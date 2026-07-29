@@ -553,6 +553,12 @@ type config struct {
 	// into a duplicate session notification (hw-94w5k finding #4).
 	// Nil-safe: a nil cache never dedupes. Initialized in main().
 	eventDedup *eventDedupCache
+	// userNames caches users.info display-name lookups backing inbound
+	// sender resolution, inline `<@U…>` mention rewriting, and
+	// thread-context preamble author lines (hq-uxln9). nil disables
+	// resolution — raw ids pass through, keeping directly-constructed
+	// test configs network-inert.
+	userNames *userNameCache
 }
 
 func loadConfig() (config, error) {
@@ -1192,6 +1198,9 @@ func main() {
 	// Wire the Events API redelivery seen-set before handleSlackEvents
 	// closes over cfg. Nil-safe (nil disables dedup). hw-94w5k #4.
 	cfg.eventDedup = newEventDedupCache(eventDedupTTL)
+	// Wire the users.info display-name cache. Nil-safe consumer path
+	// (nil disables resolution — raw ids pass through). hq-uxln9.
+	cfg.userNames = newUserNameCache()
 	internalDescr := cfg.internalListen
 	if cfg.serviceSocket != "" {
 		internalDescr = "uds:" + cfg.serviceSocket
@@ -3131,10 +3140,19 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
 			text = threadMarker + "Thread parent could not be fetched.\n\n" + text
 		} else {
-			text = threadMarker + formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS) + text
+			resolveName := func(id string) string { return resolveUserDisplayName(cfg, id) }
+			text = threadMarker + formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName) + text
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}
 	}
+
+	// Inline `<@U…>` mentions (including any carried in by the
+	// thread-context preamble above) render as raw ids in the session
+	// reminder — rewrite them to display names via the users.info
+	// cache (hq-uxln9). Runs AFTER target parsing so address tokens
+	// are untouched, and before the inbound struct is built so the
+	// alias-dispatch copy inherits the rewrite.
+	text = rewriteSlackUserMentions(cfg, text)
 
 	var attachments []externalAttachment
 	if len(msg.Files) > 0 {
@@ -3173,7 +3191,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		},
 		Actor: externalActor{
 			ID:          msg.User,
-			DisplayName: msg.User, // resolving display name needs users.info — defer
+			DisplayName: resolveUserDisplayName(cfg, msg.User), // raw id on lookup failure (hq-uxln9)
 			IsBot:       false,
 		},
 		Text:             text,

@@ -292,7 +292,16 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 // gc-px8.5's first-mention semantics. A non-empty sinceTS limits
 // the preamble to peer activity newer than the target's last
 // delivered context — gc-px8.6's cross-agent delta visibility.
-func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, currentTS, sinceTS string) string {
+//
+// Bot-authored and whitespace-only messages are filtered. Returns
+// "" when no messages survive filtering — caller MUST treat that as
+// no-op so empty/short threads, current-message-only callbacks, and
+// replays with no new peer activity carry no preamble overhead.
+//
+// resolveName maps a Slack user id to a display name for the author
+// line (hq-uxln9); nil renders the raw id (pre-fix behavior, and what
+// the table tests exercise).
+func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, currentTS, sinceTS string, resolveName func(string) string) string {
 	var prior []slackThreadMessage
 	for _, m := range replies {
 		if m.TS == "" {
@@ -329,6 +338,9 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 			continue
 		}
 		author := m.User
+		if author != "" && resolveName != nil {
+			author = resolveName(author)
+		}
 		if author == "" {
 			author = "?"
 		}
