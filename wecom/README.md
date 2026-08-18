@@ -86,6 +86,11 @@ robot's visible scope decides who can talk to it.
 
 - Long-connection robots do **not** work in external/customer groups —
   internal company chats and DMs only.
+- **No offline replay**: messages sent while no connection is live are NOT
+  queued and replayed by Tencent on reconnect (observed live 2026-08-18:
+  a DM sent before the supervised service first connected never produced
+  a callback frame). Keeping the service supervised is what bounds this
+  loss window to restarts.
 - A second adapter instance authenticating with the same bot causes the
   server to drop the first connection (`event.disconnected_event`): run
   exactly one adapter per bot.

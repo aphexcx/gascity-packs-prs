@@ -345,7 +345,11 @@ function chainSend(chatid, fn) {
   const prev = sendChains.get(chatid) ?? Promise.resolve();
   const next = prev.catch(() => {}).then(fn);
   sendChains.set(chatid, next);
-  next.finally(() => {
+  // The cleanup must hang off a rejection-proofed derivative: `next` can
+  // reject (the caller handles that), and `.finally()` on a rejecting
+  // promise yields ANOTHER rejecting promise — left bare, that derived
+  // rejection is unhandled and kills the process on the first failed send.
+  next.catch(() => {}).then(() => {
     if (sendChains.get(chatid) === next) sendChains.delete(chatid);
   });
   return next;
