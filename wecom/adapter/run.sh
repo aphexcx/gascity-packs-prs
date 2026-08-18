@@ -84,7 +84,11 @@ cd "$adapter_dir"
 # `(cd wecom/adapter && ./run.sh --deps-only)` at pack setup so the first
 # supervised start never pays install latency.
 deps_marker="node_modules/.gc-deps-ok"
-lock_hash="$(shasum -a 256 pnpm-lock.yaml | cut -d' ' -f1)"
+if command -v shasum >/dev/null 2>&1; then
+  lock_hash="$(shasum -a 256 pnpm-lock.yaml | cut -d' ' -f1)"
+else
+  lock_hash="$(sha256sum pnpm-lock.yaml | cut -d' ' -f1)"
+fi
 if [[ ! -f "$deps_marker" || "$(cat "$deps_marker" 2>/dev/null)" != "$lock_hash" ]]; then
   # pnpm only: the committed lockfile is pnpm-lock.yaml, and an npm
   # fallback would re-resolve ranged dependencies fresh — production

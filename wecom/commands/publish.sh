@@ -15,6 +15,7 @@ set -eu
 
 chat=""
 text=""
+text_file=""
 
 require_value() {
   # $1 = flag name, $2 = arg count remaining (including the flag itself)
@@ -26,10 +27,12 @@ require_value() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --chat)   require_value "$1" "$#"; chat="$2"; shift 2 ;;
-    --text)   require_value "$1" "$#"; text="$2"; shift 2 ;;
-    --chat=*) chat="${1#*=}"; shift ;;
-    --text=*) text="${1#*=}"; shift ;;
+    --chat)      require_value "$1" "$#"; chat="$2"; shift 2 ;;
+    --text)      require_value "$1" "$#"; text="$2"; shift 2 ;;
+    --text-file) require_value "$1" "$#"; text_file="$2"; shift 2 ;;
+    --chat=*)      chat="${1#*=}"; shift ;;
+    --text=*)      text="${1#*=}"; shift ;;
+    --text-file=*) text_file="${1#*=}"; shift ;;
     -h|--help)
       cat "$(dirname "$0")/publish/help.md"
       exit 0
@@ -45,8 +48,16 @@ if [ -z "$chat" ]; then
   echo "gc wecom publish: --chat is required" >&2
   exit 2
 fi
-if [ -z "$text" ]; then
-  echo "gc wecom publish: --text is required" >&2
+if [ -n "$text" ] && [ -n "$text_file" ]; then
+  echo "gc wecom publish: use --text or --text-file, not both" >&2
+  exit 2
+fi
+if [ -z "$text" ] && [ -z "$text_file" ]; then
+  echo "gc wecom publish: --text or --text-file is required" >&2
+  exit 2
+fi
+if [ -n "$text_file" ] && [ ! -f "$text_file" ]; then
+  echo "gc wecom publish: --text-file $text_file not found" >&2
   exit 2
 fi
 
@@ -65,10 +76,20 @@ url="${WECOM_ADAPTER_URL:-${api_base}/v0/city/${city}/svc/wecom/publish}"
 # Build the request body with jq so chat/text are correctly JSON-escaped
 # (text may contain quotes, newlines, etc.). The body reuses the extmsg
 # publishRequest wire shape the adapter already serves for gc callbacks.
-body=$(jq -n \
-  --arg chat "$chat" \
-  --arg text "$text" \
-  '{conversation: {conversation_id: $chat}, text: $text}')
+# --text-file exists because reply text regularly contains characters
+# that are unsafe to interpolate into a shell command (apostrophes,
+# backticks, code snippets) — agents write the reply to a file instead.
+if [ -n "$text_file" ]; then
+  body=$(jq -n \
+    --arg chat "$chat" \
+    --rawfile text "$text_file" \
+    '{conversation: {conversation_id: $chat}, text: $text}')
+else
+  body=$(jq -n \
+    --arg chat "$chat" \
+    --arg text "$text" \
+    '{conversation: {conversation_id: $chat}, text: $text}')
+fi
 
 # Capture status and body separately so the adapter's JSON error payload
 # reaches the operator instead of being swallowed by `curl -f`.

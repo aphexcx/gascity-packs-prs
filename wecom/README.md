@@ -39,11 +39,13 @@ no funnel.
 
 ## Secrets
 
-`~/.config/gc-wecom-adapter/env` (never in the repo) — or, preferred when
-supervised, `env` inside the service's `GC_SERVICE_SECRETS_DIR` so each
-city on a shared host keeps its own credentials (two cities sourcing one
-global file would cross-wire their bots — the newer connection displaces
-the older one):
+Supervised (proxy_process) runs — the normal case — REQUIRE the per-city
+secrets file: `<city>/.gc/services/wecom/secrets/env` (the directory gc
+scaffolds and passes as `GC_SERVICE_SECRETS_DIR`; the adapter fails fast
+if the file is missing there). Per-city scoping is what stops two cities
+on one host from sourcing each other's bot credentials and cross-wiring
+connections. `~/.config/gc-wecom-adapter/env` works only for standalone
+dev runs of `adapter/run.sh` outside gc. Contents (never in the repo):
 
 ```
 WECOM_BOT_ID=...

@@ -367,10 +367,12 @@ function publishStateFor(key) {
       // whole message from scratch — duplicate chunks users already saw.
       // If everything is in flight (pathological load), grow temporarily.
       for (const [k, s] of publishStates) {
-        // Never the entry just inserted for `key` — it has no promise
-        // yet, so an unguarded scan would evict it immediately and a
-        // concurrent same-key retry would double-send.
-        if (k !== key && !s.promise) {
+        // Only fully completed entries (receipt present) are evictable.
+        // Never the entry just inserted for `key` (promise-less until
+        // after insert), and never a failed partial (chunksDelivered>0,
+        // no receipt) — evicting one lets a later gc retry restart at
+        // chunk zero and duplicate chunks users already saw.
+        if (k !== key && s.receipt && !s.promise) {
           publishStates.delete(k);
           break;
         }
@@ -520,8 +522,10 @@ async function registerAdapter(cfg) {
     callback_url: cfg.internalCallbackURL,
     // Without this, gc's inbound nudge tells the session to run the
     // generic "gc wecom reply-current ..." — a verb this pack doesn't
-    // ship. Point the reply flow at the verb that exists.
-    reply_instructions: `gc wecom publish --chat {conversation_id} --text '<your reply>'`,
+    // ship. Point the reply flow at the verb that exists. File-based so
+    // arbitrary reply text (apostrophes, code, Chinese quotes) never has
+    // to survive shell interpolation.
+    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>',
     capabilities: {
       SupportsChildConversations: false,
       SupportsAttachments: false,

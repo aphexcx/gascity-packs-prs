@@ -5,6 +5,7 @@ Send a markdown message to a WeCom chat through the running wecom adapter.
 ## Usage
 
 ```
+gc wecom publish --chat <chatid-or-userid> --text-file <path>
 gc wecom publish --chat <chatid-or-userid> --text "message"
 ```
 
@@ -12,8 +13,12 @@ gc wecom publish --chat <chatid-or-userid> --text "message"
 
 - `--chat` (required) — WeCom conversation id: the `chatid` for a group
   chat, or the peer's `userid` for a DM.
-- `--text` (required) — message body. WeCom markdown (`**bold**`, lists,
-  links); chunked automatically at 3800 chars.
+- `--text-file` — file containing the message body; preferred, since
+  reply text with apostrophes/backticks/code is unsafe to interpolate
+  into a shell command.
+- `--text` — inline message body (simple strings only). Exactly one of
+  `--text` / `--text-file` is required. WeCom markdown (`**bold**`,
+  lists, links); chunked automatically at ~3800 UTF-8 bytes.
 
 ## Environment
 
