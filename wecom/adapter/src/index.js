@@ -161,24 +161,28 @@ function renderText(msg) {
 // --- inbound: WeCom frame → gc extmsg -------------------------------------
 
 // Dedup by msgid: reconnects can replay frames the bot already handled.
+// An id is marked seen only AFTER gc accepts the POST — marking earlier
+// would turn a transient gc failure into permanent message loss when the
+// SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
+// of a not-yet-accepted id.
 const seenMsgIds = new Set();
 const seenMsgIdOrder = [];
 const seenMsgIdCap = 2048;
+const inflightMsgIds = new Set();
 
-function alreadySeen(msgid) {
-  if (!msgid) return false;
-  if (seenMsgIds.has(msgid)) return true;
+function markSeen(msgid) {
+  if (!msgid || seenMsgIds.has(msgid)) return;
   seenMsgIds.add(msgid);
   seenMsgIdOrder.push(msgid);
   if (seenMsgIdOrder.length > seenMsgIdCap) {
     seenMsgIds.delete(seenMsgIdOrder.shift());
   }
-  return false;
 }
 
 async function bridgeInbound(cfg, frame) {
   const msg = frame.body;
-  if (!msg || alreadySeen(msg.msgid)) return;
+  if (!msg) return;
+  if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) return;
 
   const conversation = conversationForMessage(cfg, msg);
   if (!conversation.conversation_id) {
@@ -205,33 +209,55 @@ async function bridgeInbound(cfg, frame) {
   };
 
   const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
+  if (msg.msgid) inflightMsgIds.add(msg.msgid);
   try {
     await postJSON(target, { message });
+    markSeen(msg.msgid);
     log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
   } catch (err) {
+    // Not marked seen: if the SDK replays this frame after reconnecting,
+    // the bridge retries instead of dropping the message.
     log(`inbound ${msg.msgid} POST failed: ${err.message}`);
+  } finally {
+    if (msg.msgid) inflightMsgIds.delete(msg.msgid);
   }
 }
 
 // --- outbound: gc /publish → WeCom sendMessage -----------------------------
 
-// WeCom markdown messages cap out around 4096 bytes; chunk conservatively
-// so multi-part replies survive.
-const outboundChunkSize = 3800;
+// WeCom markdown messages cap out around 4096 BYTES; chunk conservatively
+// in UTF-8 bytes — Chinese text is ~3 bytes per character, so counting
+// UTF-16 code units would overshoot the cap threefold. Splitting iterates
+// code points (for...of), which can never sever a surrogate pair.
+const outboundChunkBytes = 3800;
+const utf8 = new TextEncoder();
 
 function chunkText(text) {
-  if (text.length <= outboundChunkSize) return [text];
+  if (utf8.encode(text).length <= outboundChunkBytes) return [text];
   const chunks = [];
-  let rest = text;
-  while (rest.length > 0) {
-    let cut = Math.min(outboundChunkSize, rest.length);
-    // Prefer a newline boundary inside the window to avoid splitting
-    // markdown constructs mid-line.
-    const nl = rest.lastIndexOf('\n', cut);
-    if (cut < rest.length && nl > outboundChunkSize / 2) cut = nl + 1;
-    chunks.push(rest.slice(0, cut));
-    rest = rest.slice(cut);
+  let current = '';
+  let currentBytes = 0;
+  let lastNewlineOffset = -1; // index into `current` just past the last \n
+  for (const ch of text) {
+    const chBytes = utf8.encode(ch).length;
+    if (currentBytes + chBytes > outboundChunkBytes) {
+      // Prefer breaking at the last newline in the window so markdown
+      // constructs aren't severed mid-line.
+      if (lastNewlineOffset > current.length / 2) {
+        chunks.push(current.slice(0, lastNewlineOffset));
+        current = current.slice(lastNewlineOffset);
+      } else {
+        chunks.push(current);
+        current = '';
+      }
+      currentBytes = utf8.encode(current).length;
+      lastNewlineOffset = -1;
+    }
+    current += ch;
+    currentBytes += chBytes;
+    if (ch === '\n') lastNewlineOffset = current.length;
   }
+  if (current.length > 0) chunks.push(current);
   return chunks;
 }
 
@@ -323,10 +349,14 @@ async function registerAdapter(cfg) {
     account_id: cfg.botId,
     name: 'wecom-adapter',
     callback_url: cfg.internalCallbackURL,
+    // Without this, gc's inbound nudge tells the session to run the
+    // generic "gc wecom reply-current ..." — a verb this pack doesn't
+    // ship. Point the reply flow at the verb that exists.
+    reply_instructions: `gc wecom publish --chat {conversation_id} --text '<your reply>'`,
     capabilities: {
       SupportsChildConversations: false,
       SupportsAttachments: false,
-      MaxMessageLength: outboundChunkSize,
+      MaxMessageLength: outboundChunkBytes,
     },
   });
   log(`registered with gc as provider=${cfg.provider} account=${cfg.botId} callback=${cfg.internalCallbackURL}`);

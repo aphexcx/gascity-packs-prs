@@ -28,7 +28,13 @@ no funnel.
     to the `chatid` for group chats, to the peer `userid` for DMs — chunked
     at 3800 chars.
 - `commands/publish.sh` — `gc wecom publish`: manual/operator sends through
-  the running adapter via gc's `/svc/wecom` reverse proxy.
+  the running adapter via gc's `/svc/wecom` reverse proxy. Also the verb
+  gc's inbound nudges cite (registered as the adapter's
+  `reply_instructions`), so the mayor's reply flow works without a
+  `reply-current` verb.
+- `pack.toml` ships an `[[extmsg.default_route]]` fragment routing unbound
+  wecom conversations to the `mayor` agent — without it gc acks inbound
+  POSTs and then drops them as unrouted.
 
 ## Secrets
 
@@ -37,6 +43,16 @@ no funnel.
 ```
 WECOM_BOT_ID=...
 WECOM_BOT_SECRET=...
+GC_CITY_NAME=...
+```
+
+`GC_CITY_NAME` is required — the controller injects the service socket and
+API base but not the city name. Pre-warm dependencies once at setup so the
+first supervised start never pays npm-install latency inside the
+supervisor's readiness window:
+
+```
+(cd wecom/adapter && ./run.sh --deps-only)
 ```
 
 Both come from the WeCom console when creating the robot: **Workspace →
