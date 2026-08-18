@@ -1,0 +1,2 @@
+description = "Send a markdown message to a WeCom chat (group chatid or DM userid)"
+run = "../publish.sh"

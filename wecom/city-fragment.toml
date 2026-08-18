@@ -1,0 +1,13 @@
+# City-config fragment for the wecom pack — add this file's path to the
+# `include` list in city.toml (pack.toml cannot carry extmsg config; the
+# pack parser rejects unknown keys).
+#
+# Routes inbound WeCom conversations with no existing binding to the mayor
+# session. The adapter's explicit_target is only address-by-handle
+# metadata, not a route — without a default route gc acknowledges the
+# inbound POST and then drops it as unrouted. Rebind individual chats with
+# `gc extmsg bind` when they should go elsewhere.
+
+[[extmsg.default_route]]
+provider = "wecom"
+agent = "mayor"

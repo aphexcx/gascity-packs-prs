@@ -1,0 +1,53 @@
+# wecom — WeCom (企业微信) AI Bot provider extension for Gas City.
+#
+# Bridges a WeCom Smart Robot (智能机器人, API mode / Long Connection) to a
+# gc city. Unlike the Slack packs there is NO public listener anywhere in
+# this pack: the WeCom AI Bot protocol runs over an OUTBOUND WebSocket to
+# wss://openws.work.weixin.qq.com, so the adapter works from behind NAT/GFW
+# with no domain, no funnel, and no inbound TLS termination.
+#
+# Pack-shipped adapter (./adapter, Node.js):
+#
+#   - Maintains the long-connection WebSocket via Tencent's official
+#     @wecom/aibot-node-sdk (auth, heartbeat, reconnect, reply queues).
+#   - Inbound: every text/voice/mixed message is bridged to gc by POSTing
+#     /v0/city/{city}/extmsg/inbound; routing to the mayor comes from the
+#     [[extmsg.default_route]] in city-fragment.toml (rebind individual
+#     chats with `gc extmsg bind`). WeCom transcribes voice server-side,
+#     so voice frames arrive as text.
+#   - Outbound: binds a Unix domain socket at $GC_SERVICE_SOCKET for
+#     /publish + /healthz; gc reverse-proxies /svc/wecom/* to it and the
+#     extmsg subsystem appends /publish when delivering session replies.
+#
+# Secrets (WECOM_BOT_ID, WECOM_BOT_SECRET) stay in
+# ~/.config/gc-wecom-adapter/env and are sourced by adapter/run.sh.
+# See README.md "Secrets".
+#
+# Architecture reference: slack-full (adapter + pack.toml + env contract +
+# gc service registration + default_route to mayor), per gp-86d.
+
+[pack]
+name = "wecom"
+version = "0.0.1"
+schema = 2
+
+# proxy_process service: gc supervises the adapter as part of the city's
+# service set. The adapter binds a UDS at $GC_SERVICE_SOCKET for /publish +
+# /healthz; gc reverse-proxies /svc/wecom/* to it. There is no public bind.
+
+# NOTE: inbound routing needs [[extmsg.default_route]] in the CITY config —
+# pack.toml has no extmsg surface (unknown keys are fatal to the pack
+# parser). Add ./city-fragment.toml to city.toml's `include` list at setup;
+# without it gc acks unbound inbound POSTs and then drops them as unrouted.
+# See README "Setup".
+
+[[service]]
+name = "wecom"
+kind = "proxy_process"
+
+[service.publication]
+visibility = "private"
+
+[service.process]
+command = ["./adapter/run.sh"]
+health_path = "/healthz"
