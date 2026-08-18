@@ -121,6 +121,10 @@ async function postJSON(target, body) {
       'X-GC-Request': 'gc-wecom-adapter',
     },
     body: JSON.stringify(body),
+    // Deadline so a stalled gc handler (connection accepted, no response)
+    // aborts into the retry loop instead of pinning the per-conversation
+    // queue forever behind a request that never settles.
+    signal: AbortSignal.timeout(15000),
   });
   if (!resp.ok) {
     const text = (await resp.text().catch(() => '')).trim();
@@ -331,6 +335,22 @@ function chunkText(text) {
 const publishStates = new Map(); // key → { chunksDelivered, messageID, receipt, promise }
 const publishStatesCap = 512;
 
+// Per-chat outbound serialization: the SDK only serializes sends sharing a
+// req_id, so two publishes to the same chat (different idempotency keys)
+// could otherwise interleave one reply between another's chunks. Chain the
+// whole chunk loop per chatid; different chats stay concurrent.
+const sendChains = new Map();
+
+function chainSend(chatid, fn) {
+  const prev = sendChains.get(chatid) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  sendChains.set(chatid, next);
+  next.finally(() => {
+    if (sendChains.get(chatid) === next) sendChains.delete(chatid);
+  });
+  return next;
+}
+
 function publishStateFor(key) {
   if (!key) return { chunksDelivered: 0 }; // untracked, per-call state
   let state = publishStates.get(key);
@@ -389,7 +409,7 @@ function handlePublish(cfg, wsClient) {
         state.chunksDelivered = i + 1;
       }
     };
-    state.promise = send();
+    state.promise = chainSend(chatid, send);
     try {
       await state.promise;
     } catch (err) {
