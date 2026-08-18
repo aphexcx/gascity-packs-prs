@@ -367,7 +367,10 @@ function publishStateFor(key) {
       // whole message from scratch — duplicate chunks users already saw.
       // If everything is in flight (pathological load), grow temporarily.
       for (const [k, s] of publishStates) {
-        if (!s.promise) {
+        // Never the entry just inserted for `key` — it has no promise
+        // yet, so an unguarded scan would evict it immediately and a
+        // concurrent same-key retry would double-send.
+        if (k !== key && !s.promise) {
           publishStates.delete(k);
           break;
         }

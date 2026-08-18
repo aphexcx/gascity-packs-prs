@@ -36,7 +36,11 @@ fi
 # global path for standalone/dev use.
 if [[ -n "${GC_WECOM_ADAPTER_ENV:-}" ]]; then
   env_file="$GC_WECOM_ADAPTER_ENV"
-elif [[ -n "${GC_SERVICE_SECRETS_DIR:-}" && -f "$GC_SERVICE_SECRETS_DIR/env" ]]; then
+elif [[ -n "${GC_SERVICE_SECRETS_DIR:-}" ]]; then
+  # Supervised mode: the per-city secrets file is REQUIRED — falling
+  # through to the global file here would let a new city silently start
+  # with another city's bot credentials on a multi-city host. Fail fast
+  # (the missing-file message below says where to put it) instead.
   env_file="$GC_SERVICE_SECRETS_DIR/env"
 else
   env_file="$HOME/.config/gc-wecom-adapter/env"
