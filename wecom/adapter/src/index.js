@@ -524,13 +524,25 @@ async function registerAdapter(cfg) {
 async function main() {
   const cfg = loadConfig();
 
+  // Debug-suppressing logger: the SDK's default logger writes every
+  // callback frame at DEBUG via JSON.stringify — full message bodies,
+  // user ids, media URLs/AES keys, and response_url tokens — and
+  // proxy_process output persists to the service log. Conversation
+  // content must never be retained there; info/warn/error pass through.
+  const sdkLogger = {
+    debug: () => {},
+    info: (m, ...a) => log('[sdk]', m, ...a),
+    warn: (m, ...a) => log('[sdk][warn]', m, ...a),
+    error: (m, ...a) => log('[sdk][error]', m, ...a),
+  };
+
   // maxReconnectAttempts -1 = unlimited: a long network outage must never
   // strand a "healthy" process with a permanently dead connection (the
   // supervisor only watches /healthz, which the HTTP listener answers).
   // Auth-failure retries stay at the SDK default — bad credentials don't
   // heal by retrying; the terminal-error handler below exits instead so
   // the supervisor restarts us (picking up a rotated env file).
-  const wsOptions = { botId: cfg.botId, secret: cfg.botSecret, maxReconnectAttempts: -1 };
+  const wsOptions = { botId: cfg.botId, secret: cfg.botSecret, maxReconnectAttempts: -1, logger: sdkLogger };
   if (cfg.wsURL) wsOptions.wsUrl = cfg.wsURL;
   const wsClient = new WSClient(wsOptions);
 
