@@ -1,0 +1,17 @@
+{
+  "name": "gc-wecom-adapter",
+  "version": "0.0.1",
+  "description": "WeCom (企业微信) AI Bot long-connection adapter for Gas City — bridges a WeCom Smart Robot to a gc city's extmsg surface.",
+  "type": "module",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@wecom/aibot-node-sdk": "^1.0.7"
+  }
+}
