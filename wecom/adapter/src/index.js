@@ -7,9 +7,10 @@
 // directions to gc:
 //
 //   - Inbound: text / voice / mixed messages (and file/image/video
-//     placeholders) → POST /v0/city/{city}/extmsg/inbound, addressed to
-//     the mayor session (override with WECOM_INBOUND_TARGET). WeCom
-//     transcribes voice server-side, so voice frames carry text.
+//     placeholders) → POST /v0/city/{city}/extmsg/inbound. Routing to the
+//     mayor comes from the pack's city-fragment default route, never from
+//     a per-message addressee. WeCom transcribes voice server-side, so
+//     voice frames carry text.
 //
 //   - Outbound: a UDS (or loopback TCP) listener for /publish + /healthz.
 //     gc's extmsg subsystem POSTs {callback_url}/publish to deliver a
@@ -27,15 +28,15 @@
 //	GC_SERVICE_SOCKET      UDS path the internal listener binds.
 //	GC_SERVICE_URL_PREFIX  Reverse-proxy prefix gc routes to this service;
 //	                       used to compute the self-registration callback URL.
-//	GC_API_BASE_URL        gc API base (default http://127.0.0.1:9443).
+//	GC_API_BASE_URL        gc API base — REQUIRED in proxy_process mode
+//	                       (the controller does not inject it); standalone
+//	                       dev falls back to http://127.0.0.1:9443.
 //
 // Optional env:
 //
 //	LISTEN_INTERNAL        TCP bind when GC_SERVICE_SOCKET is unset
 //	                       (default 127.0.0.1:8790).
 //	REGISTER_ON_START      "true" (default) self-registers as an extmsg adapter.
-//	ADAPTER_PROVIDER       extmsg provider name (default "wecom").
-//	WECOM_INBOUND_TARGET   Session handle inbound messages address (default "mayor").
 //	WECOM_WELCOME_TEXT     Welcome message sent on enter_chat (default: none).
 //	WECOM_WS_URL           Override the long-connection endpoint (private
 //	                       deployments publish their own; default is the
@@ -61,8 +62,11 @@ function loadConfig() {
     botSecret: getenv('WECOM_BOT_SECRET'),
     cityName: getenv('GC_CITY_NAME'),
     gcAPIBase: getenv('GC_API_BASE_URL').replace(/\/+$/, ''),
-    provider: getenv('ADAPTER_PROVIDER', 'wecom'),
-    inboundTarget: getenv('WECOM_INBOUND_TARGET', 'mayor'),
+    // Fixed provider key: the pack's required city-fragment default route
+    // and command surface are keyed to "wecom" — an override here would
+    // silently detach registration from the route and drop every unbound
+    // conversation.
+    provider: 'wecom',
     welcomeText: getenv('WECOM_WELCOME_TEXT'),
     wsURL: getenv('WECOM_WS_URL'),
     serviceSocket: getenv('GC_SERVICE_SOCKET'),
@@ -134,8 +138,12 @@ function isRetryable(err) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// postJSONWithRetry retries transient failures on a fixed backoff ladder
-// and rethrows the final (or first non-retryable) error.
+// postJSONWithRetry retries transient failures indefinitely on a backoff
+// ladder capped at 60s, and rethrows the first non-retryable error. The
+// retry is the delivery mechanism — WeCom replay is not guaranteed, so a
+// gc outage of any length must not translate into dropped messages. Memory
+// is bounded by traffic during the outage: one small pending frame per
+// undelivered message.
 const retryDelaysMs = [1000, 5000, 15000, 60000];
 
 async function postJSONWithRetry(target, body, label) {
@@ -144,9 +152,12 @@ async function postJSONWithRetry(target, body, label) {
       await postJSON(target, body);
       return;
     } catch (err) {
-      if (!isRetryable(err) || attempt >= retryDelaysMs.length) throw err;
-      log(`${label}: attempt ${attempt + 1} failed (${err.message}); retrying in ${retryDelaysMs[attempt] / 1000}s`);
-      await sleep(retryDelaysMs[attempt]);
+      if (!isRetryable(err)) throw err;
+      const delay = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)];
+      if (attempt === 0 || attempt % 10 === 0) {
+        log(`${label}: attempt ${attempt + 1} failed (${err.message}); retrying in ${delay / 1000}s`);
+      }
+      await sleep(delay);
     }
   }
 }
@@ -234,8 +245,12 @@ async function bridgeInbound(cfg, frame) {
       display_name: msg.from?.userid ?? '',
       is_bot: false,
     },
+    // No explicit_target: routing is the default_route fragment's job
+    // (and per-conversation bindings). Stamping an addressee here would
+    // mislabel messages on rebound conversations — gc carries it into the
+    // reminder and tells the receiving agent the message was addressed to
+    // someone else.
     text,
-    explicit_target: cfg.inboundTarget,
     dedup_key: msg.msgid,
     received_at: msg.create_time
       ? new Date(msg.create_time * 1000).toISOString()
@@ -245,24 +260,19 @@ async function bridgeInbound(cfg, frame) {
   const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
   if (msg.msgid) inflightMsgIds.add(msg.msgid);
   try {
-    // Transient gc failures retry here — WeCom replay after a reconnect
-    // is not guaranteed, so the retry ladder is the delivery mechanism,
-    // not a bonus. The in-flight marker holds for the whole ladder so a
-    // replay arriving mid-retry can't double-post.
+    // Transient gc failures retry indefinitely — WeCom replay after a
+    // reconnect is not guaranteed, so the retry loop is the delivery
+    // mechanism, not a bonus. The in-flight marker holds for the whole
+    // retry so a replay arriving mid-retry can't double-post.
     await postJSONWithRetry(target, { message }, `inbound ${msg.msgid}`);
     markSeen(msg.msgid);
     log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
   } catch (err) {
-    if (err.status !== undefined && err.status < 500) {
-      // Deterministic rejection: a replay would fail identically, so mark
-      // seen to stop pointless re-posts.
-      markSeen(msg.msgid);
-      log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
-    } else {
-      // Retries exhausted. NOT marked seen: a later SDK replay gets a
-      // fresh ladder.
-      log(`inbound ${msg.msgid} POST failed after retries: ${err.message}`);
-    }
+    // Only deterministic 4xx rejections land here (transient failures
+    // retry forever): a replay would fail identically, so mark seen to
+    // stop pointless re-posts.
+    markSeen(msg.msgid);
+    log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
   } finally {
     if (msg.msgid) inflightMsgIds.delete(msg.msgid);
   }
@@ -342,19 +352,21 @@ function handlePublish(cfg, wsClient) {
     }
 
     const state = publishStateFor(pub.idempotency_key);
-    if (state.receipt) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(state.receipt));
-      return;
-    }
-    // Coalesce a concurrent retry of the same key onto the in-flight send.
-    if (state.promise) {
-      await state.promise.catch(() => {});
+    // Atomically claim the send: only the waiter that observes neither a
+    // receipt nor an in-flight promise proceeds; everyone else awaits and
+    // RE-CHECKS. The loop matters — after a failed send, resumed waiters
+    // that simply fell through would each start their own send and resend
+    // the same chunk concurrently. No await sits between the final check
+    // and the promise assignment below, so the claim is race-free on the
+    // event loop.
+    for (;;) {
       if (state.receipt) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(state.receipt));
         return;
       }
+      if (!state.promise) break;
+      await state.promise.catch(() => {});
     }
 
     const send = async () => {
@@ -499,9 +511,14 @@ async function main() {
     }
   });
   wsClient.on('event.disconnected_event', () => {
-    // The server drops the old connection when a NEW connection authenticates
-    // with the same bot — usually a second adapter instance. Surface loudly.
-    log('wecom server disconnected this connection: a newer connection took over');
+    // The server drops this connection when a NEW connection authenticates
+    // with the same bot (usually a stray second instance), and SDK 1.0.7
+    // disables reconnects afterwards — staying alive would mean answering
+    // /healthz green while permanently deaf. Exit so the supervisor
+    // restarts us; on restart we re-authenticate and reclaim the
+    // connection once the other instance is gone.
+    log('wecom server disconnected this connection (newer connection took over); exiting for supervisor restart');
+    process.exit(1);
   });
 
   for (const evt of ['message.text', 'message.voice', 'message.mixed', 'message.image', 'message.file', 'message.video']) {

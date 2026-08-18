@@ -11,9 +11,10 @@
 #   - Maintains the long-connection WebSocket via Tencent's official
 #     @wecom/aibot-node-sdk (auth, heartbeat, reconnect, reply queues).
 #   - Inbound: every text/voice/mixed message is bridged to gc by POSTing
-#     /v0/city/{city}/extmsg/inbound addressed to the mayor session
-#     (override with WECOM_INBOUND_TARGET). WeCom transcribes voice
-#     server-side, so voice frames arrive as text.
+#     /v0/city/{city}/extmsg/inbound; routing to the mayor comes from the
+#     [[extmsg.default_route]] in city-fragment.toml (rebind individual
+#     chats with `gc extmsg bind`). WeCom transcribes voice server-side,
+#     so voice frames arrive as text.
 #   - Outbound: binds a Unix domain socket at $GC_SERVICE_SOCKET for
 #     /publish + /healthz; gc reverse-proxies /svc/wecom/* to it and the
 #     extmsg subsystem appends /publish when delivering session replies.

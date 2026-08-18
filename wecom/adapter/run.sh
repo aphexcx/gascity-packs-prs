@@ -17,8 +17,6 @@
 #
 # Optional env keys:
 #   LISTEN_INTERNAL         # default 127.0.0.1:8790 (localhost-only; /publish)
-#   ADAPTER_PROVIDER        # default wecom
-#   WECOM_INBOUND_TARGET    # default mayor
 #   WECOM_WELCOME_TEXT      # optional enter_chat welcome message
 #   WECOM_WS_URL            # override long-connection endpoint (private deploys)
 #   REGISTER_ON_START       # default true; set false to skip self-registration
