@@ -39,7 +39,11 @@ no funnel.
 
 ## Secrets
 
-`~/.config/gc-wecom-adapter/env` (never in the repo):
+`~/.config/gc-wecom-adapter/env` (never in the repo) — or, preferred when
+supervised, `env` inside the service's `GC_SERVICE_SECRETS_DIR` so each
+city on a shared host keeps its own credentials (two cities sourcing one
+global file would cross-wire their bots — the newer connection displaces
+the older one):
 
 ```
 WECOM_BOT_ID=...

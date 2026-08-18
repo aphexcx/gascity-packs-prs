@@ -2,9 +2,11 @@
 #
 # run.sh — start the gc-wecom-adapter in foreground.
 #
-# Reads secrets from a sourced env file. Default location:
-#   ~/.config/gc-wecom-adapter/env
-# Override via GC_WECOM_ADAPTER_ENV.
+# Reads secrets from a sourced env file, resolved in this order:
+#   1. $GC_WECOM_ADAPTER_ENV (explicit override)
+#   2. $GC_SERVICE_SECRETS_DIR/env (per-city; supervised mode — use this
+#      when more than one city on the host imports the pack)
+#   3. ~/.config/gc-wecom-adapter/env (global; standalone/dev)
 #
 # Required env keys (in the file):
 #   WECOM_BOT_ID            # Bot ID from WeCom console (API mode / Long Connection)
@@ -28,7 +30,17 @@ if [[ "${1:-}" == "--deps-only" ]]; then
   deps_only=true
 fi
 
-env_file="${GC_WECOM_ADAPTER_ENV:-$HOME/.config/gc-wecom-adapter/env}"
+# Env file resolution order: explicit override, then the per-city secrets
+# dir gc scaffolds for this service (so two cities on one host can't source
+# each other's credentials and cross-wire their bots), then the legacy
+# global path for standalone/dev use.
+if [[ -n "${GC_WECOM_ADAPTER_ENV:-}" ]]; then
+  env_file="$GC_WECOM_ADAPTER_ENV"
+elif [[ -n "${GC_SERVICE_SECRETS_DIR:-}" && -f "$GC_SERVICE_SECRETS_DIR/env" ]]; then
+  env_file="$GC_SERVICE_SECRETS_DIR/env"
+else
+  env_file="$HOME/.config/gc-wecom-adapter/env"
+fi
 # --deps-only needs no secrets — it must work on a fresh box before the
 # env file exists, since it's the documented pre-warm step.
 if [[ "$deps_only" != true && ! -f "$env_file" ]]; then
@@ -70,14 +82,14 @@ cd "$adapter_dir"
 deps_marker="node_modules/.gc-deps-ok"
 lock_hash="$(shasum -a 256 pnpm-lock.yaml | cut -d' ' -f1)"
 if [[ ! -f "$deps_marker" || "$(cat "$deps_marker" 2>/dev/null)" != "$lock_hash" ]]; then
-  if command -v pnpm >/dev/null 2>&1; then
-    pnpm install --prod --prefer-offline --silent
-  else
-    # --no-package-lock: writing package-lock.json into a commit-pinned
-    # remote-import cache dirties the checkout and gc then refuses to
-    # start the service from it after a supervisor restart.
-    npm install --omit=dev --no-package-lock --silent
+  # pnpm only: the committed lockfile is pnpm-lock.yaml, and an npm
+  # fallback would re-resolve ranged dependencies fresh — production
+  # behavior changing on a dependency release with no repository change.
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "gc-wecom-adapter: pnpm is required to install dependencies from the committed lockfile (brew install pnpm, or corepack enable pnpm)" >&2
+    exit 1
   fi
+  pnpm install --prod --prefer-offline --frozen-lockfile --silent
   printf '%s' "$lock_hash" > "$deps_marker"
 fi
 

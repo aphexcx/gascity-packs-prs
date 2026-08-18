@@ -362,7 +362,16 @@ function publishStateFor(key) {
     state = { chunksDelivered: 0 };
     publishStates.set(key, state);
     if (publishStates.size > publishStatesCap) {
-      publishStates.delete(publishStates.keys().next().value);
+      // Evict the oldest SETTLED state only: evicting one whose send is
+      // still in flight would let a gc retry of that key re-queue the
+      // whole message from scratch — duplicate chunks users already saw.
+      // If everything is in flight (pathological load), grow temporarily.
+      for (const [k, s] of publishStates) {
+        if (!s.promise) {
+          publishStates.delete(k);
+          break;
+        }
+      }
     }
   }
   return state;
@@ -529,11 +538,15 @@ async function main() {
   // user ids, media URLs/AES keys, and response_url tokens — and
   // proxy_process output persists to the service log. Conversation
   // content must never be retained there; info/warn/error pass through.
+  // warn/error can embed serialized frame data on malformed or novel
+  // frames — scrub anything from the first brace onward and drop varargs
+  // (which carry raw objects) so payloads never persist at any level.
+  const scrub = (m) => String(m).replace(/\{[\s\S]*$/, '{…redacted}');
   const sdkLogger = {
     debug: () => {},
-    info: (m, ...a) => log('[sdk]', m, ...a),
-    warn: (m, ...a) => log('[sdk][warn]', m, ...a),
-    error: (m, ...a) => log('[sdk][error]', m, ...a),
+    info: (m) => log('[sdk]', scrub(m)),
+    warn: (m) => log('[sdk][warn]', scrub(m)),
+    error: (m) => log('[sdk][error]', scrub(m)),
   };
 
   // maxReconnectAttempts -1 = unlimited: a long network outage must never
