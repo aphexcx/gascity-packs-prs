@@ -55,11 +55,19 @@ city's actual API port with `gc status`).
 ## Setup
 
 1. Write the env file above.
-2. Add `wecom/city-fragment.toml` to city.toml's `include` list — it
-   carries the `[[extmsg.default_route]]` that routes unbound wecom
-   conversations to the mayor. pack.toml cannot (the pack parser rejects
-   extmsg keys), so this step is not optional: without it gc acks inbound
-   messages and then drops them as unrouted.
+2. Add the default route to the CITY config — not optional: without it gc
+   acks inbound messages and then drops them as unrouted (pack.toml cannot
+   carry it; the pack parser rejects extmsg keys). Either paste this block
+   into city.toml directly, or copy `city-fragment.toml` from this pack
+   NEXT TO city.toml and list it in `include` (include paths resolve
+   relative to city.toml's directory — for remote pack imports the cached
+   pack checkout is not at a resolvable relative path):
+
+   ```toml
+   [[extmsg.default_route]]
+   provider = "wecom"
+   agent = "mayor"
+   ```
 3. Pre-warm dependencies so the first supervised start never pays
    npm-install latency inside the supervisor's readiness window:
 

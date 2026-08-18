@@ -73,7 +73,10 @@ if [[ ! -f "$deps_marker" || "$(cat "$deps_marker" 2>/dev/null)" != "$lock_hash"
   if command -v pnpm >/dev/null 2>&1; then
     pnpm install --prod --prefer-offline --silent
   else
-    npm install --omit=dev --silent
+    # --no-package-lock: writing package-lock.json into a commit-pinned
+    # remote-import cache dirties the checkout and gc then refuses to
+    # start the service from it after a supervisor restart.
+    npm install --omit=dev --no-package-lock --silent
   fi
   printf '%s' "$lock_hash" > "$deps_marker"
 fi

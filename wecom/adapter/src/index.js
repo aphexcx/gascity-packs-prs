@@ -128,12 +128,21 @@ async function postJSON(target, body) {
     err.status = resp.status;
     throw err;
   }
+  // Drain the success body: undici only reuses a connection once its
+  // response body is consumed, and sustained inbound traffic on
+  // never-drained responses accumulates connections until delivery stalls.
+  await resp.arrayBuffer().catch(() => {});
 }
 
-// A 4xx is a deterministic rejection — retrying sends the same bytes to the
-// same validator. Network failures (no status) and 5xx are transient.
+// A 4xx is normally a deterministic rejection — retrying sends the same
+// bytes to the same validator. Two exceptions are transient: network
+// failures (no status), and 404, which gc's city-scoped endpoints return
+// during normal city startup/restart until reconciliation completes
+// ("city not found or not running"). A genuinely wrong city name also
+// 404s — that misconfiguration shows up as an endless, logged retry loop
+// rather than silent message loss, which is the right failure mode here.
 function isRetryable(err) {
-  return err.status === undefined || err.status >= 500;
+  return err.status === undefined || err.status >= 500 || err.status === 404;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -414,6 +423,10 @@ function startInternalListener(cfg, wsClient) {
       return;
     }
     if (req.method === 'POST' && req.url.startsWith('/publish')) {
+      // Stream-decode as UTF-8: coercing each Buffer chunk to a string
+      // independently corrupts a multibyte sequence (Chinese, emoji) that
+      // a chunk boundary happens to split.
+      req.setEncoding('utf8');
       let body = '';
       req.on('data', (d) => { body += d; });
       req.on('end', () => { publish(req, res, body).catch((err) => {
@@ -521,8 +534,24 @@ async function main() {
     process.exit(1);
   });
 
+  // Per-conversation serial delivery: with independent async bridges, a
+  // transient failure on message A would let a later message B land in gc
+  // first, reversing conversation context. Chain frames per conversation;
+  // separate conversations still proceed concurrently. Entries are removed
+  // once their chain drains, so memory tracks active conversations only.
+  const convoChains = new Map();
+  const enqueueInbound = (frame) => {
+    const msg = frame?.body ?? {};
+    const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
+    const prev = convoChains.get(key) ?? Promise.resolve();
+    const next = prev.then(() => bridgeInbound(cfg, frame)).catch((err) => log(`bridge error: ${err.message}`));
+    convoChains.set(key, next);
+    next.finally(() => {
+      if (convoChains.get(key) === next) convoChains.delete(key);
+    });
+  };
   for (const evt of ['message.text', 'message.voice', 'message.mixed', 'message.image', 'message.file', 'message.video']) {
-    wsClient.on(evt, (frame) => { bridgeInbound(cfg, frame).catch((err) => log(`bridge error: ${err.message}`)); });
+    wsClient.on(evt, enqueueInbound);
   }
 
   if (cfg.welcomeText) {
