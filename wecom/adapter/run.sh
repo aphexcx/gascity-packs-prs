@@ -11,10 +11,12 @@
 #   WECOM_BOT_SECRET        # Bot Secret from the same page
 #   GC_CITY_NAME            # gc city the adapter posts to. No default —
 #                           # adapter exits at startup if unset.
+#   GC_API_BASE_URL         # gc API base, e.g. http://127.0.0.1:8372 —
+#                           # required in supervised (proxy_process) mode;
+#                           # standalone dev falls back to 127.0.0.1:9443.
 #
 # Optional env keys:
 #   LISTEN_INTERNAL         # default 127.0.0.1:8790 (localhost-only; /publish)
-#   GC_API_BASE_URL         # default http://127.0.0.1:9443
 #   ADAPTER_PROVIDER        # default wecom
 #   WECOM_INBOUND_TARGET    # default mayor
 #   WECOM_WELCOME_TEXT      # optional enter_chat welcome message
@@ -39,10 +41,12 @@ Create it with at minimum:
   WECOM_BOT_ID=...
   WECOM_BOT_SECRET=...
   GC_CITY_NAME=...
+  GC_API_BASE_URL=http://127.0.0.1:8372
 
 (Bot ID + Secret come from the WeCom console: Workspace -> Smart Robot ->
 Create Robot -> Manual -> API Mode -> "Use Long Connection". GC_CITY_NAME
-is the gc city to bridge into — the controller does not inject it.)
+and GC_API_BASE_URL are NOT controller-injected — check the city's actual
+API port with 'gc status'.)
 EOF
   exit 1
 fi

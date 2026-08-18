@@ -34,15 +34,11 @@ schema = 2
 # service set. The adapter binds a UDS at $GC_SERVICE_SOCKET for /publish +
 # /healthz; gc reverse-proxies /svc/wecom/* to it. There is no public bind.
 
-# Inbound WeCom conversations with no existing binding route to the mayor
-# session by default — without this fragment gc acks the inbound POST and
-# then drops it as unrouted (the adapter's explicit_target is only
-# address-by-handle metadata, not a route). Rebind per-conversation with
-# `gc extmsg bind` when a chat should go elsewhere.
-
-[[extmsg.default_route]]
-provider = "wecom"
-agent = "mayor"
+# NOTE: inbound routing needs [[extmsg.default_route]] in the CITY config —
+# pack.toml has no extmsg surface (unknown keys are fatal to the pack
+# parser). Add ./city-fragment.toml to city.toml's `include` list at setup;
+# without it gc acks unbound inbound POSTs and then drops them as unrouted.
+# See README "Setup".
 
 [[service]]
 name = "wecom"

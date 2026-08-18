@@ -32,8 +32,9 @@ no funnel.
   gc's inbound nudges cite (registered as the adapter's
   `reply_instructions`), so the mayor's reply flow works without a
   `reply-current` verb.
-- `pack.toml` ships an `[[extmsg.default_route]]` fragment routing unbound
-  wecom conversations to the `mayor` agent — without it gc acks inbound
+- `city-fragment.toml` — the `[[extmsg.default_route]]` routing unbound
+  wecom conversations to the `mayor` agent; added to city.toml's `include`
+  at setup (pack.toml has no extmsg surface). Without it gc acks inbound
   POSTs and then drops them as unrouted.
 
 ## Secrets
@@ -44,16 +45,27 @@ no funnel.
 WECOM_BOT_ID=...
 WECOM_BOT_SECRET=...
 GC_CITY_NAME=...
+GC_API_BASE_URL=http://127.0.0.1:8372
 ```
 
-`GC_CITY_NAME` is required — the controller injects the service socket and
-API base but not the city name. Pre-warm dependencies once at setup so the
-first supervised start never pays npm-install latency inside the
-supervisor's readiness window:
+`GC_CITY_NAME` and `GC_API_BASE_URL` are both required — the controller
+injects the service socket and URL prefix but neither of these (check the
+city's actual API port with `gc status`).
 
-```
-(cd wecom/adapter && ./run.sh --deps-only)
-```
+## Setup
+
+1. Write the env file above.
+2. Add `wecom/city-fragment.toml` to city.toml's `include` list — it
+   carries the `[[extmsg.default_route]]` that routes unbound wecom
+   conversations to the mayor. pack.toml cannot (the pack parser rejects
+   extmsg keys), so this step is not optional: without it gc acks inbound
+   messages and then drops them as unrouted.
+3. Pre-warm dependencies so the first supervised start never pays
+   npm-install latency inside the supervisor's readiness window:
+
+   ```
+   (cd wecom/adapter && ./run.sh --deps-only)
+   ```
 
 Both come from the WeCom console when creating the robot: **Workspace →
 Smart Robot → Create Robot → Manual → API Mode → connection method "Use

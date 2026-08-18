@@ -60,7 +60,7 @@ function loadConfig() {
     botId: getenv('WECOM_BOT_ID'),
     botSecret: getenv('WECOM_BOT_SECRET'),
     cityName: getenv('GC_CITY_NAME'),
-    gcAPIBase: getenv('GC_API_BASE_URL', 'http://127.0.0.1:9443').replace(/\/+$/, ''),
+    gcAPIBase: getenv('GC_API_BASE_URL').replace(/\/+$/, ''),
     provider: getenv('ADAPTER_PROVIDER', 'wecom'),
     inboundTarget: getenv('WECOM_INBOUND_TARGET', 'mayor'),
     welcomeText: getenv('WECOM_WELCOME_TEXT'),
@@ -89,8 +89,15 @@ function loadConfig() {
     if (!cfg.serviceURLPrefix) {
       throw new Error('GC_SERVICE_SOCKET is set but GC_SERVICE_URL_PREFIX is empty — controller-injected env is incomplete');
     }
+    // The controller injects the socket and URL prefix but NOT the API
+    // base; a silent localhost default here would point registration and
+    // every inbound POST at the wrong port while /healthz stays green.
+    if (!cfg.gcAPIBase) {
+      throw new Error('GC_SERVICE_SOCKET is set but GC_API_BASE_URL is empty — set it in the adapter env file (the controller does not inject it)');
+    }
     cfg.internalCallbackURL = cfg.gcAPIBase + cfg.serviceURLPrefix;
   } else {
+    if (!cfg.gcAPIBase) cfg.gcAPIBase = 'http://127.0.0.1:9443';
     cfg.internalCallbackURL = `http://${cfg.listenInternal}`;
   }
   return cfg;
@@ -113,7 +120,34 @@ async function postJSON(target, body) {
   });
   if (!resp.ok) {
     const text = (await resp.text().catch(() => '')).trim();
-    throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
+    const err = new Error(`${resp.status} ${resp.statusText}: ${text}`);
+    err.status = resp.status;
+    throw err;
+  }
+}
+
+// A 4xx is a deterministic rejection — retrying sends the same bytes to the
+// same validator. Network failures (no status) and 5xx are transient.
+function isRetryable(err) {
+  return err.status === undefined || err.status >= 500;
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// postJSONWithRetry retries transient failures on a fixed backoff ladder
+// and rethrows the final (or first non-retryable) error.
+const retryDelaysMs = [1000, 5000, 15000, 60000];
+
+async function postJSONWithRetry(target, body, label) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await postJSON(target, body);
+      return;
+    } catch (err) {
+      if (!isRetryable(err) || attempt >= retryDelaysMs.length) throw err;
+      log(`${label}: attempt ${attempt + 1} failed (${err.message}); retrying in ${retryDelaysMs[attempt] / 1000}s`);
+      await sleep(retryDelaysMs[attempt]);
+    }
   }
 }
 
@@ -211,13 +245,24 @@ async function bridgeInbound(cfg, frame) {
   const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
   if (msg.msgid) inflightMsgIds.add(msg.msgid);
   try {
-    await postJSON(target, { message });
+    // Transient gc failures retry here — WeCom replay after a reconnect
+    // is not guaranteed, so the retry ladder is the delivery mechanism,
+    // not a bonus. The in-flight marker holds for the whole ladder so a
+    // replay arriving mid-retry can't double-post.
+    await postJSONWithRetry(target, { message }, `inbound ${msg.msgid}`);
     markSeen(msg.msgid);
     log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
   } catch (err) {
-    // Not marked seen: if the SDK replays this frame after reconnecting,
-    // the bridge retries instead of dropping the message.
-    log(`inbound ${msg.msgid} POST failed: ${err.message}`);
+    if (err.status !== undefined && err.status < 500) {
+      // Deterministic rejection: a replay would fail identically, so mark
+      // seen to stop pointless re-posts.
+      markSeen(msg.msgid);
+      log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
+    } else {
+      // Retries exhausted. NOT marked seen: a later SDK replay gets a
+      // fresh ladder.
+      log(`inbound ${msg.msgid} POST failed after retries: ${err.message}`);
+    }
   } finally {
     if (msg.msgid) inflightMsgIds.delete(msg.msgid);
   }
@@ -261,6 +306,25 @@ function chunkText(text) {
   return chunks;
 }
 
+// Idempotency: gc retries a publish (callback timeout, transient error)
+// with the same idempotency_key. Track per-key chunk progress and the
+// final receipt so a retry never re-sends chunks WeCom users already saw.
+const publishStates = new Map(); // key → { chunksDelivered, messageID, receipt, promise }
+const publishStatesCap = 512;
+
+function publishStateFor(key) {
+  if (!key) return { chunksDelivered: 0 }; // untracked, per-call state
+  let state = publishStates.get(key);
+  if (!state) {
+    state = { chunksDelivered: 0 };
+    publishStates.set(key, state);
+    if (publishStates.size > publishStatesCap) {
+      publishStates.delete(publishStates.keys().next().value);
+    }
+  }
+  return state;
+}
+
 function handlePublish(cfg, wsClient) {
   return async (req, res, body) => {
     let pub;
@@ -276,17 +340,39 @@ function handlePublish(cfg, wsClient) {
       res.writeHead(400).end('conversation.conversation_id and text are required');
       return;
     }
-    let messageID = '';
-    try {
-      for (const chunk of chunkText(pub.text)) {
+
+    const state = publishStateFor(pub.idempotency_key);
+    if (state.receipt) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(state.receipt));
+      return;
+    }
+    // Coalesce a concurrent retry of the same key onto the in-flight send.
+    if (state.promise) {
+      await state.promise.catch(() => {});
+      if (state.receipt) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(state.receipt));
+        return;
+      }
+    }
+
+    const send = async () => {
+      const chunks = chunkText(pub.text);
+      for (let i = state.chunksDelivered; i < chunks.length; i++) {
         const receipt = await wsClient.sendMessage(chatid, {
           msgtype: 'markdown',
-          markdown: { content: chunk },
+          markdown: { content: chunks[i] },
         });
-        messageID = receipt?.headers?.req_id ?? messageID;
+        state.messageID = receipt?.headers?.req_id ?? state.messageID;
+        state.chunksDelivered = i + 1;
       }
+    };
+    state.promise = send();
+    try {
+      await state.promise;
     } catch (err) {
-      log(`publish → ${chatid} failed: ${err.message}`);
+      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${err.message}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         conversation: convo,
@@ -294,14 +380,17 @@ function handlePublish(cfg, wsClient) {
         failure_kind: 'provider_error',
       }));
       return;
+    } finally {
+      state.promise = undefined;
     }
+    state.receipt = {
+      conversation: convo,
+      message_id: state.messageID ?? '',
+      delivered: true,
+    };
     log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''})`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      conversation: convo,
-      message_id: messageID,
-      delivered: true,
-    }));
+    res.end(JSON.stringify(state.receipt));
   };
 }
 
@@ -342,6 +431,25 @@ function startInternalListener(cfg, wsClient) {
 
 // --- adapter self-registration --------------------------------------------
 
+// The adapter registry is in-memory on the gc side: until registration
+// lands, gc has no callback URL and no reply instructions, so a
+// registration that failed once and was merely logged would leave
+// messaging dead until a manual restart. Retry forever on a capped
+// backoff — the endpoint is idempotent.
+async function registerAdapterUntilDone(cfg) {
+  let delay = 5000;
+  for (;;) {
+    try {
+      await registerAdapter(cfg);
+      return;
+    } catch (err) {
+      log(`adapter registration failed: ${err.message}; retrying in ${delay / 1000}s`);
+      await sleep(delay);
+      delay = Math.min(delay * 2, 60000);
+    }
+  }
+}
+
 async function registerAdapter(cfg) {
   const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/adapters`;
   await postJSON(target, {
@@ -367,7 +475,13 @@ async function registerAdapter(cfg) {
 async function main() {
   const cfg = loadConfig();
 
-  const wsOptions = { botId: cfg.botId, secret: cfg.botSecret };
+  // maxReconnectAttempts -1 = unlimited: a long network outage must never
+  // strand a "healthy" process with a permanently dead connection (the
+  // supervisor only watches /healthz, which the HTTP listener answers).
+  // Auth-failure retries stay at the SDK default — bad credentials don't
+  // heal by retrying; the terminal-error handler below exits instead so
+  // the supervisor restarts us (picking up a rotated env file).
+  const wsOptions = { botId: cfg.botId, secret: cfg.botSecret, maxReconnectAttempts: -1 };
   if (cfg.wsURL) wsOptions.wsUrl = cfg.wsURL;
   const wsClient = new WSClient(wsOptions);
 
@@ -375,7 +489,15 @@ async function main() {
 
   wsClient.on('authenticated', () => log('wecom long connection authenticated'));
   wsClient.on('reconnecting', (attempt) => log(`wecom reconnecting (attempt ${attempt})`));
-  wsClient.on('error', (err) => log(`wecom ws error: ${err.message}`));
+  wsClient.on('error', (err) => {
+    log(`wecom ws error: ${err.message}`);
+    if (err?.code === 'WS_RECONNECT_EXHAUSTED' || err?.code === 'WS_AUTH_FAILURE_EXHAUSTED') {
+      // Terminal for this process: the SDK has stopped reconnecting.
+      // Exit non-zero so the supervisor restarts the adapter.
+      log('terminal connection error; exiting for supervisor restart');
+      process.exit(1);
+    }
+  });
   wsClient.on('event.disconnected_event', () => {
     // The server drops the old connection when a NEW connection authenticates
     // with the same bot — usually a second adapter instance. Surface loudly.
@@ -397,13 +519,8 @@ async function main() {
   wsClient.connect();
 
   if (cfg.registerOnStart) {
-    try {
-      await registerAdapter(cfg);
-    } catch (err) {
-      // Registration is retried on next restart; inbound POSTs fail closed
-      // until gc knows the provider, so surface the reason.
-      log(`adapter registration failed: ${err.message}`);
-    }
+    // Runs concurrently with the WS connection; retries until gc accepts.
+    registerAdapterUntilDone(cfg);
   }
 
   const shutdown = (signal) => {
