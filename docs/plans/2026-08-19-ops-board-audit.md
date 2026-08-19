@@ -144,3 +144,23 @@ VPN on. (2) open the URL above in Safari/Chrome — the cert is a real Let's-Enc
 Tailscale, so no warning. Add to Home Screen for a one-tap board. Laptop: same — Tailscale app on,
 then the URL. If it does not load: check the Tailscale app shows "Connected" and that the device
 is in the same tailnet (admin console → Machines).
+
+## 6. Build (2026-08-19, after Afik's GO 18:08Z)
+
+D1–D3 built as proposed, plus codex-review hardening (waiting-before-unclaimed precedence; session
+resolution by session_name/alias/id/`gc.session_id` preferring a live session over a dead one with
+a recycled identity; failed/partial sessions reads skip session-dependent stall checks; no stall
+guessed from a stale heartbeat alone; card notes tick on the app-level 1s clock). 921 vitest tests
+pass; tsc strict + eslint clean.
+
+- Branch `feat/beads-stall-cues` (worktree ~/code/gascity-wt-beadscues), DRAFT PR
+  https://github.com/aphexcx/gascity/pull/1; upstream PR (clean cherry-pick onto
+  gastownhall main, dist rebuilt) https://github.com/gastownhall/gascity/pull/5417.
+- Live verification (vite dev against the 127.0.0.1:8372 supervisor, screenshots in
+  /Users/tailor512/city/assets/gp-6xd-delta/): header "2 in progress" → "12 in progress";
+  hw-6oqx2 "waiting on Taylor+Afik for 2d"; ci-5xui "waiting on human for 22d";
+  hw-mma6/hw-cn7c/hw-qd71 surface as stalled; healthy cards read
+  "gc__implementation-worker-… · active 1m ago".
+- Phase-2 Slack alerts filed as gp-d8j (design note in the bead; not built).
+- The live :8443 dashboard serves the OLD bundle until the mayor rolls the gc binary
+  (merge → make install → supervisor restart, mayor's motion).
