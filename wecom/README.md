@@ -68,17 +68,30 @@ Limits (all env-tunable, see `adapter/run.sh`): per-file size cap
 `WECOM_MEDIA_MAX_BYTES` (default 200MB, enforced while the download
 streams — the wire allows +32 bytes for WeCom's PKCS#7 padding);
 `WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS` (default 3) bounds in-flight
-downloads globally, so worst-case buffer memory is slots × the size cap;
-a queued download that cannot start within `WECOM_MEDIA_URL_TTL_MS`
-(default 270s from the message's create_time) is rejected instead of
-running against a dead URL; the download itself is wall-clock bounded by
+downloads globally, so download buffer memory is at most slots × the
+size cap — the URL-expiry deadline (`WECOM_MEDIA_URL_TTL_MS`, default
+270s from the message's create_time) is honored on every admission path:
+an already-expired URL is rejected even when a slot is idle, and a
+queued download whose deadline passes is rejected instead of running
+against a dead URL. Downloads are wall-clock bounded by
 `WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS` (a trickling body is aborted, not just
-an idle one). The store has a total quota (`WECOM_MEDIA_QUOTA_BYTES`,
-default 10GiB) and a minimum-free-disk floor
+an idle one). Audio transcription never extends the download bound: the
+buffer is dropped at the disk write and the bytes are re-read from the
+saved file only after admission to a separate transcription gate
+(`WECOM_TRANSCRIBE_MAX_CONCURRENT`, default 2). The store has a total
+quota (`WECOM_MEDIA_QUOTA_BYTES`, default 10GiB, charged by delta so an
+overwrite never double-counts) and a minimum-free-disk floor
 (`WECOM_MEDIA_MIN_FREE_BYTES`, default 5GiB): on breach the save is
 rejected with an in-message note. Nothing prunes the store automatically
 — it is append-only (fleet no-deletion policy); reclaiming space is a
 manual decision.
+
+Backpressure: hydration results are held (for replay dedup) until gc
+accepts the message. If 512 media messages are simultaneously awaiting
+delivery (a long gc outage under heavy media traffic), NEW media
+messages deliver with an explicit "media not ingested: hydration backlog
+full" note instead of evicting a live entry — evicting one would let an
+SDK replay re-download bytes already ingested.
 
 Failure behavior is deliberate: a failed download/decrypt/save still
 delivers the message with a placeholder plus an error note (the URL is

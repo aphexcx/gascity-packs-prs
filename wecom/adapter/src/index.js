@@ -55,7 +55,11 @@
 //	                       120000) — covers the whole response body.
 //	WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS
 //	                       Global download-admission bound (default 3);
-//	                       worst-case buffer memory = this × the size cap.
+//	                       download buffer memory ≤ this × the size cap.
+//	WECOM_TRANSCRIBE_MAX_CONCURRENT
+//	                       Concurrent Scribe transcriptions (default 2);
+//	                       audio bytes are re-read from disk only after
+//	                       admission, adding ≤ this × file size.
 //	WECOM_MEDIA_URL_TTL_MS Download-URL lifetime from message create_time
 //	                       (default 270000); queued downloads that cannot
 //	                       start inside it are rejected with a note.
@@ -138,6 +142,10 @@ function loadConfig() {
     mediaMinFreeBytes: intEnv('WECOM_MEDIA_MIN_FREE_BYTES', 5 * 1024 * 1024 * 1024),
     transcribeTimeoutMs: intEnv('WECOM_TRANSCRIBE_TIMEOUT_MS', 180000),
     transcribeLanguage: getenv('WECOM_TRANSCRIBE_LANGUAGE'),
+    // Bounds how many audio files are re-read from disk and held during
+    // Scribe calls at once; audio memory ≤ this × the size cap, on top of
+    // (and independent from) the download gate's bound.
+    transcribeMaxConcurrent: intEnv('WECOM_TRANSCRIBE_MAX_CONCURRENT', 2),
   };
 
   const missing = [];
@@ -530,6 +538,10 @@ async function main() {
       language: cfg.transcribeLanguage,
     }),
     gate: createDownloadGate(cfg.mediaMaxConcurrentDownloads),
+    // Separate small gate for transcription: audio bytes are re-read from
+    // disk only after admission here, so they never count against (or wait
+    // on) the download slots.
+    transcribeGate: createDownloadGate(cfg.transcribeMaxConcurrent),
     quota: createStoreQuota({
       dir: cfg.mediaDir,
       quotaBytes: cfg.mediaQuotaBytes,

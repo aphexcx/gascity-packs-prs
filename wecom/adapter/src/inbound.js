@@ -127,9 +127,12 @@ export function renderText(msg) {
 //                 wall-clock bounded by the caller
 //   transcribe    (buffer, filename) → transcript (audio files)
 //   gate          shared download-admission gate (createDownloadGate)
+//   transcribeGate shared transcription-admission gate (deadline-less)
 //   quota         durable-store guard (createStoreQuota)
 //   postInbound   (target, body, label, log) — delivery; defaults to the
 //                 retry-forever poster above (tests inject a fake gc)
+//   hydrationsCap / hydrationsTtlMs
+//                 replay-cache bounds (defaults 512 / 30min; test knobs)
 //   now, log      clock and logger
 //
 // enqueueInbound returns the chained bridge promise (settles when this
@@ -140,8 +143,11 @@ export function createInboundPipeline(deps) {
     downloadFile,
     transcribe = null,
     gate = null,
+    transcribeGate = null,
     quota = null,
     postInbound = postJSONWithRetry,
+    hydrationsCap = 512,
+    hydrationsTtlMs = 30 * 60 * 1000,
     now = Date.now,
     log = () => {},
   } = deps;
@@ -159,22 +165,24 @@ export function createInboundPipeline(deps) {
   // In-flight media hydrations keyed by msgid: an SDK frame replay arriving
   // while the first copy's download is still running reuses the same
   // promise instead of downloading (and storing) the bytes a second time.
-  // Entries normally leave when the message's bridge settles; the cap and
-  // TTL bound the map through pathological cases (a gc outage holding
-  // hundreds of bridges in retry, a bridge path that never consumed its
-  // entry) — evicting early only costs dedup for a replay whose URL is
-  // dead by then anyway.
+  // Entries normally leave when the message's bridge settles.
+  //
+  // Bounding (codex r2): every entry between insert and bridge-settle is
+  // LIVE — its dedup is load-bearing (a 513-message outage where the
+  // oldest live entry got evicted downloaded every attachment twice). So
+  // the map is bounded by REFUSING NEW admissions at the cap (the refused
+  // message still delivers, with an explicit not-ingested note), never by
+  // evicting live entries. The TTL sweep is leak insurance only, and it
+  // skips msgids whose bridge is mid-delivery (inflight) — an arbitrarily
+  // long gc outage must not reopen the double-download window.
   const hydrations = new Map(); // msgid → { promise, at }
-  const hydrationsCap = 512;
-  const hydrationsTtlMs = 30 * 60 * 1000;
 
   function sweepHydrations() {
-    // Map iterates in insertion order, so the front is always the oldest:
-    // evict stale entries, and beyond that the oldest entries whenever the
-    // map is full (leaving room for the entry about to be inserted).
+    // Map iterates in insertion order, so the front is always the oldest.
     const cutoff = now() - hydrationsTtlMs;
     for (const [k, v] of hydrations) {
-      if (v.at > cutoff && hydrations.size < hydrationsCap) break;
+      if (v.at > cutoff) break;
+      if (inflightMsgIds.has(k)) continue; // bridge mid-retry: load-bearing
       hydrations.delete(k);
     }
   }
@@ -195,11 +203,27 @@ export function createInboundPipeline(deps) {
   // non-media frames and for msgids already delivered (the bridge drops
   // those anyway).
   function startHydration(msg) {
-    if (!msg || mediaItemsForMessage(msg).length === 0) return null;
+    if (!msg) return null;
+    const itemCount = mediaItemsForMessage(msg).length;
+    if (itemCount === 0) return null;
     if (msg.msgid) {
       if (seenMsgIds.has(msg.msgid)) return null;
       const existing = hydrations.get(msg.msgid);
       if (existing) return existing.promise;
+      sweepHydrations();
+      if (hydrations.size >= hydrationsCap) {
+        // Backlog full (hydrationsCap media messages already awaiting gc
+        // delivery): refuse NEW ingestion rather than evict a live entry
+        // whose dedup is protecting an in-flight delivery. The message
+        // still delivers with an honest note; by the time the backlog
+        // could clear, this URL would be dead anyway.
+        log(`inbound ${msg.msgid}: hydration backlog full (${hydrationsCap}); media not ingested`);
+        const noun = itemCount === 1 ? 'file' : 'files';
+        return Promise.resolve({
+          attachments: [],
+          block: `[${itemCount} WeCom ${noun} attached]\n  media not ingested: the adapter's hydration backlog is full (${hydrationsCap} media messages awaiting gc delivery); WeCom download URLs expire ~5 minutes after receipt, so the bytes are not recoverable — ask the sender to re-send once delivery recovers`,
+        });
+      }
     }
     const promise = hydrateMessageMedia(msg, {
       downloadFile,
@@ -208,12 +232,12 @@ export function createInboundPipeline(deps) {
       urlTtlMs: cfg.mediaUrlTtlMs,
       transcribe,
       gate,
+      transcribeGate,
       quota,
       now,
       log,
     });
     if (msg.msgid) {
-      sweepHydrations();
       hydrations.set(msg.msgid, { promise, at: now() });
     }
     return promise;
@@ -224,15 +248,26 @@ export function createInboundPipeline(deps) {
     if (!msg) return;
     if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) return;
 
+    // Cleanup is promise-conditional (codex r2): delete the map entry only
+    // if it still holds THE hydration this bridge consumed. An
+    // unconditional delete races replacements — after this entry is gone
+    // (TTL leak-sweep) and a replay re-admits a fresh hydration, this
+    // bridge's late finally would delete the replay's live entry (ABA).
+    const deleteOwnHydration = () => {
+      if (!msg.msgid || !hydration) return;
+      const current = hydrations.get(msg.msgid);
+      if (current && current.promise === hydration) hydrations.delete(msg.msgid);
+    };
+
     const conversation = conversationForMessage(cfg, msg);
     if (!conversation.conversation_id) {
       log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
-      if (msg.msgid) hydrations.delete(msg.msgid);
+      deleteOwnHydration();
       return;
     }
     let text = renderText(msg);
     if (!text) {
-      if (msg.msgid) hydrations.delete(msg.msgid);
+      deleteOwnHydration();
       return;
     }
 
@@ -290,10 +325,8 @@ export function createInboundPipeline(deps) {
       markSeen(msg.msgid);
       log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
     } finally {
-      if (msg.msgid) {
-        inflightMsgIds.delete(msg.msgid);
-        hydrations.delete(msg.msgid);
-      }
+      if (msg.msgid) inflightMsgIds.delete(msg.msgid);
+      deleteOwnHydration();
     }
   }
 

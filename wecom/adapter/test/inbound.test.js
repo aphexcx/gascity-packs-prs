@@ -272,3 +272,71 @@ test('renderText regression table', () => {
   }), '两张[image]');
   assert.equal(renderText({ msgtype: 'sticker' }), '[sticker message]');
 });
+
+// --- codex round-2: backlog admission instead of live-entry eviction ---------
+
+test('a full backlog refuses NEW media and never evicts live entries — replays stay single-download', async (t) => {
+  // Simulated gc outage: deliveries for H_1/H_2 hang, keeping both bridges
+  // (and their hydration entries) live. Cap = 2 for the test (prod 512).
+  // Codex's round-1 probe: at cap, the oldest LIVE entry was evicted, so
+  // replaying it re-downloaded every attachment (513 msgs -> 1,026
+  // downloads). Now the cap refuses NEW admissions instead.
+  let releaseOutage;
+  const outage = new Promise((r) => { releaseOutage = r; });
+  const posts = [];
+  let downloads = 0;
+  const mediaDir = tmpMediaDir(t);
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir,
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    downloadFile: async () => {
+      downloads++;
+      return { buffer: Buffer.from('img'), filename: 'p.png' };
+    },
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id === 'H_1' || id === 'H_2') await outage;
+      posts.push({ id, text: body.message.text });
+    },
+    hydrationsCap: 2,
+  });
+
+  const h1 = fileMessage({ msgid: 'H_1', from: { userid: 'u1' } });
+  const h2 = fileMessage({ msgid: 'H_2', from: { userid: 'u2' } });
+  const b1 = p.enqueueInbound(frame(h1));
+  const b2 = p.enqueueInbound(frame(h2));
+  // Let both hydrations complete (downloads done, bridges hung in outage).
+  for (let i = 0; i < 200 && downloads < 2; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(downloads, 2);
+  assert.equal(p.stats().hydrations, 2, 'both live entries retained');
+
+  // Cap reached: a THIRD media message is refused ingestion (no eviction,
+  // no download) but still delivers, with the backlog note.
+  await p.enqueueInbound(frame(fileMessage({ msgid: 'H_3', from: { userid: 'u3' } })));
+  assert.equal(downloads, 2, 'backlog-refused message must not download');
+  assert.equal(p.stats().hydrations, 2, 'live entries were NOT evicted for the new message');
+  const h3 = posts.find((x) => x.id === 'H_3');
+  assert.ok(h3.text.includes('hydration backlog is full'));
+  assert.ok(h3.text.includes('re-send'));
+
+  // Replaying the LIVE messages mid-outage reuses their hydrations: the
+  // round-1 bug would have re-downloaded here.
+  p.enqueueInbound(frame(h1));
+  p.enqueueInbound(frame(h2));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(downloads, 2, 'replays of live entries must not re-download');
+
+  // Outage ends: bridges settle, entries drain, and NEW media is admitted
+  // (and downloaded) again.
+  releaseOutage();
+  await Promise.all([b1, b2]);
+  assert.equal(p.stats().hydrations, 0);
+  assert.deepEqual(posts.map((x) => x.id).sort(), ['H_1', 'H_2', 'H_3']);
+  assert.equal(posts.filter((x) => x.id === 'H_1').length, 1, 'single POST per message');
+  await p.enqueueInbound(frame(fileMessage({ msgid: 'H_4', from: { userid: 'u4' } })));
+  assert.equal(downloads, 3, 'admission reopens once the backlog drains');
+});

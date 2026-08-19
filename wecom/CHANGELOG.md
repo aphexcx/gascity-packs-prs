@@ -2,6 +2,20 @@
 
 ## 0.0.1 (unreleased)
 
+- Media ingestion hardening round 2 (jg-c7j codex round-2): the URL-expiry
+  deadline is enforced on every gate admission path (already-expired URLs
+  are rejected even at an idle slot; pump re-checks before resolving a
+  waiter whose rejection timer lagged); the hydration replay map never
+  evicts live entries — at the 512-entry cap NEW media delivers with an
+  explicit "backlog full" note instead (an outage probe had shown live
+  eviction doubling every download on replay), the TTL sweep skips
+  msgids mid-delivery, and cleanup is promise-conditional (no ABA delete
+  of a replacement entry); quota is charged by delta against the existing
+  file so duplicate overwrites cannot drift the cache; audio buffers no
+  longer outlive the download gate — transcription re-reads bytes from
+  the saved file only after admission to a separate gate
+  (`WECOM_TRANSCRIBE_MAX_CONCURRENT`, default 2). 7 new regression tests
+  (57 total).
 - Media ingestion hardening (jg-c7j codex round-1): per-message media
   items download concurrently under a global admission gate
   (`WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS`, default 3 — bounds worst-case

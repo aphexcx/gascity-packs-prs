@@ -642,9 +642,12 @@ test('a gate-starved item fails with a note; the message still hydrates the rest
   const mediaDir = tmpMediaDir(t);
   const gate = createDownloadGate(1);
   // Occupy the only slot for the duration of the first (slow) download;
-  // the second item's deadline (create_time + ttl) passes while queued.
+  // the second item's deadline passes while queued. No create_time on the
+  // fixture: the anchor is hydration start, so the first item's deadline
+  // is safely in the future while the second starves. (A second-truncated
+  // create_time would put the whole deadline in the past and trip the
+  // already-expired admission check instead — covered by its own test.)
   const msg = fileMessage({
-    create_time: Math.floor(Date.now() / 1000),
     msgtype: 'mixed',
     file: undefined,
     mixed: {
@@ -723,4 +726,125 @@ test('withDeadline rejects a trickling promise at the wall clock and passes fast
   assert.equal(await withDeadline(Promise.resolve('ok'), 1000, 'fast'), 'ok');
   const never = new Promise(() => {});
   await assert.rejects(withDeadline(never, 30, 'stalled download'), /wall-clock deadline/);
+});
+
+// --- codex round-2: expiry-at-admission, transcription memory, quota delta ----
+
+test('an expired deadline is rejected even when a slot sits idle', async () => {
+  const gate = createDownloadGate(2);
+  // Both slots free; the URL is already dead — admission must still fail.
+  await assert.rejects(gate.acquire(Date.now() - 1), /already past its expiry deadline/);
+  // The failed admission must not have consumed a slot.
+  const r1 = await gate.acquire(Date.now() + 60000);
+  const r2 = await gate.acquire(Date.now() + 60000);
+  r1(); r2();
+});
+
+test('pump never admits a waiter whose deadline passed while queued', async () => {
+  // Injected clock: the waiter's rejection timer is scheduled for +100s of
+  // REAL time (so it cannot fire during this test), simulating a delayed
+  // timer callback. The fake clock then jumps past the deadline before the
+  // slot frees — pump must reject the waiter, not admit it.
+  let t = 1_000_000;
+  const gate = createDownloadGate(1, () => t);
+  const release = await gate.acquire(t + 100000);
+  const waiter = gate.acquire(t + 100000);
+  t += 200000; // deadline passed; timer (real 100s) has not fired
+  release();
+  await assert.rejects(waiter, /busy until past the URL expiry deadline/);
+  // The rejected waiter must not have consumed the freed slot.
+  (await gate.acquire(t + 100000))();
+});
+
+test('hydrate rejects a message whose URL already expired — download never starts', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  let downloads = 0;
+  const { attachments, block } = await hydrateMessageMedia(
+    fileMessage({ create_time: Math.floor(Date.now() / 1000) - 3600 }), // 1h old
+    {
+      downloadFile: async () => { downloads++; return { buffer: Buffer.from('x'), filename: 'a.txt' }; },
+      mediaDir,
+      maxBytes: 1024,
+      transcribe: null,
+      gate: createDownloadGate(3),
+      urlTtlMs: 270000,
+      log: () => {},
+    },
+  );
+  assert.equal(downloads, 0, 'an expired URL must never reach downloadFile');
+  assert.deepEqual(attachments, []);
+  assert.ok(block.includes('download not started'));
+});
+
+test('transcription reads the bytes from DISK only after gate admission', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const transcribeGate = createDownloadGate(1);
+  const holdSlot = await transcribeGate.acquire(); // starve transcription
+  let received = null;
+  const hydration = hydrateMessageMedia(fileMessage(), {
+    downloadFile: async () => ({ buffer: Buffer.from('original-bytes'), filename: 'memo.m4a' }),
+    mediaDir,
+    maxBytes: 1024,
+    transcribe: async (buffer) => { received = buffer.toString(); return '转写'; },
+    transcribeGate,
+    log: () => {},
+  });
+  // Wait for the save (download slot released, transcription queued).
+  const dest = path.join(mediaDir, 'zhang_san', 'MSGID_1-memo.m4a');
+  for (let i = 0; i < 200 && !fs.existsSync(dest); i++) {
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  assert.ok(fs.existsSync(dest), 'file must be saved before transcription admission');
+  assert.equal(received, null, 'transcribe must not run before gate admission');
+  // Tamper with the saved file: if hydration had retained the download
+  // buffer, the transcriber would see 'original-bytes'; reading from disk
+  // post-admission sees the tampered content — proving the buffer was
+  // dropped at write time.
+  fs.writeFileSync(dest, 'tampered-bytes');
+  holdSlot();
+  const { block } = await hydration;
+  assert.equal(received, 'tampered-bytes');
+  assert.ok(block.includes('[audio transcript — memo.m4a]\n转写'));
+});
+
+test('concurrent transcriptions are bounded by the transcription gate', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const transcribeGate = createDownloadGate(1);
+  let inFlight = 0;
+  let peak = 0;
+  const transcribe = async () => {
+    inFlight++;
+    peak = Math.max(peak, inFlight);
+    await new Promise((r) => setTimeout(r, 30));
+    inFlight--;
+    return '好';
+  };
+  const deps = (msgid) => ({
+    downloadFile: async () => ({ buffer: Buffer.from('a'), filename: `${msgid}.mp3` }),
+    mediaDir, maxBytes: 1024, transcribe, transcribeGate, log: () => {},
+  });
+  await Promise.all([
+    hydrateMessageMedia(fileMessage({ msgid: 'A1' }), deps('A1')),
+    hydrateMessageMedia(fileMessage({ msgid: 'A2' }), deps('A2')),
+    hydrateMessageMedia(fileMessage({ msgid: 'A3' }), deps('A3')),
+  ]);
+  assert.equal(peak, 1, 'gate slots bound concurrent transcriptions');
+});
+
+test('overwriting the same destination charges quota by delta, not double', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const quota = createStoreQuota({ dir: mediaDir, quotaBytes: 150, minFreeBytes: 0 });
+  const deps = {
+    downloadFile: async () => ({ buffer: Buffer.from('x'.repeat(100)), filename: 'a.bin' }),
+    mediaDir, maxBytes: 1024, transcribe: null, quota, log: () => {},
+  };
+  const first = await hydrateMessageMedia(fileMessage(), deps);
+  assert.equal(first.attachments.length, 1);
+  // Same msgid → same dest: the overwrite is a zero-byte delta, so it must
+  // fit even though 100 + 100 would breach the 150-byte quota.
+  const second = await hydrateMessageMedia(fileMessage(), deps);
+  assert.equal(second.attachments.length, 1, 'overwrite must not double-count quota');
+  // The cached usage still reflects ONE stored copy: 40 more bytes fit.
+  assert.equal(quota.admit(40).ok, true);
+  assert.equal(quota.admit(60).ok, false);
 });

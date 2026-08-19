@@ -291,8 +291,15 @@ export function withDeadline(promise, ms, label) {
 // videos from exhausting adapter memory (worst case = slots × the size
 // cap, both configurable). Waiters carry a deadline: a WeCom download URL
 // dies ~5 minutes after the message was created, so a slot that cannot be
-// had before the deadline REJECTS immediately at the deadline instead of
-// eventually running a download that can only 4xx.
+// had before the deadline REJECTS instead of eventually running a
+// download that can only 4xx. The deadline is honored on EVERY admission
+// path (codex r2): an already-expired deadline rejects even when a slot
+// sits idle, and pump() re-checks before resolving a waiter — the
+// waiter's rejection timer can fire late under event-loop delay, and a
+// slot freeing up in that window must not admit a dead URL.
+//
+// acquire(null) waits indefinitely with no deadline — the transcription
+// gate uses this (an ElevenLabs call has no URL on a fuse).
 export function createDownloadGate(slots, now = Date.now) {
   let inUse = 0;
   const waiters = [];
@@ -312,26 +319,37 @@ export function createDownloadGate(slots, now = Date.now) {
       const w = waiters.shift();
       if (w.settled) continue; // deadline already rejected it
       w.settled = true;
-      clearTimeout(w.timer);
+      if (w.timer) clearTimeout(w.timer);
+      if (w.deadlineAt !== null && w.deadlineAt <= now()) {
+        // The deadline passed while queued but the timer callback has not
+        // run yet — reject here, never hand a dead URL a slot.
+        w.reject(new Error('all download slots busy until past the URL expiry deadline'));
+        continue;
+      }
       inUse++;
       w.resolve(makeRelease());
     }
   };
 
   return {
-    acquire(deadlineAt) {
+    acquire(deadlineAt = null) {
+      if (deadlineAt !== null && deadlineAt <= now()) {
+        return Promise.reject(new Error('download URL already past its expiry deadline'));
+      }
       if (inUse < slots) {
         inUse++;
         return Promise.resolve(makeRelease());
       }
       return new Promise((resolve, reject) => {
-        const w = { resolve, settled: false, timer: null };
-        w.timer = setTimeout(() => {
-          if (w.settled) return;
-          w.settled = true;
-          reject(new Error('all download slots busy until past the URL expiry deadline'));
-        }, Math.max(0, deadlineAt - now()));
-        w.timer.unref?.();
+        const w = { resolve, reject, deadlineAt, settled: false, timer: null };
+        if (deadlineAt !== null) {
+          w.timer = setTimeout(() => {
+            if (w.settled) return;
+            w.settled = true;
+            reject(new Error('all download slots busy until past the URL expiry deadline'));
+          }, Math.max(0, deadlineAt - now()));
+          w.timer.unref?.();
+        }
         waiters.push(w);
       });
     },
@@ -521,6 +539,10 @@ export async function transcribeAudio(buffer, filename, opts = {}) {
 //   transcribe(buffer, filename) → transcript         (audio files only)
 //   gate                      shared download-admission gate
 //                             (createDownloadGate); optional
+//   transcribeGate            shared transcription-admission gate
+//                             (createDownloadGate, deadline-less acquire);
+//                             bounds how many audio files are re-read
+//                             from disk at once; optional
 //   quota                     durable-store guard (createStoreQuota);
 //                             optional
 //   urlTtlMs                  admission deadline relative to the message's
@@ -531,7 +553,8 @@ export async function transcribeAudio(buffer, filename, opts = {}) {
 export async function hydrateMessageMedia(msg, deps) {
   const {
     downloadFile, mediaDir, maxBytes, transcribe, log = () => {},
-    gate = null, quota = null, urlTtlMs = 270000, now = Date.now,
+    gate = null, transcribeGate = null, quota = null,
+    urlTtlMs = 270000, now = Date.now,
   } = deps;
   const items = mediaItemsForMessage(msg);
   if (items.length === 0) return { attachments: [], block: '' };
@@ -586,13 +609,6 @@ export async function hydrateMessageMedia(msg, deps) {
       if (maxBytes > 0 && buffer.length > maxBytes) {
         return fail(`[${item.kind}]`, `file too large (${buffer.length} bytes > ${maxBytes} cap)`);
       }
-      if (quota) {
-        const verdict = quota.admit(buffer.length);
-        if (!verdict.ok) {
-          log(`inbound ${msg.msgid}: ${label} save rejected: ${verdict.reason}`);
-          return fail(`[${item.kind}]`, verdict.reason);
-        }
-      }
 
       // Filename: sender's original (Content-Disposition) when present;
       // otherwise the media kind plus a magic-byte extension so agent-side
@@ -606,6 +622,23 @@ export async function hydrateMessageMedia(msg, deps) {
       const indexPart = item.index === null ? '' : `${item.index}-`;
       const dest = path.join(convDir, `${msgidPrefix}-${indexPart}${name}`);
 
+      // Quota is charged on the DELTA against whatever already sits at
+      // dest: a rare duplicate hydration of the same msgid overwrites the
+      // same file, and double-counting it would drift the cached usage
+      // upward into premature quota rejections (codex r2).
+      let prevSize = 0;
+      try {
+        prevSize = fs.statSync(dest).size;
+      } catch { /* new file */ }
+      const deltaBytes = buffer.length - prevSize;
+      if (quota) {
+        const verdict = quota.admit(deltaBytes);
+        if (!verdict.ok) {
+          log(`inbound ${msg.msgid}: ${label} save rejected: ${verdict.reason}`);
+          return fail(`[${item.kind}]`, verdict.reason);
+        }
+      }
+
       try {
         // 0o700 dirs / 0o600 files: the store holds private DM content.
         fs.mkdirSync(convDir, { recursive: true, mode: 0o700 });
@@ -614,19 +647,20 @@ export async function hydrateMessageMedia(msg, deps) {
         log(`inbound ${msg.msgid}: ${label} write failed: ${scrubErrorMessage(err.message)}`);
         return fail(name, `could not save to disk (${scrubErrorMessage(err.message)})`);
       }
-      quota?.recordSaved(buffer.length);
+      quota?.recordSaved(deltaBytes);
       log(`inbound ${msg.msgid}: ${label} saved (${buffer.length} bytes)`);
 
-      // Retain the buffer past the slot only for audio about to be
-      // transcribed — image/video buffers (the big ones) become garbage
-      // the moment this scope ends.
+      // The download buffer is dropped HERE, at the write — for every
+      // media kind, audio included. Transcription re-reads the bytes from
+      // disk after its own gate admission below, so audio never extends
+      // the download gate's slots × cap memory bound (codex r2).
       const wantTranscript = item.kind === 'file' && isAudioFilename(name) && !!transcribe;
-      saved = { name, dest, audioBuffer: wantTranscript ? buffer : null };
+      saved = { name, dest, wantTranscript };
     } finally {
       release();
     }
 
-    const { name, dest, audioBuffer } = saved;
+    const { name, dest, wantTranscript } = saved;
     const mime = mimeTypeForFilename(name);
     const out = {
       line: `  ${n + 1}. ${neutralizeMarkupBoundaries(name)} (${mime || item.kind}) — saved to ${neutralizeMarkupBoundaries(dest)}; Read that path to view it`,
@@ -639,14 +673,23 @@ export async function hydrateMessageMedia(msg, deps) {
 
     // Audio FILES get an inline Scribe transcript; images/videos are read
     // directly by the receiving agent, no transcription. A transcription
-    // failure is a note, never a dropped message.
-    if (audioBuffer) {
+    // failure is a note, never a dropped message. The bytes are loaded
+    // FROM DISK only after the (deadline-less) transcription gate admits
+    // us, so concurrent audio memory is bounded at transcription slots ×
+    // file size — independent of the download gate, whose slot this item
+    // already released at the write.
+    if (wantTranscript) {
+      let releaseTranscribe = () => {};
       try {
-        const transcript = await transcribe(audioBuffer, name);
+        if (transcribeGate) releaseTranscribe = await transcribeGate.acquire();
+        const audioBytes = await fs.promises.readFile(dest);
+        const transcript = await transcribe(audioBytes, name);
         out.extra = `[audio transcript — ${neutralizeMarkupBoundaries(name)}]\n${neutralizeMarkupBoundaries(transcript)}`;
       } catch (err) {
         log(`inbound ${msg.msgid}: transcription failed: ${scrubErrorMessage(err.message)}`);
         out.extra = `[transcription failed: ${scrubErrorMessage(err.message)} — the audio file is saved at ${neutralizeMarkupBoundaries(dest)}]`;
+      } finally {
+        releaseTranscribe();
       }
     }
     return out;
