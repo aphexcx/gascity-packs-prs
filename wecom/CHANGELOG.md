@@ -2,6 +2,21 @@
 
 ## 0.0.1 (unreleased)
 
+- Media ingestion hardening round 4 (jg-c7j codex round-4): seen-set
+  eviction now exempts msgids with pending frames — 2,048 churned
+  deliveries can no longer evict a delivered msgid whose replay is still
+  queued (which double-POSTed it; gc does not consume dedup_key); the set
+  may exceed its cap by exactly the retained pending marks and re-trims
+  when their last frame settles, evicting oldest-non-pending-first so a
+  retained old mark never displaces a newer one. Refcount hygiene: a
+  synchronous throw during enqueue setup (after the pending mark opens)
+  now releases the mark and rethrows; the owner-hydration cleanup moved
+  into a function-wide try/finally in the bridge, covering exceptions
+  anywhere in the body (e.g. an out-of-range create_time throwing in
+  toISOString) — not just explicit returns and the POST block. The
+  symlink transcription test now pins the O_NOFOLLOW open failure
+  ('open failed') distinctly from the size/digest checks. 4 new
+  regression tests (66 total).
 - Media ingestion hardening round 3 (jg-c7j codex round-3): hydration
   entries are protected from the TTL sweep for a msgid's whole pending
   lifetime — a refcounted mark opens at ENQUEUE and closes when each

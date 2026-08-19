@@ -842,6 +842,12 @@ test('a symlink swapped in at the audio path is refused (O_NOFOLLOW)', async (t)
   assert.equal(receivedBytes(), null, 'symlinked content must never reach the transcriber');
   assert.ok(block.includes('[transcription failed:'));
   assert.ok(block.includes('changed after save'));
+  // Pin the O_NOFOLLOW mechanism specifically: the symlink must fail the
+  // OPEN itself (ELOOP), not merely trip the later size/digest checks —
+  // 'open failed' distinguishes the two (codex r4). The lure content is
+  // deliberately size- and digest-mismatched too, so without this
+  // assertion, dropping O_NOFOLLOW would still pass the test.
+  assert.ok(block.includes('open failed'), 'symlink must be refused by the O_NOFOLLOW open');
 });
 
 test('a size change at the audio path is refused before hashing', async (t) => {

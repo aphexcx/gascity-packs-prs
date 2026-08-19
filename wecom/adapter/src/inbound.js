@@ -133,6 +133,7 @@ export function renderText(msg) {
 //                 retry-forever poster above (tests inject a fake gc)
 //   hydrationsCap / hydrationsTtlMs
 //                 replay-cache bounds (defaults 512 / 30min; test knobs)
+//   seenMsgIdCap  seen-set bound (default 2048; test knob)
 //   now, log      clock and logger
 //
 // enqueueInbound returns the chained bridge promise (settles when this
@@ -148,6 +149,7 @@ export function createInboundPipeline(deps) {
     postInbound = postJSONWithRetry,
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
+    seenMsgIdCap = 2048,
     now = Date.now,
     log = () => {},
   } = deps;
@@ -159,7 +161,6 @@ export function createInboundPipeline(deps) {
   // of a not-yet-accepted id.
   const seenMsgIds = new Set();
   const seenMsgIdOrder = [];
-  const seenMsgIdCap = 2048;
   const inflightMsgIds = new Set();
 
   // In-flight media hydrations keyed by msgid: an SDK frame replay arriving
@@ -202,6 +203,9 @@ export function createInboundPipeline(deps) {
       // lifetime; once no frame for this msgid is outstanding, a future
       // replay may legitimately re-evaluate admission.
       refusals.delete(msgid);
+      // This msgid no longer blocks seen-set eviction: re-trim any excess
+      // its pending mark forced trimSeen to retain.
+      trimSeen();
     } else {
       pendingMsgIds.set(msgid, count - 1);
     }
@@ -227,9 +231,44 @@ export function createInboundPipeline(deps) {
     if (!msgid || seenMsgIds.has(msgid)) return;
     seenMsgIds.add(msgid);
     seenMsgIdOrder.push(msgid);
-    if (seenMsgIdOrder.length > seenMsgIdCap) {
+    trimSeen();
+  }
+
+  // trimSeen keeps the seen set at its cap but EXEMPTS msgids that still
+  // have pending frames (codex r4): a delivered msgid whose replay sits
+  // queued behind another delivery relies on the seen check for POST
+  // dedup — 2,048 churned messages must not evict it into a double POST
+  // (gc does not consume dedup_key). The exemption means the set can
+  // exceed the cap by exactly the retained pending marks; it re-trims
+  // when a pending msgid's last frame settles (removePending above).
+  // Eviction is oldest-non-pending-first — a retained old mark must never
+  // push a NEWER mark out in its place (a fresh delivery's replay can be
+  // seconds away).
+  function trimSeen() {
+    if (seenMsgIdOrder.length <= seenMsgIdCap) return;
+    // Steady-state fast path (no pending retention at the front): the
+    // usual one-over-cap insert evicts the single oldest entry, O(1).
+    if (seenMsgIdOrder.length === seenMsgIdCap + 1 && !pendingMsgIds.has(seenMsgIdOrder[0])) {
       seenMsgIds.delete(seenMsgIdOrder.shift());
+      return;
     }
+    let nonPending = 0;
+    for (const id of seenMsgIdOrder) {
+      if (!pendingMsgIds.has(id)) nonPending++;
+    }
+    let toEvict = nonPending - seenMsgIdCap;
+    if (toEvict <= 0) return;
+    const survivors = [];
+    for (const id of seenMsgIdOrder) {
+      if (toEvict > 0 && !pendingMsgIds.has(id)) {
+        seenMsgIds.delete(id);
+        toEvict--;
+      } else {
+        survivors.push(id);
+      }
+    }
+    seenMsgIdOrder.length = 0;
+    seenMsgIdOrder.push(...survivors);
   }
 
   // startHydration kicks off download+decrypt+store for a media frame the
@@ -300,10 +339,11 @@ export function createInboundPipeline(deps) {
     // and only while it still holds THE promise that frame consumed. A
     // non-owner replay deleting the entry it merely reused would strip
     // the original delivery's dedup; an unconditional delete races
-    // replacements (ABA). It runs on EVERY exit path — including the
-    // duplicate/seen early-returns below, where an owner replay (one that
-    // re-admitted a fresh hydration after the original's entry vanished)
-    // would otherwise leak its entry forever.
+    // replacements (ABA). The function-wide try/finally below (codex r4)
+    // guarantees it runs on EVERY exit — early returns, the POST paths,
+    // and exceptions anywhere in the body (e.g. an out-of-range but
+    // JSON-valid create_time making toISOString() throw), which would
+    // otherwise strand the owner's entry until the TTL sweep.
     const hydration = handle?.promise ?? null;
     const deleteOwnHydration = () => {
       if (!msg.msgid || !handle?.owner) return;
@@ -311,78 +351,79 @@ export function createInboundPipeline(deps) {
       if (current && current.promise === hydration) hydrations.delete(msg.msgid);
     };
 
-    if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) {
-      deleteOwnHydration();
-      return;
-    }
-
-    const conversation = conversationForMessage(cfg, msg);
-    if (!conversation.conversation_id) {
-      log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
-      deleteOwnHydration();
-      return;
-    }
-    let text = renderText(msg);
-    if (!text) {
-      deleteOwnHydration();
-      return;
-    }
-
-    // Media hydration started the moment the frame arrived (the download
-    // URL is on a 5-minute fuse — it cannot wait behind this conversation's
-    // gc retry queue); by the time this chained bridge runs, the promise is
-    // usually already settled. hydrateMessageMedia never rejects, but a
-    // defensive catch keeps an unforeseen bug from dropping the message:
-    // worst case the agent sees the bare placeholder text.
-    let attachments = [];
-    if (hydration) {
-      const hydrated = await hydration.catch((err) => {
-        log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
-        return { attachments: [], block: '' };
-      });
-      attachments = hydrated.attachments;
-      if (hydrated.block) text = `${text}\n${hydrated.block}`;
-    }
-
-    const message = {
-      provider_message_id: msg.msgid,
-      conversation,
-      actor: {
-        id: msg.from?.userid ?? '',
-        display_name: msg.from?.userid ?? '',
-        is_bot: false,
-      },
-      // No explicit_target: routing is the default_route fragment's job
-      // (and per-conversation bindings). Stamping an addressee here would
-      // mislabel messages on rebound conversations — gc carries it into the
-      // reminder and tells the receiving agent the message was addressed to
-      // someone else.
-      text,
-      ...(attachments.length > 0 ? { attachments } : {}),
-      dedup_key: msg.msgid,
-      received_at: msg.create_time
-        ? new Date(msg.create_time * 1000).toISOString()
-        : new Date().toISOString(),
-    };
-
-    const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
-    if (msg.msgid) inflightMsgIds.add(msg.msgid);
     try {
-      // Transient gc failures retry indefinitely — WeCom replay after a
-      // reconnect is not guaranteed, so the retry loop is the delivery
-      // mechanism, not a bonus. The in-flight marker holds for the whole
-      // retry so a replay arriving mid-retry can't double-post.
-      await postInbound(target, { message }, `inbound ${msg.msgid}`, log);
-      markSeen(msg.msgid);
-      log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
-    } catch (err) {
-      // Only deterministic 4xx rejections land here (transient failures
-      // retry forever): a replay would fail identically, so mark seen to
-      // stop pointless re-posts.
-      markSeen(msg.msgid);
-      log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
+      if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) {
+        return;
+      }
+
+      const conversation = conversationForMessage(cfg, msg);
+      if (!conversation.conversation_id) {
+        log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
+        return;
+      }
+      let text = renderText(msg);
+      if (!text) {
+        return;
+      }
+
+      // Media hydration started the moment the frame arrived (the download
+      // URL is on a 5-minute fuse — it cannot wait behind this
+      // conversation's gc retry queue); by the time this chained bridge
+      // runs, the promise is usually already settled. hydrateMessageMedia
+      // never rejects, but a defensive catch keeps an unforeseen bug from
+      // dropping the message: worst case the agent sees the bare
+      // placeholder text.
+      let attachments = [];
+      if (hydration) {
+        const hydrated = await hydration.catch((err) => {
+          log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
+          return { attachments: [], block: '' };
+        });
+        attachments = hydrated.attachments;
+        if (hydrated.block) text = `${text}\n${hydrated.block}`;
+      }
+
+      const message = {
+        provider_message_id: msg.msgid,
+        conversation,
+        actor: {
+          id: msg.from?.userid ?? '',
+          display_name: msg.from?.userid ?? '',
+          is_bot: false,
+        },
+        // No explicit_target: routing is the default_route fragment's job
+        // (and per-conversation bindings). Stamping an addressee here would
+        // mislabel messages on rebound conversations — gc carries it into
+        // the reminder and tells the receiving agent the message was
+        // addressed to someone else.
+        text,
+        ...(attachments.length > 0 ? { attachments } : {}),
+        dedup_key: msg.msgid,
+        received_at: msg.create_time
+          ? new Date(msg.create_time * 1000).toISOString()
+          : new Date().toISOString(),
+      };
+
+      const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
+      if (msg.msgid) inflightMsgIds.add(msg.msgid);
+      try {
+        // Transient gc failures retry indefinitely — WeCom replay after a
+        // reconnect is not guaranteed, so the retry loop is the delivery
+        // mechanism, not a bonus. The in-flight marker holds for the whole
+        // retry so a replay arriving mid-retry can't double-post.
+        await postInbound(target, { message }, `inbound ${msg.msgid}`, log);
+        markSeen(msg.msgid);
+        log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
+      } catch (err) {
+        // Only deterministic 4xx rejections land here (transient failures
+        // retry forever): a replay would fail identically, so mark seen to
+        // stop pointless re-posts.
+        markSeen(msg.msgid);
+        log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
+      } finally {
+        if (msg.msgid) inflightMsgIds.delete(msg.msgid);
+      }
     } finally {
-      if (msg.msgid) inflightMsgIds.delete(msg.msgid);
       deleteOwnHydration();
     }
   }
@@ -398,21 +439,30 @@ export function createInboundPipeline(deps) {
     // Pending ownership opens HERE — before the bridge even queues — so
     // the TTL sweep can tell a live-but-queued hydration from a leak.
     addPending(msg.msgid);
-    // Hydration starts NOW, outside the chain — the media download URL
-    // expires ~5 minutes after this frame, and the chain can be stuck
-    // behind an earlier message's gc retry loop for longer than that.
-    const handle = startHydration(msg);
-    const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
-    const prev = convoChains.get(key) ?? Promise.resolve();
-    const next = prev.then(() => bridgeInbound(frame, handle)).catch((err) => log(`bridge error: ${err.message}`));
-    convoChains.set(key, next);
-    next.finally(() => {
-      // Every enqueued frame settles exactly once (early-returns
-      // included), so the refcount balances even under replays.
+    // Everything between the addPending above and the finally-attachment
+    // below runs synchronously; a throw in that window (hydration setup,
+    // chain wiring) would otherwise leak the refcount forever, since no
+    // settled bridge ever decrements it (codex r4).
+    try {
+      // Hydration starts NOW, outside the chain — the media download URL
+      // expires ~5 minutes after this frame, and the chain can be stuck
+      // behind an earlier message's gc retry loop for longer than that.
+      const handle = startHydration(msg);
+      const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
+      const prev = convoChains.get(key) ?? Promise.resolve();
+      const next = prev.then(() => bridgeInbound(frame, handle)).catch((err) => log(`bridge error: ${err.message}`));
+      convoChains.set(key, next);
+      next.finally(() => {
+        // Every enqueued frame settles exactly once (early-returns
+        // included), so the refcount balances even under replays.
+        removePending(msg.msgid);
+        if (convoChains.get(key) === next) convoChains.delete(key);
+      });
+      return next;
+    } catch (err) {
       removePending(msg.msgid);
-      if (convoChains.get(key) === next) convoChains.delete(key);
-    });
-    return next;
+      throw err;
+    }
   };
 
   return {

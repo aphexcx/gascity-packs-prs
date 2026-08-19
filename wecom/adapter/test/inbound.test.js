@@ -475,3 +475,162 @@ test('a refused msgid replays into the SAME refusal after capacity clears — no
   assert.equal(downloads, 1);
   assert.equal(posts.filter((x) => x.id === 'M_REF').length, 1);
 });
+
+// --- codex round-4: seen-set churn, setup-throw and bridge-throw hygiene ------
+
+test('2,048-message churn cannot evict a pending msgid from the seen set (no double POST)', async (t) => {
+  // M is DELIVERED (seen), then a replay of M queues behind a hanging
+  // same-conversation delivery (pending). 2,100 unique deliveries then
+  // churn the seen set past its 2,048 cap: the round-3 FIFO would evict M,
+  // and the queued replay bridge would POST M a second time (gc does not
+  // consume dedup_key). Pending msgids must survive eviction; the set
+  // re-trims once M's last pending frame settles.
+  const posts = [];
+  let releaseHold;
+  const holdHeld = new Promise((r) => { releaseHold = r; });
+  const { pipeline } = makePipeline(t, {
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id === 'T_HOLD') await holdHeld;
+      posts.push(id);
+    },
+  });
+
+  // Deliver M, then block its conversation and queue a replay of M.
+  const m = textMessage({ msgid: 'M_KEEP', from: { userid: 'u1' } });
+  await pipeline.enqueueInbound(frame(m));
+  assert.deepEqual(posts, ['M_KEEP']);
+  const holdBridge = pipeline.enqueueInbound(frame(textMessage({ msgid: 'T_HOLD', from: { userid: 'u1' } })));
+  const replayBridge = pipeline.enqueueInbound(frame(m));
+
+  // Churn: 2,100 unique messages across other conversations, all delivered.
+  const churn = [];
+  for (let i = 0; i < 2100; i++) {
+    churn.push(pipeline.enqueueInbound(frame(textMessage({
+      msgid: `C_${i}`,
+      from: { userid: `churn_${i}` },
+    }))));
+  }
+  await Promise.all(churn);
+  // Pending msgids are exempt from the cap: 2,048 non-pending marks plus
+  // the retained M_KEEP — one above the cap, M_KEEP kept.
+  assert.equal(pipeline.stats().seen, 2049);
+
+  // Unblock: the queued replay must be dropped by the retained seen mark.
+  releaseHold();
+  await Promise.all([holdBridge, replayBridge]);
+  assert.equal(posts.filter((id) => id === 'M_KEEP').length, 1, 'exactly one POST for the churned msgid');
+  // Re-trim on the replay's settle: M_KEEP (now the oldest non-pending
+  // mark) rolls off and the set returns to its cap — the standard FIFO
+  // tradeoff for ids older than 2,048 newer deliveries.
+  assert.equal(pipeline.stats().seen, 2048);
+  assert.equal(pipeline.stats().pending, 0);
+});
+
+test('pending marks hold the seen set above cap and re-trim on the last settle', async (t) => {
+  // Tiny-cap variant pinning the two halves of the r4 fix numerically:
+  // (1) when EVERY retained entry is pending, the set exceeds the cap
+  // rather than evicting one; (2) the moment their last pending frames
+  // settle, removePending re-trims back to the cap.
+  const posts = [];
+  const holds = new Map(); // msgid → release
+  const { pipeline } = makePipeline(t, {
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (holds.has(id)) await new Promise((r) => { const prev = holds.get(id); holds.set(id, () => { prev?.(); r(); }); });
+      posts.push(id);
+    },
+  });
+  // Rebuild with cap 2 (makePipeline has no knob for it).
+  let posts2 = [];
+  const holdsHeld = new Map(); // holder msgid → resolve
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir: tmpMediaDir(t),
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    downloadFile: async () => ({ buffer: Buffer.from('x'), filename: 'p.png' }),
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id.startsWith('HOLD_')) await new Promise((r) => holdsHeld.set(id, r));
+      posts2.push(id);
+    },
+    seenMsgIdCap: 2,
+  });
+
+  // Deliver A and B (seen = 2 = cap), then block both conversations and
+  // queue a replay of each (both msgids pending).
+  const a = textMessage({ msgid: 'A', from: { userid: 'ua' } });
+  const b = textMessage({ msgid: 'B', from: { userid: 'ub' } });
+  await p.enqueueInbound(frame(a));
+  await p.enqueueInbound(frame(b));
+  const holdA = p.enqueueInbound(frame(textMessage({ msgid: 'HOLD_A', from: { userid: 'ua' } })));
+  const holdB = p.enqueueInbound(frame(textMessage({ msgid: 'HOLD_B', from: { userid: 'ub' } })));
+  const replayA = p.enqueueInbound(frame(a));
+  const replayB = p.enqueueInbound(frame(b));
+
+  // A third delivery overflows the cap — but A and B are both pending, so
+  // the set grows past the cap instead of evicting either.
+  await p.enqueueInbound(frame(textMessage({ msgid: 'C', from: { userid: 'uc' } })));
+  assert.equal(p.stats().seen, 3, 'all-pending retention holds the set above the cap');
+
+  // Drain: the replays are dropped by the retained marks (single POST per
+  // msgid) and the re-trim on their last settle brings the set back to cap.
+  holdsHeld.get('HOLD_A')();
+  holdsHeld.get('HOLD_B')();
+  await Promise.all([holdA, holdB, replayA, replayB]);
+  assert.equal(posts2.filter((id) => id === 'A').length, 1);
+  assert.equal(posts2.filter((id) => id === 'B').length, 1);
+  assert.equal(p.stats().seen, 2, 're-trim on pending drain restores the cap');
+  assert.equal(p.stats().pending, 0);
+});
+
+test('a synchronous setup throw releases the pending refcount and rethrows', async (t) => {
+  // A throwing clock makes startHydration (sweep timestamp) blow up
+  // synchronously inside enqueueInbound — before the bridge exists, so no
+  // settled bridge would ever decrement the refcount.
+  const mediaDir = tmpMediaDir(t);
+  let calls = 0;
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir,
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    now: () => {
+      calls++;
+      if (calls === 1) throw new Error('clock backend unavailable');
+      return Date.now();
+    },
+    downloadFile: async () => ({ buffer: Buffer.from('img'), filename: 'p.png' }),
+    postInbound: async () => {},
+  });
+  assert.throws(
+    () => p.enqueueInbound(frame(fileMessage({ msgid: 'F_THROW' }))),
+    /clock backend unavailable/,
+  );
+  assert.equal(p.stats().pending, 0, 'setup failure must not leak the pending mark');
+  // The pipeline still works afterwards.
+  await p.enqueueInbound(frame(fileMessage({ msgid: 'F_AFTER' })));
+  assert.equal(p.stats().pending, 0);
+  assert.equal(p.stats().hydrations, 0);
+});
+
+test('an exception inside the bridge body still cleans the owner hydration entry', async (t) => {
+  // create_time 1e15 seconds is JSON-valid but 1e18 ms is outside the
+  // Date range: toISOString() throws AFTER hydration was consumed and
+  // BEFORE the POST block — only a function-wide finally reaches it.
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(fileMessage({
+    msgid: 'F_BADTIME',
+    create_time: 1e15,
+  })));
+  assert.equal(posts.length, 0, 'the malformed frame was dropped, not delivered');
+  const stats = pipeline.stats();
+  assert.equal(stats.hydrations, 0, 'owner entry must not outlive the throwing bridge');
+  assert.equal(stats.pending, 0);
+  assert.equal(stats.inflight, 0);
+});
