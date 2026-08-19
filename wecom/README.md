@@ -78,7 +78,10 @@ against a dead URL. Downloads are wall-clock bounded by
 an idle one). Audio transcription never extends the download bound: the
 buffer is dropped at the disk write and the bytes are re-read from the
 saved file only after admission to a separate transcription gate
-(`WECOM_TRANSCRIBE_MAX_CONCURRENT`, default 2). The store has a total
+(`WECOM_TRANSCRIBE_MAX_CONCURRENT`, default 2) — and verified before
+Scribe sees them (O_NOFOLLOW open, regular-file + exact-size check on
+the open fd, sha256 match against the bytes written); a file changed
+after save fails the transcription with a note instead. The store has a total
 quota (`WECOM_MEDIA_QUOTA_BYTES`, default 10GiB, charged by delta so an
 overwrite never double-counts) and a minimum-free-disk floor
 (`WECOM_MEDIA_MIN_FREE_BYTES`, default 5GiB): on breach the save is
@@ -87,11 +90,16 @@ rejected with an in-message note. Nothing prunes the store automatically
 manual decision.
 
 Backpressure: hydration results are held (for replay dedup) until gc
-accepts the message. If 512 media messages are simultaneously awaiting
-delivery (a long gc outage under heavy media traffic), NEW media
-messages deliver with an explicit "media not ingested: hydration backlog
-full" note instead of evicting a live entry — evicting one would let an
-SDK replay re-download bytes already ingested.
+accepts the message — protected for the message's whole pending
+lifetime, from enqueue to bridge settlement, so an entry queued behind
+an earlier delivery in the same conversation is never reaped early. If
+512 media messages are simultaneously awaiting delivery (a long gc
+outage under heavy media traffic), NEW media messages deliver with an
+explicit "media not ingested: hydration backlog full" note instead of
+evicting a live entry — evicting one would let an SDK replay re-download
+bytes already ingested. The refusal itself sticks per msgid while that
+message is pending: replays get the same refusal, never a download the
+queued note won't deliver.
 
 Failure behavior is deliberate: a failed download/decrypt/save still
 delivers the message with a placeholder plus an error note (the URL is

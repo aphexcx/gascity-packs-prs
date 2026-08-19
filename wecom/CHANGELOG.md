@@ -2,6 +2,22 @@
 
 ## 0.0.1 (unreleased)
 
+- Media ingestion hardening round 3 (jg-c7j codex round-3): hydration
+  entries are protected from the TTL sweep for a msgid's whole pending
+  lifetime — a refcounted mark opens at ENQUEUE and closes when each
+  frame's bridge settles, so a media message queued behind an earlier
+  same-conversation delivery can no longer be swept (and re-downloaded on
+  replay) before its POST starts; backlog refusals are cached per msgid
+  for that same pending lifetime, so a replay after capacity clears gets
+  the SAME refusal instead of a fresh download the queued refusal note
+  never delivers; hydration cleanup is owner-gated (only the inserting
+  frame's bridge deletes the entry) and runs on every early-return path,
+  closing the replacement-entry leak; the gated transcription reread now
+  verifies the saved file before Scribe — O_NOFOLLOW open (symlink swap
+  refused), fd-stat regular-file + exact-size check, and a sha256 match
+  against the digest taken from the download buffer at write time — any
+  mismatch becomes a "[transcription failed: … changed after save]" note.
+  5 new regression tests (62 total).
 - Media ingestion hardening round 2 (jg-c7j codex round-2): the URL-expiry
   deadline is enforced on every gate admission path (already-expired URLs
   are rejected even at an idle slot; pump re-checks before resolving a

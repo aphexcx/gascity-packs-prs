@@ -776,8 +776,10 @@ test('hydrate rejects a message whose URL already expired — download never sta
   assert.ok(block.includes('download not started'));
 });
 
-test('transcription reads the bytes from DISK only after gate admission', async (t) => {
-  const mediaDir = tmpMediaDir(t);
+// startGatedTranscription spins up a hydration whose transcription is
+// starved behind a pre-acquired gate slot, waits for the disk write, and
+// returns the controls the round-2/3 tests share.
+async function startGatedTranscription(mediaDir) {
   const transcribeGate = createDownloadGate(1);
   const holdSlot = await transcribeGate.acquire(); // starve transcription
   let received = null;
@@ -795,16 +797,61 @@ test('transcription reads the bytes from DISK only after gate admission', async 
     await new Promise((r) => setTimeout(r, 5));
   }
   assert.ok(fs.existsSync(dest), 'file must be saved before transcription admission');
-  assert.equal(received, null, 'transcribe must not run before gate admission');
-  // Tamper with the saved file: if hydration had retained the download
-  // buffer, the transcriber would see 'original-bytes'; reading from disk
-  // post-admission sees the tampered content — proving the buffer was
-  // dropped at write time.
-  fs.writeFileSync(dest, 'tampered-bytes');
+  return { hydration, holdSlot, dest, receivedBytes: () => received };
+}
+
+test('transcription reads verified bytes from DISK only after gate admission', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const { hydration, holdSlot, receivedBytes } = await startGatedTranscription(mediaDir);
+  assert.equal(receivedBytes(), null, 'transcribe must not run before gate admission');
   holdSlot();
   const { block } = await hydration;
-  assert.equal(received, 'tampered-bytes');
+  // The bytes came from the saved file (the download buffer was dropped at
+  // write time) and passed size+digest verification untouched.
+  assert.equal(receivedBytes(), 'original-bytes');
   assert.ok(block.includes('[audio transcript — memo.m4a]\n转写'));
+});
+
+test('tampered saved audio never reaches Scribe — digest mismatch fails the transcription', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const { hydration, holdSlot, dest, receivedBytes } = await startGatedTranscription(mediaDir);
+  // Same-length content swap while queued for the gate: only the sha256
+  // computed at write time can catch it.
+  fs.writeFileSync(dest, 'tampered-bytes');
+  holdSlot();
+  const { attachments, block } = await hydration;
+  assert.equal(receivedBytes(), null, 'tampered bytes must never reach the transcriber');
+  assert.ok(block.includes('[transcription failed:'));
+  assert.ok(block.includes('changed after save'));
+  assert.ok(block.includes('digest mismatch'));
+  // The saved file path still delivers — the failure is a note, not a drop.
+  assert.equal(attachments.length, 1);
+  assert.ok(block.includes('saved to'));
+});
+
+test('a symlink swapped in at the audio path is refused (O_NOFOLLOW)', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const { hydration, holdSlot, dest, receivedBytes } = await startGatedTranscription(mediaDir);
+  // Replace the saved file with a symlink to attacker-chosen content.
+  const lure = path.join(mediaDir, 'lure.bin');
+  fs.writeFileSync(lure, 'attacker-content');
+  fs.rmSync(dest);
+  fs.symlinkSync(lure, dest);
+  holdSlot();
+  const { block } = await hydration;
+  assert.equal(receivedBytes(), null, 'symlinked content must never reach the transcriber');
+  assert.ok(block.includes('[transcription failed:'));
+  assert.ok(block.includes('changed after save'));
+});
+
+test('a size change at the audio path is refused before hashing', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const { hydration, holdSlot, dest, receivedBytes } = await startGatedTranscription(mediaDir);
+  fs.writeFileSync(dest, 'much-longer-replacement-content-than-the-original');
+  holdSlot();
+  const { block } = await hydration;
+  assert.equal(receivedBytes(), null);
+  assert.ok(block.includes('size mismatch'));
 });
 
 test('concurrent transcriptions are bounded by the transcription gate', async (t) => {

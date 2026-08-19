@@ -27,6 +27,7 @@
 // message itself is always delivered and the adapter never crashes on a
 // hostile or broken attachment.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -653,9 +654,17 @@ export async function hydrateMessageMedia(msg, deps) {
       // The download buffer is dropped HERE, at the write — for every
       // media kind, audio included. Transcription re-reads the bytes from
       // disk after its own gate admission below, so audio never extends
-      // the download gate's slots × cap memory bound (codex r2).
+      // the download gate's slots × cap memory bound (codex r2). The
+      // size + sha256 pin down exactly what was written: the gated reread
+      // refuses anything else at that pathname (codex r3).
       const wantTranscript = item.kind === 'file' && isAudioFilename(name) && !!transcribe;
-      saved = { name, dest, wantTranscript };
+      saved = {
+        name,
+        dest,
+        wantTranscript,
+        size: wantTranscript ? buffer.length : 0,
+        digest: wantTranscript ? crypto.createHash('sha256').update(buffer).digest('hex') : '',
+      };
     } finally {
       release();
     }
@@ -682,7 +691,7 @@ export async function hydrateMessageMedia(msg, deps) {
       let releaseTranscribe = () => {};
       try {
         if (transcribeGate) releaseTranscribe = await transcribeGate.acquire();
-        const audioBytes = await fs.promises.readFile(dest);
+        const audioBytes = await readVerifiedAudio(dest, saved.size, saved.digest);
         const transcript = await transcribe(audioBytes, name);
         out.extra = `[audio transcript — ${neutralizeMarkupBoundaries(name)}]\n${neutralizeMarkupBoundaries(transcript)}`;
       } catch (err) {
@@ -702,6 +711,49 @@ export async function hydrateMessageMedia(msg, deps) {
   const noun = items.length === 1 ? 'file' : 'files';
   const block = [`[${items.length} WeCom ${noun} attached]`, ...lines, ...extras].join('\n');
   return { attachments, block };
+}
+
+// readVerifiedAudio re-reads a saved audio file for transcription and
+// proves it is byte-identical to what the adapter wrote (codex r3): the
+// pathname sits in a window between save and gated transcription, and a
+// replacement, symlink swap, or oversized file there must never reach
+// Scribe or dodge the size invariant. O_NOFOLLOW makes a symlink at the
+// final component fail the open outright; the stat runs on the OPEN FD
+// (no path race) and must show a regular file of the exact written size;
+// the sha256 of the bytes actually read must match the digest computed
+// from the download buffer at write time.
+async function readVerifiedAudio(dest, expectedSize, expectedDigest) {
+  let fd;
+  try {
+    fd = await fs.promises.open(dest, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  } catch (err) {
+    throw new Error(`saved audio file changed after save (open failed: ${err.code ?? err.message})`);
+  }
+  try {
+    const st = await fd.stat();
+    if (!st.isFile()) {
+      throw new Error('saved audio file changed after save (no longer a regular file)');
+    }
+    if (st.size !== expectedSize) {
+      throw new Error('saved audio file changed after save (size mismatch)');
+    }
+    const bytes = Buffer.alloc(expectedSize);
+    let offset = 0;
+    while (offset < expectedSize) {
+      const { bytesRead } = await fd.read(bytes, offset, expectedSize - offset, offset);
+      if (bytesRead === 0) {
+        throw new Error('saved audio file changed after save (short read)');
+      }
+      offset += bytesRead;
+    }
+    const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (digest !== expectedDigest) {
+      throw new Error('saved audio file changed after save (content digest mismatch)');
+    }
+    return bytes;
+  } finally {
+    await fd.close();
+  }
 }
 
 // failureLine renders one undeliverable attachment. The expiry note

@@ -177,12 +177,48 @@ export function createInboundPipeline(deps) {
   // long gc outage must not reopen the double-download window.
   const hydrations = new Map(); // msgid → { promise, at }
 
+  // Pending ownership (codex r3): a msgid is "pending" from the moment a
+  // frame for it is ENQUEUED until that frame's bridge settles — not just
+  // while its POST is in flight (inflightMsgIds), which starts only after
+  // the bridge unblocks. A media message queued behind an earlier
+  // same-conversation delivery has a live, load-bearing hydration entry
+  // long before inflight is set; the TTL sweep must never evict it.
+  // Refcounted because replays enqueue additional frames for the same
+  // msgid: the mark holds until the LAST enqueued frame settles.
+  const pendingMsgIds = new Map(); // msgid → count of enqueued, unsettled frames
+
+  function addPending(msgid) {
+    if (!msgid) return;
+    pendingMsgIds.set(msgid, (pendingMsgIds.get(msgid) ?? 0) + 1);
+  }
+
+  function removePending(msgid) {
+    if (!msgid) return;
+    const count = pendingMsgIds.get(msgid);
+    if (count === undefined) return;
+    if (count <= 1) {
+      pendingMsgIds.delete(msgid);
+      // The refusal decision (below) is cached for the message's pending
+      // lifetime; once no frame for this msgid is outstanding, a future
+      // replay may legitimately re-evaluate admission.
+      refusals.delete(msgid);
+    } else {
+      pendingMsgIds.set(msgid, count - 1);
+    }
+  }
+
+  // Backlog refusals cached by msgid (codex r3): a refused message's
+  // bridge can sit queued for a long time; if capacity clears meanwhile, a
+  // REPLAY must get the SAME refusal — not a fresh hydration that
+  // downloads media the already-queued refusal note will never deliver.
+  const refusals = new Map(); // msgid → refusal result promise
+
   function sweepHydrations() {
     // Map iterates in insertion order, so the front is always the oldest.
     const cutoff = now() - hydrationsTtlMs;
     for (const [k, v] of hydrations) {
       if (v.at > cutoff) break;
-      if (inflightMsgIds.has(k)) continue; // bridge mid-retry: load-bearing
+      if (pendingMsgIds.has(k)) continue; // a bridge still owns it: load-bearing
       hydrations.delete(k);
     }
   }
@@ -201,7 +237,10 @@ export function createInboundPipeline(deps) {
   // sit arbitrarily long behind a gc-outage retry loop while the WeCom
   // download URL burns through its ~5-minute lifetime. Returns null for
   // non-media frames and for msgids already delivered (the bridge drops
-  // those anyway).
+  // those anyway); otherwise a handle { promise, owner } — owner is true
+  // only for the frame whose call INSERTED the hydrations entry, and only
+  // that frame's bridge may delete it (a non-owner replay deleting the
+  // entry it merely reused would strip the original's dedup).
   function startHydration(msg) {
     if (!msg) return null;
     const itemCount = mediaItemsForMessage(msg).length;
@@ -209,7 +248,13 @@ export function createInboundPipeline(deps) {
     if (msg.msgid) {
       if (seenMsgIds.has(msg.msgid)) return null;
       const existing = hydrations.get(msg.msgid);
-      if (existing) return existing.promise;
+      if (existing) return { promise: existing.promise, owner: false };
+      // A refusal sticks for the message's whole pending lifetime: if
+      // capacity cleared while the refused bridge is still queued, a
+      // replay admitted here would download media that the queued refusal
+      // note never delivers (codex r3).
+      const refused = refusals.get(msg.msgid);
+      if (refused) return { promise: refused, owner: false };
       sweepHydrations();
       if (hydrations.size >= hydrationsCap) {
         // Backlog full (hydrationsCap media messages already awaiting gc
@@ -219,10 +264,12 @@ export function createInboundPipeline(deps) {
         // could clear, this URL would be dead anyway.
         log(`inbound ${msg.msgid}: hydration backlog full (${hydrationsCap}); media not ingested`);
         const noun = itemCount === 1 ? 'file' : 'files';
-        return Promise.resolve({
+        const refusal = Promise.resolve({
           attachments: [],
           block: `[${itemCount} WeCom ${noun} attached]\n  media not ingested: the adapter's hydration backlog is full (${hydrationsCap} media messages awaiting gc delivery); WeCom download URLs expire ~5 minutes after receipt, so the bytes are not recoverable — ask the sender to re-send once delivery recovers`,
         });
+        refusals.set(msg.msgid, refusal);
+        return { promise: refusal, owner: false };
       }
     }
     const promise = hydrateMessageMedia(msg, {
@@ -239,25 +286,35 @@ export function createInboundPipeline(deps) {
     });
     if (msg.msgid) {
       hydrations.set(msg.msgid, { promise, at: now() });
+      return { promise, owner: true };
     }
-    return promise;
+    return { promise, owner: false };
   }
 
-  async function bridgeInbound(frame, hydration) {
+  async function bridgeInbound(frame, handle) {
     const msg = frame.body;
     if (!msg) return;
-    if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) return;
 
-    // Cleanup is promise-conditional (codex r2): delete the map entry only
-    // if it still holds THE hydration this bridge consumed. An
-    // unconditional delete races replacements — after this entry is gone
-    // (TTL leak-sweep) and a replay re-admits a fresh hydration, this
-    // bridge's late finally would delete the replay's live entry (ABA).
+    // Cleanup is owner- AND promise-conditional (codex r2+r3): only the
+    // frame whose startHydration call inserted the entry may delete it,
+    // and only while it still holds THE promise that frame consumed. A
+    // non-owner replay deleting the entry it merely reused would strip
+    // the original delivery's dedup; an unconditional delete races
+    // replacements (ABA). It runs on EVERY exit path — including the
+    // duplicate/seen early-returns below, where an owner replay (one that
+    // re-admitted a fresh hydration after the original's entry vanished)
+    // would otherwise leak its entry forever.
+    const hydration = handle?.promise ?? null;
     const deleteOwnHydration = () => {
-      if (!msg.msgid || !hydration) return;
+      if (!msg.msgid || !handle?.owner) return;
       const current = hydrations.get(msg.msgid);
       if (current && current.promise === hydration) hydrations.delete(msg.msgid);
     };
+
+    if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) {
+      deleteOwnHydration();
+      return;
+    }
 
     const conversation = conversationForMessage(cfg, msg);
     if (!conversation.conversation_id) {
@@ -338,15 +395,21 @@ export function createInboundPipeline(deps) {
   const convoChains = new Map();
   const enqueueInbound = (frame) => {
     const msg = frame?.body ?? {};
+    // Pending ownership opens HERE — before the bridge even queues — so
+    // the TTL sweep can tell a live-but-queued hydration from a leak.
+    addPending(msg.msgid);
     // Hydration starts NOW, outside the chain — the media download URL
     // expires ~5 minutes after this frame, and the chain can be stuck
     // behind an earlier message's gc retry loop for longer than that.
-    const hydration = startHydration(msg);
+    const handle = startHydration(msg);
     const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
     const prev = convoChains.get(key) ?? Promise.resolve();
-    const next = prev.then(() => bridgeInbound(frame, hydration)).catch((err) => log(`bridge error: ${err.message}`));
+    const next = prev.then(() => bridgeInbound(frame, handle)).catch((err) => log(`bridge error: ${err.message}`));
     convoChains.set(key, next);
     next.finally(() => {
+      // Every enqueued frame settles exactly once (early-returns
+      // included), so the refcount balances even under replays.
+      removePending(msg.msgid);
       if (convoChains.get(key) === next) convoChains.delete(key);
     });
     return next;
@@ -360,6 +423,8 @@ export function createInboundPipeline(deps) {
       inflight: inflightMsgIds.size,
       seen: seenMsgIds.size,
       chains: convoChains.size,
+      pending: pendingMsgIds.size,
+      refusals: refusals.size,
     }),
   };
 }

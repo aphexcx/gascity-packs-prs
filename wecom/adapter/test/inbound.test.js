@@ -340,3 +340,138 @@ test('a full backlog refuses NEW media and never evicts live entries — replays
   await p.enqueueInbound(frame(fileMessage({ msgid: 'H_4', from: { userid: 'u4' } })));
   assert.equal(downloads, 3, 'admission reopens once the backlog drains');
 });
+
+// --- codex round-3: queued-bridge sweep protection, sticky refusals ----------
+
+test('the TTL sweep never evicts a hydration whose bridge is queued behind another delivery', async (t) => {
+  // Msg A (text) hangs in delivery, blocking the conversation chain. Msg B
+  // (media, SAME conversation) hydrates immediately but its bridge is
+  // QUEUED — inflight is not set for it yet. The fake clock then jumps
+  // past the TTL and another message triggers a sweep: B's entry must
+  // survive (pending ownership opened at enqueue), so B's replay reuses
+  // it instead of re-downloading.
+  let clock = 1_000_000_000;
+  let downloads = 0;
+  let releaseA;
+  const aHeld = new Promise((r) => { releaseA = r; });
+  const posts = [];
+  const mediaDir = tmpMediaDir(t);
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir,
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    now: () => clock,
+    downloadFile: async () => {
+      downloads++;
+      return { buffer: Buffer.from('img'), filename: 'p.png' };
+    },
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id === 'T_A') await aHeld;
+      posts.push(id);
+    },
+  });
+
+  const msgB = fileMessage({ msgid: 'F_B', from: { userid: 'zhang_san' } });
+  const bridgeA = p.enqueueInbound(frame(textMessage({ msgid: 'T_A', from: { userid: 'zhang_san' } })));
+  const bridgeB = p.enqueueInbound(frame(msgB));
+  for (let i = 0; i < 200 && downloads < 1; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(downloads, 1);
+  assert.equal(p.stats().hydrations, 1);
+
+  // 31 minutes pass (past the 30min TTL); a new media message triggers the
+  // sweep on its admission path.
+  clock += 31 * 60 * 1000;
+  await p.enqueueInbound(frame(fileMessage({ msgid: 'F_OTHER', from: { userid: 'li_si' } })));
+  assert.equal(p.stats().hydrations, 1, "B's queued-live entry must survive the sweep");
+
+  // Replay B mid-outage: must reuse the surviving hydration.
+  const replayB = p.enqueueInbound(frame(msgB));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(downloads, 2, 'replay must not re-download (1 = B, 2 = F_OTHER)');
+
+  releaseA();
+  await Promise.all([bridgeA, bridgeB, replayB]);
+  assert.deepEqual(posts, ['F_OTHER', 'T_A', 'F_B']);
+  assert.equal(p.stats().hydrations, 0);
+  assert.equal(p.stats().pending, 0);
+});
+
+test('a refused msgid replays into the SAME refusal after capacity clears — no download, no leak', async (t) => {
+  // M_FULL (media) hangs in delivery and holds the whole cap (1). F_REF
+  // (media, msgid M) arrives behind a hanging same-conversation message:
+  // refused, refusal note queued. Capacity then clears (M_FULL delivers)
+  // while F_REF's bridge is STILL queued — a replay of M must get the
+  // cached refusal, not a fresh hydration whose download the queued
+  // refusal note never delivers (and whose entry then leaks).
+  let downloads = 0;
+  const posts = [];
+  let releaseFull;
+  const fullHeld = new Promise((r) => { releaseFull = r; });
+  let releaseHold;
+  const holdHeld = new Promise((r) => { releaseHold = r; });
+  const mediaDir = tmpMediaDir(t);
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir,
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    downloadFile: async () => {
+      downloads++;
+      return { buffer: Buffer.from('img'), filename: 'p.png' };
+    },
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id === 'M_FULL') await fullHeld;
+      if (id === 'T_HOLD') await holdHeld;
+      posts.push({ id, text: body.message.text });
+    },
+    hydrationsCap: 1,
+  });
+
+  // Fill the cap with a live entry.
+  const bridgeFull = p.enqueueInbound(frame(fileMessage({ msgid: 'M_FULL', from: { userid: 'u9' } })));
+  for (let i = 0; i < 200 && downloads < 1; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(p.stats().hydrations, 1);
+
+  // Block u1's chain, then enqueue the media message that gets refused.
+  const bridgeHold = p.enqueueInbound(frame(textMessage({ msgid: 'T_HOLD', from: { userid: 'u1' } })));
+  const refMsg = fileMessage({ msgid: 'M_REF', from: { userid: 'u1' } });
+  const bridgeRef = p.enqueueInbound(frame(refMsg));
+  assert.equal(downloads, 1, 'refused message must not download');
+  assert.equal(p.stats().refusals, 1);
+
+  // Capacity clears while the refusal bridge is still queued behind T_HOLD.
+  releaseFull();
+  await bridgeFull;
+  assert.equal(p.stats().hydrations, 0, 'capacity has cleared');
+
+  // Replay of the refused msgid: must get the SAME cached refusal.
+  const replayRef = p.enqueueInbound(frame(refMsg));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(downloads, 1, 'replay of a refused msgid must not be admitted while pending');
+  assert.equal(p.stats().hydrations, 0, 'no replacement hydration to leak');
+
+  // Unblock the chain: the refusal note delivers exactly once; nothing leaks.
+  releaseHold();
+  await Promise.all([bridgeHold, bridgeRef, replayRef]);
+  const refPosts = posts.filter((x) => x.id === 'M_REF');
+  assert.equal(refPosts.length, 1);
+  assert.ok(refPosts[0].text.includes('hydration backlog is full'));
+  assert.equal(p.stats().hydrations, 0);
+  assert.equal(p.stats().refusals, 0, 'refusal cache drains with the pending lifetime');
+  assert.equal(p.stats().pending, 0);
+  assert.equal(downloads, 1, 'the refused media was never downloaded');
+
+  // Once nothing is pending for M_REF... a fresh frame re-evaluates
+  // admission (capacity is free now) — but M_REF was delivered (seen), so
+  // a late replay is simply dropped.
+  await p.enqueueInbound(frame(refMsg));
+  assert.equal(downloads, 1);
+  assert.equal(posts.filter((x) => x.id === 'M_REF').length, 1);
+});
