@@ -26,7 +26,12 @@
 #                           # <city>/.gc/wecom-media/inbound (supervised) or
 #                           # ~/city/.gc/wecom-media/inbound (standalone)
 #   WECOM_MEDIA_MAX_BYTES   # attachment size cap; default 209715200 (200MB)
-#   WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS   # default 120000
+#   WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS   # wall-clock download deadline; default 120000
+#   WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS  # global admission bound; default 3
+#   WECOM_MEDIA_URL_TTL_MS  # URL lifetime from create_time; default 270000
+#   WECOM_MEDIA_QUOTA_BYTES # store quota, saves rejected on breach (no
+#                           # auto-deletion — append-only); default 10GiB
+#   WECOM_MEDIA_MIN_FREE_BYTES  # min free disk to leave after a save; default 5GiB
 #   WECOM_TRANSCRIBE_TIMEOUT_MS       # default 180000
 #   WECOM_TRANSCRIBE_LANGUAGE         # pin Scribe language_code; default auto
 #   ELEVENLABS_API_KEY      # Scribe key for audio-file transcription; falls

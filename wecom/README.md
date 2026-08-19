@@ -62,10 +62,23 @@ receipt) at:
 supervised mode (per-city, so two cities on one host never interleave
 stores), else `~/city/.gc/wecom-media/inbound`. Dirs are 0700 and files
 0600 (DM content). Path components are sanitized; original filenames
-(Chinese included) survive minus separators/control chars. Size cap
-`WECOM_MEDIA_MAX_BYTES` (default 200MB) is enforced while the download
-streams. Nothing prunes the store automatically — it is the durable
-record; prune manually if it ever matters.
+(Chinese included) survive minus separators/control chars.
+
+Limits (all env-tunable, see `adapter/run.sh`): per-file size cap
+`WECOM_MEDIA_MAX_BYTES` (default 200MB, enforced while the download
+streams — the wire allows +32 bytes for WeCom's PKCS#7 padding);
+`WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS` (default 3) bounds in-flight
+downloads globally, so worst-case buffer memory is slots × the size cap;
+a queued download that cannot start within `WECOM_MEDIA_URL_TTL_MS`
+(default 270s from the message's create_time) is rejected instead of
+running against a dead URL; the download itself is wall-clock bounded by
+`WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS` (a trickling body is aborted, not just
+an idle one). The store has a total quota (`WECOM_MEDIA_QUOTA_BYTES`,
+default 10GiB) and a minimum-free-disk floor
+(`WECOM_MEDIA_MIN_FREE_BYTES`, default 5GiB): on breach the save is
+rejected with an in-message note. Nothing prunes the store automatically
+— it is append-only (fleet no-deletion policy); reclaiming space is a
+manual decision.
 
 Failure behavior is deliberate: a failed download/decrypt/save still
 delivers the message with a placeholder plus an error note (the URL is
@@ -79,10 +92,15 @@ a `[transcription failed: …]` note.
 cd wecom/adapter && pnpm install && pnpm test   # node --test, no test deps
 ```
 
-Covers the WeCom media crypto scheme against generated fixtures (encrypt
-per spec → SDK `decryptFile`), the real SDK download path over a local
-HTTP server, filename/path sanitization, Scribe request shape, and the
-failure-isolation contract.
+`test/media.test.js` covers the WeCom media crypto scheme against
+generated fixtures (encrypt per spec → SDK `decryptFile`), the real SDK
+download path over a local HTTP server, filename/path sanitization,
+admission gate/quota behavior, Scribe request shape, and the
+failure-isolation contract. `test/inbound.test.js` drives the extracted
+frame→gc pipeline (`src/inbound.js`) with a fake downloader and fake gc:
+extmsg POST shape (attachments included), hydration starting while the
+conversation chain is blocked, replay dedup mid-download, cleanup after
+delivery/rejection, and text/voice regressions.
 
 ## Secrets
 

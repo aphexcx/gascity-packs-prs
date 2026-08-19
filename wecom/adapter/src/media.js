@@ -30,6 +30,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 // --- text hygiene ------------------------------------------------------------
 
@@ -194,6 +195,20 @@ export function isAudioFilename(name) {
   return audioExtensions.has(extensionOf(name));
 }
 
+// isValidMediaAesKey gates the download: a WeCom media aeskey must be
+// base64 decoding to exactly the AES-256 key length. SDK 1.0.7's
+// downloadFile treats a missing/falsy key as "return the raw bytes" — so
+// an item that slipped through without a real key would get its
+// CIPHERTEXT stored and advertised as decrypted plaintext. Validate
+// before downloading and fail the item instead.
+export function isValidMediaAesKey(aeskey) {
+  if (typeof aeskey !== 'string' || aeskey.length === 0) return false;
+  // Strict base64 shape first: Buffer.from(_, 'base64') is lenient and
+  // would silently skip garbage characters.
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(aeskey)) return false;
+  return Buffer.from(aeskey, 'base64').length === 32;
+}
+
 // --- message decomposition ---------------------------------------------------
 
 // mediaItemsForMessage extracts every downloadable attachment from an
@@ -251,6 +266,153 @@ export function defaultMediaDir(env = process.env) {
     return path.join(path.resolve(env.GC_SERVICE_SECRETS_DIR, '..', '..', '..'), 'wecom-media', 'inbound');
   }
   return path.join(os.homedir(), 'city', '.gc', 'wecom-media', 'inbound');
+}
+
+// --- admission control -------------------------------------------------------
+
+// withDeadline bounds a promise with an independent wall-clock timer. The
+// SDK's requestTimeout (axios `timeout`) does not cover a response body
+// that keeps trickling — a hostile or broken CDN could hold a download
+// slot forever. index.js pairs this with a per-request AbortSignal on the
+// SDK's HTTP client (which actually severs the socket); this wrapper is
+// the promise-level guarantee that hydration unblocks even if that abort
+// misfires.
+export function withDeadline(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} exceeded the ${ms}ms wall-clock deadline`)), ms);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// createDownloadGate bounds how many media downloads hold buffers at once
+// across ALL messages — the admission limit that keeps a burst of 200MB
+// videos from exhausting adapter memory (worst case = slots × the size
+// cap, both configurable). Waiters carry a deadline: a WeCom download URL
+// dies ~5 minutes after the message was created, so a slot that cannot be
+// had before the deadline REJECTS immediately at the deadline instead of
+// eventually running a download that can only 4xx.
+export function createDownloadGate(slots, now = Date.now) {
+  let inUse = 0;
+  const waiters = [];
+
+  const makeRelease = () => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inUse--;
+      pump();
+    };
+  };
+
+  const pump = () => {
+    while (inUse < slots && waiters.length > 0) {
+      const w = waiters.shift();
+      if (w.settled) continue; // deadline already rejected it
+      w.settled = true;
+      clearTimeout(w.timer);
+      inUse++;
+      w.resolve(makeRelease());
+    }
+  };
+
+  return {
+    acquire(deadlineAt) {
+      if (inUse < slots) {
+        inUse++;
+        return Promise.resolve(makeRelease());
+      }
+      return new Promise((resolve, reject) => {
+        const w = { resolve, settled: false, timer: null };
+        w.timer = setTimeout(() => {
+          if (w.settled) return;
+          w.settled = true;
+          reject(new Error('all download slots busy until past the URL expiry deadline'));
+        }, Math.max(0, deadlineAt - now()));
+        w.timer.unref?.();
+        waiters.push(w);
+      });
+    },
+  };
+}
+
+// createStoreQuota guards the durable store: a total-usage quota plus a
+// minimum-free-disk check, evaluated BEFORE each save. On breach the save
+// is rejected with a failure note — never by deleting anything: the store
+// is append-only by fleet policy (no unapproved deletion), so reclaiming
+// space is a human/mayor decision. Usage is scanned lazily once per
+// process and tracked incrementally after that; out-of-band changes to
+// the store drift the cached figure until the next adapter restart —
+// acceptable for a guard whose job is stopping runaway growth, not
+// accounting.
+export function createStoreQuota({ dir, quotaBytes, minFreeBytes, statfs = fs.statfsSync }) {
+  let used = null;
+
+  const scan = (d) => {
+    let total = 0;
+    let entries;
+    try {
+      entries = fs.readdirSync(d, { withFileTypes: true });
+    } catch {
+      return 0; // store not created yet
+    }
+    for (const e of entries) {
+      const p = path.join(d, e.name);
+      try {
+        if (e.isDirectory()) total += scan(p);
+        else if (e.isFile()) total += fs.statSync(p).size;
+      } catch { /* raced with external change; skip */ }
+    }
+    return total;
+  };
+
+  // statfs needs an existing path; before the first save the store dir
+  // may not exist yet, so walk up to the nearest existing ancestor.
+  const freeBytes = () => {
+    let p = dir;
+    for (;;) {
+      try {
+        const s = statfs(p);
+        return Number(s.bavail) * Number(s.bsize);
+      } catch (err) {
+        const parent = path.dirname(p);
+        if (parent === p) throw err;
+        p = parent;
+      }
+    }
+  };
+
+  return {
+    admit(addBytes) {
+      if (used === null) used = scan(dir);
+      if (quotaBytes > 0 && used + addBytes > quotaBytes) {
+        return {
+          ok: false,
+          reason: `media store quota exceeded (${used} bytes stored + ${addBytes} > ${quotaBytes} cap; the store is append-only — pruning is a manual decision)`,
+        };
+      }
+      if (minFreeBytes > 0) {
+        let free;
+        try {
+          free = freeBytes();
+        } catch {
+          return { ok: true }; // a statfs failure must not block saves
+        }
+        if (free - addBytes < minFreeBytes) {
+          return {
+            ok: false,
+            reason: `insufficient free disk space (${free} bytes free, ${minFreeBytes} minimum required after save)`,
+          };
+        }
+      }
+      return { ok: true };
+    },
+    recordSaved(bytes) {
+      if (used !== null) used += bytes;
+    },
+  };
 }
 
 // --- ElevenLabs Scribe transcription ----------------------------------------
@@ -336,26 +498,41 @@ export async function transcribeAudio(buffer, filename, opts = {}) {
 // never throws: each item settles into either a saved attachment or a
 // per-item failure note, and the returned block always names every
 // attachment the message carried (mirroring slack-full's "every file is
-// named even when a download failed" contract).
+// named even when a download failed" contract). Items run CONCURRENTLY —
+// a mixed message's third image must not wait out two stalled downloads
+// while its own URL burns through the ~5-minute expiry; the shared gate
+// (below) is what bounds total in-flight downloads instead.
 //
 // Returns { attachments, block }:
 //   attachments — extmsg ExternalAttachment records ({provider_id,
-//                 url: 'file://<abs path>', mime_type}) for items that
-//                 saved successfully; the URL never carries a token.
+//                 url: file:// URL, mime_type}) for items that saved
+//                 successfully; the URL never carries a token.
 //   block       — text appended to the delivered message: the
 //                 "[N WeCom file(s) attached]" listing plus any audio
 //                 transcript / failure notes.
 //
 // deps:
-//   downloadFile(url, aeskey) → {buffer, filename}   (SDK download+decrypt)
+//   downloadFile(url, aeskey) → {buffer, filename}   (SDK download+decrypt,
+//                             wall-clock bounded by the caller)
 //   mediaDir                  durable store root
 //   maxBytes                  size cap (also enforced upstream via axios
 //                             maxContentLength; this is the belt-and-braces
 //                             check on the decrypted plaintext)
 //   transcribe(buffer, filename) → transcript         (audio files only)
+//   gate                      shared download-admission gate
+//                             (createDownloadGate); optional
+//   quota                     durable-store guard (createStoreQuota);
+//                             optional
+//   urlTtlMs                  admission deadline relative to the message's
+//                             create_time (default 270s ≈ the 5-minute URL
+//                             lifetime minus headroom for the download)
+//   now                       clock (tests)
 //   log(...)                  adapter logger
 export async function hydrateMessageMedia(msg, deps) {
-  const { downloadFile, mediaDir, maxBytes, transcribe, log = () => {} } = deps;
+  const {
+    downloadFile, mediaDir, maxBytes, transcribe, log = () => {},
+    gate = null, quota = null, urlTtlMs = 270000, now = Date.now,
+  } = deps;
   const items = mediaItemsForMessage(msg);
   if (items.length === 0) return { attachments: [], block: '' };
 
@@ -363,75 +540,121 @@ export async function hydrateMessageMedia(msg, deps) {
   const convDir = path.join(mediaDir, safePathComponent(conversationId ?? 'unknown'));
   const msgidPrefix = safePathComponent(msg.msgid ?? 'nomsgid');
 
-  const attachments = [];
-  const lines = [];
-  const extras = [];
+  // The URL lifetime anchors to when WeCom minted it — the message's
+  // create_time — not to when this hydration got scheduled.
+  const anchorMs = msg.create_time ? msg.create_time * 1000 : now();
+  const deadlineAt = anchorMs + urlTtlMs;
 
-  for (let n = 0; n < items.length; n++) {
-    const item = items[n];
+  const results = await Promise.all(items.map(async (item, n) => {
     const label = items.length > 1 ? `${item.kind} ${n + 1}` : `${item.kind}`;
-    let result;
+    const fail = (name, reason) => ({ line: failureLine(n, name, reason) });
+
+    // A missing/malformed aeskey must fail the item BEFORE download: the
+    // SDK returns raw bytes when the key is falsy, and storing ciphertext
+    // as if it were the file is worse than no file.
+    if (!isValidMediaAesKey(item.aeskey)) {
+      log(`inbound ${msg.msgid}: ${label} has no valid aeskey; not downloaded`);
+      return fail(`[${item.kind}]`, 'missing or invalid decryption key');
+    }
+
+    let release = () => {};
+    if (gate) {
+      try {
+        release = await gate.acquire(deadlineAt);
+      } catch (err) {
+        log(`inbound ${msg.msgid}: ${label} download not started: ${scrubErrorMessage(err.message)}`);
+        return fail(`[${item.kind}]`, `download not started (${scrubErrorMessage(err.message)})`);
+      }
+    }
+
+    // The slot is held from download through the disk write — the window
+    // in which the (up to maxBytes) buffer must exist — and released
+    // before transcription, which only ever holds small audio files.
+    let saved;
     try {
-      result = await downloadFile(item.url, item.aeskey);
-    } catch (err) {
-      log(`inbound ${msg.msgid}: ${label} download failed: ${scrubErrorMessage(err.message)}`);
-      lines.push(failureLine(n, `[${item.kind}]`, `download failed (${scrubErrorMessage(err.message)})`));
-      continue;
-    }
-    const buffer = result?.buffer;
-    if (!buffer || buffer.length === 0) {
-      lines.push(failureLine(n, `[${item.kind}]`, 'download returned no data'));
-      continue;
-    }
-    if (maxBytes > 0 && buffer.length > maxBytes) {
-      lines.push(failureLine(n, `[${item.kind}]`, `file too large (${buffer.length} bytes > ${maxBytes} cap)`));
-      continue;
+      let result;
+      try {
+        result = await downloadFile(item.url, item.aeskey);
+      } catch (err) {
+        log(`inbound ${msg.msgid}: ${label} download failed: ${scrubErrorMessage(err.message)}`);
+        return fail(`[${item.kind}]`, `download failed (${scrubErrorMessage(err.message)})`);
+      }
+      const buffer = result?.buffer;
+      if (!buffer || buffer.length === 0) {
+        return fail(`[${item.kind}]`, 'download returned no data');
+      }
+      if (maxBytes > 0 && buffer.length > maxBytes) {
+        return fail(`[${item.kind}]`, `file too large (${buffer.length} bytes > ${maxBytes} cap)`);
+      }
+      if (quota) {
+        const verdict = quota.admit(buffer.length);
+        if (!verdict.ok) {
+          log(`inbound ${msg.msgid}: ${label} save rejected: ${verdict.reason}`);
+          return fail(`[${item.kind}]`, verdict.reason);
+        }
+      }
+
+      // Filename: sender's original (Content-Disposition) when present;
+      // otherwise the media kind plus a magic-byte extension so agent-side
+      // type detection still works on WeCom's nameless images/videos.
+      let name = result.filename ? safeFilename(result.filename) : '';
+      if (!name || name === 'file') {
+        name = item.kind + sniffExtension(buffer);
+      } else if (!extensionOf(name)) {
+        name += sniffExtension(buffer);
+      }
+      const indexPart = item.index === null ? '' : `${item.index}-`;
+      const dest = path.join(convDir, `${msgidPrefix}-${indexPart}${name}`);
+
+      try {
+        // 0o700 dirs / 0o600 files: the store holds private DM content.
+        fs.mkdirSync(convDir, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(dest, buffer, { mode: 0o600 });
+      } catch (err) {
+        log(`inbound ${msg.msgid}: ${label} write failed: ${scrubErrorMessage(err.message)}`);
+        return fail(name, `could not save to disk (${scrubErrorMessage(err.message)})`);
+      }
+      quota?.recordSaved(buffer.length);
+      log(`inbound ${msg.msgid}: ${label} saved (${buffer.length} bytes)`);
+
+      // Retain the buffer past the slot only for audio about to be
+      // transcribed — image/video buffers (the big ones) become garbage
+      // the moment this scope ends.
+      const wantTranscript = item.kind === 'file' && isAudioFilename(name) && !!transcribe;
+      saved = { name, dest, audioBuffer: wantTranscript ? buffer : null };
+    } finally {
+      release();
     }
 
-    // Filename: sender's original (Content-Disposition) when present;
-    // otherwise the media kind plus a magic-byte extension so agent-side
-    // type detection still works on WeCom's nameless images/videos.
-    let name = result.filename ? safeFilename(result.filename) : '';
-    if (!name || name === 'file') {
-      name = item.kind + sniffExtension(buffer);
-    } else if (!extensionOf(name)) {
-      name += sniffExtension(buffer);
-    }
-    const indexPart = item.index === null ? '' : `${item.index}-`;
-    const dest = path.join(convDir, `${msgidPrefix}-${indexPart}${name}`);
-
-    try {
-      // 0o700 dirs / 0o600 files: the store holds private DM content.
-      fs.mkdirSync(convDir, { recursive: true, mode: 0o700 });
-      fs.writeFileSync(dest, buffer, { mode: 0o600 });
-    } catch (err) {
-      log(`inbound ${msg.msgid}: ${label} write failed: ${scrubErrorMessage(err.message)}`);
-      lines.push(failureLine(n, name, `could not save to disk (${scrubErrorMessage(err.message)})`));
-      continue;
-    }
-
+    const { name, dest, audioBuffer } = saved;
     const mime = mimeTypeForFilename(name);
-    attachments.push({
-      provider_id: item.index === null ? (msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
-      url: `file://${dest}`,
-      ...(mime ? { mime_type: mime } : {}),
-    });
-    lines.push(`  ${n + 1}. ${neutralizeMarkupBoundaries(name)} (${mime || item.kind}) — saved to ${neutralizeMarkupBoundaries(dest)}; Read that path to view it`);
-    log(`inbound ${msg.msgid}: ${label} saved (${buffer.length} bytes)`);
+    const out = {
+      line: `  ${n + 1}. ${neutralizeMarkupBoundaries(name)} (${mime || item.kind}) — saved to ${neutralizeMarkupBoundaries(dest)}; Read that path to view it`,
+      attachment: {
+        provider_id: item.index === null ? (msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
+        url: pathToFileURL(dest).href,
+        ...(mime ? { mime_type: mime } : {}),
+      },
+    };
 
     // Audio FILES get an inline Scribe transcript; images/videos are read
     // directly by the receiving agent, no transcription. A transcription
     // failure is a note, never a dropped message.
-    if (item.kind === 'file' && isAudioFilename(name) && transcribe) {
+    if (audioBuffer) {
       try {
-        const transcript = await transcribe(buffer, name);
-        extras.push(`[audio transcript — ${neutralizeMarkupBoundaries(name)}]\n${neutralizeMarkupBoundaries(transcript)}`);
+        const transcript = await transcribe(audioBuffer, name);
+        out.extra = `[audio transcript — ${neutralizeMarkupBoundaries(name)}]\n${neutralizeMarkupBoundaries(transcript)}`;
       } catch (err) {
         log(`inbound ${msg.msgid}: transcription failed: ${scrubErrorMessage(err.message)}`);
-        extras.push(`[transcription failed: ${scrubErrorMessage(err.message)} — the audio file is saved at ${neutralizeMarkupBoundaries(dest)}]`);
+        out.extra = `[transcription failed: ${scrubErrorMessage(err.message)} — the audio file is saved at ${neutralizeMarkupBoundaries(dest)}]`;
       }
     }
-  }
+    return out;
+  }));
+
+  const attachments = results.filter((r) => r.attachment).map((r) => r.attachment);
+  const lines = results.map((r) => r.line);
+  const extras = results.filter((r) => r.extra).map((r) => r.extra);
 
   const noun = items.length === 1 ? 'file' : 'files';
   const block = [`[${items.length} WeCom ${noun} attached]`, ...lines, ...extras].join('\n');

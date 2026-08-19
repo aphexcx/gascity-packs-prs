@@ -15,14 +15,18 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import AiBot from '@wecom/aibot-node-sdk';
 
 import {
+  createDownloadGate,
+  createStoreQuota,
   defaultMediaDir,
   formatTranscript,
   hydrateMessageMedia,
   isAudioFilename,
+  isValidMediaAesKey,
   mediaItemsForMessage,
   mimeTypeForFilename,
   neutralizeMarkupBoundaries,
@@ -32,9 +36,15 @@ import {
   scrubErrorMessage,
   sniffExtension,
   transcribeAudio,
+  withDeadline,
 } from '../src/media.js';
 
 const { decryptFile } = AiBot;
+
+// Every hydrate fixture needs a REAL aeskey now — hydration validates the
+// key shape before downloading (a falsy key would make the SDK hand back
+// ciphertext).
+const testAesKey = crypto.randomBytes(32).toString('base64');
 
 // encryptWeComMedia builds a fixture the way WeCom encrypts media: AES-256
 // key from the base64 aeskey, IV = its first 16 bytes, PKCS#7 padded to
@@ -62,7 +72,7 @@ function fileMessage(overrides = {}) {
     chattype: 'single',
     from: { userid: 'zhang_san' },
     msgtype: 'file',
-    file: { url: 'https://wwcdn.example/file1', aeskey: 'KEY1' },
+    file: { url: 'https://wwcdn.example/file1', aeskey: testAesKey },
     ...overrides,
   };
 }
@@ -113,7 +123,7 @@ test('hydration stores plaintext when the downloader applies the real decrypt', 
     log: () => {},
   });
   assert.equal(attachments.length, 1);
-  const stored = fs.readFileSync(attachments[0].url.replace('file://', ''));
+  const stored = fs.readFileSync(fileURLToPath(attachments[0].url));
   assert.deepEqual(stored, plaintext);
 });
 
@@ -288,7 +298,7 @@ test('hydrate saves a file under <conv>/<msgid>-<name> and mirrors the slack blo
   });
   const dest = path.join(mediaDir, 'zhang_san', 'MSGID_1-季度报告.pdf');
   assert.deepEqual(attachments, [
-    { provider_id: 'MSGID_1', url: `file://${dest}`, mime_type: 'application/pdf' },
+    { provider_id: 'MSGID_1', url: pathToFileURL(dest).href, mime_type: 'application/pdf' },
   ]);
   assert.equal(fs.readFileSync(dest, 'utf8'), '%PDF-1.7 body');
   assert.match(block, /^\[1 WeCom file attached\]/);
@@ -311,7 +321,7 @@ test('hydrate uses the group chatid as the conversation dir', async (t) => {
 test('hydrate names extension-less media from magic bytes', async (t) => {
   const mediaDir = tmpMediaDir(t);
   const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8)]);
-  const msg = fileMessage({ msgtype: 'image', image: { url: 'u', aeskey: 'k' }, file: undefined });
+  const msg = fileMessage({ msgtype: 'image', image: { url: 'u', aeskey: testAesKey }, file: undefined });
   const { attachments } = await hydrateMessageMedia(msg, {
     downloadFile: async () => ({ buffer: png, filename: undefined }),
     mediaDir,
@@ -330,9 +340,9 @@ test('hydrate keeps mixed-image filenames distinct by item index', async (t) => 
     file: undefined,
     mixed: {
       msg_item: [
-        { msgtype: 'image', image: { url: 'u1', aeskey: 'k1' } },
+        { msgtype: 'image', image: { url: 'u1', aeskey: testAesKey } },
         { msgtype: 'text', text: { content: '和' } },
-        { msgtype: 'image', image: { url: 'u2', aeskey: 'k2' } },
+        { msgtype: 'image', image: { url: 'u2', aeskey: testAesKey } },
       ],
     },
   });
@@ -386,8 +396,8 @@ test('one bad attachment never poisons its siblings', async (t) => {
     file: undefined,
     mixed: {
       msg_item: [
-        { msgtype: 'image', image: { url: 'bad', aeskey: 'k1' } },
-        { msgtype: 'image', image: { url: 'good', aeskey: 'k2' } },
+        { msgtype: 'image', image: { url: 'bad', aeskey: testAesKey } },
+        { msgtype: 'image', image: { url: 'good', aeskey: testAesKey } },
       ],
     },
   });
@@ -418,7 +428,7 @@ test('a hostile filename cannot escape the store or forge reminder markup', asyn
     transcribe: null,
     log: () => {},
   });
-  const dest = attachments[0].url.replace('file://', '');
+  const dest = fileURLToPath(attachments[0].url);
   assert.ok(dest.startsWith(path.join(mediaDir, 'zhang_san') + path.sep));
   assert.ok(!path.relative(mediaDir, dest).startsWith('..'));
   assert.ok(!block.includes('</system-reminder>'), 'markup boundary must be neutralized');
@@ -438,7 +448,7 @@ test('audio files transcribe inline; images and videos never do', async (t) => {
     mediaDir, maxBytes: 1024, transcribe, log: () => {},
   });
   assert.ok(audio.block.includes('[audio transcript — memo.m4a]\n早上好，这是测试转写。'));
-  const video = await hydrateMessageMedia(fileMessage({ msgid: 'MSGID_2', msgtype: 'video', video: { url: 'u', aeskey: 'k' }, file: undefined }), {
+  const video = await hydrateMessageMedia(fileMessage({ msgid: 'MSGID_2', msgtype: 'video', video: { url: 'u', aeskey: testAesKey }, file: undefined }), {
     downloadFile: async () => ({ buffer: Buffer.from('fake-video'), filename: 'clip.mp4' }),
     mediaDir, maxBytes: 1024, transcribe, log: () => {},
   });
@@ -526,4 +536,191 @@ test('resolveElevenLabsKey prefers env, then the key file, else empty', () => {
   assert.equal(resolveElevenLabsKey({ ELEVENLABS_API_KEY: ' k-env ' }, () => { throw new Error('unused'); }), 'k-env');
   assert.equal(resolveElevenLabsKey({}, () => 'k-file\n'), 'k-file');
   assert.equal(resolveElevenLabsKey({}, () => { throw new Error('ENOENT'); }), '');
+});
+
+// --- codex round-1: admission control, quota, aeskey validation ---------------
+
+test('isValidMediaAesKey accepts only base64 decoding to 32 bytes', () => {
+  assert.ok(isValidMediaAesKey(testAesKey));
+  assert.ok(!isValidMediaAesKey(undefined));
+  assert.ok(!isValidMediaAesKey(''));
+  assert.ok(!isValidMediaAesKey('KEY1'));
+  assert.ok(!isValidMediaAesKey('not base64 !!'));
+  // Right shape, wrong length (16 bytes).
+  assert.ok(!isValidMediaAesKey(crypto.randomBytes(16).toString('base64')));
+});
+
+test('an item without a valid aeskey fails BEFORE download — no ciphertext stored', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  let downloads = 0;
+  const { attachments, block } = await hydrateMessageMedia(
+    fileMessage({ file: { url: 'https://wwcdn.example/f', aeskey: undefined } }),
+    {
+      downloadFile: async () => { downloads++; return { buffer: Buffer.from('ciphertext'), filename: 'x.bin' }; },
+      mediaDir,
+      maxBytes: 1024,
+      transcribe: null,
+      log: () => {},
+    },
+  );
+  assert.equal(downloads, 0);
+  assert.deepEqual(attachments, []);
+  assert.ok(block.includes('missing or invalid decryption key'));
+});
+
+test('mixed-message items download concurrently, not sequentially', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const msg = fileMessage({
+    msgtype: 'mixed',
+    file: undefined,
+    mixed: {
+      msg_item: [
+        { msgtype: 'image', image: { url: 'u0', aeskey: testAesKey } },
+        { msgtype: 'image', image: { url: 'u1', aeskey: testAesKey } },
+        { msgtype: 'image', image: { url: 'u2', aeskey: testAesKey } },
+      ],
+    },
+  });
+  let started = 0;
+  let resolveAll;
+  const allStarted = new Promise((r) => { resolveAll = r; });
+  const holds = [];
+  const hydration = hydrateMessageMedia(msg, {
+    downloadFile: () => new Promise((resolve) => {
+      started++;
+      holds.push(() => resolve({ buffer: Buffer.from('x'), filename: `p${started}.png` }));
+      if (started === 3) resolveAll();
+    }),
+    mediaDir, maxBytes: 1024, transcribe: null, log: () => {},
+  });
+  // All three downloads must be IN FLIGHT before any completes — a
+  // sequential loop would sit at started === 1 here forever.
+  await allStarted;
+  assert.equal(started, 3);
+  for (const release of holds) release();
+  const { attachments } = await hydration;
+  assert.equal(attachments.length, 3);
+});
+
+test('createDownloadGate bounds concurrency and pumps released slots to waiters', async () => {
+  const gate = createDownloadGate(2);
+  const r1 = await gate.acquire(Date.now() + 60000);
+  const r2 = await gate.acquire(Date.now() + 60000);
+  let thirdAcquired = false;
+  const third = gate.acquire(Date.now() + 60000).then((release) => {
+    thirdAcquired = true;
+    return release;
+  });
+  // Both slots held: the third waits.
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(thirdAcquired, false);
+  r1();
+  const r3 = await third;
+  assert.equal(thirdAcquired, true);
+  // Double-release must not free a phantom slot.
+  r1();
+  let fourthAcquired = false;
+  const fourth = gate.acquire(Date.now() + 60000).then((release) => {
+    fourthAcquired = true;
+    return release;
+  });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(fourthAcquired, false, 'double-release must not open a third slot');
+  r2();
+  (await fourth)();
+  r3();
+});
+
+test('createDownloadGate rejects a waiter whose deadline passes first', async () => {
+  const gate = createDownloadGate(1);
+  const release = await gate.acquire(Date.now() + 60000);
+  await assert.rejects(gate.acquire(Date.now() + 30), /busy until past the URL expiry deadline/);
+  release();
+});
+
+test('a gate-starved item fails with a note; the message still hydrates the rest', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const gate = createDownloadGate(1);
+  // Occupy the only slot for the duration of the first (slow) download;
+  // the second item's deadline (create_time + ttl) passes while queued.
+  const msg = fileMessage({
+    create_time: Math.floor(Date.now() / 1000),
+    msgtype: 'mixed',
+    file: undefined,
+    mixed: {
+      msg_item: [
+        { msgtype: 'image', image: { url: 'slow', aeskey: testAesKey } },
+        { msgtype: 'image', image: { url: 'fast', aeskey: testAesKey } },
+      ],
+    },
+  });
+  const { attachments, block } = await hydrateMessageMedia(msg, {
+    downloadFile: (url) => new Promise((resolve) => {
+      // The slow download outlives the second item's admission deadline.
+      setTimeout(() => resolve({ buffer: Buffer.from('x'), filename: `${url}.png` }), 150);
+    }),
+    mediaDir,
+    maxBytes: 1024,
+    transcribe: null,
+    gate,
+    urlTtlMs: 50,
+    log: () => {},
+  });
+  assert.equal(attachments.length, 1);
+  assert.ok(block.includes('download not started'));
+  assert.ok(block.includes('expire ~5 minutes'));
+});
+
+test('createStoreQuota enforces the total quota and stays append-only', (t) => {
+  const dir = tmpMediaDir(t);
+  fs.writeFileSync(path.join(dir, 'existing.bin'), Buffer.alloc(600));
+  const quota = createStoreQuota({
+    dir,
+    quotaBytes: 1000,
+    minFreeBytes: 0,
+  });
+  // Lazy scan counts the pre-existing file.
+  assert.equal(quota.admit(300).ok, true);
+  quota.recordSaved(300);
+  const verdict = quota.admit(200);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /quota exceeded/);
+  assert.match(verdict.reason, /append-only/);
+  // Nothing was deleted to make room.
+  assert.ok(fs.existsSync(path.join(dir, 'existing.bin')));
+});
+
+test('createStoreQuota rejects saves that would breach minimum free space', (t) => {
+  const dir = tmpMediaDir(t);
+  const quota = createStoreQuota({
+    dir,
+    quotaBytes: 0,
+    minFreeBytes: 1000,
+    statfs: () => ({ bavail: 1, bsize: 1100 }), // 1100 bytes free
+  });
+  assert.equal(quota.admit(50).ok, true);
+  const verdict = quota.admit(200);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason, /free disk space/);
+});
+
+test('a quota rejection yields a failure note and no file on disk', async (t) => {
+  const mediaDir = tmpMediaDir(t);
+  const { attachments, block } = await hydrateMessageMedia(fileMessage(), {
+    downloadFile: async () => ({ buffer: Buffer.from('x'.repeat(100)), filename: 'a.txt' }),
+    mediaDir,
+    maxBytes: 1024,
+    transcribe: null,
+    quota: createStoreQuota({ dir: mediaDir, quotaBytes: 10, minFreeBytes: 0 }),
+    log: () => {},
+  });
+  assert.deepEqual(attachments, []);
+  assert.ok(block.includes('quota exceeded'));
+  assert.ok(!fs.existsSync(path.join(mediaDir, 'zhang_san')));
+});
+
+test('withDeadline rejects a trickling promise at the wall clock and passes fast ones', async () => {
+  assert.equal(await withDeadline(Promise.resolve('ok'), 1000, 'fast'), 'ok');
+  const never = new Promise(() => {});
+  await assert.rejects(withDeadline(never, 30, 'stalled download'), /wall-clock deadline/);
 });

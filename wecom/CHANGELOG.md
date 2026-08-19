@@ -2,6 +2,22 @@
 
 ## 0.0.1 (unreleased)
 
+- Media ingestion hardening (jg-c7j codex round-1): per-message media
+  items download concurrently under a global admission gate
+  (`WECOM_MEDIA_MAX_CONCURRENT_DOWNLOADS`, default 3 — bounds worst-case
+  buffer memory at slots × size cap) with a URL-expiry deadline
+  (`WECOM_MEDIA_URL_TTL_MS`) for queued waiters; downloads get a true
+  wall-clock abort (per-request AbortSignal + promise deadline — axios
+  `timeout` never fires on a trickling body); items without a valid
+  32-byte base64 aeskey fail before download (SDK would return raw
+  ciphertext); the durable store gains a quota
+  (`WECOM_MEDIA_QUOTA_BYTES`, 10GiB) and min-free-disk floor
+  (`WECOM_MEDIA_MIN_FREE_BYTES`, 5GiB) — breaches reject the save with a
+  note, never delete (append-only store); attachment URLs built with
+  `pathToFileURL`; wire cap allows +32B PKCS#7 overhead over the
+  plaintext cap; hydration replay map is capped + TTL-bounded. Inbound
+  wiring extracted to `adapter/src/inbound.js` and covered by
+  integration tests with a fake WS/gc (50 tests total).
 - Media/file ingestion (jg-c7j): image/file/video messages (and mixed-message
   images) are downloaded + AES-256-CBC decrypted in the receive path (URLs
   expire in ~5 min), persisted to a durable per-conversation store
