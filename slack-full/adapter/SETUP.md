@@ -98,6 +98,32 @@ curl -s https://<your-tailnet>.ts.net/healthz
    - **Allow users to send Slash commands and messages from the messages
      tab** → ON.
 
+### Optional: Socket Mode transport (no public URL)
+
+Instead of the Funnel-fronted Request URL, the adapter can receive
+events over an outbound WebSocket (Slack **Socket Mode**). This removes
+the public-HTTP single point of failure entirely — recommended for
+production single-workspace deployments.
+
+1. **Basic Information** → **App-Level Tokens** → **Generate Token and
+   Scopes**. Name it (e.g. `socket-mode`), add scope
+   `connections:write`, generate, and copy the `xapp-…` token.
+2. Set `SLACK_APP_TOKEN=xapp-…` in the adapter's env (same place as
+   `SLACK_BOT_TOKEN`). With the default `SLACK_SOCKET_MODE=auto` the
+   adapter dials Slack on startup; look for `socket mode: connected` in
+   the log and `socket_mode=connected` on `/healthz`.
+3. **Cutover**: in the app config, **Socket Mode** → toggle **Enable
+   Socket Mode** ON. This atomically stops Request-URL delivery and
+   routes events down the socket. Keep the Event Subscriptions URL
+   configured — rollback is toggling Socket Mode back OFF (and/or
+   `SLACK_SOCKET_MODE=off` on the adapter).
+
+Order matters: start the adapter with the token BEFORE flipping the
+toggle, so there is no window where neither transport is listening.
+The inbound-liveness watchdog (`SLACK_LIVENESS_*` in the README env
+table) alarms if inbound goes silent while channel history keeps
+growing — on either transport.
+
 ## Step 3 — Find your DM channel ID with the bot
 
 After installing the app, open Slack, click on the app's name in the

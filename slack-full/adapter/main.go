@@ -51,33 +51,83 @@
 //     keep using this env var alone. With neither
 //     source set, every inbound is rejected 401
 //     (correct fail-closed behavior).
+//   - SLACK_APP_TOKEN         xapp- app-level token (connections:write).
+//     Enables the Socket Mode inbound transport
+//     (gp-3og): the adapter dials OUT to Slack over
+//     a WebSocket and receives events/interactions
+//     with no public Request URL. Unset = HTTP
+//     Events API only. Must start with "xapp-".
 //
 // Optional override (sane default; set to override):
+//
+//   - SLACK_SOCKET_MODE            Default "auto": run the Socket Mode
+//     transport iff SLACK_APP_TOKEN is set.
+//     "on" requires the token (startup error
+//     without it); "off" never connects even
+//     with a token — the rollback lever.
+//
+//   - SLACK_LIVENESS_STALL_AFTER   Default "10m". With zero inbound events
+//     for this long, the liveness watchdog
+//     probes watched channels' history for
+//     human messages the adapter never
+//     received and ALARMS if it finds any
+//     (gp-3og; the 2026-08-19 silent-outage
+//     detector). "0" disables the watchdog.
+//
+//   - SLACK_LIVENESS_CHANNELS      Comma-separated channel ids the watchdog
+//     always probes. Channels seen in live
+//     traffic are learned automatically; pin
+//     the critical ones here so a from-boot
+//     outage is still detected.
+//
+//   - SLACK_LIVENESS_ALERT_CHANNEL Channel id that receives a chat.postMessage
+//     alarm when a stall is confirmed and a
+//     note when a backfill recovers messages.
+//     Unset = log-only.
+//
+//   - SLACK_LIVENESS_STATE_PATH    Default "<GC_CITY_PATH>/.gc/slack/inbound_liveness.json"
+//     (or /tmp/gc-slack-adapter/...). Persists
+//     per-channel watermarks so a restart
+//     backfills the downtime gap. Set-but-empty
+//     disables persistence.
+//
+//   - SLACK_BACKFILL_MAX_WINDOW    Default "1h". How far back a reconnect/
+//     restart/watchdog backfill reads channel
+//     history when replaying missed messages
+//     through the normal pipeline. "0" disables
+//     replay (watchdog alarms only).
 //
 //   - LISTEN_PUBLIC                Default ":8765". Public TCP listener
 //     for /slack/events. Bind 0.0.0.0 if
 //     fronted by a tunnel (Tailscale Funnel,
 //     ngrok, etc.).
+//
 //   - LISTEN_INTERNAL              Default "127.0.0.1:8766". Loopback
 //     listener for /publish and other gc-side
 //     endpoints. Ignored when GC_SERVICE_SOCKET
 //     is set (proxy_process mode).
+//
 //   - INTERNAL_CALLBACK_URL        Default "http://127.0.0.1:8766". URL
 //     advertised to gc during self-registration.
 //     In proxy_process mode this is computed
 //     from GC_API_BASE_URL + GC_SERVICE_URL_PREFIX
 //     and the env var is ignored.
+//
 //   - GC_API_BASE_URL              Default "http://127.0.0.1:9443". Base
 //     URL for gc's HTTP API.
+//
 //   - ADAPTER_PROVIDER             Default "slack". Provider name used in
 //     conversation refs and adapter registration.
+//
 //   - REGISTER_ON_START            Default "true". Set "false" to skip
 //     /extmsg/adapters self-registration (used
 //     by tests + diagnostics).
+//
 //   - HANDLE_PREFIX                Default "@". Leading address token
 //     recognized on inbound messages for
 //     keyword routing (e.g. "@name: text").
 //     Empty string disables routing.
+//
 //   - BUSY_REACTION                Default "hourglass". Emoji name (no
 //     colons) added to a targeted inbound
 //     message when it is dispatched and removed
@@ -87,26 +137,32 @@
 //     Assistant-mode assistant.threads.setStatus
 //     (hq-xizo). Set-but-empty (BUSY_REACTION=)
 //     disables the lifecycle entirely.
+//
 //   - IDENTITY_STORE_PATH          Default "/tmp/gc-slack-adapter/identities.json".
 //     JSON file backing the per-session
 //     chat:write.customize identity registry.
 //     Persisted so adapter restarts don't strip
 //     identity from running sessions.
+//
 //   - HANDLE_ALIAS_STORE_PATH      Default "/tmp/gc-slack-adapter/handle-aliases.json".
 //     JSON file backing the cross-channel
 //     handle → session-id alias registry.
+//
 //   - INBOUND_FILE_STORE           Default "/tmp/gc-slack-adapter/inbound".
 //     Directory for downloaded inbound Slack
 //     file attachments. Files are organized as
 //     <store>/<channel>/<ts>-<safe-filename>
 //     and exposed to gc as file:// URLs.
+//
 //   - INBOUND_FILE_TTL             Default "168h" (7 days). Maximum age
 //     (mtime-based) before the in-process
 //     janitor deletes a file. "0" disables the
 //     janitor.
+//
 //   - INBOUND_FILE_SWEEP_INTERVAL  Default "1h". How often the janitor
 //     wakes to scan INBOUND_FILE_STORE. "0"
 //     disables the janitor.
+//
 //   - SLACK_CHANNEL_MAPPING_PATH    Default "<GC_CITY_PATH>/.gc/slack/channel_mappings.json"
 //     when GC_CITY_PATH is set, otherwise
 //     "/tmp/gc-slack-adapter/channel_mappings.json".
@@ -114,6 +170,7 @@
 //     map-channel`. Read-only on the adapter
 //     side; loaded at startup and re-read on
 //     SIGHUP (gc-cby.23).
+//
 //   - SLACK_RIG_MAPPING_PATH        Default "<GC_CITY_PATH>/.gc/slack/rig_mappings.json"
 //     when GC_CITY_PATH is set, otherwise
 //     "/tmp/gc-slack-adapter/rig_mappings.json".
@@ -123,6 +180,7 @@
 //     SLACK_CHANNEL_MAPPING_PATH. Channel
 //     mappings override rig mappings when both
 //     claim the same channel.
+//
 //   - SLACK_APPS_REGISTRY_PATH      Default "<GC_CITY_PATH>/.gc/slack/apps.json"
 //     when GC_CITY_PATH is set, otherwise
 //     "/tmp/gc-slack-adapter/apps.json". JSON
@@ -131,6 +189,7 @@
 //     on the adapter side; same SIGHUP-or-restart
 //     reload contract. Used for per-app signing
 //     secret lookup keyed by team_id.
+//
 //   - GC_CITY_PATH                 Optional; consulted only to derive
 //     SLACK_CHANNEL_MAPPING_PATH,
 //     SLACK_RIG_MAPPING_PATH, and
@@ -560,6 +619,41 @@ type config struct {
 	// instance wired for handlePublish, so SIGHUP reloads propagate.
 	// nil-safe: nil skips the curated leg.
 	userAliases *userAliasMap
+
+	// slackAppToken is the app-level token (xapp-…, scope
+	// connections:write) that opens the Socket Mode WebSocket
+	// (SLACK_APP_TOKEN). Empty disables the socket transport; the
+	// Events API listener stays up either way (gp-3og).
+	slackAppToken string
+	// socketMode is the parsed SLACK_SOCKET_MODE policy: "auto" (default —
+	// run the socket transport when SLACK_APP_TOKEN is set), "on" (require
+	// the token; fail startup without it), "off" (never connect even with
+	// a token present — the operator's rollback lever).
+	socketMode string
+	// inboundLiveness is the process-wide inbound-liveness tracker +
+	// watchdog (gp-3og). Nil-safe consumer paths; only the production
+	// main() wires it.
+	inboundLiveness *inboundLiveness
+	// livenessStallAfter is how long the adapter tolerates zero inbound
+	// events before the watchdog probes channel history for messages it
+	// should have seen (SLACK_LIVENESS_STALL_AFTER, default 10m; 0
+	// disables the watchdog).
+	livenessStallAfter time.Duration
+	// livenessChannels is the operator-pinned watched-channel list
+	// (SLACK_LIVENESS_CHANNELS, comma-separated channel ids). The
+	// watchdog also learns channels from live inbound traffic.
+	livenessChannels []string
+	// livenessAlertChannel, when set, receives a chat.postMessage alarm
+	// the moment the watchdog confirms missed inbound (SLACK_LIVENESS_ALERT_CHANNEL).
+	livenessAlertChannel string
+	// livenessStatePath persists last-inbound + per-channel watermarks so
+	// a restart can backfill the gap (SLACK_LIVENESS_STATE_PATH; defaults
+	// beside the other city-rooted registries; empty string disables).
+	livenessStatePath string
+	// backfillMaxWindow caps how far back a reconnect/restart/watchdog
+	// backfill reads channel history (SLACK_BACKFILL_MAX_WINDOW, default
+	// 1h; 0 disables backfill delivery — the watchdog then only alarms).
+	backfillMaxWindow time.Duration
 }
 
 func loadConfig() (config, error) {
@@ -676,6 +770,51 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	cfg.roomLaunchPath = envOrFn("GC_SLACK_ROOM_LAUNCH_FILE", defaultRoomLaunchPath)
 	cfg.subteamAliasStorePath = envOrFn("SLACK_SUBTEAM_ALIAS_FILE", defaultSubteamAliasPath)
 	cfg.userAliasStorePath = envOrFn("SLACK_USER_ALIAS_FILE", defaultUserAliasPath)
+
+	// Socket Mode inbound transport + inbound-liveness watchdog (gp-3og).
+	// SLACK_APP_TOKEN is the xapp- app-level token; SLACK_SOCKET_MODE is
+	// the policy knob (auto|on|off). Liveness knobs are durations/lists
+	// with conservative defaults; a malformed value is a startup error
+	// (silently disabling the watchdog is exactly the failure mode it
+	// exists to catch).
+	cfg.slackAppToken = strings.TrimSpace(getenv("SLACK_APP_TOKEN"))
+	cfg.socketMode = strings.ToLower(strings.TrimSpace(envOrFn("SLACK_SOCKET_MODE", socketModePolicyAuto)))
+	switch cfg.socketMode {
+	case socketModePolicyAuto, socketModePolicyOn, socketModePolicyOff:
+	default:
+		return cfg, fmt.Errorf("SLACK_SOCKET_MODE %q invalid (want auto|on|off)", cfg.socketMode)
+	}
+	if cfg.socketMode == socketModePolicyOn && cfg.slackAppToken == "" {
+		return cfg, errors.New("SLACK_SOCKET_MODE=on requires SLACK_APP_TOKEN (xapp-… app-level token with connections:write)")
+	}
+	if cfg.slackAppToken != "" && !strings.HasPrefix(cfg.slackAppToken, "xapp-") {
+		return cfg, errors.New("SLACK_APP_TOKEN must be an app-level token (xapp-…), not a bot/user token")
+	}
+	if d, err := time.ParseDuration(envOrFn("SLACK_LIVENESS_STALL_AFTER", "10m")); err == nil && d >= 0 {
+		cfg.livenessStallAfter = d
+	} else {
+		return cfg, fmt.Errorf("SLACK_LIVENESS_STALL_AFTER %q invalid (want a non-negative Go duration; 0 disables)", getenv("SLACK_LIVENESS_STALL_AFTER"))
+	}
+	if d, err := time.ParseDuration(envOrFn("SLACK_BACKFILL_MAX_WINDOW", "1h")); err == nil && d >= 0 {
+		cfg.backfillMaxWindow = d
+	} else {
+		return cfg, fmt.Errorf("SLACK_BACKFILL_MAX_WINDOW %q invalid (want a non-negative Go duration; 0 disables backfill delivery)", getenv("SLACK_BACKFILL_MAX_WINDOW"))
+	}
+	for _, c := range strings.Split(getenv("SLACK_LIVENESS_CHANNELS"), ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			cfg.livenessChannels = append(cfg.livenessChannels, c)
+		}
+	}
+	cfg.livenessAlertChannel = strings.TrimSpace(getenv("SLACK_LIVENESS_ALERT_CHANNEL"))
+	defaultLivenessStatePath := "/tmp/gc-slack-adapter/inbound_liveness.json"
+	if cfg.cityPath != "" {
+		defaultLivenessStatePath = filepath.Join(cfg.cityPath, ".gc", "slack", "inbound_liveness.json")
+	}
+	if v, ok := lookup("SLACK_LIVENESS_STATE_PATH"); ok {
+		cfg.livenessStatePath = strings.TrimSpace(v)
+	} else {
+		cfg.livenessStatePath = defaultLivenessStatePath
+	}
 
 	// Company-rooms (Phase 1) registry + ingress paths. The two JSON
 	// registries follow the same city-rooted-then-/tmp default with an
@@ -1196,6 +1335,12 @@ func main() {
 	// Wire the users.info display-name cache. Nil-safe consumer path
 	// (nil disables resolution — raw ids pass through). hq-uxln9.
 	cfg.userNames = newUserNameCache()
+	// Wire the inbound-liveness tracker before handleSlackEvents closes
+	// over cfg: every verified event_callback (either transport) feeds
+	// it, and the watchdog/backfill read from it. The deliver + alert
+	// hooks are attached below once the events handler exists. gp-3og.
+	cfg.inboundLiveness = newInboundLiveness(cfg, newSlackHistoryClient(cfg.slackBotToken))
+	livenessHealth.Store(cfg.inboundLiveness)
 	internalDescr := cfg.internalListen
 	if cfg.serviceSocket != "" {
 		internalDescr = "uds:" + cfg.serviceSocket
@@ -1347,8 +1492,16 @@ func main() {
 	// (HMAC-verified) and /healthz. Bound to 0.0.0.0 by default so
 	// Tailscale Funnel can reach it.
 	publicMux := http.NewServeMux()
-	publicMux.HandleFunc("/slack/events", handleSlackEvents(cfg, aliasReg, threadReg, roomLaunchReg, subteamAliases, threadHandleSticky))
-	publicMux.HandleFunc("/slack/interactions", handleSlackInteractions(cfg, channelMapReg, rigMapReg))
+	eventsHandler := handleSlackEvents(cfg, aliasReg, threadReg, roomLaunchReg, subteamAliases, threadHandleSticky)
+	interactionsHandler := handleSlackInteractions(cfg, channelMapReg, rigMapReg)
+	publicMux.HandleFunc("/slack/events", eventsHandler)
+	publicMux.HandleFunc("/slack/interactions", interactionsHandler)
+	// Backfill replays and the stall alarm ride on the same handlers /
+	// bot token. gp-3og.
+	cfg.inboundLiveness.deliver = deliverViaHandler(eventsHandler)
+	cfg.inboundLiveness.alert = slackAlertPoster(cfg.slackBotToken, cfg.livenessAlertChannel)
+	log.Printf("inbound liveness: watchdog stall_after=%s backfill_window=%s pinned_channels=%d alert_channel=%q state=%s",
+		cfg.livenessStallAfter, cfg.backfillMaxWindow, len(cfg.livenessChannels), cfg.livenessAlertChannel, cfg.livenessStatePath)
 	registerOAuthHandlers(publicMux, cfg, appsReg)
 	publicMux.HandleFunc("/healthz", handleHealthz)
 	publicMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -1403,6 +1556,21 @@ func main() {
 	defer janitorCancel()
 	go runInboundFileJanitor(janitorCtx, cfg)
 	go runDispatchDropSummary(janitorCtx, dispatchDropSummaryInterval, cfg.dispatchConcurrency)
+	go cfg.inboundLiveness.runWatchdog(janitorCtx)
+
+	// Socket Mode inbound transport (gp-3og). Runs alongside the public
+	// listener; Slack routes each app's events to exactly one of the two
+	// per the app's "Socket Mode" toggle, so the operator's cutover is a
+	// UI flip with the HTTP path kept for rollback.
+	var socketRunner *socketModeRunner
+	if socketModeEnabled(cfg) {
+		socketRunner = newSocketModeRunner(cfg, eventsHandler, interactionsHandler, cfg.inboundLiveness)
+		socketModeHealth.Store(socketRunner)
+		log.Printf("socket mode: enabled (policy=%s) — dialing Slack with the app-level token; Events API listener stays up for rollback/other apps", cfg.socketMode)
+		go socketRunner.run(janitorCtx)
+	} else {
+		log.Printf("socket mode: disabled (policy=%s app_token_set=%v) — inbound relies on the Events API Request URL", cfg.socketMode, cfg.slackAppToken != "")
+	}
 
 	// Thread-binding teardown subscriber (cby.5.4): listens to gc's
 	// city-scoped event stream for terminal session lifecycle events
@@ -2381,7 +2549,13 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// no longer route an event verified as an agent-app DM into the legacy
 		// dispatcher, nor admit a legacy-trial-verified event as an owner DM.
 		agentApps := cfg.companyGateway.agentAppsSnapshot()
-		if !verifyInboundEvent(cfg, agentApps, head, body, ts, sig) {
+		// A Socket Mode envelope arrives over the app-level-token
+		// WebSocket, not the public listener, and carries no HMAC —
+		// the transport itself is the authentication. The socket
+		// runner marks its in-process synthetic request as trusted
+		// (gp-3og); every network request fails this check and is
+		// verified exactly as before.
+		if !isTrustedTransportRequest(r) && !verifyInboundEvent(cfg, agentApps, head, body, ts, sig) {
 			log.Printf("slack signature verify FAILED type=%q api_app_id=%q team_id=%q",
 				clipTeamIDForLog(head.Type), clipTeamIDForLog(head.APIAppID), clipTeamIDForLog(head.TeamID))
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
@@ -2399,6 +2573,22 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte(env.Challenge))
 			return
+		}
+
+		// Inbound-liveness bookkeeping (gp-3og): every verified
+		// event_callback, on either transport, refreshes the "last
+		// inbound" clock and records the message origin so the
+		// watchdog and the reconnect backfill can tell a message the
+		// adapter already saw from one it missed. A message the
+		// backfill already synthesized and delivered is dropped here
+		// — the late live copy would otherwise double-deliver. Nil-safe.
+		if env.Type == "event_callback" {
+			if cfg.inboundLiveness.noteInboundEnvelope(env, trustedTransportName(r)) == inboundOriginBackfilled {
+				w.WriteHeader(http.StatusOK)
+				log.Printf("slack event: dropping live copy of a backfilled message event_id=%s team_id=%q",
+					env.EventID, clipTeamIDForLog(env.TeamID))
+				return
+			}
 		}
 
 		// Company-rooms durable admission (Slack company-rooms Phase 1d).

@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Socket Mode inbound transport (gp-3og / ci-mk4qj): with an `xapp-…`
+  app-level token (`SLACK_APP_TOKEN`, scope `connections:write`) the
+  adapter dials out to Slack over a WebSocket (slack-go `socketmode`)
+  and receives events, slash commands, and interactive payloads with no
+  public Request URL — removing the funnel/Events-API single point of
+  failure behind the 2026-08-19 silent inbound outage. Envelopes run
+  through the same handlers as the HTTP path (same routing, event_id
+  dedup, company admission, busy reactions, load-shedding) via a
+  context-scoped trusted-transport marker that no network request can
+  forge; acks are sent on 2xx handler outcomes, envelopes are left for
+  Slack to redeliver on 5xx, and slash/interactive JSON bodies ride
+  back as ack payloads. Auto-reconnects with backoff; each (re)connect
+  backfills the gap from channel history. `SLACK_SOCKET_MODE=auto|on|off`
+  is the policy knob (`off` = rollback lever); the Events API listener
+  stays up either way, so cutover/rollback is the Slack-app UI flip.
+- Inbound-liveness watchdog + backfill (gp-3og / ci-mk4qj): the adapter
+  now tracks last-inbound time and per-channel watermarks (persisted at
+  `SLACK_LIVENESS_STATE_PATH`); after `SLACK_LIVENESS_STALL_AFTER`
+  (default 10m) of silence it probes watched channels'
+  `conversations.history` (+ fresh thread replies) with the bot token
+  and, if humans posted messages the adapter never received, raises a
+  loud `INBOUND LIVENESS ALARM`, flips `/healthz` to
+  `inbound_liveness=stalled`, optionally posts an alarm to
+  `SLACK_LIVENESS_ALERT_CHANNEL`, and replays the missed messages
+  through the normal inbound pipeline (bounded by
+  `SLACK_BACKFILL_MAX_WINDOW`, deduped against live deliveries in both
+  directions) — closing the exact "dead transport looks like a quiet
+  workspace" gap that made the outage silent. Restart gaps backfill
+  from the persisted watermarks. `/healthz` gains `socket_mode=…` and
+  `inbound_liveness=…` status lines.
+
 - Accidental-mrkdwn guard on the send path (gp-o42): `gc slack
   reply-current` (legacy and company paths), `publish`,
   `publish-to-channel`, `upload --initial-comment`, and `delegate` now
