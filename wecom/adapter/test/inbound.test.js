@@ -587,6 +587,61 @@ test('pending marks hold the seen set above cap and re-trim on the last settle',
   assert.equal(p.stats().pending, 0);
 });
 
+test('mixed-order eviction: cap governs the non-pending count, not the front slot', async (t) => {
+  // Codex r5 probe ordering: [A(non-pending), B(pending)] + C with cap 2.
+  // The r4 fast path evicted A because it sat at the front and was
+  // non-pending — although the non-pending population (A, C) was exactly
+  // at the cap — and A's replay then double-POSTed (posts=[A,B,C,A]).
+  const posts = [];
+  const holdsHeld = new Map();
+  const p = createInboundPipeline({
+    cfg: {
+      cityName: 'jadegate', provider: 'wecom', botId: 'BOT_1',
+      gcAPIBase: 'http://gc.test:9443', mediaDir: tmpMediaDir(t),
+      mediaMaxBytes: 1024 * 1024, mediaUrlTtlMs: 270000,
+    },
+    log: () => {},
+    downloadFile: async () => ({ buffer: Buffer.from('x'), filename: 'p.png' }),
+    postInbound: async (target, body) => {
+      const id = body.message.provider_message_id;
+      if (id.startsWith('HOLD_')) await new Promise((r) => holdsHeld.set(id, r));
+      posts.push(id);
+    },
+    seenMsgIdCap: 2,
+  });
+
+  // A delivered and fully settled — the oldest NON-PENDING mark.
+  const a = textMessage({ msgid: 'A', from: { userid: 'ua' } });
+  await p.enqueueInbound(frame(a));
+  // B delivered, then kept PENDING by a replay queued behind a held
+  // delivery in its conversation.
+  const b = textMessage({ msgid: 'B', from: { userid: 'ub' } });
+  await p.enqueueInbound(frame(b));
+  const holdB = p.enqueueInbound(frame(textMessage({ msgid: 'HOLD_B', from: { userid: 'ub' } })));
+  const replayB = p.enqueueInbound(frame(b));
+
+  // C arrives: non-pending population is (A, C) = cap — nothing may evict.
+  await p.enqueueInbound(frame(textMessage({ msgid: 'C', from: { userid: 'uc' } })));
+  assert.equal(p.stats().seen, 3, 'A retained although it sits at the front');
+  // The double-POST from the r5 probe must not reproduce.
+  await p.enqueueInbound(frame(a));
+  assert.deepEqual(posts.filter((id) => id === 'A'), ['A'], 'replay of A deduped');
+
+  // D pushes the non-pending population to (A, C, D) > cap: A — the
+  // oldest NON-PENDING — is the one evicted; pending B is untouchable.
+  await p.enqueueInbound(frame(textMessage({ msgid: 'D', from: { userid: 'ud' } })));
+  assert.equal(p.stats().seen, 3, 'A evicted; B(pending)+C+D remain');
+
+  // Drain B's conversation: its replay dedups (single POST), B re-enters
+  // cap accounting on settle and rolls off via the cursor rewind; the set
+  // converges to the cap.
+  holdsHeld.get('HOLD_B')();
+  await Promise.all([holdB, replayB]);
+  assert.equal(posts.filter((id) => id === 'B').length, 1, 'single POST for B');
+  assert.equal(p.stats().seen, 2, 'set converges to cap after all settles');
+  assert.equal(p.stats().pending, 0);
+});
+
 test('a synchronous setup throw releases the pending refcount and rethrows', async (t) => {
   // A throwing clock makes startHydration (sweep timestamp) blow up
   // synchronously inside enqueueInbound — before the bridge exists, so no

@@ -160,7 +160,21 @@ export function createInboundPipeline(deps) {
   // SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
   // of a not-yet-accepted id.
   const seenMsgIds = new Set();
-  const seenMsgIdOrder = [];
+  // Eviction bookkeeping (codex r5): seenMsgIdOrder is append-only with a
+  // cursor (seenHead) marking the logical front — slots behind the cursor
+  // are dead. seenNonPending is a RUNNING count of marks with no pending
+  // frames: the cap governs exactly that population, so eviction decisions
+  // never rescan the array, and marks flip in and out of the count at the
+  // pending transitions (addPending / removePending below).
+  let seenMsgIdOrder = [];
+  let seenHead = 0;
+  let seenNonPending = 0;
+  // msgid → its live slot index in seenMsgIdOrder. A slot is live iff this
+  // map still points at it — eviction deletes the entry, so a re-marked id
+  // gets a fresh slot and the stale one reads as dead. Also lets
+  // removePending REWIND the cursor to a settling mark's position, keeping
+  // eviction oldest-non-pending-first without rescanning.
+  const seenIndex = new Map();
   const inflightMsgIds = new Set();
 
   // In-flight media hydrations keyed by msgid: an SDK frame replay arriving
@@ -190,7 +204,12 @@ export function createInboundPipeline(deps) {
 
   function addPending(msgid) {
     if (!msgid) return;
-    pendingMsgIds.set(msgid, (pendingMsgIds.get(msgid) ?? 0) + 1);
+    const count = pendingMsgIds.get(msgid) ?? 0;
+    pendingMsgIds.set(msgid, count + 1);
+    // A seen mark whose msgid becomes pending again (a replay of an old
+    // delivered id) leaves the cap accounting until it drains — its dedup
+    // is load-bearing for exactly that replay.
+    if (count === 0 && seenMsgIds.has(msgid)) seenNonPending--;
   }
 
   function removePending(msgid) {
@@ -203,8 +222,15 @@ export function createInboundPipeline(deps) {
       // lifetime; once no frame for this msgid is outstanding, a future
       // replay may legitimately re-evaluate admission.
       refusals.delete(msgid);
-      // This msgid no longer blocks seen-set eviction: re-trim any excess
-      // its pending mark forced trimSeen to retain.
+      // The mark (if this msgid has one) re-enters cap accounting; rewind
+      // the cursor to its slot so the retained OLD mark rolls off first
+      // (never a newer one), then re-trim any excess its exemption forced
+      // trimSeen to retain.
+      if (seenMsgIds.has(msgid)) {
+        seenNonPending++;
+        const slot = seenIndex.get(msgid);
+        if (slot !== undefined && slot < seenHead) seenHead = slot;
+      }
       trimSeen();
     } else {
       pendingMsgIds.set(msgid, count - 1);
@@ -230,7 +256,12 @@ export function createInboundPipeline(deps) {
   function markSeen(msgid) {
     if (!msgid || seenMsgIds.has(msgid)) return;
     seenMsgIds.add(msgid);
+    seenIndex.set(msgid, seenMsgIdOrder.length);
     seenMsgIdOrder.push(msgid);
+    // A mark made while its msgid still has pending frames (the normal
+    // bridge-delivery case — pending closes at the enqueue finally, after
+    // this) joins cap accounting later, at removePending.
+    if (!pendingMsgIds.has(msgid)) seenNonPending++;
     trimSeen();
   }
 
@@ -245,30 +276,40 @@ export function createInboundPipeline(deps) {
   // push a NEWER mark out in its place (a fresh delivery's replay can be
   // seconds away).
   function trimSeen() {
-    if (seenMsgIdOrder.length <= seenMsgIdCap) return;
-    // Steady-state fast path (no pending retention at the front): the
-    // usual one-over-cap insert evicts the single oldest entry, O(1).
-    if (seenMsgIdOrder.length === seenMsgIdCap + 1 && !pendingMsgIds.has(seenMsgIdOrder[0])) {
-      seenMsgIds.delete(seenMsgIdOrder.shift());
-      return;
+    // The cap governs the NON-PENDING population only (codex r5): eviction
+    // triggers on the running count, never on array length or on what
+    // happens to sit at the front — [old(non-pending), pending] + new must
+    // keep all three when the non-pending count is within the cap.
+    while (seenNonPending > seenMsgIdCap) {
+      // Advance past dead slots (evicted or re-marked ids) and past
+      // pending-exempt marks; removePending rewinds the cursor to a
+      // settling mark's slot, so skipped pending marks are reachable again
+      // the moment they re-enter cap accounting.
+      const id = seenMsgIdOrder[seenHead];
+      if (id === undefined) break; // accounting says evict, nothing evictable — defensive
+      if (seenIndex.get(id) !== seenHead || pendingMsgIds.has(id)) {
+        seenHead++;
+        continue;
+      }
+      seenMsgIds.delete(id);
+      seenIndex.delete(id);
+      seenNonPending--;
+      seenHead++;
     }
-    let nonPending = 0;
-    for (const id of seenMsgIdOrder) {
-      if (!pendingMsgIds.has(id)) nonPending++;
-    }
-    let toEvict = nonPending - seenMsgIdCap;
-    if (toEvict <= 0) return;
-    const survivors = [];
-    for (const id of seenMsgIdOrder) {
-      if (toEvict > 0 && !pendingMsgIds.has(id)) {
-        seenMsgIds.delete(id);
-        toEvict--;
-      } else {
-        survivors.push(id);
+    // Compaction: reclaim the dead prefix once it dominates a
+    // beyond-double-cap array. Loop-free copy (no variadic spread), rare
+    // by construction, indices rebuilt for the survivors.
+    if (seenHead > seenMsgIdCap && seenHead * 2 > seenMsgIdOrder.length) {
+      const offset = seenHead;
+      seenMsgIdOrder = seenMsgIdOrder.slice(seenHead);
+      seenHead = 0;
+      for (let i = 0; i < seenMsgIdOrder.length; i++) {
+        const id = seenMsgIdOrder[i];
+        // Remap only the LIVE slot for this id — a stale duplicate slot
+        // (same id re-marked later) must not steal the live index.
+        if (seenIndex.get(id) === i + offset) seenIndex.set(id, i);
       }
     }
-    seenMsgIdOrder.length = 0;
-    seenMsgIdOrder.push(...survivors);
   }
 
   // startHydration kicks off download+decrypt+store for a media frame the
