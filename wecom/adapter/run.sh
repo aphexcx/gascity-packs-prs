@@ -22,6 +22,17 @@
 #   WECOM_WELCOME_TEXT      # optional enter_chat welcome message
 #   WECOM_WS_URL            # override long-connection endpoint (private deploys)
 #   REGISTER_ON_START       # default true; set false to skip self-registration
+#   WECOM_MEDIA_DIR         # durable inbound media store; default
+#                           # <city>/.gc/wecom-media/inbound (supervised) or
+#                           # ~/city/.gc/wecom-media/inbound (standalone)
+#   WECOM_MEDIA_MAX_BYTES   # attachment size cap; default 209715200 (200MB)
+#   WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS   # default 120000
+#   WECOM_TRANSCRIBE_TIMEOUT_MS       # default 180000
+#   WECOM_TRANSCRIBE_LANGUAGE         # pin Scribe language_code; default auto
+#   ELEVENLABS_API_KEY      # Scribe key for audio-file transcription; falls
+#                           # back to ~/.config/elevenlabs/api-key; unset =
+#                           # audio files deliver with a transcription-failed
+#                           # note (never dropped)
 
 set -euo pipefail
 

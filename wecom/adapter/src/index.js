@@ -6,11 +6,15 @@
 // connection via Tencent's official @wecom/aibot-node-sdk and bridges both
 // directions to gc:
 //
-//   - Inbound: text / voice / mixed messages (and file/image/video
-//     placeholders) → POST /v0/city/{city}/extmsg/inbound. Routing to the
-//     mayor comes from the pack's city-fragment default route, never from
-//     a per-message addressee. WeCom transcribes voice server-side, so
-//     voice frames carry text.
+//   - Inbound: text / voice / mixed / image / file / video messages →
+//     POST /v0/city/{city}/extmsg/inbound. Routing to the mayor comes from
+//     the pack's city-fragment default route, never from a per-message
+//     addressee. WeCom transcribes voice server-side, so voice frames
+//     carry text. Media attachments are downloaded + decrypted in the
+//     receive path (their URLs expire in ~5 minutes), persisted under the
+//     durable media store, and surfaced as file:// attachments plus a
+//     text block; audio FILES additionally get an inline ElevenLabs
+//     Scribe transcript. See src/media.js.
 //
 //   - Outbound: a UDS (or loopback TCP) listener for /publish + /healthz.
 //     gc's extmsg subsystem POSTs {callback_url}/publish to deliver a
@@ -41,11 +45,34 @@
 //	WECOM_WS_URL           Override the long-connection endpoint (private
 //	                       deployments publish their own; default is the
 //	                       SDK's built-in wss://openws.work.weixin.qq.com).
+//	WECOM_MEDIA_DIR        Durable store for decrypted inbound media.
+//	                       Default: <city>/.gc/wecom-media/inbound derived
+//	                       from GC_SERVICE_SECRETS_DIR in supervised mode;
+//	                       ~/city/.gc/wecom-media/inbound standalone.
+//	WECOM_MEDIA_MAX_BYTES  Attachment size cap (default 209715200 = 200MB).
+//	WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS
+//	                       Media download timeout (default 120000).
+//	WECOM_TRANSCRIBE_TIMEOUT_MS
+//	                       ElevenLabs Scribe timeout (default 180000).
+//	WECOM_TRANSCRIBE_LANGUAGE
+//	                       Pin a Scribe language_code (e.g. "zh"); default
+//	                       empty = auto-detect.
+//	ELEVENLABS_API_KEY     Scribe API key; falls back to
+//	                       ~/.config/elevenlabs/api-key. Unset = audio
+//	                       files deliver with a transcription-failed note.
 
 import http from 'node:http';
 import fs from 'node:fs';
 import process from 'node:process';
 import AiBot from '@wecom/aibot-node-sdk';
+
+import {
+  defaultMediaDir,
+  hydrateMessageMedia,
+  mediaItemsForMessage,
+  resolveElevenLabsKey,
+  transcribeAudio,
+} from './media.js';
 
 const { WSClient } = AiBot;
 
@@ -54,6 +81,13 @@ const { WSClient } = AiBot;
 function getenv(name, fallback = '') {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
+}
+
+// intEnv parses a positive-integer env override; a missing, malformed, or
+// non-positive value falls back rather than silently disabling a limit.
+function intEnv(name, fallback) {
+  const n = Number.parseInt(getenv(name), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
 function loadConfig() {
@@ -74,6 +108,11 @@ function loadConfig() {
     listenInternal: getenv('LISTEN_INTERNAL', '127.0.0.1:8790'),
     registerOnStart: getenv('REGISTER_ON_START', 'true') !== 'false',
     internalCallbackURL: '',
+    mediaDir: defaultMediaDir(process.env),
+    mediaMaxBytes: intEnv('WECOM_MEDIA_MAX_BYTES', 200 * 1024 * 1024),
+    mediaDownloadTimeoutMs: intEnv('WECOM_MEDIA_DOWNLOAD_TIMEOUT_MS', 120000),
+    transcribeTimeoutMs: intEnv('WECOM_TRANSCRIBE_TIMEOUT_MS', 180000),
+    transcribeLanguage: getenv('WECOM_TRANSCRIBE_LANGUAGE'),
   };
 
   const missing = [];
@@ -189,9 +228,10 @@ function conversationForMessage(cfg, msg) {
 }
 
 // renderText flattens each supported WeCom message type into the plain
-// text gc transports. Media stays a placeholder in phase 1 — the encrypted
-// download URLs expire in 5 minutes, so proper attachment surfacing needs
-// the download+decrypt path (SDK downloadFile) and a file:// hand-off.
+// text gc transports. Media placeholders stay as the base text; the
+// hydration block (download+decrypt+store, src/media.js) is appended by
+// bridgeInbound — so a message whose hydration failed entirely still
+// reads as '[file message]' plus the failure note, never as silence.
 function renderText(msg) {
   switch (msg.msgtype) {
     case 'text':
@@ -228,6 +268,44 @@ const seenMsgIdOrder = [];
 const seenMsgIdCap = 2048;
 const inflightMsgIds = new Set();
 
+// In-flight media hydrations keyed by msgid: an SDK frame replay arriving
+// while the first copy's download is still running reuses the same
+// promise instead of downloading (and storing) the bytes a second time.
+// Entries are removed when the message's bridge settles — memory tracks
+// active hydrations only.
+const hydrations = new Map();
+
+// startHydration kicks off download+decrypt+store for a media frame the
+// moment it arrives — BEFORE the per-conversation bridge chain, which can
+// sit arbitrarily long behind a gc-outage retry loop while the WeCom
+// download URL burns through its ~5-minute lifetime. Returns null for
+// non-media frames and for msgids already delivered (the bridge drops
+// those anyway).
+function startHydration(cfg, wsClient, msg) {
+  if (!msg || mediaItemsForMessage(msg).length === 0) return null;
+  if (msg.msgid) {
+    if (seenMsgIds.has(msg.msgid)) return null;
+    const existing = hydrations.get(msg.msgid);
+    if (existing) return existing;
+  }
+  const promise = hydrateMessageMedia(msg, {
+    downloadFile: (url, aeskey) => wsClient.downloadFile(url, aeskey),
+    mediaDir: cfg.mediaDir,
+    maxBytes: cfg.mediaMaxBytes,
+    // Key + language resolve per call, not at startup: the operator
+    // dropping ~/.config/elevenlabs/api-key in place starts working on
+    // the next audio file without an adapter restart.
+    transcribe: (buffer, filename) => transcribeAudio(buffer, filename, {
+      apiKey: resolveElevenLabsKey(),
+      timeoutMs: cfg.transcribeTimeoutMs,
+      language: cfg.transcribeLanguage,
+    }),
+    log,
+  });
+  if (msg.msgid) hydrations.set(msg.msgid, promise);
+  return promise;
+}
+
 function markSeen(msgid) {
   if (!msgid || seenMsgIds.has(msgid)) return;
   seenMsgIds.add(msgid);
@@ -237,7 +315,7 @@ function markSeen(msgid) {
   }
 }
 
-async function bridgeInbound(cfg, frame) {
+async function bridgeInbound(cfg, frame, hydration) {
   const msg = frame.body;
   if (!msg) return;
   if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) return;
@@ -245,10 +323,30 @@ async function bridgeInbound(cfg, frame) {
   const conversation = conversationForMessage(cfg, msg);
   if (!conversation.conversation_id) {
     log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
+    if (msg.msgid) hydrations.delete(msg.msgid);
     return;
   }
-  const text = renderText(msg);
-  if (!text) return;
+  let text = renderText(msg);
+  if (!text) {
+    if (msg.msgid) hydrations.delete(msg.msgid);
+    return;
+  }
+
+  // Media hydration started the moment the frame arrived (the download
+  // URL is on a 5-minute fuse — it cannot wait behind this conversation's
+  // gc retry queue); by the time this chained bridge runs, the promise is
+  // usually already settled. hydrateMessageMedia never rejects, but a
+  // defensive catch keeps an unforeseen bug from dropping the message:
+  // worst case the agent sees the bare placeholder text.
+  let attachments = [];
+  if (hydration) {
+    const hydrated = await hydration.catch((err) => {
+      log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
+      return { attachments: [], block: '' };
+    });
+    attachments = hydrated.attachments;
+    if (hydrated.block) text = `${text}\n${hydrated.block}`;
+  }
 
   const message = {
     provider_message_id: msg.msgid,
@@ -264,6 +362,7 @@ async function bridgeInbound(cfg, frame) {
     // reminder and tells the receiving agent the message was addressed to
     // someone else.
     text,
+    ...(attachments.length > 0 ? { attachments } : {}),
     dedup_key: msg.msgid,
     received_at: msg.create_time
       ? new Date(msg.create_time * 1000).toISOString()
@@ -287,7 +386,10 @@ async function bridgeInbound(cfg, frame) {
     markSeen(msg.msgid);
     log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
   } finally {
-    if (msg.msgid) inflightMsgIds.delete(msg.msgid);
+    if (msg.msgid) {
+      inflightMsgIds.delete(msg.msgid);
+      hydrations.delete(msg.msgid);
+    }
   }
 }
 
@@ -528,7 +630,9 @@ async function registerAdapter(cfg) {
     reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>',
     capabilities: {
       SupportsChildConversations: false,
-      SupportsAttachments: false,
+      // Inbound only: media/file messages hydrate into file:// attachment
+      // records (src/media.js). Outbound stays text/markdown.
+      SupportsAttachments: true,
       MaxMessageLength: outboundChunkBytes,
     },
   });
@@ -562,9 +666,25 @@ async function main() {
   // Auth-failure retries stay at the SDK default — bad credentials don't
   // heal by retrying; the terminal-error handler below exits instead so
   // the supervisor restarts us (picking up a rotated env file).
-  const wsOptions = { botId: cfg.botId, secret: cfg.botSecret, maxReconnectAttempts: -1, logger: sdkLogger };
+  // requestTimeout governs the SDK's HTTP client — media downloads are its
+  // only use. The SDK default (10s) is far too short for a large file over
+  // a mainland uplink.
+  const wsOptions = {
+    botId: cfg.botId,
+    secret: cfg.botSecret,
+    maxReconnectAttempts: -1,
+    requestTimeout: cfg.mediaDownloadTimeoutMs,
+    logger: sdkLogger,
+  };
   if (cfg.wsURL) wsOptions.wsUrl = cfg.wsURL;
   const wsClient = new WSClient(wsOptions);
+
+  // Size cap, enforced WHILE streaming (axios aborts the response once the
+  // byte count crosses maxContentLength) — the belt-and-braces post-hoc
+  // check in media.js can't protect memory on a multi-GB body by itself.
+  // wsClient.api is the SDK's documented advanced-use accessor for its
+  // download HTTP client.
+  wsClient.api.httpClient.defaults.maxContentLength = cfg.mediaMaxBytes;
 
   const server = startInternalListener(cfg, wsClient);
 
@@ -598,9 +718,13 @@ async function main() {
   const convoChains = new Map();
   const enqueueInbound = (frame) => {
     const msg = frame?.body ?? {};
+    // Hydration starts NOW, outside the chain — the media download URL
+    // expires ~5 minutes after this frame, and the chain can be stuck
+    // behind an earlier message's gc retry loop for longer than that.
+    const hydration = startHydration(cfg, wsClient, msg);
     const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
     const prev = convoChains.get(key) ?? Promise.resolve();
-    const next = prev.then(() => bridgeInbound(cfg, frame)).catch((err) => log(`bridge error: ${err.message}`));
+    const next = prev.then(() => bridgeInbound(cfg, frame, hydration)).catch((err) => log(`bridge error: ${err.message}`));
     convoChains.set(key, next);
     next.finally(() => {
       if (convoChains.get(key) === next) convoChains.delete(key);

@@ -17,11 +17,21 @@ no funnel.
 - `adapter/` — Node.js bridge on Tencent's official
   [`@wecom/aibot-node-sdk`](https://www.npmjs.com/package/@wecom/aibot-node-sdk)
   (auth, heartbeat, reconnect, reply queues stay upstream-maintained).
-  - Inbound: text / voice / mixed frames → `POST /v0/city/{city}/extmsg/inbound`
-    addressed to the mayor. WeCom transcribes voice server-side, so voice
-    arrives as `[voice] <transcript>`. Image/file/video are placeholders in
-    phase 1 (their download URLs are AES-encrypted and expire in 5 minutes;
-    attachment surfacing is a follow-up).
+  - Inbound: text / voice / mixed / image / file / video frames →
+    `POST /v0/city/{city}/extmsg/inbound` addressed to the mayor. WeCom
+    transcribes voice server-side, so voice arrives as `[voice]
+    <transcript>`. Media/file attachments are downloaded + AES-256-CBC
+    decrypted **in the receive path** (their URLs expire in ~5 minutes),
+    persisted to the durable store below, and surfaced to the bound
+    session as `file://` attachment records plus a
+    `[N WeCom file(s) attached] … saved to <path>; Read that path to view
+    it` text block (mirroring slack-full's inbound hydration). Audio
+    **files** (m4a/amr/mp3/… — distinct from voice messages) additionally
+    get an inline ElevenLabs Scribe transcript
+    (`model_id=scribe_v1, diarize=true, tag_audio_events=false`; key from
+    `$ELEVENLABS_API_KEY` or `~/.config/elevenlabs/api-key`); a
+    transcription or download failure downgrades to a note — the message
+    always delivers. See `adapter/src/media.js`.
   - Outbound: `/publish` + `/healthz` on `$GC_SERVICE_SOCKET` (UDS). gc
     appends `/publish` to the registered callback URL when delivering a
     session's reply; the adapter forwards it as a WeCom markdown message —
@@ -36,6 +46,43 @@ no funnel.
   wecom conversations to the `mayor` agent; added to city.toml's `include`
   at setup (pack.toml has no extmsg surface). Without it gc acks inbound
   POSTs and then drops them as unrouted.
+
+## Inbound media store
+
+Decrypted attachments persist (reboot-safe, unlike slack-full's /tmp
+spool — the mayor cites these paths in beads and replies long after
+receipt) at:
+
+```
+<store>/<conversation-id>/<message-id>[-<mixed-index>]-<original-filename>
+```
+
+`<store>` resolves to `$WECOM_MEDIA_DIR`, else
+`<city>/.gc/wecom-media/inbound` derived from `GC_SERVICE_SECRETS_DIR` in
+supervised mode (per-city, so two cities on one host never interleave
+stores), else `~/city/.gc/wecom-media/inbound`. Dirs are 0700 and files
+0600 (DM content). Path components are sanitized; original filenames
+(Chinese included) survive minus separators/control chars. Size cap
+`WECOM_MEDIA_MAX_BYTES` (default 200MB) is enforced while the download
+streams. Nothing prunes the store automatically — it is the durable
+record; prune manually if it ever matters.
+
+Failure behavior is deliberate: a failed download/decrypt/save still
+delivers the message with a placeholder plus an error note (the URL is
+dead ~5 minutes after receipt, so the note says to ask the sender to
+re-send); a failed transcription still delivers the saved file path with
+a `[transcription failed: …]` note.
+
+## Adapter tests
+
+```
+cd wecom/adapter && pnpm install && pnpm test   # node --test, no test deps
+```
+
+Covers the WeCom media crypto scheme against generated fixtures (encrypt
+per spec → SDK `decryptFile`), the real SDK download path over a local
+HTTP server, filename/path sanitization, Scribe request shape, and the
+failure-isolation contract.
 
 ## Secrets
 
@@ -102,11 +149,12 @@ robot's visible scope decides who can talk to it.
   exactly one adapter per bot.
 - Welcome replies (`enter_chat`) must be sent within 5 seconds of the event.
 
-## Phase plan (gp-86d / jg-1yx)
+## Phase plan (gp-86d / jg-1yx / jg-c7j)
 
-1. **This pack**: skeleton + long-connection client, DM + group round-trip
-   with the mayor session.
-2. Voice: already text via WeCom server-side ASR for the basic path;
-   evaluate local transcription only if quality/coverage demands it.
+1. **Done (jg-1yx)**: skeleton + long-connection client, DM + group
+   round-trip with the mayor session.
+2. **Done (jg-c7j)**: media/file ingestion — download+decrypt in the
+   receive path, durable `file://` hand-off, ElevenLabs Scribe transcripts
+   for audio files. Voice messages stay on WeCom's server-side ASR.
 3. Paperwork systems inventory (Duqin/Dongyun) + mandatory
    draft-then-confirm gates (template cards are the natural confirm UI).
