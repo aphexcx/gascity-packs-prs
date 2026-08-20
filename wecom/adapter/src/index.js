@@ -105,6 +105,10 @@
 //	WECOM_UPLOAD_MAX_QUEUE Requests allowed to WAIT for an upload slot
 //	                       (default 8); beyond it /publish-media answers
 //	                       429 before reading the file.
+//	WECOM_PUBLISH_MAX_BODY_BYTES
+//	                       Internal-listener request body cap (default
+//	                       1048576 = 1MiB); oversized bodies answer 413
+//	                       and the connection is severed.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -121,6 +125,7 @@ import {
   withDeadline,
 } from './media.js';
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
+import { createRequestListener, hardenServer } from './listener.js';
 import {
   createAttemptJournal,
   createConversationKindStore,
@@ -196,6 +201,9 @@ function loadConfig() {
     // uploadMaxQueue are answered 429 before any file I/O.
     uploadMaxConcurrent: intEnv('WECOM_UPLOAD_MAX_CONCURRENT', 2),
     uploadMaxQueue: intEnv('WECOM_UPLOAD_MAX_QUEUE', 8),
+    // Internal-listener body cap: publish bodies are small JSON (media
+    // travels by path, not in the body); over-cap requests answer 413.
+    publishMaxBodyBytes: intEnv('WECOM_PUBLISH_MAX_BODY_BYTES', 1024 * 1024),
   };
 
   const missing = [];
@@ -246,37 +254,14 @@ function log(...args) {
 // client, and startInternalListener routes both endpoints to it.
 
 function startInternalListener(cfg, publisher) {
-  const handle = (handler, label) => (req, res) => {
-    // Stream-decode as UTF-8: coercing each Buffer chunk to a string
-    // independently corrupts a multibyte sequence (Chinese, emoji) that
-    // a chunk boundary happens to split.
-    req.setEncoding('utf8');
-    let body = '';
-    req.on('data', (d) => { body += d; });
-    req.on('end', () => { handler(req, res, body).catch((err) => {
-      log(`${label} handler error: ${err.message}`);
-      if (!res.headersSent) res.writeHead(500).end();
-    }); });
-  };
-  const publish = handle(publisher.handlePublish, 'publish');
-  const publishMedia = handle(publisher.handlePublishMedia, 'publish-media');
-  const server = http.createServer((req, res) => {
-    if (req.method === 'GET' && req.url.startsWith('/healthz')) {
-      res.writeHead(200).end('ok');
-      return;
-    }
-    // /publish-media must match BEFORE /publish — startsWith('/publish')
-    // matches both paths.
-    if (req.method === 'POST' && req.url.startsWith('/publish-media')) {
-      publishMedia(req, res);
-      return;
-    }
-    if (req.method === 'POST' && req.url.startsWith('/publish')) {
-      publish(req, res);
-      return;
-    }
-    res.writeHead(404).end();
-  });
+  // Route matching, the body byte cap, and multibyte-safe decoding live
+  // in src/listener.js (testable); socket-level header/request deadlines
+  // come from hardenServer (codex jg-d0xr finding 10).
+  const server = hardenServer(http.createServer(createRequestListener({
+    publisher,
+    log,
+    maxBodyBytes: cfg.publishMaxBodyBytes,
+  })));
 
   if (cfg.serviceSocket) {
     // The controller owns the UDS lifecycle but a crashed predecessor can

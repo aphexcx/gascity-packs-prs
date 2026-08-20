@@ -52,6 +52,8 @@
 #                           # default 2 (buffer memory ≤ this × media cap)
 #   WECOM_UPLOAD_MAX_QUEUE  # requests allowed to wait for an upload slot;
 #                           # default 8 — beyond it /publish-media 429s
+#   WECOM_PUBLISH_MAX_BODY_BYTES  # internal-listener body cap; default
+#                           # 1048576 (1MiB) — oversized bodies 413
 
 set -euo pipefail
 
