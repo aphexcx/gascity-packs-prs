@@ -878,13 +878,27 @@ export function createOutboundPublisher(deps) {
   // jg-d0xr finding 5: leaving the installation to the caller let every
   // waiter resumed by one failure claim ownership at once, duplicating
   // sends and transcript recordings).
+  //
+  // Round-2 finding 6: each wake REFETCHES the entry from the map. The
+  // owner may have been refused at admission (gate/path/journal) and
+  // retired the untouched entry via releaseUntouchedState — a waiter that
+  // kept using its captured reference would install ownership on an
+  // ORPHAN no other caller can see, while a parallel fresh claim creates
+  // a second owner for the same key in the map: two concurrent sends.
+  // Refetching re-admits atomically within the iteration (the map get,
+  // the admission, and the owner installation have no await between
+  // them). A captured state that settled WITH a receipt is still safe to
+  // answer from directly even if it was evicted meanwhile — it is the
+  // same dedup answer the map would have given.
   async function claimPublishState(key) {
-    const state = publishStateFor(key);
-    if (!state) return { refused: true };
     for (;;) {
+      const state = publishStateFor(key);
+      if (!state) return { refused: true };
       if (state.receipt) return { receipt: state.receipt, state };
       if (!state.promise) return { state, token: installOwner(state) };
       await state.promise.catch(() => {});
+      if (state.receipt) return { receipt: state.receipt, state };
+      // Otherwise: refetch — never resume a possibly-retired reference.
     }
   }
 

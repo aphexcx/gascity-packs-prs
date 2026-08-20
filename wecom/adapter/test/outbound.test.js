@@ -921,6 +921,62 @@ test('after an in-flight text failure only ONE waiting retry re-sends', async (t
   assert.equal(sendAttempts, 2, 'the message must not be re-sent by both waiters');
 });
 
+// Codex jg-d0xr round-2 finding 6: on a gate/path refusal the owner woke
+// same-key waiters AND releaseUntouchedState deleted the shared map entry.
+// Each waiter had captured that state before awaiting, so it resumed
+// owning an ORPHAN no longer present in publishStates — a parallel fresh
+// claim then created a second state in the map and sent concurrently,
+// duplicating the same key's media. The claim loop must refetch the map
+// entry after every wake.
+test('waiters woken by a refused owner rejoin the map instead of owning an orphan state', async (t) => {
+  const dir = tmpDir(t);
+  const real = writeFixture(dir, 'photo.png', pngBytes);
+  const missing = path.join(dir, 'nope.png');
+  let uploadCount = 0;
+  let releaseUploads;
+  const uploadHold = new Promise((r) => { releaseUploads = r; });
+  const { publisher, calls } = makePublisher({
+    uploadMedia: async () => {
+      uploadCount += 1;
+      await uploadHold;
+      return { media_id: `MEDIA_${uploadCount}` };
+    },
+  });
+  const bodyFor = (file) => ({
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-orphan-race',
+  });
+  const chase = async (n) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
+
+  // The owner is refused at the path stage (missing file) and retires the
+  // untouched state; two same-key retries are already waiting on it.
+  const p1 = publishMedia(publisher, bodyFor(missing));
+  const p2 = publishMedia(publisher, bodyFor(real));
+  const p3 = publishMedia(publisher, bodyFor(real));
+  const r1 = await p1;
+  assert.equal(r1.statusCode, 400);
+
+  // A woken waiter becomes the new owner and blocks in the upload …
+  while (uploadCount === 0) await chase(1);
+  // … while a FRESH claim for the same key arrives. It must join the
+  // in-flight send through the map, not start its own.
+  const p4 = publishMedia(publisher, bodyFor(real));
+  await chase(4);
+  releaseUploads();
+  const [r2, r3, r4] = await Promise.all([p2, p3, p4]);
+
+  assert.equal(r2.statusCode, 200);
+  assert.equal(r3.statusCode, 200);
+  assert.equal(r4.statusCode, 200);
+  assert.equal(uploadCount, 1, 'the orphaned owner and the fresh claim must not both upload');
+  assert.equal(calls.filter((c) => c.op === 'sendMediaMessage').length, 1,
+    'the media must reach the chat exactly once');
+  assert.equal(r3.json().message_id, r2.json().message_id);
+  assert.equal(r4.json().message_id, r2.json().message_id);
+});
+
 // --- global outbound admission (finding 9) ----------------------------------------
 
 // Codex jg-d0xr finding 9: every concurrent request allocated and hashed
