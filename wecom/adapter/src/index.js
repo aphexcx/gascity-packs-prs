@@ -16,10 +16,14 @@
 //     text block; audio FILES additionally get an inline ElevenLabs
 //     Scribe transcript. See src/media.js.
 //
-//   - Outbound: a UDS (or loopback TCP) listener for /publish + /healthz.
-//     gc's extmsg subsystem POSTs {callback_url}/publish to deliver a
-//     bound session's reply; the adapter forwards it with sendMessage —
-//     chatid for group chats, the peer userid for DMs.
+//   - Outbound: a UDS (or loopback TCP) listener for /publish +
+//     /publish-media + /healthz. gc's extmsg subsystem POSTs
+//     {callback_url}/publish to deliver a bound session's reply; the
+//     adapter forwards it with sendMessage — chatid for group chats, the
+//     peer userid for DMs. /publish-media (gc wecom publish
+//     --image|--video) uploads a local image/video over the long
+//     connection and pushes it as a media message, then records the
+//     outbound transcript through gc /extmsg/outbound. See src/outbound.js.
 //
 // Required env:
 //
@@ -78,9 +82,19 @@
 //	ELEVENLABS_API_KEY     Scribe API key; falls back to
 //	                       ~/.config/elevenlabs/api-key. Unset = audio
 //	                       files deliver with a transcription-failed note.
+//	WECOM_IMAGE_MAX_BYTES  Outbound image cap (default 10485760 = 10MB —
+//	                       WeCom's own smart-robot limit; raise only if
+//	                       your tenant allows more).
+//	WECOM_VIDEO_MAX_BYTES  Outbound video cap (default 10485760 = 10MB,
+//	                       the WeCom smart-robot limit; mp4 only).
+//	WECOM_UPLOAD_TIMEOUT_MS
+//	                       Wall-clock deadline for one whole chunked media
+//	                       upload (default 300000 — 10MB in ≤512KB chunks
+//	                       over a mainland uplink needs headroom).
 
 import http from 'node:http';
 import fs from 'node:fs';
+import path from 'node:path';
 import process from 'node:process';
 import AiBot from '@wecom/aibot-node-sdk';
 
@@ -93,6 +107,11 @@ import {
   withDeadline,
 } from './media.js';
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
+import {
+  createConversationKindStore,
+  createOutboundPublisher,
+  outboundChunkBytes,
+} from './outbound.js';
 
 const { WSClient } = AiBot;
 
@@ -146,6 +165,13 @@ function loadConfig() {
     // Scribe calls at once; audio memory ≤ this × the size cap, on top of
     // (and independent from) the download gate's bound.
     transcribeMaxConcurrent: intEnv('WECOM_TRANSCRIBE_MAX_CONCURRENT', 2),
+    // Outbound media caps: 10MB is WeCom's own smart-robot limit for both
+    // images (png/jpg/jpeg/gif) and videos (mp4) — see src/outbound.js.
+    // Oversized files are rejected with a downscale/re-encode message,
+    // never transcoded here.
+    imageMaxBytes: intEnv('WECOM_IMAGE_MAX_BYTES', 10 * 1024 * 1024),
+    videoMaxBytes: intEnv('WECOM_VIDEO_MAX_BYTES', 10 * 1024 * 1024),
+    uploadTimeoutMs: intEnv('WECOM_UPLOAD_TIMEOUT_MS', 300000),
   };
 
   const missing = [];
@@ -189,186 +215,40 @@ function log(...args) {
 // with the real SDK downloader, Scribe transcriber, download gate, and
 // store quota.
 
-// --- outbound: gc /publish → WeCom sendMessage -----------------------------
+// The outbound direction (text /publish with idempotent chunked sends,
+// image/video /publish-media with upload → media_id → aibot_send_msg and
+// gc transcript recording, per-chat send chains) lives in src/outbound.js
+// as a testable publisher; main() below instantiates it with the real SDK
+// client, and startInternalListener routes both endpoints to it.
 
-// WeCom markdown messages cap out around 4096 BYTES; chunk conservatively
-// in UTF-8 bytes — Chinese text is ~3 bytes per character, so counting
-// UTF-16 code units would overshoot the cap threefold. Splitting iterates
-// code points (for...of), which can never sever a surrogate pair.
-const outboundChunkBytes = 3800;
-const utf8 = new TextEncoder();
-
-function chunkText(text) {
-  if (utf8.encode(text).length <= outboundChunkBytes) return [text];
-  const chunks = [];
-  let current = '';
-  let currentBytes = 0;
-  let lastNewlineOffset = -1; // index into `current` just past the last \n
-  for (const ch of text) {
-    const chBytes = utf8.encode(ch).length;
-    if (currentBytes + chBytes > outboundChunkBytes) {
-      // Prefer breaking at the last newline in the window so markdown
-      // constructs aren't severed mid-line.
-      if (lastNewlineOffset > current.length / 2) {
-        chunks.push(current.slice(0, lastNewlineOffset));
-        current = current.slice(lastNewlineOffset);
-      } else {
-        chunks.push(current);
-        current = '';
-      }
-      currentBytes = utf8.encode(current).length;
-      lastNewlineOffset = -1;
-    }
-    current += ch;
-    currentBytes += chBytes;
-    if (ch === '\n') lastNewlineOffset = current.length;
-  }
-  if (current.length > 0) chunks.push(current);
-  return chunks;
-}
-
-// Idempotency: gc retries a publish (callback timeout, transient error)
-// with the same idempotency_key. Track per-key chunk progress and the
-// final receipt so a retry never re-sends chunks WeCom users already saw.
-const publishStates = new Map(); // key → { chunksDelivered, messageID, receipt, promise }
-const publishStatesCap = 512;
-
-// Per-chat outbound serialization: the SDK only serializes sends sharing a
-// req_id, so two publishes to the same chat (different idempotency keys)
-// could otherwise interleave one reply between another's chunks. Chain the
-// whole chunk loop per chatid; different chats stay concurrent.
-const sendChains = new Map();
-
-function chainSend(chatid, fn) {
-  const prev = sendChains.get(chatid) ?? Promise.resolve();
-  const next = prev.catch(() => {}).then(fn);
-  sendChains.set(chatid, next);
-  // The cleanup must hang off a rejection-proofed derivative: `next` can
-  // reject (the caller handles that), and `.finally()` on a rejecting
-  // promise yields ANOTHER rejecting promise — left bare, that derived
-  // rejection is unhandled and kills the process on the first failed send.
-  next.catch(() => {}).then(() => {
-    if (sendChains.get(chatid) === next) sendChains.delete(chatid);
-  });
-  return next;
-}
-
-function publishStateFor(key) {
-  if (!key) return { chunksDelivered: 0 }; // untracked, per-call state
-  let state = publishStates.get(key);
-  if (!state) {
-    state = { chunksDelivered: 0 };
-    publishStates.set(key, state);
-    if (publishStates.size > publishStatesCap) {
-      // Evict the oldest SETTLED state only: evicting one whose send is
-      // still in flight would let a gc retry of that key re-queue the
-      // whole message from scratch — duplicate chunks users already saw.
-      // If everything is in flight (pathological load), grow temporarily.
-      for (const [k, s] of publishStates) {
-        // Only fully completed entries (receipt present) are evictable.
-        // Never the entry just inserted for `key` (promise-less until
-        // after insert), and never a failed partial (chunksDelivered>0,
-        // no receipt) — evicting one lets a later gc retry restart at
-        // chunk zero and duplicate chunks users already saw.
-        if (k !== key && s.receipt && !s.promise) {
-          publishStates.delete(k);
-          break;
-        }
-      }
-    }
-  }
-  return state;
-}
-
-function handlePublish(cfg, wsClient) {
-  return async (req, res, body) => {
-    let pub;
-    try {
-      pub = JSON.parse(body);
-    } catch {
-      res.writeHead(400).end('invalid JSON');
-      return;
-    }
-    const convo = pub.conversation ?? {};
-    const chatid = convo.conversation_id;
-    if (!chatid || !pub.text) {
-      res.writeHead(400).end('conversation.conversation_id and text are required');
-      return;
-    }
-
-    const state = publishStateFor(pub.idempotency_key);
-    // Atomically claim the send: only the waiter that observes neither a
-    // receipt nor an in-flight promise proceeds; everyone else awaits and
-    // RE-CHECKS. The loop matters — after a failed send, resumed waiters
-    // that simply fell through would each start their own send and resend
-    // the same chunk concurrently. No await sits between the final check
-    // and the promise assignment below, so the claim is race-free on the
-    // event loop.
-    for (;;) {
-      if (state.receipt) {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(state.receipt));
-        return;
-      }
-      if (!state.promise) break;
-      await state.promise.catch(() => {});
-    }
-
-    const send = async () => {
-      const chunks = chunkText(pub.text);
-      for (let i = state.chunksDelivered; i < chunks.length; i++) {
-        const receipt = await wsClient.sendMessage(chatid, {
-          msgtype: 'markdown',
-          markdown: { content: chunks[i] },
-        });
-        state.messageID = receipt?.headers?.req_id ?? state.messageID;
-        state.chunksDelivered = i + 1;
-      }
-    };
-    state.promise = chainSend(chatid, send);
-    try {
-      await state.promise;
-    } catch (err) {
-      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${err.message}`);
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        conversation: convo,
-        delivered: false,
-        failure_kind: 'provider_error',
-      }));
-      return;
-    } finally {
-      state.promise = undefined;
-    }
-    state.receipt = {
-      conversation: convo,
-      message_id: state.messageID ?? '',
-      delivered: true,
-    };
-    log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''})`);
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(state.receipt));
+function startInternalListener(cfg, publisher) {
+  const handle = (handler, label) => (req, res) => {
+    // Stream-decode as UTF-8: coercing each Buffer chunk to a string
+    // independently corrupts a multibyte sequence (Chinese, emoji) that
+    // a chunk boundary happens to split.
+    req.setEncoding('utf8');
+    let body = '';
+    req.on('data', (d) => { body += d; });
+    req.on('end', () => { handler(req, res, body).catch((err) => {
+      log(`${label} handler error: ${err.message}`);
+      if (!res.headersSent) res.writeHead(500).end();
+    }); });
   };
-}
-
-function startInternalListener(cfg, wsClient) {
-  const publish = handlePublish(cfg, wsClient);
+  const publish = handle(publisher.handlePublish, 'publish');
+  const publishMedia = handle(publisher.handlePublishMedia, 'publish-media');
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url.startsWith('/healthz')) {
       res.writeHead(200).end('ok');
       return;
     }
+    // /publish-media must match BEFORE /publish — startsWith('/publish')
+    // matches both paths.
+    if (req.method === 'POST' && req.url.startsWith('/publish-media')) {
+      publishMedia(req, res);
+      return;
+    }
     if (req.method === 'POST' && req.url.startsWith('/publish')) {
-      // Stream-decode as UTF-8: coercing each Buffer chunk to a string
-      // independently corrupts a multibyte sequence (Chinese, emoji) that
-      // a chunk boundary happens to split.
-      req.setEncoding('utf8');
-      let body = '';
-      req.on('data', (d) => { body += d; });
-      req.on('end', () => { publish(req, res, body).catch((err) => {
-        log(`publish handler error: ${err.message}`);
-        if (!res.headersSent) res.writeHead(500).end();
-      }); });
+      publish(req, res);
       return;
     }
     res.writeHead(404).end();
@@ -379,12 +259,12 @@ function startInternalListener(cfg, wsClient) {
     // leave a stale socket file behind; listen() would EADDRINUSE on it.
     try { fs.unlinkSync(cfg.serviceSocket); } catch { /* ENOENT is fine */ }
     server.listen(cfg.serviceSocket, () => {
-      log(`internal listener on UDS ${cfg.serviceSocket} (/publish, /healthz)`);
+      log(`internal listener on UDS ${cfg.serviceSocket} (/publish, /publish-media, /healthz)`);
     });
   } else {
     const [host, port] = cfg.listenInternal.split(':');
     server.listen(Number(port), host, () => {
-      log(`internal listener on ${cfg.listenInternal} (/publish, /healthz)`);
+      log(`internal listener on ${cfg.listenInternal} (/publish, /publish-media, /healthz)`);
     });
   }
   return server;
@@ -423,11 +303,12 @@ async function registerAdapter(cfg) {
     // ship. Point the reply flow at the verb that exists. File-based so
     // arbitrary reply text (apostrophes, code, Chinese quotes) never has
     // to survive shell interpolation.
-    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>',
+    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>. To send an image or video instead: gc wecom publish --chat {conversation_id} --image <path> (or --video <path>), optional --text caption.',
     capabilities: {
       SupportsChildConversations: false,
-      // Inbound only: media/file messages hydrate into file:// attachment
-      // records (src/media.js). Outbound stays text/markdown.
+      // Inbound: media/file messages hydrate into file:// attachment
+      // records (src/media.js). Outbound: text/markdown via /publish;
+      // image/video via /publish-media (src/outbound.js).
       SupportsAttachments: true,
       MaxMessageLength: outboundChunkBytes,
     },
@@ -495,7 +376,28 @@ async function main() {
     return requestConfig;
   });
 
-  const server = startInternalListener(cfg, wsClient);
+  // Conversation-kind memory for outbound transcript refs (dm vs room —
+  // part of gc's conversation identity), learned from inbound traffic and
+  // persisted next to the media store so it survives restarts.
+  const kindStore = createConversationKindStore({
+    filePath: path.join(path.dirname(cfg.mediaDir), 'conversation-kinds.json'),
+    log,
+  });
+
+  const publisher = createOutboundPublisher({
+    cfg,
+    sendMessage: (chatid, body) => wsClient.sendMessage(chatid, body),
+    uploadMedia: (buffer, options) => wsClient.uploadMedia(buffer, options),
+    sendMediaMessage: (chatid, type, mediaId) => wsClient.sendMediaMessage(chatid, type, mediaId),
+    // One wall-clock bound on the whole chunked upload: each WS chunk has
+    // the SDK's reply-ack timeout, but 20 chunks × retries can still
+    // stretch; the /publish-media HTTP response must unblock eventually.
+    withUploadDeadline: (p) => withDeadline(p, cfg.uploadTimeoutMs, 'media upload'),
+    kindStore,
+    log,
+  });
+
+  const server = startInternalListener(cfg, publisher);
 
   wsClient.on('authenticated', () => log('wecom long connection authenticated'));
   wsClient.on('reconnecting', (attempt) => log(`wecom reconnecting (attempt ${attempt})`));
@@ -550,6 +452,9 @@ async function main() {
   });
   for (const evt of ['message.text', 'message.voice', 'message.mixed', 'message.image', 'message.file', 'message.video']) {
     wsClient.on(evt, pipeline.enqueueInbound);
+    // Every inbound frame also teaches the kind store its conversation's
+    // dm/room kind — the outbound transcript ref needs it (see outbound.js).
+    wsClient.on(evt, kindStore.observe);
   }
 
   if (cfg.welcomeText) {

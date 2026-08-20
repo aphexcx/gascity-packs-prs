@@ -2,6 +2,36 @@
 
 ## 0.0.1 (unreleased)
 
+- Outbound media (jg-d0xr): `gc wecom publish --image <path>` /
+  `--video <path>` send a local image (≤10MB, jpg/jpeg/png/gif) or video
+  (≤10MB, mp4 — WeCom's own smart-robot caps, verified against
+  developer.work.weixin.qq.com/document/path/101463) through the new
+  adapter endpoint `/publish-media`: chunked upload over the long
+  connection to a `media_id`, then an `aibot_send_msg` media message.
+  Optional `--text` becomes a follow-up markdown message on the same
+  per-chat send chain (WeCom media messages carry no caption field).
+  Files are checked by magic bytes; oversized/wrong-format/symlink/
+  relative-path inputs are rejected with actionable 400s (no transcoding
+  — downscale/re-encode and retry; `WECOM_IMAGE_MAX_BYTES` /
+  `WECOM_VIDEO_MAX_BYTES` / `WECOM_UPLOAD_TIMEOUT_MS` are the knobs).
+  Delivered media sends are recorded in the extmsg conversation
+  transcript by POSTing gc `/extmsg/outbound` with the already-settled
+  idempotency key — gc's callback to `/publish` answers from the receipt
+  instead of re-sending — with the attachment metadata (filename, mime,
+  size, sha256, source path, caption) in the entry text; recording is
+  best-effort and downgrades to `transcript_recorded:false` + note (no
+  session, unowned binding, gc outage) after the media already delivered.
+  The dm/room kind gc keys conversations by is learned from inbound
+  frames into a persisted `conversation-kinds.json` (with `--kind` and a
+  `wr` chatid-prefix heuristic as fallbacks; a wrong guess can only make
+  gc reject the recording, never mislabel it). The outbound machinery
+  moved from `index.js` into a testable `src/outbound.js` (same
+  extraction pattern as `src/inbound.js`); text `/publish` behavior is
+  unchanged and now regression-tested. Upload/send stages are latched
+  per idempotency key so a retry resumes at the failed stage — never a
+  second upload (quota: 30/min per robot) or a twice-shown message.
+  26 new tests (93 total).
+
 - Media ingestion hardening round 4 (jg-c7j codex round-4): seen-set
   eviction now exempts msgids with pending frames — 2,048 churned
   deliveries can no longer evict a delivered msgid whose replay is still

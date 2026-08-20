@@ -39,6 +39,11 @@
 #                           # back to ~/.config/elevenlabs/api-key; unset =
 #                           # audio files deliver with a transcription-failed
 #                           # note (never dropped)
+#   WECOM_IMAGE_MAX_BYTES   # outbound image cap; default 10485760 (10MB —
+#                           # WeCom's own smart-robot limit; jpg/png/gif)
+#   WECOM_VIDEO_MAX_BYTES   # outbound video cap; default 10485760 (10MB; mp4)
+#   WECOM_UPLOAD_TIMEOUT_MS # wall-clock bound on one whole chunked media
+#                           # upload; default 300000
 
 set -euo pipefail
 

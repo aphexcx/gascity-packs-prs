@@ -32,13 +32,20 @@ no funnel.
     `$ELEVENLABS_API_KEY` or `~/.config/elevenlabs/api-key`); a
     transcription or download failure downgrades to a note — the message
     always delivers. See `adapter/src/media.js`.
-  - Outbound: `/publish` + `/healthz` on `$GC_SERVICE_SOCKET` (UDS). gc
-    appends `/publish` to the registered callback URL when delivering a
-    session's reply; the adapter forwards it as a WeCom markdown message —
-    to the `chatid` for group chats, to the peer `userid` for DMs — chunked
-    at 3800 chars.
+  - Outbound: `/publish` + `/publish-media` + `/healthz` on
+    `$GC_SERVICE_SOCKET` (UDS). gc appends `/publish` to the registered
+    callback URL when delivering a session's reply; the adapter forwards
+    it as a WeCom markdown message — to the `chatid` for group chats, to
+    the peer `userid` for DMs — chunked at 3800 UTF-8 bytes.
+    `/publish-media` (jg-d0xr) sends a local **image or video** file:
+    chunked upload over the long connection (`aibot_upload_media_init →
+    chunk × N → finish`, ≤512KB/chunk) to a `media_id`, then an
+    `aibot_send_msg` image/video message. See "Outbound media" below and
+    `adapter/src/outbound.js`.
 - `commands/publish.sh` — `gc wecom publish`: manual/operator sends through
-  the running adapter via gc's `/svc/wecom` reverse proxy. Also the verb
+  the running adapter via gc's `/svc/wecom` reverse proxy — `--text` /
+  `--text-file` for markdown, `--image` / `--video` for media (optional
+  `--text` caption goes out as a follow-up message). Also the verb
   gc's inbound nudges cite (registered as the adapter's
   `reply_instructions`), so the mayor's reply flow works without a
   `reply-current` verb.
@@ -107,6 +114,43 @@ dead ~5 minutes after receipt, so the note says to ask the sender to
 re-send); a failed transcription still delivers the saved file path with
 a `[transcription failed: …]` note.
 
+## Outbound media (images & videos)
+
+`gc wecom publish --chat <id> --image /abs/path.png [--text caption]` (or
+`--video /abs/path.mp4`) posts the adapter's `/publish-media`: the adapter
+validates the local file, uploads it over the long connection, and pushes
+the media message. Limits are WeCom's own smart-robot caps
+(developer.work.weixin.qq.com/document/path/101463, verified 2026-08-20):
+**images ≤10MB, jpg/jpeg/png/gif; videos ≤10MB, mp4** — checked by magic
+bytes, not filename. Oversized or wrong-format files are rejected with an
+actionable 400 (the adapter never transcodes — downscale/re-encode and
+retry; `WECOM_IMAGE_MAX_BYTES` / `WECOM_VIDEO_MAX_BYTES` override the caps
+only for tenants allowed more). WeCom image/video messages have no caption
+field, so `--text` is delivered as a follow-up markdown message on the
+same per-chat send chain (nothing can interleave between media and
+caption). Uploads count against WeCom's robot quota (30/min, 1000/hour);
+`media_id`s stay valid 3 days but are not reused across sends.
+
+**Transcript recording.** gc's outbound wire (`PublishRequest`) is
+text-only, so gc cannot deliver media itself; the adapter therefore sends
+first and then POSTs gc `/extmsg/outbound` with the SAME idempotency key
+it just settled. gc authorizes against the conversation's (agent-)binding
+and calls back `/publish` — which answers from the settled receipt
+without re-sending — then appends the outbound transcript entry
+(`[image sent] name (mime, bytes, sha256 …) — source: path` + caption)
+and fans out peer notifications. Recording is best-effort by design: no
+`session_id`, a caller that doesn't own the binding, or a gc outage
+downgrade to `transcript_recorded: false` with a note — the media was
+already delivered. The dm/room kind gc keys conversations by is learned
+from inbound traffic (persisted at
+`<store>/../conversation-kinds.json`), with `--kind` and a `wr`
+chatid-prefix heuristic as fallbacks; a wrong guess only makes gc reject
+the recording (no binding under the mismatched ref) — it can never
+record under a mislabeled conversation. Plain `--text` publishes through
+this command still bypass gc and are not transcript-recorded (unchanged
+behavior; the standard reply flow's own text recording is a separate,
+gc-side concern).
+
 ## Adapter tests
 
 ```
@@ -121,7 +165,15 @@ failure-isolation contract. `test/inbound.test.js` drives the extracted
 frame→gc pipeline (`src/inbound.js`) with a fake downloader and fake gc:
 extmsg POST shape (attachments included), hydration starting while the
 conversation chain is blocked, replay dedup mid-download, cleanup after
-delivery/rejection, and text/voice regressions.
+delivery/rejection, and text/voice regressions. `test/outbound.test.js`
+drives the publish pipeline (`src/outbound.js`) with a fake WS client and
+fake gc: upload→send→receipt shape, size/format rejections (magic-byte
+checks, symlink/relative-path refusal), stage-latched resume under one
+idempotency key (never a second upload or a twice-shown image), the
+recording callback answering from the settled receipt, dm/room kind
+resolution and the persisted kind store, per-chat ordering across both
+endpoints, and the relocated text-publish behavior (chunking, keyed-retry
+dedup).
 
 ## Secrets
 
@@ -195,5 +247,8 @@ robot's visible scope decides who can talk to it.
 2. **Done (jg-c7j)**: media/file ingestion — download+decrypt in the
    receive path, durable `file://` hand-off, ElevenLabs Scribe transcripts
    for audio files. Voice messages stay on WeCom's server-side ASR.
-3. Paperwork systems inventory (Duqin/Dongyun) + mandatory
+3. **Done (jg-d0xr)**: outbound media — `gc wecom publish --image/--video`
+   via chunked upload + `aibot_send_msg`, with extmsg transcript recording
+   through gc `/extmsg/outbound` (idempotency-key dedup against re-sends).
+4. Paperwork systems inventory (Duqin/Dongyun) + mandatory
    draft-then-confirm gates (template cards are the natural confirm UI).
