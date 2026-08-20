@@ -599,7 +599,7 @@ test('media responses echo the idempotency key on success and on failure', async
   const { publisher } = makePublisher({
     sendMediaMessage: async () => {
       sendAttempts += 1;
-      if (sendAttempts === 1) throw new Error('ws not connected');
+      if (sendAttempts === 1) throw new Error('WebSocket not connected, unable to send data');
       return { headers: { req_id: 'MSG_OK' } };
     },
   });
@@ -633,7 +633,7 @@ test('a failed send resumes at the failed stage on retry — never a second uplo
     },
     sendMediaMessage: async (chatid, type, mediaId) => {
       sendAttempts += 1;
-      if (sendAttempts === 1) throw new Error('ws not connected');
+      if (sendAttempts === 1) throw new Error('WebSocket not connected, unable to send data');
       calls.push({ op: 'sendMediaMessage', chatid, type, mediaId });
       return { headers: { req_id: 'MSG_OK' } };
     },
@@ -648,7 +648,7 @@ test('a failed send resumes at the failed stage on retry — never a second uplo
   const first = await publishMedia(publisher, body);
   assert.equal(first.statusCode, 502);
   assert.equal(first.json().failure_kind, 'provider_error');
-  assert.match(first.json().error, /ws not connected/);
+  assert.match(first.json().error, /not connected/);
 
   const second = await publishMedia(publisher, body);
   assert.equal(second.statusCode, 200);
@@ -671,7 +671,7 @@ test('a failed caption resumes without re-sending the already-delivered media', 
       captionAttempts += 1;
       // A DEFINITE failure — ack timeouts are delivery-unknown since the
       // finding-3 fix and refuse the retry (covered by their own test).
-      if (captionAttempts === 1) throw new Error('ws not connected');
+      if (captionAttempts === 1) throw new Error('WebSocket not connected, unable to send data');
       return { headers: { req_id: 'CAPTION_OK' } };
     },
   });
@@ -761,7 +761,7 @@ test('a failed key retried with different bytes at the same path never rides the
   const { publisher, calls } = makePublisher({
     sendMediaMessage: async (chatid, type, mediaId) => {
       sendAttempts += 1;
-      if (sendAttempts === 1) throw new Error('ws not connected');
+      if (sendAttempts === 1) throw new Error('WebSocket not connected, unable to send data');
       calls.push({ op: 'sendMediaMessage', chatid, type, mediaId });
       return { headers: { req_id: 'MSG_OK' } };
     },
@@ -1260,7 +1260,7 @@ test('after an in-flight media failure only ONE waiting retry acquires the send'
       sendAttempts += 1;
       if (sendAttempts === 1) {
         await firstSendGate;
-        throw new Error('ws not connected');
+        throw new Error('WebSocket not connected, unable to send data');
       }
       calls.push({ op: 'sendMediaMessage', chatid, type, mediaId });
       return { headers: { req_id: 'MSG_OK' } };
@@ -1300,7 +1300,7 @@ test('after an in-flight text failure only ONE waiting retry re-sends', async (t
       sendAttempts += 1;
       if (sendAttempts === 1) {
         await firstSendGate;
-        throw new Error('ws not connected');
+        throw new Error('WebSocket not connected, unable to send data');
       }
       return { headers: { req_id: 'TEXT_OK' } };
     },
@@ -1449,7 +1449,7 @@ test('a media backlog never wedges legacy text delivery (separate pools)', async
     journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
     sendMediaMessage: async () => {
       sendAttempts += 1;
-      if (sendAttempts === 1) throw new Error('ws not connected');
+      if (sendAttempts === 1) throw new Error('WebSocket not connected, unable to send data');
       return { headers: { req_id: 'MSG_OK' } };
     },
   });
@@ -1641,7 +1641,7 @@ test('stage latches survive a restart: the retried key resumes without a second 
   // Life 1: upload succeeds, send definitively fails, process "dies".
   const life1 = makePublisher({
     journal: createAttemptJournal({ filePath: journalPath }),
-    sendMediaMessage: async () => { throw new Error('ws not connected'); },
+    sendMediaMessage: async () => { throw new Error('WebSocket not connected, unable to send data'); },
   });
   const failed = await publishMedia(life1.publisher, body);
   assert.equal(failed.statusCode, 502);
@@ -1777,6 +1777,43 @@ test('a socket-loss cancellation after the frame was written is delivery-unknown
   assert.equal(retry.statusCode, 502);
   assert.equal(retry.json().failure_kind, 'delivery_unknown');
   assert.equal(sendAttempts, 1, 'a frame the socket may have carried must not be re-sent');
+});
+
+// Codex jg-d0xr round-3 finding 1: the pre-write classifier was a loose
+// /not connected/i substring test, and post-write cancellations embed the
+// PROVIDER-CONTROLLED close reason verbatim. A reason like "backend not
+// connected" matched, cleared sendAttempted, and the same-key retry sent
+// the media a second time. The pre-write shapes are now full-string
+// anchored; a spoofed close reason keeps its cancellation tail and stays
+// delivery-unknown.
+test('"not connected" inside a post-write close reason stays delivery-unknown — never retryable', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      // SDK 1.0.7 clearPendingMessages shape with a provider-chosen
+      // close reason that mimics the pre-write error text.
+      throw new Error('WebSocket connection closed (code 1006, reason: backend not connected), reply for reqId: SEND_MSG_7 cancelled');
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-spoofed-close-reason',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'delivery_unknown',
+    'a post-write cancellation must never classify as a definite pre-write failure');
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(sendAttempts, 1, 'the maybe-displayed media must not be sent twice');
 });
 
 test('an unrecognized send failure defaults to delivery-unknown, never blind retry', async (t) => {

@@ -397,14 +397,24 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
 //   post-write, UNKNOWN  → '<reason>, reply for reqId: … cancelled'
 //   anything else        → UNKNOWN (fail toward refusing, never re-sending)
 //
-// Upload failures never come through here — an upload is invisible to the
-// chat, so re-running it is always safe.
+// The pre-write shapes are matched FULL-STRING (codex jg-d0xr round-3
+// finding 1): the post-write cancellation embeds the provider-controlled
+// WebSocket close reason verbatim ('<reason>, reply for reqId: …
+// cancelled'), so a loose substring test like /not connected/i let a
+// close reason of "backend not connected" reclassify a POST-write
+// cancellation as definite — clearing sendAttempted and permitting a
+// duplicate send. The anchors leave the close-reason suffix no way to
+// match: a spoofed reason still carries the ', reply for reqId: …
+// cancelled' tail, which fails both full-string patterns.
+const preWriteSendFailures = [
+  /^WebSocket not connected, unable to send data$/,
+  /^Reply queue for reqId .+ exceeds max size \(\d+\)$/,
+];
+
 function isDefiniteSendFailure(err) {
   if (err && typeof err.errcode === 'number' && err.errcode !== 0) return true;
   const msg = String(err?.message ?? '');
-  if (/not connected/i.test(msg)) return true;
-  if (/^Reply queue for reqId .* exceeds max size/i.test(msg)) return true;
-  return false;
+  return preWriteSendFailures.some((re) => re.test(msg));
 }
 
 // sendErrorText renders any SDK rejection — Error or raw errcode ack
