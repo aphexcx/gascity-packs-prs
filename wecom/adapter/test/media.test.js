@@ -21,6 +21,7 @@ import AiBot from '@wecom/aibot-node-sdk';
 
 import {
   createDownloadGate,
+  createSdkLogger,
   createStoreQuota,
   defaultMediaDir,
   formatTranscript,
@@ -900,4 +901,59 @@ test('overwriting the same destination charges quota by delta, not double', asyn
   // The cached usage still reflects ONE stored copy: 40 more bytes fit.
   assert.equal(quota.admit(40).ok, true);
   assert.equal(quota.admit(60).ok, false);
+});
+
+// --- SDK logger scrubbing (jg-d0xr finding 11) --------------------------------------
+
+// Codex jg-d0xr finding 11: SDK 1.0.7 logs upload filenames, upload_id,
+// and media_id at INFO as PLAIN strings — the brace-based scrub never
+// touched them, so private filenames and live provider identifiers
+// persisted in the service log despite the no-content-logging policy.
+test('the SDK logger allowlists INFO to connection lifecycle only', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args.join(' ')));
+
+  // Lifecycle lines (verbatim SDK 1.0.7 messages) must survive.
+  logger.info('Connecting to WebSocket: wss://openws.work.weixin.qq.com...');
+  logger.info('WebSocket connection established, sending auth...');
+  logger.info('Authentication successful');
+  logger.info('Connection lost, reconnecting in 2000ms (attempt 1/-1)...');
+  assert.equal(lines.length, 4);
+  assert.ok(lines[0].includes('[url]'), 'even lifecycle lines drop URLs');
+
+  // Upload progress (also verbatim) must be suppressed entirely.
+  lines.length = 0;
+  logger.info('Uploading media: type=image, filename=机密截图.png, size=123456, chunks=1');
+  logger.info('Upload init success: upload_id=UPLOAD_SECRET_1');
+  logger.info('All 1 chunks uploaded, finishing...');
+  logger.info('Upload complete: media_id=MEDIA_SECRET_1, type=image');
+  logger.info('Downloading file...');
+  assert.deepEqual(lines, [], 'no upload/download detail may reach the persisted log at INFO');
+});
+
+test('warn/error lines pass through with identifiers, braces, and URLs redacted', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args.join(' ')));
+
+  logger.warn('Reply ack timeout (10000ms) for reqId: SEND_MSG_42');
+  logger.error('Upload failed for filename=机密截图.png, upload_id=UPLOAD_SECRET_1, response: {"media_id":"MEDIA_SECRET_1"}');
+  logger.warn('Received unknown frame (ignored): {"body":{"userid":"zhang_san"}}');
+
+  assert.equal(lines.length, 3);
+  assert.ok(!lines[0].includes('SEND_MSG_42'), 'req ids are redacted');
+  assert.ok(!lines[1].includes('机密截图'), 'filenames are redacted');
+  assert.ok(!lines[1].includes('UPLOAD_SECRET_1'), 'upload ids are redacted');
+  assert.ok(!lines[1].includes('MEDIA_SECRET_1'), 'media ids are redacted (brace scrub)');
+  assert.ok(!lines[2].includes('zhang_san'), 'serialized frames are truncated at the first brace');
+  assert.match(lines[1], /filename=\[redacted\]/);
+});
+
+test('the SDK logger drops varargs — raw objects never persist', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args));
+
+  logger.error('WebSocket error:', { url: 'wss://x', secret: 'BOT_SECRET' });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].length, 2, 'only the prefix and the scrubbed first message');
+  assert.ok(!JSON.stringify(lines).includes('BOT_SECRET'));
 });

@@ -118,6 +118,7 @@ import AiBot from '@wecom/aibot-node-sdk';
 
 import {
   createDownloadGate,
+  createSdkLogger,
   createStoreQuota,
   defaultMediaDir,
   resolveElevenLabsKey,
@@ -330,21 +331,14 @@ async function registerAdapter(cfg) {
 async function main() {
   const cfg = loadConfig();
 
-  // Debug-suppressing logger: the SDK's default logger writes every
-  // callback frame at DEBUG via JSON.stringify — full message bodies,
-  // user ids, media URLs/AES keys, and response_url tokens — and
-  // proxy_process output persists to the service log. Conversation
-  // content must never be retained there; info/warn/error pass through.
-  // warn/error can embed serialized frame data on malformed or novel
-  // frames — scrub anything from the first brace onward and drop varargs
-  // (which carry raw objects) so payloads never persist at any level.
-  const scrub = (m) => String(m).replace(/\{[\s\S]*$/, '{…redacted}');
-  const sdkLogger = {
-    debug: () => {},
-    info: (m) => log('[sdk]', scrub(m)),
-    warn: (m) => log('[sdk][warn]', scrub(m)),
-    error: (m) => log('[sdk][error]', scrub(m)),
-  };
+  // SDK logger (src/media.js createSdkLogger — codex jg-d0xr finding 11):
+  // DEBUG dropped (full callback frames), INFO allowlisted to connection
+  // lifecycle because SDK 1.0.7 logs upload filenames and
+  // upload_id/media_id at INFO, warn/error scrubbed — braces truncated,
+  // URLs dropped, plain-string identifiers redacted, varargs (raw
+  // objects) never forwarded. proxy_process output persists to the
+  // service log; conversation content must never be retained there.
+  const sdkLogger = createSdkLogger(log);
 
   // maxReconnectAttempts -1 = unlimited: a long network outage must never
   // strand a "healthy" process with a permanently dead connection (the

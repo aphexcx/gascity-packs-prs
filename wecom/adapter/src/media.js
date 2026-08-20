@@ -64,6 +64,50 @@ export function scrubErrorMessage(msg) {
   return neutralizeMarkupBoundaries(s);
 }
 
+// --- SDK logger --------------------------------------------------------------
+
+// scrubSdkLogLine sanitizes one @wecom/aibot-node-sdk log line for the
+// persisted service log (codex jg-d0xr finding 11): everything from the
+// first brace onward goes (serialized frames carry message bodies, user
+// ids, media URLs/AES keys), URLs go, and the SDK's PLAIN-STRING mentions
+// of private identifiers — upload filenames, upload_id, media_id, req/
+// chat/user ids — are redacted too, since the brace scrub never caught
+// those. Filenames are conversation content under the adapter's
+// no-content-logging policy; upload/media ids are live provider
+// capabilities for up to 3 days.
+// The value span runs to the next delimiter, not the next space — a
+// filename with spaces must not leak its tail. Over-redaction is the
+// right failure mode here.
+const sdkIdentifierPattern = /\b(file_?name|upload_?id|media_?id|req_?id|chat_?id|user_?id)\b\s*[=:]?\s*[^,;)]*/gi;
+
+export function scrubSdkLogLine(m) {
+  return String(m)
+    .replace(/\{[\s\S]*$/, '{…redacted}')
+    .replace(/\b(?:https?|wss?):\/\/\S+/g, '[url]')
+    .replace(sdkIdentifierPattern, (_, name) => `${name}=[redacted]`);
+}
+
+// createSdkLogger builds the logger handed to the SDK. DEBUG is dropped
+// entirely (full callback frames). INFO is ALLOWLISTED to connection
+// lifecycle — authentication, connect/reconnect/disconnect, heartbeat —
+// because SDK 1.0.7 logs upload progress at INFO, naming the filename and
+// upload_id/media_id of every outbound file; an operator diagnosing the
+// long connection needs the lifecycle lines and nothing else. warn/error
+// pass through (scrubbed, varargs dropped — they carry raw objects).
+const sdkInfoAllowlist = /auth|connect|reconnect|disconnect|handshake|heartbeat|websocket|\bws\b|subscribe/i;
+
+export function createSdkLogger(log) {
+  return {
+    debug: () => {},
+    info: (m) => {
+      const s = scrubSdkLogLine(m);
+      if (sdkInfoAllowlist.test(s)) log('[sdk]', s);
+    },
+    warn: (m) => log('[sdk][warn]', scrubSdkLogLine(m)),
+    error: (m) => log('[sdk][error]', scrubSdkLogLine(m)),
+  };
+}
+
 // --- path sanitization -------------------------------------------------------
 
 // capUtf8Bytes truncates s to at most max UTF-8 BYTES without severing a
