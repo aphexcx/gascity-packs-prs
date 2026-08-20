@@ -417,6 +417,18 @@ export function createOutboundPublisher(deps) {
     maxQueue: cfg.uploadMaxQueue ?? 8,
   });
 
+  // Seeded receipts for gc's transcript-recording callback (finding 6):
+  // while a delivered media publish awaits its /extmsg/outbound
+  // round-trip, its receipt lives HERE — a lookup separate from the
+  // shared publishStates map, so ordinary text-dedup cap pressure can
+  // never evict it. If it were evictable, gc's callback would miss the
+  // settled receipt and treat the transcript text as a fresh /publish —
+  // visibly sending filenames and host source paths into the chat. The
+  // map is bounded by the number of in-flight recordings (each admitted
+  // through the upload gate above); entries are removed the moment
+  // recording settles either way.
+  const transcriptSeeds = new Map(); // key → receipt
+
   // Per-chat outbound serialization: the SDK only serializes sends sharing
   // a req_id, so two publishes to the same chat (different idempotency
   // keys) could otherwise interleave one reply between another's chunks —
@@ -553,6 +565,16 @@ export function createOutboundPublisher(deps) {
     const chatid = convo.conversation_id;
     if (!chatid || !pub.text) {
       res.writeHead(400).end('conversation.conversation_id and text are required');
+      return;
+    }
+
+    // Seeded media receipts answer FIRST (finding 6): gc's recording
+    // callback must always find the pinned receipt, whatever the shared
+    // dedup map is doing under load.
+    const seeded = pub.idempotency_key ? transcriptSeeds.get(pub.idempotency_key) : undefined;
+    if (seeded) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(seeded));
       return;
     }
 
@@ -940,6 +962,12 @@ export function createOutboundPublisher(deps) {
     let transcriptNote = '';
     if (pub.session_id) {
       const kind = resolveKind(convo.kind, chatid);
+      // Pin the receipt for the whole recording round-trip (finding 6):
+      // the seed in its own lookup guarantees the callback a hit, and
+      // pinned=true keeps the map entry itself out of eviction's reach
+      // until recording settles.
+      state.pinned = true;
+      transcriptSeeds.set(key, state.receipt);
       try {
         await recordOutboundTranscript({
           sessionID: pub.session_id,
@@ -952,6 +980,9 @@ export function createOutboundPublisher(deps) {
       } catch (err) {
         transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubErrorMessage(err.message)}`;
         log(`publish-media → ${chatid}: transcript recording failed: ${scrubErrorMessage(err.message)}`);
+      } finally {
+        transcriptSeeds.delete(key);
+        state.pinned = false;
       }
     } else {
       transcriptNote = 'delivered, but not recorded in the extmsg transcript: no session_id supplied (set GC_SESSION_ID or pass --session)';
@@ -972,6 +1003,10 @@ export function createOutboundPublisher(deps) {
     handlePublish,
     handlePublishMedia,
     // Introspection for tests and diagnostics only — not a public surface.
-    stats: () => ({ publishStates: publishStates.size, sendChains: sendChains.size }),
+    stats: () => ({
+      publishStates: publishStates.size,
+      sendChains: sendChains.size,
+      transcriptSeeds: transcriptSeeds.size,
+    }),
   };
 }

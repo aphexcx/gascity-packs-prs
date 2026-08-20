@@ -917,6 +917,96 @@ test('a full state table refuses NEW keys instead of growing or evicting partial
   assert.equal(textAdmitted.statusCode, 200);
 });
 
+// --- seeded receipt pinning (finding 6) ---------------------------------------------
+
+// Codex jg-d0xr finding 6: the just-settled media receipt sat in the
+// SHARED publishStates map, evictable under cap pressure while the
+// /extmsg/outbound round-trip was still pending. When it got evicted,
+// gc's recording callback missed the settled receipt and delivered the
+// transcript text as a fresh publish — filenames and host source paths
+// visibly sent into the chat. Seeds now live in their own pinned lookup
+// for exactly the recording window, and cap pressure REFUSES new keys
+// rather than evicting pinned or live entries.
+test('cap pressure during the recording round-trip never turns the callback into a fresh publish', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let publisherRef;
+  let pressureRes;
+  let callbackRes;
+  const { publisher, calls } = makePublisher({
+    publishStatesCap: 1,
+    postOutbound: async (target, body) => {
+      // While recording is pending: (a) an unrelated text publish exerts
+      // cap pressure on the state table …
+      pressureRes = fakeRes();
+      await publisherRef.handlePublish({}, pressureRes, JSON.stringify({
+        conversation: { conversation_id: 'li_si' },
+        text: 'unrelated cap pressure',
+        idempotency_key: 'key-pressure',
+      }));
+      // … then (b) gc's callback posts the transcript text back through
+      // /publish under the media key.
+      callbackRes = fakeRes();
+      await publisherRef.handlePublish({}, callbackRes, JSON.stringify({
+        conversation: { conversation_id: 'zhang_san' },
+        text: body.text,
+        idempotency_key: body.idempotency_key,
+      }));
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
+    },
+  });
+  publisherRef = publisher;
+
+  const res = await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-pinned-seed',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().transcript_recorded, true);
+
+  // The pressure key was refused — the pinned seed was NOT evicted for it.
+  assert.equal(pressureRes.statusCode, 503);
+  // The callback answered straight from the seed: same receipt, no send.
+  assert.equal(callbackRes.statusCode, 200);
+  assert.equal(callbackRes.json().delivered, true);
+  assert.equal(callbackRes.json().message_id, res.json().message_id);
+  const markdownSends = calls.filter((c) => c.op === 'sendMessage');
+  assert.equal(markdownSends.length, 0,
+    'the transcript text (filename + host source path) must never reach the chat as a message');
+
+  // The pin and the seed last exactly the recording window.
+  assert.equal(publisher.stats().transcriptSeeds, 0);
+  const afterRes = fakeRes();
+  await publisher.handlePublish({}, afterRes, JSON.stringify({
+    conversation: { conversation_id: 'li_si' },
+    text: 'admitted now',
+    idempotency_key: 'key-after',
+  }));
+  assert.equal(afterRes.statusCode, 200, 'settled unpinned entries are evictable again');
+});
+
+test('the seed is cleaned up even when recording fails', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher } = makePublisher({
+    postOutbound: async () => { throw new Error('gc unreachable'); },
+  });
+
+  const res = await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-seed-cleanup',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().transcript_recorded, false);
+  assert.equal(publisher.stats().transcriptSeeds, 0);
+});
+
 // --- transcript recording edge cases -------------------------------------------
 
 test('no session_id: delivered, transcript not recorded, note says why', async (t) => {
