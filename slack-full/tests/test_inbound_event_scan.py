@@ -270,3 +270,80 @@ def test_thread_lookup_returns_empty_root_for_plain_inbound(gc_mock: "GcMock") -
     assert mid == "1786291407.960839"
     assert thread_root == ""
     assert conv["conversation_id"] == "C0PLAIN"
+
+
+# --- peer-bot exclusion (gp-kop) -------------------------------------------
+# Peer-bot posts delivered as read-only context must NEVER become the
+# reply-current / react / upload anchor — no auto-response semantics. The
+# adapter stamps "peer-bot <label>" as the inbound Actor display name
+# (event payload ``actor``) and IsBot=true on the transcript entry; the
+# latest-inbound helpers key their exclusion on exactly those markers.
+
+
+def test_peer_bot_event_never_wins_latest_inbound(gc_mock: "GcMock") -> None:
+    # An immediate-mode peer post arrives AFTER the human message. The
+    # scan must still anchor on the human inbound, or the next
+    # reply-current would thread a reply at the peer bot.
+    common = _import_common()
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session",
+        conversation_id="C0HUMAN",
+        actor="afik",
+        age_seconds=120,
+    )
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session",
+        conversation_id="C0HUMAN",
+        actor="peer-bot 司南",
+        age_seconds=5,
+    )
+
+    event = common.find_latest_inbound_for_session("gc-test-session")
+
+    assert event is not None
+    assert event["payload"]["actor"] == "afik"
+
+
+def test_only_peer_bot_events_yield_none(gc_mock: "GcMock") -> None:
+    # A session that has ONLY ever received peer-bot context has no
+    # reply anchor at all: the scan must exhaust every window and give
+    # the caller its normal "no inbound" fallback, not a peer anchor.
+    common = _import_common()
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session",
+        conversation_id="C0PEERONLY",
+        actor="peer-bot citadel",
+    )
+
+    assert common.find_latest_inbound_for_session("gc-test-session") is None
+    sinces = [c.get("since") for c in _events_calls(gc_mock)]
+    assert sinces == list(common._INBOUND_SCAN_WINDOWS)
+
+
+def test_thread_lookup_skips_bot_authored_transcript_entries(gc_mock: "GcMock") -> None:
+    # Newest transcript inbound is a bot-authored peer-context entry;
+    # the thread lookup must skip past it to the latest HUMAN inbound.
+    common = _import_common()
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session", conversation_id="C0MIXED",
+    )
+    gc_mock.register_transcript_entry(
+        conversation_id="C0MIXED",
+        provider_message_id="1786291000.000100",
+        reply_to_message_id="1786290000.000001",
+        actor_display_name="afik",
+    )
+    gc_mock.register_transcript_entry(
+        conversation_id="C0MIXED",
+        provider_message_id="1786291500.000200",
+        actor_display_name="peer-bot 司南",
+        actor_is_bot=True,
+    )
+
+    match = common.find_latest_inbound_thread_for_session("gc-test-session")
+
+    assert match is not None
+    mid, thread_root, conv = match
+    assert mid == "1786291000.000100", "bot-authored entry anchored the lookup"
+    assert thread_root == "1786290000.000001"
+    assert conv["conversation_id"] == "C0MIXED"

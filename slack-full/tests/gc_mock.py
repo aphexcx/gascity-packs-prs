@@ -166,12 +166,17 @@ class GcMock:
         provider: str = "slack",
         kind: str = "dm",
         message_id: str = "",
+        actor: str = "",
         age_seconds: float = 0.0,
     ) -> None:
         """Seed an extmsg.inbound event so reply-current's lookup path resolves.
 
         Mirrors the payload shape produced by gc when a real Slack event_callback
         arrives at the slack-pack adapter and gets forwarded to /extmsg/inbound.
+
+        ``actor`` is the inbound speaker's display name (gc's
+        InboundEventPayload.Actor) — the adapter stamps ``peer-bot <label>``
+        here on immediate peer-context inbounds (gp-kop).
 
         ``age_seconds`` backdates the event so tests can exercise the
         client's escalating ``since`` windows; it is mock-internal and
@@ -185,6 +190,7 @@ class GcMock:
                 "provider": provider,
                 "kind": kind,
                 "message_id": message_id,
+                "actor": actor,
             },
             "_age_seconds": age_seconds,
         }
@@ -218,6 +224,8 @@ class GcMock:
         message_kind: str = "inbound",
         account_id: str = "T0TESTWS",
         reply_to_message_id: str = "",
+        actor_display_name: str = "",
+        actor_is_bot: bool = False,
     ) -> None:
         """Seed a transcript entry for ``GET /extmsg/transcript`` lookups.
 
@@ -226,12 +234,22 @@ class GcMock:
         session's conversation. ``reply_to_message_id`` mirrors the thread
         root ts the adapter stamps on a thread-reply inbound (gp-i62);
         empty means a plain channel/DM message.
+
+        The ``Actor`` key mirrors gc's wire shape: the record struct has no
+        json tags (PascalCase keys) while the nested ExternalActor does
+        (``is_bot``). ``actor_is_bot=True`` marks a bot-authored entry, e.g.
+        an immediate peer-context inbound (gp-kop).
         """
         key = (provider, conversation_id, kind)
         entry = {
             "Kind": message_kind,
             "ProviderMessageID": provider_message_id,
             "ReplyToMessageID": reply_to_message_id,
+            "Actor": {
+                "id": "",
+                "display_name": actor_display_name,
+                "is_bot": actor_is_bot,
+            },
             "Conversation": {
                 "ScopeID": self.city_name,
                 "Provider": provider,

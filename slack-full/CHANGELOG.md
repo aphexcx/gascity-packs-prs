@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Peer-bot visibility on the legacy channel path (gp-kop, Afik-approved
+  Option A): messages authored by an EXPLICITLY ALLOWLISTED fleet app
+  (new `peer_bots.json` registry, `SLACK_PEER_BOTS_PATH`, SIGHUP-
+  reloadable) are delivered to the channel-bound session as tagged
+  read-only context instead of being dropped — fixing fleet mayors
+  double-answering humans because they could not see each other's
+  posts. Default is no wake: peer posts buffer per channel (newest 20)
+  and ride ahead of the next naturally forwarded inbound; channels in
+  `immediate_channels` forward each peer post immediately as its own
+  inbound. Loop + safety rules are hard-enforced: every candidate
+  resolves through `bots.info` (reusing the company gateway's author
+  resolver) and a bot's own posts are never delivered back to itself,
+  even when misconfigured into the allowlist; unknown bots keep the
+  historical drop byte-for-byte; delivered posts carry a
+  `peer-bot <label>` provenance tag in both the text block and the
+  inbound Actor (`is_bot: true`); and no auto-response semantics exist
+  anywhere in the path — the peer branch never parses targets, never
+  busy-marks, never alias-dispatches, and the intake helpers now skip
+  bot-authored inbounds so `gc slack reply-current`/`react`/`upload`
+  can never anchor on a peer post. Adapter restart required (registry
+  wiring + inbound hook); the intake-helper exclusion is script-side.
+
 - Socket Mode inbound transport (gp-3og / ci-mk4qj): with an `xapp-…`
   app-level token (`SLACK_APP_TOKEN`, scope `connections:write`) the
   adapter dials out to Slack over a WebSocket (slack-go `socketmode`)
