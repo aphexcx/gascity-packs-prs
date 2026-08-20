@@ -252,6 +252,56 @@ bot identity. System/bot status notifications that intentionally post as the bot
 go through `gc slack post-message` (direct to Slack `chat.postMessage`),
 which bypasses `/publish` entirely and is unaffected by this guard.
 
+### Socket Mode inbound transport + inbound-liveness watchdog
+
+Two hardening layers added after the 2026-08-19 Events API outage (~26
+minutes of silent inbound loss while the Request URL showed
+On/Verified; gp-3og / ci-mk4qj):
+
+**Socket Mode** (`SLACK_APP_TOKEN`, `SLACK_SOCKET_MODE`): with an
+`xapp-…` app-level token (`connections:write`), the adapter dials OUT
+to Slack over a WebSocket (slack-go `socketmode`) instead of waiting
+for POSTs to a public Request URL — no funnel, no tunnel, no inbound
+HMAC surface. Every envelope (events, slash commands, interactive
+payloads) is translated into the SAME in-process HTTP request the
+public listener would have received and runs through the SAME handlers,
+so routing, event_id dedup, company-room admission, busy reactions, and
+load-shedding are byte-for-byte identical; the only skipped step is the
+HTTP signature check, replaced by a context-scoped trusted-transport
+marker no network request can forge. Ack policy: 2xx handler outcomes
+ack the envelope (well under Slack's 3s budget — the ack fires as soon
+as the handler returns, and the handlers ack-then-process); 5xx leaves
+the envelope un-acked so Slack redelivers (the socket twin of the
+company gateway's 503 retry contract). Slash-command ephemerals and
+`response_action` bodies ride back as the ack payload. The client
+reconnects automatically (Slack-requested disconnects, ping timeouts,
+network errors) with exponential backoff, and each (re)connect triggers
+a history backfill of the gap. **Cutover is a Slack-app UI flip**:
+enabling Socket Mode in the app config stops Request-URL delivery,
+disabling it restores the URL path — the adapter keeps both transports
+wired, so rollback is the same flip back (`SLACK_SOCKET_MODE=off` is
+the adapter-side lever).
+
+**Inbound-liveness watchdog** (`SLACK_LIVENESS_*`,
+`SLACK_BACKFILL_MAX_WINDOW`): the failure that made the outage silent
+is that a dead inbound transport looks exactly like a quiet workspace.
+The watchdog tracks the last inbound event and a per-channel watermark
+(persisted across restarts); when nothing has arrived for
+`SLACK_LIVENESS_STALL_AFTER` it reads the watched channels'
+`conversations.history` with the bot token and compares against the
+watermarks. New human, dispatch-eligible messages the adapter never
+received ⇒ a loud `INBOUND LIVENESS ALARM` log line, `/healthz` flips
+to `inbound_liveness=stalled`, an optional Slack alarm to
+`SLACK_LIVENESS_ALERT_CHANNEL` (outbound still works when inbound is
+dead — that's the point), and the missed messages are replayed through
+the normal pipeline as `backfill:<channel>:<ts>` envelopes so bound
+sessions get them late instead of never. Dedup is bidirectional: the
+probe skips origins already seen live, and a late live copy of a
+backfilled message is dropped. `/healthz` carries both surfaces:
+`socket_mode=connected|connecting|disconnected|disabled` with
+connection/ack counters, and `inbound_liveness=ok|stalled|watchdog_off`
+with probe/missed/backfill counters.
+
 ## Install
 
 ```toml
@@ -389,6 +439,13 @@ package docstring at the top of that file. Summary:
 | `INBOUND_FILE_TTL`             | `168h` (7 days)                                  | Janitor retention. `0` disables sweeping.                                       |
 | `INBOUND_FILE_SWEEP_INTERVAL`  | `1h`                                             | Janitor scan period. `0` disables sweeping.                                     |
 | `SLACK_DISPATCH_CONCURRENCY`   | `50`                                             | Cap on in-flight inbound-dispatch goroutines (slash-command, slack-event, alias-resolved). On saturation the adapter drops the dispatch with a `dispatch queue full` log line; the inbound POST itself is not affected. Must be a positive integer; 0/negative/non-numeric values fail at startup. (sec-S-04) |
+| `SLACK_APP_TOKEN`              | unset                                            | `xapp-…` app-level token (`connections:write`). Enables the **Socket Mode** inbound transport: the adapter dials out to Slack over a WebSocket and receives events/slash-commands/interactions with no public Request URL (gp-3og). Unset = HTTP Events API only. |
+| `SLACK_SOCKET_MODE`            | `auto`                                           | Socket Mode policy: `auto` (connect iff `SLACK_APP_TOKEN` is set), `on` (require the token; fail startup without it), `off` (never connect — rollback lever). |
+| `SLACK_LIVENESS_STALL_AFTER`   | `10m`                                            | Inbound-liveness watchdog: with zero inbound events for this long, probe watched channels' history (`conversations.history` via the bot token) for human messages the adapter never received, and **alarm** if any exist. `0` disables the watchdog. |
+| `SLACK_LIVENESS_CHANNELS`      | unset                                            | Comma-separated channel ids the watchdog always probes. Channels seen in live traffic are learned automatically; pin the critical ones so an outage present from boot is still detected. |
+| `SLACK_LIVENESS_ALERT_CHANNEL` | unset                                            | Channel id that receives a `chat.postMessage` alarm when a stall is confirmed (outbound is independent of the dead inbound path) and a note when a backfill replays recovered messages. Unset = log-only. |
+| `SLACK_LIVENESS_STATE_PATH`    | `<GC_CITY_PATH>/.gc/slack/inbound_liveness.json` (or `/tmp/gc-slack-adapter/inbound_liveness.json`) | Persists per-channel watermarks + last-inbound so a restart backfills the downtime gap. Set-but-empty (`SLACK_LIVENESS_STATE_PATH=`) disables persistence. |
+| `SLACK_BACKFILL_MAX_WINDOW`    | `1h`                                             | How far back a reconnect / restart / watchdog backfill reads channel history when replaying missed messages through the normal inbound pipeline. `0` disables replay (watchdog alarms only). |
 
 **Permissions:** `IDENTITY_STORE_PATH`, `HANDLE_ALIAS_STORE_PATH`, and
 `INBOUND_FILE_STORE` are written with `0o700` directories and `0o600`
