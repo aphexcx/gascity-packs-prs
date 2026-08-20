@@ -94,6 +94,7 @@ func reloadAllRegistries(
 	subteams *subteamAliasMap,
 	users *userAliasMap,
 	peers *peerBotsRegistry,
+	policy *deliveryPolicyRegistry,
 ) error {
 	var (
 		commits []func()
@@ -134,6 +135,10 @@ func reloadAllRegistries(
 	if peers != nil {
 		snap, err := peers.Stage()
 		stage("peer bots", err, func() { peers.Commit(snap) })
+	}
+	if policy != nil {
+		snap, err := policy.Stage()
+		stage("delivery policy", err, func() { policy.Commit(snap) })
 	}
 
 	if len(errs) > 0 {
@@ -204,12 +209,13 @@ func logReloadOutcome(
 	subteams *subteamAliasMap,
 	users *userAliasMap,
 	peers *peerBotsRegistry,
+	policy *deliveryPolicyRegistry,
 ) {
 	log.Printf("SIGHUP received: reloading slack-pack registries")
-	if err := reloadAllRegistries(apps, chans, rigs, rooms, subteams, users, peers); err != nil {
+	if err := reloadAllRegistries(apps, chans, rigs, rooms, subteams, users, peers, policy); err != nil {
 		log.Printf("WARN: registry reload failed (live state preserved): %s", scrubAppsRegistryError(err))
 		return
 	}
-	log.Printf("registry reload OK: apps=%d channels=%d rigs=%d rooms=%d subteams=%d users=%d peers=%d",
-		apps.Len(), chans.Len(), rigs.Len(), rooms.Len(), subteams.Len(), users.Len(), peers.Len())
+	log.Printf("registry reload OK: apps=%d channels=%d rigs=%d rooms=%d subteams=%d users=%d peers=%d delivery_policy=%d",
+		apps.Len(), chans.Len(), rigs.Len(), rooms.Len(), subteams.Len(), users.Len(), peers.Len(), policy.Len())
 }

@@ -337,7 +337,7 @@ func TestReloadAllRegistriesCommitsAllOnSuccess(t *testing.T) {
 		"T1:C3": {WorkspaceID: "T1", ChannelID: "C3", PoolTemplate: "v1", CreatedAt: f.now, UpdatedAt: f.now},
 	})
 
-	if err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil); err != nil {
+	if err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil, nil); err != nil {
 		t.Fatalf("reloadAllRegistries: %v", err)
 	}
 
@@ -377,7 +377,7 @@ func TestReloadAllRegistriesAbortsOnAnyParseFailure(t *testing.T) {
 		t.Fatalf("write corrupt: %v", err)
 	}
 
-	err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil)
+	err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("reloadAllRegistries with one corrupt file: want error")
 	}
@@ -404,7 +404,7 @@ func TestReloadAllRegistriesAggregatesAllErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil)
+	err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil, nil)
 	if err == nil {
 		t.Fatal("want error")
 	}
@@ -422,7 +422,7 @@ func TestReloadAllRegistriesAllMissingFilesIsNoop(t *testing.T) {
 			t.Fatalf("rm %s: %v", p, err)
 		}
 	}
-	if err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil); err != nil {
+	if err := reloadAllRegistries(f.apps, f.chans, f.rigs, f.rooms, nil, nil, nil, nil); err != nil {
 		t.Fatalf("reloadAllRegistries should be a no-op when all files missing: %v", err)
 	}
 	// All four must keep their seeded state.
