@@ -790,6 +790,7 @@ export function createOutboundPublisher(deps) {
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
       receipt: e.receipt,
+      expectedTranscript: e.expectedTranscript,
       deliveryUnknown: !!e.deliveryUnknown
         || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
         || ((e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
@@ -1024,10 +1025,32 @@ export function createOutboundPublisher(deps) {
       return;
     }
     if (claim.receipt) {
-      // A media key lands here too: gc's transcript-recording callback
-      // posts the SAME key back through /publish, and this settled-receipt
-      // answer is exactly what keeps it from re-sending. Never endpoint-
-      // check receipts on this path.
+      // A media key can land here: gc's transcript-recording callback
+      // posts the SAME key back through /publish and this settled-receipt
+      // answer keeps it from re-sending. But cross-endpoint fingerprinting
+      // must be SYMMETRIC (round-2 finding 9): once the seed is gone, a
+      // media receipt may be consumed ONLY by the actual recording
+      // callback, matched on the narrowly-scoped expected fingerprint
+      // (exact conversation + transcript text). An ordinary text publish
+      // that merely collided on the key must NOT silently receive the
+      // media receipt and send nothing — it is a conflict.
+      if (claim.state?.endpoint === 'publish-media') {
+        const exp = claim.state.expectedTranscript;
+        const isRecordingCallback = !!exp
+          && exp.conversation_id === chatid
+          && exp.text === pub.text;
+        if (!isRecordingCallback) {
+          res.writeHead(409, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({
+            conversation: convo,
+            delivered: false,
+            failure_kind: 'idempotency_conflict',
+            error: `idempotency_key ${pub.idempotency_key} was already used for a media publish — `
+              + 'use a fresh key for a text publish (only the matching transcript-recording callback may reuse a media key)',
+          }));
+          return;
+        }
+      }
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(claim.receipt));
       return;
@@ -1583,6 +1606,23 @@ export function createOutboundPublisher(deps) {
     let transcriptNote = '';
     if (pub.session_id) {
       const kind = resolveKind(convo.kind, chatid);
+      const transcriptText = transcriptTextFor({
+        mediaKind,
+        filename: effectiveFilename,
+        size: effectiveSize,
+        digest: effectiveDigest,
+        filePath,
+        caption,
+      });
+      // Persist the narrowly-scoped expected callback fingerprint (round-2
+      // finding 9): the ONLY /publish request permitted to consume this
+      // media receipt is gc's transcript-recording callback, identified by
+      // the exact (conversation, transcript text) it will echo back. A
+      // legitimate ordinary text publish that merely collided on the key
+      // is refused (409) instead of silently getting the media receipt and
+      // sending nothing. Journaled so late/post-restart callbacks match.
+      state.expectedTranscript = { conversation_id: chatid, text: transcriptText };
+      journal.record(key, { expectedTranscript: state.expectedTranscript }, { critical: false });
       // Pin the receipt for the whole recording round-trip (finding 6):
       // the seed in its own lookup guarantees the callback a hit, and
       // pinned=true keeps the map entry itself out of eviction's reach
@@ -1595,14 +1635,7 @@ export function createOutboundPublisher(deps) {
           conversationID: chatid,
           kind,
           key,
-          text: transcriptTextFor({
-            mediaKind,
-            filename: effectiveFilename,
-            size: effectiveSize,
-            digest: effectiveDigest,
-            filePath,
-            caption,
-          }),
+          text: transcriptText,
         });
         transcriptRecorded = true;
       } catch (err) {

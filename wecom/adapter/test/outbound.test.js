@@ -791,6 +791,85 @@ test('a failed key retried with different bytes at the same path never rides the
   assert.equal(calls.at(-1).mediaId, 'MEDIA_1', 'the resume rides the original upload');
 });
 
+// Codex jg-d0xr round-2 finding 9: cross-endpoint fingerprinting was
+// asymmetric. Once the transcript seed was removed, /publish returned any
+// settled MEDIA receipt without checking state.endpoint — a legitimate
+// text publish reusing that key got 200 and sent NO text. Only the actual
+// recording callback (matching conversation + exact transcript text) may
+// consume a media receipt now; anything else is a 409 conflict.
+test('after the seed is gone, a text publish reusing a media key is refused — not silently answered', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let transcriptText;
+  const { publisher, calls } = makePublisher({
+    postOutbound: async (target, body) => {
+      transcriptText = body.text;
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
+    },
+  });
+  const key = 'key-endpoint-asymmetry';
+  const media = await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+  assert.equal(media.statusCode, 200);
+  assert.equal(publisher.stats().transcriptSeeds, 0, 'the seed window is closed');
+  const callsAfterMedia = calls.length;
+
+  // A DIFFERENT, legitimate text publish that happens to reuse the key.
+  const text = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'a totally different reply',
+    idempotency_key: key,
+  });
+  assert.equal(text.statusCode, 409, 'the text must not be silently dropped by returning the media receipt');
+  assert.equal(text.json().failure_kind, 'idempotency_conflict');
+  assert.equal(calls.length, callsAfterMedia, 'and it must not have re-sent the media either');
+
+  // The ACTUAL recording callback (matching conversation + exact text)
+  // still consumes the media receipt without re-sending — even after the
+  // seed window closed.
+  const callback = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: transcriptText,
+    idempotency_key: key,
+  });
+  assert.equal(callback.statusCode, 200);
+  assert.equal(callback.json().message_id, media.json().message_id);
+  assert.equal(calls.length, callsAfterMedia, 'the matching callback sends nothing');
+});
+
+test('a callback for the right key but the WRONG conversation cannot consume a media receipt', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let transcriptText;
+  const { publisher } = makePublisher({
+    postOutbound: async (target, body) => {
+      transcriptText = body.text;
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
+    },
+  });
+  const key = 'key-wrong-convo';
+  await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+
+  // Same transcript text but a different conversation → not the callback.
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    text: transcriptText,
+    idempotency_key: key,
+  });
+  assert.equal(res.statusCode, 409);
+});
+
 test('a key settled by /publish cannot be replayed against /publish-media', async (t) => {
   const dir = tmpDir(t);
   const file = writeFixture(dir, 'photo.png', pngBytes);
