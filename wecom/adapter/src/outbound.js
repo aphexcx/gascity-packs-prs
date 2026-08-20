@@ -364,17 +364,45 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
   };
 }
 
-// isAckAmbiguous decides whether a provider send failure leaves delivery
-// UNKNOWN (finding 3): the SDK's reply-ack timeout ("Reply ack timeout
-// (10000ms) for reqId: …") means the frame went out and the
-// acknowledgement never came back — WeCom may well have displayed the
-// message, so a blind same-key retry could show it twice. Anything else
-// the SDK throws (not connected, reply queue full, errcode≠0 response) is
-// a definite non-delivery and stays retryable. Upload failures never come
-// through here — an upload is invisible to the chat, so re-running it is
-// always safe.
-function isAckAmbiguous(err) {
-  return err?.code === 'ETIMEDOUT' || /\btimed?\s*out\b/i.test(err?.message ?? '');
+// isDefiniteSendFailure decides whether a provider SEND failure provably
+// happened BEFORE the frame was written, or is an explicit negative
+// acknowledgement — the only two classes safe to retry blindly (codex
+// jg-d0xr round-2 finding 4). Everything else is delivery-UNKNOWN by
+// DEFAULT: round 1 enumerated only timeout-shaped errors as ambiguous,
+// so the pinned SDK's socket-loss rejection of already-written frames —
+// "WebSocket connection closed (…), reply for reqId … cancelled"
+// (clearPendingMessages in @wecom/aibot-node-sdk 1.0.7) — cleared
+// sendAttempted and a retry could display the message twice.
+//
+// Verified against every rejection path in SDK 1.0.7's sendReply/
+// processReplyQueue/handleReplyAck/clearPendingMessages:
+//   pre-write, definite  → 'WebSocket not connected, unable to send data'
+//                          (send() threw before ws.send)
+//   pre-write, definite  → 'Reply queue for reqId … exceeds max size (…)'
+//                          (refused before enqueue)
+//   negative ack, definite → the raw ACK FRAME object with errcode ≠ 0
+//                          (the provider saw and rejected the message)
+//   post-write, UNKNOWN  → 'Reply ack timeout (…) for reqId: …'
+//   post-write, UNKNOWN  → '<reason>, reply for reqId: … cancelled'
+//   anything else        → UNKNOWN (fail toward refusing, never re-sending)
+//
+// Upload failures never come through here — an upload is invisible to the
+// chat, so re-running it is always safe.
+function isDefiniteSendFailure(err) {
+  if (err && typeof err.errcode === 'number' && err.errcode !== 0) return true;
+  const msg = String(err?.message ?? '');
+  if (/not connected/i.test(msg)) return true;
+  if (/^Reply queue for reqId .* exceeds max size/i.test(msg)) return true;
+  return false;
+}
+
+// sendErrorText renders any SDK rejection — Error or raw errcode ack
+// frame — as a message string for scrubbing/logging.
+function sendErrorText(err) {
+  if (err && typeof err.errcode === 'number') {
+    return `provider rejected the message: errcode ${err.errcode}${err.errmsg ? ` (${err.errmsg})` : ''}`;
+  }
+  return String(err?.message ?? err ?? 'unknown error');
 }
 
 // --- media file admission ------------------------------------------------------
@@ -1347,15 +1375,17 @@ export function createOutboundPublisher(deps) {
         try {
           frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId);
         } catch (err) {
-          if (isAckAmbiguous(err)) {
-            state.deliveryUnknown = true;
-            journal.record(key, { deliveryUnknown: true }, { critical: false });
-          } else {
-            // Definite non-delivery (never written / provider refused):
+          if (isDefiniteSendFailure(err)) {
+            // Provably pre-write, or an explicit provider rejection:
             // clear the attempt so the key stays retryable. Non-critical:
             // if this reset is lost, a restart over-refuses (delivery-
             // unknown) — the safe direction.
             journal.record(key, { sendAttempted: false }, { critical: false });
+          } else {
+            // Post-write or unrecognized: the frame may already be
+            // visible in the chat (round-2 finding 4 — default ambiguous).
+            state.deliveryUnknown = true;
+            journal.record(key, { deliveryUnknown: true }, { critical: false });
           }
           throw err;
         }
@@ -1374,11 +1404,11 @@ export function createOutboundPublisher(deps) {
               markdown: { content: chunks[i] },
             });
           } catch (err) {
-            if (isAckAmbiguous(err)) {
+            if (isDefiniteSendFailure(err)) {
+              journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
+            } else {
               state.deliveryUnknown = true;
               journal.record(key, { deliveryUnknown: true }, { critical: false });
-            } else {
-              journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
             }
             throw err;
           }
@@ -1404,11 +1434,11 @@ export function createOutboundPublisher(deps) {
         return;
       }
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
-      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${err.message}`);
+      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${sendErrorText(err)}`);
       if (state.deliveryUnknown) {
-        // Ack timeouts are NOT retryable failures (finding 3): the frame
-        // went out and WeCom may have displayed it.
-        failDeliveryUnknown(`${stage} stage: ${scrubErrorMessage(err.message)}`);
+        // Post-write failures without a negative acknowledgement are NOT
+        // retryable (findings 3/4): the frame may have been displayed.
+        failDeliveryUnknown(`${stage} stage: ${scrubErrorMessage(sendErrorText(err))}`);
         return;
       }
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1419,7 +1449,7 @@ export function createOutboundPublisher(deps) {
         conversation: convo,
         delivered: false,
         failure_kind: 'provider_error',
-        error: scrubErrorMessage(err.message),
+        error: scrubErrorMessage(sendErrorText(err)),
         // Echoed so the operator can rerun with the SAME key and resume
         // instead of duplicating whatever stages already delivered.
         idempotency_key: key,

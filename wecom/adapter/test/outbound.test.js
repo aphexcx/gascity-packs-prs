@@ -1146,6 +1146,98 @@ test('a crash between send-attempt and acknowledgement hydrates as delivery-unkn
   assert.equal(life2.calls.length, 0, 'the maybe-displayed media must not be sent again');
 });
 
+// Codex jg-d0xr round-2 finding 4: only timeout-shaped errors were treated
+// as ambiguous. The pinned SDK rejects already-written pending frames on
+// socket loss as "WebSocket connection closed (…), reply for reqId …
+// cancelled" — that did not match, sendAttempted was cleared, and a retry
+// could display the message twice. Every post-write failure without an
+// explicit negative acknowledgement is now delivery-unknown by default.
+test('a socket-loss cancellation after the frame was written is delivery-unknown', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      // Verbatim SDK 1.0.7 clearPendingMessages rejection shape.
+      throw new Error('WebSocket connection closed (code 1006, reason: ), reply for reqId: SEND_MSG_9 cancelled');
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-socket-loss',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'delivery_unknown');
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(sendAttempts, 1, 'a frame the socket may have carried must not be re-sent');
+});
+
+test('an unrecognized send failure defaults to delivery-unknown, never blind retry', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      throw new Error('something exploded mid-flight');
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-unrecognized',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'delivery_unknown');
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(sendAttempts, 1);
+});
+
+test('an explicit provider errcode rejection stays retryable', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        // The SDK rejects with the raw ack FRAME on errcode ≠ 0 — a
+        // negative acknowledgement: the provider saw it and refused it.
+        const frame = { errcode: 95001, errmsg: 'invalid chat' };
+        throw frame; // eslint-disable-line no-throw-literal
+      }
+      return { headers: { req_id: 'MSG_OK' } };
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-nack',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'provider_error');
+  assert.match(first.json().error, /errcode 95001/);
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 200, 'a negative acknowledgement is a definite non-delivery');
+  assert.equal(sendAttempts, 2);
+});
+
 test('a caption ack timeout is delivery-unknown too — the chunk is not re-sent', async (t) => {
   const dir = tmpDir(t);
   const file = writeFixture(dir, 'photo.png', pngBytes);
