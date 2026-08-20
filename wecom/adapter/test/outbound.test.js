@@ -9,6 +9,7 @@
 // the relocated text-publish behavior (chunking, retry dedup).
 
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -114,7 +115,14 @@ function makePublisher(overrides = {}) {
 
 async function publishMedia(publisher, body) {
   const res = fakeRes();
-  await publisher.handlePublishMedia({}, res, JSON.stringify(body));
+  // The CLI generates one idempotency key per logical invocation
+  // (finding 2) and the adapter refuses keyless media publishes; mirror
+  // the CLI here so each helper call is one fresh invocation. Tests
+  // exercising retries pass an explicit key.
+  const withKey = body.idempotency_key
+    ? body
+    : { ...body, idempotency_key: `test-${crypto.randomUUID()}` };
+  await publisher.handlePublishMedia({}, res, JSON.stringify(withKey));
   return res;
 }
 
@@ -355,6 +363,57 @@ test('missing file, empty file, relative path, symlink, and bad media_kind all 4
   assert.match(badKind.json().error, /media_kind must be one of: image, video/);
 
   assert.equal(calls.length, 0);
+});
+
+// --- idempotency key requirement (finding 2) --------------------------------------
+
+// Codex jg-d0xr finding 2: the adapter minted a fresh UUID per keyless
+// request, so a rerun after a lost HTTP response sent and recorded the
+// media AGAIN. The key now must come from the caller (the CLI generates
+// one per logical invocation) and is echoed in every response so operator
+// retries can reuse it.
+test('a media publish without an idempotency key is refused before any provider work', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher();
+
+  const res = fakeRes();
+  await publisher.handlePublishMedia({}, res, JSON.stringify({
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  }));
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json().error, /idempotency_key is required/);
+  assert.match(res.json().error, /--idempotency-key/);
+  assert.equal(calls.length, 0);
+});
+
+test('media responses echo the idempotency key on success and on failure', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) throw new Error('ws not connected');
+      return { headers: { req_id: 'MSG_OK' } };
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-echo',
+  };
+
+  const failed = await publishMedia(publisher, body);
+  assert.equal(failed.statusCode, 502);
+  assert.equal(failed.json().idempotency_key, 'key-echo');
+
+  const ok = await publishMedia(publisher, body);
+  assert.equal(ok.statusCode, 200);
+  assert.equal(ok.json().idempotency_key, 'key-echo');
 });
 
 // --- failure resume under one idempotency key ---------------------------------

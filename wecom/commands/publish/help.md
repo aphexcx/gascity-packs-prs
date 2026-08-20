@@ -40,6 +40,13 @@ gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "c
   conversation's (agent-)binding for recording to succeed — the message
   itself is delivered regardless, and a recording miss is reported as a
   `note:` on stderr.
+- `--idempotency-key` — reuse a previous invocation's key to RESUME a
+  failed or ambiguous media send without duplicating whatever already
+  reached the chat. Media sends generate one automatically per
+  invocation (echoed in the response, and in the retry hint printed on
+  failure); pass the echoed key back here when retrying by hand. The
+  key must be paired with the same chat/file/caption — the adapter
+  answers a mismatched reuse with HTTP 409.
 
 ## Transcript
 

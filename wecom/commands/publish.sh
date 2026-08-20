@@ -34,6 +34,7 @@ image=""
 video=""
 kind=""
 session="${GC_SESSION_ID:-}"
+idempotency_key=""
 
 require_value() {
   # $1 = flag name, $2 = arg count remaining (including the flag itself)
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
     --video)     require_value "$1" "$#"; video="$2"; shift 2 ;;
     --kind)      require_value "$1" "$#"; kind="$2"; shift 2 ;;
     --session)   require_value "$1" "$#"; session="$2"; shift 2 ;;
+    --idempotency-key) require_value "$1" "$#"; idempotency_key="$2"; shift 2 ;;
     --chat=*)      chat="${1#*=}"; shift ;;
     --text=*)      text="${1#*=}"; shift ;;
     --text-file=*) text_file="${1#*=}"; shift ;;
@@ -59,6 +61,7 @@ while [ $# -gt 0 ]; do
     --video=*)     video="${1#*=}"; shift ;;
     --kind=*)      kind="${1#*=}"; shift ;;
     --session=*)   session="${1#*=}"; shift ;;
+    --idempotency-key=*) idempotency_key="${1#*=}"; shift ;;
     -h|--help)
       cat "$(dirname "$0")/publish/help.md"
       exit 0
@@ -127,6 +130,18 @@ url="${WECOM_ADAPTER_URL:-${api_base}/v0/city/${city}/svc/wecom/publish}"
 # that are unsafe to interpolate into a shell command (apostrophes,
 # backticks, code snippets) — agents write the reply to a file instead.
 if [ -n "$media" ]; then
+  # One idempotency key per LOGICAL invocation, generated here — never per
+  # HTTP attempt. The adapter latches every delivery stage under this key,
+  # so the transport retries below and operator reruns (pass the echoed
+  # key back via --idempotency-key) resume the send instead of showing the
+  # user the media twice (codex jg-d0xr finding 2).
+  if [ -z "$idempotency_key" ]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+      idempotency_key="wecom-cli-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    else
+      idempotency_key="wecom-cli-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    fi
+  fi
   # The adapter reads the file from its own process, so the path must be
   # absolute (its working directory is not the caller's).
   case "$media" in
@@ -144,9 +159,10 @@ if [ -n "$media" ]; then
       --arg file "$media" \
       --arg media_kind "$media_kind" \
       --arg session "$session" \
+      --arg ikey "$idempotency_key" \
       --rawfile text "$text_file" \
       '{conversation: ({conversation_id: $chat} + (if $kind != "" then {kind: $kind} else {} end)),
-        file_path: $file, media_kind: $media_kind, text: $text}
+        file_path: $file, media_kind: $media_kind, text: $text, idempotency_key: $ikey}
        + (if $session != "" then {session_id: $session} else {} end)')
   else
     body=$(jq -n \
@@ -155,9 +171,10 @@ if [ -n "$media" ]; then
       --arg file "$media" \
       --arg media_kind "$media_kind" \
       --arg session "$session" \
+      --arg ikey "$idempotency_key" \
       --arg text "$text" \
       '{conversation: ({conversation_id: $chat} + (if $kind != "" then {kind: $kind} else {} end)),
-        file_path: $file, media_kind: $media_kind}
+        file_path: $file, media_kind: $media_kind, idempotency_key: $ikey}
        + (if $text != "" then {text: $text} else {} end)
        + (if $session != "" then {session_id: $session} else {} end)')
   fi
@@ -165,18 +182,32 @@ if [ -n "$media" ]; then
 elif [ -n "$text_file" ]; then
   body=$(jq -n \
     --arg chat "$chat" \
+    --arg ikey "$idempotency_key" \
     --rawfile text "$text_file" \
-    '{conversation: {conversation_id: $chat}, text: $text}')
+    '{conversation: {conversation_id: $chat}, text: $text}
+     + (if $ikey != "" then {idempotency_key: $ikey} else {} end)')
 else
   body=$(jq -n \
     --arg chat "$chat" \
+    --arg ikey "$idempotency_key" \
     --arg text "$text" \
-    '{conversation: {conversation_id: $chat}, text: $text}')
+    '{conversation: {conversation_id: $chat}, text: $text}
+     + (if $ikey != "" then {idempotency_key: $ikey} else {} end)')
+fi
+
+# Transport retries are safe ONLY because media requests carry the
+# invocation-stable idempotency key generated above — the adapter answers
+# a retried key from its latched state instead of re-sending. Text goes
+# through gc's own retrying machinery, so no curl retry there.
+retry_args=""
+if [ -n "$media" ]; then
+  retry_args="--retry 2 --retry-connrefused"
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
 # reaches the operator instead of being swallowed by `curl -f`.
-response=$(curl -sS -X POST "$url" \
+# shellcheck disable=SC2086  # retry_args is deliberately word-split
+response=$(curl -sS $retry_args -X POST "$url" \
   -H 'Content-Type: application/json' \
   -H 'X-GC-Request: gc-wecom' \
   -d "$body" \
@@ -188,6 +219,11 @@ payload=$(printf '%s' "$response" | sed '$d')
 if [ "$status" -ge 400 ] 2>/dev/null; then
   echo "gc wecom publish: adapter returned HTTP $status" >&2
   [ -n "$payload" ] && echo "$payload" >&2
+  # Failed or ambiguous media sends resume under the SAME key — repeating
+  # the command with a fresh key would deliver the media a second time.
+  if [ -n "$media" ] && [ "$status" -ge 429 ]; then
+    echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  fi
   exit 1
 fi
 
