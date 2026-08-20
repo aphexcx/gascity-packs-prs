@@ -42,6 +42,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 import {
   mimeTypeForFilename,
@@ -268,29 +269,51 @@ class ForbiddenError extends Error {}
 
 // --- outbound-media root confinement --------------------------------------------
 
-// assertConfinedMediaPath enforces the outbound-media root (codex jg-d0xr
-// finding 1): /publish-media may only read files under
-// WECOM_OUTBOUND_MEDIA_ROOT, and refuses symlinks ANYWHERE in the path.
-// Without it, any local caller able to reach the internal listener could
-// exfiltrate every image/video readable by the adapter to a WeCom chat —
-// the O_NOFOLLOW open protects only the FINAL component; symlinked parent
-// directories were traversed freely. Fail closed: no configured root, no
-// media publishing at all.
+// openConfinedMediaFile enforces the outbound-media root (codex jg-d0xr
+// finding 1, hardened in round 2): /publish-media may only read files
+// under WECOM_OUTBOUND_MEDIA_ROOT, refuses symlinks ANYWHERE in the path,
+// and — the round-2 point — leaves NO gap between the check and the open
+// that a rename/symlink swap could race. The round-1 walk lstat'ed each
+// component and then opened the ORIGINAL pathname: a process able to
+// write beneath the root could rename a checked directory and replace it
+// with a symlink before the open (O_NOFOLLOW protects only the final
+// component), escaping the root.
+//
+// This adapter runs on macOS, where openat2(RESOLVE_BENEATH |
+// RESOLVE_NO_SYMLINKS) does not exist and Node exposes no openat/fstatat.
+// The equivalent here is a SYNCHRONOUS chdir-anchored walk — the process
+// cwd plays the role of the directory descriptor:
+//
+//   1. chdir(realpath(root)) anchors the walk (the root path itself is
+//      operator-configured and trusted; everything BELOW it is not).
+//   2. Each component is looked up RELATIVELY — a single-component name,
+//      so the kernel never re-traverses the checked prefix — lstat'ed
+//      (any symlink refused), chdir'ed into, and then verified by
+//      stat('.') dev/ino against the lstat: if the entry was swapped
+//      between the lstat and the chdir (even dir-for-dir), the identity
+//      check fails and the request is refused. A symlink swapped in after
+//      its lstat lands the chdir at a different inode — refused too.
+//   3. The FINAL component is opened relatively with O_NOFOLLOW from the
+//      verified directory and fstat-verified against its lstat; the
+//      returned fd is what the caller reads — never the pathname again.
+//
+// The walk is fully synchronous, so no other JavaScript can observe the
+// temporarily-changed cwd (single thread, no awaits between the chdir and
+// the restore in `finally`). The one theoretical hazard — an ASYNC fs call
+// elsewhere in the process using a RELATIVE path resolving on the libuv
+// threadpool mid-walk — does not exist in this adapter: every fs path it
+// touches is absolute (file_path is validated absolute; store/journal
+// paths derive from absolute config). Residual vectors are documented in
+// the jg-d0xr round-2 fix report: a hard link to an out-of-root file
+// planted INSIDE the root defeats any path-based confinement (openat2
+// included) and requires in-root write access — the trust boundary the
+// root defines.
 //
 // The root is canonicalized per request (a root created after boot starts
 // working without a restart); the target is compared LEXICALLY against it
 // (no symlink resolution — a path that only reaches the root through a
-// link is refused, not normalized), then every component below the root
-// is lstat'ed and any symlink is rejected even if it would resolve back
-// inside the root. The O_NOFOLLOW open that follows re-checks the final
-// component at open time; racing a PARENT component into a symlink after
-// the walk requires write access inside the root itself, which is exactly
-// the trust boundary the root defines. Session/target authorization
-// stays where it lives today: gc's /extmsg/outbound checks the session's
-// binding when the transcript is recorded — the internal listener has no
-// pre-delivery authorization surface, which is why the filesystem scope
-// here must be airtight on its own.
-export async function assertConfinedMediaPath(filePath, outboundMediaRoot) {
+// link is refused, not normalized).
+export function openConfinedMediaFile(filePath, outboundMediaRoot) {
   if (!outboundMediaRoot) {
     throw new ForbiddenError(
       'outbound media publishing is disabled: WECOM_OUTBOUND_MEDIA_ROOT is not set — '
@@ -299,7 +322,7 @@ export async function assertConfinedMediaPath(filePath, outboundMediaRoot) {
   }
   let rootReal;
   try {
-    rootReal = await fs.promises.realpath(outboundMediaRoot);
+    rootReal = fs.realpathSync(outboundMediaRoot);
   } catch {
     throw new ForbiddenError(
       `outbound media publishing is disabled: WECOM_OUTBOUND_MEDIA_ROOT (${outboundMediaRoot}) does not resolve to an existing directory`,
@@ -310,20 +333,88 @@ export async function assertConfinedMediaPath(filePath, outboundMediaRoot) {
   if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
     throw new ForbiddenError(`file_path must live under the outbound media root ${rootReal}: ${filePath}`);
   }
-  let current = rootReal;
-  for (const part of rel.split(path.sep)) {
-    current = path.join(current, part);
-    let st;
+  const parts = rel.split(path.sep);
+  const cannotOpen = (err) => new ClientError(
+    `cannot open ${filePath} (${err.code ?? err.message}); pass an absolute path to a readable file under the outbound media root`,
+  );
+  const prevCwd = process.cwd();
+  let fd = null;
+  try {
     try {
-      st = await fs.promises.lstat(current);
-    } catch (err) {
-      throw new ClientError(`cannot open ${filePath} (${err.code ?? err.message}); pass an absolute path to a readable file under the outbound media root`);
+      process.chdir(rootReal);
+    } catch {
+      throw new ForbiddenError(
+        `outbound media publishing is disabled: WECOM_OUTBOUND_MEDIA_ROOT (${outboundMediaRoot}) does not resolve to an existing directory`,
+      );
     }
-    if (st.isSymbolicLink()) {
-      throw new ForbiddenError(`${current} is a symlink; symlinks are not allowed anywhere in an outbound media path — pass the real path under the outbound media root`);
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      let st;
+      try {
+        st = fs.lstatSync(part);
+      } catch (err) {
+        throw cannotOpen(err);
+      }
+      if (st.isSymbolicLink()) {
+        throw new ForbiddenError(
+          `${path.join(rootReal, ...parts.slice(0, i + 1))} is a symlink; symlinks are not allowed `
+          + 'anywhere in an outbound media path — pass the real path under the outbound media root',
+        );
+      }
+      if (i < parts.length - 1) {
+        if (!st.isDirectory()) throw cannotOpen({ code: 'ENOTDIR' });
+        try {
+          process.chdir(part);
+        } catch (err) {
+          throw cannotOpen(err);
+        }
+        // Identity check: the directory we LANDED in must be the inode the
+        // lstat saw. chdir itself would happily follow a symlink swapped
+        // in after the lstat; the dev/ino comparison catches exactly that
+        // (and any dir-for-dir swap), because the impostor is a different
+        // inode. This is the per-component RESOLVE_NO_SYMLINKS equivalent.
+        const here = fs.statSync('.');
+        if (here.dev !== st.dev || here.ino !== st.ino) {
+          throw new ForbiddenError(
+            `${filePath}: a path component changed while it was being verified — refusing to follow it; retry`,
+          );
+        }
+      } else {
+        try {
+          fd = fs.openSync(part, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        } catch (err) {
+          if (err.code === 'ELOOP' || err.code === 'EMLINK') {
+            throw new ForbiddenError(
+              `${resolved} is a symlink; symlinks are not allowed anywhere in an outbound media path — `
+              + 'pass the real path under the outbound media root',
+            );
+          }
+          throw cannotOpen(err);
+        }
+        // The open was relative to the VERIFIED directory, so even a raced
+        // regular-file swap stays confined; the fstat identity check just
+        // pins the bytes read to the inode the walk admitted.
+        const fst = fs.fstatSync(fd);
+        if (fst.dev !== st.dev || fst.ino !== st.ino) {
+          throw new ClientError(`${filePath} changed while it was being opened; retry`);
+        }
+      }
+    }
+    return { fd, resolvedPath: resolved };
+  } catch (err) {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    }
+    throw err;
+  } finally {
+    try {
+      process.chdir(prevCwd);
+    } catch {
+      // The original cwd vanished while we walked; land somewhere sane
+      // rather than staying parked inside the media root.
+      try { process.chdir(path.dirname(rootReal)); } catch { process.chdir('/'); }
     }
   }
-  return resolved;
 }
 
 // postJSONParsed mirrors inbound.js's postJSON (same headers, same 15s
@@ -350,27 +441,22 @@ async function postJSONParsed(target, body) {
   return resp.json().catch(() => ({}));
 }
 
-// readMediaFile opens, validates, and reads one local media file. Client
-// mistakes throw ClientError (→ HTTP 400 with the message verbatim);
-// anything else propagates. O_NOFOLLOW + stat-on-the-open-handle is the
-// same no-path-race hygiene as media.js's readVerifiedAudio: the size
-// check and the bytes read cannot be swapped out from under each other.
-// Asynchronous I/O throughout (codex jg-d0xr finding 9): a 10MB
-// synchronous read stalled the event loop — and with it every concurrent
-// send and the WS heartbeat — per request.
-async function readMediaFile(filePath, mediaKind, maxBytes) {
+// readMediaFile validates and reads one local media file FROM AN ALREADY
+// OPEN fd — the one openConfinedMediaFile's verified walk produced (codex
+// jg-d0xr round-2 finding 1: the pathname is never re-opened after the
+// check, so there is no window for a swap between them). Client mistakes
+// throw ClientError (→ HTTP 400 with the message verbatim); anything else
+// propagates. Asynchronous I/O for the bytes (codex jg-d0xr finding 9): a
+// 10MB synchronous read stalled the event loop — and with it every
+// concurrent send and the WS heartbeat — per request. Always closes the fd.
+const fdRead = promisify(fs.read);
+const fdClose = promisify(fs.close);
+const fdFstat = promisify(fs.fstat);
+
+async function readMediaFile({ fd, filePath, mediaKind, maxBytes }) {
   const spec = mediaKindSpecs[mediaKind];
-  let handle;
   try {
-    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
-  } catch (err) {
-    if (err.code === 'ELOOP' || err.code === 'EMLINK') {
-      throw new ClientError(`${filePath} is a symlink; pass the real file path`);
-    }
-    throw new ClientError(`cannot open ${filePath} (${err.code ?? err.message}); pass an absolute path to a readable file on the adapter host`);
-  }
-  try {
-    const st = await handle.stat();
+    const st = await fdFstat(fd);
     if (!st.isFile()) {
       throw new ClientError(`${filePath} is not a regular file`);
     }
@@ -387,7 +473,7 @@ async function readMediaFile(filePath, mediaKind, maxBytes) {
     const buffer = Buffer.alloc(st.size);
     let offset = 0;
     while (offset < st.size) {
-      const { bytesRead } = await handle.read(buffer, offset, st.size - offset, offset);
+      const { bytesRead } = await fdRead(fd, buffer, offset, st.size - offset, offset);
       if (bytesRead === 0) throw new ClientError(`${filePath} changed while reading (short read)`);
       offset += bytesRead;
     }
@@ -400,7 +486,7 @@ async function readMediaFile(filePath, mediaKind, maxBytes) {
     }
     return { buffer, size: st.size, detectedExtension: detected };
   } finally {
-    await handle.close();
+    await fdClose(fd).catch(() => {});
   }
 }
 
@@ -950,6 +1036,25 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
+    // Pre-delivery capability check (round-2 finding 1): gc's binding
+    // check runs only AFTER delivery, inside transcript recording, and
+    // only when a session_id was supplied — it never gates the send. The
+    // strongest pre-delivery target check the adapter can enforce without
+    // a gc authorization endpoint is inbound evidence: media may only be
+    // published to a conversation the adapter has SEEN talk to the bot
+    // (the persistent kind store learns every inbound conversation).
+    // WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS=true opts back into
+    // proactive media pushes to never-seen ids.
+    if (cfg.mediaRequireKnownConversation && !kindStore?.lookup(chatid)) {
+      token.finish(new Error(`unknown conversation ${chatid}`));
+      releaseUntouchedState(key, state);
+      fail403(
+        `media may only be published to conversations with inbound history (${chatid} has none) — `
+        + 'have the peer message the bot first, or set WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS=true on the adapter to allow proactive media pushes',
+      );
+      return;
+    }
+
     // Global admission BEFORE any file I/O (finding 9): a slot must be
     // held to allocate a media buffer at all; the queue cap turns a burst
     // into fast 429s instead of unbounded 10MB allocations. The slot is
@@ -973,12 +1078,13 @@ export function createOutboundPublisher(deps) {
 
     // Only the admitted owner touches the filesystem (finding 7): settled
     // and conflicting retries were answered above without any file access.
-    // Confinement first (finding 1) — the root check must precede the
-    // open, so nothing outside the outbound media root is ever read.
+    // The confined walk and the open are ONE operation (round-2 finding
+    // 1): the bytes are read from the fd the verified walk produced, so a
+    // rename/symlink swap after the check has nothing left to race.
     let media;
     try {
-      await assertConfinedMediaPath(filePath, cfg.outboundMediaRoot);
-      media = await readMediaFile(filePath, mediaKind, maxBytes);
+      const opened = openConfinedMediaFile(filePath, cfg.outboundMediaRoot);
+      media = await readMediaFile({ fd: opened.fd, filePath, mediaKind, maxBytes });
     } catch (err) {
       releaseUpload();
       token.finish(err);

@@ -89,7 +89,17 @@
 //	                       the endpoint would otherwise let any local
 //	                       caller send arbitrary adapter-readable files to
 //	                       a WeCom chat. Symlinks anywhere in a media path
-//	                       are rejected.
+//	                       are rejected, and the confinement walk is
+//	                       race-free (descriptor-anchored per-component
+//	                       traversal; the checked fd is what gets read).
+//	WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS
+//	                       "true" allows /publish-media to conversations
+//	                       the adapter has never seen inbound traffic
+//	                       from. Default false: media (the exfiltration-
+//	                       capable surface) only goes to chats with
+//	                       inbound evidence — the strongest pre-delivery
+//	                       target check available without a gc
+//	                       authorization endpoint.
 //	WECOM_IMAGE_MAX_BYTES  Outbound image cap (default 10485760 = 10MB —
 //	                       WeCom's own smart-robot limit; raise only if
 //	                       your tenant allows more).
@@ -194,6 +204,10 @@ function loadConfig() {
     // directory, and refuses everything (fail closed) when it is unset —
     // see assertConfinedMediaPath in src/outbound.js.
     outboundMediaRoot: getenv('WECOM_OUTBOUND_MEDIA_ROOT'),
+    // Pre-delivery capability gate (jg-d0xr round-2 finding 1): media
+    // sends require inbound evidence for the target conversation unless
+    // explicitly opened up.
+    mediaRequireKnownConversation: getenv('WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS') !== 'true',
     imageMaxBytes: intEnv('WECOM_IMAGE_MAX_BYTES', 10 * 1024 * 1024),
     videoMaxBytes: intEnv('WECOM_VIDEO_MAX_BYTES', 10 * 1024 * 1024),
     uploadTimeoutMs: intEnv('WECOM_UPLOAD_TIMEOUT_MS', 300000),

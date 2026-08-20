@@ -475,6 +475,99 @@ test('a root that does not exist fails closed instead of open', async (t) => {
   assert.equal(calls.length, 0);
 });
 
+// Round-2 finding 1: the round-1 walk lstat'ed every component and THEN
+// re-opened the original pathname — a writer beneath the root could
+// rename a checked directory into a symlink between the check and the
+// open and exfiltrate any adapter-readable file. This test wins that race
+// deterministically against the old code by hooking fs.promises.open (the
+// old open path) to perform the swap at the exact moment; the fixed walk
+// opens the file from the verified directory descriptor chain in one
+// synchronous operation, so the hook never fires and the swap never lands.
+test('a parent-dir symlink swap between check and open cannot escape the media root', async (t) => {
+  const dir = tmpDir(t);
+  const root = path.join(dir, 'root');
+  const sub = path.join(root, 'sub');
+  const secretDir = path.join(dir, 'secret');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.mkdirSync(secretDir);
+  const legit = writeFixture(sub, 'photo.png', pngBytes);
+  const secretBytes = Buffer.concat([pngBytes, Buffer.from(' SECRET-HOST-FILE')]);
+  fs.writeFileSync(path.join(secretDir, 'photo.png'), secretBytes);
+
+  const uploads = [];
+  const { publisher } = makePublisher({
+    cfg: { outboundMediaRoot: root },
+    uploadMedia: async (buffer) => {
+      uploads.push(Buffer.from(buffer));
+      return { media_id: 'MEDIA_RACE' };
+    },
+  });
+
+  // The attacker's rename+symlink swap, armed to fire inside the old
+  // check-to-open window.
+  const swapParentToSymlink = () => {
+    fs.renameSync(sub, `${sub}.stash`);
+    fs.symlinkSync(secretDir, sub);
+  };
+  const realOpen = fs.promises.open;
+  fs.promises.open = async (p, ...rest) => {
+    if (p === legit) swapParentToSymlink();
+    return realOpen.call(fs.promises, p, ...rest);
+  };
+  t.after(() => { fs.promises.open = realOpen; });
+
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: legit,
+    media_kind: 'image',
+  });
+
+  // Whatever the outcome (200 on the legit bytes, or a refusal if the
+  // swap landed mid-walk), the secret bytes must never reach the provider.
+  for (const uploaded of uploads) {
+    assert.ok(!uploaded.equals(secretBytes),
+      'an out-of-root file was uploaded: the check-to-open window is still exploitable');
+  }
+  if (res.statusCode === 200) {
+    assert.equal(uploads.length, 1);
+    assert.ok(uploads[0].equals(pngBytes), 'the confined file itself should have been read');
+  }
+});
+
+// Round-2 finding 1, authorization clause: gc's binding check runs only
+// after delivery (and only with a session_id), so the adapter enforces
+// the strongest PRE-delivery target check it can — media only goes to
+// conversations with inbound evidence — unless explicitly opened up.
+test('media publishes require inbound evidence for the target conversation when gated', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const kindStore = createConversationKindStore({ filePath: path.join(dir, 'kinds.json'), log: () => {} });
+  const { publisher, calls } = makePublisher({
+    kindStore,
+    cfg: { mediaRequireKnownConversation: true },
+  });
+
+  const refused = await publishMedia(publisher, {
+    conversation: { conversation_id: 'never_seen' },
+    file_path: file,
+    media_kind: 'image',
+  });
+  assert.equal(refused.statusCode, 403);
+  assert.equal(refused.json().failure_kind, 'forbidden');
+  assert.match(refused.json().error, /inbound history/);
+  assert.match(refused.json().error, /WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS/);
+  assert.equal(calls.length, 0, 'refused before any file or provider work');
+
+  // Inbound traffic from the conversation unlocks it.
+  kindStore.observe({ body: { chattype: 'single', from: { userid: 'zhang_san' } } });
+  const ok = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  });
+  assert.equal(ok.statusCode, 200);
+});
+
 // --- idempotency key requirement (finding 2) --------------------------------------
 
 // Codex jg-d0xr finding 2: the adapter minted a fresh UUID per keyless
