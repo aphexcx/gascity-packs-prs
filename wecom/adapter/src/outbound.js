@@ -776,6 +776,8 @@ export function createOutboundPublisher(deps) {
       fingerprint: e.fingerprint,
       mediaId: e.mediaId,
       mediaSent: !!e.mediaSent,
+      mediaSize: e.mediaSize,
+      uploadFilename: e.uploadFilename,
       messageID: e.messageID,
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
@@ -1237,94 +1239,123 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    // Global admission BEFORE any file I/O (finding 9): a slot must be
-    // held to allocate a media buffer at all; the queue cap turns a burst
-    // into fast 429s instead of unbounded 10MB allocations. The slot is
-    // released the moment the upload stage settles, in the send below.
-    let releaseUpload;
-    try {
-      releaseUpload = await uploadGate.acquire();
-    } catch (err) {
-      token.finish(err);
-      releaseUntouchedState(key, state);
-      res.writeHead(429, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        conversation: convo,
-        delivered: false,
-        failure_kind: 'overloaded',
-        error: err.message,
-        idempotency_key: key,
-      }));
-      return;
-    }
+    // A retry attaching to a still-running retained upload must NOT
+    // acquire another admission slot or reread the file (round-2 finding
+    // 5): the retained uploadRun already owns both the buffer and the
+    // slot. Only two shapes touch the gate and the filesystem — a fresh
+    // upload (slot held from before the read until the SDK settles the
+    // upload), and a latched-media_id resume (slot held just long enough
+    // to read + hash for the digest check, released before the sends).
+    const attachToRetainedUpload = !state.mediaId && !!state.uploadPromise;
 
-    // Only the admitted owner touches the filesystem (finding 7): settled
-    // and conflicting retries were answered above without any file access.
-    // The confined walk and the open are ONE operation (round-2 finding
-    // 1): the bytes are read from the fd the verified walk produced, so a
-    // rename/symlink swap after the check has nothing left to race.
-    let media;
-    try {
-      const opened = openConfinedMediaFile(filePath, cfg.outboundMediaRoot);
-      media = await readMediaFile({ fd: opened.fd, filePath, mediaKind, maxBytes });
-    } catch (err) {
-      releaseUpload();
-      token.finish(err);
-      releaseUntouchedState(key, state);
-      if (err instanceof ForbiddenError) {
-        fail403(err.message);
-        return;
-      }
-      if (err instanceof ClientError) {
-        fail400(err.message);
-        return;
-      }
-      throw err;
-    }
-    // Filename shown in the WeCom bubble: caller override, else the file's
-    // basename — sanitized, and always carrying the DETECTED extension so
-    // WeCom's own server-side type checks see a name that matches the
-    // bytes (a .png named photo.jpg uploads as photo.jpg.png, not a lie).
-    let filename = safeFilename(pub.filename || path.basename(filePath));
-    if (!filename.toLowerCase().endsWith(media.detectedExtension)) {
-      const jpegAlias = media.detectedExtension === '.jpg' && filename.toLowerCase().endsWith('.jpeg');
-      if (!jpegAlias) filename += media.detectedExtension;
-    }
-    const digest = crypto.createHash('sha256').update(media.buffer).digest('hex');
-    if (state.fingerprint) {
-      // A partial state carries the digest of the bytes already uploaded
-      // under this key; the same path re-read with DIFFERENT content must
-      // not ride that media_id.
-      if (state.fingerprint.digest !== digest) {
-        releaseUpload();
-        token.finish(new Error(`idempotency conflict on ${key}`));
-        fail409(['media digest']);
-        return;
-      }
-    } else {
-      // Journal the fingerprint BEFORE any provider write (finding 3):
-      // from here on, a restart can validate and resume this key. This
-      // write is CRITICAL — if it cannot be made durable, the send stops
-      // here (round-2 finding 3: swallowed journal failures let provider
-      // writes proceed as though the latches were durable).
-      const fingerprint = { ...probe, digest };
+    let releaseUpload = null;
+    let media = null;
+    if (!attachToRetainedUpload) {
+      // Global admission BEFORE any file I/O (finding 9): a slot must be
+      // held to allocate a media buffer at all; the queue cap turns a
+      // burst into fast 429s instead of unbounded 10MB allocations.
       try {
-        journal.record(key, { fingerprint });
+        releaseUpload = await uploadGate.acquire();
       } catch (err) {
-        if (err instanceof JournalUnavailableError) {
-          releaseUpload();
-          token.finish(err);
-          releaseUntouchedState(key, state);
-          fail503Journal(err.message);
-          return;
-        }
+        token.finish(err);
+        releaseUntouchedState(key, state);
+        res.writeHead(429, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          conversation: convo,
+          delivered: false,
+          failure_kind: 'overloaded',
+          error: err.message,
+          idempotency_key: key,
+        }));
+        return;
+      }
+
+      // Only the admitted owner touches the filesystem (finding 7):
+      // settled and conflicting retries were answered above without any
+      // file access. The confined walk and the open are ONE operation
+      // (round-2 finding 1): the bytes are read from the fd the verified
+      // walk produced, so a rename/symlink swap after the check has
+      // nothing left to race.
+      try {
+        const opened = openConfinedMediaFile(filePath, cfg.outboundMediaRoot);
+        media = await readMediaFile({ fd: opened.fd, filePath, mediaKind, maxBytes });
+      } catch (err) {
         releaseUpload();
         token.finish(err);
+        releaseUntouchedState(key, state);
+        if (err instanceof ForbiddenError) {
+          fail403(err.message);
+          return;
+        }
+        if (err instanceof ClientError) {
+          fail400(err.message);
+          return;
+        }
         throw err;
       }
-      state.endpoint = 'publish-media';
-      state.fingerprint = fingerprint;
+      // Filename shown in the WeCom bubble: caller override, else the
+      // file's basename — sanitized, and always carrying the DETECTED
+      // extension so WeCom's own server-side type checks see a name that
+      // matches the bytes (a .png named photo.jpg uploads as
+      // photo.jpg.png, not a lie).
+      let filename = safeFilename(pub.filename || path.basename(filePath));
+      if (!filename.toLowerCase().endsWith(media.detectedExtension)) {
+        const jpegAlias = media.detectedExtension === '.jpg' && filename.toLowerCase().endsWith('.jpeg');
+        if (!jpegAlias) filename += media.detectedExtension;
+      }
+      const digest = crypto.createHash('sha256').update(media.buffer).digest('hex');
+      if (state.fingerprint) {
+        // A partial state carries the digest of the bytes already uploaded
+        // under this key; the same path re-read with DIFFERENT content
+        // must not ride that media_id.
+        if (state.fingerprint.digest !== digest) {
+          releaseUpload();
+          token.finish(new Error(`idempotency conflict on ${key}`));
+          fail409(['media digest']);
+          return;
+        }
+        if (state.mediaSize === undefined) state.mediaSize = media.size;
+        if (!state.uploadFilename) state.uploadFilename = filename;
+      } else {
+        // Journal the fingerprint BEFORE any provider write (finding 3):
+        // from here on, a restart can validate and resume this key. This
+        // write is CRITICAL — if it cannot be made durable, the send stops
+        // here (round-2 finding 3: swallowed journal failures let provider
+        // writes proceed as though the latches were durable). mediaSize
+        // and uploadFilename latch alongside so attach-resumes (which
+        // never reread the file) can build the transcript entry.
+        const fingerprint = { ...probe, digest };
+        try {
+          journal.record(key, { fingerprint, mediaSize: media.size, uploadFilename: filename });
+        } catch (err) {
+          releaseUpload();
+          token.finish(err);
+          if (err instanceof JournalUnavailableError) {
+            releaseUntouchedState(key, state);
+            fail503Journal(err.message);
+            return;
+          }
+          throw err;
+        }
+        state.endpoint = 'publish-media';
+        state.fingerprint = fingerprint;
+        state.mediaSize = media.size;
+        state.uploadFilename = filename;
+      }
+      if (state.mediaId) {
+        // The upload is already latched — the buffer was only needed for
+        // the digest verification above. Free the slot before the
+        // (buffer-less) send stages rather than across them.
+        releaseUpload();
+        releaseUpload = null;
+      }
     }
+
+    // Everything the remaining stages need survives in the state latches,
+    // so attach-resumes work without the buffer.
+    const effectiveFilename = state.uploadFilename;
+    const effectiveDigest = state.fingerprint.digest;
+    const effectiveSize = state.mediaSize;
 
     const spec = mediaKindSpecs[mediaKind];
     const send = async () => {
@@ -1333,19 +1364,29 @@ export function createOutboundPublisher(deps) {
       // a re-upload wastes quota (30/min per robot), and a re-send shows
       // the user the media twice. Each latch is journaled the moment it
       // matters (finding 3) so the resume survives an adapter restart.
-      try {
-        if (!state.mediaId) {
-          if (!state.uploadPromise) {
-            // The upload promise is RETAINED until the SDK settles it
-            // (finding 3): withUploadDeadline only stops the wait — the
-            // chunked upload keeps running inside the SDK, and starting a
-            // second one on retry would double quota use and race two
-            // uploads of the same bytes over one connection. A retry
-            // re-awaits the same promise; if the abandoned upload
-            // eventually resolves, its media_id is latched out-of-band.
-            const uploadRun = Promise.resolve(
-              uploadMedia(media.buffer, { type: spec.wecomType, filename }),
-            ).then((uploaded) => {
+      if (!state.mediaId) {
+        if (!state.uploadPromise) {
+          // The upload promise is RETAINED until the SDK settles it
+          // (finding 3): withUploadDeadline only stops the wait — the
+          // chunked upload keeps running inside the SDK, and starting a
+          // second one on retry would double quota use and race two
+          // uploads of the same bytes over one connection. A retry
+          // re-awaits the same promise; if the abandoned upload
+          // eventually resolves, its media_id is latched out-of-band.
+          //
+          // The admission SLOT transfers to the uploadRun (round-2
+          // finding 5): it frees when the UPLOAD settles, not when a
+          // deadline-limited waiter gives up — the retained upload still
+          // owns the buffer, so releasing on the deadline made the
+          // global bound false exactly under the timeout it was meant to
+          // handle. A permanently hung upload therefore consumes its
+          // slot; that is the documented cost of having no SDK-level
+          // cancellation.
+          const slotRelease = releaseUpload;
+          releaseUpload = null;
+          const buffer = media.buffer;
+          const uploadRun = (async () => uploadMedia(buffer, { type: spec.wecomType, filename: effectiveFilename }))()
+            .then((uploaded) => {
               if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
               if (!state.mediaId) {
                 state.mediaId = uploaded.media_id;
@@ -1353,19 +1394,15 @@ export function createOutboundPublisher(deps) {
               }
               return uploaded;
             });
-            uploadRun.catch(() => {}); // retained without a live waiter
-            const clearRetention = () => {
-              if (state.uploadPromise === uploadRun) state.uploadPromise = undefined;
-            };
-            uploadRun.then(clearRetention, clearRetention);
-            state.uploadPromise = uploadRun;
-          }
-          await withUploadDeadline(state.uploadPromise);
+          uploadRun.catch(() => {}); // retained without a live waiter
+          const settleRetention = () => {
+            if (state.uploadPromise === uploadRun) state.uploadPromise = undefined;
+            slotRelease();
+          };
+          uploadRun.then(settleRetention, settleRetention);
+          state.uploadPromise = uploadRun;
         }
-      } finally {
-        // The buffer's provider-side use ends with the upload stage —
-        // free the admission slot before the (buffer-less) send stages.
-        releaseUpload();
+        await withUploadDeadline(state.uploadPromise);
       }
       if (!state.mediaSent) {
         // sendAttempted persists BEFORE the frame goes out: a crash in
@@ -1467,7 +1504,7 @@ export function createOutboundPublisher(deps) {
     };
     journal.record(key, { receipt: state.receipt }, { critical: false });
     token.finish();
-    log(`publish-media → ${chatid} ${mediaKind} delivered (${media.size} bytes, session=${pub.session_id ?? ''})`);
+    log(`publish-media → ${chatid} ${mediaKind} delivered (${effectiveSize} bytes, session=${pub.session_id ?? ''})`);
 
     let transcriptRecorded = false;
     let transcriptNote = '';
@@ -1485,7 +1522,14 @@ export function createOutboundPublisher(deps) {
           conversationID: chatid,
           kind,
           key,
-          text: transcriptTextFor({ mediaKind, filename, size: media.size, digest, filePath, caption }),
+          text: transcriptTextFor({
+            mediaKind,
+            filename: effectiveFilename,
+            size: effectiveSize,
+            digest: effectiveDigest,
+            filePath,
+            caption,
+          }),
         });
         transcriptRecorded = true;
       } catch (err) {

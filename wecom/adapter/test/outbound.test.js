@@ -1315,6 +1315,111 @@ test('a timed-out upload is retained: retries re-await it instead of uploading a
   assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
 });
 
+// --- upload admission under deadline abandonment (round-2 finding 5) -------------------
+
+// Codex jg-d0xr round-2 finding 5: when withUploadDeadline rejected, a
+// `finally` released the upload slot even though the retained uploadRun
+// was still executing and still owned the media buffer — new keys could
+// start more uploads after every deadline, so the claimed global bound
+// was false under the exact timeout it was meant to handle. The slot now
+// belongs to the uploadRun and frees only when the SDK settles it.
+test('a deadline-abandoned upload keeps its admission slot until the SDK settles it', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', jpgBytes);
+  let uploads = 0;
+  let resolveHung;
+  const hung = new Promise((r) => { resolveHung = r; });
+  const { publisher } = makePublisher({
+    cfg: { uploadMaxConcurrent: 1, uploadMaxQueue: 0 },
+    uploadMedia: async () => {
+      uploads += 1;
+      if (uploads === 1) return hung;
+      return { media_id: `MEDIA_${uploads}` };
+    },
+    withUploadDeadline: (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('media upload exceeded the 20ms wall-clock deadline')), 20)),
+    ]),
+  });
+
+  const first = await publishMedia(publisher, {
+    conversation: { conversation_id: 'chat_1' },
+    file_path: fileA,
+    media_kind: 'image',
+    idempotency_key: 'key-hung',
+  });
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'provider_error');
+
+  // The hung upload still owns the buffer AND the slot: a NEW key must be
+  // refused, not admitted to allocate another buffer and upload.
+  const newKeyBody = {
+    conversation: { conversation_id: 'chat_2' },
+    file_path: fileB,
+    media_kind: 'image',
+    idempotency_key: 'key-after-deadline',
+  };
+  const second = await publishMedia(publisher, newKeyBody);
+  assert.equal(second.statusCode, 429, 'the global upload bound must hold under the exact timeout it exists for');
+  assert.equal(uploads, 1, 'no second upload may start while the retained one consumes the slot');
+
+  // When the SDK finally settles the hung upload, the slot frees.
+  resolveHung({ media_id: 'MEDIA_LATE' });
+  await new Promise((r) => setImmediate(r));
+  const third = await publishMedia(publisher, newKeyBody);
+  assert.equal(third.statusCode, 200);
+  assert.equal(uploads, 2);
+});
+
+test('a same-key retry attaches to the retained upload without another slot or file read', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let uploads = 0;
+  let resolveHung;
+  const hung = new Promise((r) => { resolveHung = r; });
+  const { publisher, calls } = makePublisher({
+    cfg: { uploadMaxConcurrent: 1, uploadMaxQueue: 0 },
+    uploadMedia: async () => {
+      uploads += 1;
+      return hung;
+    },
+    withUploadDeadline: (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('media upload exceeded the 20ms wall-clock deadline')), 20)),
+    ]),
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-attach',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+
+  // Delete the file: the attach-resume needs neither the file nor a gate
+  // slot — the retained upload owns the buffer (and, with queue 0 and one
+  // slot consumed, acquiring would 429).
+  fs.rmSync(file);
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'provider_error',
+    'the attach-resume must wait on the retained upload — not 400 on the missing file or 429 on the gate');
+  assert.equal(uploads, 1);
+
+  // Late completion latches the media_id; a retry (file restored for the
+  // digest check) rides the retained upload's result.
+  resolveHung({ media_id: 'MEDIA_LATE' });
+  await new Promise((r) => setImmediate(r));
+  fs.writeFileSync(file, pngBytes);
+  const third = await publishMedia(publisher, body);
+  assert.equal(third.statusCode, 200);
+  assert.equal(uploads, 1, 'the retained upload is the only upload that ever ran');
+  assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
+});
+
 // --- journal durability: fail closed (round-2 finding 3) ------------------------------
 
 // Codex jg-d0xr round-2 finding 3: journal persistence was fail-open —
