@@ -1223,6 +1223,139 @@ test('a timed-out upload is retained: retries re-await it instead of uploading a
   assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
 });
 
+// --- journal durability: fail closed (round-2 finding 3) ------------------------------
+
+// Codex jg-d0xr round-2 finding 3: journal persistence was fail-open —
+// disk-full/permission/rename failures were logged and ignored, after
+// which provider writes proceeded as though sendAttempted were durable;
+// startup corruption was silently discarded and every key started fresh.
+// Either path can re-send media users already saw.
+test('a journal write failure stops the send before any provider work (fail closed)', async (t) => {
+  const dir = tmpDir(t);
+  const journalDir = path.join(dir, 'jdir');
+  fs.mkdirSync(journalDir);
+  const journalPath = path.join(journalDir, 'attempts.json');
+  const journal = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher({ journal });
+  // Take the journal directory read-only: the fingerprint latch cannot be
+  // made durable.
+  fs.chmodSync(journalDir, 0o500);
+  t.after(() => { try { fs.chmodSync(journalDir, 0o700); } catch { /* already restored */ } });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-journal-down',
+  };
+
+  const res = await publishMedia(publisher, body);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().failure_kind, 'journal_unavailable');
+  assert.equal(res.json().idempotency_key, 'key-journal-down');
+  assert.equal(calls.length, 0, 'no provider write may happen without a durable fingerprint');
+
+  // Once the journal is writable again, the SAME key sends cleanly.
+  fs.chmodSync(journalDir, 0o700);
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 200);
+});
+
+test('a journal failure after upload refuses BEFORE the aibot_send_msg frame goes out', async (t) => {
+  const dir = tmpDir(t);
+  const journalDir = path.join(dir, 'jdir');
+  fs.mkdirSync(journalDir);
+  const journalPath = path.join(journalDir, 'attempts.json');
+  const journal = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher({
+    journal,
+    // The journal dies exactly between the upload and the send.
+    uploadMedia: async () => {
+      fs.chmodSync(journalDir, 0o500);
+      return { media_id: 'MEDIA_J' };
+    },
+  });
+  t.after(() => { try { fs.chmodSync(journalDir, 0o700); } catch { /* restored */ } });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-journal-mid',
+  };
+
+  const res = await publishMedia(publisher, body);
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().failure_kind, 'journal_unavailable');
+  assert.equal(calls.filter((c) => c.op === 'sendMediaMessage').length, 0,
+    'sendAttempted must be durable before the frame may go out');
+
+  // The on-disk journal never claimed an attempt, so a fresh life resumes
+  // the key cleanly (re-uploading is safe: uploads are invisible).
+  fs.chmodSync(journalDir, 0o700);
+  const life2 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath, log: () => {} }) });
+  const retry = await publishMedia(life2.publisher, body);
+  assert.equal(retry.statusCode, 200, JSON.stringify(retry.json()));
+});
+
+test('startup corruption quarantines the journal and fails closed instead of starting empty', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  fs.writeFileSync(journalPath, '{definitely not json');
+  const journal = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(journal.isDegraded(), true);
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('attempts.json.corrupt-')),
+    'the corrupt file must be preserved for inspection, not discarded');
+
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher({ journal });
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-degraded',
+  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().failure_kind, 'journal_unavailable');
+  assert.match(res.json().error, /degraded/);
+  assert.equal(calls.length, 0, 'a degraded journal must refuse media publishes entirely');
+});
+
+test('a corrupt main journal recovers from the rotated backup generation', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const j1 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  j1.record('key-a', { fingerprint: { digest: 'd1' } });
+  j1.record('key-a', { mediaId: 'MEDIA_A' });
+  assert.ok(fs.existsSync(`${journalPath}.bak`), 'every persist rotates the previous generation to .bak');
+
+  // External damage to the main file — the previous generation survives.
+  fs.writeFileSync(journalPath, 'garbage{{{');
+  const j2 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(j2.isDegraded(), false);
+  assert.equal(j2.get('key-a')?.fingerprint?.digest, 'd1', 'recovered from the backup generation');
+  assert.ok(fs.readdirSync(dir).some((f) => f.startsWith('attempts.json.corrupt-')),
+    'the damaged main file is quarantined, not overwritten');
+});
+
+test('a crash between the backup rotation and the final rename recovers from the fsynced tmp', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const j1 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  j1.record('key-t', { fingerprint: { digest: 'old' } });
+  // Simulate the crash window: main was already rotated away, and the
+  // fsync'd tmp (the NEWEST generation) never got renamed into place.
+  fs.renameSync(journalPath, `${journalPath}.bak`);
+  fs.writeFileSync(`${journalPath}.tmp`, JSON.stringify({
+    version: 2,
+    entries: { 'key-t': { fingerprint: { digest: 'newest' }, mediaId: 'M_TMP' } },
+  }));
+
+  const j2 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(j2.isDegraded(), false);
+  assert.equal(j2.get('key-t')?.mediaId, 'M_TMP', 'the newest surviving generation wins');
+});
+
 // --- seeded receipt pinning (finding 6) ---------------------------------------------
 
 // Codex jg-d0xr finding 6: the just-settled media receipt sat in the

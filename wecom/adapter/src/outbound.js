@@ -162,6 +162,12 @@ export function createConversationKindStore({ filePath, log = () => {}, cap = 40
 
 // --- outbound attempt journal ---------------------------------------------------
 
+// Thrown when a CRITICAL journal write cannot be made durable, or when
+// the journal booted degraded. Answered as HTTP 503 failure_kind
+// "journal_unavailable": the send is refused rather than run without the
+// durable state a safe retry depends on (codex jg-d0xr round-2 finding 3).
+export class JournalUnavailableError extends Error {}
+
 // createAttemptJournal persists per-key media delivery progress ACROSS
 // restarts (codex jg-d0xr finding 3): stage latches lived only in memory,
 // so a restart forgot which uploads and sends had already happened and a
@@ -169,54 +175,179 @@ export function createConversationKindStore({ filePath, log = () => {}, cap = 40
 // stage mutation is journaled before the next provider action depends on
 // it — in particular sendAttempted is written BEFORE aibot_send_msg goes
 // out, so a crash in that window hydrates as delivery-unknown rather than
-// silently retryable. Same atomic tmp+rename, 0600 discipline as the
-// conversation-kind store; writes are small and media sends are capped at
-// 30/min by WeCom, so the synchronous write is not on a hot path.
+// silently retryable.
+//
+// Round-2 hardening: the journal FAILS CLOSED instead of open.
+//   - Critical writes (the pre-provider-write latches) succeed or THROW
+//     JournalUnavailableError; the caller must stop the send. Non-critical
+//     writes (post-delivery latches whose loss only makes a restart
+//     over-refuse via delivery-unknown) log and continue, but roll their
+//     in-memory mutation back so a later successful persist cannot
+//     resurrect a patch whose send was aborted.
+//   - Durability: the temp file is fsync'd before the atomic rename and
+//     the directory is fsync'd after it; the previous generation rotates
+//     to `<file>.bak` on every persist (one write behind, at most).
+//   - Startup corruption QUARANTINES the corrupt file (renamed aside,
+//     never silently discarded) and recovers from the newest valid
+//     generation — main, then the fsync'd tmp (a crash between the two
+//     renames leaves tmp as the newest survivor), then the backup. If no
+//     valid generation exists while corrupt ones do, the journal boots
+//     DEGRADED and every media publish is refused until an operator
+//     inspects the quarantined files — starting empty would re-send media
+//     users already saw.
+//
+// Retention policy (round-2 finding 7): entries are pruned only past
+// `cap` (default 512), oldest SETTLED first — a durable receipt is
+// dropped only when the journal is full of newer entries, and dropping a
+// non-settled entry (which loses its delivery-unknown protection) is the
+// documented last resort, logged when it happens.
+//
 // filePath null keeps the journal in memory only (tests).
 export function createAttemptJournal({ filePath = null, log = () => {}, cap = 512 } = {}) {
   const entries = new Map(); // key → { fingerprint, mediaId, sendAttempted, mediaSent, … }
+  let degraded = false;
+
+  // tryLoad → Map (valid), undefined (absent), or null (corrupt/unreadable).
+  const tryLoad = (p) => {
+    let raw;
+    try {
+      raw = fs.readFileSync(p, 'utf8');
+    } catch (err) {
+      if (err.code === 'ENOENT') return undefined;
+      log(`outbound attempt journal ${p} unreadable (${scrubErrorMessage(err.message)})`);
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.entries !== 'object' || parsed.entries === null) {
+        throw new Error('unexpected shape');
+      }
+      const m = new Map();
+      for (const [key, entry] of Object.entries(parsed.entries)) {
+        if (entry && typeof entry === 'object') m.set(key, entry);
+      }
+      return m;
+    } catch (err) {
+      log(`outbound attempt journal ${p} corrupt (${scrubErrorMessage(err.message)})`);
+      return null;
+    }
+  };
+
+  const quarantine = (p) => {
+    const dest = `${p}.corrupt-${Date.now()}`;
+    try {
+      fs.renameSync(p, dest);
+      log(`outbound attempt journal: quarantined ${p} → ${dest}`);
+    } catch (err) {
+      if (err.code !== 'ENOENT') log(`outbound attempt journal: could not quarantine ${p} (${scrubErrorMessage(err.message)})`);
+    }
+  };
 
   if (filePath) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-      for (const [key, entry] of Object.entries(raw?.entries ?? {})) {
-        if (entry && typeof entry === 'object') entries.set(key, entry);
+    let loaded;
+    let sawCorrupt = false;
+    for (const p of [filePath, `${filePath}.tmp`, `${filePath}.bak`]) {
+      const m = tryLoad(p);
+      if (m instanceof Map) {
+        loaded = m;
+        if (p !== filePath) log(`outbound attempt journal: recovered ${m.size} entries from ${p}`);
+        break;
       }
-    } catch (err) {
-      // Missing file is the normal first boot; anything else starts empty
-      // and logs — losing the journal degrades to the pre-journal world
-      // (retries may duplicate after a restart), never to a crash.
-      if (err.code !== 'ENOENT') log(`outbound attempt journal unreadable (${scrubErrorMessage(err.message)}); starting empty`);
+      if (m === null) {
+        sawCorrupt = true;
+        quarantine(p);
+      }
+    }
+    if (loaded) {
+      for (const [k, v] of loaded) entries.set(k, v);
+    } else if (sawCorrupt) {
+      degraded = true;
+      log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '
+        + 'media publishing fails closed until the quarantined journal files are inspected and removed');
     }
   }
 
   function persist() {
     if (!filePath) return;
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    const tmp = `${filePath}.tmp`;
+    const payload = JSON.stringify({ version: 2, entries: Object.fromEntries(entries) });
+    // fsync the temp file BEFORE the rename: an atomic rename of
+    // un-flushed data is atomically nothing after a power loss.
+    const fd = fs.openSync(tmp, 'w', 0o600);
     try {
-      fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-      const tmp = `${filePath}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify({ version: 1, entries: Object.fromEntries(entries) }), { mode: 0o600 });
-      fs.renameSync(tmp, filePath);
+      fs.writeFileSync(fd, payload);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    // Rotate the previous good generation to .bak, land the new one, and
+    // fsync the directory so both renames are durable.
+    try {
+      fs.renameSync(filePath, `${filePath}.bak`);
     } catch (err) {
-      log(`outbound attempt journal write failed: ${scrubErrorMessage(err.message)}`);
+      if (err.code !== 'ENOENT') throw err;
+    }
+    fs.renameSync(tmp, filePath);
+    const dirFd = fs.openSync(path.dirname(filePath), 'r');
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
     }
   }
 
   return {
-    record(key, patch) {
-      const merged = { ...(entries.get(key) ?? {}), ...patch, updatedAt: Date.now() };
+    // record merges `patch` into the key's entry and persists. critical
+    // (the default) throws JournalUnavailableError when durability cannot
+    // be established — callers must stop the send; critical:false logs,
+    // rolls the in-memory mutation back, and returns false.
+    record(key, patch, { critical = true } = {}) {
+      const fail = (err) => {
+        const wrapped = new JournalUnavailableError(
+          `the outbound attempt journal cannot be written (${err.code ?? scrubErrorMessage(err.message)}) — `
+          + 'refusing to send without durable delivery state; free disk space or fix permissions and retry with the same idempotency key',
+        );
+        if (critical) throw wrapped;
+        log(wrapped.message);
+        return false;
+      };
+      if (degraded) return fail(new Error('journal is degraded (quarantined corrupt state on startup)'));
+      const hadKey = entries.has(key);
+      const prev = entries.get(key);
+      const merged = { ...(prev ?? {}), ...patch, updatedAt: Date.now() };
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
+      const pruned = [];
       while (entries.size > cap) {
-        // Drop the oldest SETTLED entry first; failing that, the oldest of
-        // all — the journal must never be the thing that grows unbounded.
+        // Documented retention policy: drop the oldest SETTLED entry
+        // first; only when nothing is settled drop the oldest of all —
+        // that entry loses its delivery-unknown protection, so say so.
         let dropped = null;
         for (const [k, e] of entries) {
           if (e.receipt) { dropped = k; break; }
         }
-        entries.delete(dropped ?? entries.keys().next().value);
+        if (dropped === null) {
+          dropped = entries.keys().next().value;
+          log(`outbound attempt journal at cap ${cap} with nothing settled: dropping unresolved entry for a key (its restart-resume protection is lost)`);
+        }
+        pruned.push([dropped, entries.get(dropped)]);
+        entries.delete(dropped);
       }
-      persist();
+      try {
+        persist();
+      } catch (err) {
+        // Roll back: the caller aborts on a critical failure, and a later
+        // successful persist must not resurrect this patch as if the
+        // aborted action had happened.
+        entries.delete(key);
+        if (hadKey) entries.set(key, prev);
+        for (const [k, v] of pruned) {
+          if (!entries.has(k)) entries.set(k, v);
+        }
+        return fail(err);
+      }
+      return true;
     },
     get(key) {
       return entries.get(key);
@@ -226,6 +357,9 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
     },
     size() {
       return entries.size;
+    },
+    isDegraded() {
+      return degraded;
     },
   };
 }
@@ -992,6 +1126,26 @@ export function createOutboundPublisher(deps) {
         idempotency_key: key,
       }));
     };
+    const fail503Journal = (message) => {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'journal_unavailable',
+        error: message,
+        idempotency_key: key,
+      }));
+    };
+
+    // The attempt journal is what makes a retried key safe; without it the
+    // adapter must not send at all (round-2 finding 3 — fail closed).
+    if (journal.isDegraded?.()) {
+      fail503Journal(
+        'the outbound attempt journal booted degraded (corrupt state was quarantined on startup) — '
+        + 'media publishing is disabled until an operator inspects the quarantined journal files',
+      );
+      return;
+    }
 
     const claim = await claimPublishState(key);
     if (claim.refused) {
@@ -1120,11 +1274,28 @@ export function createOutboundPublisher(deps) {
         return;
       }
     } else {
-      state.endpoint = 'publish-media';
-      state.fingerprint = { ...probe, digest };
       // Journal the fingerprint BEFORE any provider write (finding 3):
-      // from here on, a restart can validate and resume this key.
-      journal.record(key, { fingerprint: state.fingerprint });
+      // from here on, a restart can validate and resume this key. This
+      // write is CRITICAL — if it cannot be made durable, the send stops
+      // here (round-2 finding 3: swallowed journal failures let provider
+      // writes proceed as though the latches were durable).
+      const fingerprint = { ...probe, digest };
+      try {
+        journal.record(key, { fingerprint });
+      } catch (err) {
+        if (err instanceof JournalUnavailableError) {
+          releaseUpload();
+          token.finish(err);
+          releaseUntouchedState(key, state);
+          fail503Journal(err.message);
+          return;
+        }
+        releaseUpload();
+        token.finish(err);
+        throw err;
+      }
+      state.endpoint = 'publish-media';
+      state.fingerprint = fingerprint;
     }
 
     const spec = mediaKindSpecs[mediaKind];
@@ -1150,7 +1321,7 @@ export function createOutboundPublisher(deps) {
               if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
               if (!state.mediaId) {
                 state.mediaId = uploaded.media_id;
-                journal.record(key, { mediaId: uploaded.media_id });
+                journal.record(key, { mediaId: uploaded.media_id }, { critical: false });
               }
               return uploaded;
             });
@@ -1178,17 +1349,19 @@ export function createOutboundPublisher(deps) {
         } catch (err) {
           if (isAckAmbiguous(err)) {
             state.deliveryUnknown = true;
-            journal.record(key, { deliveryUnknown: true });
+            journal.record(key, { deliveryUnknown: true }, { critical: false });
           } else {
             // Definite non-delivery (never written / provider refused):
-            // clear the attempt so the key stays retryable.
-            journal.record(key, { sendAttempted: false });
+            // clear the attempt so the key stays retryable. Non-critical:
+            // if this reset is lost, a restart over-refuses (delivery-
+            // unknown) — the safe direction.
+            journal.record(key, { sendAttempted: false }, { critical: false });
           }
           throw err;
         }
         state.messageID = frame?.headers?.req_id ?? state.messageID;
         state.mediaSent = true;
-        journal.record(key, { mediaSent: true, messageID: state.messageID ?? '' });
+        journal.record(key, { mediaSent: true, messageID: state.messageID ?? '' }, { critical: false });
       }
       if (caption) {
         const chunks = chunkText(caption);
@@ -1203,9 +1376,9 @@ export function createOutboundPublisher(deps) {
           } catch (err) {
             if (isAckAmbiguous(err)) {
               state.deliveryUnknown = true;
-              journal.record(key, { deliveryUnknown: true });
+              journal.record(key, { deliveryUnknown: true }, { critical: false });
             } else {
-              journal.record(key, { chunksAttempted: state.chunksDelivered });
+              journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
             }
             throw err;
           }
@@ -1214,7 +1387,7 @@ export function createOutboundPublisher(deps) {
           journal.record(key, {
             chunksDelivered: state.chunksDelivered,
             captionMessageID: state.captionMessageID ?? '',
-          });
+          }, { critical: false });
         }
       }
     };
@@ -1222,6 +1395,14 @@ export function createOutboundPublisher(deps) {
       await chainSend(chatid, send);
     } catch (err) {
       token.finish(err);
+      if (err instanceof JournalUnavailableError) {
+        // A CRITICAL pre-provider-write journal latch could not be made
+        // durable, so the send stopped BEFORE the frame went out (round-2
+        // finding 3). Nothing was delivered; the same key retries cleanly
+        // once the journal is writable again.
+        fail503Journal(err.message);
+        return;
+      }
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
       log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${err.message}`);
       if (state.deliveryUnknown) {
@@ -1254,7 +1435,7 @@ export function createOutboundPublisher(deps) {
       message_id: state.messageID ?? '',
       delivered: true,
     };
-    journal.record(key, { receipt: state.receipt });
+    journal.record(key, { receipt: state.receipt }, { critical: false });
     token.finish();
     log(`publish-media → ${chatid} ${mediaKind} delivered (${media.size} bytes, session=${pub.session_id ?? ''})`);
 
@@ -1305,7 +1486,7 @@ export function createOutboundPublisher(deps) {
       ...(transcriptNote ? { transcript_note: transcriptNote } : {}),
     };
     state.receipt = response;
-    journal.record(key, { receipt: response });
+    journal.record(key, { receipt: response }, { critical: false });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(response));
   }
