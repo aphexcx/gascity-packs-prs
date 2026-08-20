@@ -197,14 +197,18 @@ export class JournalUnavailableError extends Error {}
 //     inspects the quarantined files — starting empty would re-send media
 //     users already saw.
 //
-// Retention policy (round-2 finding 7): entries are pruned only past
-// `cap` (default 512), oldest SETTLED first — a durable receipt is
-// dropped only when the journal is full of newer entries, and dropping a
-// non-settled entry (which loses its delivery-unknown protection) is the
-// documented last resort, logged when it happens.
+// Retention policy (round-2 findings 7 and 12): entries are pruned past
+// `cap` (default 512) AND past `maxBytes` of serialized journal (default
+// 4 MiB), oldest SETTLED first — a durable receipt is dropped only when
+// the journal is full of newer entries, and dropping a non-settled entry
+// (which loses its delivery-unknown protection) is the documented last
+// resort, logged when it happens. Per-entry size is itself bounded (the
+// key is byte-capped and captions are persisted as fixed-size hashes —
+// see handlePublishMedia), which is what keeps the full-rewrite persist
+// below cheap enough to run per stage latch.
 //
 // filePath null keeps the journal in memory only (tests).
-export function createAttemptJournal({ filePath = null, log = () => {}, cap = 512 } = {}) {
+export function createAttemptJournal({ filePath = null, log = () => {}, cap = 512, maxBytes = 4 * 1024 * 1024 } = {}) {
   const entries = new Map(); // key → { fingerprint, mediaId, sendAttempted, mediaSent, … }
   let degraded = false;
 
@@ -320,17 +324,23 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
       const pruned = [];
-      while (entries.size > cap) {
-        // Documented retention policy: drop the oldest SETTLED entry
-        // first; only when nothing is settled drop the oldest of all —
-        // that entry loses its delivery-unknown protection, so say so.
+      // Retention policy (round-2 findings 7, 12): bound BOTH the entry
+      // count and the total serialized bytes. Per-entry size is already
+      // bounded (capped key, hashed caption), so the byte cap is a
+      // belt-and-suspenders guard against a pathological in-cap burst.
+      // Drop the oldest SETTLED entry first; only when nothing is settled
+      // drop the oldest of all — that entry loses its delivery-unknown
+      // protection, so say so.
+      const overBytes = () =>
+        Buffer.byteLength(JSON.stringify({ version: 2, entries: Object.fromEntries(entries) })) > maxBytes;
+      while (entries.size > cap || (entries.size > 1 && overBytes())) {
         let dropped = null;
         for (const [k, e] of entries) {
           if (e.receipt) { dropped = k; break; }
         }
         if (dropped === null) {
           dropped = entries.keys().next().value;
-          log(`outbound attempt journal at cap ${cap} with nothing settled: dropping unresolved entry for a key (its restart-resume protection is lost)`);
+          log('outbound attempt journal at capacity with nothing settled: dropping unresolved entry for a key (its restart-resume protection is lost)');
         }
         pruned.push([dropped, entries.get(dropped)]);
         entries.delete(dropped);
@@ -429,6 +439,16 @@ const mediaKindSpecs = {
 
 class ClientError extends Error {}
 class ForbiddenError extends Error {}
+
+// Field byte limit for the idempotency key (round-2 finding 12): it is a
+// persistent map/journal key, so an unbounded one is unbounded metadata.
+const MAX_IDEMPOTENCY_KEY_BYTES = 256;
+
+// sha256Hex renders a fixed-size fingerprint of an unbounded text field
+// (round-2 finding 12): captions and transcript texts are persisted as
+// hashes, never verbatim — equality comparison is unchanged, journal
+// growth is not.
+const sha256Hex = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
 // --- outbound-media root confinement --------------------------------------------
 
@@ -1039,7 +1059,7 @@ export function createOutboundPublisher(deps) {
         const exp = claim.state.expectedTranscript;
         const isRecordingCallback = !!exp
           && exp.conversation_id === chatid
-          && exp.text === pub.text;
+          && exp.text_sha256 === sha256Hex(pub.text);
         if (!isRecordingCallback) {
           res.writeHead(409, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
@@ -1218,6 +1238,15 @@ export function createOutboundPublisher(deps) {
       fail400('idempotency_key is required: gc wecom publish generates one per invocation — pass --idempotency-key to reuse a previous one across retries');
       return;
     }
+    // Field byte limits (round-2 finding 12): the 1MiB listener body cap
+    // does not bound a SINGLE field. The idempotency key is a map key AND
+    // a journal key, persisted forever — cap it. (Captions are bounded by
+    // being stored as a fixed-size hash in the fingerprint below, so no
+    // content limit is imposed on them beyond the body cap.)
+    if (Buffer.byteLength(key) > MAX_IDEMPOTENCY_KEY_BYTES) {
+      fail400(`idempotency_key must be at most ${MAX_IDEMPOTENCY_KEY_BYTES} bytes`);
+      return;
+    }
 
     // The request-level operation fingerprint (finding 4): idempotency
     // state keyed by the key ALONE let a retried key with a different
@@ -1226,13 +1255,34 @@ export function createOutboundPublisher(deps) {
     // Every reuse of a key must describe the SAME logical send; anything
     // else is answered 409, never partially resumed. The media digest
     // joins the fingerprint once the owner has read the file below.
+    //
+    // Fingerprint values are NORMALIZED SEMANTIC values, and BOUNDED
+    // (round-2 findings 11, 12):
+    //   - file_path is lexically normalized (path.resolve), so the CLI's
+    //     `pwd`-prefixed `./photo.png` and a bare `photo.png` fingerprint
+    //     IDENTICALLY instead of falsely 409-ing a legitimate retry.
+    //   - filename is the EFFECTIVE sanitized upload filename (caller
+    //     override or the file's basename, through safeFilename — which
+    //     also byte-caps it), so equivalent expressions of the same name
+    //     match; the detected-extension suffix depends on the bytes and
+    //     is covered by the digest.
+    //   - kind is the EFFECTIVE dm/room the transcript ref will use and
+    //     session_id is the recording identity — round 1 excluded both,
+    //     so they could silently change across a partial retry and record
+    //     the transcript under a different ref/session than the attempt
+    //     that delivered.
+    //   - the caption is stored as a fixed-size sha-256 (a large caption
+    //     no longer bloats the persistent journal, and comparison is
+    //     unchanged — a different caption still hashes differently).
     const probe = {
       endpoint: 'publish-media',
       conversation_id: chatid,
+      kind: resolveKind(convo.kind, chatid),
+      session_id: typeof pub.session_id === 'string' ? pub.session_id : '',
       media_kind: mediaKind,
-      file_path: filePath,
-      filename: typeof pub.filename === 'string' ? pub.filename : '',
-      caption,
+      file_path: path.resolve(filePath),
+      filename: safeFilename(pub.filename || path.basename(filePath)),
+      caption: caption ? sha256Hex(caption) : '',
     };
     const fail409 = (fields) => {
       res.writeHead(409, { 'Content-Type': 'application/json' });
@@ -1397,8 +1447,9 @@ export function createOutboundPublisher(deps) {
       // file's basename — sanitized, and always carrying the DETECTED
       // extension so WeCom's own server-side type checks see a name that
       // matches the bytes (a .png named photo.jpg uploads as
-      // photo.jpg.png, not a lie).
-      let filename = safeFilename(pub.filename || path.basename(filePath));
+      // photo.jpg.png, not a lie). Starts from the fingerprinted sanitized
+      // name (finding 11) so the fingerprint and the upload never drift.
+      let filename = probe.filename;
       if (!filename.toLowerCase().endsWith(media.detectedExtension)) {
         const jpegAlias = media.detectedExtension === '.jpg' && filename.toLowerCase().endsWith('.jpeg');
         if (!jpegAlias) filename += media.detectedExtension;
@@ -1611,7 +1662,12 @@ export function createOutboundPublisher(deps) {
     let transcriptRecorded = false;
     let transcriptNote = '';
     if (pub.session_id) {
-      const kind = resolveKind(convo.kind, chatid);
+      // The fingerprinted effective kind (finding 11), not a fresh
+      // resolveKind: the kind store may have learned between the probe and
+      // this point (or between the delivering attempt and a finalizing
+      // retry), and the transcript ref must be the one the fingerprint
+      // bound.
+      const kind = state.fingerprint?.kind ?? resolveKind(convo.kind, chatid);
       const transcriptText = transcriptTextFor({
         mediaKind,
         filename: effectiveFilename,
@@ -1627,7 +1683,10 @@ export function createOutboundPublisher(deps) {
       // legitimate ordinary text publish that merely collided on the key
       // is refused (409) instead of silently getting the media receipt and
       // sending nothing. Journaled so late/post-restart callbacks match.
-      state.expectedTranscript = { conversation_id: chatid, text: transcriptText };
+      // The text is stored as a fixed-size hash (round-2 finding 12): the
+      // transcript text embeds the caption verbatim, and journaling it raw
+      // re-created exactly the caption bloat the fingerprint hash removed.
+      state.expectedTranscript = { conversation_id: chatid, text_sha256: sha256Hex(transcriptText) };
       journal.record(key, { expectedTranscript: state.expectedTranscript }, { critical: false });
       // Pin the receipt for the whole recording round-trip (finding 6):
       // the seed in its own lookup guarantees the callback a hit, and

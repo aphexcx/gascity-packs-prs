@@ -917,6 +917,164 @@ test('a settled key retried after the file is gone still answers the cached rece
   assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage']);
 });
 
+// Codex jg-d0xr round-2 finding 11: the fingerprint stored the raw path,
+// so a retry of the same file expressed differently (the CLI prefixes
+// pwd, yielding `/abs/./photo.png` vs `/abs/photo.png`) produced a
+// different fingerprint and a spurious 409. Paths are lexically normalized
+// before fingerprinting now.
+test('the same file expressed as ./x and x fingerprints identically (no spurious 409)', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher } = makePublisher();
+  const key = 'key-path-norm';
+
+  const first = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+  assert.equal(first.statusCode, 200);
+
+  // The CLI's pwd-prefix of a relative arg produces a non-normalized but
+  // equivalent absolute path; it must be treated as the identical send.
+  // (Built by hand — path.join would collapse the dot segments and test
+  // nothing.)
+  const denormalized = `${dir}${path.sep}.${path.sep}photo.png`;
+  assert.notEqual(denormalized, file);
+  assert.equal(path.resolve(denormalized), file);
+  const retry = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: denormalized,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+  assert.equal(retry.statusCode, 200, 'a lexically-equivalent path must not 409');
+  assert.equal(retry.json().message_id, first.json().message_id);
+});
+
+// Codex jg-d0xr round-2 finding 12: a large caption was copied verbatim
+// into the persistent journal — once through the fingerprint, and once
+// through the expected-transcript callback fingerprint (whose text embeds
+// the caption). Both are stored as fixed-size hashes now, and the
+// idempotency key has a byte limit.
+test('a large caption is not stored verbatim in the journal, and an oversized key is refused', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const bigCaption = '很长的说明。'.repeat(2000); // well over any field
+  const journal = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  const { publisher } = makePublisher({ journal });
+
+  const res = await publishMedia(publisher, {
+    session_id: 'sess-mayor', // recording persists the expected-transcript fingerprint too
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    text: bigCaption,
+    idempotency_key: 'key-big-caption',
+  });
+  assert.equal(res.statusCode, 200);
+  const persisted = fs.readFileSync(journalPath, 'utf8');
+  assert.ok(!persisted.includes('很长的说明'), 'the raw caption must not be persisted in the journal');
+  const entry = journal.get('key-big-caption');
+  assert.match(entry.fingerprint.caption, /^[0-9a-f]{64}$/, 'the caption is fingerprinted as a sha-256');
+  assert.match(entry.expectedTranscript.text_sha256, /^[0-9a-f]{64}$/,
+    'the expected transcript text (which embeds the caption) is persisted as a sha-256');
+
+  // An oversized idempotency key is refused before any work.
+  const oversize = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'k'.repeat(300),
+  });
+  assert.equal(oversize.statusCode, 400);
+  assert.match(oversize.json().error, /idempotency_key must be at most 256 bytes/);
+});
+
+// Codex jg-d0xr round-2 finding 11 (the other half): conversation.kind and
+// session_id were EXCLUDED from the fingerprint, so both could silently
+// change across a partial retry — recording the transcript under a
+// different ref or session than the attempt that delivered.
+test('reusing a key with a different session or effective kind answers 409', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher();
+  const body = {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-identity-fields',
+  };
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 200);
+  const callsAfterFirst = calls.length;
+
+  for (const [mutation, field] of [
+    [{ session_id: 'sess-other' }, 'session_id'],
+    [{ conversation: { conversation_id: 'zhang_san', kind: 'room' } }, 'kind'],
+  ]) {
+    const res = await publishMedia(publisher, { ...body, ...mutation });
+    assert.equal(res.statusCode, 409, JSON.stringify(mutation));
+    assert.match(res.json().error, new RegExp(`mismatched:.*${field}`));
+  }
+  const identical = await publishMedia(publisher, body);
+  assert.equal(identical.statusCode, 200);
+  assert.equal(calls.length, callsAfterFirst, 'no provider traffic for conflicting or deduped retries');
+});
+
+// Finding 11: the fingerprint filename is the EFFECTIVE sanitized name,
+// so a retry that spells the same upload name differently (explicit
+// filename equal to the file's basename, where the original omitted it)
+// is the identical send — not a 409.
+test('an explicit filename equal to the effective basename fingerprints identically', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher } = makePublisher();
+  const key = 'key-filename-norm';
+
+  const first = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+  assert.equal(first.statusCode, 200);
+
+  const retry = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    filename: 'photo.png',
+    idempotency_key: key,
+  });
+  assert.equal(retry.statusCode, 200, 'an equivalent filename expression must not 409');
+  assert.equal(retry.json().message_id, first.json().message_id);
+});
+
+// Codex jg-d0xr round-2 finding 12: the journal is also bounded in BYTES,
+// not just entry count — oldest settled entries are pruned once the
+// serialized journal would exceed maxBytes.
+test('the attempt journal prunes oldest settled entries past its byte cap', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const maxBytes = 4096;
+  const journal = createAttemptJournal({ filePath: journalPath, log: () => {}, cap: 1000, maxBytes });
+
+  const padding = 'x'.repeat(300);
+  for (let i = 0; i < 40; i++) {
+    journal.record(`key-${i}`, { receipt: { delivered: true, note: padding } });
+  }
+
+  assert.ok(journal.size() < 40, 'entries beyond the byte cap are pruned');
+  assert.equal(journal.get('key-0'), undefined, 'the oldest settled entry goes first');
+  assert.ok(journal.get('key-39'), 'the newest entry survives');
+  const persistedBytes = fs.statSync(journalPath).size;
+  assert.ok(persistedBytes <= maxBytes, `persisted journal (${persistedBytes}B) stays within maxBytes (${maxBytes}B)`);
+});
+
 // --- owner claim under concurrent retries (finding 5) ----------------------------
 
 // Codex jg-d0xr finding 5: claimPublishState was async and left installing
