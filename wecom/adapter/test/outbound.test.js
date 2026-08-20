@@ -605,6 +605,7 @@ test('a settled media key answers retries from the receipt without new sends', a
   const file = writeFixture(dir, 'photo.png', pngBytes);
   const { publisher, calls } = makePublisher();
   const body = {
+    session_id: 'sess-mayor',
     conversation: { conversation_id: 'zhang_san' },
     file_path: file,
     media_kind: 'image',
@@ -615,6 +616,11 @@ test('a settled media key answers retries from the receipt without new sends', a
   const second = await publishMedia(publisher, body);
   assert.equal(second.statusCode, 200);
   assert.equal(second.json().message_id, first.json().message_id);
+  // The COMPLETE response is cached (finding 8): the retry keeps media_id
+  // and the transcript outcome instead of degrading to a bare receipt.
+  assert.deepEqual(second.json(), first.json());
+  assert.equal(second.json().media_id, 'MEDIA_1');
+  assert.equal(second.json().transcript_recorded, true);
   assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage']);
 });
 

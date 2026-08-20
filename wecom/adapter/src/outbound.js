@@ -1182,15 +1182,26 @@ export function createOutboundPublisher(deps) {
       transcriptNote = 'delivered, but not recorded in the extmsg transcript: no session_id supplied (set GC_SESSION_ID or pass --session)';
     }
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+    // Cache the COMPLETE media response as the receipt (finding 8, the
+    // adapter-side half): a settled-key retry used to get back only the
+    // bare {conversation, message_id, delivered} and lose media_id and
+    // the transcript outcome. Recording itself stays single-shot — the
+    // safe retry-repair of an AMBIGUOUS recording failure needs gc-side
+    // dedup of transcript appends first (an ambiguous /extmsg/outbound
+    // may have appended; re-posting could double the transcript entry),
+    // so a recording miss remains a truthful transcript_recorded:false.
+    const response = {
       ...state.receipt,
       media_id: state.mediaId,
       idempotency_key: key,
       ...(state.captionMessageID ? { caption_message_id: state.captionMessageID } : {}),
       transcript_recorded: transcriptRecorded,
       ...(transcriptNote ? { transcript_note: transcriptNote } : {}),
-    }));
+    };
+    state.receipt = response;
+    journal.record(key, { receipt: response });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(response));
   }
 
   return {
