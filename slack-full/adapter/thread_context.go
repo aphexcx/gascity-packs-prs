@@ -301,7 +301,14 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 // resolveName maps a Slack user id to a display name for the author
 // line (hq-uxln9); nil renders the raw id (pre-fix behavior, and what
 // the table tests exercise).
-func formatThreadContextPreamble(replies []slackThreadMessage, currentTS, sinceTS string, resolveName func(string) string) string {
+//
+// alreadyDelivered reports whether this audience already received the
+// message as its own inbound (gp-729 item 2); such priors — the thread
+// parent above all — collapse to a one-line count instead of a full
+// re-quote. nil disables the filter (every prior quotes in full, the
+// pre-gp-729 behavior). The conservative direction is always the full
+// quote: an empty delivered-set only ever re-quotes, never loses.
+func formatThreadContextPreamble(replies []slackThreadMessage, currentTS, sinceTS string, resolveName func(string) string, alreadyDelivered func(string) bool) string {
 	var prior []slackThreadMessage
 	for _, m := range replies {
 		if m.TS == "" {
@@ -324,13 +331,37 @@ func formatThreadContextPreamble(replies []slackThreadMessage, currentTS, sinceT
 	if len(prior) == 0 {
 		return ""
 	}
+	var quoted []slackThreadMessage
+	deliveredCount := 0
+	deliveredNewest := ""
+	for _, m := range prior {
+		if alreadyDelivered != nil && alreadyDelivered(m.TS) {
+			deliveredCount++
+			if m.TS > deliveredNewest {
+				deliveredNewest = m.TS
+			}
+			continue
+		}
+		quoted = append(quoted, m)
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Thread context (%d earlier message", len(prior))
-	if len(prior) != 1 {
+	if deliveredCount > 0 {
+		fmt.Fprintf(&b, "Thread context: %d earlier message", deliveredCount)
+		if deliveredCount != 1 {
+			b.WriteByte('s')
+		}
+		fmt.Fprintf(&b, " already delivered (newest ts %s) — not re-quoted.\n", deliveredNewest)
+	}
+	if len(quoted) == 0 {
+		b.WriteString("\n---\n\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Thread context (%d earlier message", len(quoted))
+	if len(quoted) != 1 {
 		b.WriteByte('s')
 	}
 	b.WriteString("):\n")
-	for _, m := range prior {
+	for _, m := range quoted {
 		author := m.User
 		if author != "" && resolveName != nil {
 			author = resolveName(author)

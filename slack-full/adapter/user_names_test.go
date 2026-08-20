@@ -163,7 +163,7 @@ func TestPreambleAuthorsResolve(t *testing.T) {
 		{TS: "1.0", User: "U111", Text: "kicking off"},
 		{TS: "2.0", User: "U999", Text: "ack"},
 	}
-	got := formatThreadContextPreamble(replies, "3.0", "", resolveName)
+	got := formatThreadContextPreamble(replies, "3.0", "", resolveName, nil)
 	want := "Thread context (2 earlier messages):\n@Afik: kicking off\n@U999: ack\n\n---\n\n"
 	if got != want {
 		t.Errorf("preamble:\ngot:  %q\nwant: %q", got, want)
