@@ -506,6 +506,127 @@ test('a settled media key answers retries from the receipt without new sends', a
   assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage']);
 });
 
+// --- idempotency fingerprint (finding 4) and file-free settled retries (finding 7) —
+
+// Codex jg-d0xr finding 4: state keyed by the key alone let a retried key
+// carry a DIFFERENT chat/file/caption and inherit the previous attempt's
+// latched media_id — file A delivered under B's request, B's metadata
+// recorded for it. Every reuse must describe the identical send or 409.
+test('a settled key retried with a different chat, file, or caption answers 409', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', jpgBytes);
+  const { publisher, calls } = makePublisher();
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: fileA,
+    media_kind: 'image',
+    text: 'caption A',
+    idempotency_key: 'key-fp-settled',
+  };
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 200);
+  const callsAfterFirst = calls.length;
+
+  for (const mutation of [
+    { conversation: { conversation_id: 'li_si' } },
+    { file_path: fileB },
+    { text: 'caption B' },
+  ]) {
+    const res = await publishMedia(publisher, { ...body, ...mutation });
+    assert.equal(res.statusCode, 409, JSON.stringify(mutation));
+    assert.equal(res.json().failure_kind, 'idempotency_conflict');
+    assert.equal(res.json().idempotency_key, 'key-fp-settled');
+  }
+  const identical = await publishMedia(publisher, body);
+  assert.equal(identical.statusCode, 200);
+  assert.equal(calls.length, callsAfterFirst, 'no provider traffic for conflicting or deduped retries');
+});
+
+test('a failed key retried with different bytes at the same path never rides the latched media_id', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher, calls } = makePublisher({
+    sendMediaMessage: async (chatid, type, mediaId) => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) throw new Error('ws not connected');
+      calls.push({ op: 'sendMediaMessage', chatid, type, mediaId });
+      return { headers: { req_id: 'MSG_OK' } };
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-fp-partial',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502, 'upload latched, send failed');
+
+  // Same path, different content: the latched media_id belongs to the OLD
+  // bytes — resuming would show the user content nobody asked to send.
+  fs.writeFileSync(file, gifBytes);
+  const swapped = await publishMedia(publisher, body);
+  assert.equal(swapped.statusCode, 409);
+  assert.match(swapped.json().error, /media digest/);
+  assert.equal(sendAttempts, 1, 'the latched media_id must not be sent for different bytes');
+
+  // Restoring the original bytes makes the retry the identical send again.
+  fs.writeFileSync(file, pngBytes);
+  const resumed = await publishMedia(publisher, body);
+  assert.equal(resumed.statusCode, 200);
+  assert.equal(calls.at(-1).mediaId, 'MEDIA_1', 'the resume rides the original upload');
+});
+
+test('a key settled by /publish cannot be replayed against /publish-media', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher();
+
+  const text = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'plain text',
+    idempotency_key: 'key-cross-endpoint',
+  });
+  assert.equal(text.statusCode, 200);
+
+  const media = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-cross-endpoint',
+  });
+  assert.equal(media.statusCode, 409, 'returning the text receipt for a media publish lies to the caller');
+  assert.deepEqual(calls.map((c) => c.op), ['sendMessage'], 'no media traffic under the replayed key');
+});
+
+// Codex jg-d0xr finding 7: the file was reopened and hashed BEFORE the
+// settled-receipt check, so a retry after the original delivery response
+// was lost 400'd if the file had since been deleted — instead of
+// returning the cached success it is entitled to.
+test('a settled key retried after the file is gone still answers the cached receipt', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher();
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-file-gone',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 200);
+  fs.rmSync(file);
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().message_id, first.json().message_id);
+  assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage']);
+});
+
 // --- owner claim under concurrent retries (finding 5) ----------------------------
 
 // Codex jg-d0xr finding 5: claimPublishState was async and left installing
