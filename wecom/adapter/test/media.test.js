@@ -24,6 +24,7 @@ import {
   createSdkLogger,
   createStoreQuota,
   defaultMediaDir,
+  describeProviderError,
   formatTranscript,
   hydrateMessageMedia,
   isAudioFilename,
@@ -35,7 +36,6 @@ import {
   safeFilename,
   safePathComponent,
   scrubErrorMessage,
-  scrubProviderError,
   sniffExtension,
   transcribeAudio,
   withDeadline,
@@ -222,20 +222,51 @@ test('scrubErrorMessage drops URLs and caps length', () => {
   assert.ok(scrubErrorMessage('x'.repeat(500)).length <= 201);
 });
 
-// Codex jg-d0xr round-2 finding 13: both publish handlers re-logged and
-// echoed propagated provider errors verbatim, bypassing the round-1
-// identifier redaction — an ack-timeout probe persisted a secret request
-// id, and upload errors can carry a serialized provider payload.
-test('scrubProviderError strips serialized payloads, identifiers, and URLs', () => {
-  const raw = 'Upload init failed: no upload_id returned. Response: {"media_id":"MEDIA_SECRET","req_id":"SECRET_REQ_42","url":"https://openws.example/u?tok=abc"}';
-  const scrubbed = scrubProviderError(raw);
-  assert.ok(!scrubbed.includes('MEDIA_SECRET'), 'provider payload media id leaked');
-  assert.ok(!scrubbed.includes('SECRET_REQ_42'), 'provider request id leaked');
-  assert.ok(!scrubbed.includes('openws.example'), 'provider URL leaked');
-  assert.ok(!scrubbed.includes('tok=abc'), 'provider URL query leaked');
-  // Plain-string identifier mentions are redacted too.
-  assert.ok(!scrubProviderError('failed reqId: SECRET_REQ_42').includes('SECRET_REQ_42'));
-  assert.ok(scrubProviderError('x'.repeat(500)).length <= 201);
+// Codex jg-d0xr round-2 finding 13, hardened by round-3 finding 3: the
+// round-2 scrub only redacted RECOGNIZED patterns (braces, URLs, labeled
+// ids), so free-text provider errmsg passed to responses and persistent
+// logs verbatim. describeProviderError is allowlist-based: structured
+// fields and canonical labels only — unrecognized text is discarded.
+test('describeProviderError discards free-text provider errmsg entirely (allowlist only)', () => {
+  // The round-3 probe string: no label, no URL, no brace — it used to
+  // survive the pattern scrub unchanged.
+  const freeText = describeProviderError(new Error('cannot process payroll-secret.png token ABC123'));
+  assert.ok(!freeText.includes('payroll-secret'), 'free-text filename leaked');
+  assert.ok(!freeText.includes('ABC123'), 'free-text token leaked');
+  assert.match(freeText, /withheld/);
+
+  // An ack frame keeps its numeric errcode and drops the errmsg.
+  const nack = describeProviderError({ errcode: 95001, errmsg: 'cannot process payroll-secret.png token ABC123' });
+  assert.match(nack, /errcode 95001/);
+  assert.ok(!nack.includes('payroll-secret'));
+  assert.ok(!nack.includes('ABC123'));
+
+  // The round-2 probe strings stay dead: serialized payloads, ids, URLs.
+  const raw = describeProviderError(new Error(
+    'Upload init failed: no upload_id returned. Response: {"media_id":"MEDIA_SECRET","req_id":"SECRET_REQ_42","url":"https://openws.example/u?tok=abc"}',
+  ));
+  assert.ok(!raw.includes('MEDIA_SECRET'), 'provider payload media id leaked');
+  assert.ok(!raw.includes('SECRET_REQ_42'), 'provider request id leaked');
+  assert.ok(!raw.includes('openws.example'), 'provider URL leaked');
+
+  // Known SDK shapes map to canonical labels; embedded identifiers and
+  // provider-controlled tails are dropped with the rest of the message.
+  const ackTimeout = describeProviderError(new Error('Reply ack timeout (10000ms) for reqId: SECRET_REQ_42'));
+  assert.ok(!ackTimeout.includes('SECRET_REQ_42'));
+  assert.match(ackTimeout, /acknowledgement timed out/);
+  const cancelled = describeProviderError(new Error('WebSocket connection closed (code 1006, reason: see https://evil.example/x), reply for reqId: R9 cancelled'));
+  assert.ok(!cancelled.includes('evil.example'));
+  assert.ok(!cancelled.includes('R9'));
+
+  // Structured HTTP context survives as numbers, never as response text.
+  const gcErr = new Error('422 Unprocessable Entity: no active binding for conversation wecom/zhang_san');
+  gcErr.status = 422;
+  const gc = describeProviderError(gcErr);
+  assert.match(gc, /HTTP status 422/);
+  assert.ok(!gc.includes('zhang_san'));
+
+  // Unbounded input yields bounded output.
+  assert.ok(describeProviderError(new Error('x'.repeat(5000))).length <= 201);
 });
 
 // --- typing helpers ----------------------------------------------------------

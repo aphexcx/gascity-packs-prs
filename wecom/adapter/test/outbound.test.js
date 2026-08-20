@@ -90,7 +90,7 @@ function makePublisher(overrides = {}) {
   let mediaSeq = 0;
   const publisher = createOutboundPublisher({
     cfg,
-    log: () => {},
+    log: overrides.log ?? (() => {}),
     sendMessage: overrides.sendMessage
       ?? (async (chatid, body) => {
         calls.push({ op: 'sendMessage', chatid, body });
@@ -1186,7 +1186,9 @@ test('a definite recording miss is repaired by a same-key retry without re-sendi
   const first = await publishMedia(publisher, body);
   assert.equal(first.statusCode, 200);
   assert.equal(first.json().transcript_recorded, false);
-  assert.match(first.json().transcript_note, /gc restarting/);
+  // Round-3 finding 3: gc's response text is no longer echoed — only the
+  // structured HTTP status survives into the note.
+  assert.match(first.json().transcript_note, /HTTP status 503/);
   const sendsAfterFirst = calls.length;
 
   const retry = await publishMedia(publisher, body);
@@ -1874,6 +1876,58 @@ test('an explicit provider errcode rejection stays retryable', async (t) => {
   assert.equal(sendAttempts, 2);
 });
 
+// Codex jg-d0xr round-3 finding 3, end to end: provider errmsg matching
+// no redaction pattern (no label, no URL, no brace) used to pass VERBATIM
+// into responses and persistent logs. Every sink now carries only the
+// allowlisted rendering — error class, numeric errcode, canonical labels.
+test('free-text provider error text never reaches the response or the log', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const logs = [];
+  let mode = 'nack';
+  const { publisher } = makePublisher({
+    log: (...args) => logs.push(args.join(' ')),
+    sendMediaMessage: async () => {
+      if (mode === 'nack') {
+        // A provider ack frame whose errmsg carries sensitive free text.
+        const frame = { errcode: 95001, errmsg: 'cannot process payroll-secret.png token ABC123' };
+        throw frame; // eslint-disable-line no-throw-literal
+      }
+      // The round-3 probe shape: a bare Error with the same free text.
+      throw new Error('cannot process payroll-secret.png token ABC123');
+    },
+  });
+
+  const nack = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-sink-nack',
+  });
+  assert.equal(nack.statusCode, 502);
+  assert.equal(nack.json().failure_kind, 'provider_error');
+  assert.match(nack.json().error, /errcode 95001/, 'the numeric errcode is retained');
+
+  mode = 'free-text';
+  const free = await publishMedia(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-sink-freetext',
+  });
+  assert.equal(free.statusCode, 502);
+  assert.equal(free.json().failure_kind, 'delivery_unknown', 'an unrecognized send failure stays ambiguous');
+
+  for (const [label, sink] of [
+    ['nack response', nack.body],
+    ['free-text response', free.body],
+    ['service log', logs.join('\n')],
+  ]) {
+    assert.ok(!sink.includes('payroll-secret'), `${label} leaked the filename`);
+    assert.ok(!sink.includes('ABC123'), `${label} leaked the token`);
+  }
+});
+
 test('a caption ack timeout is delivery-unknown too — the chunk is not re-sent', async (t) => {
   const dir = tmpDir(t);
   const file = writeFixture(dir, 'photo.png', pngBytes);
@@ -2455,7 +2509,10 @@ test('a gc recording failure downgrades to a note — delivery already happened'
   const out = res.json();
   assert.equal(out.delivered, true);
   assert.equal(out.transcript_recorded, false);
-  assert.match(out.transcript_note, /no active binding/);
+  // Round-3 finding 3: the gc response body is withheld; the numeric
+  // status is what the note carries.
+  assert.match(out.transcript_note, /HTTP status 422/);
+  assert.ok(!out.transcript_note.includes('no active binding'), 'raw gc response text must not be echoed');
 });
 
 test('a 200 OutboundResult without a TranscriptEntry still counts as not recorded', async (t) => {

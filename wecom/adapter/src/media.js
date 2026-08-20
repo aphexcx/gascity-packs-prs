@@ -87,17 +87,60 @@ export function scrubSdkLogLine(m) {
     .replace(sdkIdentifierPattern, (_, name) => `${name}=[redacted]`);
 }
 
-// scrubProviderError is the single structured sink for a PROVIDER error
-// message that both publish handlers propagate into responses and logs
-// (codex jg-d0xr round-2 finding 13). Round 1 redacted only direct SDK
-// output; the handlers still re-logged/echoed provider errors verbatim,
-// leaking serialized provider payloads (`Response: {…}` — media ids,
-// upload ids, secret request ids), URLs, and filenames. This applies the
-// SDK line scrub (brace-truncate + URL drop + identifier redaction) AND
-// the delivered-text scrub (markup neutralization + length cap) in one
-// pass, so every final sink for a provider error is uniformly safe.
-export function scrubProviderError(msg) {
-  return scrubErrorMessage(scrubSdkLogLine(String(msg ?? 'unknown error')));
+// describeProviderError is the single structured sink for a PROVIDER/SDK
+// failure that both publish handlers propagate into responses and logs
+// (codex jg-d0xr round-2 finding 13, hardened in round 3). Round 2
+// scrubbed pattern-matched fragments (braces, URLs, labeled identifiers)
+// out of the raw message — but any errmsg matching NO pattern passed
+// verbatim, so free-text provider errors ("cannot process
+// payroll-secret.png token ABC123") still reached responses and
+// persistent logs. Redaction is now ALLOWLIST-based: the output is
+// synthesized from structured fields only — a numeric provider errcode,
+// a numeric HTTP status, the error class name — plus a canonical label
+// when the message exactly matches a known SDK/adapter error shape. The
+// raw text of anything unrecognized (provider errmsg included) is
+// DISCARDED, never echoed or logged.
+//
+// The shapes are full-string anchored wherever the SDK's own text is
+// constant; where an SDK message embeds runtime values (reqId, close
+// reason, byte counts) the label replaces the whole message, so embedded
+// identifiers and provider-controlled tails never survive into a sink.
+const providerErrorShapes = [
+  [/^WebSocket not connected, unable to send data$/,
+    'the WebSocket is not connected (nothing was written)'],
+  [/^Reply queue for reqId .+ exceeds max size \(\d+\)$/,
+    'the SDK reply queue is full (the send was refused before any frame was written)'],
+  [/^Reply ack timeout \(\d+ms\) for reqId: /,
+    'the provider acknowledgement timed out'],
+  [/, reply for reqId: .+ cancelled$/,
+    'the connection dropped before the acknowledgement arrived'],
+  [/^Max auth failure attempts exceeded \(\d+\)$/,
+    'SDK authentication attempts exhausted'],
+  [/^Max reconnect attempts exceeded \(\d+\)$/,
+    'SDK reconnect attempts exhausted'],
+  [/ exceeded the \d+ms wall-clock deadline$/,
+    'the operation exceeded its wall-clock deadline'],
+  [/^media upload returned no media_id$/,
+    'the upload completed without a media_id'],
+  [/^gc accepted the publish but recorded no transcript entry$/,
+    'gc accepted the publish but recorded no transcript entry'],
+];
+
+export function describeProviderError(err) {
+  if (err && typeof err.errcode === 'number') {
+    // A provider ack frame: the numeric errcode is kept; the free-text
+    // errmsg is provider-controlled and dropped.
+    return `provider rejected the message: errcode ${err.errcode}`;
+  }
+  const msg = String((err && typeof err === 'object' ? err.message : err) ?? '');
+  for (const [re, label] of providerErrorShapes) {
+    if (re.test(msg)) return label;
+  }
+  const name = typeof err?.name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(err.name)
+    ? err.name
+    : 'Error';
+  const status = typeof err?.status === 'number' ? `, HTTP status ${err.status}` : '';
+  return `${name}${status} (unrecognized error text withheld from logs and responses)`;
 }
 
 // createSdkLogger builds the logger handed to the SDK. DEBUG is dropped

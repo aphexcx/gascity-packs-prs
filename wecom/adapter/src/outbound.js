@@ -45,11 +45,11 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import {
+  describeProviderError,
   mimeTypeForFilename,
   neutralizeMarkupBoundaries,
   safeFilename,
   scrubErrorMessage,
-  scrubProviderError,
   sniffExtension,
 } from './media.js';
 
@@ -417,14 +417,10 @@ function isDefiniteSendFailure(err) {
   return preWriteSendFailures.some((re) => re.test(msg));
 }
 
-// sendErrorText renders any SDK rejection — Error or raw errcode ack
-// frame — as a message string for scrubbing/logging.
-function sendErrorText(err) {
-  if (err && typeof err.errcode === 'number') {
-    return `provider rejected the message: errcode ${err.errcode}${err.errmsg ? ` (${err.errmsg})` : ''}`;
-  }
-  return String(err?.message ?? err ?? 'unknown error');
-}
+// Provider/SDK failures are rendered for every sink by media.js's
+// describeProviderError (codex jg-d0xr round-3 finding 3): allowlisted
+// structure only — error class, numeric errcode/status, canonical labels
+// for known SDK shapes. Raw errmsg text never reaches a response or log.
 
 // --- media file admission ------------------------------------------------------
 
@@ -1158,10 +1154,10 @@ export function createOutboundPublisher(deps) {
       await chainSend(chatid, send);
     } catch (err) {
       token.finish(err);
-      // Scrub the provider error at the log sink too (round-2 finding 13):
-      // the response was already scrubbed, but this log line propagated a
-      // verbatim provider error (URLs, ids, payloads) into the service log.
-      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${scrubProviderError(err.message)}`);
+      // Allowlist-render the provider error at the log sink (round-2
+      // finding 13; round-3 finding 3): only structured fields and
+      // canonical labels reach the service log — never raw errmsg text.
+      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${describeProviderError(err)}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         conversation: convo,
@@ -1683,24 +1679,25 @@ export function createOutboundPublisher(deps) {
         return;
       }
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
-      // Scrub at the log sink (round-2 finding 13): sendErrorText renders
-      // the error structurally, scrubErrorMessage strips URLs/ids/payloads.
-      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${scrubProviderError(sendErrorText(err))}`);
+      // Allowlist-render at the log sink (round-2 finding 13; round-3
+      // finding 3): stage + error class + numeric errcode survive; raw
+      // provider errmsg text never does.
+      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${describeProviderError(err)}`);
       if (state.deliveryUnknown) {
         // Post-write failures without a negative acknowledgement are NOT
         // retryable (findings 3/4): the frame may have been displayed.
-        failDeliveryUnknown(`${stage} stage: ${scrubProviderError(sendErrorText(err))}`);
+        failDeliveryUnknown(`${stage} stage: ${describeProviderError(err)}`);
         return;
       }
       res.writeHead(502, { 'Content-Type': 'application/json' });
       // Unlike /publish (whose caller is gc's receipt parser), this
-      // endpoint answers the CLI — include the scrubbed provider error so
-      // the operator sees WHY instead of a bare failure kind.
+      // endpoint answers the CLI — include the allowlist-rendered provider
+      // error so the operator sees WHY instead of a bare failure kind.
       res.end(JSON.stringify({
         conversation: convo,
         delivered: false,
         failure_kind: 'provider_error',
-        error: scrubProviderError(sendErrorText(err)),
+        error: describeProviderError(err),
         // Echoed so the operator can rerun with the SAME key and resume
         // instead of duplicating whatever stages already delivered.
         idempotency_key: key,
@@ -1816,12 +1813,12 @@ export function createOutboundPublisher(deps) {
             state.recordingOutcome = definite ? 'not_recorded' : 'unknown';
             journal.record(key, { recordingOutcome: state.recordingOutcome }, { critical: false });
             recordingTerminal = !definite;
-            transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubProviderError(err.message)}`;
+            transcriptNote = `delivered, but not recorded in the extmsg transcript: ${describeProviderError(err)}`;
             if (!definite) {
               transcriptNote += ' (outcome unknown: the append may already have landed, so it is not re-posted on '
                 + 'retry — repairing it safely needs gc-side transcript-append dedup)';
             }
-            log(`publish-media → ${chatid}: transcript recording failed: ${scrubProviderError(err.message)}`);
+            log(`publish-media → ${chatid}: transcript recording failed: ${describeProviderError(err)}`);
           } finally {
             transcriptSeeds.delete(key);
             state.pinned = false;
