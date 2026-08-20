@@ -2056,6 +2056,134 @@ test('a same-key retry attaches to the retained upload without another slot or f
   assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
 });
 
+// Codex jg-d0xr round-3 finding 2: after an upload deadline the owner
+// promise clears while state.uploadPromise still owns the buffer and the
+// admission slot — but eviction checked only promise/pinned, so cap
+// pressure evicted the state, and the key's journal rehydration (no
+// retained promise) reread the file and started a SECOND upload of the
+// same bytes. A retained upload is live: never evictable.
+test('a deadline-abandoned upload is never evicted: its key re-attaches instead of re-uploading', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', jpgBytes);
+  const journalPath = path.join(dir, 'attempts.json');
+  let uploads = 0;
+  let resolveHung;
+  const hung = new Promise((r) => { resolveHung = r; });
+  const { publisher, calls } = makePublisher({
+    publishStatesCap: 1, // media pool cap = 1
+    journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
+    // Generous gate so the pressure lands on the STATE pool, not the slot.
+    cfg: { uploadMaxConcurrent: 4, uploadMaxQueue: 4 },
+    uploadMedia: async () => {
+      uploads += 1;
+      if (uploads === 1) return hung;
+      return { media_id: `MEDIA_${uploads}` };
+    },
+    withUploadDeadline: (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('media upload exceeded the 20ms wall-clock deadline')), 20)),
+    ]),
+  });
+  const bodyA = {
+    conversation: { conversation_id: 'chat_a' },
+    file_path: fileA,
+    media_kind: 'image',
+    idempotency_key: 'key-r3-retained',
+  };
+
+  const first = await publishMedia(publisher, bodyA);
+  assert.equal(first.statusCode, 502);
+
+  // A NEW media key must NOT evict the retained-upload state (it is
+  // live): with the pool full of it, the new key is refused instead.
+  const bodyB = {
+    conversation: { conversation_id: 'chat_b' },
+    file_path: fileB,
+    media_kind: 'image',
+    idempotency_key: 'key-r3-evictor',
+  };
+  const pressured = await publishMedia(publisher, bodyB);
+  assert.equal(pressured.statusCode, 503, 'a retained upload holds its pool slot like any live send');
+  assert.equal(uploads, 1, 'the pressure key must not have started an upload');
+  assert.equal(publisher.stats().publishStates, 1, 'the pool never exceeds its cap');
+
+  // The retained key's own retry attaches to the SAME upload — the exact
+  // guarantee eviction used to break by forcing a journal rehydration.
+  const attach = await publishMedia(publisher, bodyA);
+  assert.equal(attach.statusCode, 502);
+  assert.equal(uploads, 1, 'the round-3 probe saw uploads A,B,A here — A must never upload twice');
+
+  resolveHung({ media_id: 'MEDIA_LATE' });
+  await new Promise((r) => setImmediate(r));
+  const resumed = await publishMedia(publisher, bodyA);
+  assert.equal(resumed.statusCode, 200);
+  assert.equal(uploads, 1);
+  assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
+
+  // Once the upload settled and the key answered, it is evictable again:
+  // the refused key retries successfully.
+  const retryB = await publishMedia(publisher, bodyB);
+  assert.equal(retryB.statusCode, 200);
+  assert.equal(uploads, 2);
+  assert.equal(publisher.stats().publishStates, 1, 'admission still evicts down to the cap');
+});
+
+test('journal rehydration counts against the media pool cap instead of growing past it', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', jpgBytes);
+  const journalPath = path.join(dir, 'attempts.json');
+  let aSends = 0;
+  let liveBlocked = false;
+  let releaseLive;
+  const liveHold = new Promise((r) => { releaseLive = r; });
+  const { publisher } = makePublisher({
+    publishStatesCap: 1, // media pool cap = 1
+    journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
+    sendMediaMessage: async (chatid, type, mediaId) => {
+      if (chatid === 'chat_a') aSends += 1;
+      if (chatid === 'chat_live') {
+        liveBlocked = true;
+        await liveHold;
+      }
+      return { headers: { req_id: `MSG_${mediaId}` } };
+    },
+  });
+  const bodyA = {
+    conversation: { conversation_id: 'chat_a' },
+    file_path: fileA,
+    media_kind: 'image',
+    idempotency_key: 'key-r3-settled',
+  };
+
+  const first = await publishMedia(publisher, bodyA);
+  assert.equal(first.statusCode, 200);
+
+  // A LIVE send takes the single pool slot (evicting the settled A from
+  // memory; the journal keeps it).
+  const liveP = publishMedia(publisher, {
+    conversation: { conversation_id: 'chat_live' },
+    file_path: fileB,
+    media_kind: 'image',
+    idempotency_key: 'key-r3-live',
+  });
+  while (!liveBlocked) await new Promise((r) => setImmediate(r));
+
+  // A's retry rehydrates from the journal while the pool is FULL of a
+  // live send: it must answer from the journaled receipt WITHOUT growing
+  // the map past its cap (the round-3 probe grew it to 2 with cap 1).
+  const retry = await publishMedia(publisher, bodyA);
+  assert.equal(retry.statusCode, 200);
+  assert.deepEqual(retry.json(), first.json(), 'the rehydrated key answers its settled receipt');
+  assert.equal(aSends, 1, 'the rehydrated key must not re-send');
+  assert.equal(publisher.stats().publishStates, 1, 'rehydration is an admission: the cap holds');
+
+  releaseLive();
+  const live = await liveP;
+  assert.equal(live.statusCode, 200);
+});
+
 // --- journal durability: fail closed (round-2 finding 3) ------------------------------
 
 // Codex jg-d0xr round-2 finding 3: journal persistence was fail-open —

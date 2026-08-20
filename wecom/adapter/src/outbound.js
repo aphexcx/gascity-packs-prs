@@ -883,9 +883,9 @@ export function createOutboundPublisher(deps) {
   //   - MEDIA eviction may drop any non-live, unpinned entry — settled OR
   //     unsettled — because the journal rehydrates it (findings 7/8). A
   //     new media key is refused (503) ONLY when the media pool is full
-  //     of genuinely LIVE (in-flight) or pinned sends: a true concurrency
-  //     bound, not a permanent wedge. The upload gate and the journal cap
-  //     bound the real resources (finding 9).
+  //     of genuinely LIVE (in-flight, retained-upload, or pinned) sends:
+  //     a true concurrency bound, not a permanent wedge. The upload gate
+  //     and the journal cap bound the real resources (finding 9).
   //   - TEXT never refuses (finding 8 / legacy restore): it evicts the
   //     oldest settled or zero-progress text entry, and GROWS when
   //     nothing is evictable — exactly the pre-jg-d0xr behavior. Text
@@ -895,30 +895,49 @@ export function createOutboundPublisher(deps) {
     let state = publishStates.get(key);
     if (state) return state;
 
+    // Media eviction may drop any non-LIVE, unpinned media entry (the
+    // journal rehydrates it); settled first, then unsettled. LIVE means
+    // an owner promise, a pinned recording round-trip, OR a retained
+    // upload (codex jg-d0xr round-3 finding 2): after an upload deadline
+    // the owner promise clears while state.uploadPromise still owns the
+    // media buffer and the admission slot — evicting that state stranded
+    // both, and the key's journal rehydration (which has no retained
+    // promise) reread the file and started a SECOND upload of the same
+    // bytes. A retained upload is exactly as live as an owner promise.
+    const evictMedia = (predicate) => {
+      for (const [k, s] of publishStates) {
+        if ((s.endpoint ?? 'publish') !== 'publish-media') continue;
+        if (s.promise || s.pinned || s.uploadPromise) continue;
+        if (predicate(s)) { publishStates.delete(k); return true; }
+      }
+      return false;
+    };
+    const admitMedia = () => countByEndpoint('publish-media') < mediaStatesCap
+      || evictMedia((s) => !!s.receipt) || evictMedia(() => true);
+
     // Finding 7: rehydrate a journaled media key that was evicted from
     // memory (or lost to a restart) instead of admitting it as new.
+    // Rehydration is an ADMISSION and counts against the media cap like
+    // any other (round-3 finding 2: uncapped rehydration grew the state
+    // map past the cap it claims to hold).
     const journaled = journal.get?.(key);
     if (journaled) {
       state = stateFromJournalEntry(journaled);
+      if (!admitMedia()) {
+        // The pool is full of live/pinned sends. A SETTLED journaled key
+        // is still answered — read-only, from an UNCACHED state — but an
+        // unsettled one needs the map entry as its mutual exclusion
+        // against concurrent same-key claims, so it is refused like a
+        // new key (retryable once the pool drains).
+        return state.receipt ? state : null;
+      }
       publishStates.set(key, state);
       return state;
     }
 
     if (endpoint === 'publish-media') {
-      if (countByEndpoint('publish-media') >= mediaStatesCap) {
-        // Evict any non-live, unpinned media entry (the journal rehydrates
-        // it); settled first, then unsettled. Refuse only when every media
-        // slot is a live or pinned send.
-        const evict = (predicate) => {
-          for (const [k, s] of publishStates) {
-            if ((s.endpoint ?? 'publish') !== 'publish-media') continue;
-            if (s.promise || s.pinned) continue;
-            if (predicate(s)) { publishStates.delete(k); return true; }
-          }
-          return false;
-        };
-        if (!evict((s) => !!s.receipt) && !evict(() => true)) return null;
-      }
+      // Refuse only when every media slot is a live or pinned send.
+      if (!admitMedia()) return null;
     } else if (countByEndpoint('publish') >= textStatesCap) {
       const evict = (predicate) => {
         for (const [k, s] of publishStates) {
