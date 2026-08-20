@@ -1075,6 +1075,173 @@ test('the attempt journal prunes oldest settled entries past its byte cap', asyn
   assert.ok(persistedBytes <= maxBytes, `persisted journal (${persistedBytes}B) stays within maxBytes (${maxBytes}B)`);
 });
 
+// --- delivery receipt vs finalized response (round-2 finding 10) -----------------
+
+// Codex jg-d0xr round-2 finding 10: the publisher journaled a bare
+// delivery receipt and released same-key waiters BEFORE transcript
+// recording, so a retry during the recording call — or after a crash
+// there — permanently received the incomplete response without media_id,
+// idempotency_key, or transcript outcome. The delivery receipt is now
+// callback-only; retries wait on the finalization promise and always get
+// the complete response, and the recording stage/outcome is journaled.
+test('a retry during transcript recording waits for finalization and gets the complete response', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let releaseRecording;
+  const recordingGate = new Promise((r) => { releaseRecording = r; });
+  const { publisher, calls } = makePublisher({
+    postOutbound: async () => {
+      await recordingGate;
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
+    },
+  });
+  const body = {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-retry-mid-recording',
+  };
+
+  const p1 = publishMedia(publisher, body);
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+  const p2 = publishMedia(publisher, body); // retry while recording is in flight
+  for (let i = 0; i < 8; i++) await new Promise((r) => setImmediate(r));
+  releaseRecording();
+  const [r1, r2] = await Promise.all([p1, p2]);
+
+  assert.equal(r1.statusCode, 200);
+  assert.equal(r2.statusCode, 200);
+  assert.deepEqual(r2.json(), r1.json(), 'the retry gets the identical COMPLETE response');
+  assert.equal(r2.json().media_id, 'MEDIA_1');
+  assert.equal(r2.json().idempotency_key, 'key-retry-mid-recording');
+  assert.equal(r2.json().transcript_recorded, true);
+  assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage'], 'the retry sends nothing');
+});
+
+test('a crash during transcript recording finalizes truthfully on the retried key', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const body = {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-crash-mid-recording',
+  };
+
+  // Life 1: delivery succeeds and the process dies inside the recording
+  // POST — simulated by a postOutbound that never settles.
+  const life1Journal = createAttemptJournal({ filePath: journalPath });
+  const life1 = makePublisher({
+    journal: life1Journal,
+    postOutbound: () => new Promise(() => {}),
+  });
+  publishMedia(life1.publisher, body); // intentionally not awaited: it never settles
+  while (!life1Journal.get('key-crash-mid-recording')?.recordingAttempted) {
+    await new Promise((r) => setImmediate(r));
+  }
+
+  // Life 2: same journal — and the media file is long gone, which must
+  // not matter for a finalization-only retry.
+  fs.rmSync(file);
+  const life2 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  const retry = await publishMedia(life2.publisher, body);
+  assert.equal(retry.statusCode, 200, 'the delivered publish must not turn into an error');
+  const out = retry.json();
+  assert.equal(out.delivered, true);
+  assert.equal(out.media_id, 'MEDIA_1');
+  assert.equal(out.idempotency_key, 'key-crash-mid-recording');
+  assert.equal(out.transcript_recorded, false);
+  assert.match(out.transcript_note, /unknown outcome/);
+  assert.equal(life2.calls.length, 0, 'no provider traffic for a fully delivered key');
+  assert.equal(life2.outboundPosts.length, 0, 'an AMBIGUOUS recording must never be re-posted (gc-side dedup is deferred)');
+});
+
+test('a definite recording miss is repaired by a same-key retry without re-sending', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let recordingAttempts = 0;
+  const { publisher, calls } = makePublisher({
+    postOutbound: async () => {
+      recordingAttempts += 1;
+      if (recordingAttempts === 1) {
+        // gc RESPONDED: provably nothing was appended.
+        const err = new Error('503 Service Unavailable: gc restarting');
+        err.status = 503;
+        throw err;
+      }
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-2' } };
+    },
+  });
+  const body = {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-recording-repair',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 200);
+  assert.equal(first.json().transcript_recorded, false);
+  assert.match(first.json().transcript_note, /gc restarting/);
+  const sendsAfterFirst = calls.length;
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().transcript_recorded, true, 'a provably-unappended recording is repaired on retry');
+  assert.equal(retry.json().media_id, first.json().media_id);
+  assert.equal(recordingAttempts, 2);
+  assert.equal(calls.length, sendsAfterFirst, 'the repair never re-sends the media');
+});
+
+test("gc's retried recording callback after a crash mid-recording gets the delivery receipt, not a 409", async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const key = 'key-callback-after-crash';
+  let transcriptText;
+  const life1Journal = createAttemptJournal({ filePath: journalPath });
+  const life1 = makePublisher({
+    journal: life1Journal,
+    postOutbound: (target, body) => {
+      transcriptText = body.text;
+      return new Promise(() => {}); // gc got the POST; the adapter dies before the response
+    },
+  });
+  publishMedia(life1.publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  }); // intentionally not awaited: it never settles
+  while (!transcriptText) await new Promise((r) => setImmediate(r));
+
+  // Life 2: gc's HTTPAdapter retries the callback against the restarted
+  // adapter. The state has only the callback receipt — no settled response.
+  const life2 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  const cb = await publishText(life2.publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: transcriptText,
+    idempotency_key: key,
+  });
+  assert.equal(cb.statusCode, 200);
+  assert.equal(cb.json().delivered, true);
+  assert.equal(life2.calls.length, 0, 'the callback must not send the transcript text as chat markdown');
+
+  // An unrelated text publish colliding on the key is still refused
+  // (finding 9 stays symmetric).
+  const collide = await publishText(life2.publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'unrelated reply',
+    idempotency_key: key,
+  });
+  assert.equal(collide.statusCode, 409);
+});
+
 // --- owner claim under concurrent retries (finding 5) ----------------------------
 
 // Codex jg-d0xr finding 5: claimPublishState was async and left installing

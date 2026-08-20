@@ -811,6 +811,13 @@ export function createOutboundPublisher(deps) {
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
       receipt: e.receipt,
+      // Finding 10: the callback-only delivery receipt and the recording
+      // stage/outcome survive a crash during transcript recording, so a
+      // retried key finalizes (or truthfully reports the ambiguity)
+      // instead of forever answering an incomplete bare receipt.
+      callbackReceipt: e.callbackReceipt,
+      recordingAttempted: !!e.recordingAttempted,
+      recordingOutcome: e.recordingOutcome,
       expectedTranscript: e.expectedTranscript,
       deliveryUnknown: !!e.deliveryUnknown
         || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
@@ -1078,6 +1085,22 @@ export function createOutboundPublisher(deps) {
     }
     const { state, token } = claim;
     if (state.endpoint && state.endpoint !== 'publish') {
+      // Delivered but not yet finalized (round-2 finding 10): after a
+      // crash during transcript recording — or while a definite recording
+      // miss awaits repair — the media state carries a callback-only
+      // delivery receipt but no settled response. gc's recording callback
+      // (and only it, matched on the expected-transcript fingerprint of
+      // finding 9) is answered from that receipt so a retried callback
+      // never re-sends the transcript text or gets a spurious 409.
+      const exp = state.expectedTranscript;
+      if (state.callbackReceipt && !!exp
+        && exp.conversation_id === chatid
+        && exp.text_sha256 === sha256Hex(pub.text)) {
+        token.finish();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(state.callbackReceipt));
+        return;
+      }
       // An UNSETTLED media state must not be resumed as text — its
       // chunksDelivered counts caption chunks of a different send.
       token.finish(new Error(`idempotency conflict on ${pub.idempotency_key}`));
@@ -1370,6 +1393,15 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
+    // All sends already completed (round-2 finding 10): this retry only
+    // needs FINALIZATION — the transcript-recording outcome and the
+    // complete response. The media is already visible in the chat, so
+    // nothing below may re-gate, re-read, or re-verify the file (which
+    // may be long gone — the same file-free discipline settled retries
+    // get, finding 7); the fingerprint match above already vouched for
+    // the request.
+    const sendsComplete = !!state.callbackReceipt;
+
     // Pre-delivery capability check (round-2 finding 1): gc's binding
     // check runs only AFTER delivery, inside transcript recording, and
     // only when a session_id was supplied — it never gates the send. The
@@ -1379,7 +1411,7 @@ export function createOutboundPublisher(deps) {
     // (the persistent kind store learns every inbound conversation).
     // WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS=true opts back into
     // proactive media pushes to never-seen ids.
-    if (cfg.mediaRequireKnownConversation && !kindStore?.lookup(chatid)) {
+    if (!sendsComplete && cfg.mediaRequireKnownConversation && !kindStore?.lookup(chatid)) {
       token.finish(new Error(`unknown conversation ${chatid}`));
       releaseUntouchedState(key, state);
       fail403(
@@ -1400,7 +1432,7 @@ export function createOutboundPublisher(deps) {
 
     let releaseUpload = null;
     let media = null;
-    if (!attachToRetainedUpload) {
+    if (!sendsComplete && !attachToRetainedUpload) {
       // Global admission BEFORE any file I/O (finding 9): a slot must be
       // held to allocate a media buffer at all; the queue cap turns a
       // burst into fast 429s instead of unbounded 10MB allocations.
@@ -1610,7 +1642,7 @@ export function createOutboundPublisher(deps) {
       }
     };
     try {
-      await chainSend(chatid, send);
+      if (!sendsComplete) await chainSend(chatid, send);
     } catch (err) {
       token.finish(err);
       if (err instanceof JournalUnavailableError) {
@@ -1646,94 +1678,159 @@ export function createOutboundPublisher(deps) {
       }));
       return;
     }
-    // Settle the receipt BEFORE the recording call below: gc's callback
-    // to /publish with this key must find it settled, or it would try to
-    // send the transcript text as a fresh markdown message. It must also
-    // be visible before token.finish() wakes same-key waiters.
-    state.receipt = {
-      conversation: convo,
-      message_id: state.messageID ?? '',
-      delivered: true,
-    };
-    journal.record(key, { receipt: state.receipt }, { critical: false });
-    token.finish();
-    log(`publish-media → ${chatid} ${mediaKind} delivered (${effectiveSize} bytes, session=${pub.session_id ?? ''})`);
-
-    let transcriptRecorded = false;
-    let transcriptNote = '';
-    if (pub.session_id) {
-      // The fingerprinted effective kind (finding 11), not a fresh
-      // resolveKind: the kind store may have learned between the probe and
-      // this point (or between the delivering attempt and a finalizing
-      // retry), and the transcript ref must be the one the fingerprint
-      // bound.
-      const kind = state.fingerprint?.kind ?? resolveKind(convo.kind, chatid);
-      const transcriptText = transcriptTextFor({
-        mediaKind,
-        filename: effectiveFilename,
-        size: effectiveSize,
-        digest: effectiveDigest,
-        filePath,
-        caption,
-      });
-      // Persist the narrowly-scoped expected callback fingerprint (round-2
-      // finding 9): the ONLY /publish request permitted to consume this
-      // media receipt is gc's transcript-recording callback, identified by
-      // the exact (conversation, transcript text) it will echo back. A
-      // legitimate ordinary text publish that merely collided on the key
-      // is refused (409) instead of silently getting the media receipt and
-      // sending nothing. Journaled so late/post-restart callbacks match.
-      // The text is stored as a fixed-size hash (round-2 finding 12): the
-      // transcript text embeds the caption verbatim, and journaling it raw
-      // re-created exactly the caption bloat the fingerprint hash removed.
-      state.expectedTranscript = { conversation_id: chatid, text_sha256: sha256Hex(transcriptText) };
-      journal.record(key, { expectedTranscript: state.expectedTranscript }, { critical: false });
-      // Pin the receipt for the whole recording round-trip (finding 6):
-      // the seed in its own lookup guarantees the callback a hit, and
-      // pinned=true keeps the map entry itself out of eviction's reach
-      // until recording settles.
-      state.pinned = true;
-      transcriptSeeds.set(key, state.receipt);
-      try {
-        await recordOutboundTranscript({
-          sessionID: pub.session_id,
-          conversationID: chatid,
-          kind,
-          key,
-          text: transcriptText,
-        });
-        transcriptRecorded = true;
-      } catch (err) {
-        transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubProviderError(err.message)}`;
-        log(`publish-media → ${chatid}: transcript recording failed: ${scrubProviderError(err.message)}`);
-      } finally {
-        transcriptSeeds.delete(key);
-        state.pinned = false;
-      }
-    } else {
-      transcriptNote = 'delivered, but not recorded in the extmsg transcript: no session_id supplied (set GC_SESSION_ID or pass --session)';
+    // The DELIVERY receipt and the FINALIZED response are separate
+    // (round-2 finding 10): settling the bare receipt before transcript
+    // recording let a retry that arrived during the recording call — or
+    // after a crash there — permanently receive an incomplete response
+    // with no media_id, idempotency_key, or transcript outcome. The
+    // callback-only receipt below exists solely so gc's recording
+    // callback (via /publish) never re-sends; same-key /publish-media
+    // retries keep waiting on the owner promise — the finalization
+    // promise, which now settles only after recording does — and are
+    // answered with the COMPLETE response.
+    if (!state.callbackReceipt) {
+      state.callbackReceipt = {
+        conversation: convo,
+        message_id: state.messageID ?? '',
+        delivered: true,
+      };
+      journal.record(key, { callbackReceipt: state.callbackReceipt }, { critical: false });
+      log(`publish-media → ${chatid} ${mediaKind} delivered (${effectiveSize} bytes, session=${pub.session_id ?? ''})`);
     }
 
-    // Cache the COMPLETE media response as the receipt (finding 8, the
-    // adapter-side half): a settled-key retry used to get back only the
-    // bare {conversation, message_id, delivered} and lose media_id and
-    // the transcript outcome. Recording itself stays single-shot — the
-    // safe retry-repair of an AMBIGUOUS recording failure needs gc-side
-    // dedup of transcript appends first (an ambiguous /extmsg/outbound
-    // may have appended; re-posting could double the transcript entry),
-    // so a recording miss remains a truthful transcript_recorded:false.
-    const response = {
-      ...state.receipt,
-      media_id: state.mediaId,
-      idempotency_key: key,
-      ...(state.captionMessageID ? { caption_message_id: state.captionMessageID } : {}),
-      transcript_recorded: transcriptRecorded,
-      ...(transcriptNote ? { transcript_note: transcriptNote } : {}),
-    };
-    state.receipt = response;
-    journal.record(key, { receipt: response }, { critical: false });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(response));
+    try {
+      let transcriptRecorded = state.recordingOutcome === 'recorded';
+      let recordingTerminal = true;
+      let transcriptNote = '';
+      if (transcriptRecorded) {
+        // A previous attempt already recorded the transcript (journaled
+        // outcome); this retry only rebuilds the complete response.
+      } else if (state.recordingAttempted && state.recordingOutcome !== 'not_recorded') {
+        // A previous recording attempt has no recorded outcome (crash
+        // mid-POST, lost response): the append may already have landed,
+        // and re-posting could double the transcript entry. Safe
+        // retry-repair needs gc-side dedup of transcript appends first —
+        // deferred to gc, as in round 1 — so the truthful terminal answer
+        // is delivered-but-outcome-unknown.
+        transcriptNote = 'delivered, but a previous transcript-recording attempt has an unknown outcome — '
+          + 'not re-posted (repairing it safely needs gc-side transcript-append dedup)';
+      } else if (pub.session_id) {
+        // The fingerprinted effective kind (finding 11), not a fresh
+        // resolveKind: the kind store may have learned between the probe
+        // and this point (or between the delivering attempt and a
+        // finalizing retry), and the transcript ref must be the one the
+        // fingerprint bound.
+        const kind = state.fingerprint?.kind ?? resolveKind(convo.kind, chatid);
+        const transcriptText = transcriptTextFor({
+          mediaKind,
+          filename: effectiveFilename,
+          size: effectiveSize,
+          digest: effectiveDigest,
+          filePath,
+          caption,
+        });
+        // Persist the narrowly-scoped expected callback fingerprint
+        // (round-2 finding 9): the ONLY /publish request permitted to
+        // consume this media receipt is gc's transcript-recording
+        // callback, identified by the exact (conversation, transcript
+        // text) it will echo back. A legitimate ordinary text publish that
+        // merely collided on the key is refused (409) instead of silently
+        // getting the media receipt and sending nothing. Journaled so
+        // late/post-restart callbacks match. The text is stored as a
+        // fixed-size hash (round-2 finding 12): the transcript text embeds
+        // the caption verbatim, and journaling it raw re-created exactly
+        // the caption bloat the fingerprint hash removed.
+        state.expectedTranscript = { conversation_id: chatid, text_sha256: sha256Hex(transcriptText) };
+        // The attempted latch persists BEFORE the POST — the sendAttempted
+        // discipline, applied to recording (finding 10): a crash
+        // mid-recording must hydrate as attempted-with-unknown-outcome,
+        // never as never-attempted (a retry would re-post and could double
+        // the append). If the latch cannot be persisted the POST is
+        // skipped — the publish itself is already delivered — and the key
+        // stays repairable for a retry once the journal is writable.
+        const latched = journal.record(key, {
+          expectedTranscript: state.expectedTranscript,
+          recordingAttempted: true,
+        }, { critical: false });
+        if (!latched) {
+          recordingTerminal = false;
+          transcriptNote = 'delivered, but not recorded in the extmsg transcript: the attempt journal is unavailable, '
+            + 'and recording is not attempted without a durable attempt latch — retry with the same key once it is writable';
+        } else {
+          state.recordingAttempted = true;
+          // Pin the receipt for the whole recording round-trip (finding
+          // 6): the seed in its own lookup guarantees the callback a hit,
+          // and pinned=true keeps the map entry itself out of eviction's
+          // reach until recording settles.
+          state.pinned = true;
+          transcriptSeeds.set(key, state.callbackReceipt);
+          try {
+            await recordOutboundTranscript({
+              sessionID: pub.session_id,
+              conversationID: chatid,
+              kind,
+              key,
+              text: transcriptText,
+            });
+            transcriptRecorded = true;
+            state.recordingOutcome = 'recorded';
+            journal.record(key, { recordingOutcome: 'recorded' }, { critical: false });
+          } catch (err) {
+            // gc RESPONDED — an HTTP status, or an explicit result with no
+            // transcript entry: provably nothing was appended, so the
+            // outcome is DEFINITE and a same-key retry may re-attempt the
+            // recording (the state stays unsettled below). No response at
+            // all (network cut, timeout): AMBIGUOUS — the append may have
+            // landed, so it is never blindly re-posted.
+            const definite = typeof err.status === 'number'
+              || /recorded no transcript entry/.test(String(err?.message ?? ''));
+            state.recordingOutcome = definite ? 'not_recorded' : 'unknown';
+            journal.record(key, { recordingOutcome: state.recordingOutcome }, { critical: false });
+            recordingTerminal = !definite;
+            transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubProviderError(err.message)}`;
+            if (!definite) {
+              transcriptNote += ' (outcome unknown: the append may already have landed, so it is not re-posted on '
+                + 'retry — repairing it safely needs gc-side transcript-append dedup)';
+            }
+            log(`publish-media → ${chatid}: transcript recording failed: ${scrubProviderError(err.message)}`);
+          } finally {
+            transcriptSeeds.delete(key);
+            state.pinned = false;
+          }
+        }
+      } else {
+        transcriptNote = 'delivered, but not recorded in the extmsg transcript: no session_id supplied (set GC_SESSION_ID or pass --session)';
+      }
+
+      // The COMPLETE media response (finding 8, the adapter-side half): a
+      // settled-key retry keeps media_id and the transcript outcome
+      // instead of degrading to a bare receipt.
+      const response = {
+        ...state.callbackReceipt,
+        media_id: state.mediaId,
+        idempotency_key: key,
+        ...(state.captionMessageID ? { caption_message_id: state.captionMessageID } : {}),
+        transcript_recorded: transcriptRecorded,
+        ...(transcriptNote ? { transcript_note: transcriptNote } : {}),
+      };
+      // A DEFINITE recording miss stays UNSETTLED (finding 10): gc
+      // provably appended nothing, so a same-key retry safely repairs the
+      // recording — delivery still never repeats, the stage latches and
+      // the callback receipt carry it. Everything else is terminal —
+      // recorded, ambiguous (unrepairable without gc-side dedup), no
+      // session — and settles the complete response as the cached receipt.
+      if (recordingTerminal) {
+        state.receipt = response;
+        journal.record(key, { receipt: response }, { critical: false });
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(response));
+    } finally {
+      // The finalization promise settles HERE — waiters wake only now and
+      // refetch, finding either the settled complete receipt or a state
+      // whose recording is theirs to repair.
+      token.finish();
+    }
   }
 
   return {
