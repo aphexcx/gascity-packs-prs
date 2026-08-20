@@ -1079,7 +1079,8 @@ def test_body_tildes_are_guarded_by_default(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr(common, "_request", fake_request)
     monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
-    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                        lambda _sid: None, raising=False)
     monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
 
     exit_code = rc.main([
@@ -1103,7 +1104,8 @@ def test_raw_flag_skips_the_mrkdwn_guard(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(common, "_request", fake_request)
     monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
-    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                        lambda _sid: None, raising=False)
     monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
 
     exit_code = rc.main([
