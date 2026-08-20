@@ -132,6 +132,36 @@ test('a failed media publish tells the operator which key resumes it', { skip: !
   assert.match(run.stderr, new RegExp(`retry with --idempotency-key ${key}`));
 });
 
+// Codex jg-d0xr round-2 finding 2: with `set -e`, an exhausted curl
+// transport failure exited from the command substitution BEFORE the
+// generated key was ever printed — if the first request delivered but all
+// responses were lost, the operator's natural rerun minted a fresh key
+// and duplicated the media. The key must reach the operator before any
+// network I/O, and a transport failure must name it again.
+test('a transport failure with every response lost still surfaces the resume key', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'photo.png');
+  fs.writeFileSync(file, pngBytes);
+  // Bind-and-close an ephemeral port so nothing listens: curl exhausts
+  // its connection retries and exits non-zero without any HTTP response.
+  const deadPort = await new Promise((resolve) => {
+    const s = http.createServer();
+    s.listen(0, '127.0.0.1', () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+
+  const run = await runPublish(['--chat', 'zhang_san', '--image', file], `http://127.0.0.1:${deadPort}/publish`);
+  assert.equal(run.code, 1, `the script must fail deliberately, not die under set -e (stderr: ${run.stderr})`);
+  const keyMention = run.stderr.match(/--idempotency-key (wecom-cli-[0-9a-f-]+)/);
+  assert.ok(keyMention, `stderr must name the resume key on a transport failure; got: ${run.stderr}`);
+  assert.match(run.stderr, /resume this send without duplicating/);
+  // The key is printed BEFORE the request goes out, so even a killed curl
+  // leaves the operator holding it: the first stderr line names it.
+  assert.match(run.stderr.split('\n')[0], /idempotency key wecom-cli-/);
+});
+
 test('text publishes pass --idempotency-key through and omit it otherwise', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
   const { requests, url } = await startCaptureServer(t, () => ({}));
 

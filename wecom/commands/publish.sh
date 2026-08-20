@@ -202,16 +202,39 @@ fi
 retry_args=""
 if [ -n "$media" ]; then
   retry_args="--retry 2 --retry-connrefused"
+  # --retry-all-errors (curl >= 7.71) widens transport retries beyond the
+  # built-in transient list; safe here for the same idempotency reason.
+  if curl --help all 2>/dev/null | grep -q -- --retry-all-errors; then
+    retry_args="$retry_args --retry-all-errors"
+  fi
+  # The resume key must reach the operator BEFORE any network I/O (codex
+  # jg-d0xr round-2 finding 2): if the request delivered but every
+  # response was lost, curl exits non-zero and — before this fix — set -e
+  # killed the script inside the command substitution below without ever
+  # printing the generated key, so the natural rerun minted a fresh key
+  # and duplicated the media. Print it up front, unconditionally.
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
-# reaches the operator instead of being swallowed by `curl -f`.
+# reaches the operator instead of being swallowed by `curl -f`. The
+# `|| curl_rc=$?` keeps set -e from exiting on a transport failure before
+# the failure (and the resume key) can be reported.
+curl_rc=0
 # shellcheck disable=SC2086  # retry_args is deliberately word-split
 response=$(curl -sS $retry_args -X POST "$url" \
   -H 'Content-Type: application/json' \
   -H 'X-GC-Request: gc-wecom' \
   -d "$body" \
-  -w '\n%{http_code}')
+  -w '\n%{http_code}') || curl_rc=$?
+
+if [ "$curl_rc" -ne 0 ]; then
+  echo "gc wecom publish: transport failure (curl exit $curl_rc) — no adapter response received" >&2
+  if [ -n "$media" ]; then
+    echo "gc wecom publish: the send may or may not have been delivered; retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  fi
+  exit 1
+fi
 
 status=$(printf '%s' "$response" | tail -n 1)
 payload=$(printf '%s' "$response" | sed '$d')
