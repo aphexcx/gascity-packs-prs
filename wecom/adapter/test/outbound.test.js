@@ -42,7 +42,9 @@ const movBytes = Buffer.concat([
 ]);
 
 function tmpDir(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-outbound-test-'));
+  // realpath'd so fixture paths compare lexically against the confined
+  // outbound-media root (macOS: /var/folders → /private/var/folders).
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-outbound-test-')));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -79,6 +81,9 @@ function makePublisher(overrides = {}) {
     imageMaxBytes: 10 * 1024 * 1024,
     videoMaxBytes: 10 * 1024 * 1024,
     uploadTimeoutMs: 5000,
+    // Every tmpDir fixture lives under the OS temp dir, so this default
+    // root confines the whole suite; confinement tests override it.
+    outboundMediaRoot: fs.realpathSync(os.tmpdir()),
     ...overrides.cfg,
   };
   let mediaSeq = 0;
@@ -333,7 +338,7 @@ test('gif is accepted for images and png is rejected for videos', async (t) => {
   assert.match(bad.json().error, /accept mp4/);
 });
 
-test('missing file, empty file, relative path, symlink, and bad media_kind all 400', async (t) => {
+test('missing file, empty file, relative path, and bad media_kind 400; symlink 403', async (t) => {
   const dir = tmpDir(t);
   const empty = writeFixture(dir, 'empty.png', Buffer.alloc(0));
   const real = writeFixture(dir, 'real.png', pngBytes);
@@ -354,14 +359,116 @@ test('missing file, empty file, relative path, symlink, and bad media_kind all 4
   assert.equal(rel.statusCode, 400);
   assert.match(rel.json().error, /must be absolute/);
 
+  // Symlinks are refused as a confinement violation (403 forbidden) since
+  // the jg-d0xr finding-1 fix — they were a plain 400 before.
   const sym = await publishMedia(publisher, { conversation: convo, file_path: link, media_kind: 'image' });
-  assert.equal(sym.statusCode, 400);
+  assert.equal(sym.statusCode, 403);
   assert.match(sym.json().error, /symlink/);
 
   const badKind = await publishMedia(publisher, { conversation: convo, file_path: real, media_kind: 'voice' });
   assert.equal(badKind.statusCode, 400);
   assert.match(badKind.json().error, /media_kind must be one of: image, video/);
 
+  assert.equal(calls.length, 0);
+});
+
+// --- outbound-media root confinement (finding 1) -----------------------------------
+
+// Codex jg-d0xr finding 1: /publish-media accepted EVERY absolute path
+// the adapter could read — O_NOFOLLOW protected only the final component,
+// so a compromised local caller could route arbitrary private files on
+// the host to a WeCom chat through symlinked parents. The endpoint now
+// fails closed without a configured root, confines lexically to the
+// canonicalized root, and refuses symlinks at any depth.
+test('media publishing fails closed when no outbound media root is configured', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher({ cfg: { outboundMediaRoot: '' } });
+
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  });
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.json().failure_kind, 'forbidden');
+  assert.match(res.json().error, /WECOM_OUTBOUND_MEDIA_ROOT is not set/);
+  assert.equal(calls.length, 0);
+});
+
+test('a readable file OUTSIDE the outbound media root is refused', async (t) => {
+  const dir = tmpDir(t);
+  const root = path.join(dir, 'root');
+  fs.mkdirSync(root);
+  const outside = writeFixture(dir, 'private.png', pngBytes); // sibling of root
+  const inside = writeFixture(root, 'ok.png', pngBytes);
+  const { publisher, calls } = makePublisher({ cfg: { outboundMediaRoot: root } });
+
+  const refused = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: outside,
+    media_kind: 'image',
+  });
+  assert.equal(refused.statusCode, 403);
+  assert.match(refused.json().error, /must live under the outbound media root/);
+  assert.equal(calls.length, 0);
+
+  const traversal = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: path.join(root, '..', 'private.png'),
+    media_kind: 'image',
+  });
+  assert.equal(traversal.statusCode, 403);
+
+  const ok = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: inside,
+    media_kind: 'image',
+  });
+  assert.equal(ok.statusCode, 200);
+});
+
+test('a symlinked PARENT directory inside the root is refused, even resolving inside it', async (t) => {
+  const dir = tmpDir(t);
+  const root = path.join(dir, 'root');
+  const secretDir = path.join(dir, 'secret');
+  fs.mkdirSync(root);
+  fs.mkdirSync(secretDir);
+  writeFixture(secretDir, 'private.png', pngBytes);
+  // A dir-symlink escaping the root: lexically confined, physically not.
+  fs.symlinkSync(secretDir, path.join(root, 'escape'));
+  // And one that resolves back INSIDE the root — still refused: symlink
+  // handling must be uniform or racing links become an oracle.
+  const realDir = path.join(root, 'real');
+  fs.mkdirSync(realDir);
+  writeFixture(realDir, 'ok.png', pngBytes);
+  fs.symlinkSync(realDir, path.join(root, 'alias'));
+  const { publisher, calls } = makePublisher({ cfg: { outboundMediaRoot: root } });
+
+  for (const p of [path.join(root, 'escape', 'private.png'), path.join(root, 'alias', 'ok.png')]) {
+    const res = await publishMedia(publisher, {
+      conversation: { conversation_id: 'zhang_san' },
+      file_path: p,
+      media_kind: 'image',
+    });
+    assert.equal(res.statusCode, 403, p);
+    assert.match(res.json().error, /symlink/);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test('a root that does not exist fails closed instead of open', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls } = makePublisher({ cfg: { outboundMediaRoot: path.join(dir, 'nope') } });
+
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  });
+  assert.equal(res.statusCode, 403);
+  assert.match(res.json().error, /does not resolve to an existing directory/);
   assert.equal(calls.length, 0);
 });
 
@@ -902,8 +1009,9 @@ test('a text publish queues behind an in-flight media send to the same chat', as
     file_path: file,
     media_kind: 'image',
   });
-  // Give the media publish a tick to claim the chain before the text lands.
-  await new Promise((r) => setImmediate(r));
+  // Wait until the media publish actually claimed the chain (admission is
+  // async since the finding-1 confinement walk) before the text lands.
+  while (order.length === 0) await new Promise((r) => setImmediate(r));
   const textP = publishText(publisher, {
     conversation: { conversation_id: 'zhang_san' },
     text: 'after the image',

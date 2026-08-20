@@ -25,7 +25,9 @@ gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "c
   png, or gif up to 10MB (checked by content, not extension); oversized
   or other formats are rejected with an explanatory error — downscale or
   convert first, the adapter never transcodes. Mutually exclusive with
-  `--video`.
+  `--video`. The file must live under the adapter's configured
+  `WECOM_OUTBOUND_MEDIA_ROOT` (no symlinks anywhere in the path); media
+  publishing is disabled entirely when that root is not configured.
 - `--video` — local path to a video to send. WeCom accepts mp4 up to
   10MB; same rejection behavior as `--image`.
 - With `--image`/`--video`, `--text`/`--text-file` becomes an optional

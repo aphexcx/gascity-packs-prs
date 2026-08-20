@@ -82,6 +82,14 @@
 //	ELEVENLABS_API_KEY     Scribe API key; falls back to
 //	                       ~/.config/elevenlabs/api-key. Unset = audio
 //	                       files deliver with a transcription-failed note.
+//	WECOM_OUTBOUND_MEDIA_ROOT
+//	                       Directory outbound media files may be read
+//	                       from. REQUIRED for /publish-media — without it
+//	                       every media publish is refused (fail closed):
+//	                       the endpoint would otherwise let any local
+//	                       caller send arbitrary adapter-readable files to
+//	                       a WeCom chat. Symlinks anywhere in a media path
+//	                       are rejected.
 //	WECOM_IMAGE_MAX_BYTES  Outbound image cap (default 10485760 = 10MB —
 //	                       WeCom's own smart-robot limit; raise only if
 //	                       your tenant allows more).
@@ -169,6 +177,10 @@ function loadConfig() {
     // images (png/jpg/jpeg/gif) and videos (mp4) — see src/outbound.js.
     // Oversized files are rejected with a downscale/re-encode message,
     // never transcoded here.
+    // Outbound-media root: /publish-media only reads files under this
+    // directory, and refuses everything (fail closed) when it is unset —
+    // see assertConfinedMediaPath in src/outbound.js.
+    outboundMediaRoot: getenv('WECOM_OUTBOUND_MEDIA_ROOT'),
     imageMaxBytes: intEnv('WECOM_IMAGE_MAX_BYTES', 10 * 1024 * 1024),
     videoMaxBytes: intEnv('WECOM_VIDEO_MAX_BYTES', 10 * 1024 * 1024),
     uploadTimeoutMs: intEnv('WECOM_UPLOAD_TIMEOUT_MS', 300000),
@@ -303,7 +315,7 @@ async function registerAdapter(cfg) {
     // ship. Point the reply flow at the verb that exists. File-based so
     // arbitrary reply text (apostrophes, code, Chinese quotes) never has
     // to survive shell interpolation.
-    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>. To send an image or video instead: gc wecom publish --chat {conversation_id} --image <path> (or --video <path>), optional --text caption.',
+    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>. To send an image or video instead: gc wecom publish --chat {conversation_id} --image <path> (or --video <path>), optional --text caption; media files must live under the adapter\'s WECOM_OUTBOUND_MEDIA_ROOT directory.',
     capabilities: {
       SupportsChildConversations: false,
       // Inbound: media/file messages hydrate into file:// attachment

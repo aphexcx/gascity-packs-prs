@@ -181,6 +181,67 @@ const mediaKindSpecs = {
 };
 
 class ClientError extends Error {}
+class ForbiddenError extends Error {}
+
+// --- outbound-media root confinement --------------------------------------------
+
+// assertConfinedMediaPath enforces the outbound-media root (codex jg-d0xr
+// finding 1): /publish-media may only read files under
+// WECOM_OUTBOUND_MEDIA_ROOT, and refuses symlinks ANYWHERE in the path.
+// Without it, any local caller able to reach the internal listener could
+// exfiltrate every image/video readable by the adapter to a WeCom chat —
+// the O_NOFOLLOW open protects only the FINAL component; symlinked parent
+// directories were traversed freely. Fail closed: no configured root, no
+// media publishing at all.
+//
+// The root is canonicalized per request (a root created after boot starts
+// working without a restart); the target is compared LEXICALLY against it
+// (no symlink resolution — a path that only reaches the root through a
+// link is refused, not normalized), then every component below the root
+// is lstat'ed and any symlink is rejected even if it would resolve back
+// inside the root. The O_NOFOLLOW open that follows re-checks the final
+// component at open time; racing a PARENT component into a symlink after
+// the walk requires write access inside the root itself, which is exactly
+// the trust boundary the root defines. Session/target authorization
+// stays where it lives today: gc's /extmsg/outbound checks the session's
+// binding when the transcript is recorded — the internal listener has no
+// pre-delivery authorization surface, which is why the filesystem scope
+// here must be airtight on its own.
+export async function assertConfinedMediaPath(filePath, outboundMediaRoot) {
+  if (!outboundMediaRoot) {
+    throw new ForbiddenError(
+      'outbound media publishing is disabled: WECOM_OUTBOUND_MEDIA_ROOT is not set — '
+      + 'configure the directory outbound media files may be read from (the adapter fails closed without it)',
+    );
+  }
+  let rootReal;
+  try {
+    rootReal = await fs.promises.realpath(outboundMediaRoot);
+  } catch {
+    throw new ForbiddenError(
+      `outbound media publishing is disabled: WECOM_OUTBOUND_MEDIA_ROOT (${outboundMediaRoot}) does not resolve to an existing directory`,
+    );
+  }
+  const resolved = path.resolve(filePath);
+  const rel = path.relative(rootReal, resolved);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new ForbiddenError(`file_path must live under the outbound media root ${rootReal}: ${filePath}`);
+  }
+  let current = rootReal;
+  for (const part of rel.split(path.sep)) {
+    current = path.join(current, part);
+    let st;
+    try {
+      st = await fs.promises.lstat(current);
+    } catch (err) {
+      throw new ClientError(`cannot open ${filePath} (${err.code ?? err.message}); pass an absolute path to a readable file under the outbound media root`);
+    }
+    if (st.isSymbolicLink()) {
+      throw new ForbiddenError(`${current} is a symlink; symlinks are not allowed anywhere in an outbound media path — pass the real path under the outbound media root`);
+    }
+  }
+  return resolved;
+}
 
 // postJSONParsed mirrors inbound.js's postJSON (same headers, same 15s
 // deadline) but returns the PARSED response body: the transcript-recording
@@ -571,6 +632,10 @@ export function createOutboundPublisher(deps) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ conversation: convo, delivered: false, failure_kind: 'invalid_request', error: message }));
     };
+    const fail403 = (message) => {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ conversation: convo, delivered: false, failure_kind: 'forbidden', error: message }));
+    };
     if (!chatid || !filePath) {
       fail400('conversation.conversation_id and file_path are required');
       return;
@@ -653,12 +718,19 @@ export function createOutboundPublisher(deps) {
 
     // Only the admitted owner touches the filesystem (finding 7): settled
     // and conflicting retries were answered above without any file access.
+    // Confinement first (finding 1) — the root check must precede the
+    // open, so nothing outside the outbound media root is ever read.
     let media;
     try {
+      await assertConfinedMediaPath(filePath, cfg.outboundMediaRoot);
       media = readMediaFile(filePath, mediaKind, maxBytes);
     } catch (err) {
       token.finish(err);
       releaseUntouchedState(key, state);
+      if (err instanceof ForbiddenError) {
+        fail403(err.message);
+        return;
+      }
       if (err instanceof ClientError) {
         fail400(err.message);
         return;
