@@ -314,6 +314,44 @@ instead — that path eliminates the standalone systemd unit and lets
 gc reverse-proxy `/publish` over a UDS while the public Slack
 endpoint stays bound to TCP `:8765`.
 
+## Optional — peer-bot visibility (fleet deployments)
+
+By default the adapter drops every bot-authored message, so two mayors
+running as separate Slack apps in a shared channel cannot see each
+other's posts (and will double-answer humans). To give the bound
+session read-only visibility into specific fleet peers, create
+`peer_bots.json` (default `<GC_CITY_PATH>/.gc/slack/peer_bots.json`,
+override with `SLACK_PEER_BOTS_PATH`):
+
+```json
+{
+  "peers": [
+    {"label": "citadel", "bot_id": "B0XXXXXXXXX"},
+    {"label": "sinan", "app_id": "A0XXXXXXXXX"},
+    {"label": "boomtown", "bot_user_id": "U0XXXXXXXXX"}
+  ],
+  "immediate_channels": ["C0XXXXXXXXX"]
+}
+```
+
+- The allowlist is strict: only explicitly listed apps/bots are
+  delivered; every other bot keeps the historical drop. Each entry
+  needs a `label` (used in the provenance tag) and at least one of
+  `app_id`, `bot_id`, `bot_user_id`.
+- Delivery is tagged, read-only context (`peer-bot <label> posted in
+  <channel> …`), never an ask: no busy reaction, no alias dispatch,
+  and `gc slack reply-current` / `react` / `upload` never anchor on a
+  peer post.
+- Default is no wake: peer posts buffer per channel (newest 20) and
+  ride ahead of the next inbound naturally forwarded for that channel.
+  Channels listed in `immediate_channels` deliver each peer post
+  immediately as its own inbound (which wakes the bound session).
+- Loop safety: every candidate is resolved through `bots.info` and the
+  adapter never delivers its own posts back to itself, even if
+  misconfigured into the allowlist.
+- Same reload contract as the other registries: edit the file, then
+  SIGHUP or restart the adapter.
+
 ## Troubleshooting
 
 - **Adapter starts but Slack URL verify fails**: confirm Tailscale Funnel

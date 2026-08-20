@@ -412,6 +412,24 @@ def session_identity_candidates(session_id: str) -> set[str]:
 # truncation risk up front.
 _INBOUND_SCAN_WINDOWS = ("10m", "2h", "48h")
 
+# Actor display-name prefix the adapter stamps on peer-bot context inbounds
+# (gp-kop; keep in sync with peerActorPrefix in adapter/peer_bots.go). A
+# peer-bot post delivered as read-only context must NEVER become the
+# reply-current / react / upload anchor — no auto-response semantics — so
+# the latest-inbound helpers skip these events and every bot-authored
+# transcript entry.
+_PEER_BOT_ACTOR_PREFIX = "peer-bot "
+
+
+def _is_peer_bot_event(event: dict[str, Any]) -> bool:
+    actor = (event.get("payload") or {}).get("actor") or ""
+    return isinstance(actor, str) and actor.startswith(_PEER_BOT_ACTOR_PREFIX)
+
+
+def _is_bot_transcript_entry(entry: dict[str, Any]) -> bool:
+    actor = entry.get("Actor") or entry.get("actor") or {}
+    return bool(isinstance(actor, dict) and actor.get("is_bot"))
+
 
 def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
     """Find the most recent extmsg.inbound event targeting session_id.
@@ -448,7 +466,12 @@ def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
                 f"{len(raw)}/{total} oldest events; the latest inbound may be missed",
                 file=sys.stderr,
             )
-        matches = [e for e in raw if (e.get("payload") or {}).get("target_session") in identities]
+        matches = [
+            e
+            for e in raw
+            if (e.get("payload") or {}).get("target_session") in identities
+            and not _is_peer_bot_event(e)
+        ]
         if matches:
             return matches[-1]  # events are in chronological order
     return None
@@ -527,7 +550,11 @@ def find_latest_inbound_thread_for_session(
         if items:
             break
     # items are newest-first (order=desc): the first inbound is the latest.
+    # Bot-authored entries (peer-bot context, gp-kop) are skipped: a peer
+    # post must never anchor reply-current threading, react, or upload.
     for entry in items:
+        if _is_bot_transcript_entry(entry):
+            continue
         if (entry.get("Kind") or entry.get("kind")) == "inbound":
             mid = (entry.get("ProviderMessageID") or entry.get("provider_message_id") or "").strip()
             if mid:

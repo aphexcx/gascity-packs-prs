@@ -654,6 +654,26 @@ type config struct {
 	// backfill reads channel history (SLACK_BACKFILL_MAX_WINDOW, default
 	// 1h; 0 disables backfill delivery — the watchdog then only alarms).
 	backfillMaxWindow time.Duration
+	// peerBotsPath is the JSON file naming the allowlisted fleet apps whose
+	// posts are delivered to bound sessions as tagged read-only peer
+	// context (gp-kop), plus the channels configured for immediate (waking)
+	// delivery. Operator-edited off-band; same SIGHUP-or-restart reload
+	// contract as channelMappingPath. Sourced from SLACK_PEER_BOTS_PATH,
+	// defaulting to <GC_CITY_PATH>/.gc/slack/peer_bots.json when
+	// GC_CITY_PATH is set, else /tmp/gc-slack-adapter/peer_bots.json.
+	peerBotsPath string
+	// peerBots is the in-memory snapshot of peerBotsPath. Nil-safe: nil (or
+	// an empty allowlist) keeps the legacy drop-every-bot-message behavior.
+	peerBots *peerBotsRegistry
+	// peerContext buffers allowlisted peer posts per channel until the next
+	// inbound naturally forwarded for that channel carries them as a
+	// prepended context block (the no-wake default). Nil-safe.
+	peerContext *peerContextBuffer
+	// peerAuthors resolves a peer post's bot_id through bots.info — the
+	// company gateway's author-resolution scaffolding reused for the
+	// legacy-path self-guard (a bot must never see its own posts). Nil
+	// disables peer delivery entirely (fail closed).
+	peerAuthors companyAuthorResolver
 }
 
 func loadConfig() (config, error) {
@@ -749,6 +769,7 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	defaultRoomLaunchPath := "/tmp/gc-slack-adapter/room_launch_mappings.json"
 	defaultSubteamAliasPath := "/tmp/gc-slack-adapter/subteam-aliases.json"
 	defaultUserAliasPath := "/tmp/gc-slack-adapter/slack-user-aliases.json"
+	defaultPeerBotsPath := "/tmp/gc-slack-adapter/peer_bots.json"
 	if cityPath := getenv("GC_CITY_PATH"); cityPath != "" {
 		defaultMappingPath = filepath.Join(cityPath, ".gc", "slack", "channel_mappings.json")
 		defaultRigMappingPath = filepath.Join(cityPath, ".gc", "slack", "rig_mappings.json")
@@ -757,6 +778,7 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		defaultRoomLaunchPath = filepath.Join(cityPath, ".gc", "slack", "room_launch_mappings.json")
 		defaultSubteamAliasPath = filepath.Join(cityPath, ".gc", "slack", "subteam-aliases.json")
 		defaultUserAliasPath = filepath.Join(cityPath, ".gc", "slack", "slack-user-aliases.json")
+		defaultPeerBotsPath = filepath.Join(cityPath, ".gc", "slack", "peer_bots.json")
 		cfg.cityPath = cityPath
 	}
 	cfg.channelMappingPath = envOrFn("SLACK_CHANNEL_MAPPING_PATH", defaultMappingPath)
@@ -770,6 +792,7 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	cfg.roomLaunchPath = envOrFn("GC_SLACK_ROOM_LAUNCH_FILE", defaultRoomLaunchPath)
 	cfg.subteamAliasStorePath = envOrFn("SLACK_SUBTEAM_ALIAS_FILE", defaultSubteamAliasPath)
 	cfg.userAliasStorePath = envOrFn("SLACK_USER_ALIAS_FILE", defaultUserAliasPath)
+	cfg.peerBotsPath = envOrFn("SLACK_PEER_BOTS_PATH", defaultPeerBotsPath)
 
 	// Socket Mode inbound transport + inbound-liveness watchdog (gp-3og).
 	// SLACK_APP_TOKEN is the xapp- app-level token; SLACK_SOCKET_MODE is
@@ -1422,6 +1445,20 @@ func main() {
 	// instance keeps SIGHUP reloads visible to inbound rendering.
 	cfg.userAliases = userAliases
 
+	peerBots, err := newPeerBotsRegistry(cfg.peerBotsPath)
+	if err != nil {
+		log.Fatalf("peer bots registry: %v", err)
+	}
+	log.Printf("peer bots registry: store=%s peers=%d (read-only; SIGHUP or restart to reload)",
+		cfg.peerBotsPath, peerBots.Len())
+	// Peer-bot visibility (gp-kop): the registry, the per-channel context
+	// buffer, and the bots.info author resolver (reusing the company
+	// gateway's resolver type for the never-deliver-own-posts self-guard)
+	// must all be on cfg before handleSlackEvents closes over it.
+	cfg.peerBots = peerBots
+	cfg.peerContext = newPeerContextBuffer()
+	cfg.peerAuthors = newBotInfoResolver(cfg.slackBotToken)
+
 	channelMapReg, err := newChannelMappingRegistry(cfg.channelMappingPath)
 	if err != nil {
 		log.Fatalf("channel mapping registry: %v", err)
@@ -1623,7 +1660,7 @@ func main() {
 	signal.Notify(hupCh, syscall.SIGHUP)
 	defer signal.Stop(hupCh)
 	go runReloadLoop(reloadStop, hupCh, func() {
-		logReloadOutcome(appsReg, channelMapReg, rigMapReg, roomLaunchReg, subteamAliases, userAliases)
+		logReloadOutcome(appsReg, channelMapReg, rigMapReg, roomLaunchReg, subteamAliases, userAliases, peerBots)
 		// Company stores reload on the same SIGHUP but OUTSIDE the atomic
 		// six-registry set: a stale/invalid company file retains its own
 		// last-known-good snapshot (handled inside StageReload) and never
@@ -2944,15 +2981,26 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if msg.Type != "message" && msg.Type != "app_mention" {
 		return
 	}
-	// Skip bot/system messages. Subtyped messages are system noise
-	// (message_changed, message_deleted, channel_join, bot_message, …)
-	// with one exception: "file_share" is a human posting a file and
+	// Bot-authored messages historically dropped here unconditionally,
+	// which made fleet mayors blind to each other's posts (gp-kop). An
+	// EXPLICITLY ALLOWLISTED fleet app's post is now delivered as tagged
+	// read-only peer context instead (buffered by default, immediate for
+	// configured channels); everything else keeps the drop. The peer
+	// branch terminates here either way: no target parsing, no busy
+	// affordance, no alias dispatch — a peer post is never an ask.
+	if msg.BotID != "" || msg.Subtype == "bot_message" {
+		maybeDeliverPeerBotMessage(cfg, env, msg)
+		return
+	}
+	// Skip system messages. Subtyped messages are system noise
+	// (message_changed, message_deleted, channel_join, …) with one
+	// exception: "file_share" is a human posting a file and
 	// must flow through so downloadSlackFiles can fetch the
 	// attachment. Slack delivers file posts both ways — the modern
 	// composer emits a plain message event with files[] and no
 	// subtype, older/API surfaces emit subtype "file_share" — and
 	// dropping the latter silently loses the upload (hw-94w5k #1).
-	if msg.BotID != "" || (msg.Subtype != "" && msg.Subtype != "file_share") || msg.User == "" {
+	if (msg.Subtype != "" && msg.Subtype != "file_share") || msg.User == "" {
 		return
 	}
 	// A message with neither text nor files carries nothing to route.
@@ -3203,10 +3251,22 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
 
+	// Buffered peer-bot context (gp-kop): pending allowlisted peer posts
+	// for this channel ride ahead of the message that naturally woke the
+	// bound session. Channel copy only — the alias-dispatch copy below
+	// targets a session that may not be bound to this channel at all.
+	// Drained here, restored on forward failure so a Slack redelivery
+	// re-flushes the same context.
+	peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
+	if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
+		textForChannel = peerBlock + "\n\n" + textForChannel
+	}
+
 	inboundForChannel := inbound
 	inboundForChannel.Text = textForChannel
 	if err := postInbound(cfg, inboundForChannel); err != nil {
 		log.Printf("inbound POST failed: %v", err)
+		cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
 		// Nothing reached gc. Cancel the busy mark FIRST — no agent
 		// received the message, so no reply will ever come to clear
 		// it — restoring any marks it displaced (their agents may
