@@ -35,6 +35,7 @@ import {
   safeFilename,
   safePathComponent,
   scrubErrorMessage,
+  scrubProviderError,
   sniffExtension,
   transcribeAudio,
   withDeadline,
@@ -219,6 +220,22 @@ test('scrubErrorMessage drops URLs and caps length', () => {
   assert.ok(!scrubbed.includes('wwcdn'));
   assert.ok(scrubbed.includes('[url]'));
   assert.ok(scrubErrorMessage('x'.repeat(500)).length <= 201);
+});
+
+// Codex jg-d0xr round-2 finding 13: both publish handlers re-logged and
+// echoed propagated provider errors verbatim, bypassing the round-1
+// identifier redaction — an ack-timeout probe persisted a secret request
+// id, and upload errors can carry a serialized provider payload.
+test('scrubProviderError strips serialized payloads, identifiers, and URLs', () => {
+  const raw = 'Upload init failed: no upload_id returned. Response: {"media_id":"MEDIA_SECRET","req_id":"SECRET_REQ_42","url":"https://openws.example/u?tok=abc"}';
+  const scrubbed = scrubProviderError(raw);
+  assert.ok(!scrubbed.includes('MEDIA_SECRET'), 'provider payload media id leaked');
+  assert.ok(!scrubbed.includes('SECRET_REQ_42'), 'provider request id leaked');
+  assert.ok(!scrubbed.includes('openws.example'), 'provider URL leaked');
+  assert.ok(!scrubbed.includes('tok=abc'), 'provider URL query leaked');
+  // Plain-string identifier mentions are redacted too.
+  assert.ok(!scrubProviderError('failed reqId: SECRET_REQ_42').includes('SECRET_REQ_42'));
+  assert.ok(scrubProviderError('x'.repeat(500)).length <= 201);
 });
 
 // --- typing helpers ----------------------------------------------------------

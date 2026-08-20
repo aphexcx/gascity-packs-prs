@@ -87,6 +87,19 @@ export function scrubSdkLogLine(m) {
     .replace(sdkIdentifierPattern, (_, name) => `${name}=[redacted]`);
 }
 
+// scrubProviderError is the single structured sink for a PROVIDER error
+// message that both publish handlers propagate into responses and logs
+// (codex jg-d0xr round-2 finding 13). Round 1 redacted only direct SDK
+// output; the handlers still re-logged/echoed provider errors verbatim,
+// leaking serialized provider payloads (`Response: {…}` — media ids,
+// upload ids, secret request ids), URLs, and filenames. This applies the
+// SDK line scrub (brace-truncate + URL drop + identifier redaction) AND
+// the delivered-text scrub (markup neutralization + length cap) in one
+// pass, so every final sink for a provider error is uniformly safe.
+export function scrubProviderError(msg) {
+  return scrubErrorMessage(scrubSdkLogLine(String(msg ?? 'unknown error')));
+}
+
 // createSdkLogger builds the logger handed to the SDK. DEBUG is dropped
 // entirely (full callback frames). INFO is ALLOWLISTED to connection
 // lifecycle — authentication, connect/reconnect/disconnect, heartbeat —

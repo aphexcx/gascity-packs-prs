@@ -49,6 +49,7 @@ import {
   neutralizeMarkupBoundaries,
   safeFilename,
   scrubErrorMessage,
+  scrubProviderError,
   sniffExtension,
 } from './media.js';
 
@@ -1085,7 +1086,10 @@ export function createOutboundPublisher(deps) {
       await chainSend(chatid, send);
     } catch (err) {
       token.finish(err);
-      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${err.message}`);
+      // Scrub the provider error at the log sink too (round-2 finding 13):
+      // the response was already scrubbed, but this log line propagated a
+      // verbatim provider error (URLs, ids, payloads) into the service log.
+      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${scrubProviderError(err.message)}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         conversation: convo,
@@ -1567,11 +1571,13 @@ export function createOutboundPublisher(deps) {
         return;
       }
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
-      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${sendErrorText(err)}`);
+      // Scrub at the log sink (round-2 finding 13): sendErrorText renders
+      // the error structurally, scrubErrorMessage strips URLs/ids/payloads.
+      log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${scrubProviderError(sendErrorText(err))}`);
       if (state.deliveryUnknown) {
         // Post-write failures without a negative acknowledgement are NOT
         // retryable (findings 3/4): the frame may have been displayed.
-        failDeliveryUnknown(`${stage} stage: ${scrubErrorMessage(sendErrorText(err))}`);
+        failDeliveryUnknown(`${stage} stage: ${scrubProviderError(sendErrorText(err))}`);
         return;
       }
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -1582,7 +1588,7 @@ export function createOutboundPublisher(deps) {
         conversation: convo,
         delivered: false,
         failure_kind: 'provider_error',
-        error: scrubErrorMessage(sendErrorText(err)),
+        error: scrubProviderError(sendErrorText(err)),
         // Echoed so the operator can rerun with the SAME key and resume
         // instead of duplicating whatever stages already delivered.
         idempotency_key: key,
@@ -1639,8 +1645,8 @@ export function createOutboundPublisher(deps) {
         });
         transcriptRecorded = true;
       } catch (err) {
-        transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubErrorMessage(err.message)}`;
-        log(`publish-media → ${chatid}: transcript recording failed: ${scrubErrorMessage(err.message)}`);
+        transcriptNote = `delivered, but not recorded in the extmsg transcript: ${scrubProviderError(err.message)}`;
+        log(`publish-media → ${chatid}: transcript recording failed: ${scrubProviderError(err.message)}`);
       } finally {
         transcriptSeeds.delete(key);
         state.pinned = false;
