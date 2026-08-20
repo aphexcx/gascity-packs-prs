@@ -352,6 +352,42 @@ override with `SLACK_PEER_BOTS_PATH`):
 - Same reload contract as the other registries: edit the file, then
   SIGHUP or restart the adapter.
 
+## Optional — inbound token efficiency (gp-729)
+
+The adapter coalesces bursts of untargeted channel chatter into one
+delivered inbound per debounce window (default 8s), registers a
+one-line reply-instruction template with gc (the full how-to arrives
+once per channel per adapter lifetime), collapses already-delivered
+thread priors in context preambles, suppresses the duplicate direct
+copy for alias targets that are already channel-bound, and renders
+`#name (Cid)` in pack-owned wrapper blocks (needs the `channels:read`
+bot scope; falls back to the raw id without it).
+
+Knobs:
+
+- `SLACK_COALESCE_WINDOW` — burst debounce for untargeted inbounds
+  (Go duration, default `8s`; `0` restores per-message immediate
+  forwarding). Targeted / bot-mentioned messages always deliver
+  immediately and flush any pending buffer ahead of themselves.
+- `delivery_policy.json` (default
+  `<GC_CITY_PATH>/.gc/slack/delivery_policy.json`, override with
+  `SLACK_DELIVERY_POLICY_PATH`) — per-channel delivery pacing:
+
+```json
+{
+  "channels": {
+    "C0XXXXXXXXX": {"mode": "digest", "interval_minutes": 10},
+    "C0YYYYYYYYY": {"mode": "immediate"}
+  }
+}
+```
+
+  A `digest` channel accumulates and delivers verbatim in one batch
+  every `interval_minutes` (1–120) — nothing is dropped or summarized.
+  Every unlisted channel (and an absent file) is `immediate`: only the
+  short burst debounce applies. Same SIGHUP-or-restart reload contract
+  as the other registries.
+
 ## Troubleshooting
 
 - **Adapter starts but Slack URL verify fails**: confirm Tailscale Funnel

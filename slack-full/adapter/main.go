@@ -674,6 +674,41 @@ type config struct {
 	// legacy-path self-guard (a bot must never see its own posts). Nil
 	// disables peer delivery entirely (fail closed).
 	peerAuthors companyAuthorResolver
+
+	// --- token-efficiency pass (gp-729) ---
+	//
+	// coalesceWindow is the burst-debounce for untargeted channel
+	// inbounds (SLACK_COALESCE_WINDOW, default 8s; 0 restores
+	// per-message immediate forwarding). coalescer owns the buffers
+	// and timers; nil-safe — nil disables coalescing entirely, which
+	// keeps directly-constructed test configs on the immediate path.
+	coalesceWindow time.Duration
+	coalescer      *inboundCoalescer
+	// deliveryPolicyPath / deliveryPolicy back delivery_policy.json —
+	// the per-channel immediate-vs-digest knob (item 6). Operator-
+	// edited off-band; same SIGHUP-or-restart reload contract as
+	// peer_bots.json. Sourced from SLACK_DELIVERY_POLICY_PATH,
+	// defaulting to <GC_CITY_PATH>/.gc/slack/delivery_policy.json when
+	// GC_CITY_PATH is set, else /tmp/gc-slack-adapter/delivery_policy.json.
+	deliveryPolicyPath string
+	deliveryPolicy     *deliveryPolicyRegistry
+	// deliveredIDs tracks which message timestamps each audience has
+	// already received so thread-context preambles stop re-quoting
+	// them (item 2). Nil-safe: nil means never-seen → full quote.
+	deliveredIDs *deliveredIDs
+	// channelNames caches conversations.info name lookups backing the
+	// "#name (Cid)" rendering in pack-owned wrapper blocks (item 4).
+	// nil disables resolution — raw ids pass through, keeping
+	// directly-constructed test configs network-inert.
+	channelNames *channelNameCache
+	// replyHelp remembers which channels received the full reply
+	// how-to this adapter lifetime (item 3 — the per-message reminder
+	// carries only the registered one-line template). Nil-safe.
+	replyHelp *oncePerChannel
+	// bindingCheck caches gc binding lookups backing alias-dispatch
+	// turn-dedup (item 5). Nil-safe: nil preserves the historical
+	// double-dispatch behavior.
+	bindingCheck *bindingCheckCache
 }
 
 func loadConfig() (config, error) {
@@ -793,6 +828,12 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	cfg.subteamAliasStorePath = envOrFn("SLACK_SUBTEAM_ALIAS_FILE", defaultSubteamAliasPath)
 	cfg.userAliasStorePath = envOrFn("SLACK_USER_ALIAS_FILE", defaultUserAliasPath)
 	cfg.peerBotsPath = envOrFn("SLACK_PEER_BOTS_PATH", defaultPeerBotsPath)
+	cfg.deliveryPolicyPath = envOrFn("SLACK_DELIVERY_POLICY_PATH", companyStateDirDefault(cfg.cityPath, "delivery_policy.json"))
+	if d, err := time.ParseDuration(envOrFn("SLACK_COALESCE_WINDOW", defaultCoalesceWindow.String())); err == nil && d >= 0 {
+		cfg.coalesceWindow = d
+	} else {
+		return cfg, fmt.Errorf("SLACK_COALESCE_WINDOW %q invalid (want a non-negative Go duration; 0 disables burst coalescing)", getenv("SLACK_COALESCE_WINDOW"))
+	}
 
 	// Socket Mode inbound transport + inbound-liveness watchdog (gp-3og).
 	// SLACK_APP_TOKEN is the xapp- app-level token; SLACK_SOCKET_MODE is
@@ -1075,6 +1116,12 @@ type adapterRegisterRequest struct {
 	Name         string              `json:"name,omitempty"`
 	CallbackURL  string              `json:"callback_url,omitempty"`
 	Capabilities adapterCapabilities `json:"capabilities,omitempty"`
+	// ReplyInstructions is the one-line reply-instruction template gc
+	// renders into every inbound reminder in place of its generic
+	// three-line reply-current fallback (extmsg
+	// ReplyInstructionsProvider, gp-729 item 3). {conversation_id} is
+	// substituted per reminder.
+	ReplyInstructions string `json:"reply_instructions,omitempty"`
 }
 
 // Slack API types
@@ -1525,6 +1572,30 @@ func main() {
 		companyDirStore.Snapshot() != nil, companyBindStore.Snapshot() != nil,
 		companyGW.dmBindStore.Snapshot() != nil, companyGW.agentApps.Snapshot().Len(), cfg.companyVerifySessions, receipts != nil)
 
+	// Token-efficiency pass (gp-729): the per-channel delivery-policy
+	// registry, the burst coalescer, and the supporting caches must all
+	// be on cfg before handleSlackEvents closes over the cfg value
+	// below. The coalescer's deliver closure captures the completed cfg
+	// copy — set immediately after the last cfg field assignment and
+	// before the listener starts, so no event can race an unset deliver.
+	deliveryPolicy, err := newDeliveryPolicyRegistry(cfg.deliveryPolicyPath)
+	if err != nil {
+		log.Fatalf("delivery policy registry: %v", err)
+	}
+	log.Printf("delivery policy registry: store=%s channels=%d (read-only; SIGHUP or restart to reload)",
+		cfg.deliveryPolicyPath, deliveryPolicy.Len())
+	cfg.deliveryPolicy = deliveryPolicy
+	cfg.deliveredIDs = newDeliveredIDs()
+	cfg.channelNames = newChannelNameCache()
+	cfg.replyHelp = newOncePerChannel()
+	cfg.bindingCheck = newBindingCheckCache()
+	cfg.coalescer = newInboundCoalescer(cfg.coalesceWindow, deliveryPolicy)
+	deliverCfg := cfg
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		return deliverCoalescedBatch(deliverCfg, channel, batch)
+	}
+	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d", cfg.coalesceWindow, deliveryPolicy.Len())
+
 	// Public mux: only /slack/events + /slack/interactions
 	// (HMAC-verified) and /healthz. Bound to 0.0.0.0 by default so
 	// Tailscale Funnel can reach it.
@@ -1579,7 +1650,15 @@ func main() {
 
 	if cfg.registerOnStart {
 		if err := registerAdapter(cfg); err != nil {
-			log.Fatalf("register adapter: %v", err)
+			// A gc predating extmsg reply_instructions (hq-fh9,
+			// 2026-07-06) may reject the unknown field outright.
+			// The template is a token nicety — never worth failing
+			// startup over — so retry once without it before the
+			// fatal verdict; gc then keeps its generic fallback text.
+			log.Printf("WARN: register adapter with reply_instructions failed (%v); retrying without the template", err)
+			if err := registerAdapterWithoutReplyInstructions(cfg); err != nil {
+				log.Fatalf("register adapter: %v", err)
+			}
 		}
 		mode := "LOCALHOST ONLY"
 		if cfg.serviceSocket != "" {
@@ -1660,12 +1739,16 @@ func main() {
 	signal.Notify(hupCh, syscall.SIGHUP)
 	defer signal.Stop(hupCh)
 	go runReloadLoop(reloadStop, hupCh, func() {
-		logReloadOutcome(appsReg, channelMapReg, rigMapReg, roomLaunchReg, subteamAliases, userAliases, peerBots)
+		logReloadOutcome(appsReg, channelMapReg, rigMapReg, roomLaunchReg, subteamAliases, userAliases, peerBots, deliveryPolicy)
 		// Company stores reload on the same SIGHUP but OUTSIDE the atomic
 		// six-registry set: a stale/invalid company file retains its own
 		// last-known-good snapshot (handled inside StageReload) and never
 		// blocks the six above, which have already committed.
 		companyGW.reloadOnSIGHUP()
+		// Re-arm coalescer timers against the (possibly changed)
+		// delivery policy: a channel flipped digest→immediate must not
+		// keep waiting out a stale two-hour window (gp-729 item 6).
+		cfg.coalescer.reconcileTimers()
 	})
 
 	stop := make(chan os.Signal, 1)
@@ -1682,6 +1765,10 @@ func main() {
 	defer cancel()
 	_ = publicSrv.Shutdown(ctx)
 	_ = internalSrv.Shutdown(ctx)
+	// Buffered coalesced messages were already acked to Slack — drain
+	// them to gc before exiting so a normal shutdown never loses a
+	// window's worth of chatter (gp-729).
+	cfg.coalescer.flushAll()
 }
 
 // listenUDS binds a Unix domain socket at path, removing any stale entry
@@ -1709,6 +1796,16 @@ func listenUDS(path string) (net.Listener, error) {
 }
 
 func registerAdapter(cfg config) error {
+	return registerAdapterRequest(cfg, slackReplyInstructionsTemplate)
+}
+
+// registerAdapterWithoutReplyInstructions is the compatibility retry for
+// a gc predating the reply_instructions registration field (hq-fh9).
+func registerAdapterWithoutReplyInstructions(cfg config) error {
+	return registerAdapterRequest(cfg, "")
+}
+
+func registerAdapterRequest(cfg config, replyInstructions string) error {
 	body, _ := json.Marshal(adapterRegisterRequest{
 		Provider:    cfg.provider,
 		AccountID:   cfg.accountID,
@@ -1719,6 +1816,7 @@ func registerAdapter(cfg config) error {
 			SupportsAttachments:        true,
 			MaxMessageLength:           40000, // Slack's chat.postMessage limit
 		},
+		ReplyInstructions: replyInstructions,
 	})
 	// PathEscape cityName so URL-significant characters cannot alter
 	// routing on the gc API side (sec-S-06). cityName is operator-supplied
@@ -3103,6 +3201,30 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 	}
 
+	// Alias-dispatch turn-dedup (gp-729 item 5): resolve the alias early
+	// so the duplicate-suppression verdict can shape the channel copy's
+	// text. When the aliased session already holds an active gc binding
+	// for this conversation, the extmsg fan-out below IS its delivery —
+	// the direct dispatch would land the same message id in that session
+	// twice in one turn (once as its own prompt, once as a mid-turn
+	// injection). Suppression restores the human's address marker into
+	// the forwarded text so addressed-ness survives without the second
+	// copy; a binding-lookup error fails open to dispatching both copies
+	// (duplicate is overhead, a missed delivery is loss — binding_check.go).
+	aliasedSessionID := ""
+	aliasSuppressed := false
+	if target != "" && aliasReg != nil {
+		if sid, ok := aliasReg.Get(target); ok {
+			aliasedSessionID = sid
+			if sessionBoundToConversation(cfg, sid, msg.Channel) {
+				aliasSuppressed = true
+				text = "@" + target + ": " + text
+				log.Printf("alias dispatch suppressed (turn-dedup gp-729): handle=%s session=%s already bound to chan=%s ts=%s",
+					target, sid, msg.Channel, msg.TS)
+			}
+		}
+	}
+
 	// gc-px8.5 + gc-px8.6: prepend thread-context preamble for inbounds
 	// that are replies in a thread. The cache stores per-(target,
 	// channel, thread) the ts of the most recent preamble already
@@ -3125,7 +3247,23 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
 		} else {
 			resolveName := func(id string) string { return resolveUserDisplayName(cfg, id) }
-			if preamble := formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName); preamble != "" {
+			// Priors this audience already received as their own
+			// inbounds collapse to a one-line note instead of a
+			// re-quote (gp-729 item 2). Exact-key lookup only: a
+			// handle's aliased session may not be channel-bound, so
+			// channel-audience history must never suppress its context.
+			// Buffered-but-undelivered ids count as delivered for the
+			// channel audience — they are guaranteed to land in the
+			// same or an earlier delivery than this message (a parent
+			// still in the coalesce buffer must not be re-quoted in
+			// its own reply's preamble).
+			alreadyDelivered := func(ts string) bool {
+				if cfg.deliveredIDs.seen(target, msg.Channel, ts) {
+					return true
+				}
+				return target == "" && cfg.coalescer.pendingContains(msg.Channel, ts)
+			}
+			if preamble := formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered); preamble != "" {
 				text = preamble + text
 			}
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
@@ -3244,6 +3382,25 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// failure). Best-effort: errors are logged and don't block the
 	// dispatch path. BUSY_REACTION= (set-but-empty) disables all of
 	// this — no reaction, no mark.
+	// Burst coalescing (gp-729 item 1): untargeted, non-bot-mentioned
+	// channel chatter buffers for the debounce window (or the channel's
+	// digest interval, item 6) and delivers as ONE inbound. Targeted or
+	// bot-mentioned messages keep the exact busy/alias/dedup flow below,
+	// with any pending buffer flushed AHEAD of them so ordering holds.
+	// Admission to the buffer is final handling of the event — the ack
+	// already went to Slack, the dedup claim commits via the defer, and
+	// a failed flush retries from the coalescer's own timer rather than
+	// via Slack redelivery.
+	// Rooms only: DMs/MPIMs are direct conversations where latency
+	// matters more than wrapper overhead — they keep the immediate path.
+	if cfg.coalescer.enabled() && target == "" && !botMentioned && inbound.Conversation.Kind == "room" {
+		inboundForChannel := inbound
+		inboundForChannel.Text = textForChannel
+		cfg.coalescer.enqueue(msg.Channel, pendingChannelInbound{inbound: inboundForChannel})
+		return
+	}
+	cfg.coalescer.flushAheadOf(msg.Channel)
+
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
@@ -3261,12 +3418,24 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
 		textForChannel = peerBlock + "\n\n" + textForChannel
 	}
+	// Once-per-channel full reply how-to (gp-729 item 3): the
+	// per-message reminder carries only the registered one-line
+	// template, so the first delivery for a channel this adapter
+	// lifetime appends the long form (and the channel's name+id
+	// pairing, item 4).
+	firstHelp := cfg.replyHelp.first(msg.Channel)
+	if firstHelp {
+		textForChannel += "\n\n" + replyHelpBlock(cfg, msg.Channel)
+	}
 
 	inboundForChannel := inbound
 	inboundForChannel.Text = textForChannel
 	if err := postInbound(cfg, inboundForChannel); err != nil {
 		log.Printf("inbound POST failed: %v", err)
 		cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+		if firstHelp {
+			cfg.replyHelp.unmark(msg.Channel)
+		}
 		// Nothing reached gc. Cancel the busy mark FIRST — no agent
 		// received the message, so no reply will ever come to clear
 		// it — restoring any marks it displaced (their agents may
@@ -3289,6 +3458,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	}
 	log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch",
 		msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(text))
+	cfg.deliveredIDs.record("", msg.Channel, msg.TS)
+	if aliasSuppressed {
+		// The channel copy IS the handle audience's delivery when the
+		// direct dispatch is suppressed; record it under the handle key
+		// so sticky thread replies dedup their preambles too.
+		cfg.deliveredIDs.record(target, msg.Channel, msg.TS)
+	}
 
 	// Busy-reaction lifecycle, add side: fires once per inbound (the
 	// alias-dispatch fanout below targets the same Slack TS, so a
@@ -3325,18 +3501,19 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inbound (above) and is expected to stay silent (per its prompt)
 	// because target != its handle.
 	displacedOwned := false
-	if target != "" && aliasReg != nil {
-		if aliasedSessionID, ok := aliasReg.Get(target); ok {
-			// Thread-stickiness bind: record (channel, msg.TS) -> target
-			// so subsequent thread replies (whose msg.ThreadTS will
-			// equal this msg.TS) inherit the same handle without the
-			// human re-tagging. Only binds when the dispatch actually
-			// fires — a target with no alias entry shouldn't poison the
-			// sticky map. Subsequent thread replies look this up before
-			// the parsers run.
-			if threadHandleSticky != nil {
-				threadHandleSticky.Bind(msg.Channel, msg.TS, target)
-			}
+	if aliasedSessionID != "" {
+		// Thread-stickiness bind: record (channel, msg.TS) -> target
+		// so subsequent thread replies (whose msg.ThreadTS will
+		// equal this msg.TS) inherit the same handle without the
+		// human re-tagging. Only binds when the handle resolved to a
+		// registered alias — a target with no alias entry shouldn't
+		// poison the sticky map. Binds on the suppressed path too:
+		// thread replies must keep inheriting the handle (and keep
+		// being suppressed) or the affordance flip-flops mid-thread.
+		if threadHandleSticky != nil {
+			threadHandleSticky.Bind(msg.Channel, msg.TS, target)
+		}
+		if !aliasSuppressed {
 			// Transfer the slot we already hold to the alias goroutine.
 			// No new acquireDispatchSlot — that would double-count
 			// against dispatchSem (gc-cby.26 Phase 4 review fix).
@@ -3359,6 +3536,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				defer dispatchInflightWG.Done()
 				defer release()
 				if dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target) {
+					cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 					// Final delivery landed: NOW retire the marks
 					// this re-target displaced (codex r7).
 					for _, d := range displaced {
@@ -4738,7 +4916,10 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 			"This bypasses your local channel binding (you have none for that channel) and posts directly through the slack adapter, with your registered identity applied.\n"+
 			"</system-reminder>",
 		neutralizeMarkupBoundaries(handle),
-		neutralizeMarkupBoundaries(msg.Conversation.ConversationID),
+		// Prose position renders "#name (Cid)" when resolvable (gp-729
+		// item 4); the --conversation-id flag below keeps the bare id
+		// the CLI needs.
+		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
 		neutralizeMarkupBoundaries(msg.ProviderMessageID),
 		neutralizeMarkupBoundaries(sender),
 		neutralizeMarkupBoundaries(msg.Text),

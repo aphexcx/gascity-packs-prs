@@ -10,6 +10,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
+  1. **Burst coalescing** — untargeted, non-bot-mentioned channel
+     messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,
+     default 8s; 0 disables) and deliver as ONE inbound whose text
+     block carries every message verbatim (sender, ts, thread
+     annotations), instead of N full system-reminder blocks. Targeted
+     or bot-mentioned messages keep the exact busy/alias/dedup flow and
+     flush any pending buffer ahead of themselves so ordering holds. A
+     single-message flush is byte-identical to the immediate path.
+  2. **Thread-parent dedup** — the adapter now tracks delivered message
+     ids per audience; thread-context preambles collapse priors the
+     audience already received to a one-line count ("N earlier messages
+     already delivered … not re-quoted") and keep the full quote only
+     for messages the audience genuinely hasn't seen.
+  3. **Reply boilerplate once** — the adapter registers a one-line
+     reply-instruction template with gc (`reply_instructions` on
+     adapter registration), replacing gc's generic three-line
+     reply-current fallback on every reminder; the full how-to (file
+     mechanics, threading, react, channel name+id) is appended once per
+     channel per adapter lifetime to that channel's first delivery.
+  4. **Channel names next to ids** — pack-owned wrapper blocks
+     (coalesced-burst headers, the once-per-channel how-to, the
+     alias-dispatch reminder) render `#name (Cid)` via a new
+     conversations.info cache (mirrors the users.info cache; raw id on
+     any failure; needs `channels:read`).
+  5. **Alias-dispatch turn-dedup** — a targeted inbound whose alias
+     session already holds an active gc binding for the originating
+     conversation no longer gets a second direct session-message copy
+     (which landed the same message id twice in one turn); the
+     `@handle:` address marker is restored into the channel copy so
+     addressed-ness survives. Binding lookups are cached (60s) and fail
+     open to double delivery.
+  6. **Per-channel delivery policy** — new `delivery_policy.json`
+     registry (`SLACK_DELIVERY_POLICY_PATH`, SIGHUP-reloadable):
+     `{"channels": {"C…": {"mode": "digest", "interval_minutes": N}}}`
+     switches a channel to verbatim batched delivery every N minutes
+     (nothing dropped or summarized); every unlisted channel — and an
+     absent file — stays immediate, so day one is behavior-neutral.
+  Alias-dispatch reminders now render the originating channel as
+  `#name (Cid)`. Adapter restart required; no script-side changes.
+
 - Peer-bot visibility on the legacy channel path (gp-kop, Afik-approved
   Option A): messages authored by an EXPLICITLY ALLOWLISTED fleet app
   (new `peer_bots.json` registry, `SLACK_PEER_BOTS_PATH`, SIGHUP-
