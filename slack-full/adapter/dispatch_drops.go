@@ -31,6 +31,15 @@ func handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	if gw := companyHealthStatus.Load(); gw != nil {
 		_, _ = io.WriteString(w, gw.healthzDetail())
 	}
+	// Inbound transport + liveness (gp-3og). Like the company gateway,
+	// each line appears only when production main() wired the component
+	// — the two-line "ok + counter" contract holds for bare handlers.
+	if r := socketModeHealth.Load(); r != nil {
+		_, _ = io.WriteString(w, r.healthzDetail())
+	}
+	if l := livenessHealth.Load(); l != nil {
+		_, _ = io.WriteString(w, l.healthzDetail())
+	}
 }
 
 // dispatchDropSummaryInterval paces the saturation roll-up log. One

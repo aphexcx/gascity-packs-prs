@@ -335,7 +335,11 @@ func handleSlackInteractions(cfg config, mapReg *channelMappingRegistry, rigReg 
 		// payload= JSON form (payload.team.id). See gc-cby.16.
 		teamID := parseTeamIDFromInteractionsBody(body)
 		secrets := lookupSigningSecrets(cfg.appsRegistry, cfg.slackSigningKey, teamID)
-		if !verifySlackSignatureMulti(secrets, r.Header.Get("X-Slack-Request-Timestamp"), body, r.Header.Get("X-Slack-Signature")) {
+		// Socket Mode slash-command / interactive envelopes are
+		// authenticated by the app-level-token WebSocket and carry no
+		// HMAC; the socket runner marks its in-process request as
+		// trusted (gp-3og). Network requests are verified as before.
+		if !isTrustedTransportRequest(r) && !verifySlackSignatureMulti(secrets, r.Header.Get("X-Slack-Request-Timestamp"), body, r.Header.Get("X-Slack-Signature")) {
 			log.Printf("slack interactions: signature verify FAILED team_id=%q candidates=%d", clipTeamIDForLog(teamID), len(secrets))
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
