@@ -450,6 +450,27 @@ class ForbiddenError extends Error {}
 // persistent map/journal key, so an unbounded one is unbounded metadata.
 const MAX_IDEMPOTENCY_KEY_BYTES = 256;
 
+// Per-field byte limits for everything else a media publish persists
+// (round-3 finding 5): the 1MiB listener body cap does not bound a SINGLE
+// field, and the conversation ref, file path, and session id are each
+// duplicated across the journaled fingerprint, callback receipt, expected
+// callback, and final receipt — a body-cap-sized value could compose ONE
+// journal entry beyond the journal's maxBytes, which pruning cannot
+// shrink (it never drops the only entry). WeCom ids are short ASCII and
+// macOS PATH_MAX is 1024; these caps are generous, and with them in
+// place a single entry is structurally a few KB at worst.
+const MAX_CONVERSATION_BYTES = 4096;
+const MAX_FILE_PATH_BYTES = 1024;
+const MAX_SESSION_ID_BYTES = 256;
+
+// latchedReqId bounds a provider frame's req_id before it is latched into
+// journal-persisted state (round-3 finding 5): receipt frames are
+// provider-controlled, and an oversized id must not balloon an entry.
+const latchedReqId = (frame) => {
+  const id = frame?.headers?.req_id;
+  return typeof id === 'string' && Buffer.byteLength(id) <= 256 ? id : undefined;
+};
+
 // sha256Hex renders a fixed-size fingerprint of an unbounded text field
 // (round-2 finding 12): captions and transcript texts are persisted as
 // hashes, never verbatim — equality comparison is unchanged, journal
@@ -1273,6 +1294,31 @@ export function createOutboundPublisher(deps) {
       fail400(`conversation.kind must be "dm" or "room", got ${JSON.stringify(convo.kind)}`);
       return;
     }
+    // A non-string session_id used to fingerprint as '' while finalization
+    // tested the RAW value's truthiness (round-3 finding 4): a numeric
+    // session attempted recording, and a same-key retry omitting it passed
+    // fingerprint validation onto the no-session path. Reject the shape
+    // outright; recording below is driven exclusively by the normalized
+    // fingerprint value.
+    if (pub.session_id != null && typeof pub.session_id !== 'string') {
+      fail400(`session_id must be a string when supplied, got ${typeof pub.session_id}`);
+      return;
+    }
+    // Per-field byte limits (round-3 finding 5) — see the MAX_* constants:
+    // every one of these fields is journaled, and pruning can never shrink
+    // a single oversized entry.
+    if (Buffer.byteLength(JSON.stringify(convo)) > MAX_CONVERSATION_BYTES) {
+      fail400(`conversation must serialize to at most ${MAX_CONVERSATION_BYTES} bytes`);
+      return;
+    }
+    if (Buffer.byteLength(filePath) > MAX_FILE_PATH_BYTES) {
+      fail400(`file_path must be at most ${MAX_FILE_PATH_BYTES} bytes`);
+      return;
+    }
+    if (pub.session_id && Buffer.byteLength(pub.session_id) > MAX_SESSION_ID_BYTES) {
+      fail400(`session_id must be at most ${MAX_SESSION_ID_BYTES} bytes`);
+      return;
+    }
     const maxBytes = mediaKind === 'image' ? cfg.imageMaxBytes : cfg.videoMaxBytes;
 
     // The idempotency key is REQUIRED here: the caller (gc wecom publish)
@@ -1326,7 +1372,7 @@ export function createOutboundPublisher(deps) {
       endpoint: 'publish-media',
       conversation_id: chatid,
       kind: resolveKind(convo.kind, chatid),
-      session_id: typeof pub.session_id === 'string' ? pub.session_id : '',
+      session_id: pub.session_id ?? '', // validated string-or-absent above (round-3 finding 4)
       media_kind: mediaKind,
       file_path: path.resolve(filePath),
       filename: safeFilename(pub.filename || path.basename(filePath)),
@@ -1634,7 +1680,7 @@ export function createOutboundPublisher(deps) {
           }
           throw err;
         }
-        state.messageID = frame?.headers?.req_id ?? state.messageID;
+        state.messageID = latchedReqId(frame) ?? state.messageID;
         state.mediaSent = true;
         journal.record(key, { mediaSent: true, messageID: state.messageID ?? '' }, { critical: false });
       }
@@ -1657,7 +1703,7 @@ export function createOutboundPublisher(deps) {
             }
             throw err;
           }
-          state.captionMessageID = frame?.headers?.req_id ?? state.captionMessageID;
+          state.captionMessageID = latchedReqId(frame) ?? state.captionMessageID;
           state.chunksDelivered = i + 1;
           journal.record(key, {
             chunksDelivered: state.chunksDelivered,
@@ -1714,6 +1760,13 @@ export function createOutboundPublisher(deps) {
     // retries keep waiting on the owner promise — the finalization
     // promise, which now settles only after recording does — and are
     // answered with the COMPLETE response.
+    // The recording identity is the NORMALIZED FINGERPRINT value (round-3
+    // finding 4), never the raw request field: the fingerprint is what the
+    // conflict check vouched for, and it survives journal rehydration for
+    // finalizing retries. (probe.session_id is the validated fallback for
+    // the same value; the fingerprint always carries it by this point.)
+    const sessionID = state.fingerprint?.session_id ?? probe.session_id;
+
     if (!state.callbackReceipt) {
       state.callbackReceipt = {
         conversation: convo,
@@ -1721,7 +1774,7 @@ export function createOutboundPublisher(deps) {
         delivered: true,
       };
       journal.record(key, { callbackReceipt: state.callbackReceipt }, { critical: false });
-      log(`publish-media → ${chatid} ${mediaKind} delivered (${effectiveSize} bytes, session=${pub.session_id ?? ''})`);
+      log(`publish-media → ${chatid} ${mediaKind} delivered (${effectiveSize} bytes, session=${sessionID})`);
     }
 
     try {
@@ -1740,7 +1793,7 @@ export function createOutboundPublisher(deps) {
         // is delivered-but-outcome-unknown.
         transcriptNote = 'delivered, but a previous transcript-recording attempt has an unknown outcome — '
           + 'not re-posted (repairing it safely needs gc-side transcript-append dedup)';
-      } else if (pub.session_id) {
+      } else if (sessionID) {
         // The fingerprinted effective kind (finding 11), not a fresh
         // resolveKind: the kind store may have learned between the probe
         // and this point (or between the delivering attempt and a
@@ -1792,7 +1845,7 @@ export function createOutboundPublisher(deps) {
           transcriptSeeds.set(key, state.callbackReceipt);
           try {
             await recordOutboundTranscript({
-              sessionID: pub.session_id,
+              sessionID,
               conversationID: chatid,
               kind,
               key,

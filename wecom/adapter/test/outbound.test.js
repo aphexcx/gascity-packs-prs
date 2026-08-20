@@ -2587,6 +2587,58 @@ test('an invalid conversation.kind is rejected up front', async (t) => {
   assert.match(res.json().error, /kind must be "dm" or "room"/);
 });
 
+// Codex jg-d0xr round-3 finding 4: a non-string session_id fingerprinted
+// as '' while finalization tested the RAW value's truthiness — a numeric
+// session attempted recording, and a same-key retry omitting it passed
+// fingerprint validation onto the no-session path. Non-string shapes are
+// now rejected; recording is driven from the fingerprint value.
+test('a non-string session_id is rejected before any provider work', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const { publisher, calls, outboundPosts } = makePublisher();
+  const res = await publishMedia(publisher, {
+    session_id: 12345,
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  });
+  assert.equal(res.statusCode, 400);
+  assert.match(res.json().error, /session_id must be a string/);
+  assert.equal(calls.length, 0, 'nothing may be sent for a malformed session identity');
+  assert.equal(outboundPosts.length, 0);
+});
+
+// Codex jg-d0xr round-3 finding 5: the journal byte cap cannot shrink a
+// SINGLE entry, and the conversation ref, file path, and session id are
+// each duplicated across the fingerprint, callback receipt, expected
+// callback, and final receipt — a body-cap-sized field could compose one
+// entry beyond the journal's maxBytes. Each journaled field is now
+// byte-capped at admission.
+test('oversized single fields are rejected before anything is journaled', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const journal = createAttemptJournal(); // in-memory, inspectable
+  const { publisher, calls } = makePublisher({ journal });
+  const base = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+  };
+  const cases = [
+    [{ conversation: { conversation_id: 'x'.repeat(8192) } }, /conversation must serialize to at most 4096 bytes/],
+    [{ conversation: { conversation_id: 'zhang_san', extra: 'y'.repeat(8192) } }, /conversation must serialize to at most 4096 bytes/],
+    [{ file_path: path.join(dir, `${'z'.repeat(1500)}.png`) }, /file_path must be at most 1024 bytes/],
+    [{ session_id: 's'.repeat(512) }, /session_id must be at most 256 bytes/],
+  ];
+  for (const [mutation, re] of cases) {
+    const res = await publishMedia(publisher, { ...base, ...mutation });
+    assert.equal(res.statusCode, 400, JSON.stringify(Object.keys(mutation)));
+    assert.match(res.json().error, re);
+  }
+  assert.equal(journal.size(), 0, 'no oversized field may reach the journal');
+  assert.equal(calls.length, 0);
+});
+
 // --- conversation-kind store ----------------------------------------------------
 
 test('the kind store learns from inbound frames and survives a restart', async (t) => {
