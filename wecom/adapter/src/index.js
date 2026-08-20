@@ -122,6 +122,7 @@ import {
 } from './media.js';
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
 import {
+  createAttemptJournal,
   createConversationKindStore,
   createOutboundPublisher,
   outboundChunkBytes,
@@ -407,8 +408,18 @@ async function main() {
     log,
   });
 
+  // Outbound attempt journal: media stage latches (upload → send →
+  // caption) persisted across restarts so a retried idempotency key
+  // resumes instead of re-sending, and interrupted sends come back as
+  // delivery-unknown. Lives next to the kind store.
+  const journal = createAttemptJournal({
+    filePath: path.join(path.dirname(cfg.mediaDir), 'outbound-attempts.json'),
+    log,
+  });
+
   const publisher = createOutboundPublisher({
     cfg,
+    journal,
     sendMessage: (chatid, body) => wsClient.sendMessage(chatid, body),
     uploadMedia: (buffer, options) => wsClient.uploadMedia(buffer, options),
     sendMediaMessage: (chatid, type, mediaId) => wsClient.sendMediaMessage(chatid, type, mediaId),

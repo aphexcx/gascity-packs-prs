@@ -17,6 +17,7 @@ import { test } from 'node:test';
 
 import {
   chunkText,
+  createAttemptJournal,
   createConversationKindStore,
   createOutboundPublisher,
   outboundChunkBytes,
@@ -113,6 +114,8 @@ function makePublisher(overrides = {}) {
         return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
       }),
     kindStore: overrides.kindStore ?? null,
+    ...(overrides.journal ? { journal: overrides.journal } : {}),
+    ...(overrides.withUploadDeadline ? { withUploadDeadline: overrides.withUploadDeadline } : {}),
     publishStatesCap: overrides.publishStatesCap ?? 512,
   });
   return { publisher, calls, outboundPosts, cfg };
@@ -573,7 +576,9 @@ test('a failed caption resumes without re-sending the already-delivered media', 
     },
     sendMessage: async () => {
       captionAttempts += 1;
-      if (captionAttempts === 1) throw new Error('ack timeout');
+      // A DEFINITE failure — ack timeouts are delivery-unknown since the
+      // finding-3 fix and refuse the retry (covered by their own test).
+      if (captionAttempts === 1) throw new Error('ws not connected');
       return { headers: { req_id: 'CAPTION_OK' } };
     },
   });
@@ -915,6 +920,208 @@ test('a full state table refuses NEW keys instead of growing or evicting partial
     idempotency_key: 'key-new-B',
   });
   assert.equal(textAdmitted.statusCode, 200);
+});
+
+// --- attempt journal, delivery-unknown, upload retention (finding 3) -----------------
+
+// Codex jg-d0xr finding 3: stage latches lived only in memory (a restart
+// forgot everything already delivered), lost acknowledgements were
+// treated as retryable (a same-key retry could display the media twice),
+// and a timed-out upload kept running in the SDK while a retry started a
+// second one.
+test('stage latches survive a restart: the retried key resumes without a second upload', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-restart-resume',
+  };
+
+  // Life 1: upload succeeds, send definitively fails, process "dies".
+  const life1 = makePublisher({
+    journal: createAttemptJournal({ filePath: journalPath }),
+    sendMediaMessage: async () => { throw new Error('ws not connected'); },
+  });
+  const failed = await publishMedia(life1.publisher, body);
+  assert.equal(failed.statusCode, 502);
+
+  // Life 2: fresh publisher, same journal file.
+  let life2Uploads = 0;
+  const life2 = makePublisher({
+    journal: createAttemptJournal({ filePath: journalPath }),
+    uploadMedia: async () => {
+      life2Uploads += 1;
+      return { media_id: 'MEDIA_DUP' };
+    },
+  });
+  const resumed = await publishMedia(life2.publisher, body);
+  assert.equal(resumed.statusCode, 200);
+  assert.equal(life2Uploads, 0, 'the journaled media_id must be reused across the restart');
+  const sent = life2.calls.find((c) => c.op === 'sendMediaMessage');
+  assert.equal(sent.mediaId, 'MEDIA_1', "life 1's upload is what gets sent");
+});
+
+test('a fully settled key answers from the journaled receipt after a restart', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-restart-settled',
+  };
+
+  const life1 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  const first = await publishMedia(life1.publisher, body);
+  assert.equal(first.statusCode, 200);
+
+  const life2 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  fs.rmSync(file); // and the file may be long gone (finding 7)
+  const retry = await publishMedia(life2.publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().message_id, first.json().message_id);
+  assert.equal(life2.calls.length, 0, 'no provider traffic for a settled key after restart');
+});
+
+test('a lost acknowledgement classifies as delivery-unknown — never blindly re-sent', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      throw new Error('Reply ack timeout (10000ms) for reqId: SEND_MSG_1');
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-ack-lost',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'delivery_unknown');
+  assert.match(first.json().error, /may or may not be visible/);
+  assert.equal(first.json().idempotency_key, 'key-ack-lost');
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(sendAttempts, 1, 'an ambiguous send must NOT be repeated under the same key');
+});
+
+test('a crash between send-attempt and acknowledgement hydrates as delivery-unknown', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-crash-mid-send',
+  };
+
+  // Life 1: the send frame goes out and the process dies before any ack —
+  // simulated by a sendMediaMessage that never settles.
+  const life1Journal = createAttemptJournal({ filePath: journalPath });
+  const life1 = makePublisher({
+    journal: life1Journal,
+    sendMediaMessage: () => new Promise(() => {}),
+  });
+  publishMedia(life1.publisher, body); // intentionally not awaited: it never settles
+  while (!life1Journal.get('key-crash-mid-send')?.sendAttempted) {
+    await new Promise((r) => setImmediate(r));
+  }
+
+  // Life 2: same journal file.
+  const life2 = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  const retry = await publishMedia(life2.publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(life2.calls.length, 0, 'the maybe-displayed media must not be sent again');
+});
+
+test('a caption ack timeout is delivery-unknown too — the chunk is not re-sent', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let mediaSends = 0;
+  let captionAttempts = 0;
+  const { publisher } = makePublisher({
+    sendMediaMessage: async () => {
+      mediaSends += 1;
+      return { headers: { req_id: 'MSG_1' } };
+    },
+    sendMessage: async () => {
+      captionAttempts += 1;
+      throw new Error('Reply ack timeout (10000ms) for reqId: SEND_MSG_2');
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    text: 'ambiguous caption',
+    idempotency_key: 'key-caption-ack-lost',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'delivery_unknown');
+
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(mediaSends, 1);
+  assert.equal(captionAttempts, 1, 'a maybe-displayed caption chunk must not be repeated');
+});
+
+test('a timed-out upload is retained: retries re-await it instead of uploading again', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let uploads = 0;
+  let resolveUpload;
+  const slowUpload = new Promise((r) => { resolveUpload = r; });
+  const { publisher, calls } = makePublisher({
+    uploadMedia: async () => {
+      uploads += 1;
+      return slowUpload;
+    },
+    // A short real deadline standing in for withDeadline(p, uploadTimeoutMs).
+    withUploadDeadline: (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('media upload exceeded the 30ms wall-clock deadline')), 30)),
+    ]),
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-upload-retained',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'provider_error', 'an upload timeout is retryable, not delivery-unknown');
+
+  // Retry while the SDK upload is STILL running: it must wait on the same
+  // upload, not start a second one.
+  const second = await publishMedia(publisher, body);
+  assert.equal(second.statusCode, 502);
+  assert.equal(uploads, 1, 'a second concurrent upload of the same bytes must never start');
+
+  // The abandoned upload finally succeeds; its media_id is latched.
+  resolveUpload({ media_id: 'MEDIA_LATE' });
+  await new Promise((r) => setImmediate(r));
+  const third = await publishMedia(publisher, body);
+  assert.equal(third.statusCode, 200);
+  assert.equal(uploads, 1);
+  assert.equal(calls.find((c) => c.op === 'sendMediaMessage').mediaId, 'MEDIA_LATE');
 });
 
 // --- seeded receipt pinning (finding 6) ---------------------------------------------

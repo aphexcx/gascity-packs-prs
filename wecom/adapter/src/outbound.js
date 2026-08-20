@@ -159,6 +159,89 @@ export function createConversationKindStore({ filePath, log = () => {}, cap = 40
   };
 }
 
+// --- outbound attempt journal ---------------------------------------------------
+
+// createAttemptJournal persists per-key media delivery progress ACROSS
+// restarts (codex jg-d0xr finding 3): stage latches lived only in memory,
+// so a restart forgot which uploads and sends had already happened and a
+// retried key re-uploaded and RE-SENT media users had already seen. Each
+// stage mutation is journaled before the next provider action depends on
+// it — in particular sendAttempted is written BEFORE aibot_send_msg goes
+// out, so a crash in that window hydrates as delivery-unknown rather than
+// silently retryable. Same atomic tmp+rename, 0600 discipline as the
+// conversation-kind store; writes are small and media sends are capped at
+// 30/min by WeCom, so the synchronous write is not on a hot path.
+// filePath null keeps the journal in memory only (tests).
+export function createAttemptJournal({ filePath = null, log = () => {}, cap = 512 } = {}) {
+  const entries = new Map(); // key → { fingerprint, mediaId, sendAttempted, mediaSent, … }
+
+  if (filePath) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      for (const [key, entry] of Object.entries(raw?.entries ?? {})) {
+        if (entry && typeof entry === 'object') entries.set(key, entry);
+      }
+    } catch (err) {
+      // Missing file is the normal first boot; anything else starts empty
+      // and logs — losing the journal degrades to the pre-journal world
+      // (retries may duplicate after a restart), never to a crash.
+      if (err.code !== 'ENOENT') log(`outbound attempt journal unreadable (${scrubErrorMessage(err.message)}); starting empty`);
+    }
+  }
+
+  function persist() {
+    if (!filePath) return;
+    try {
+      fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+      const tmp = `${filePath}.tmp`;
+      fs.writeFileSync(tmp, JSON.stringify({ version: 1, entries: Object.fromEntries(entries) }), { mode: 0o600 });
+      fs.renameSync(tmp, filePath);
+    } catch (err) {
+      log(`outbound attempt journal write failed: ${scrubErrorMessage(err.message)}`);
+    }
+  }
+
+  return {
+    record(key, patch) {
+      const merged = { ...(entries.get(key) ?? {}), ...patch, updatedAt: Date.now() };
+      entries.delete(key); // re-insert so Map order tracks recency
+      entries.set(key, merged);
+      while (entries.size > cap) {
+        // Drop the oldest SETTLED entry first; failing that, the oldest of
+        // all — the journal must never be the thing that grows unbounded.
+        let dropped = null;
+        for (const [k, e] of entries) {
+          if (e.receipt) { dropped = k; break; }
+        }
+        entries.delete(dropped ?? entries.keys().next().value);
+      }
+      persist();
+    },
+    get(key) {
+      return entries.get(key);
+    },
+    entries() {
+      return [...entries];
+    },
+    size() {
+      return entries.size;
+    },
+  };
+}
+
+// isAckAmbiguous decides whether a provider send failure leaves delivery
+// UNKNOWN (finding 3): the SDK's reply-ack timeout ("Reply ack timeout
+// (10000ms) for reqId: …") means the frame went out and the
+// acknowledgement never came back — WeCom may well have displayed the
+// message, so a blind same-key retry could show it twice. Anything else
+// the SDK throws (not connected, reply queue full, errcode≠0 response) is
+// a definite non-delivery and stays retryable. Upload failures never come
+// through here — an upload is invisible to the chat, so re-running it is
+// always safe.
+function isAckAmbiguous(err) {
+  return err?.code === 'ETIMEDOUT' || /\btimed?\s*out\b/i.test(err?.message ?? '');
+}
+
 // --- media file admission ------------------------------------------------------
 
 // What each media kind accepts, per the WeCom smart-robot limits above.
@@ -384,6 +467,9 @@ export function createUploadGate({ slots, maxQueue }) {
 //                    chunked upload (index.js wraps media.js withDeadline);
 //                    identity in tests
 //   kindStore        createConversationKindStore instance (or null)
+//   journal          createAttemptJournal instance — persists media stage
+//                    latches across restarts; defaults to an in-memory
+//                    journal (no file)
 //   postOutbound     (target, body) → parsed OutboundResult — POST gc
 //                    /extmsg/outbound; defaults to postJSONParsed above
 //                    (tests inject a fake)
@@ -397,6 +483,7 @@ export function createOutboundPublisher(deps) {
     sendMediaMessage,
     withUploadDeadline = (p) => p,
     kindStore = null,
+    journal = createAttemptJournal(),
     postOutbound = postJSONParsed,
     log = () => {},
     publishStatesCap = 512,
@@ -428,6 +515,28 @@ export function createOutboundPublisher(deps) {
   // through the upload gate above); entries are removed the moment
   // recording settles either way.
   const transcriptSeeds = new Map(); // key → receipt
+
+  // Rehydrate media publish states from the attempt journal (finding 3):
+  // a restart used to lose every latch, so a retried key re-uploaded and
+  // RE-SENT media users had already seen. A journaled entry whose
+  // aibot_send_msg (or caption chunk) was attempted without a recorded
+  // acknowledgement comes back as delivery-unknown — refused for blind
+  // retry, because the message may already be visible in the chat.
+  for (const [journaledKey, e] of journal.entries()) {
+    publishStates.set(journaledKey, {
+      endpoint: 'publish-media',
+      fingerprint: e.fingerprint,
+      mediaId: e.mediaId,
+      mediaSent: !!e.mediaSent,
+      messageID: e.messageID,
+      captionMessageID: e.captionMessageID,
+      chunksDelivered: e.chunksDelivered ?? 0,
+      receipt: e.receipt,
+      deliveryUnknown: !!e.deliveryUnknown
+        || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
+        || ((e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
+    });
+  }
 
   // Per-chat outbound serialization: the SDK only serializes sends sharing
   // a req_id, so two publishes to the same chat (different idempotency
@@ -785,6 +894,18 @@ export function createOutboundPublisher(deps) {
         idempotency_key: key,
       }));
     };
+    const failDeliveryUnknown = (detail = '') => {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'delivery_unknown',
+        error: 'the WeCom acknowledgement for a send under this idempotency key never arrived — the message may or may not be visible in the chat. '
+          + 'Check the chat first; re-send with a FRESH key only if it is genuinely missing.'
+          + (detail ? ` (${detail})` : ''),
+        idempotency_key: key,
+      }));
+    };
 
     const claim = await claimPublishState(key);
     if (claim.refused) {
@@ -819,6 +940,14 @@ export function createOutboundPublisher(deps) {
         fail409(conflicts);
         return;
       }
+    }
+    if (state.deliveryUnknown) {
+      // A previous attempt's acknowledgement never arrived (or the
+      // adapter died mid-send): the message may already be visible in
+      // the chat, so this key is not blindly retryable (finding 3).
+      token.finish(new Error(`delivery unknown for ${key}`));
+      failDeliveryUnknown();
+      return;
     }
 
     // Global admission BEFORE any file I/O (finding 9): a slot must be
@@ -887,6 +1016,9 @@ export function createOutboundPublisher(deps) {
     } else {
       state.endpoint = 'publish-media';
       state.fingerprint = { ...probe, digest };
+      // Journal the fingerprint BEFORE any provider write (finding 3):
+      // from here on, a restart can validate and resume this key.
+      journal.record(key, { fingerprint: state.fingerprint });
     }
 
     const spec = mediaKindSpecs[mediaKind];
@@ -894,14 +1026,36 @@ export function createOutboundPublisher(deps) {
       // Three latched stages so a gc-style retry of the same key resumes
       // where the failure happened instead of repeating delivered steps:
       // a re-upload wastes quota (30/min per robot), and a re-send shows
-      // the user the media twice.
+      // the user the media twice. Each latch is journaled the moment it
+      // matters (finding 3) so the resume survives an adapter restart.
       try {
         if (!state.mediaId) {
-          const uploaded = await withUploadDeadline(
-            uploadMedia(media.buffer, { type: spec.wecomType, filename }),
-          );
-          if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
-          state.mediaId = uploaded.media_id;
+          if (!state.uploadPromise) {
+            // The upload promise is RETAINED until the SDK settles it
+            // (finding 3): withUploadDeadline only stops the wait — the
+            // chunked upload keeps running inside the SDK, and starting a
+            // second one on retry would double quota use and race two
+            // uploads of the same bytes over one connection. A retry
+            // re-awaits the same promise; if the abandoned upload
+            // eventually resolves, its media_id is latched out-of-band.
+            const uploadRun = Promise.resolve(
+              uploadMedia(media.buffer, { type: spec.wecomType, filename }),
+            ).then((uploaded) => {
+              if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
+              if (!state.mediaId) {
+                state.mediaId = uploaded.media_id;
+                journal.record(key, { mediaId: uploaded.media_id });
+              }
+              return uploaded;
+            });
+            uploadRun.catch(() => {}); // retained without a live waiter
+            const clearRetention = () => {
+              if (state.uploadPromise === uploadRun) state.uploadPromise = undefined;
+            };
+            uploadRun.then(clearRetention, clearRetention);
+            state.uploadPromise = uploadRun;
+          }
+          await withUploadDeadline(state.uploadPromise);
         }
       } finally {
         // The buffer's provider-side use ends with the upload stage —
@@ -909,19 +1063,52 @@ export function createOutboundPublisher(deps) {
         releaseUpload();
       }
       if (!state.mediaSent) {
-        const frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId);
+        // sendAttempted persists BEFORE the frame goes out: a crash in
+        // this window must hydrate as delivery-unknown, not retryable.
+        journal.record(key, { sendAttempted: true });
+        let frame;
+        try {
+          frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId);
+        } catch (err) {
+          if (isAckAmbiguous(err)) {
+            state.deliveryUnknown = true;
+            journal.record(key, { deliveryUnknown: true });
+          } else {
+            // Definite non-delivery (never written / provider refused):
+            // clear the attempt so the key stays retryable.
+            journal.record(key, { sendAttempted: false });
+          }
+          throw err;
+        }
         state.messageID = frame?.headers?.req_id ?? state.messageID;
         state.mediaSent = true;
+        journal.record(key, { mediaSent: true, messageID: state.messageID ?? '' });
       }
       if (caption) {
         const chunks = chunkText(caption);
         for (let i = state.chunksDelivered; i < chunks.length; i++) {
-          const frame = await sendMessage(chatid, {
-            msgtype: 'markdown',
-            markdown: { content: chunks[i] },
-          });
+          journal.record(key, { chunksAttempted: i + 1 });
+          let frame;
+          try {
+            frame = await sendMessage(chatid, {
+              msgtype: 'markdown',
+              markdown: { content: chunks[i] },
+            });
+          } catch (err) {
+            if (isAckAmbiguous(err)) {
+              state.deliveryUnknown = true;
+              journal.record(key, { deliveryUnknown: true });
+            } else {
+              journal.record(key, { chunksAttempted: state.chunksDelivered });
+            }
+            throw err;
+          }
           state.captionMessageID = frame?.headers?.req_id ?? state.captionMessageID;
           state.chunksDelivered = i + 1;
+          journal.record(key, {
+            chunksDelivered: state.chunksDelivered,
+            captionMessageID: state.captionMessageID ?? '',
+          });
         }
       }
     };
@@ -931,6 +1118,12 @@ export function createOutboundPublisher(deps) {
       token.finish(err);
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
       log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${err.message}`);
+      if (state.deliveryUnknown) {
+        // Ack timeouts are NOT retryable failures (finding 3): the frame
+        // went out and WeCom may have displayed it.
+        failDeliveryUnknown(`${stage} stage: ${scrubErrorMessage(err.message)}`);
+        return;
+      }
       res.writeHead(502, { 'Content-Type': 'application/json' });
       // Unlike /publish (whose caller is gc's receipt parser), this
       // endpoint answers the CLI — include the scrubbed provider error so
@@ -955,6 +1148,7 @@ export function createOutboundPublisher(deps) {
       message_id: state.messageID ?? '',
       delivered: true,
     };
+    journal.record(key, { receipt: state.receipt });
     token.finish();
     log(`publish-media → ${chatid} ${mediaKind} delivered (${media.size} bytes, session=${pub.session_id ?? ''})`);
 
