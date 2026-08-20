@@ -38,7 +38,7 @@ func TestCoalescerNilAndZeroWindowDisabled(t *testing.T) {
 		t.Fatal("nil coalescer must be disabled")
 	}
 	nilC.enqueue("C1", testPending("C1", "1.0", "x")) // must not panic
-	nilC.flushAheadOf("C1")                           // must not panic
+	nilC.flushAheadOf("C1", "")                           // must not panic
 	nilC.flushAll()                                   // must not panic
 	nilC.reconcileTimers()                            // must not panic
 	if nilC.pendingContains("C1", "1.0") {
@@ -115,7 +115,7 @@ func TestCoalescerFlushAheadOfDrainsSynchronously(t *testing.T) {
 	c := newInboundCoalescer(time.Hour, nil)
 	c.deliver = deliver
 	c.enqueue("C1", testPending("C1", "1.0", "buffered"))
-	c.flushAheadOf("C1")
+	c.flushAheadOf("C1", "")
 	select {
 	case batch := <-got:
 		if len(batch) != 1 || batch[0].inbound.ProviderMessageID != "1.0" {
@@ -125,10 +125,58 @@ func TestCoalescerFlushAheadOfDrainsSynchronously(t *testing.T) {
 		t.Fatal("flushAheadOf must deliver synchronously")
 	}
 	// Empty buffer: no delivery.
-	c.flushAheadOf("C1")
+	c.flushAheadOf("C1", "")
 	select {
 	case <-got:
 		t.Fatal("empty flushAheadOf must not deliver")
+	default:
+	}
+}
+
+func TestCoalescerFlushAheadOfWithholdsUrgentTwin(t *testing.T) {
+	// pc_c920ff5fe90c: the urgent message's buffered twin (same ts,
+	// distinct event id) must not ride in the flushed batch — the batch
+	// dedup key can't collide with the urgent copy's "slack-<ts>", so
+	// gc would deliver the id twice in one turn. The twin is RETURNED,
+	// not dropped: the caller restores it if the urgent delivery fails.
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "chatter"))
+	c.enqueue("C1", testPending("C1", "2.0", "twin of the urgent mention"))
+	withheld := c.flushAheadOf("C1", "2.0")
+	select {
+	case batch := <-got:
+		if len(batch) != 1 || batch[0].inbound.ProviderMessageID != "1.0" {
+			t.Fatalf("batch must hold only the non-twin chatter: %+v", batch)
+		}
+	default:
+		t.Fatal("flush-ahead must still deliver the rest of the batch")
+	}
+	if len(withheld) != 1 || withheld[0].inbound.ProviderMessageID != "2.0" {
+		t.Fatalf("withheld = %+v, want the twin entry", withheld)
+	}
+	if c.pendingContains("C1", "2.0") {
+		t.Fatal("withheld twin must leave the buffer while the urgent copy is in flight")
+	}
+	// Urgent delivery failed → the caller restores; the twin must be
+	// buffered again for the timer retry.
+	c.restore("C1", withheld)
+	if !c.pendingContains("C1", "2.0") {
+		t.Fatal("restored twin must re-enter the buffer")
+	}
+
+	// A buffer holding ONLY the twin flushes to nothing.
+	c.mu.Lock()
+	c.takeLocked("C1") // reset buffer state
+	c.mu.Unlock()
+	c.enqueue("C1", testPending("C1", "3.0", "lone twin"))
+	if withheld := c.flushAheadOf("C1", "3.0"); len(withheld) != 1 {
+		t.Fatalf("lone twin must be withheld, got %+v", withheld)
+	}
+	select {
+	case batch := <-got:
+		t.Fatalf("twin-only batch must not deliver: %+v", batch)
 	default:
 	}
 }
@@ -143,7 +191,7 @@ func TestCoalescerStaleTimerCannotStealNewerBatch(t *testing.T) {
 	c.mu.Lock()
 	staleGen := c.gen["C1"]
 	c.mu.Unlock()
-	c.flushAheadOf("C1")
+	c.flushAheadOf("C1", "")
 	<-got
 	c.enqueue("C1", testPending("C1", "2.0", "new"))
 	// Simulate the stale callback firing late: it must no-op, leaving
@@ -300,7 +348,8 @@ func TestFormatCoalescedBlockShape(t *testing.T) {
 	got := formatCoalescedBlock(cfg, "C1", batch)
 
 	for _, want := range []string{
-		"[2 messages in C1, coalesced; reply commands anchor to the newest, ts 2.000000]",
+		"[2 messages in C1, coalesced. Reply with --turn-ts 2.000000 to answer the newest",
+		"--reply-to <its thread ts> or --no-thread",
 		"[1.000000] Afik: first line",
 		"[2.000000] Afik (in thread 1.000000): second",
 	} {

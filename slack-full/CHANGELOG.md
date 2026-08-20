@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Reply-current turn anchoring (gp-6j3; fleet repro 8/20, three misfires
+  in one hour across two cities): the default threading scanned for the
+  LATEST inbound at send time, and coalesced delivery + interleaved
+  channel/thread traffic made that a different message than the one the
+  session was answering — threaded asks got answered top-level, and one
+  reply landed in a foreign thread outright. New `--turn-ts <ts>` flag
+  on `gc slack reply-current` pins the anchor to the exact inbound being
+  answered (its thread root when threaded, channel level when not) via a
+  transcript lookup by ts; an unresolvable ts is a hard error with
+  explicit-anchor guidance (`--reply-to` / `--no-thread`), never a
+  silent top-level post. The registered reply template now renders
+  `--turn-ts {message_ts}` into every gc inbound reminder, the
+  once-per-channel how-to documents the flag, and the coalesced-block
+  header steers replies to older batch members (which have no transcript
+  entry of their own) through `--reply-to`/`--no-thread`. A live company
+  turn refuses `--turn-ts` and points at `--turn-ref`. The no-flag
+  latest-inbound inheritance (gp-i62) is unchanged as a fallback.
+- Coalescer twin double-delivery (pc_c920ff5fe90c, folded into gp-6j3):
+  a bot-mention pair (`message` + `app_mention`, same ts, distinct
+  event ids) could split when the bot user id was unknown — one copy
+  buffered as chatter, the other took the urgent path — and the flushed
+  batch's `slack-batch-…` dedup key can never collide with the urgent
+  copy's `slack-<ts>`, so gc delivered the same message id twice in one
+  turn with different decoration. Flush-ahead now withholds the urgent
+  message's own ts from the batch (restored for the timer retry if the
+  urgent post then fails — never dropped), a ts already delivered to
+  the channel audience is skipped at enqueue AND filtered again at
+  batch-delivery time (narrowing the race where the twin buffers while
+  the urgent POST is still in flight to the POST's own in-flight
+  window; an urgent failure never records its ts, so the buffered copy
+  still delivers — the residual is fail-open to a duplicate, never to
+  loss, accepted like gp-729's documented window limitations), and
+  same-ts entries collapse inside a batch.
+
 ### Added
 
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):

@@ -1165,3 +1165,242 @@ def test_company_path_raw_flag_passes_tildes(
     rc_code = rc.main(["--body", _RUNWAY_LINE, "--raw"])
     assert rc_code == 0
     assert captured[0]["payload"]["text"] == _RUNWAY_LINE
+
+
+# --------------------------------------------------------------------------
+# --turn-ts exact anchoring (gp-6j3): anchor the reply to the inbound the
+# session is answering, never to whatever inbound arrived last. Fleet repro
+# (8/20, two cities in one hour): a threaded ask answered TOP-LEVEL twice
+# because a newer top-level inbound had displaced the scan anchor, and a
+# ship announcement landed in a foreign thread because the latest inbound
+# happened to be threaded.
+# --------------------------------------------------------------------------
+
+
+def _forbid_latest_scan(monkeypatch: pytest.MonkeyPatch, common) -> None:
+    def _fail(_sid):
+        raise AssertionError("--turn-ts must not scan for the latest inbound")
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", _fail)
+
+
+def test_turn_ts_threaded_inbound_anchors_at_its_root(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    calls: dict[str, Any] = {}
+
+    def fake_by_ts(conv, ts):
+        calls["conv"] = conv
+        calls["ts"] = ts
+        return "1700000.000100", conv
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", fake_by_ts)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--body", "recap",
+    ])
+    assert code == 0
+    assert calls["ts"] == "1700000.000200"
+    assert calls["conv"]["conversation_id"] == "C0AAAA"
+    assert captured["body"]["reply_to_message_id"] == "1700000.000100"
+
+
+def test_turn_ts_unthreaded_inbound_posts_channel_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Top-level triggering inbound → channel-level post, even when a newer
+    THREADED inbound exists (the scan that would have borrowed its thread
+    must not run at all)."""
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--body", "shipped CN-CRM",
+    ])
+    assert code == 0
+    assert "reply_to_message_id" not in captured["body"]
+
+
+def test_turn_ts_lookup_miss_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ts with no transcript entry (older coalesced-batch member) must be
+    a hard error with explicit-anchor guidance, not a silent top-level post."""
+    rc, common = _import_modules()
+    published: list[Any] = []
+
+    def fake_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        published.append(args)
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: None)
+    with pytest.raises(SystemExit) as exc:
+        rc.main([
+            "--session", "gc-test-session",
+            "--conversation-id", "C0AAAA",
+            "--turn-ts", "1700000.000300",
+            "--body", "x",
+        ])
+    msg = str(exc.value)
+    assert "--reply-to" in msg and "--no-thread" in msg
+    assert not published, "nothing may publish on an unresolvable anchor"
+
+
+def test_explicit_reply_to_wins_over_turn_ts(monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    def _no_lookup(conv, ts):
+        raise AssertionError("--reply-to must skip the --turn-ts lookup")
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", _no_lookup)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--reply-to", "1700000.000900",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000900"
+
+
+def test_no_thread_with_turn_ts_posts_channel_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    def _no_lookup(conv, ts):
+        raise AssertionError("--no-thread must skip the --turn-ts lookup")
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", _no_lookup)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--no-thread",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert "reply_to_message_id" not in captured["body"]
+
+
+def test_thread_current_with_turn_ts_threads_under_turn_inbound(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """--thread-current + --turn-ts anchors under the TURN inbound: its
+    thread root when threaded, the message itself when top-level."""
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--thread-current",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000200"
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("1700000.000100", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--thread-current",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000100"
+
+
+def test_turn_ts_refused_on_live_company_turn(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """A live company turn diverts reply-current to the company room, so a
+    channel-binding --turn-ts anchor would be silently ignored — refuse it
+    and point at --turn-ref instead."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    _write_turn(outbound, session="ollie-main", kind="ambient", agent="ollie",
+                ts="1700000000.000500")
+    monkeypatch.setenv("GC_SESSION_NAME", "ollie-main")
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--body", "x", "--turn-ts", "1700000000.000500"])
+    assert "--turn-ref" in str(exc.value)
+
+
+def test_find_inbound_thread_by_ts_matches_exact_entry(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    _rc, common = _import_modules()
+    items = [
+        {"Kind": "inbound", "ProviderMessageID": "3.0", "ReplyToMessageID": "9.9",
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+        # Bot-authored entry with the target ts must be skipped (gp-kop).
+        {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "8.8",
+         "Actor": {"is_bot": True},
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+        {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "1.5",
+         "Actor": {"is_bot": False},
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+    ]
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": items})
+    conv = {"conversation_id": "C1", "provider": "slack", "kind": "room"}
+
+    match = common.find_inbound_thread_by_ts(conv, "2.0")
+    assert match is not None
+    thread_root, got_conv = match
+    assert thread_root == "1.5"
+    assert got_conv["conversation_id"] == "C1"
+
+    assert common.find_inbound_thread_by_ts(conv, "3.0") == (
+        "9.9", {"scope_id": "test-city", "provider": "slack",
+                "account_id": "T0TESTWS", "conversation_id": "C1",
+                "kind": "room"})
+    assert common.find_inbound_thread_by_ts(conv, "7.7") is None

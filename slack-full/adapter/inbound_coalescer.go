@@ -223,22 +223,50 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 // caller proceeds. A failed delivery restores the batch — the urgent
 // message proceeds regardless (logged), and the retry timer covers the
 // buffered ones.
-func (c *inboundCoalescer) flushAheadOf(channel string) {
+//
+// excludeTS names the urgent message's own ts. A bot-mention pair
+// (message + app_mention, same ts, distinct event_ids) can split: when
+// the bot user id is unknown, the message twin buffers as plain chatter
+// while the app_mention twin takes the urgent path. Delivering the
+// buffered twin inside a multi-message batch — whose batch-specific
+// dedup key gc cannot correlate with the urgent copy's "slack-<ts>"
+// key — hands the session the same message id twice in one turn with
+// different decoration (pc_c920ff5fe90c). Matching entries are WITHHELD
+// from the batch and returned: the urgent copy is that message's
+// delivery, but the twin was already acked to Slack when it entered the
+// buffer, so the caller must restore() the returned entries if the
+// urgent delivery then fails — dropping them outright would lose the
+// message with no redelivery guarantee.
+func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChannelInbound {
 	if c == nil {
-		return
+		return nil
 	}
 	c.mu.Lock()
 	batch, mu := c.takeLocked(channel)
 	c.mu.Unlock()
+	var withheld []pendingChannelInbound
+	if excludeTS != "" {
+		kept := batch[:0]
+		for _, p := range batch {
+			if p.inbound.ProviderMessageID == excludeTS {
+				log.Printf("coalesce: chan=%s buffered twin ts=%s withheld (urgent copy delivers it)", channel, excludeTS)
+				withheld = append(withheld, p)
+				continue
+			}
+			kept = append(kept, p)
+		}
+		batch = kept
+	}
 	mu.Lock()
 	defer mu.Unlock()
 	if len(batch) == 0 || c.deliver == nil {
-		return
+		return withheld
 	}
 	if !c.deliver(channel, batch) {
 		log.Printf("coalesce: chan=%s flush-ahead failed; batch restored for timer retry (urgent message proceeds out of order)", channel)
 		c.restore(channel, batch)
 	}
+	return withheld
 }
 
 // pendingContains reports whether ts is currently buffered for channel.
@@ -323,7 +351,10 @@ func coalesceBatchDedupKey(batch []pendingChannelInbound) string {
 func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbound) string {
 	last := batch[len(batch)-1].inbound
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%d messages in %s, coalesced; reply commands anchor to the newest, ts %s]\n",
+	// --turn-ts resolves via the transcript, which records ONE entry for
+	// the whole batch (under the newest ts) — so the header steers
+	// replies to older members through --reply-to/--no-thread instead.
+	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --turn-ts %s to answer the newest; to answer an older one use --reply-to <its thread ts> or --no-thread instead (--turn-ts resolves only the newest)]\n",
 		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(last.ProviderMessageID))
 	for _, p := range batch {
 		m := p.inbound
@@ -356,6 +387,38 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	sort.SliceStable(batch, func(i, j int) bool {
 		return batch[i].inbound.ProviderMessageID < batch[j].inbound.ProviderMessageID
 	})
+	// Collapse same-ts entries (first kept): distinct event_ids for one
+	// message can each admit to the buffer past the event-dedup cache
+	// (eviction, restart), and quoting the id twice inside one block is
+	// the in-batch variant of pc_c920ff5fe90c.
+	kept := batch[:0]
+	for _, p := range batch {
+		if len(kept) > 0 && kept[len(kept)-1].inbound.ProviderMessageID == p.inbound.ProviderMessageID {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	batch = kept
+	// Delivery-time twin filter (pc_c920ff5fe90c): drop entries whose ts
+	// the channel audience has already received — the urgent twin
+	// delivered while this copy sat buffered (it can slip past the
+	// enqueue-time check when the urgent POST is still in flight). The
+	// check runs here, at delivery time under the flush mutex, precisely
+	// because an urgent delivery that FAILED never records its ts: the
+	// buffered copy then still delivers. Fail open to a duplicate in the
+	// residual in-flight window, never to loss.
+	unseen := batch[:0]
+	for _, p := range batch {
+		if cfg.deliveredIDs.seen("", channel, p.inbound.ProviderMessageID) {
+			log.Printf("coalesce: chan=%s ts=%s already delivered to channel audience — dropped from batch", channel, p.inbound.ProviderMessageID)
+			continue
+		}
+		unseen = append(unseen, p)
+	}
+	batch = unseen
+	if len(batch) == 0 {
+		return true
+	}
 	env := batch[len(batch)-1].inbound
 	text := env.Text
 	if len(batch) > 1 {
@@ -448,16 +511,23 @@ func replyHelpBlock(cfg config, channel string) string {
 	return fmt.Sprintf(
 		"[channel %s — full reply how-to, sent once per channel per adapter session]\n"+
 			"To reply: write your reply to a file, then run:\n"+
-			"  gc slack reply-current --conversation-id %s --body-file <file>\n"+
-			"Replies auto-thread under the latest inbound; pass --no-thread for a top-level post.\n"+
+			"  gc slack reply-current --conversation-id %s --turn-ts <ts of the message you are answering> --body-file <file>\n"+
+			"--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.\n"+
 			"To react: gc slack react --emoji <name>",
 		display, neutralizeMarkupBoundaries(channel))
 }
 
 // slackReplyInstructionsTemplate is the one-line per-message reply
 // instruction registered with gc (extmsg ReplyInstructionsProvider).
-// gc substitutes {conversation_id} per reminder; the full how-to
-// arrives once per channel via replyHelpBlock. Keep the command shape
-// in sync with scripts/slack_chat_reply_current.py —
+// gc substitutes {conversation_id} and {message_ts} per reminder; the
+// full how-to arrives once per channel via replyHelpBlock. Keep the
+// command shape in sync with scripts/slack_chat_reply_current.py —
 // tests/test_reply_template_contract.py pins the flags.
-const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --body-file <file>"
+//
+// --turn-ts {message_ts} pins the reply to the exact inbound the
+// reminder delivered (gp-6j3): without it, reply-current anchors on the
+// LATEST inbound at send time, and coalesced delivery + interleaved
+// channel/thread traffic routinely make that a different message —
+// replies landed top-level instead of in-thread, and in the wrong
+// thread outright, three times in one hour across two cities.
+const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --turn-ts {message_ts} --body-file <file>"

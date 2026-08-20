@@ -14,6 +14,16 @@ reply, the reply inherits its thread_ts and lands in the same thread —
 including when --conversation-id names the same conversation explicitly
 (gp-i62). --reply-to / --thread-current still override the anchor, and
 --no-thread forces a channel-level post.
+
+--turn-ts <ts> (gp-6j3) pins the anchor to the exact inbound the session
+is answering — the ts carried in the delivery reminder — instead of the
+latest-inbound scan. Under coalesced delivery + interleaved traffic the
+latest inbound at SEND time is often not the message being answered
+(fleet repro: replies landing top-level instead of in-thread, and in the
+wrong thread outright). With --turn-ts the reply threads at that
+inbound's thread root when it was threaded and posts channel-level when
+it was not; if the ts cannot be resolved in the conversation's
+transcript, the command fails fast with guidance rather than guessing.
 """
 
 from __future__ import annotations
@@ -129,6 +139,33 @@ def _resolve_conversation(
 _DEFAULT_KIND = "dm"
 
 
+def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str) -> str:
+    """Resolve --turn-ts to its thread anchor via the transcript (gp-6j3).
+
+    Returns the triggering inbound's thread root ("" when it was a
+    top-level message). A lookup miss is a hard error, not a fallback to
+    channel level: posting top-level when the triggering inbound was
+    threaded is exactly the misfire --turn-ts exists to prevent, and the
+    caller has the thread ts in its reminder to pass explicitly.
+    """
+    try:
+        match = common.find_inbound_thread_by_ts(conv, turn_ts)
+    except common.GCAPIError as exc:
+        raise SystemExit(
+            f"--turn-ts {turn_ts}: transcript lookup failed ({exc}); "
+            "re-run with --reply-to <thread ts> (from your delivery "
+            "reminder) or --no-thread for a top-level post") from exc
+    if match is None:
+        raise SystemExit(
+            f"--turn-ts {turn_ts}: no matching inbound in the transcript for "
+            f"conversation {conv.get('conversation_id', '')} (an older member "
+            "of a coalesced batch has no entry of its own). Pass --reply-to "
+            "<thread ts> (shown next to the message in your delivery "
+            "reminder) to thread, or --no-thread for a top-level post.")
+    thread_root, _conv = match
+    return thread_root
+
+
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     """Company-context path: post via the acting agent's own token.
 
@@ -169,6 +206,15 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             session_name, kind_override=kind_override, turn_ref=turn_ref)
         if source is None:
             return None  # no company pointer — fall through to the legacy path
+        if (getattr(args, "turn_ts", "") or "").strip():
+            # --turn-ts anchors a channel-binding inbound; on a session
+            # with a live company turn the reply would divert to the
+            # company room regardless of the anchor. Refuse instead of
+            # silently misrouting (gp-6j3).
+            raise SystemExit(
+                "--turn-ts targets a channel-binding inbound, but this "
+                "session has a live company turn; use --turn-ref from the "
+                "company reminder instead")
         body = _load_body(args)
         if source == "dm":
             result = outbound.post_company_dm_reply(
@@ -218,6 +264,17 @@ def main(argv: list[str]) -> int:
                               "reply acts on (default: newest by delivered-at)."))
     parser.add_argument("--reply-to", default="",
                         help="Slack message ts to reply to (threaded reply)")
+    parser.add_argument(
+        "--turn-ts", default="",
+        help=("Slack ts of the inbound this reply answers (carried in the "
+              "delivery reminder). Anchors the reply to that exact message: "
+              "its thread root when it was threaded, channel level when it "
+              "was not — instead of inheriting whatever inbound arrived "
+              "last, which interleaved traffic makes the wrong one "
+              "(gp-6j3). Fails fast when the ts is not in the "
+              "conversation's transcript (e.g. an older member of a "
+              "coalesced batch): pass --reply-to <thread ts> or "
+              "--no-thread instead."))
     parser.add_argument(
         "--origin-ts", default="",
         help=("Company rooms: pin a specific turn ts when a newer wake has "
@@ -296,23 +353,38 @@ def main(argv: list[str]) -> int:
         raise SystemExit("missing slack account_id (SLACK_WORKSPACE_ID env)")
 
     reply_to = args.reply_to
+    turn_ts = (args.turn_ts or "").strip()
     if args.no_thread and (reply_to or args.thread_current):
         raise SystemExit(
             "--no-thread cannot be combined with --reply-to or --thread-current")
     if args.thread_current:
         if reply_to:
             raise SystemExit("pass --reply-to OR --thread-current, not both")
-        match = common.find_latest_inbound_thread_for_session(session_id)
-        if match is None:
-            raise SystemExit(
-                "no recent inbound transcript entry for this session; "
-                "cannot thread without --reply-to <ts>"
-            )
-        mid, thread_root, _conv = match
-        # A thread-reply inbound anchors at its thread ROOT, not its own
-        # ts — Slack threads hang off the parent message, and a thread_ts
-        # pointing at a child strands the reply outside the conversation.
-        reply_to = thread_root or mid
+        if turn_ts:
+            # Thread under the turn's own inbound: its root when it was a
+            # thread reply, the message itself when top-level.
+            thread_root = _resolve_turn_anchor(conv, turn_ts)
+            reply_to = thread_root or turn_ts
+        else:
+            match = common.find_latest_inbound_thread_for_session(session_id)
+            if match is None:
+                raise SystemExit(
+                    "no recent inbound transcript entry for this session; "
+                    "cannot thread without --reply-to <ts>"
+                )
+            mid, thread_root, _conv = match
+            # A thread-reply inbound anchors at its thread ROOT, not its own
+            # ts — Slack threads hang off the parent message, and a thread_ts
+            # pointing at a child strands the reply outside the conversation.
+            reply_to = thread_root or mid
+    elif turn_ts and not reply_to and not args.no_thread:
+        # gp-6j3: the caller named the exact inbound this reply answers
+        # (the ts every delivery reminder carries). Anchor there — its
+        # thread root when threaded, channel level when not — and never
+        # scan for the latest inbound, whose thread context under
+        # coalesced delivery + interleaved traffic is routinely NOT the
+        # message being answered.
+        reply_to = _resolve_turn_anchor(conv, turn_ts)
     elif not reply_to and not args.no_thread:
         # gp-i62: a threaded inbound means the human is talking to this
         # session IN that thread — "reply to the latest inbound" must land

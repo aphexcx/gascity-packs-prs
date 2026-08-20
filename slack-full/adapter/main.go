@@ -3394,12 +3394,28 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// Rooms only: DMs/MPIMs are direct conversations where latency
 	// matters more than wrapper overhead — they keep the immediate path.
 	if cfg.coalescer.enabled() && target == "" && !botMentioned && inbound.Conversation.Kind == "room" {
+		// A ts the channel audience already received is the trailing
+		// half of a bot-mention pair (message + app_mention, same ts)
+		// whose urgent twin delivered first. Buffering it would hand
+		// the session the same message id again inside a batch whose
+		// dedup key gc cannot correlate with the urgent copy's
+		// "slack-<ts>" (pc_c920ff5fe90c). Skipping is final handling
+		// exactly like buffer admission: the ack went to Slack and the
+		// dedup claim commits via the defer.
+		if cfg.deliveredIDs.seen("", msg.Channel, msg.TS) {
+			log.Printf("inbound: chan=%s ts=%s already delivered to channel audience — twin skipped", msg.Channel, msg.TS)
+			return
+		}
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
 		cfg.coalescer.enqueue(msg.Channel, pendingChannelInbound{inbound: inboundForChannel})
 		return
 	}
-	cfg.coalescer.flushAheadOf(msg.Channel)
+	// withheldTwins: buffered copies of THIS message's ts, held back from
+	// the flushed batch (pc_c920ff5fe90c). Restored below if the urgent
+	// channel post fails — they were already acked to Slack when
+	// buffered, so dropping them on failure would lose the message.
+	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
 	var busyAddDone chan struct{}
@@ -3433,6 +3449,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if err := postInbound(cfg, inboundForChannel); err != nil {
 		log.Printf("inbound POST failed: %v", err)
 		cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+		// The urgent copy never reached gc, so the withheld buffered
+		// twins are the only remaining path for this ts — put them
+		// back for the coalescer's timer retry (pc_c920ff5fe90c).
+		cfg.coalescer.restore(msg.Channel, withheldTwins)
 		if firstHelp {
 			cfg.replyHelp.unmark(msg.Channel)
 		}
