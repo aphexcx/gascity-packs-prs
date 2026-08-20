@@ -1028,12 +1028,21 @@ test('upload admission is globally bounded: slot, bounded queue, then 429', asyn
   assert.equal(retry3.statusCode, 200);
 });
 
-test('a full state table refuses NEW keys instead of growing or evicting partials', async (t) => {
+// Codex jg-d0xr round-2 finding 8: the round-1 refuse-over-evict policy
+// wedged the SHARED cache — during an outage, cap-many keyed text sends
+// that failed before delivering wedged every later legacy text publish
+// into a 503 until restart. Text and media now have SEPARATE pools, the
+// journal is the durable media source of truth, and a non-live media
+// entry is evictable from memory (rehydrated on retry) — a new media key
+// is refused only under genuine LIVE concurrency.
+test('a media backlog never wedges legacy text delivery (separate pools)', async (t) => {
   const dir = tmpDir(t);
   const file = writeFixture(dir, 'photo.png', pngBytes);
+  const journalPath = path.join(dir, 'attempts.json');
   let sendAttempts = 0;
   const { publisher } = makePublisher({
-    publishStatesCap: 1,
+    publishStatesCap: 1, // media pool cap = 1
+    journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
     sendMediaMessage: async () => {
       sendAttempts += 1;
       if (sendAttempts === 1) throw new Error('ws not connected');
@@ -1047,34 +1056,164 @@ test('a full state table refuses NEW keys instead of growing or evicting partial
     idempotency_key: 'key-partial-A',
   };
 
-  // Key A fails after upload — a partial state that must NOT be evicted.
+  // Key A fails after upload — a non-live partial (journaled, resumable).
   const failed = await publishMedia(publisher, mediaBody);
   assert.equal(failed.statusCode, 502);
 
-  // The table is at cap with only the partial: new keys are refused …
-  const textRefused = await publishText(publisher, {
+  // Legacy text is NEVER refused by a full media pool (the regression).
+  const textOk = await publishText(publisher, {
     conversation: { conversation_id: 'li_si' },
     text: 'hello',
     idempotency_key: 'key-new-B',
   });
-  assert.equal(textRefused.statusCode, 503);
-  assert.equal(textRefused.json().failure_kind, 'overloaded');
-  const mediaRefused = await publishMedia(publisher, { ...mediaBody, idempotency_key: 'key-new-C' });
-  assert.equal(mediaRefused.statusCode, 503);
-  assert.equal(mediaRefused.json().idempotency_key, 'key-new-C');
+  assert.equal(textOk.statusCode, 200);
 
-  // … while the partial's own retry still resumes and settles it,
+  // A new media key evicts the non-live partial from MEMORY (the journal
+  // keeps it) and is admitted — no permanent wedge.
+  const fileC = writeFixture(dir, 'c.png', jpgBytes);
+  const mediaC = await publishMedia(publisher, {
+    conversation: { conversation_id: 'wang_wu' },
+    file_path: fileC,
+    media_kind: 'image',
+    idempotency_key: 'key-new-C',
+  });
+  assert.equal(mediaC.statusCode, 200);
+
+  // The evicted partial's own retry rehydrates from the journal and
+  // resumes without a second upload or a duplicate send.
   const resumed = await publishMedia(publisher, mediaBody);
   assert.equal(resumed.statusCode, 200);
-  assert.equal(sendAttempts, 2);
+  assert.equal(resumed.json().media_id, 'MEDIA_1', 'resumed from the journaled upload, not re-uploaded');
+});
 
-  // and a settled entry is evictable again — the new key is admitted.
-  const textAdmitted = await publishText(publisher, {
-    conversation: { conversation_id: 'li_si' },
-    text: 'hello',
-    idempotency_key: 'key-new-B',
+test('a media pool full of LIVE in-flight sends refuses a new media key (concurrency bound)', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', jpgBytes);
+  let releaseSend;
+  const sendHold = new Promise((r) => { releaseSend = r; });
+  const { publisher } = makePublisher({
+    publishStatesCap: 1,
+    // Generous gate so the block is the STATE pool, not the upload slot.
+    cfg: { uploadMaxConcurrent: 4, uploadMaxQueue: 4 },
+    sendMediaMessage: async () => {
+      await sendHold;
+      return { headers: { req_id: 'MSG_OK' } };
+    },
   });
-  assert.equal(textAdmitted.statusCode, 200);
+
+  const p1 = publishMedia(publisher, {
+    conversation: { conversation_id: 'chat_1' },
+    file_path: fileA,
+    media_kind: 'image',
+    idempotency_key: 'key-live-A',
+  });
+  // Let A pass admission and block in the (live, promise-held) send.
+  while (publisher.stats().publishStates === 0) await new Promise((r) => setImmediate(r));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+
+  const refused = await publishMedia(publisher, {
+    conversation: { conversation_id: 'chat_2' },
+    file_path: fileB,
+    media_kind: 'image',
+    idempotency_key: 'key-live-B',
+  });
+  assert.equal(refused.statusCode, 503, 'a pool full of live sends is a real concurrency bound');
+  assert.equal(refused.json().failure_kind, 'overloaded');
+
+  releaseSend();
+  const r1 = await p1;
+  assert.equal(r1.statusCode, 200);
+});
+
+// Codex jg-d0xr round-2 finding 7: settled media receipts were evicted
+// from memory and the still-present journal entry was NEVER consulted
+// again (journal.get was unused). After enough later publishes evicted a
+// media receipt, a same-key retry was treated as new and RESENT. Keys now
+// rehydrate lazily from the journal on every map miss.
+test('a settled media receipt evicted from memory is rehydrated from the journal, not resent', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const journalPath = path.join(dir, 'attempts.json');
+  const { publisher, calls } = makePublisher({
+    publishStatesCap: 1,
+    journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-settled-evicted',
+  };
+
+  const first = await publishMedia(publisher, body);
+  assert.equal(first.statusCode, 200);
+  const sendsAfterFirst = calls.length;
+
+  // Evict the settled receipt from memory with an unrelated media key
+  // (media pool cap 1). The evicted key is still in the journal.
+  const other = writeFixture(dir, 'other.png', jpgBytes);
+  await publishMedia(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    file_path: other,
+    media_kind: 'image',
+    idempotency_key: 'key-evictor',
+  });
+
+  // The original key retries: it MUST answer from the rehydrated journal
+  // receipt, not upload+send the media a second time.
+  const retry = await publishMedia(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().message_id, first.json().message_id);
+  assert.equal(retry.json().media_id, first.json().media_id);
+  const originalKeySends = calls.slice(sendsAfterFirst).filter(
+    (c) => c.chatid === 'zhang_san',
+  );
+  assert.equal(originalKeySends.length, 0, 'the evicted-then-retried key must not re-send its media');
+});
+
+test('a late gc callback for an evicted media key is served from the journal, not sent as chat text', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const journalPath = path.join(dir, 'attempts.json');
+  let transcriptText;
+  const { publisher, calls } = makePublisher({
+    publishStatesCap: 1,
+    journal: createAttemptJournal({ filePath: journalPath, log: () => {} }),
+    postOutbound: async (target, body) => {
+      transcriptText = body.text;
+      return { Receipt: { Delivered: true }, TranscriptEntry: { ID: 'tr-1' } };
+    },
+  });
+  const key = 'key-late-callback';
+  const first = await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+  assert.equal(first.statusCode, 200);
+
+  // Evict the media receipt from memory AND drop the seed (recording is
+  // already done). Then gc retries the transcript callback LATE.
+  const other = writeFixture(dir, 'other.png', jpgBytes);
+  await publishMedia(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    file_path: other,
+    media_kind: 'image',
+    idempotency_key: 'key-evictor-2',
+  });
+  const callsBefore = calls.length;
+
+  const cb = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: transcriptText,
+    idempotency_key: key,
+  });
+  assert.equal(cb.statusCode, 200);
+  assert.equal(cb.json().message_id, first.json().message_id);
+  assert.equal(calls.length, callsBefore, 'the late callback must not send the transcript text as chat markdown');
 });
 
 // --- attempt journal, delivery-unknown, upload retention (finding 3) -----------------
@@ -1659,14 +1798,21 @@ test('cap pressure during the recording round-trip never turns the callback into
   assert.equal(res.statusCode, 200);
   assert.equal(res.json().transcript_recorded, true);
 
-  // The pressure key was refused — the pinned seed was NOT evicted for it.
-  assert.equal(pressureRes.statusCode, 503);
+  // The pinned seed was NOT evicted, and — round-2 finding 8 — the
+  // unrelated TEXT publish is served from its own pool rather than
+  // wedged: it no longer contends with the media state at all.
+  assert.equal(pressureRes.statusCode, 200);
   // The callback answered straight from the seed: same receipt, no send.
   assert.equal(callbackRes.statusCode, 200);
   assert.equal(callbackRes.json().delivered, true);
   assert.equal(callbackRes.json().message_id, res.json().message_id);
-  const markdownSends = calls.filter((c) => c.op === 'sendMessage');
-  assert.equal(markdownSends.length, 0,
+  // The TRANSCRIPT TEXT (filename + host source path) must never reach
+  // the chat as a message — that is the finding-6 leak. The unrelated
+  // pressure text sending is fine (separate pool, finding 8).
+  const transcriptLeaks = calls.filter(
+    (c) => c.op === 'sendMessage' && /\[image sent\]/.test(c.body?.markdown?.content ?? ''),
+  );
+  assert.equal(transcriptLeaks.length, 0,
     'the transcript text (filename + host source path) must never reach the chat as a message');
 
   // The pin and the seed last exactly the recording window.

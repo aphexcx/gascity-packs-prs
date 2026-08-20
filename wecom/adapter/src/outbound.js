@@ -735,7 +735,16 @@ export function createOutboundPublisher(deps) {
     postOutbound = postJSONParsed,
     log = () => {},
     publishStatesCap = 512,
+    textStatesCap = 512,
   } = deps;
+
+  // Two independent in-memory pools (codex jg-d0xr round-2 finding 8): a
+  // media outage that stranded 512 unsettled MEDIA keys used to wedge the
+  // SHARED cache so every later LEGACY TEXT publish got 503 until a
+  // restart. Media and text now have separate capacities, and the
+  // journal (below) is the durable source of truth for media so the
+  // in-memory media entry is only a cache — evictable and rehydratable.
+  const mediaStatesCap = publishStatesCap;
 
   // Idempotency: gc retries a publish (callback timeout, transient error)
   // with the same idempotency_key. Track per-key chunk progress and the
@@ -764,14 +773,13 @@ export function createOutboundPublisher(deps) {
   // recording settles either way.
   const transcriptSeeds = new Map(); // key → receipt
 
-  // Rehydrate media publish states from the attempt journal (finding 3):
-  // a restart used to lose every latch, so a retried key re-uploaded and
-  // RE-SENT media users had already seen. A journaled entry whose
+  // stateFromJournalEntry reconstructs an in-memory media state from a
+  // journaled entry (findings 3 and 7). A journaled entry whose
   // aibot_send_msg (or caption chunk) was attempted without a recorded
   // acknowledgement comes back as delivery-unknown — refused for blind
   // retry, because the message may already be visible in the chat.
-  for (const [journaledKey, e] of journal.entries()) {
-    publishStates.set(journaledKey, {
+  function stateFromJournalEntry(e) {
+    return {
       endpoint: 'publish-media',
       fingerprint: e.fingerprint,
       mediaId: e.mediaId,
@@ -785,8 +793,16 @@ export function createOutboundPublisher(deps) {
       deliveryUnknown: !!e.deliveryUnknown
         || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
         || ((e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
-    });
+    };
   }
+
+  // The journal is rehydrated LAZILY on a map miss (finding 7 — see
+  // rehydrateFromJournal in publishStateFor), not bulk-loaded at
+  // construction: bulk-loading would pull up to 512 media entries into
+  // memory and defeat the pool separation, and it never covered keys
+  // evicted from memory WHILE the journal still held them (the exact
+  // finding-7 resend). A retry of any journaled media key rehydrates when
+  // it arrives; a restart is just the first such retry.
 
   // Per-chat outbound serialization: the SDK only serializes sends sharing
   // a req_id, so two publishes to the same chat (different idempotency
@@ -809,33 +825,76 @@ export function createOutboundPublisher(deps) {
     return next;
   }
 
+  // countByEndpoint tallies the live in-memory pool for one endpoint.
+  function countByEndpoint(endpoint) {
+    let n = 0;
+    for (const s of publishStates.values()) if ((s.endpoint ?? 'publish') === endpoint) n += 1;
+    return n;
+  }
+
   // publishStateFor returns the tracked state for a key, admitting a new
-  // one only within the cap. Returns null when a NEW key cannot be
-  // admitted: only fully settled, unpinned entries are evictable — never
-  // a live (in-flight) send, never a pinned seed whose recording callback
-  // is still due, and never a failed partial (its latches are exactly
-  // what a retry resumes from; losing them re-sends media users already
-  // saw). When nothing is evictable the key is REFUSED (HTTP 503) instead
-  // of growing without bound or evicting an unsafe entry (codex jg-d0xr
-  // findings 6 and 9 — the old code grew "temporarily", i.e. forever).
-  function publishStateFor(key) {
-    if (!key) return { chunksDelivered: 0 }; // untracked, per-call state
+  // one within the endpoint's pool. Codex jg-d0xr findings 6, 7, 8, 9:
+  //
+  //   - Map miss REHYDRATES from the journal first (finding 7): a media
+  //     receipt evicted from memory but still journaled must answer a
+  //     retry from its durable receipt, never be treated as a fresh send
+  //     and re-sent. The journal is the media source of truth.
+  //   - MEDIA and TEXT admit against SEPARATE caps (finding 8): a media
+  //     outage can no longer wedge legacy text delivery.
+  //   - MEDIA eviction may drop any non-live, unpinned entry — settled OR
+  //     unsettled — because the journal rehydrates it (findings 7/8). A
+  //     new media key is refused (503) ONLY when the media pool is full
+  //     of genuinely LIVE (in-flight) or pinned sends: a true concurrency
+  //     bound, not a permanent wedge. The upload gate and the journal cap
+  //     bound the real resources (finding 9).
+  //   - TEXT never refuses (finding 8 / legacy restore): it evicts the
+  //     oldest settled or zero-progress text entry, and GROWS when
+  //     nothing is evictable — exactly the pre-jg-d0xr behavior. Text
+  //     states carry no buffer, so growth is bounded by live concurrency.
+  function publishStateFor(key, endpoint = 'publish') {
+    if (!key) return { chunksDelivered: 0, endpoint }; // untracked, per-call state
     let state = publishStates.get(key);
-    if (!state) {
-      if (publishStates.size >= publishStatesCap) {
-        let evicted = false;
-        for (const [k, s] of publishStates) {
-          if (s.receipt && !s.promise && !s.pinned) {
-            publishStates.delete(k);
-            evicted = true;
-            break;
-          }
-        }
-        if (!evicted) return null;
-      }
-      state = { chunksDelivered: 0 };
+    if (state) return state;
+
+    // Finding 7: rehydrate a journaled media key that was evicted from
+    // memory (or lost to a restart) instead of admitting it as new.
+    const journaled = journal.get?.(key);
+    if (journaled) {
+      state = stateFromJournalEntry(journaled);
       publishStates.set(key, state);
+      return state;
     }
+
+    if (endpoint === 'publish-media') {
+      if (countByEndpoint('publish-media') >= mediaStatesCap) {
+        // Evict any non-live, unpinned media entry (the journal rehydrates
+        // it); settled first, then unsettled. Refuse only when every media
+        // slot is a live or pinned send.
+        const evict = (predicate) => {
+          for (const [k, s] of publishStates) {
+            if ((s.endpoint ?? 'publish') !== 'publish-media') continue;
+            if (s.promise || s.pinned) continue;
+            if (predicate(s)) { publishStates.delete(k); return true; }
+          }
+          return false;
+        };
+        if (!evict((s) => !!s.receipt) && !evict(() => true)) return null;
+      }
+    } else if (countByEndpoint('publish') >= textStatesCap) {
+      const evict = (predicate) => {
+        for (const [k, s] of publishStates) {
+          if ((s.endpoint ?? 'publish') !== 'publish') continue;
+          if (s.promise || s.pinned) continue;
+          if (predicate(s)) { publishStates.delete(k); return true; }
+        }
+        return false;
+      };
+      // Prefer settled, then a zero-progress text entry (a retry restarts
+      // at chunk 0 anyway); otherwise GROW — never block a text delivery.
+      evict((s) => !!s.receipt) || evict((s) => s.chunksDelivered === 0 && !s.receipt);
+    }
+    state = { chunksDelivered: 0, endpoint };
+    publishStates.set(key, state);
     return state;
   }
 
@@ -890,9 +949,9 @@ export function createOutboundPublisher(deps) {
   // them). A captured state that settled WITH a receipt is still safe to
   // answer from directly even if it was evicted meanwhile — it is the
   // same dedup answer the map would have given.
-  async function claimPublishState(key) {
+  async function claimPublishState(key, endpoint = 'publish') {
     for (;;) {
-      const state = publishStateFor(key);
+      const state = publishStateFor(key, endpoint);
       if (!state) return { refused: true };
       if (state.receipt) return { receipt: state.receipt, state };
       if (!state.promise) return { state, token: installOwner(state) };
@@ -951,7 +1010,7 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    const claim = await claimPublishState(pub.idempotency_key);
+    const claim = await claimPublishState(pub.idempotency_key, 'publish');
     if (claim.refused) {
       // The idempotency map is at cap with nothing safely evictable:
       // refusing the NEW key beats evicting a live/pinned entry whose
@@ -1191,7 +1250,7 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    const claim = await claimPublishState(key);
+    const claim = await claimPublishState(key, 'publish-media');
     if (claim.refused) {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
