@@ -131,3 +131,10 @@ gc slack upload --file /tmp/leo-cam-frame.jpg \
                 --thread-ts 1234.5678 \
                 --initial-comment "live camera frame, taken 00:41Z"
 ```
+
+Formatting guard: tildes that would accidentally pair into Slack
+strikethrough (e.g. "~$58.5k … ~$16.5k" — tilde as "approximately") are
+neutralized by default with a visually identical substitute (U+223C).
+Deliberate tight-wrapped `~word~` strikethrough, code spans, lone
+tildes, and every other formatting character pass through untouched.
+Pass --raw to send --initial-comment byte-for-byte verbatim.

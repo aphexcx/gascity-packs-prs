@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Accidental-mrkdwn guard on the send path (gp-o42): `gc slack
+  reply-current` (legacy and company paths), `publish`,
+  `publish-to-channel`, `upload --initial-comment`, and `delegate` now
+  neutralize tildes that would pair into unintended Slack strikethrough
+  ("~$58.5k … ~$16.5k" rendered half a runway summary struck through).
+  Slack mrkdwn has no escape sequence, so accidental delimiter tildes
+  are substituted with the visually identical U+223C TILDE OPERATOR —
+  but only on lines where a pair could actually form: lone tildes keep
+  their ASCII byte (`cd ~/repo` survives copy-paste), code spans are
+  never touched, a tilde before an optionally-signed digit/currency
+  (`~$5k`, `~-$13.5k`, `~9/2`) is never a delimiter, and deliberate
+  tight-wrapped `~word~` strikethrough still renders. `*bold*`,
+  `_italics_`, and bullets are unaffected. New `--raw` flag on all five
+  commands sends the body verbatim. Pure script-side change — no
+  adapter restart needed.
+
 - `gc slack read` (gp-lie): native channel + thread history reads via
   `conversations.history`/`conversations.replies` using the pack's bot
   token, closing the last claude.ai-MCP dependency for Slack reads —
