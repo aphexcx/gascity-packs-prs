@@ -348,20 +348,50 @@ export function createOutboundPublisher(deps) {
     return state;
   }
 
+  // installOwner marks `state` as owned by this caller and installs the
+  // owner promise SYNCHRONOUSLY — the promise every other claimer of the
+  // same key waits on. The owner settles it through token.finish(err?),
+  // which clears the promise only while the token still owns it (a stale
+  // finish can never clobber a successor's claim) and only THEN wakes the
+  // waiters, so a waiter resumed by the settlement always observes either
+  // the receipt or a claimable (promise-less) state — never a half-torn
+  // one.
+  function installOwner(state) {
+    let settle;
+    const promise = new Promise((resolve, reject) => { settle = { resolve, reject }; });
+    // Waiters attach their own .catch in the claim loop; this guard keeps
+    // an owner failure from ever surfacing as an unhandled rejection when
+    // no waiter happens to be queued.
+    promise.catch(() => {});
+    const token = {
+      finish(err) {
+        if (state.owner !== token) return;
+        state.owner = undefined;
+        state.promise = undefined;
+        if (err) settle.reject(err); else settle.resolve();
+      },
+    };
+    state.owner = token;
+    state.promise = promise;
+    return token;
+  }
+
   // claimPublishState resolves the atomic-claim loop both handlers share:
   // returns { receipt } when the key already settled (answer it straight
   // from the map — this is what dedups gc's recording callback), or
-  // { state } once this caller owns the right to run the send. The loop
-  // matters — after a failed send, resumed waiters that simply fell
+  // { state, token } once this caller owns the right to run the send. The
+  // loop matters — after a failed send, resumed waiters that simply fell
   // through would each start their own send and resend the same chunk
-  // concurrently. No await sits between the final check and the promise
-  // assignment the caller performs, so the claim is race-free on the
-  // event loop.
+  // concurrently. The owner promise is installed synchronously INSIDE the
+  // claim (no await sits between the check and the installation — codex
+  // jg-d0xr finding 5: leaving the installation to the caller let every
+  // waiter resumed by one failure claim ownership at once, duplicating
+  // sends and transcript recordings).
   async function claimPublishState(key) {
     const state = publishStateFor(key);
     for (;;) {
       if (state.receipt) return { receipt: state.receipt, state };
-      if (!state.promise) return { state };
+      if (!state.promise) return { state, token: installOwner(state) };
       await state.promise.catch(() => {});
     }
   }
@@ -383,12 +413,13 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
-    const { receipt, state } = await claimPublishState(pub.idempotency_key);
-    if (receipt) {
+    const claim = await claimPublishState(pub.idempotency_key);
+    if (claim.receipt) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(receipt));
+      res.end(JSON.stringify(claim.receipt));
       return;
     }
+    const { state, token } = claim;
 
     const send = async () => {
       const chunks = chunkText(pub.text);
@@ -401,10 +432,10 @@ export function createOutboundPublisher(deps) {
         state.chunksDelivered = i + 1;
       }
     };
-    state.promise = chainSend(chatid, send);
     try {
-      await state.promise;
+      await chainSend(chatid, send);
     } catch (err) {
+      token.finish(err);
       log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${err.message}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
@@ -413,14 +444,15 @@ export function createOutboundPublisher(deps) {
         failure_kind: 'provider_error',
       }));
       return;
-    } finally {
-      state.promise = undefined;
     }
+    // The receipt must be visible BEFORE the owner promise settles, so a
+    // waiter woken by finish() answers from the map instead of re-claiming.
     state.receipt = {
       conversation: convo,
       message_id: state.messageID ?? '',
       delivered: true,
     };
+    token.finish();
     log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''})`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(state.receipt));
@@ -543,12 +575,13 @@ export function createOutboundPublisher(deps) {
     const digest = crypto.createHash('sha256').update(media.buffer).digest('hex');
 
     const key = pub.idempotency_key || `wecom-media-${crypto.randomUUID()}`;
-    const { receipt, state } = await claimPublishState(key);
-    if (receipt) {
+    const claim = await claimPublishState(key);
+    if (claim.receipt) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(receipt));
+      res.end(JSON.stringify(claim.receipt));
       return;
     }
+    const { state, token } = claim;
 
     const spec = mediaKindSpecs[mediaKind];
     const send = async () => {
@@ -580,10 +613,10 @@ export function createOutboundPublisher(deps) {
         }
       }
     };
-    state.promise = chainSend(chatid, send);
     try {
-      await state.promise;
+      await chainSend(chatid, send);
     } catch (err) {
+      token.finish(err);
       const stage = !state.mediaId ? 'upload' : (!state.mediaSent ? 'send' : `caption chunk ${state.chunksDelivered + 1}`);
       log(`publish-media → ${chatid} ${mediaKind} failed at ${stage}: ${err.message}`);
       res.writeHead(502, { 'Content-Type': 'application/json' });
@@ -597,17 +630,17 @@ export function createOutboundPublisher(deps) {
         error: scrubErrorMessage(err.message),
       }));
       return;
-    } finally {
-      state.promise = undefined;
     }
     // Settle the receipt BEFORE the recording call below: gc's callback
     // to /publish with this key must find it settled, or it would try to
-    // send the transcript text as a fresh markdown message.
+    // send the transcript text as a fresh markdown message. It must also
+    // be visible before token.finish() wakes same-key waiters.
     state.receipt = {
       conversation: convo,
       message_id: state.messageID ?? '',
       delivered: true,
     };
+    token.finish();
     log(`publish-media → ${chatid} ${mediaKind} delivered (${media.size} bytes, session=${pub.session_id ?? ''})`);
 
     let transcriptRecorded = false;

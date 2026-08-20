@@ -447,6 +447,89 @@ test('a settled media key answers retries from the receipt without new sends', a
   assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage']);
 });
 
+// --- owner claim under concurrent retries (finding 5) ----------------------------
+
+// Codex jg-d0xr finding 5: claimPublishState was async and left installing
+// state.promise to the caller, so every waiter resumed by one in-flight
+// failure claimed ownership at once — one resumed media send but TWO
+// postOutbound transcript recordings (duplicate transcript entries and
+// fanout). The owner promise now installs synchronously inside the claim.
+test('after an in-flight media failure only ONE waiting retry acquires the send', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  let failFirst;
+  const firstSendGate = new Promise((r) => { failFirst = r; });
+  const { publisher, calls, outboundPosts } = makePublisher({
+    sendMediaMessage: async (chatid, type, mediaId) => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        await firstSendGate;
+        throw new Error('ws not connected');
+      }
+      calls.push({ op: 'sendMediaMessage', chatid, type, mediaId });
+      return { headers: { req_id: 'MSG_OK' } };
+    },
+  });
+  const body = {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-owner-race',
+  };
+
+  const p1 = publishMedia(publisher, body);
+  // Let p1 reach the blocked send before the retries arrive and wait.
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  const p2 = publishMedia(publisher, body);
+  const p3 = publishMedia(publisher, body);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  failFirst();
+  const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+  assert.equal(r1.statusCode, 502);
+  assert.equal(r2.statusCode, 200);
+  assert.equal(r3.statusCode, 200);
+  assert.equal(r2.json().message_id, r3.json().message_id);
+  assert.equal(sendAttempts, 2, 'exactly one waiter may resume the send');
+  assert.equal(outboundPosts.length, 1, 'a duplicate owner records the transcript twice');
+});
+
+test('after an in-flight text failure only ONE waiting retry re-sends', async (t) => {
+  let sendAttempts = 0;
+  let failFirst;
+  const firstSendGate = new Promise((r) => { failFirst = r; });
+  const { publisher } = makePublisher({
+    sendMessage: async () => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) {
+        await firstSendGate;
+        throw new Error('ws not connected');
+      }
+      return { headers: { req_id: 'TEXT_OK' } };
+    },
+  });
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'once only',
+    idempotency_key: 'key-text-owner-race',
+  };
+
+  const p1 = publishText(publisher, body);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  const p2 = publishText(publisher, body);
+  const p3 = publishText(publisher, body);
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  failFirst();
+  const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
+
+  assert.equal(r1.statusCode, 502);
+  assert.equal(r2.statusCode, 200);
+  assert.equal(r3.statusCode, 200);
+  assert.equal(sendAttempts, 2, 'the message must not be re-sent by both waiters');
+});
+
 // --- transcript recording edge cases -------------------------------------------
 
 test('no session_id: delivered, transcript not recorded, note says why', async (t) => {
