@@ -817,6 +817,106 @@ test('after an in-flight text failure only ONE waiting retry re-sends', async (t
   assert.equal(sendAttempts, 2, 'the message must not be re-sent by both waiters');
 });
 
+// --- global outbound admission (finding 9) ----------------------------------------
+
+// Codex jg-d0xr finding 9: every concurrent request allocated and hashed
+// up to 10MB before touching idempotency state and held the buffer
+// through upload — no global bound. Admission now takes an upload-gate
+// slot BEFORE any file I/O; the queue is capped and overflow answers 429.
+test('upload admission is globally bounded: slot, bounded queue, then 429', async (t) => {
+  const dir = tmpDir(t);
+  const fileA = writeFixture(dir, 'a.png', pngBytes);
+  const fileB = writeFixture(dir, 'b.png', pngBytes);
+  const fileC = writeFixture(dir, 'c.png', pngBytes);
+  let releaseFirstUpload;
+  const firstUploadGate = new Promise((r) => { releaseFirstUpload = r; });
+  let uploads = 0;
+  const { publisher } = makePublisher({
+    cfg: { uploadMaxConcurrent: 1, uploadMaxQueue: 1 },
+    uploadMedia: async () => {
+      uploads += 1;
+      if (uploads === 1) await firstUploadGate;
+      return { media_id: `MEDIA_${uploads}` };
+    },
+  });
+  const bodyFor = (file, key, chat) => ({
+    conversation: { conversation_id: chat },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: key,
+  });
+
+  const p1 = publishMedia(publisher, bodyFor(fileA, 'key-gate-1', 'chat_1'));
+  while (uploads === 0) await new Promise((r) => setImmediate(r));
+  const p2 = publishMedia(publisher, bodyFor(fileB, 'key-gate-2', 'chat_2'));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+  const p3 = publishMedia(publisher, bodyFor(fileC, 'key-gate-3', 'chat_3'));
+  const r3 = await p3;
+  assert.equal(r3.statusCode, 429, 'beyond the queue cap the request is refused before reading');
+  assert.equal(r3.json().failure_kind, 'overloaded');
+  assert.match(r3.json().error, /outbound upload capacity/);
+  assert.equal(r3.json().idempotency_key, 'key-gate-3');
+
+  releaseFirstUpload();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.equal(r1.statusCode, 200);
+  assert.equal(r2.statusCode, 200, 'a queued waiter proceeds once the slot frees');
+  assert.equal(uploads, 2);
+
+  // The refused key was dropped untouched: retrying it later succeeds.
+  const retry3 = await publishMedia(publisher, bodyFor(fileC, 'key-gate-3', 'chat_3'));
+  assert.equal(retry3.statusCode, 200);
+});
+
+test('a full state table refuses NEW keys instead of growing or evicting partials', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let sendAttempts = 0;
+  const { publisher } = makePublisher({
+    publishStatesCap: 1,
+    sendMediaMessage: async () => {
+      sendAttempts += 1;
+      if (sendAttempts === 1) throw new Error('ws not connected');
+      return { headers: { req_id: 'MSG_OK' } };
+    },
+  });
+  const mediaBody = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-partial-A',
+  };
+
+  // Key A fails after upload — a partial state that must NOT be evicted.
+  const failed = await publishMedia(publisher, mediaBody);
+  assert.equal(failed.statusCode, 502);
+
+  // The table is at cap with only the partial: new keys are refused …
+  const textRefused = await publishText(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    text: 'hello',
+    idempotency_key: 'key-new-B',
+  });
+  assert.equal(textRefused.statusCode, 503);
+  assert.equal(textRefused.json().failure_kind, 'overloaded');
+  const mediaRefused = await publishMedia(publisher, { ...mediaBody, idempotency_key: 'key-new-C' });
+  assert.equal(mediaRefused.statusCode, 503);
+  assert.equal(mediaRefused.json().idempotency_key, 'key-new-C');
+
+  // … while the partial's own retry still resumes and settles it,
+  const resumed = await publishMedia(publisher, mediaBody);
+  assert.equal(resumed.statusCode, 200);
+  assert.equal(sendAttempts, 2);
+
+  // and a settled entry is evictable again — the new key is admitted.
+  const textAdmitted = await publishText(publisher, {
+    conversation: { conversation_id: 'li_si' },
+    text: 'hello',
+    idempotency_key: 'key-new-B',
+  });
+  assert.equal(textAdmitted.statusCode, 200);
+});
+
 // --- transcript recording edge cases -------------------------------------------
 
 test('no session_id: delivered, transcript not recorded, note says why', async (t) => {

@@ -269,14 +269,17 @@ async function postJSONParsed(target, body) {
 
 // readMediaFile opens, validates, and reads one local media file. Client
 // mistakes throw ClientError (→ HTTP 400 with the message verbatim);
-// anything else propagates. O_NOFOLLOW + fstat-on-the-open-fd is the same
-// no-path-race hygiene as media.js's readVerifiedAudio: the size check and
-// the bytes read cannot be swapped out from under each other.
-function readMediaFile(filePath, mediaKind, maxBytes) {
+// anything else propagates. O_NOFOLLOW + stat-on-the-open-handle is the
+// same no-path-race hygiene as media.js's readVerifiedAudio: the size
+// check and the bytes read cannot be swapped out from under each other.
+// Asynchronous I/O throughout (codex jg-d0xr finding 9): a 10MB
+// synchronous read stalled the event loop — and with it every concurrent
+// send and the WS heartbeat — per request.
+async function readMediaFile(filePath, mediaKind, maxBytes) {
   const spec = mediaKindSpecs[mediaKind];
-  let fd;
+  let handle;
   try {
-    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   } catch (err) {
     if (err.code === 'ELOOP' || err.code === 'EMLINK') {
       throw new ClientError(`${filePath} is a symlink; pass the real file path`);
@@ -284,7 +287,7 @@ function readMediaFile(filePath, mediaKind, maxBytes) {
     throw new ClientError(`cannot open ${filePath} (${err.code ?? err.message}); pass an absolute path to a readable file on the adapter host`);
   }
   try {
-    const st = fs.fstatSync(fd);
+    const st = await handle.stat();
     if (!st.isFile()) {
       throw new ClientError(`${filePath} is not a regular file`);
     }
@@ -301,7 +304,7 @@ function readMediaFile(filePath, mediaKind, maxBytes) {
     const buffer = Buffer.alloc(st.size);
     let offset = 0;
     while (offset < st.size) {
-      const bytesRead = fs.readSync(fd, buffer, offset, st.size - offset, offset);
+      const { bytesRead } = await handle.read(buffer, offset, st.size - offset, offset);
       if (bytesRead === 0) throw new ClientError(`${filePath} changed while reading (short read)`);
       offset += bytesRead;
     }
@@ -314,8 +317,54 @@ function readMediaFile(filePath, mediaKind, maxBytes) {
     }
     return { buffer, size: st.size, detectedExtension: detected };
   } finally {
-    fs.closeSync(fd);
+    await handle.close();
   }
+}
+
+// --- global upload admission ------------------------------------------------------
+
+// Thrown when the upload gate is saturated; answered as HTTP 429 — the
+// caller retries with the SAME idempotency key once load drains.
+class BusyError extends Error {}
+
+// createUploadGate bounds outbound media admission globally (codex
+// jg-d0xr finding 9): at most `slots` requests hold a media buffer
+// (read → hash → chunked upload) at once, and at most `maxQueue` more may
+// wait for a slot — anything beyond that is refused up front, BEFORE the
+// file is read, so a burst of /publish-media requests cannot allocate
+// unbounded 10MB buffers or saturate the long connection. Waiters hold no
+// buffer. Same idempotent-release/pump discipline as media.js's
+// createDownloadGate; no deadline variant because a local file, unlike a
+// WeCom download URL, is not on a fuse.
+export function createUploadGate({ slots, maxQueue }) {
+  let inUse = 0;
+  const waiters = [];
+  const makeRelease = () => {
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      inUse--;
+      while (inUse < slots && waiters.length > 0) {
+        inUse++;
+        waiters.shift()(makeRelease());
+      }
+    };
+  };
+  return {
+    acquire() {
+      if (inUse < slots) {
+        inUse++;
+        return Promise.resolve(makeRelease());
+      }
+      if (waiters.length >= maxQueue) {
+        return Promise.reject(new BusyError(
+          `the adapter is at its outbound upload capacity (${slots} uploading, ${maxQueue} queued) — retry shortly with the same idempotency key`,
+        ));
+      }
+      return new Promise((resolve) => { waiters.push(resolve); });
+    },
+  };
 }
 
 // --- publisher ----------------------------------------------------------------
@@ -361,6 +410,13 @@ export function createOutboundPublisher(deps) {
   // settled receipt here is what stops that callback from re-sending.
   const publishStates = new Map(); // key → { chunksDelivered, messageID, receipt, promise, … }
 
+  // Global outbound upload admission (finding 9): worst-case media buffer
+  // memory ≤ slots × the media cap; queued waiters hold no buffer yet.
+  const uploadGate = createUploadGate({
+    slots: cfg.uploadMaxConcurrent ?? 2,
+    maxQueue: cfg.uploadMaxQueue ?? 8,
+  });
+
   // Per-chat outbound serialization: the SDK only serializes sends sharing
   // a req_id, so two publishes to the same chat (different idempotency
   // keys) could otherwise interleave one reply between another's chunks —
@@ -382,29 +438,32 @@ export function createOutboundPublisher(deps) {
     return next;
   }
 
+  // publishStateFor returns the tracked state for a key, admitting a new
+  // one only within the cap. Returns null when a NEW key cannot be
+  // admitted: only fully settled, unpinned entries are evictable — never
+  // a live (in-flight) send, never a pinned seed whose recording callback
+  // is still due, and never a failed partial (its latches are exactly
+  // what a retry resumes from; losing them re-sends media users already
+  // saw). When nothing is evictable the key is REFUSED (HTTP 503) instead
+  // of growing without bound or evicting an unsafe entry (codex jg-d0xr
+  // findings 6 and 9 — the old code grew "temporarily", i.e. forever).
   function publishStateFor(key) {
     if (!key) return { chunksDelivered: 0 }; // untracked, per-call state
     let state = publishStates.get(key);
     if (!state) {
-      state = { chunksDelivered: 0 };
-      publishStates.set(key, state);
-      if (publishStates.size > publishStatesCap) {
-        // Evict the oldest SETTLED state only: evicting one whose send is
-        // still in flight would let a gc retry of that key re-queue the
-        // whole message from scratch — duplicate chunks users already saw.
-        // If everything is in flight (pathological load), grow temporarily.
+      if (publishStates.size >= publishStatesCap) {
+        let evicted = false;
         for (const [k, s] of publishStates) {
-          // Only fully completed entries (receipt present) are evictable.
-          // Never the entry just inserted for `key` (promise-less until
-          // after insert), and never a failed partial (chunksDelivered>0,
-          // no receipt) — evicting one lets a later gc retry restart at
-          // chunk zero and duplicate chunks users already saw.
-          if (k !== key && s.receipt && !s.promise) {
+          if (s.receipt && !s.promise && !s.pinned) {
             publishStates.delete(k);
+            evicted = true;
             break;
           }
         }
+        if (!evicted) return null;
       }
+      state = { chunksDelivered: 0 };
+      publishStates.set(key, state);
     }
     return state;
   }
@@ -450,6 +509,7 @@ export function createOutboundPublisher(deps) {
   // sends and transcript recordings).
   async function claimPublishState(key) {
     const state = publishStateFor(key);
+    if (!state) return { refused: true };
     for (;;) {
       if (state.receipt) return { receipt: state.receipt, state };
       if (!state.promise) return { state, token: installOwner(state) };
@@ -497,6 +557,18 @@ export function createOutboundPublisher(deps) {
     }
 
     const claim = await claimPublishState(pub.idempotency_key);
+    if (claim.refused) {
+      // The idempotency map is at cap with nothing safely evictable:
+      // refusing the NEW key beats evicting a live/pinned entry whose
+      // loss re-sends messages users already saw. gc retries later.
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'overloaded',
+      }));
+      return;
+    }
     if (claim.receipt) {
       // A media key lands here too: gc's transcript-recording callback
       // posts the SAME key back through /publish, and this settled-receipt
@@ -693,6 +765,17 @@ export function createOutboundPublisher(deps) {
     };
 
     const claim = await claimPublishState(key);
+    if (claim.refused) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'overloaded',
+        error: 'the adapter\'s publish-state table is full of live or unresolved sends — retry shortly with the same idempotency key',
+        idempotency_key: key,
+      }));
+      return;
+    }
     if (claim.receipt) {
       // Settled: validate the fingerprint WITHOUT touching the file
       // (finding 7 — the original may have been deleted or moved since
@@ -716,6 +799,27 @@ export function createOutboundPublisher(deps) {
       }
     }
 
+    // Global admission BEFORE any file I/O (finding 9): a slot must be
+    // held to allocate a media buffer at all; the queue cap turns a burst
+    // into fast 429s instead of unbounded 10MB allocations. The slot is
+    // released the moment the upload stage settles, in the send below.
+    let releaseUpload;
+    try {
+      releaseUpload = await uploadGate.acquire();
+    } catch (err) {
+      token.finish(err);
+      releaseUntouchedState(key, state);
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'overloaded',
+        error: err.message,
+        idempotency_key: key,
+      }));
+      return;
+    }
+
     // Only the admitted owner touches the filesystem (finding 7): settled
     // and conflicting retries were answered above without any file access.
     // Confinement first (finding 1) — the root check must precede the
@@ -723,8 +827,9 @@ export function createOutboundPublisher(deps) {
     let media;
     try {
       await assertConfinedMediaPath(filePath, cfg.outboundMediaRoot);
-      media = readMediaFile(filePath, mediaKind, maxBytes);
+      media = await readMediaFile(filePath, mediaKind, maxBytes);
     } catch (err) {
+      releaseUpload();
       token.finish(err);
       releaseUntouchedState(key, state);
       if (err instanceof ForbiddenError) {
@@ -752,6 +857,7 @@ export function createOutboundPublisher(deps) {
       // under this key; the same path re-read with DIFFERENT content must
       // not ride that media_id.
       if (state.fingerprint.digest !== digest) {
+        releaseUpload();
         token.finish(new Error(`idempotency conflict on ${key}`));
         fail409(['media digest']);
         return;
@@ -767,12 +873,18 @@ export function createOutboundPublisher(deps) {
       // where the failure happened instead of repeating delivered steps:
       // a re-upload wastes quota (30/min per robot), and a re-send shows
       // the user the media twice.
-      if (!state.mediaId) {
-        const uploaded = await withUploadDeadline(
-          uploadMedia(media.buffer, { type: spec.wecomType, filename }),
-        );
-        if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
-        state.mediaId = uploaded.media_id;
+      try {
+        if (!state.mediaId) {
+          const uploaded = await withUploadDeadline(
+            uploadMedia(media.buffer, { type: spec.wecomType, filename }),
+          );
+          if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
+          state.mediaId = uploaded.media_id;
+        }
+      } finally {
+        // The buffer's provider-side use ends with the upload stage —
+        // free the admission slot before the (buffer-less) send stages.
+        releaseUpload();
       }
       if (!state.mediaSent) {
         const frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId);

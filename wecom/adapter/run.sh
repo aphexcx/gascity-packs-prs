@@ -48,6 +48,10 @@
 #   WECOM_VIDEO_MAX_BYTES   # outbound video cap; default 10485760 (10MB; mp4)
 #   WECOM_UPLOAD_TIMEOUT_MS # wall-clock bound on one whole chunked media
 #                           # upload; default 300000
+#   WECOM_UPLOAD_MAX_CONCURRENT  # global outbound-upload admission bound;
+#                           # default 2 (buffer memory ≤ this × media cap)
+#   WECOM_UPLOAD_MAX_QUEUE  # requests allowed to wait for an upload slot;
+#                           # default 8 — beyond it /publish-media 429s
 
 set -euo pipefail
 

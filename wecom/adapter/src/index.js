@@ -99,6 +99,12 @@
 //	                       Wall-clock deadline for one whole chunked media
 //	                       upload (default 300000 — 10MB in ≤512KB chunks
 //	                       over a mainland uplink needs headroom).
+//	WECOM_UPLOAD_MAX_CONCURRENT
+//	                       Global outbound-upload admission bound (default
+//	                       2); media buffer memory ≤ this × the media cap.
+//	WECOM_UPLOAD_MAX_QUEUE Requests allowed to WAIT for an upload slot
+//	                       (default 8); beyond it /publish-media answers
+//	                       429 before reading the file.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -184,6 +190,11 @@ function loadConfig() {
     imageMaxBytes: intEnv('WECOM_IMAGE_MAX_BYTES', 10 * 1024 * 1024),
     videoMaxBytes: intEnv('WECOM_VIDEO_MAX_BYTES', 10 * 1024 * 1024),
     uploadTimeoutMs: intEnv('WECOM_UPLOAD_TIMEOUT_MS', 300000),
+    // Outbound upload admission (src/outbound.js createUploadGate):
+    // buffer memory ≤ uploadMaxConcurrent × the media cap; waiters beyond
+    // uploadMaxQueue are answered 429 before any file I/O.
+    uploadMaxConcurrent: intEnv('WECOM_UPLOAD_MAX_CONCURRENT', 2),
+    uploadMaxQueue: intEnv('WECOM_UPLOAD_MAX_QUEUE', 8),
   };
 
   const missing = [];
