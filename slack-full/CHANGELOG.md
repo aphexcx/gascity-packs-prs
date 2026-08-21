@@ -205,6 +205,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pack pin bumps can no longer strand the adapter service (gp-d7l):
+  the `[[service]]` command is now `adapter/run.sh` (checked in)
+  instead of the gitignored built binary. `gc import install`
+  re-materializes the pack cache git-only, which used to wipe both the
+  deployed env-wrapper shim and `gc-slack-adapter.real` and leave the
+  supervisor fork/exec-ing a nonexistent path until a human rebuilt by
+  hand (outages 2026-07-30 and 2026-08-05, 15:37–15:51Z). run.sh now
+  sources the secrets env file (absorbing the shim's job), execs an
+  existing binary unchanged (idempotent fast path), and when the
+  binary is missing self-heals: locates a Go toolchain (PATH plus
+  Homebrew/system fallbacks for minimal supervisor environments),
+  rebuilds `gc-slack-adapter.real` from the colocated sources with
+  loud stderr logging, publishes it with an atomic rename safe under
+  concurrent restarts, and execs it.
+
 - `gc slack reply-current` now inherits the thread from the latest
   inbound (gp-i62): a thread-reply inbound's transcript entry carries
   the Slack `thread_ts` in `ReplyToMessageID`, and the reply anchors
