@@ -20,8 +20,12 @@
 #     to sessions as file:// attachments; audio files get an inline
 #     ElevenLabs Scribe transcript.
 #   - Outbound: binds a Unix domain socket at $GC_SERVICE_SOCKET for
-#     /publish + /healthz; gc reverse-proxies /svc/wecom/* to it and the
-#     extmsg subsystem appends /publish when delivering session replies.
+#     /publish + /publish-media + /healthz; gc reverse-proxies /svc/wecom/*
+#     to it and the extmsg subsystem appends /publish when delivering
+#     session replies. /publish-media (gc wecom publish --image|--video)
+#     uploads a local image (≤10MB jpg/png/gif) or video (≤10MB mp4) over
+#     the long connection, pushes it as a media message, and best-effort
+#     records the outbound in the extmsg transcript via gc /extmsg/outbound.
 #
 # Secrets (WECOM_BOT_ID, WECOM_BOT_SECRET) stay in
 # ~/.config/gc-wecom-adapter/env and are sourced by adapter/run.sh.

@@ -21,8 +21,10 @@ import AiBot from '@wecom/aibot-node-sdk';
 
 import {
   createDownloadGate,
+  createSdkLogger,
   createStoreQuota,
   defaultMediaDir,
+  describeProviderError,
   formatTranscript,
   hydrateMessageMedia,
   isAudioFilename,
@@ -218,6 +220,53 @@ test('scrubErrorMessage drops URLs and caps length', () => {
   assert.ok(!scrubbed.includes('wwcdn'));
   assert.ok(scrubbed.includes('[url]'));
   assert.ok(scrubErrorMessage('x'.repeat(500)).length <= 201);
+});
+
+// Codex jg-d0xr round-2 finding 13, hardened by round-3 finding 3: the
+// round-2 scrub only redacted RECOGNIZED patterns (braces, URLs, labeled
+// ids), so free-text provider errmsg passed to responses and persistent
+// logs verbatim. describeProviderError is allowlist-based: structured
+// fields and canonical labels only — unrecognized text is discarded.
+test('describeProviderError discards free-text provider errmsg entirely (allowlist only)', () => {
+  // The round-3 probe string: no label, no URL, no brace — it used to
+  // survive the pattern scrub unchanged.
+  const freeText = describeProviderError(new Error('cannot process payroll-secret.png token ABC123'));
+  assert.ok(!freeText.includes('payroll-secret'), 'free-text filename leaked');
+  assert.ok(!freeText.includes('ABC123'), 'free-text token leaked');
+  assert.match(freeText, /withheld/);
+
+  // An ack frame keeps its numeric errcode and drops the errmsg.
+  const nack = describeProviderError({ errcode: 95001, errmsg: 'cannot process payroll-secret.png token ABC123' });
+  assert.match(nack, /errcode 95001/);
+  assert.ok(!nack.includes('payroll-secret'));
+  assert.ok(!nack.includes('ABC123'));
+
+  // The round-2 probe strings stay dead: serialized payloads, ids, URLs.
+  const raw = describeProviderError(new Error(
+    'Upload init failed: no upload_id returned. Response: {"media_id":"MEDIA_SECRET","req_id":"SECRET_REQ_42","url":"https://openws.example/u?tok=abc"}',
+  ));
+  assert.ok(!raw.includes('MEDIA_SECRET'), 'provider payload media id leaked');
+  assert.ok(!raw.includes('SECRET_REQ_42'), 'provider request id leaked');
+  assert.ok(!raw.includes('openws.example'), 'provider URL leaked');
+
+  // Known SDK shapes map to canonical labels; embedded identifiers and
+  // provider-controlled tails are dropped with the rest of the message.
+  const ackTimeout = describeProviderError(new Error('Reply ack timeout (10000ms) for reqId: SECRET_REQ_42'));
+  assert.ok(!ackTimeout.includes('SECRET_REQ_42'));
+  assert.match(ackTimeout, /acknowledgement timed out/);
+  const cancelled = describeProviderError(new Error('WebSocket connection closed (code 1006, reason: see https://evil.example/x), reply for reqId: R9 cancelled'));
+  assert.ok(!cancelled.includes('evil.example'));
+  assert.ok(!cancelled.includes('R9'));
+
+  // Structured HTTP context survives as numbers, never as response text.
+  const gcErr = new Error('422 Unprocessable Entity: no active binding for conversation wecom/zhang_san');
+  gcErr.status = 422;
+  const gc = describeProviderError(gcErr);
+  assert.match(gc, /HTTP status 422/);
+  assert.ok(!gc.includes('zhang_san'));
+
+  // Unbounded input yields bounded output.
+  assert.ok(describeProviderError(new Error('x'.repeat(5000))).length <= 201);
 });
 
 // --- typing helpers ----------------------------------------------------------
@@ -900,4 +949,59 @@ test('overwriting the same destination charges quota by delta, not double', asyn
   // The cached usage still reflects ONE stored copy: 40 more bytes fit.
   assert.equal(quota.admit(40).ok, true);
   assert.equal(quota.admit(60).ok, false);
+});
+
+// --- SDK logger scrubbing (jg-d0xr finding 11) --------------------------------------
+
+// Codex jg-d0xr finding 11: SDK 1.0.7 logs upload filenames, upload_id,
+// and media_id at INFO as PLAIN strings — the brace-based scrub never
+// touched them, so private filenames and live provider identifiers
+// persisted in the service log despite the no-content-logging policy.
+test('the SDK logger allowlists INFO to connection lifecycle only', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args.join(' ')));
+
+  // Lifecycle lines (verbatim SDK 1.0.7 messages) must survive.
+  logger.info('Connecting to WebSocket: wss://openws.work.weixin.qq.com...');
+  logger.info('WebSocket connection established, sending auth...');
+  logger.info('Authentication successful');
+  logger.info('Connection lost, reconnecting in 2000ms (attempt 1/-1)...');
+  assert.equal(lines.length, 4);
+  assert.ok(lines[0].includes('[url]'), 'even lifecycle lines drop URLs');
+
+  // Upload progress (also verbatim) must be suppressed entirely.
+  lines.length = 0;
+  logger.info('Uploading media: type=image, filename=机密截图.png, size=123456, chunks=1');
+  logger.info('Upload init success: upload_id=UPLOAD_SECRET_1');
+  logger.info('All 1 chunks uploaded, finishing...');
+  logger.info('Upload complete: media_id=MEDIA_SECRET_1, type=image');
+  logger.info('Downloading file...');
+  assert.deepEqual(lines, [], 'no upload/download detail may reach the persisted log at INFO');
+});
+
+test('warn/error lines pass through with identifiers, braces, and URLs redacted', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args.join(' ')));
+
+  logger.warn('Reply ack timeout (10000ms) for reqId: SEND_MSG_42');
+  logger.error('Upload failed for filename=机密截图.png, upload_id=UPLOAD_SECRET_1, response: {"media_id":"MEDIA_SECRET_1"}');
+  logger.warn('Received unknown frame (ignored): {"body":{"userid":"zhang_san"}}');
+
+  assert.equal(lines.length, 3);
+  assert.ok(!lines[0].includes('SEND_MSG_42'), 'req ids are redacted');
+  assert.ok(!lines[1].includes('机密截图'), 'filenames are redacted');
+  assert.ok(!lines[1].includes('UPLOAD_SECRET_1'), 'upload ids are redacted');
+  assert.ok(!lines[1].includes('MEDIA_SECRET_1'), 'media ids are redacted (brace scrub)');
+  assert.ok(!lines[2].includes('zhang_san'), 'serialized frames are truncated at the first brace');
+  assert.match(lines[1], /filename=\[redacted\]/);
+});
+
+test('the SDK logger drops varargs — raw objects never persist', () => {
+  const lines = [];
+  const logger = createSdkLogger((...args) => lines.push(args));
+
+  logger.error('WebSocket error:', { url: 'wss://x', secret: 'BOT_SECRET' });
+  assert.equal(lines.length, 1);
+  assert.equal(lines[0].length, 2, 'only the prefix and the scrubbed first message');
+  assert.ok(!JSON.stringify(lines).includes('BOT_SECRET'));
 });
