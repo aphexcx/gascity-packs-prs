@@ -116,12 +116,20 @@ type socketAcker interface {
 	AckCtx(ctx context.Context, envelopeID string, payload any) error
 }
 
+// socketDegradedAfter is the grace window before a down socket transport
+// is reported as advisory-degraded on /healthz (gp-rol): slack-go's own
+// reconnects resolve in seconds and the outer ladder caps at
+// socketReconnectBackoffMax, so minutes of continuous downtime mean
+// reconnection is failing, not in progress.
+const socketDegradedAfter = 2 * time.Minute
+
 // socketModeRunner owns one app's Socket Mode connection and its status.
 type socketModeRunner struct {
 	cfg          config
 	events       http.Handler
 	interactions http.Handler
 	liveness     *inboundLiveness
+	startedAt    time.Time
 
 	// newClient builds the slack-go socket client; tests swap it.
 	newClient func() *socketmode.Client
@@ -155,6 +163,7 @@ func newSocketModeRunner(cfg config, events, interactions http.Handler, liveness
 		events:       events,
 		interactions: interactions,
 		liveness:     liveness,
+		startedAt:    time.Now(),
 	}
 	r.newClient = func() *socketmode.Client {
 		api := slack.New(cfg.slackBotToken,
@@ -186,7 +195,18 @@ func (r *socketModeRunner) run(ctx context.Context) {
 		go func() { done <- client.RunContext(runCtx) }()
 		err := r.consume(runCtx, client, done)
 		cancelRun()
-		r.connected.Store(false)
+		if r.connected.Load() {
+			// The Connecting event stamps ordinary reconnects; this path
+			// covers a client loop that ends while still connected, so
+			// degradedReason measures the outage from now, not from an
+			// older disconnect. Timestamp BEFORE flipping connected:
+			// state transitions run on this goroutine only, but health
+			// probes read concurrently and must never see
+			// connected=false with a stale disconnect time (it would
+			// skip the grace window).
+			r.lastDisconnectAt.Store(time.Now().UnixNano())
+			r.connected.Store(false)
+		}
 		if ctx.Err() != nil {
 			r.inflight.Wait()
 			return
@@ -241,8 +261,10 @@ func (r *socketModeRunner) consume(ctx context.Context, client *socketmode.Clien
 func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAcker, evt socketmode.Event) {
 	switch evt.Type {
 	case socketmode.EventTypeConnecting:
-		if r.connected.Swap(false) {
+		if r.connected.Load() {
+			// Timestamp before flipping: see the run() disconnect path.
 			r.lastDisconnectAt.Store(time.Now().UnixNano())
+			r.connected.Store(false)
 			log.Printf("socket mode: connection lost — reconnecting")
 		}
 		if ce, ok := evt.Data.(*slack.ConnectingEvent); ok {
@@ -284,8 +306,9 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 	case socketmode.EventTypeDisconnect:
 		// slack-go consumes Slack's `disconnect` envelope internally
 		// and reconnects; surfaced here only if that ever changes.
-		r.connected.Store(false)
+		// Timestamp before flipping: see the run() disconnect path.
 		r.lastDisconnectAt.Store(time.Now().UnixNano())
+		r.connected.Store(false)
 		log.Printf("socket mode: disconnect requested by Slack")
 	case socketmode.EventTypeIncomingError:
 		if e, ok := evt.Data.(error); ok {
@@ -545,6 +568,40 @@ func slashPayloadToForm(payload json.RawMessage) (url.Values, error) {
 func (r *socketModeRunner) setLastErr(s string) {
 	s = scrubSlackSecrets(s)
 	r.lastErr.Store(&s)
+}
+
+// degradedReason reports the advisory service-health reason when the
+// socket transport has been down past socketDegradedAfter, "" otherwise
+// (gp-rol). Read by handleHealthz for the X-GC-Health header: gc keeps
+// routing (outbound is fine) but flips `gc service list` to degraded.
+// Nil receiver (transport not wired) reports nothing — the liveness
+// watchdog is then the only inbound signal. Note a runner configured
+// with SLACK_APP_TOKEN while the Slack app's Socket Mode toggle is off
+// never connects, and correctly reports degraded: either the toggle or
+// SLACK_SOCKET_MODE=off should change.
+func (r *socketModeRunner) degradedReason(now time.Time) string {
+	if r == nil || r.connected.Load() {
+		return ""
+	}
+	downSince := r.startedAt
+	if ts := r.lastDisconnectAt.Load(); ts > 0 {
+		if t := time.Unix(0, ts); t.After(downSince) {
+			downSince = t
+		}
+	}
+	down := now.Sub(downSince)
+	if down < socketDegradedAfter {
+		return ""
+	}
+	state := "disconnected"
+	if !r.everConnected.Load() {
+		state = "never connected"
+	}
+	reason := fmt.Sprintf("socket_mode %s for %s", state, down.Round(time.Second))
+	if e := r.lastErr.Load(); e != nil && *e != "" {
+		reason += " (last_error=" + *e + ")"
+	}
+	return reason
 }
 
 // healthzDetail renders the socket transport's status lines for

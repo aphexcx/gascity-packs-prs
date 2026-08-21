@@ -930,6 +930,31 @@ func (l *inboundLiveness) saveState() {
 	}
 }
 
+// degradedReason reports the advisory service-health reason while a
+// confirmed inbound stall is active, "" otherwise (gp-rol). Read by
+// handleHealthz for the X-GC-Health header so `gc service list` shows
+// the slack service as degraded — the exact signal the 2026-08-19
+// outage lacked (state=ready for 26 minutes of dead inbound) — while
+// gc keeps routing outbound /publish traffic.
+func (l *inboundLiveness) degradedReason() string {
+	if l == nil {
+		return ""
+	}
+	l.mu.Lock()
+	stalled := l.stalledSince
+	last := l.lastInboundAt
+	l.mu.Unlock()
+	if stalled.IsZero() {
+		return ""
+	}
+	reason := fmt.Sprintf("inbound_liveness stalled since %s (missed=%d)",
+		stalled.UTC().Format(time.RFC3339), l.lastMissed.Load())
+	if !last.IsZero() {
+		reason += " last_inbound=" + last.UTC().Format(time.RFC3339)
+	}
+	return reason
+}
+
 // healthzDetail renders the liveness lines for /healthz. Nil receiver
 // reports the watchdog as disabled.
 func (l *inboundLiveness) healthzDetail() string {
