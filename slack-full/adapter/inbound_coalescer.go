@@ -349,13 +349,25 @@ func coalesceBatchDedupKey(batch []pendingChannelInbound) string {
 // pipeline, whose reminder formatter sanitizes the whole Text field
 // (extmsg.SanitizeForSystemReminder).
 func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbound) string {
-	last := batch[len(batch)-1].inbound
+	// The anchor claim names the newest HUMAN message: bot-tagged items
+	// (reaction notifications, gp-by3) are excluded from reply-current /
+	// react / upload anchoring by the intake helpers, so a batch whose
+	// newest entry is one must not claim it as the anchor. All-bot
+	// batches fall back to the newest item.
+	anchor := batch[len(batch)-1].inbound
+	for i := len(batch) - 1; i >= 0; i-- {
+		if !batch[i].inbound.Actor.IsBot {
+			anchor = batch[i].inbound
+			break
+		}
+	}
 	var b strings.Builder
 	// --turn-ts resolves via the transcript, which records ONE entry for
-	// the whole batch (under the newest ts) — so the header steers
-	// replies to older members through --reply-to/--no-thread instead.
+	// the whole batch (under the anchor ts — newest HUMAN message, since
+	// bot-tagged items are non-anchoring per gp-by3) — so the header
+	// steers replies to older members through --reply-to/--no-thread.
 	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --turn-ts %s to answer the newest; to answer an older one use --reply-to <its thread ts> or --no-thread instead (--turn-ts resolves only the newest)]\n",
-		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(last.ProviderMessageID))
+		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(anchor.ProviderMessageID))
 	for _, p := range batch {
 		m := p.inbound
 		sender := m.Actor.DisplayName

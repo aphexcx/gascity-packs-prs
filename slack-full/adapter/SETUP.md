@@ -91,6 +91,9 @@ curl -s https://<your-tailnet>.ts.net/healthz
      start it after Step 4 and come back here.)
    - **Subscribe to bot events** — add:
      - `message.im` (DMs to your bot)
+     - `reaction_added` and `reaction_removed` (human-reaction
+       visibility, gp-by3 — requires the `reactions:read` scope; see
+       `manifest/README.md` for the full production event list)
    - Save changes.
 
    **App Home** →

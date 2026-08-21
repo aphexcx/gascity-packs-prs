@@ -304,6 +304,31 @@ def test_peer_bot_event_never_wins_latest_inbound(gc_mock: "GcMock") -> None:
     assert event["payload"]["actor"] == "afik"
 
 
+def test_reaction_event_never_wins_latest_inbound(gc_mock: "GcMock") -> None:
+    # Same contract for reaction notifications (gp-by3): the adapter
+    # stamps "reaction: <name>" as the Actor display name, and the
+    # scan must anchor on the human message the reaction rode in after
+    # — a reaction's provider id is an event_ts, not a postable ts.
+    common = _import_common()
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session",
+        conversation_id="C0HUMAN",
+        actor="afik",
+        age_seconds=120,
+    )
+    gc_mock.register_inbound_event(
+        target_session="gc-test-session",
+        conversation_id="C0HUMAN",
+        actor="reaction: afik",
+        age_seconds=5,
+    )
+
+    event = common.find_latest_inbound_for_session("gc-test-session")
+
+    assert event is not None
+    assert event["payload"]["actor"] == "afik"
+
+
 def test_only_peer_bot_events_yield_none(gc_mock: "GcMock") -> None:
     # A session that has ONLY ever received peer-bot context has no
     # reply anchor at all: the scan must exhaust every window and give
