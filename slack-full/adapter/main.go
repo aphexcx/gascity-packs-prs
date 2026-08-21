@@ -606,6 +606,16 @@ type config struct {
 	// into a duplicate session notification (hw-94w5k finding #4).
 	// Nil-safe: a nil cache never dedupes. Initialized in main().
 	eventDedup *eventDedupCache
+	// channelClaims serializes the channel-audience delivery per
+	// (channel, ts) so a bot-mention twin pair (message + app_mention,
+	// same ts, distinct event_ids) cannot deliver the same message id
+	// twice into the bound session's turn — the event_id dedup cannot
+	// collapse the pair and gc's member notification has no dedup of
+	// its own (gp-ios, pc_c920ff5fe90c). Reuses the eventDedupCache
+	// begin/commit/forget lifecycle keyed by channelDeliveryClaimKey;
+	// see channel_claims.go. Nil-safe: a nil cache never claims, so
+	// directly-constructed test configs keep the historical behavior.
+	channelClaims *eventDedupCache
 	// userNames caches users.info display-name lookups backing inbound
 	// sender resolution, inline `<@U…>` mention rewriting, and
 	// thread-context preamble author lines (hq-uxln9). nil disables
@@ -1402,6 +1412,11 @@ func main() {
 	// Wire the Events API redelivery seen-set before handleSlackEvents
 	// closes over cfg. Nil-safe (nil disables dedup). hw-94w5k #4.
 	cfg.eventDedup = newEventDedupCache(eventDedupTTL)
+	// Wire the per-(channel, ts) channel-audience delivery claims that
+	// keep a bot-mention twin pair (message + app_mention, same ts)
+	// from delivering the same message id twice into one session turn
+	// (gp-ios, pc_c920ff5fe90c). Nil-safe (nil disables claiming).
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
 	// Wire the users.info display-name cache. Nil-safe consumer path
 	// (nil disables resolution — raw ids pass through). hq-uxln9.
 	cfg.userNames = newUserNameCache()
@@ -3233,6 +3248,64 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 	}
 
+	// gp-4vq: humans address agents in bound rooms by @-mentioning the
+	// adapter's bot user — the `@handle:` prefix syntax the parsers
+	// above recognize almost never occurs in real traffic, so gating
+	// the busy affordance on a parsed target alone left it effectively
+	// invisible (live repro: zero busy lines across a full evening of
+	// real mentions). A mention of the adapter's OWN bot user anywhere
+	// in the raw text makes the inbound busy-eligible WITHOUT
+	// fabricating a target: ExplicitTarget stays empty — a synthetic
+	// value would read as "addressed to someone else" to the
+	// channel-bound session and mute it — and no alias dispatch fires,
+	// so routing is untouched. The bot's user id comes from the
+	// envelope's authorizations block; when a delivery omits it, the
+	// app_mention event type is itself proof the bot was tagged.
+	// Detection runs on msg.Text, not the rewritten text — the
+	// hq-uxln9 mention rewrite below replaces `<@U…>` tokens with
+	// display names. Computed here, ahead of the thread-context
+	// preamble, because the channel-claim gate below needs it.
+	botMentioned := msg.Type == "app_mention" ||
+		slackTextMentionsUser(msg.Text, env.botUserID())
+	convKind := slackKindFromChannelType(msg.ChannelType, msg.Channel)
+	// willBuffer mirrors the coalescer-branch condition below: buffered
+	// chatter takes no per-ts claim here — its claim happens at batch-
+	// delivery time (deliverCoalescedBatch).
+	willBuffer := cfg.coalescer.enabled() && target == "" && !botMentioned && convKind == "room"
+
+	// Channel-audience claim (gp-ios, pc_c920ff5fe90c live shape): a
+	// bot-mention twin pair races BOTH copies down this urgent path
+	// concurrently — distinct event_ids defeat the event dedup, and the
+	// deliveredIDs check can't see a twin whose POST hasn't concluded.
+	// Exactly one twin owns the (channel, ts) channel delivery; the
+	// other parks (bounded by the owner's single gc forward — it holds
+	// its dispatch slot while parked, an accepted cost for a rare
+	// same-ts race) and then either continues with the channel copy
+	// SKIPPED (owner committed — see skipChannelPost consumers below;
+	// the alias-dispatch leg still runs under its own claim so a
+	// targeted twin can recover a failed injection, codex r1 P1) or
+	// takes over as the owner (owner forgot: its POST failed and this
+	// copy is the retry). Claimed BEFORE the thread-context preamble so
+	// a losing twin never advances threadContextCache — pre-claim
+	// marking let a bare twin win the race while the decorated copy was
+	// skipped, silently dropping the thread context (codex r1 P2).
+	skipChannelPost := false
+	var claimKey string
+	if !willBuffer {
+		claimKey = channelDeliveryClaimKey(msg.Channel, msg.TS)
+		claimProceed, claimWait := cfg.channelClaims.begin(claimKey)
+		for !claimProceed {
+			if claimWait == nil {
+				log.Printf("inbound: chan=%s ts=%s channel copy already delivered by same-ts twin — skipping channel post", msg.Channel, msg.TS)
+				skipChannelPost = true
+				break
+			}
+			log.Printf("inbound: chan=%s ts=%s parked behind in-flight same-ts twin delivery", msg.Channel, msg.TS)
+			<-claimWait
+			claimProceed, claimWait = cfg.channelClaims.begin(claimKey)
+		}
+	}
+
 	// gc-px8.5 + gc-px8.6: prepend thread-context preamble for inbounds
 	// that are replies in a thread. The cache stores per-(target,
 	// channel, thread) the ts of the most recent preamble already
@@ -3246,7 +3319,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	//   - Subsequent mention of X with no new activity: empty preamble.
 	// Errors leave the cached ts unchanged so a transient failure
 	// retries on the next inbound rather than silently losing context.
-	if msg.ThreadTS != "" && msg.ThreadTS != msg.TS && cfg.threadContextCache != nil {
+	// Skipped when the channel copy is (skipChannelPost): a skipping
+	// twin delivers nothing that could carry the preamble, and marking
+	// the cache without delivering would poison the delta for the next
+	// real visit (codex r1 P2).
+	if !skipChannelPost && msg.ThreadTS != "" && msg.ThreadTS != msg.TS && cfg.threadContextCache != nil {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
 		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
@@ -3319,7 +3396,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			Provider:       cfg.provider,
 			AccountID:      cfg.accountID,
 			ConversationID: msg.Channel,
-			Kind:           slackKindFromChannelType(msg.ChannelType, msg.Channel),
+			Kind:           convKind,
 		},
 		Actor: externalActor{
 			ID:          msg.User,
@@ -3333,35 +3410,22 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		DedupKey:         "slack-" + msg.TS,
 		ReceivedAt:       time.Now().UTC(),
 	}
-	// gp-4vq: humans address agents in bound rooms by @-mentioning the
-	// adapter's bot user — the `@handle:` prefix syntax the parsers
-	// above recognize almost never occurs in real traffic, so gating
-	// the busy affordance on a parsed target alone left it effectively
-	// invisible (live repro: zero busy lines across a full evening of
-	// real mentions). A mention of the adapter's OWN bot user anywhere
-	// in the raw text makes the inbound busy-eligible WITHOUT
-	// fabricating a target: ExplicitTarget stays empty — a synthetic
-	// value would read as "addressed to someone else" to the
-	// channel-bound session and mute it — and no alias dispatch fires,
-	// so routing is untouched. The bot's user id comes from the
-	// envelope's authorizations block; when a delivery omits it, the
-	// app_mention event type is itself proof the bot was tagged.
-	// Detection runs on msg.Text, not the rewritten text — the
-	// hq-uxln9 mention rewrite above replaces `<@U…>` tokens with
-	// display names.
+	// botMentioned/convKind/willBuffer were computed ahead of the
+	// thread-context preamble (the channel-claim gate needs them).
 	//
 	// Slack delivers a bot mention TWICE (message + app_mention,
 	// distinct event_ids, same ts — hw-vzd5y edge case 2, live repro
 	// in gp-4vq), so event_id dedup does not collapse the pair. Both
-	// deliveries compute the same verdict here and mark the same ts:
+	// deliveries compute the same busy verdict and mark the same ts:
 	// markBoth's same-message branch MERGES (one registry entry, both
 	// addDone channels chained) rather than displacing, and the
 	// second reactions.add is Slack's benign already_reacted — no
 	// double-mark, no double-remove, no stranded emoji. Each delivery
-	// still fires its own add after its own successful forward, so
-	// one delivery failing cannot suppress the survivor's affordance.
-	botMentioned := msg.Type == "app_mention" ||
-		slackTextMentionsUser(msg.Text, env.botUserID())
+	// still fires its own add after its own successful forward (a
+	// skipChannelPost twin counts its twin's committed POST as that
+	// success), so one delivery failing cannot suppress the survivor's
+	// affordance. The CHANNEL copy itself is single-delivery via the
+	// per-(channel, ts) claim above (gp-ios).
 
 	// Busy-reaction lifecycle, mark registration (hq-xizo; replaces the
 	// earlier unconditional "eyes" reaction). The reaction signals to
@@ -3401,13 +3465,32 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// via Slack redelivery.
 	// Rooms only: DMs/MPIMs are direct conversations where latency
 	// matters more than wrapper overhead — they keep the immediate path.
-	if cfg.coalescer.enabled() && target == "" && !botMentioned && inbound.Conversation.Kind == "room" {
+	if willBuffer {
+		// A ts the channel audience already received is the trailing
+		// half of a bot-mention pair (message + app_mention, same ts)
+		// whose urgent twin delivered first. Buffering it would hand
+		// the session the same message id again inside a batch whose
+		// dedup key gc cannot correlate with the urgent copy's
+		// "slack-<ts>" (pc_c920ff5fe90c). Skipping is final handling
+		// exactly like buffer admission: the ack went to Slack and the
+		// dedup claim commits via the defer.
+		if cfg.deliveredIDs.seen("", msg.Channel, msg.TS) {
+			log.Printf("inbound: chan=%s ts=%s already delivered to channel audience — twin skipped", msg.Channel, msg.TS)
+			return
+		}
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
 		cfg.coalescer.enqueue(msg.Channel, pendingChannelInbound{inbound: inboundForChannel})
 		return
 	}
-	cfg.coalescer.flushAheadOf(msg.Channel)
+	// withheldTwins: buffered copies of THIS message's ts, held back from
+	// the flushed batch (pc_c920ff5fe90c). Restored below if the urgent
+	// channel post fails — they were already acked to Slack when
+	// buffered, so dropping them on failure would lose the message. A
+	// skipChannelPost twin still flushes pending chatter ahead (ordering
+	// holds for its alias leg); its same-ts withheld copies are already
+	// delivered by the committed twin, so they simply drop.
+	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
 	var busyAddDone chan struct{}
@@ -3416,62 +3499,77 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
 
-	// Buffered peer-bot context (gp-kop): pending allowlisted peer posts
-	// for this channel ride ahead of the message that naturally woke the
-	// bound session. Channel copy only — the alias-dispatch copy below
-	// targets a session that may not be bound to this channel at all.
-	// Drained here, restored on forward failure so a Slack redelivery
-	// re-flushes the same context.
-	peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
-	if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
-		textForChannel = peerBlock + "\n\n" + textForChannel
-	}
-	// Once-per-channel full reply how-to (gp-729 item 3): the
-	// per-message reminder carries only the registered one-line
-	// template, so the first delivery for a channel this adapter
-	// lifetime appends the long form (and the channel's name+id
-	// pairing, item 4).
-	firstHelp := cfg.replyHelp.first(msg.Channel)
-	if firstHelp {
-		textForChannel += "\n\n" + replyHelpBlock(cfg, msg.Channel)
-	}
-
-	inboundForChannel := inbound
-	inboundForChannel.Text = textForChannel
-	if err := postInbound(cfg, inboundForChannel); err != nil {
-		log.Printf("inbound POST failed: %v", err)
-		cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+	if !skipChannelPost {
+		// Buffered peer-bot context (gp-kop): pending allowlisted peer
+		// posts for this channel ride ahead of the message that
+		// naturally woke the bound session. Channel copy only — the
+		// alias-dispatch copy below targets a session that may not be
+		// bound to this channel at all. Drained here, restored on
+		// forward failure so a Slack redelivery re-flushes the same
+		// context.
+		peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
+		if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
+			textForChannel = peerBlock + "\n\n" + textForChannel
+		}
+		// Once-per-channel full reply how-to (gp-729 item 3): the
+		// per-message reminder carries only the registered one-line
+		// template, so the first delivery for a channel this adapter
+		// lifetime appends the long form (and the channel's name+id
+		// pairing, item 4).
+		firstHelp := cfg.replyHelp.first(msg.Channel)
 		if firstHelp {
-			cfg.replyHelp.unmark(msg.Channel)
+			textForChannel += "\n\n" + replyHelpBlock(cfg, msg.Channel)
 		}
-		// Nothing reached gc. Cancel the busy mark FIRST — no agent
-		// received the message, so no reply will ever come to clear
-		// it — restoring any marks it displaced (their agents may
-		// still be working, codex r5). Only THEN release the dedup
-		// claim: forget wakes a parked redelivery, and it must not
-		// re-mark this timestamp while the old attempt's cancellation
-		// is still pending (a late cancel would delete the retry's
-		// fresh mark and strand its hourglass).
-		if busyEligible {
-			// Marks whose thread a reply already consumed cannot be
-			// restored (tombstoned) — remove their reactions instead
-			// (codex r8).
-			for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, busyAddDone, busyDisplacedMarks) {
-				go removeBusyReaction(cfg, msg.Channel, tk)
+
+		inboundForChannel := inbound
+		inboundForChannel.Text = textForChannel
+		if err := postInbound(cfg, inboundForChannel); err != nil {
+			log.Printf("inbound POST failed: %v", err)
+			// Release the (channel, ts) claim FIRST so a parked same-ts
+			// twin (or the restored buffered copy below) can take over
+			// as the retry path (gp-ios).
+			cfg.channelClaims.forget(claimKey)
+			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+			// The urgent copy never reached gc, so the withheld buffered
+			// twins are the only remaining path for this ts — put them
+			// back for the coalescer's timer retry (pc_c920ff5fe90c).
+			cfg.coalescer.restore(msg.Channel, withheldTwins)
+			if firstHelp {
+				cfg.replyHelp.unmark(msg.Channel)
 			}
+			// Nothing reached gc. Cancel the busy mark FIRST — no agent
+			// received the message, so no reply will ever come to clear
+			// it — restoring any marks it displaced (their agents may
+			// still be working, codex r5). Only THEN release the dedup
+			// claim: forget wakes a parked redelivery, and it must not
+			// re-mark this timestamp while the old attempt's cancellation
+			// is still pending (a late cancel would delete the retry's
+			// fresh mark and strand its hourglass).
+			if busyEligible {
+				// Marks whose thread a reply already consumed cannot be
+				// restored (tombstoned) — remove their reactions instead
+				// (codex r8).
+				for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, busyAddDone, busyDisplacedMarks) {
+					go removeBusyReaction(cfg, msg.Channel, tk)
+				}
+			}
+			commitDedup = false
+			cfg.eventDedup.forget(env.EventID)
+			return
 		}
-		commitDedup = false
-		cfg.eventDedup.forget(env.EventID)
-		return
-	}
-	log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch",
-		msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(text))
-	cfg.deliveredIDs.record("", msg.Channel, msg.TS)
-	if aliasSuppressed {
-		// The channel copy IS the handle audience's delivery when the
-		// direct dispatch is suppressed; record it under the handle key
-		// so sticky thread replies dedup their preambles too.
-		cfg.deliveredIDs.record(target, msg.Channel, msg.TS)
+		log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch",
+			msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(text))
+		// Conclude the (channel, ts) claim: a parked same-ts twin now
+		// continues with its channel copy skipped instead of re-posting
+		// it (gp-ios).
+		cfg.channelClaims.commit(claimKey)
+		cfg.deliveredIDs.record("", msg.Channel, msg.TS)
+		if aliasSuppressed {
+			// The channel copy IS the handle audience's delivery when the
+			// direct dispatch is suppressed; record it under the handle key
+			// so sticky thread replies dedup their preambles too.
+			cfg.deliveredIDs.record(target, msg.Channel, msg.TS)
+		}
 	}
 
 	// Busy-reaction lifecycle, add side: fires once per inbound (the
@@ -3543,7 +3641,40 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			go func(displaced []busyDisplaced) {
 				defer dispatchInflightWG.Done()
 				defer release()
+				// Alias-injection claim (gp-ios, codex review P1): the
+				// session-message injection has no gc-side dedup at all,
+				// and a bot-mention twin that skipped its channel copy
+				// still reaches here — without a claim the addressed
+				// session would read the same "address-by-handle"
+				// reminder twice, and skipping the twin outright would
+				// lose the injection when the owning twin's dispatch
+				// then failed (both events already got their 200s). Same
+				// two-state lifecycle as the channel claim: own it, or
+				// park (bounded by the owner's single POST) and then
+				// conclude like the success branch (owner delivered) or
+				// take over (owner failed).
+				aliasKey := aliasDeliveryClaimKey(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
+				aliasProceed, aliasWait := cfg.channelClaims.begin(aliasKey)
+				for !aliasProceed {
+					if aliasWait == nil {
+						log.Printf("alias dispatch: handle=%s ts=%s already injected by same-ts twin — skipped",
+							target, inbound.ProviderMessageID)
+						// The twin's injection IS this event's addressed
+						// delivery: conclude exactly like the success
+						// branch below.
+						for _, d := range displaced {
+							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
+						}
+						cfg.eventDedup.commit(env.EventID)
+						return
+					}
+					log.Printf("alias dispatch: handle=%s ts=%s parked behind in-flight same-ts twin injection",
+						target, inbound.ProviderMessageID)
+					<-aliasWait
+					aliasProceed, aliasWait = cfg.channelClaims.begin(aliasKey)
+				}
 				if dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target) {
+					cfg.channelClaims.commit(aliasKey)
 					cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 					// Final delivery landed: NOW retire the marks
 					// this re-target displaced (codex r7).
@@ -3587,6 +3718,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, tk)
 					}
 				}
+				// Release the injection claim after the busy cleanup so
+				// a parked same-ts twin taking over re-dispatches into a
+				// settled registry; the affordance emoji this failed
+				// attempt removed is a cosmetic miss for the takeover,
+				// not a delivery one (gp-ios).
+				cfg.channelClaims.forget(aliasKey)
 				cfg.eventDedup.forget(env.EventID)
 				reactAliasDispatchFailure(cfg.slackBotToken,
 					inbound.Conversation.ConversationID, inbound.ProviderMessageID)

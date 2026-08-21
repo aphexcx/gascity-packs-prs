@@ -333,8 +333,11 @@ func TestCoalescedBlockAnchorSkipsBotItems(t *testing.T) {
 	block := formatCoalescedBlock(config{}, "C1", []pendingChannelInbound{
 		{inbound: human}, {inbound: reaction},
 	})
-	if !strings.Contains(block, "anchor to the newest, ts 100.1]") {
+	if !strings.Contains(block, "--turn-ts 100.1 ") {
 		t.Errorf("header does not anchor at the newest human message:\n%s", block)
+	}
+	if strings.Contains(block, "--turn-ts 100.299") {
+		t.Errorf("header anchored on the bot reaction item:\n%s", block)
 	}
 }
 

@@ -538,25 +538,7 @@ def find_latest_inbound_thread_for_session(
     provider = (payload.get("provider") or "").strip()
     if not conv_id or not provider:
         return None
-    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
-    # `kind` is mandatory on the transcript GET (extmsg ConversationRef
-    # validates it). We try room first since rig channels are the
-    # primary use case; fall through to dm if no rows come back.
-    items: list[dict[str, Any]] = []
-    for kind in ("room", "dm"):
-        qs = (
-            f"scope_id={gc_city_name()}&provider={provider}"
-            f"&conversation_id={conv_id}&kind={kind}&order=desc&limit=500"
-        )
-        if workspace:
-            qs += f"&account_id={workspace}"
-        try:
-            res = gc_get(f"/extmsg/transcript?{qs}")
-        except GCAPIError:
-            continue
-        items = res.get("items") or []
-        if items:
-            break
+    items = _transcript_items_desc(conv_id, provider)
     # items are newest-first (order=desc): the first inbound is the latest.
     # Bot-authored entries (peer-bot context, gp-kop) are skipped: a peer
     # post must never anchor reply-current threading, react, or upload.
@@ -569,14 +551,103 @@ def find_latest_inbound_thread_for_session(
                 thread_root = (
                     entry.get("ReplyToMessageID") or entry.get("reply_to_message_id") or ""
                 ).strip()
-                conv = entry.get("Conversation") or entry.get("conversation") or {}
-                return mid, thread_root, {
-                    "scope_id": conv.get("ScopeID") or conv.get("scope_id") or gc_city_name(),
-                    "provider": conv.get("Provider") or conv.get("provider") or provider,
-                    "account_id": conv.get("AccountID") or conv.get("account_id") or workspace,
-                    "conversation_id": conv.get("ConversationID") or conv.get("conversation_id") or conv_id,
-                    "kind": conv.get("Kind") or conv.get("kind") or "room",
-                }
+                return mid, thread_root, _normalize_entry_conversation(entry, provider, conv_id)
+    return None
+
+
+def _transcript_items_desc(
+    conv_id: str, provider: str, kinds: tuple[str, ...] = ("room", "dm")
+) -> list[dict[str, Any]]:
+    """Fetch the newest transcript slice for a conversation (order=desc).
+
+    `kind` is mandatory on the transcript GET (extmsg ConversationRef
+    validates it); each candidate kind is tried until rows come back. The
+    default order tries room first since rig channels are the primary use
+    case, falling through to dm.
+
+    The query MUST be newest-first: the endpoint's oldest-first default
+    with a bounded limit hides the most recent entries on busy
+    conversations.
+    """
+    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
+    for kind in kinds:
+        qs = (
+            f"scope_id={gc_city_name()}&provider={provider}"
+            f"&conversation_id={conv_id}&kind={kind}&order=desc&limit=500"
+        )
+        if workspace:
+            qs += f"&account_id={workspace}"
+        try:
+            res = gc_get(f"/extmsg/transcript?{qs}")
+        except GCAPIError:
+            continue
+        items = res.get("items") or []
+        if items:
+            return items
+    return []
+
+
+def _normalize_entry_conversation(
+    entry: dict[str, Any], provider: str, conv_id: str
+) -> dict[str, str]:
+    """Flatten a transcript entry's Conversation into the publish dict shape."""
+    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
+    conv = entry.get("Conversation") or entry.get("conversation") or {}
+    return {
+        "scope_id": conv.get("ScopeID") or conv.get("scope_id") or gc_city_name(),
+        "provider": conv.get("Provider") or conv.get("provider") or provider,
+        "account_id": conv.get("AccountID") or conv.get("account_id") or workspace,
+        "conversation_id": conv.get("ConversationID") or conv.get("conversation_id") or conv_id,
+        "kind": conv.get("Kind") or conv.get("kind") or "room",
+    }
+
+
+def find_inbound_thread_by_ts(
+    conversation: dict[str, str], ts: str
+) -> tuple[str, dict[str, str]] | None:
+    """Resolve the thread anchor of a SPECIFIC inbound by its Slack ts.
+
+    reply-current's default scans for the LATEST inbound at send time,
+    but with coalesced delivery + interleaved channel/thread traffic the
+    latest inbound is not necessarily the message the session is
+    answering (gp-6j3: three cross-city misfires in one hour). When the
+    caller names the triggering inbound explicitly (--turn-ts, carried
+    in every delivery reminder), this looks up THAT transcript entry in
+    the given conversation and returns (thread_root, conversation_dict):
+    thread_root is the entry's ReplyToMessageID — "" when the inbound
+    was a top-level message.
+
+    Returns None when no matching human inbound is in the newest
+    transcript window. Callers must treat a miss as "anchor unknown" and
+    fail loudly, NOT as "top-level": older members of a coalesced batch
+    have no transcript entry of their own (the batch records one entry
+    under the newest ts), and silently posting top-level is exactly the
+    misfire this lookup exists to prevent.
+
+    Bot-authored entries are skipped (gp-kop: a peer-bot post must never
+    become a reply anchor).
+    """
+    ts = (ts or "").strip()
+    conv_id = (conversation.get("conversation_id") or "").strip()
+    provider = (conversation.get("provider") or "slack").strip()
+    if not ts or not conv_id:
+        return None
+    # Try the resolved conversation's kind first, then the other.
+    kind = (conversation.get("kind") or "").strip()
+    kinds = ("room", "dm") if kind not in ("room", "dm") else (
+        (kind, "dm") if kind == "room" else (kind, "room"))
+    for entry in _transcript_items_desc(conv_id, provider, kinds):
+        if _is_bot_transcript_entry(entry):
+            continue
+        if (entry.get("Kind") or entry.get("kind")) != "inbound":
+            continue
+        mid = (entry.get("ProviderMessageID") or entry.get("provider_message_id") or "").strip()
+        if mid != ts:
+            continue
+        thread_root = (
+            entry.get("ReplyToMessageID") or entry.get("reply_to_message_id") or ""
+        ).strip()
+        return thread_root, _normalize_entry_conversation(entry, provider, conv_id)
     return None
 
 

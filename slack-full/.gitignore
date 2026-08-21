@@ -2,15 +2,20 @@ __pycache__/
 *.pyc
 .gc/
 
-# Built adapter binary — produced by `go build` in adapter/ and read
-# in place by the [[service]] proxy_process command.
+# Built adapter binary (dev-checkout name) — produced by `go build` in
+# adapter/. The [[service]] proxy_process command is adapter/run.sh
+# (checked in), which prefers gc-slack-adapter.real and rebuilds it on
+# missing, so git-only pack re-materializations can't strand the
+# service (gp-d7l).
 adapter/gc-slack-adapter
 
 # Built operator CLI binary — produced by `go build` in cli/ and exec'd
 # by the commands/<cmd>.sh wrappers via $GC_PACK_DIR/cli/gc-slack-cli.
 cli/gc-slack-cli
 
-# Wrapper-script deployments rename the built binary to gc-slack-adapter.real
-# (the checked-in path above becomes an env-loading wrapper). Ignore it too so
-# pack-cache worktrees stay clean after local builds.
+# Canonical built-binary name in supervised deployments: run.sh builds
+# and execs adapter/gc-slack-adapter.real. (Historically this was the
+# rename target of the legacy env-wrapper-shim deployments — run.sh has
+# absorbed the shim's env-loading job.) Ignore it so pack-cache
+# worktrees stay clean after local/self-heal builds.
 adapter/gc-slack-adapter.real

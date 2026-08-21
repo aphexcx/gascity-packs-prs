@@ -546,7 +546,10 @@ GC_CITY_NAME=<your-city-name>
 ### Cutover sequence
 
 ```
-# 1. Build the adapter binary in place (source colocated with the pack)
+# 1. Build the adapter binary in place (source colocated with the pack).
+#    Optional since gp-d7l: the [[service]] command is adapter/run.sh,
+#    which rebuilds gc-slack-adapter.real itself when the binary is
+#    missing (e.g. after `gc import install` re-materialized the cache).
 ( cd slack-full/adapter && go build -o gc-slack-adapter )
 
 # 2. Source the secrets so the supervisor inherits them
