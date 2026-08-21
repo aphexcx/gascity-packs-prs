@@ -89,6 +89,9 @@ def test_manifest_declares_bot_scopes(manifest: dict) -> None:
         "groups:read",
         "im:history",
         "mpim:history",
+        # human-reaction visibility (gp-by3): required by the
+        # reaction_added / reaction_removed event subscriptions
+        "reactions:read",
         "reactions:write",
         # company rooms: bots.info author resolution for peer trust
         "users:read",
@@ -128,6 +131,10 @@ def test_manifest_subscribes_to_required_bot_events(manifest: dict) -> None:
         "message.groups",
         "message.im",
         "message.mpim",
+        # human-reaction visibility (gp-by3); live apps need these
+        # added in their dashboard config too — see manifest/README.md
+        "reaction_added",
+        "reaction_removed",
     }
     missing = required - set(events)
     assert not missing, f"manifest missing required bot events: {sorted(missing)}"

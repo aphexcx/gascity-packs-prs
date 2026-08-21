@@ -216,6 +216,11 @@ type slackThreadMessage struct {
 	User string `json:"user"`
 	Text string `json:"text"`
 	TS   string `json:"ts"`
+	// ThreadTS identifies the thread the message belongs to (equal to
+	// TS on a thread parent, absent on unthreaded messages). Consumed
+	// by the reaction-target lookup (gp-by3) to thread the reaction
+	// notification under the reacted-to message's thread.
+	ThreadTS string `json:"thread_ts,omitempty"`
 	// BotID is set when the message came from a bot rather than a
 	// human user. Bot-authored messages are skipped from the
 	// preamble — they're often the adapter's own outbound replies
