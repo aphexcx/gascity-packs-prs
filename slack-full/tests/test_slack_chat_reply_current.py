@@ -1404,3 +1404,104 @@ def test_find_inbound_thread_by_ts_matches_exact_entry(
                 "account_id": "T0TESTWS", "conversation_id": "C1",
                 "kind": "room"})
     assert common.find_inbound_thread_by_ts(conv, "7.7") is None
+
+
+# --- gp-ios (pc_7fe644e666a6): send-pipeline failures leave a JSON envelope ---
+#
+# A publish failure used to surface as a bare SystemExit message on
+# stderr with an EMPTY stdout — "non-JSON (empty/error)" to the calling
+# agent, indistinguishable from a crashed script. The pipeline failure
+# paths (session resolution, publish) now always leave a machine-readable
+# delivered=false envelope on stdout while keeping exit code 1.
+
+def test_publish_failure_emits_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+
+    def failing_request(method: str, url: str, body: dict[str, Any] | None = None,
+                        *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        raise common.GCAPIError(f"POST {url} -> 502: upstream adapter unreachable")
+
+    monkeypatch.setattr(common, "_request", failing_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    exit_code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "hello",
+    ])
+    assert exit_code == 1
+    out = capsys.readouterr()
+    envelope = json.loads(out.out)  # stdout must parse as JSON, never be empty
+    assert envelope["delivered"] is False
+    assert envelope["stage"] == "publish"
+    assert "upstream adapter unreachable" in envelope["error"]
+    assert envelope["conversation_id"] == "C0TESTCHAN"
+    assert envelope["session_id"] == "gc-test-session"
+    assert envelope["via"] == "gc"
+    assert "publish failed" in out.err
+
+
+def test_session_resolution_failure_emits_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+
+    def raise_gcapi() -> str:
+        raise common.GCAPIError("could not resolve session id for name 'x'")
+
+    monkeypatch.setattr(common, "current_session_id", raise_gcapi)
+
+    exit_code = rc.main([
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "hello",
+    ])
+    assert exit_code == 1
+    out = capsys.readouterr()
+    envelope = json.loads(out.out)
+    assert envelope["delivered"] is False
+    assert envelope["stage"] == "session-resolution"
+    assert envelope["conversation_id"] == "C0TESTCHAN"
+
+
+def test_usage_errors_still_raise_system_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, _common = _import_modules()
+    # Caller errors are not pipeline failures: the message IS the product.
+    with pytest.raises(SystemExit, match="either --body or --body-file"):
+        rc.main(["--session", "s", "--conversation-id", "C1"])
+
+
+# --- gp-ios: the mrkdwn guard fails OPEN — a guard fault never blocks a send --
+
+def test_guard_crash_fails_open_to_unguarded_body(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    def exploding_guard(_text: str) -> str:
+        raise RuntimeError("synthetic guard fault")
+
+    monkeypatch.setattr(rc.slack_mrkdwn, "escape_accidental_mrkdwn", exploding_guard)
+
+    exit_code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "approx ~$5k and ~$6k",
+    ])
+    assert exit_code == 0
+    # The body went out UNGUARDED (raw tildes intact) rather than not at all.
+    assert captured["body"]["text"] == "approx ~$5k and ~$6k"
+    err = capsys.readouterr().err
+    assert "accidental-mrkdwn guard failed" in err

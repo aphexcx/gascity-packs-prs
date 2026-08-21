@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Urgent-path twin double-delivery (gp-ios, pc_c920ff5fe90c live shape,
+  2026-08-20 06:44Z): a bot-mention pair (`message` + `app_mention`,
+  same ts, distinct event ids) raced BOTH copies down the urgent
+  channel path concurrently — the event-id dedup can't collapse the
+  pair, gc's transcript append dedups only the RECORD, and gc's member
+  notification is built from each POST body with no dedup of its own,
+  so the bound session read the same message id twice in one turn
+  (once bare, once wearing the thread-context preamble). A new
+  per-(channel, ts) delivery claim serializes the channel copy: the
+  first twin owns the POST, a concurrent twin parks until the owner
+  concludes and then drops (owner delivered) or takes over (owner
+  failed — never a loss path). The coalesced-batch path claims each
+  member the same way, closing the sliver between an urgent twin's
+  conclusion and its deliveredIDs record; a claim still in flight at
+  batch time is kept without parking (fail open to a duplicate in that
+  narrow window, never to loss).
+- Coalesced-batch restore corruption (gp-ios, latent): the batch
+  delivery filters compacted the batch slice IN PLACE while the
+  caller restores its own slice on failure — a dropped member plus a
+  failed POST re-queued a corrupted batch (tail entries duplicated,
+  dropped-position members lost) for the timer retry. The filters now
+  build fresh slices.
+- reply-current send-pipeline failures now always leave a
+  machine-readable JSON envelope on stdout (gp-ios, pc_7fe644e666a6):
+  a session-resolution or publish failure used to surface as a bare
+  SystemExit message on stderr with an EMPTY stdout — "non-JSON
+  (empty/error)" to the calling agent, indistinguishable from a
+  crashed script. Failures keep exit code 1 and the stderr line but
+  stdout now carries `{"delivered": false, "stage": …, "error": …}`.
+  Usage errors and company-turn contract errors still raise SystemExit
+  (the message is the product there). The accidental-mrkdwn guard
+  (gp-o42) additionally fails OPEN: any fault inside it sends the body
+  unguarded with a stderr warning instead of blocking the send, and
+  new tests pin the guard's behavior on CJK + curly-quote bodies
+  (including U+FF5E/U+301C tilde lookalikes, which are never touched).
 - Reply-current turn anchoring (gp-6j3; fleet repro 8/20, three misfires
   in one hour across two cities): the default threading scanned for the
   LATEST inbound at send time, and coalesced delivery + interleaved

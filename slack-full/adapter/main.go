@@ -606,6 +606,16 @@ type config struct {
 	// into a duplicate session notification (hw-94w5k finding #4).
 	// Nil-safe: a nil cache never dedupes. Initialized in main().
 	eventDedup *eventDedupCache
+	// channelClaims serializes the channel-audience delivery per
+	// (channel, ts) so a bot-mention twin pair (message + app_mention,
+	// same ts, distinct event_ids) cannot deliver the same message id
+	// twice into the bound session's turn — the event_id dedup cannot
+	// collapse the pair and gc's member notification has no dedup of
+	// its own (gp-ios, pc_c920ff5fe90c). Reuses the eventDedupCache
+	// begin/commit/forget lifecycle keyed by channelDeliveryClaimKey;
+	// see channel_claims.go. Nil-safe: a nil cache never claims, so
+	// directly-constructed test configs keep the historical behavior.
+	channelClaims *eventDedupCache
 	// userNames caches users.info display-name lookups backing inbound
 	// sender resolution, inline `<@U…>` mention rewriting, and
 	// thread-context preamble author lines (hq-uxln9). nil disables
@@ -1402,6 +1412,11 @@ func main() {
 	// Wire the Events API redelivery seen-set before handleSlackEvents
 	// closes over cfg. Nil-safe (nil disables dedup). hw-94w5k #4.
 	cfg.eventDedup = newEventDedupCache(eventDedupTTL)
+	// Wire the per-(channel, ts) channel-audience delivery claims that
+	// keep a bot-mention twin pair (message + app_mention, same ts)
+	// from delivering the same message id twice into one session turn
+	// (gp-ios, pc_c920ff5fe90c). Nil-safe (nil disables claiming).
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
 	// Wire the users.info display-name cache. Nil-safe consumer path
 	// (nil disables resolution — raw ids pass through). hq-uxln9.
 	cfg.userNames = newUserNameCache()
@@ -3417,6 +3432,28 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// buffered, so dropping them on failure would lose the message.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 
+	// Channel-audience claim (gp-ios, pc_c920ff5fe90c live shape): a
+	// bot-mention twin pair races BOTH copies down this urgent path
+	// concurrently — distinct event_ids defeat the event dedup, and the
+	// deliveredIDs check can't see a twin whose POST hasn't concluded.
+	// Exactly one twin owns the (channel, ts) delivery; the other parks
+	// (bounded by the owner's single gc forward — it holds its dispatch
+	// slot while parked, an accepted cost for a rare same-ts race) and
+	// then either drops (owner committed: the channel copy is already
+	// delivered, and the same-ts withheldTwins with it) or takes over
+	// (owner forgot: its POST failed and this copy is the retry).
+	claimKey := channelDeliveryClaimKey(msg.Channel, msg.TS)
+	claimProceed, claimWait := cfg.channelClaims.begin(claimKey)
+	for !claimProceed {
+		if claimWait == nil {
+			log.Printf("inbound: chan=%s ts=%s channel copy already delivered by same-ts twin — skipped", msg.Channel, msg.TS)
+			return
+		}
+		log.Printf("inbound: chan=%s ts=%s parked behind in-flight same-ts twin delivery", msg.Channel, msg.TS)
+		<-claimWait
+		claimProceed, claimWait = cfg.channelClaims.begin(claimKey)
+	}
+
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
@@ -3448,6 +3485,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	inboundForChannel.Text = textForChannel
 	if err := postInbound(cfg, inboundForChannel); err != nil {
 		log.Printf("inbound POST failed: %v", err)
+		// Release the (channel, ts) claim FIRST so a parked same-ts
+		// twin (or the restored buffered copy below) can take over as
+		// the retry path (gp-ios).
+		cfg.channelClaims.forget(claimKey)
 		cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
 		// The urgent copy never reached gc, so the withheld buffered
 		// twins are the only remaining path for this ts — put them
@@ -3478,6 +3519,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	}
 	log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch",
 		msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(text))
+	// Conclude the (channel, ts) claim: a parked same-ts twin now drops
+	// instead of re-posting the channel copy (gp-ios).
+	cfg.channelClaims.commit(claimKey)
 	cfg.deliveredIDs.record("", msg.Channel, msg.TS)
 	if aliasSuppressed {
 		// The channel copy IS the handle audience's delivery when the

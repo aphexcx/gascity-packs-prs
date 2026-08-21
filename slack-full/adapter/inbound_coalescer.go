@@ -390,8 +390,12 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	// Collapse same-ts entries (first kept): distinct event_ids for one
 	// message can each admit to the buffer past the event-dedup cache
 	// (eviction, restart), and quoting the id twice inside one block is
-	// the in-batch variant of pc_c920ff5fe90c.
-	kept := batch[:0]
+	// the in-batch variant of pc_c920ff5fe90c. Filters below build
+	// FRESH slices: a failed delivery hands the caller's original batch
+	// slice to restore(), and compacting in place (batch[:0]) would
+	// corrupt that shared backing array — duplicating tail entries and
+	// losing dropped-position ones on the retry (gp-ios).
+	kept := make([]pendingChannelInbound, 0, len(batch))
 	for _, p := range batch {
 		if len(kept) > 0 && kept[len(kept)-1].inbound.ProviderMessageID == p.inbound.ProviderMessageID {
 			continue
@@ -402,15 +406,28 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	// Delivery-time twin filter (pc_c920ff5fe90c): drop entries whose ts
 	// the channel audience has already received — the urgent twin
 	// delivered while this copy sat buffered (it can slip past the
-	// enqueue-time check when the urgent POST is still in flight). The
-	// check runs here, at delivery time under the flush mutex, precisely
-	// because an urgent delivery that FAILED never records its ts: the
-	// buffered copy then still delivers. Fail open to a duplicate in the
-	// residual in-flight window, never to loss.
-	unseen := batch[:0]
+	// enqueue-time check when the urgent POST is still in flight). Each
+	// surviving member then claims its (channel, ts) delivery (gp-ios):
+	// a claim already committed means an urgent twin finished while this
+	// batch was assembling — drop the member; a claim still in flight is
+	// kept WITHOUT parking (this goroutine holds the channel flush
+	// mutex, and if the in-flight owner then failed, a dropped buffered
+	// copy would have no redelivery — Slack already got its 200). Fail
+	// open to a duplicate in that narrow window, never to loss.
+	unseen := make([]pendingChannelInbound, 0, len(batch))
+	var ownedClaims []string
 	for _, p := range batch {
-		if cfg.deliveredIDs.seen("", channel, p.inbound.ProviderMessageID) {
-			log.Printf("coalesce: chan=%s ts=%s already delivered to channel audience — dropped from batch", channel, p.inbound.ProviderMessageID)
+		ts := p.inbound.ProviderMessageID
+		if cfg.deliveredIDs.seen("", channel, ts) {
+			log.Printf("coalesce: chan=%s ts=%s already delivered to channel audience — dropped from batch", channel, ts)
+			continue
+		}
+		key := channelDeliveryClaimKey(channel, ts)
+		proceed, wait := cfg.channelClaims.begin(key)
+		if proceed {
+			ownedClaims = append(ownedClaims, key)
+		} else if wait == nil {
+			log.Printf("coalesce: chan=%s ts=%s delivered by same-ts twin — dropped from batch", channel, ts)
 			continue
 		}
 		unseen = append(unseen, p)
@@ -441,11 +458,20 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	env.Text = text
 	if err := postInbound(cfg, env); err != nil {
 		log.Printf("coalesced inbound POST failed: chan=%s batch=%d: %v", channel, len(batch), err)
+		// Release the member claims this batch owned so a parked
+		// same-ts urgent twin — or this batch's own timer retry — can
+		// take over the delivery (gp-ios).
+		for _, key := range ownedClaims {
+			cfg.channelClaims.forget(key)
+		}
 		cfg.peerContext.restore(channel, peerItems, peerDropped)
 		if firstHelp {
 			cfg.replyHelp.unmark(channel)
 		}
 		return false
+	}
+	for _, key := range ownedClaims {
+		cfg.channelClaims.commit(key)
 	}
 	tss := make([]string, 0, len(batch))
 	for _, p := range batch {

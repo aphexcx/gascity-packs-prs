@@ -57,6 +57,37 @@ def _derive_idempotency_key(
     return f"reply-current:{digest}"
 
 
+def _print_failure_envelope(
+    *,
+    stage: str,
+    error: str,
+    conversation_id: str = "",
+    session_id: str = "",
+    via: str = "",
+) -> int:
+    """Emit a machine-readable failure envelope on stdout, return exit 1.
+
+    A send-pipeline failure used to surface as a bare SystemExit message
+    on stderr with an EMPTY stdout — "non-JSON (empty/error)" to the
+    calling agent, indistinguishable from a crashed script
+    (pc_7fe644e666a6). Failures now keep the exit code and a stderr line
+    but always leave a JSON envelope on stdout, mirroring the
+    delivered=false receipt shape interpret_publish_receipt consumes.
+    Argument-validation and company-turn contract errors still raise
+    SystemExit: those are caller errors whose message IS the product.
+    """
+    print(json.dumps({
+        "delivered": False,
+        "stage": stage,
+        "error": error,
+        "conversation_id": conversation_id,
+        "session_id": session_id,
+        "via": via,
+    }, indent=2))
+    print(f"slack reply-current {stage} failed: {error}", file=sys.stderr)
+    return 1
+
+
 def _load_body(args: argparse.Namespace) -> str:
     if args.body and args.body_file:
         raise SystemExit("pass --body OR --body-file, not both")
@@ -69,7 +100,17 @@ def _load_body(args: argparse.Namespace) -> str:
         raise SystemExit("either --body or --body-file is required")
     if not getattr(args, "raw", False):
         # gp-o42: tilde pairs render as strikethrough in Slack mrkdwn.
-        body = slack_mrkdwn.escape_accidental_mrkdwn(body)
+        # The guard is cosmetic — a crash inside it must never block a
+        # send (pc_7fe644e666a6 suspected exactly that): fail OPEN to
+        # the unguarded body with a stderr warning.
+        try:
+            body = slack_mrkdwn.escape_accidental_mrkdwn(body)
+        except Exception as exc:  # noqa: BLE001 — any guard fault fails open
+            print(
+                f"warning: accidental-mrkdwn guard failed ({exc!r}); "
+                f"sending body unguarded",
+                file=sys.stderr,
+            )
     return body
 
 
@@ -344,7 +385,12 @@ def main(argv: list[str]) -> int:
         try:
             session_id = common.current_session_id()
         except common.GCAPIError as exc:
-            raise SystemExit(str(exc)) from exc
+            return _print_failure_envelope(
+                stage="session-resolution",
+                error=str(exc),
+                conversation_id=(args.conversation_id or "").strip(),
+                via=args.via,
+            )
 
     conv = _resolve_conversation(args, session_id)
     if not conv.get("conversation_id"):
@@ -432,7 +478,13 @@ def main(argv: list[str]) -> int:
         else:
             result = common.publish_via_gc_outbound(**publish_kwargs)
     except (common.AdapterError, common.GCAPIError) as exc:
-        raise SystemExit(str(exc)) from exc
+        return _print_failure_envelope(
+            stage="publish",
+            error=str(exc),
+            conversation_id=conv["conversation_id"],
+            session_id=session_id,
+            via=args.via,
+        )
 
     print(json.dumps({
         "conversation_id": conv["conversation_id"],
