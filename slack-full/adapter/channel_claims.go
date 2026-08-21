@@ -42,3 +42,14 @@ package main
 func channelDeliveryClaimKey(channel, ts string) string {
 	return channel + "|" + ts
 }
+
+// aliasDeliveryClaimKey names one (target, channel, ts) alias-injection
+// delivery. The session-message injection is a separate audience from
+// the channel copy — a targeted twin whose channel copy was skipped
+// still owes (exactly one) injection — so it claims under its own
+// namespaced key in the same cache. The "alias|" prefix cannot collide
+// with channelDeliveryClaimKey: Slack channel ids never contain "|" and
+// never equal "alias".
+func aliasDeliveryClaimKey(target, channel, ts string) string {
+	return "alias|" + target + "|" + channel + "|" + ts
+}

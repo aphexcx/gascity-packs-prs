@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -258,5 +259,150 @@ func TestCoalescer_FailedBatchRestoreKeepsMembersIntact(t *testing.T) {
 		if wantText := "msg " + ts; pending[i].inbound.Text != wantText {
 			t.Errorf("restored[%d] text = %q, want %q", i, pending[i].inbound.Text, wantText)
 		}
+	}
+}
+
+// flakyRouterStub serves the gc endpoints the alias-dispatch path
+// touches, failing the first N session-message POSTs so the claim
+// takeover leg can be exercised.
+type flakyRouterStub struct {
+	mu              sync.Mutex
+	failMessages    int
+	messageAttempts int
+	inbounds        []externalInboundMessage
+	sessionMessages []string
+}
+
+func (g *flakyRouterStub) handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/extmsg/inbound"):
+			var env struct {
+				Message externalInboundMessage `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&env)
+			g.mu.Lock()
+			g.inbounds = append(g.inbounds, env.Message)
+			g.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		case strings.Contains(r.URL.Path, "/extmsg/bindings"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items": []}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			var req gcSessionMessageRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			g.mu.Lock()
+			g.messageAttempts++
+			if g.failMessages > 0 {
+				g.failMessages--
+				g.mu.Unlock()
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			g.sessionMessages = append(g.sessionMessages, req.Message)
+			g.mu.Unlock()
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+func (g *flakyRouterStub) counts() (inbounds, injected, attempts int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.inbounds), len(g.sessionMessages), g.messageAttempts
+}
+
+// A targeted twin pair (codex review P1): the alias injection carries
+// its own claim, so when the owning twin's session-message POST fails,
+// the other twin — whose channel copy was skipped — takes the
+// injection over instead of being discarded. Exactly one channel copy
+// and exactly one successful injection land.
+func TestChannelClaims_AliasInjectionRecoveredByTwin(t *testing.T) {
+	stub := &flakyRouterStub{failMessages: 1}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := claimsTestConfig(gcSrv.URL)
+	cfg.bindingCheck = newBindingCheckCache()
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "sess-mayor-1"); err != nil {
+		t.Fatalf("alias set: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i, eventType := range []string{"message", "app_mention"} {
+		wg.Add(1)
+		env := botMentionEnvelope(t, eventType, "Ev"+string(rune('1'+i)), "C1", "100.000040", "",
+			"@mayor: please handle this", true)
+		go func(env slackEventEnvelope) {
+			defer wg.Done()
+			processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+		}(env)
+	}
+	wg.Wait()
+
+	waitFor(t, "one successful alias injection", func() bool {
+		_, injected, attempts := stub.counts()
+		return injected == 1 && attempts == 2
+	})
+	inbounds, injected, attempts := stub.counts()
+	if inbounds != 1 {
+		t.Errorf("channel inbounds = %d, want 1", inbounds)
+	}
+	if injected != 1 || attempts != 2 {
+		t.Errorf("alias injections = %d (attempts %d), want 1 successful of 2 attempts", injected, attempts)
+	}
+}
+
+// A trailing twin that skips its channel copy must not touch the
+// thread-context machinery (codex review P2): pre-claim ordering let a
+// losing twin advance threadContextCache without delivering, silently
+// dropping the decorated copy. The claim now precedes the preamble, so
+// the skipping twin performs no conversations.replies fetch at all.
+func TestChannelClaims_SkippingTwinLeavesThreadContextAlone(t *testing.T) {
+	var fetches atomic.Int32
+	slackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/conversations.replies") {
+			fetches.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"ok": true, "messages": [
+				{"ts": "100.000001", "user": "U_ROOT", "text": "thread root"},
+				{"ts": "100.000050", "user": "U_ALICE", "text": "the ask"}
+			]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(slackSrv.Close)
+	withSlackAPIStub(t, slackSrv)
+
+	stub := &flakyInboundStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := claimsTestConfig(gcSrv.URL)
+	cfg.slackBotToken = "xoxb-fake"
+	cfg.threadContextCache = newThreadContextCache()
+	aliasReg := newTestHandleAliasRegistry(t)
+	text := "<@" + testBotUserID + "> the ask"
+
+	env1 := botMentionEnvelope(t, "message", "Ev1", "C1", "100.000050", "100.000001", text, true)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env1, func() {})
+	if got := stub.snapshot(); len(got) != 1 {
+		t.Fatalf("after first twin: %d inbounds, want 1", len(got))
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Fatalf("after first twin: %d thread fetches, want 1", n)
+	}
+
+	env2 := botMentionEnvelope(t, "app_mention", "Ev2", "C1", "100.000050", "100.000001", text, true)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env2, func() {})
+	if got := stub.snapshot(); len(got) != 1 {
+		t.Fatalf("after trailing twin: %d inbounds, want still 1", len(got))
+	}
+	if n := fetches.Load(); n != 1 {
+		t.Errorf("trailing twin fetched thread context (%d fetches, want 1) — a skipping twin must not touch the cache", n)
 	}
 }
