@@ -449,6 +449,123 @@ func TestHealthzReportsTransportAndLivenessWhenWired(t *testing.T) {
 	}
 }
 
+// Advisory degraded-health headers (gp-rol): /healthz stays 200 — gc
+// must keep routing outbound /publish — but carries X-GC-Health:
+// degraded when the liveness watchdog has a confirmed stall or the
+// socket transport is down past its grace window, so `gc service list`
+// stops reporting ready while the event stream is dead.
+func TestHealthzAdvisoryDegradedHeaders(t *testing.T) {
+	get := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handleHealthz(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		return w
+	}
+
+	// Unwired handler: 200, no advisory headers.
+	w := get()
+	if w.Code != http.StatusOK {
+		t.Fatalf("unwired healthz code = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-GC-Health"); got != "" {
+		t.Fatalf("unwired X-GC-Health = %q, want unset", got)
+	}
+
+	// Confirmed liveness stall → degraded, still 200.
+	l := newInboundLiveness(livenessTestConfig(t), nil)
+	l.mu.Lock()
+	l.stalledSince = time.Now().Add(-5 * time.Minute)
+	l.lastInboundAt = time.Now().Add(-30 * time.Minute)
+	l.mu.Unlock()
+	l.lastMissed.Store(7)
+	livenessHealth.Store(l)
+	t.Cleanup(func() { livenessHealth.Store(nil) })
+	w = get()
+	if w.Code != http.StatusOK {
+		t.Fatalf("stalled healthz code = %d, want 200 (advisory only)", w.Code)
+	}
+	if got := w.Header().Get("X-GC-Health"); got != "degraded" {
+		t.Fatalf("stalled X-GC-Health = %q, want degraded", got)
+	}
+	reason := w.Header().Get("X-GC-Health-Reason")
+	if !strings.Contains(reason, "inbound_liveness stalled") || !strings.Contains(reason, "missed=7") {
+		t.Fatalf("stalled reason = %q", reason)
+	}
+
+	// Socket down past its grace window → its reason joins the header.
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	r.startedAt = time.Now().Add(-10 * time.Minute)
+	socketModeHealth.Store(r)
+	t.Cleanup(func() { socketModeHealth.Store(nil) })
+	reason = get().Header().Get("X-GC-Health-Reason")
+	if !strings.Contains(reason, "inbound_liveness stalled") || !strings.Contains(reason, "socket_mode never connected") {
+		t.Fatalf("combined reason = %q", reason)
+	}
+
+	// Recovery on both fronts clears the headers.
+	l.mu.Lock()
+	l.stalledSince = time.Time{}
+	l.mu.Unlock()
+	r.connected.Store(true)
+	w = get()
+	if got := w.Header().Get("X-GC-Health"); got != "" {
+		t.Fatalf("recovered X-GC-Health = %q, want unset (reason=%q)", got, w.Header().Get("X-GC-Health-Reason"))
+	}
+}
+
+// headerSafe strips control characters (remote error text must not be
+// able to corrupt the health response) and bounds the value.
+func TestHeaderSafe(t *testing.T) {
+	if got := headerSafe("a\r\nb\x00c\x7fd", 512); got != "a  b c d" {
+		t.Fatalf("headerSafe = %q", got)
+	}
+	if got := headerSafe(strings.Repeat("x", 600), 512); len(got) != 512 {
+		t.Fatalf("headerSafe len = %d, want 512", len(got))
+	}
+}
+
+// degradedReason's grace window: transient disconnects (the normal
+// slack-go reconnect churn) report nothing; only sustained downtime —
+// measured from the LATER of runner start and last disconnect — trips
+// the advisory signal.
+func TestSocketDegradedReasonGraceWindow(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	now := time.Now()
+
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("fresh runner degradedReason = %q, want empty (grace)", got)
+	}
+	r.startedAt = now.Add(-3 * time.Minute)
+	if got := r.degradedReason(now); !strings.Contains(got, "never connected") {
+		t.Fatalf("never-connected degradedReason = %q, want never connected", got)
+	}
+	r.setLastErr("invalid_auth")
+	if got := r.degradedReason(now); !strings.Contains(got, "invalid_auth") {
+		t.Fatalf("degradedReason = %q, want last_error included", got)
+	}
+
+	r.connected.Store(true)
+	r.everConnected.Store(true)
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("connected degradedReason = %q, want empty", got)
+	}
+
+	r.startedAt = now.Add(-10 * time.Minute)
+	r.connected.Store(false)
+	r.lastDisconnectAt.Store(now.Add(-time.Minute).UnixNano())
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("1m-disconnected degradedReason = %q, want empty (grace)", got)
+	}
+	r.lastDisconnectAt.Store(now.Add(-3 * time.Minute).UnixNano())
+	if got := r.degradedReason(now); !strings.Contains(got, "socket_mode disconnected for 3m0s") {
+		t.Fatalf("3m-disconnected degradedReason = %q", got)
+	}
+
+	var nilRunner *socketModeRunner
+	if got := nilRunner.degradedReason(now); got != "" {
+		t.Fatalf("nil runner degradedReason = %q, want empty", got)
+	}
+}
+
 // Real round-trip: a fake Slack serves apps.connections.open and a
 // WebSocket that sends hello + an events_api envelope; the runner (real
 // slack-go client) must forward the payload to the handler and write

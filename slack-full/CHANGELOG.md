@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Inbound liveness now reaches the gc service health model** (gp-rol;
+  papercuts pc_5ede9badf7b1 / pc_fc584c0e47ba). During the 2026-08-19
+  outages `gc service list` reported `state=ready` for 26 minutes of dead
+  inbound. `/healthz` now stays 200 (so gc keeps routing outbound
+  `/publish`, the one path that kept working) but carries advisory
+  `X-GC-Health: degraded` + `X-GC-Health-Reason` headers whenever the
+  inbound-liveness watchdog has a confirmed stall or the Socket Mode
+  transport has been down for over 2 minutes (including never-connected
+  starts, e.g. a rejected `SLACK_APP_TOKEN`). A gc with the matching
+  proxy_process support (fork `integration`) renders that as
+  `State=degraded` on `gc service list` / the dashboard — the reason on
+  `gc service show slack` and the API — while `LocalState` stays
+  `ready`; older gc binaries ignore the headers.
+
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
   1. **Burst coalescing** — untargeted, non-bot-mentioned channel
      messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,
