@@ -420,10 +420,18 @@ _INBOUND_SCAN_WINDOWS = ("10m", "2h", "48h")
 # transcript entry.
 _PEER_BOT_ACTOR_PREFIX = "peer-bot "
 
+# Same contract for reaction notifications (gp-by3; keep in sync with
+# reactionActorPrefix in adapter/reaction_events.go): a forwarded human
+# reaction is a signal, not a message — anchoring reply-current on one
+# would thread replies at a ts that is no postable message at all.
+_REACTION_ACTOR_PREFIX = "reaction: "
 
-def _is_peer_bot_event(event: dict[str, Any]) -> bool:
+_SYNTHETIC_ACTOR_PREFIXES = (_PEER_BOT_ACTOR_PREFIX, _REACTION_ACTOR_PREFIX)
+
+
+def _is_synthetic_context_event(event: dict[str, Any]) -> bool:
     actor = (event.get("payload") or {}).get("actor") or ""
-    return isinstance(actor, str) and actor.startswith(_PEER_BOT_ACTOR_PREFIX)
+    return isinstance(actor, str) and actor.startswith(_SYNTHETIC_ACTOR_PREFIXES)
 
 
 def _is_bot_transcript_entry(entry: dict[str, Any]) -> bool:
@@ -470,7 +478,7 @@ def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
             e
             for e in raw
             if (e.get("payload") or {}).get("target_session") in identities
-            and not _is_peer_bot_event(e)
+            and not _is_synthetic_context_event(e)
         ]
         if matches:
             return matches[-1]  # events are in chronological order

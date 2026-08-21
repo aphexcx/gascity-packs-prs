@@ -321,10 +321,21 @@ func coalesceBatchDedupKey(batch []pendingChannelInbound) string {
 // pipeline, whose reminder formatter sanitizes the whole Text field
 // (extmsg.SanitizeForSystemReminder).
 func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbound) string {
-	last := batch[len(batch)-1].inbound
+	// The anchor claim names the newest HUMAN message: bot-tagged items
+	// (reaction notifications, gp-by3) are excluded from reply-current /
+	// react / upload anchoring by the intake helpers, so a batch whose
+	// newest entry is one must not claim it as the anchor. All-bot
+	// batches fall back to the newest item.
+	anchor := batch[len(batch)-1].inbound
+	for i := len(batch) - 1; i >= 0; i-- {
+		if !batch[i].inbound.Actor.IsBot {
+			anchor = batch[i].inbound
+			break
+		}
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%d messages in %s, coalesced; reply commands anchor to the newest, ts %s]\n",
-		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(last.ProviderMessageID))
+		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(anchor.ProviderMessageID))
 	for _, p := range batch {
 		m := p.inbound
 		sender := m.Actor.DisplayName

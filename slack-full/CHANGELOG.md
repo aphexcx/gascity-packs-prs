@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Human-reaction visibility (gp-by3): the switchboard app subscribes to
+  `reaction_added`/`reaction_removed` (manifest: both events + the
+  `reactions:read` scope — **live apps must add these in their Slack
+  dashboard config and reinstall**; the repo manifest does not update
+  installed apps) and forwards each human reaction to the
+  conversation-bound session as a lightweight tagged notification:
+  reactor, emoji, target message ts, best-effort target snippet
+  (`conversations.replies` lookup, degrades to ts-only), threaded under
+  the target's thread when it has one. Rooms ride the gp-729 coalescer
+  (a lone 👍 still wakes the session after the window — the ack that is
+  a thread's only answer now arrives); DMs and coalescing-disabled
+  deployments forward immediately. Mechanical fleet traffic never
+  echoes: the adapter's own reactions, anything using the configured
+  busy emoji (`BUSY_REACTION`, default `hourglass`), and reactors
+  matching a `peer_bots.json` entry's `bot_user_id` all drop. The
+  notification is non-anchoring by construction (`Actor.IsBot=true`,
+  `"reaction: "` display prefix; the intake helpers and the coalesced-
+  block anchor line exclude bot-tagged entries), so `reply-current` /
+  `react` / `upload` never anchor on a reaction. Company rooms and
+  per-agent DMs are out of scope v1.
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
   1. **Burst coalescing** — untargeted, non-bot-mentioned channel
      messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,

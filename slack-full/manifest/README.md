@@ -44,6 +44,8 @@ Schema reference: <https://api.slack.com/reference/manifests>
   - `im:history` — read DM history (pairs with `message.im`)
   - `mpim:history` — read multi-party DM messages (pairs with
     `message.mpim`)
+  - `reactions:read` — human-reaction visibility (gp-by3): required by
+    the `reaction_added`/`reaction_removed` event subscriptions
   - `reactions:write` — `gc slack react` emoji ack
   - `users:read` — company rooms: resolve a company bot author's
     `bot_id` → `user_id` (`bots.info`) for peer trust; no paired event
@@ -56,6 +58,11 @@ Schema reference: <https://api.slack.com/reference/manifests>
   - `message.groups` — private channel messages
   - `message.im` — DMs
   - `message.mpim` — multi-party DMs
+  - `reaction_added` / `reaction_removed` — human emoji reactions,
+    forwarded to the bound session as tagged notifications (gp-by3).
+    Already-installed apps do NOT pick this up from the repo manifest:
+    add both events (and the `reactions:read` scope) in each live
+    app's dashboard config and reinstall.
 
 ## What's NOT declared (intentionally)
 

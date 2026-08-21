@@ -3076,6 +3076,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		log.Printf("decode slack event: %v", err)
 		return
 	}
+	// Human emoji reactions forward to the bound session as tagged
+	// notifications (gp-by3); the branch terminates here — a reaction
+	// is never an ask. Requires the reaction_added/reaction_removed
+	// event subscriptions (manifest + live app config).
+	if msg.Type == "reaction_added" || msg.Type == "reaction_removed" {
+		maybeDeliverReactionEvent(cfg, env)
+		return
+	}
 	if msg.Type != "message" && msg.Type != "app_mention" {
 		return
 	}
