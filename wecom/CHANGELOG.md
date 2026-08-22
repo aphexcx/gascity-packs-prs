@@ -2,6 +2,35 @@
 
 ## 0.0.1 (unreleased)
 
+- Adapter hardening batch (jg-p1mk, Afik overnight order 8/23):
+  **(1) Inbound-liveness watchdog** (`src/liveness.js`) — last-inbound
+  watermark over every message/event frame; past
+  `WECOM_LIVENESS_STALL_AFTER_MS` (default 10min, 0 off) of silence a
+  loud `INBOUND LIVENESS ALARM` logs (repeating 30min) and `/healthz`
+  gains an `inbound_liveness=stalled` detail line (first line stays
+  `ok`, status stays 200); optional `WECOM_LIVENESS_RECONNECT=true`
+  force-cycles the ready-but-dead WS (rate-limited) — the 8/19
+  40-minute silent-socket signature. No probe/backfill port: WeCom has
+  no bot-readable history API.
+  **(2) Empty-payload surfacing** — a voice frame with no transcript, a
+  media frame with no download URL, and URL-less mixed images deliver
+  with explicit `语音转写失败/内容缺失` markers plus an `EMPTY PAYLOAD`
+  log line; empty-text drops are logged too (8/22 22:53 silent
+  `[voice message]` case).
+  **(3) Inbound burst coalescing** (port of slack-full gp-729) —
+  same-chat frames within `WECOM_COALESCE_WINDOW_MS` (default 8s, 0
+  off) deliver as ONE inbound, verbatim in arrival order, attachments
+  concatenated, `wecom-batch-…` dedup key, 50-message early flush,
+  shutdown drain; single-message windows stay byte-identical; hydration
+  still starts at frame arrival.
+  **(4) Reply feedback 👍/👎** (jg-mlfs) — markdown sends carry a
+  deterministic `feedback.id` (`WECOM_FEEDBACK_IDS=false` disables), so
+  WeCom offers feedback controls; `event.feedback_event` callbacks
+  forward to the bound session as `[user feedback]` signals (rating,
+  reason codes, free-text criticism), deduped on the event msgid,
+  correlated via the publish log's `feedback_base`.
+  35 new tests (198 total).
+
 - Outbound media hardening (jg-d0xr codex round-1, findings 1–11):
   `/publish-media` is now confined to a REQUIRED
   `WECOM_OUTBOUND_MEDIA_ROOT` (fail closed when unset; canonicalized

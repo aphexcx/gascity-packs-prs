@@ -49,6 +49,7 @@ function makePipeline(t, overrides = {}) {
     quota: overrides.quota ?? null,
     postInbound: overrides.postInbound
       ?? (async (target, body) => { posts.push({ target, body }); }),
+    ...(overrides.deps ?? {}),
   });
   return { pipeline, posts, mediaDir, cfg };
 }
@@ -688,4 +689,274 @@ test('an exception inside the bridge body still cleans the owner hydration entry
   assert.equal(stats.hydrations, 0, 'owner entry must not outlive the throwing bridge');
   assert.equal(stats.pending, 0);
   assert.equal(stats.inflight, 0);
+});
+
+// --- empty-payload surfacing (jg-p1mk item 2) --------------------------------
+
+test('a voice frame with no transcript delivers an explicit empty-payload marker, loudly logged', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, { deps: { log: (...a) => logs.push(a.join(' ')) } });
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'V_EMPTY',
+    msgtype: 'voice',
+    voice: {},
+  })));
+  assert.equal(posts.length, 1, 'the message still delivers — never dropped');
+  const text = posts[0].body.message.text;
+  assert.match(text, /^\[voice message\]\n\[voice payload empty — 语音转写失败\/内容缺失/);
+  assert.equal(logs.filter((l) => l.includes('EMPTY PAYLOAD')).length, 1);
+});
+
+test('a media frame with no download URL delivers an explicit empty-payload marker', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, { deps: { log: (...a) => logs.push(a.join(' ')) } });
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'I_EMPTY',
+    msgtype: 'image',
+    image: {},
+  })));
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].body.message.text, /^\[image message\]\n\[image payload empty — 内容缺失/);
+  assert.equal(logs.filter((l) => l.includes('EMPTY PAYLOAD')).length, 1);
+});
+
+test('a mixed frame whose image items carry no URL surfaces the missing count', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'M_EMPTY',
+    msgtype: 'mixed',
+    mixed: { msg_item: [{ msgtype: 'text', text: { content: '看这个' } }, { msgtype: 'image', image: {} }] },
+  })));
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].body.message.text, /\[1 image\(s\) in this mixed message carried no download URL — 内容缺失/);
+});
+
+test('a healthy voice frame gains no marker (regression)', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, { deps: { log: (...a) => logs.push(a.join(' ')) } });
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgtype: 'voice',
+    voice: { content: '在路上' },
+  })));
+  assert.equal(posts[0].body.message.text, '[voice] 在路上');
+  assert.equal(logs.filter((l) => l.includes('EMPTY PAYLOAD')).length, 0);
+});
+
+test('a text frame rendering to nothing is dropped WITH a log line, never silently', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, { deps: { log: (...a) => logs.push(a.join(' ')) } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'T_BLANK', text: { content: '' } })));
+  assert.equal(posts.length, 0);
+  assert.equal(logs.filter((l) => l.includes('EMPTY PAYLOAD') && l.includes('T_BLANK')).length, 1);
+});
+
+// --- feedback events (jg-mlfs) -----------------------------------------------
+
+function feedbackEvent(overrides = {}, fb = {}) {
+  return {
+    msgid: `E_${Math.random().toString(36).slice(2)}`,
+    chattype: 'single',
+    from: { userid: 'afik' },
+    msgtype: 'event',
+    create_time: 1755500000,
+    event: { eventtype: 'feedback_event', feedback_event: { id: 'fb-abc123.0', type: 1, ...fb } },
+    ...overrides,
+  };
+}
+
+test('a 👍 feedback event forwards as a lightweight signal with the feedback id', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(feedbackEvent({ msgid: 'E_UP' })));
+  assert.equal(posts.length, 1);
+  const m = posts[0].body.message;
+  assert.equal(m.text, '[user feedback] 👍 praise from afik on bot reply feedback_id=fb-abc123.0');
+  assert.equal(m.conversation.conversation_id, 'afik');
+  assert.equal(m.dedup_key, 'E_UP');
+});
+
+test('a 👎 feedback event carries the reasons and the free-text criticism', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(feedbackEvent({}, {
+    type: 2,
+    content: '能再详细一些么',
+    inaccurate_reason_list: [2, 4],
+  })));
+  const text = posts[0].body.message.text;
+  assert.match(text, /👎 negative from afik/);
+  assert.match(text, /incomplete information, data\/analysis problems/);
+  assert.match(text, /能再详细一些么/);
+});
+
+test('a feedback withdrawal renders as withdrawn', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(feedbackEvent({}, { type: 3 })));
+  assert.match(posts[0].body.message.text, /feedback withdrawn from afik/);
+});
+
+test('a replayed feedback event dedups on the event msgid', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  const evt = feedbackEvent({ msgid: 'E_DUP' });
+  await pipeline.enqueueInbound(frame(evt));
+  await pipeline.enqueueInbound(frame(evt));
+  assert.equal(posts.length, 1);
+});
+
+// --- inbound burst coalescing (jg-p1mk item 3) -------------------------------
+
+test('two same-chat texts inside the window deliver as ONE combined inbound', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 40 } });
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'C_1', text: { content: '好的' } })));
+  const p2 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'C_2', text: { content: '明天上午到' }, create_time: 1755500005 })));
+  assert.equal(posts.length, 0, 'nothing delivers before the window closes');
+  await Promise.all([p1, p2]);
+  assert.equal(posts.length, 1);
+  const m = posts[0].body.message;
+  assert.equal(m.text, [
+    '[2 WeCom messages coalesced, in arrival order]',
+    'zhang_san: 好的',
+    'zhang_san: 明天上午到',
+  ].join('\n'));
+  assert.equal(m.provider_message_id, 'C_2');
+  assert.equal(m.dedup_key, 'wecom-batch-C_1-C_2-2');
+  assert.equal(m.received_at, new Date(1755500005 * 1000).toISOString());
+  assert.equal(m.actor.id, 'zhang_san');
+});
+
+test('a lone message in the window delivers byte-identical to the immediate path', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 20 } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'T_SOLO' })));
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0].body.message, {
+    provider_message_id: 'T_SOLO',
+    conversation: {
+      scope_id: 'jadegate',
+      provider: 'wecom',
+      account_id: 'BOT_1',
+      conversation_id: 'zhang_san',
+      kind: 'dm',
+    },
+    actor: { id: 'zhang_san', display_name: 'zhang_san', is_bot: false },
+    text: '你好',
+    dedup_key: 'T_SOLO',
+    received_at: new Date(1755500000 * 1000).toISOString(),
+  });
+});
+
+test('different conversations never share a batch', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 30 } });
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'D_1', from: { userid: 'li_si' } })));
+  const p2 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'D_2', from: { userid: 'wang_wu' } })));
+  await Promise.all([p1, p2]);
+  assert.equal(posts.length, 2);
+  const convs = posts.map((p) => p.body.message.conversation.conversation_id).sort();
+  assert.deepEqual(convs, ['li_si', 'wang_wu']);
+});
+
+test('media and text in one batch stay in arrival order with attachments concatenated', async (t) => {
+  const { pipeline, posts, mediaDir } = makePipeline(t, {
+    deps: { coalesceWindowMs: 40 },
+    downloadFile: async () => ({ buffer: Buffer.from('%PDF-1.7 x'), filename: 'r.pdf' }),
+  });
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'X_1', text: { content: '文件来了' } })));
+  const p2 = pipeline.enqueueInbound(frame(fileMessage({ msgid: 'X_2' })));
+  await Promise.all([p1, p2]);
+  assert.equal(posts.length, 1);
+  const m = posts[0].body.message;
+  const lines = m.text.split('\n');
+  assert.equal(lines[0], '[2 WeCom messages coalesced, in arrival order]');
+  assert.equal(lines[1], 'zhang_san: 文件来了');
+  assert.equal(lines[2], 'zhang_san: [file message]');
+  assert.match(m.text, /\[1 WeCom file attached\]/);
+  const dest = path.join(mediaDir, 'zhang_san', 'X_2-r.pdf');
+  assert.deepEqual(m.attachments, [
+    { provider_id: 'X_2', url: pathToFileURL(dest).href, mime_type: 'application/pdf' },
+  ]);
+});
+
+test('a full buffer flushes early instead of waiting out the window', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    deps: { coalesceWindowMs: 60_000, coalesceMaxBatch: 3 },
+  });
+  const all = [
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'B_1' }))),
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'B_2' }))),
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'B_3' }))),
+  ];
+  await Promise.all(all);
+  assert.equal(posts.length, 1, 'the cap flushed the batch with a 60s window still open');
+  assert.equal(posts[0].body.message.dedup_key, 'wecom-batch-B_1-B_3-3');
+});
+
+test('a replayed msgid inside the window collapses to one copy in the batch', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 40 } });
+  const msg = textMessage({ msgid: 'R_1' });
+  const p1 = pipeline.enqueueInbound(frame(msg));
+  const p2 = pipeline.enqueueInbound(frame(msg)); // SDK replay in-window
+  const p3 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'R_2', text: { content: '第二条' } })));
+  await Promise.all([p1, p2, p3]);
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  assert.equal(text.split('\n').length, 3, 'header + exactly two member lines');
+  assert.equal(posts[0].body.message.dedup_key, 'wecom-batch-R_1-R_2-2');
+});
+
+test('flushAll drains an open buffer immediately (shutdown path)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 60_000 } });
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'S_1' })));
+  assert.equal(posts.length, 0);
+  await pipeline.flushAll();
+  await p1;
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.message.provider_message_id, 'S_1');
+});
+
+test('batches flush in order behind an earlier in-flight delivery (chain preserved)', async (t) => {
+  let releaseFirst;
+  const firstGate = new Promise((r) => { releaseFirst = r; });
+  const order = [];
+  const { pipeline } = makePipeline(t, {
+    deps: { coalesceWindowMs: 30 },
+    postInbound: async (target, body) => {
+      if (body.message.provider_message_id === 'O_1') await firstGate;
+      order.push(body.message.provider_message_id);
+    },
+  });
+  // Batch 1 (O_1) flushes and its POST hangs; batch 2 (O_2) flushes into
+  // the chain behind it and must not overtake.
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'O_1' })));
+  await new Promise((r) => setTimeout(r, 50)); // window 1 closes, POST in flight
+  const p2 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'O_2', text: { content: '后来的' } })));
+  await new Promise((r) => setTimeout(r, 50)); // window 2 closes while O_1 still hangs
+  assert.deepEqual(order, []);
+  releaseFirst();
+  await Promise.all([p1, p2]);
+  assert.deepEqual(order, ['O_1', 'O_2']);
+});
+
+test('a batch member already delivered is skipped; the rest still deliver', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 30 } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'K_1' }))); // delivered solo
+  assert.equal(posts.length, 1);
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'K_1' }))); // late replay
+  const p2 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'K_2', text: { content: '新消息' } })));
+  await Promise.all([p1, p2]);
+  assert.equal(posts.length, 2);
+  assert.equal(posts[1].body.message.text, '新消息', 'the replay collapsed; the fresh message delivered alone');
+  assert.equal(posts[1].body.message.dedup_key, 'K_2');
+});
+
+test('pipeline state drains clean after coalesced deliveries', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 25 } });
+  await Promise.all([
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'Z_1' }))),
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'Z_2' }))),
+    pipeline.enqueueInbound(frame(fileMessage({ msgid: 'Z_3' }))),
+  ]);
+  assert.equal(posts.length, 1);
+  const stats = pipeline.stats();
+  assert.equal(stats.pending, 0);
+  assert.equal(stats.hydrations, 0);
+  assert.equal(stats.inflight, 0);
+  assert.equal(stats.buffered, 0);
+  assert.equal(stats.chains, 0);
 });

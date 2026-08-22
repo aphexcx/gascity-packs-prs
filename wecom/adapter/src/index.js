@@ -119,6 +119,31 @@
 //	                       Internal-listener request body cap (default
 //	                       1048576 = 1MiB); oversized bodies answer 413
 //	                       and the connection is severed.
+//	WECOM_LIVENESS_STALL_AFTER_MS
+//	                       Inbound-liveness watchdog threshold (default
+//	                       600000 = 10min; 0 disables): with no inbound
+//	                       frame for this long, the adapter logs a loud
+//	                       ALARM and /healthz reports
+//	                       inbound_liveness=stalled (HTTP status stays
+//	                       200) until inbound resumes. See src/liveness.js.
+//	WECOM_LIVENESS_RECONNECT
+//	                       "true" force-cycles the long connection while
+//	                       stalled (rate-limited; default false) — the
+//	                       only remediation available for a
+//	                       ready-but-dead WS, since WeCom has no history
+//	                       API to probe or backfill from.
+//	WECOM_COALESCE_WINDOW_MS
+//	                       Per-conversation inbound burst-coalescing
+//	                       window (default 8000; 0 disables): same-chat
+//	                       messages arriving within the window deliver as
+//	                       ONE combined gc inbound, in arrival order.
+//	WECOM_FEEDBACK_IDS     "false" stops attaching feedback ids to
+//	                       outbound markdown sends. Default on: every
+//	                       text publish carries a deterministic
+//	                       feedback id, WeCom then shows 👍/👎 on the
+//	                       reply, and a user's rating arrives as an
+//	                       event.feedback_event the adapter forwards to
+//	                       the bound session (jg-mlfs).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -136,6 +161,7 @@ import {
   withDeadline,
 } from './media.js';
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
+import { createInboundLiveness } from './liveness.js';
 import { createRequestListener, hardenServer } from './listener.js';
 import {
   createAttemptJournal,
@@ -158,6 +184,13 @@ function getenv(name, fallback = '') {
 function intEnv(name, fallback) {
   const n = Number.parseInt(getenv(name), 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+// intEnv0 additionally accepts 0 — for knobs where zero is a meaningful
+// "off" setting (watchdog threshold, coalescing window), not a mistake.
+function intEnv0(name, fallback) {
+  const n = Number.parseInt(getenv(name), 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 function loadConfig() {
@@ -219,6 +252,16 @@ function loadConfig() {
     // Internal-listener body cap: publish bodies are small JSON (media
     // travels by path, not in the body); over-cap requests answer 413.
     publishMaxBodyBytes: intEnv('WECOM_PUBLISH_MAX_BODY_BYTES', 1024 * 1024),
+    // Inbound-liveness watchdog (jg-p1mk item 1; src/liveness.js): the
+    // 8/19 ready-but-dead WS sat silent 40 minutes with /healthz green.
+    livenessStallAfterMs: intEnv0('WECOM_LIVENESS_STALL_AFTER_MS', 10 * 60 * 1000),
+    livenessReconnect: getenv('WECOM_LIVENESS_RECONNECT') === 'true',
+    // Inbound burst coalescing (jg-p1mk item 3; src/inbound.js): rapid
+    // same-chat bursts deliver as one combined inbound.
+    coalesceWindowMs: intEnv0('WECOM_COALESCE_WINDOW_MS', 8000),
+    // Outbound feedback ids (jg-mlfs): attach a feedback id to markdown
+    // sends so WeCom offers 👍/👎 on replies and reports ratings back.
+    feedbackIds: getenv('WECOM_FEEDBACK_IDS', 'true') !== 'false',
   };
 
   const missing = [];
@@ -268,7 +311,7 @@ function log(...args) {
 // as a testable publisher; main() below instantiates it with the real SDK
 // client, and startInternalListener routes both endpoints to it.
 
-function startInternalListener(cfg, publisher) {
+function startInternalListener(cfg, publisher, healthDetail = null) {
   // Route matching, the body byte cap, and multibyte-safe decoding live
   // in src/listener.js (testable); socket-level header/request deadlines
   // come from hardenServer (codex jg-d0xr finding 10).
@@ -276,6 +319,7 @@ function startInternalListener(cfg, publisher) {
     publisher,
     log,
     maxBodyBytes: cfg.publishMaxBodyBytes,
+    healthDetail,
   })));
 
   if (cfg.serviceSocket) {
@@ -424,7 +468,26 @@ async function main() {
     log,
   });
 
-  const server = startInternalListener(cfg, publisher);
+  // Inbound-liveness watchdog (src/liveness.js): the SDK's missed-pong
+  // detection only catches transport death; this catches the 8/19
+  // ready-but-dead shape — socket healthy, zero pushes. The optional
+  // remediation cycles the connection: disconnect() suppresses the SDK's
+  // auto-reconnect (manual close), connect() re-arms it and re-auths.
+  const liveness = createInboundLiveness({
+    stallAfterMs: cfg.livenessStallAfterMs,
+    reconnect: cfg.livenessReconnect
+      ? () => { wsClient.disconnect(); wsClient.connect(); }
+      : null,
+    log,
+  });
+
+  const server = startInternalListener(cfg, publisher, () => liveness.healthzDetail());
+
+  // Every server push — messages of any type AND event callbacks — is
+  // inbound-liveness evidence. Connection lifecycle (authenticated,
+  // pongs) deliberately is not: it stays green while pushes are dead.
+  wsClient.on('message', () => liveness.noteInbound());
+  wsClient.on('event', () => liveness.noteInbound());
 
   wsClient.on('authenticated', () => log('wecom long connection authenticated'));
   wsClient.on('reconnecting', (attempt) => log(`wecom reconnecting (attempt ${attempt})`));
@@ -484,6 +547,14 @@ async function main() {
     wsClient.on(evt, kindStore.observe);
   }
 
+  // User feedback on bot replies (jg-mlfs): a 👍/👎/withdrawal on a
+  // feedback-id-carrying reply arrives as event.feedback_event; the
+  // pipeline renders it as a lightweight "[user feedback]" signal and it
+  // rides the same dedup (event msgids share the callback msgid
+  // namespace), per-conversation ordering, and coalescing as messages.
+  wsClient.on('event.feedback_event', pipeline.enqueueInbound);
+  wsClient.on('event.feedback_event', kindStore.observe);
+
   if (cfg.welcomeText) {
     wsClient.on('event.enter_chat', (frame) => {
       // replyWelcome must run within 5s of the event frame.
@@ -493,6 +564,7 @@ async function main() {
   }
 
   wsClient.connect();
+  liveness.start();
 
   if (cfg.registerOnStart) {
     // Runs concurrently with the WS connection; retries until gc accepts.
@@ -501,6 +573,11 @@ async function main() {
 
   const shutdown = (signal) => {
     log(`${signal} received; shutting down`);
+    liveness.stop();
+    // Drain coalescing buffers first: frames received from WeCom inside
+    // an open window must get their delivery attempt before the process
+    // dies (best-effort — the 2s deadline below still bounds shutdown).
+    pipeline.flushAll();
     wsClient.disconnect();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 2000).unref();

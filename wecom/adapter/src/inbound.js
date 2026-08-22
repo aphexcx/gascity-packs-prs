@@ -6,7 +6,7 @@
 // and instantiates one pipeline; tests instantiate their own with
 // injected deps. All dedup/ordering state is per-instance.
 
-import { hydrateMessageMedia, mediaItemsForMessage } from './media.js';
+import { hydrateMessageMedia, mediaItemsForMessage, neutralizeMarkupBoundaries } from './media.js';
 
 // --- gc extmsg wire helpers (wire-compatible with internal/extmsg) ----------
 
@@ -111,8 +111,88 @@ export function renderText(msg) {
       return '[file message]';
     case 'video':
       return '[video message]';
+    case 'event':
+      // Only feedback events are enqueued (index.js wires
+      // event.feedback_event into the pipeline); other event kinds are
+      // handled at the WS layer or ignored, but render defensively.
+      return msg.event?.eventtype === 'feedback_event'
+        ? renderFeedbackText(msg)
+        : `[${msg.event?.eventtype ?? 'event'} event]`;
     default:
       return `[${msg.msgtype} message]`;
+  }
+}
+
+// renderFeedbackText flattens a WeCom feedback_event callback (jg-mlfs)
+// into the lightweight signal delivered to the bound session. Wire shape
+// (aibot 接收事件 doc): event.feedback_event = { id, type, content,
+// inaccurate_reason_list } — type 1 = 👍, 2 = 👎 (with optional free-text
+// content and reason codes), 3 = the user withdrew earlier feedback. The
+// id is the adapter-minted feedback id attached to the outbound markdown
+// send (outbound.js), so the session/operator can correlate the rating
+// with the exact reply via the publish log's feedback_base. The whole
+// line is neutralized: content is sender-controlled free text.
+const feedbackTypeLabels = {
+  1: '👍 praise',
+  2: '👎 negative',
+  3: 'feedback withdrawn',
+};
+
+const inaccurateReasonLabels = {
+  1: 'unrelated to the question',
+  2: 'incomplete information',
+  3: 'factual errors',
+  4: 'data/analysis problems',
+};
+
+export function renderFeedbackText(msg) {
+  const fb = msg?.event?.feedback_event ?? {};
+  const kind = feedbackTypeLabels[fb.type] ?? `feedback type ${fb.type ?? 'unknown'}`;
+  let text = `[user feedback] ${kind} from ${msg?.from?.userid ?? 'unknown'} on bot reply`;
+  if (fb.id) text += ` feedback_id=${fb.id}`;
+  if (fb.type === 2) {
+    const reasons = (Array.isArray(fb.inaccurate_reason_list) ? fb.inaccurate_reason_list : [])
+      .map((code) => inaccurateReasonLabels[code] ?? `reason ${code}`);
+    if (reasons.length > 0) text += ` (${reasons.join(', ')})`;
+    if (fb.content) text += ` — “${fb.content}”`;
+  }
+  return neutralizeMarkupBoundaries(text);
+}
+
+// emptyPayloadNote detects a media-bearing message whose payload is
+// MISSING — the 8/22 22:53 real case was a voice frame with neither a
+// server-side transcript nor downloadable media, which delivered as a
+// bare '[voice message]' with zero log lines. Anything the sender meant
+// to convey but WeCom did not deliver must surface as an explicit marker
+// in the delivered text plus a loud log line (bridge below), never as
+// silence.
+export function emptyPayloadNote(msg) {
+  switch (msg?.msgtype) {
+    case 'voice':
+      return msg.voice?.content
+        ? ''
+        : '[voice payload empty — 语音转写失败/内容缺失: WeCom delivered neither a transcript nor '
+          + 'downloadable media for this voice message; ask the sender to re-send or type it]';
+    case 'image':
+    case 'file':
+    case 'video':
+      return mediaItemsForMessage(msg).length > 0
+        ? ''
+        : `[${msg.msgtype} payload empty — 内容缺失: WeCom delivered no downloadable media URL for this `
+          + `${msg.msgtype} message; ask the sender to re-send]`;
+    case 'mixed': {
+      const parts = msg.mixed?.msg_item ?? [];
+      if (parts.length === 0) {
+        return '[mixed payload empty — 内容缺失: WeCom delivered a mixed message with no items]';
+      }
+      const missing = parts.filter((item) => item?.msgtype === 'image' && !item.image?.url).length;
+      return missing > 0
+        ? `[${missing} image(s) in this mixed message carried no download URL — 内容缺失: `
+          + 'ask the sender to re-send them]'
+        : '';
+    }
+    default:
+      return '';
   }
 }
 
@@ -134,10 +214,19 @@ export function renderText(msg) {
 //   hydrationsCap / hydrationsTtlMs
 //                 replay-cache bounds (defaults 512 / 30min; test knobs)
 //   seenMsgIdCap  seen-set bound (default 2048; test knob)
+//   coalesceWindowMs
+//                 per-conversation burst-coalescing window (default
+//                 cfg.coalesceWindowMs, then 0 = disabled); frames for
+//                 one conversation arriving within the window deliver
+//                 as ONE combined gc POST (jg-p1mk item 3)
+//   coalesceMaxBatch
+//                 early-flush threshold (default 50); a buffer this full
+//                 delivers immediately instead of waiting out its window
 //   now, log      clock and logger
 //
-// enqueueInbound returns the chained bridge promise (settles when this
-// frame's delivery attempt settles) — production ignores it; tests await.
+// enqueueInbound returns a promise that settles when this frame's
+// delivery attempt settles (through its coalesced batch when buffering
+// is active) — production ignores it; tests await.
 export function createInboundPipeline(deps) {
   const {
     cfg,
@@ -371,65 +460,117 @@ export function createInboundPipeline(deps) {
     return { promise, owner: false };
   }
 
-  async function bridgeInbound(frame, handle) {
-    const msg = frame.body;
-    if (!msg) return;
-
+  // bridgeBatch delivers one ordered batch of same-conversation frames as
+  // a SINGLE gc POST. The single-frame batch (the only shape when
+  // coalescing is disabled) produces an envelope byte-identical to the
+  // pre-coalescer bridge; a multi-frame batch combines the members into
+  // one text block (header + one "sender: text" segment per member, in
+  // arrival order — media and text stay interleaved exactly as sent),
+  // concatenates attachments in member order, and carries a
+  // batch-specific dedup key ("wecom-batch-<first>-<last>-<n>") so gc's
+  // dedup can never collapse it with a member's own msgid.
+  async function bridgeBatch(entries) {
     // Cleanup is owner- AND promise-conditional (codex r2+r3): only the
     // frame whose startHydration call inserted the entry may delete it,
     // and only while it still holds THE promise that frame consumed. A
     // non-owner replay deleting the entry it merely reused would strip
     // the original delivery's dedup; an unconditional delete races
     // replacements (ABA). The function-wide try/finally below (codex r4)
-    // guarantees it runs on EVERY exit — early returns, the POST paths,
-    // and exceptions anywhere in the body (e.g. an out-of-range but
-    // JSON-valid create_time making toISOString() throw), which would
-    // otherwise strand the owner's entry until the TTL sweep.
-    const hydration = handle?.promise ?? null;
-    const deleteOwnHydration = () => {
-      if (!msg.msgid || !handle?.owner) return;
-      const current = hydrations.get(msg.msgid);
-      if (current && current.promise === hydration) hydrations.delete(msg.msgid);
-    };
-
+    // guarantees every member's cleanup runs on EVERY exit — early
+    // returns, the POST paths, and exceptions anywhere in the body (e.g.
+    // an out-of-range but JSON-valid create_time making toISOString()
+    // throw), which would otherwise strand owner entries until the TTL
+    // sweep.
+    const cleanups = [];
     try {
-      if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid))) {
-        return;
-      }
+      // Per-member admission + rendering. seenInBatch collapses duplicate
+      // msgids WITHIN the batch (an SDK replay landing inside the window
+      // buffers a second entry for the same id — the in-batch variant of
+      // the replay the seen set catches across batches; first copy wins).
+      const members = [];
+      const seenInBatch = new Set();
+      for (const { frame, handle } of entries) {
+        const msg = frame?.body;
+        if (!msg) continue;
+        const hydration = handle?.promise ?? null;
+        if (msg.msgid && handle?.owner) {
+          cleanups.push(() => {
+            const current = hydrations.get(msg.msgid);
+            if (current && current.promise === hydration) hydrations.delete(msg.msgid);
+          });
+        }
+        if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid) || seenInBatch.has(msg.msgid))) {
+          continue;
+        }
+        const conversation = conversationForMessage(cfg, msg);
+        if (!conversation.conversation_id) {
+          log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
+          continue;
+        }
+        let text = renderText(msg);
+        if (!text) {
+          // A frame that renders to nothing (a text message with empty
+          // content) cannot deliver — but it must not vanish silently
+          // (jg-p1mk item 2 discipline).
+          log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message rendered no text; dropped`);
+          continue;
+        }
+        // Empty-payload surfacing (jg-p1mk item 2, 8/22 22:53 real case):
+        // a voice frame with no transcript, or a media frame with no
+        // download URL, delivers with an explicit marker plus a loud log
+        // line — never as a bare placeholder with zero evidence.
+        const note = emptyPayloadNote(msg);
+        if (note) {
+          log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message carried no usable payload; delivering with explicit marker`);
+          text = `${text}\n${note}`;
+        }
 
-      const conversation = conversationForMessage(cfg, msg);
-      if (!conversation.conversation_id) {
-        log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
-        return;
+        // Media hydration started the moment the frame arrived (the
+        // download URL is on a 5-minute fuse — it cannot wait behind this
+        // conversation's gc retry queue, nor behind the coalescing
+        // window); by the time this chained bridge runs, the promise is
+        // usually already settled. hydrateMessageMedia never rejects, but
+        // a defensive catch keeps an unforeseen bug from dropping the
+        // message: worst case the agent sees the bare placeholder text.
+        let attachments = [];
+        if (hydration) {
+          const hydrated = await hydration.catch((err) => {
+            log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
+            return { attachments: [], block: '' };
+          });
+          attachments = hydrated.attachments;
+          if (hydrated.block) text = `${text}\n${hydrated.block}`;
+        }
+        if (msg.msgid) seenInBatch.add(msg.msgid);
+        members.push({ msg, conversation, text, attachments });
       }
-      let text = renderText(msg);
-      if (!text) {
-        return;
-      }
+      if (members.length === 0) return;
 
-      // Media hydration started the moment the frame arrived (the download
-      // URL is on a 5-minute fuse — it cannot wait behind this
-      // conversation's gc retry queue); by the time this chained bridge
-      // runs, the promise is usually already settled. hydrateMessageMedia
-      // never rejects, but a defensive catch keeps an unforeseen bug from
-      // dropping the message: worst case the agent sees the bare
-      // placeholder text.
-      let attachments = [];
-      if (hydration) {
-        const hydrated = await hydration.catch((err) => {
-          log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
-          return { attachments: [], block: '' };
-        });
-        attachments = hydrated.attachments;
-        if (hydrated.block) text = `${text}\n${hydrated.block}`;
+      const newest = members[members.length - 1];
+      let text = newest.text;
+      let attachments = newest.attachments;
+      let dedupKey = newest.msg.msgid;
+      let label = `inbound ${newest.msg.msgid}`;
+      if (members.length > 1) {
+        // Header and sender interpolations are neutralized; the member
+        // bodies pass through raw, exactly like the single path — gc's
+        // reminder formatter sanitizes the whole text field.
+        const lines = [`[${members.length} WeCom messages coalesced, in arrival order]`];
+        for (const m of members) {
+          lines.push(`${neutralizeMarkupBoundaries(m.msg.from?.userid ?? 'unknown')}: ${m.text}`);
+        }
+        text = lines.join('\n');
+        attachments = members.flatMap((m) => m.attachments);
+        dedupKey = `wecom-batch-${members[0].msg.msgid ?? 'nomsgid'}-${newest.msg.msgid ?? 'nomsgid'}-${members.length}`;
+        label = `inbound batch ${members[0].msg.msgid}..${newest.msg.msgid}`;
       }
 
       const message = {
-        provider_message_id: msg.msgid,
-        conversation,
+        provider_message_id: newest.msg.msgid,
+        conversation: newest.conversation,
         actor: {
-          id: msg.from?.userid ?? '',
-          display_name: msg.from?.userid ?? '',
+          id: newest.msg.from?.userid ?? '',
+          display_name: newest.msg.from?.userid ?? '',
           is_bot: false,
         },
         // No explicit_target: routing is the default_route fragment's job
@@ -439,67 +580,147 @@ export function createInboundPipeline(deps) {
         // addressed to someone else.
         text,
         ...(attachments.length > 0 ? { attachments } : {}),
-        dedup_key: msg.msgid,
-        received_at: msg.create_time
-          ? new Date(msg.create_time * 1000).toISOString()
+        dedup_key: dedupKey,
+        received_at: newest.msg.create_time
+          ? new Date(newest.msg.create_time * 1000).toISOString()
           : new Date().toISOString(),
       };
 
       const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
-      if (msg.msgid) inflightMsgIds.add(msg.msgid);
+      const msgids = members.map((m) => m.msg.msgid).filter(Boolean);
+      for (const id of msgids) inflightMsgIds.add(id);
       try {
         // Transient gc failures retry indefinitely — WeCom replay after a
         // reconnect is not guaranteed, so the retry loop is the delivery
-        // mechanism, not a bonus. The in-flight marker holds for the whole
+        // mechanism, not a bonus. The in-flight markers hold for the whole
         // retry so a replay arriving mid-retry can't double-post.
-        await postInbound(target, { message }, `inbound ${msg.msgid}`, log);
-        markSeen(msg.msgid);
-        log(`inbound ${msg.msgid} → gc (${conversation.kind} ${conversation.conversation_id}, ${msg.msgtype})`);
+        await postInbound(target, { message }, label, log);
+        for (const id of msgids) markSeen(id);
+        log(`${label} → gc (${newest.conversation.kind} ${newest.conversation.conversation_id}, ${members.length === 1 ? newest.msg.msgtype : `${members.length} messages`})`);
       } catch (err) {
         // Only deterministic 4xx rejections land here (transient failures
         // retry forever): a replay would fail identically, so mark seen to
         // stop pointless re-posts.
-        markSeen(msg.msgid);
-        log(`inbound ${msg.msgid} rejected by gc (${err.message}); dropped`);
+        for (const id of msgids) markSeen(id);
+        log(`${label} rejected by gc (${err.message}); dropped`);
       } finally {
-        if (msg.msgid) inflightMsgIds.delete(msg.msgid);
+        for (const id of msgids) inflightMsgIds.delete(id);
       }
     } finally {
-      deleteOwnHydration();
+      for (const cleanup of cleanups) cleanup();
     }
   }
 
   // Per-conversation serial delivery: with independent async bridges, a
   // transient failure on message A would let a later message B land in gc
-  // first, reversing conversation context. Chain frames per conversation;
+  // first, reversing conversation context. Chain batches per conversation;
   // separate conversations still proceed concurrently. Entries are removed
   // once their chain drains, so memory tracks active conversations only.
   const convoChains = new Map();
+
+  function chainBatch(key, entries) {
+    const prev = convoChains.get(key) ?? Promise.resolve();
+    const next = prev.then(() => bridgeBatch(entries)).catch((err) => log(`bridge error: ${err.message}`));
+    convoChains.set(key, next);
+    return next.finally(() => {
+      // Every enqueued frame settles exactly once (early-returns
+      // included), so the refcount balances even under replays.
+      for (const e of entries) removePending(e.frame?.body?.msgid);
+      if (convoChains.get(key) === next) convoChains.delete(key);
+    });
+  }
+
+  // --- inbound burst coalescing (jg-p1mk item 3; port of slack-full's ---
+  // inbound_coalescer.go, simplified for WeCom).
+  //
+  // Rapid multi-message bursts (voice series, 3×1-line answers) each
+  // historically produced their own gc delivery = their own agent turn.
+  // With a window configured (WECOM_COALESCE_WINDOW_MS; 0 disables), a
+  // conversation's frames buffer for the window and deliver as ONE
+  // inbound carrying every message verbatim, in arrival order. Per-chat
+  // only — different conversations never share a batch (they already
+  // never shared a chain). The window is FIXED from the first buffered
+  // frame (not a sliding debounce): steady chatter flushes every window
+  // instead of deferring indefinitely. A buffer reaching
+  // coalesceMaxBatch flushes early — nothing is ever evicted or dropped;
+  // the cap bounds latency, not content. WeCom has no analog of
+  // slack-full's urgent (bot-mentioned/targeted) class, so there is no
+  // flush-ahead path; ordering versus in-flight deliveries is inherited
+  // from the per-conversation chain the flush enqueues onto.
+  //
+  // Crash acceptance, same as slack-full's: buffered frames were already
+  // received from the provider, so an adapter crash inside the window
+  // loses that window's chatter (WeCom replay is not guaranteed). A
+  // normal shutdown drains every buffer first (flushAll, wired to
+  // SIGTERM/SIGINT in index.js). Delivery failures need no restore path
+  // here: the batch POST rides postJSONWithRetry (transient failures
+  // retry forever inside the chain; deterministic rejections drop with
+  // the same semantics as the single path).
+  const coalesceWindowMs = deps.coalesceWindowMs ?? cfg.coalesceWindowMs ?? 0;
+  const coalesceMaxBatch = deps.coalesceMaxBatch ?? 50;
+  const coalesceBuffers = new Map(); // convKey → { entries, timer, settle, promise }
+
+  function flushConversation(key, buf) {
+    // Identity check makes a stale timer callback (buffer already
+    // early-flushed and replaced) a strict no-op.
+    if (coalesceBuffers.get(key) !== buf) return;
+    coalesceBuffers.delete(key);
+    clearTimeout(buf.timer);
+    buf.settle(chainBatch(key, buf.entries));
+  }
+
+  function enqueueCoalesced(key, entry) {
+    let buf = coalesceBuffers.get(key);
+    if (!buf) {
+      buf = { entries: [], timer: null, settle: null, promise: null };
+      buf.promise = new Promise((resolve) => { buf.settle = resolve; });
+      buf.timer = setTimeout(() => flushConversation(key, buf), coalesceWindowMs);
+      buf.timer.unref?.();
+      coalesceBuffers.set(key, buf);
+    }
+    buf.entries.push(entry);
+    if (buf.entries.length >= coalesceMaxBatch) {
+      log(`coalesce: ${key} buffer full (${buf.entries.length}); early flush`);
+      flushConversation(key, buf);
+    }
+    return buf.promise;
+  }
+
+  // flushAll synchronously drains every buffered conversation — the
+  // normal-shutdown path, so already-received frames are not lost to a
+  // SIGTERM landing inside a window. Returns a promise that settles when
+  // every flushed delivery settles.
+  function flushAll() {
+    const flushed = [];
+    for (const [key, buf] of [...coalesceBuffers]) {
+      flushed.push(buf.promise);
+      flushConversation(key, buf);
+    }
+    return Promise.allSettled(flushed);
+  }
+
   const enqueueInbound = (frame) => {
     const msg = frame?.body ?? {};
-    // Pending ownership opens HERE — before the bridge even queues — so
+    // Pending ownership opens HERE — before the frame even buffers — so
     // the TTL sweep can tell a live-but-queued hydration from a leak.
+    // The refcount now also spans the coalescing window: a buffered
+    // media frame's hydration entry is load-bearing for the whole wait.
     addPending(msg.msgid);
-    // Everything between the addPending above and the finally-attachment
+    // Everything between the addPending above and the promise handoff
     // below runs synchronously; a throw in that window (hydration setup,
-    // chain wiring) would otherwise leak the refcount forever, since no
-    // settled bridge ever decrements it (codex r4).
+    // buffer/chain wiring) would otherwise leak the refcount forever,
+    // since no settled bridge ever decrements it (codex r4).
     try {
-      // Hydration starts NOW, outside the chain — the media download URL
-      // expires ~5 minutes after this frame, and the chain can be stuck
-      // behind an earlier message's gc retry loop for longer than that.
+      // Hydration starts NOW, outside the buffer and the chain — the
+      // media download URL expires ~5 minutes after this frame, and the
+      // coalescing window plus an earlier message's gc retry loop can
+      // outlast that.
       const handle = startHydration(msg);
       const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
-      const prev = convoChains.get(key) ?? Promise.resolve();
-      const next = prev.then(() => bridgeInbound(frame, handle)).catch((err) => log(`bridge error: ${err.message}`));
-      convoChains.set(key, next);
-      next.finally(() => {
-        // Every enqueued frame settles exactly once (early-returns
-        // included), so the refcount balances even under replays.
-        removePending(msg.msgid);
-        if (convoChains.get(key) === next) convoChains.delete(key);
-      });
-      return next;
+      if (coalesceWindowMs > 0 && key) {
+        return enqueueCoalesced(key, { frame, handle });
+      }
+      return chainBatch(key, [{ frame, handle }]);
     } catch (err) {
       removePending(msg.msgid);
       throw err;
@@ -508,6 +729,7 @@ export function createInboundPipeline(deps) {
 
   return {
     enqueueInbound,
+    flushAll,
     // Introspection for tests and diagnostics only — not a public surface.
     stats: () => ({
       hydrations: hydrations.size,
@@ -516,6 +738,7 @@ export function createInboundPipeline(deps) {
       chains: convoChains.size,
       pending: pendingMsgIds.size,
       refusals: refusals.size,
+      buffered: coalesceBuffers.size,
     }),
   };
 }

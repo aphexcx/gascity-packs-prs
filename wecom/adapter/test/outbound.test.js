@@ -2777,3 +2777,62 @@ test('a text publish with a missing body 400s like before', async (t) => {
   await publisher.handlePublish({}, bad, 'not json');
   assert.equal(bad.statusCode, 400);
 });
+
+// --- outbound feedback ids (jg-mlfs) ----------------------------------------
+
+test('with feedbackIds on, a keyed publish attaches a deterministic per-chunk feedback id', async () => {
+  const { publisher, calls } = makePublisher({ cfg: { feedbackIds: true } });
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'hello',
+    idempotency_key: 'idem-1',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(calls.length, 1);
+  const fb = calls[0].body.markdown.feedback;
+  assert.ok(fb, 'markdown body must carry feedback');
+  assert.match(fb.id, /^fb-[0-9a-f]{40}\.0$/);
+
+  // A retried key mints the SAME id — one physical message, one id.
+  const { publisher: publisher2, calls: calls2 } = makePublisher({ cfg: { feedbackIds: true } });
+  await publishText(publisher2, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'hello',
+    idempotency_key: 'idem-1',
+  });
+  assert.equal(calls2[0].body.markdown.feedback.id, fb.id);
+});
+
+test('with feedbackIds on, each chunk of a long publish carries its own id suffix', async () => {
+  const { publisher, calls } = makePublisher({ cfg: { feedbackIds: true } });
+  const long = '段'.repeat(2600); // ~7800 UTF-8 bytes → 3 chunks at 3800
+  await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: long,
+    idempotency_key: 'idem-chunks',
+  });
+  assert.ok(calls.length > 1, 'fixture must actually chunk');
+  const ids = calls.map((c) => c.body.markdown.feedback.id);
+  const bases = new Set(ids.map((id) => id.split('.')[0]));
+  assert.equal(bases.size, 1, 'all chunks share one base');
+  assert.deepEqual(ids.map((id) => id.split('.')[1]), ids.map((_, i) => String(i)));
+});
+
+test('a keyless publish still gets a feedback id when enabled', async () => {
+  const { publisher, calls } = makePublisher({ cfg: { feedbackIds: true } });
+  await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'no key',
+  });
+  assert.match(calls[0].body.markdown.feedback.id, /^fb-[0-9a-f-]{36}\.0$/);
+});
+
+test('with feedbackIds off (or unset), the markdown body is unchanged', async () => {
+  const { publisher, calls } = makePublisher({ cfg: { feedbackIds: false } });
+  await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'plain',
+    idempotency_key: 'idem-off',
+  });
+  assert.deepEqual(calls[0].body, { msgtype: 'markdown', markdown: { content: 'plain' } });
+});

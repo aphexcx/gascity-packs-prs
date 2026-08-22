@@ -151,6 +151,55 @@ this command still bypass gc and are not transcript-recorded (unchanged
 behavior; the standard reply flow's own text recording is a separate,
 gc-side concern).
 
+## Robustness & efficiency (jg-p1mk hardening batch)
+
+**Inbound-liveness watchdog** (`src/liveness.js`). The 8/19 incident: the
+WS sat ready-but-dead ~40 minutes — socket up, pongs flowing, `/healthz`
+green, zero pushes. The SDK's missed-pong detection only catches
+transport death, so the adapter now tracks a last-inbound watermark
+(every message frame and event callback) and, past
+`WECOM_LIVENESS_STALL_AFTER_MS` (default 10min; 0 disables) of silence,
+logs a loud `INBOUND LIVENESS ALARM` (repeated every 30min while the
+stall persists) and appends `inbound_liveness=stalled` to `/healthz`
+(first line stays `ok`, HTTP status stays 200 — the supervisor must not
+restart-loop on a suspicion). WeCom has no bot-readable history API, so
+unlike slack-full there is no probe to distinguish quiet-chat from
+dead-push and no backfill — a real stall's messages are unrecoverable,
+which is why surfacing matters. `WECOM_LIVENESS_RECONNECT=true`
+additionally force-cycles the connection while stalled (rate-limited to
+once per 30min) — the only remediation available for a ready-but-dead WS.
+
+**Empty-payload surfacing** (`src/inbound.js`). The 8/22 22:53 case: a
+voice frame arrived with no server transcript and no media, and the
+session got a bare `[voice message]` with zero log evidence. Now a voice
+frame without a transcript, a media frame without a download URL, and a
+mixed frame with URL-less images all deliver with an explicit
+`语音转写失败/内容缺失`-style marker and log an `EMPTY PAYLOAD` line; a
+text frame rendering to nothing is dropped WITH a log line. Nothing is
+ever silently thin.
+
+**Inbound burst coalescing** (`src/inbound.js`, port of slack-full's
+gp-729 coalescer). Same-chat messages arriving within
+`WECOM_COALESCE_WINDOW_MS` (default 8s; 0 disables) deliver as ONE gc
+inbound — header plus every message verbatim in arrival order, media
+attachments concatenated, batch dedup key `wecom-batch-<first>-<last>-<n>`.
+Per-chat only; the window is fixed from the first buffered message; a
+buffer hitting 50 messages flushes early (nothing is ever dropped);
+shutdown drains buffers first. Hydration still starts at frame arrival —
+the 5-minute URL fuse never waits out the window. A single-message
+window delivers byte-identical to the immediate path.
+
+**Reply feedback (👍/👎, jg-mlfs).** Outbound markdown sends carry an
+adapter-minted `feedback.id` (deterministic per idempotency key + chunk;
+`WECOM_FEEDBACK_IDS=false` disables), which makes the WeCom client offer
+feedback controls on bot replies. A user's rating arrives as an
+`event.feedback_event` and is forwarded to the bound session as a
+lightweight `[user feedback]` signal — 👍, or 👎 with WeCom's reason
+codes and the user's free-text criticism, or a withdrawal — deduped on
+the event msgid and riding the same per-conversation ordering and
+coalescing as messages. Correlation: the publish log line's
+`feedback_base=fb-…` matches the signal's `feedback_id=fb-….<chunk>`.
+
 ## Adapter tests
 
 ```
