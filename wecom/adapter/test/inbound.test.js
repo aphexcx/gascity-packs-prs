@@ -1445,3 +1445,73 @@ test('peer-conversation LRU eviction is deterministic under same-millisecond tie
   await peer('wrC', '1'); // over cap: B must evict, not A
   assert.equal(logs.filter((l) => l.includes('evicted the least-recently-touched conversation g:wrB')).length, 1);
 });
+
+// --- codex jg-p1mk round-4 regressions -----------------------------------------
+
+test('numeric identity fields normalize at intake — msgid 0 dedups and media provider_id is a string (codex r4 f1/f2)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    downloadFile: async () => ({ buffer: Buffer.from('%PDF-1.7 z'), filename: 'n.pdf' }),
+  });
+  await pipeline.enqueueInbound(frame(fileMessage({ msgid: 12345 })));
+  assert.equal(posts.length, 1);
+  const att = posts[0].body.message.attachments[0];
+  assert.equal(typeof att.provider_id, 'string');
+  assert.equal(att.provider_id, '12345');
+
+  // msgid 0 delivers once and its replay dedups — truthiness gates must
+  // see the normalized string "0".
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 0, text: { content: '零' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 0, text: { content: '零' } })));
+  assert.equal(posts.length, 2, 'the replay of msgid 0 must not double-post');
+  assert.equal(posts[1].body.message.provider_message_id, '0');
+});
+
+test('a numeric peer-bot userid matches the string allowlist after intake normalization (codex r4 f2)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { cfg: { peerBotUserIds: ['7'] } });
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'PN_1', chattype: 'group', chatid: 'wrPN', from: { userid: 7 }, text: { content: '机器人' },
+  })));
+  assert.equal(posts.length, 0, 'the numeric-userid peer post must buffer, not wake');
+  assert.equal(pipeline.stats().peerContexts, 1);
+});
+
+test('the reply-help cache is bounded — eviction re-sends, never grows unbounded (codex r4 f3)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { replyHelpOnce: true, replyHelpCap: 2 } });
+  for (const u of ['u1', 'u2', 'u3']) {
+    await pipeline.enqueueInbound(frame(textMessage({ msgid: `HC_${u}`, from: { userid: u } })));
+  }
+  // u1 was evicted at the cap of 2 — its next delivery re-sends the block.
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'HC_u1b', from: { userid: 'u1' }, text: { content: '再见' } })));
+  assert.equal(posts.length, 4);
+  assert.match(posts[3].body.message.text, /full reply how-to/);
+});
+
+test('restore keeps the ORIGINAL copy of a mid-POST peer replay, preserving arrival order (codex r4 f4)', async (t) => {
+  let rejectNext = true;
+  const delivered = [];
+  let pipelineRef;
+  const room = (over) => textMessage({ chattype: 'group', chatid: 'wrRO', ...over });
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    postInbound: async (target, body) => {
+      if (rejectNext) {
+        rejectNext = false;
+        // P_old replays and P_new arrives while the POST is in flight.
+        await pipelineRef.enqueueInbound(frame(room({ msgid: 'RO_OLD', from: { userid: 'pb' }, text: { content: '旧帖' } })));
+        await pipelineRef.enqueueInbound(frame(room({ msgid: 'RO_NEW', from: { userid: 'pb' }, text: { content: '新帖' } })));
+        const err = new Error('400 Bad Request');
+        err.status = 400;
+        throw err;
+      }
+      delivered.push(body.message.text);
+    },
+  });
+  pipelineRef = pipeline;
+  await pipeline.enqueueInbound(frame(room({ msgid: 'RO_OLD', from: { userid: 'pb' }, text: { content: '旧帖' } })));
+  await pipeline.enqueueInbound(frame(room({ msgid: 'RO_H1', text: { content: '被拒' } })));
+  await pipeline.enqueueInbound(frame(room({ msgid: 'RO_H2', text: { content: '成功' } })));
+  assert.equal(delivered.length, 1);
+  const text = delivered[0];
+  assert.equal((text.match(/旧帖/g) ?? []).length, 1);
+  assert.ok(text.indexOf('旧帖') < text.indexOf('新帖'), `original arrival order must survive the rejection cycle:\n${text}`);
+});

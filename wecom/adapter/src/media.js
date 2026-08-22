@@ -780,7 +780,10 @@ export async function hydrateMessageMedia(msg, deps) {
     const out = {
       line: `  ${n + 1}. ${neutralizeMarkupBoundaries(name)} (${mime || item.kind}) — saved to ${neutralizeMarkupBoundaries(dest)}; Read that path to view it`,
       attachment: {
-        provider_id: item.index === null ? (msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
+        // String-coerced (codex jg-p1mk r4 finding 1): gc types
+        // provider_id as a string, and a numeric msgid reaching it raw
+        // rejects the whole envelope.
+        provider_id: item.index === null ? String(msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
         url: pathToFileURL(dest).href,
         ...(mime ? { mime_type: mime } : {}),
       },

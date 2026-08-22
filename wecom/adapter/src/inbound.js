@@ -418,10 +418,19 @@ export function createInboundPipeline(deps) {
   }
 
   // Conversations that already received the full reply how-to this
-  // adapter lifetime (jg-p1mk add D). Bounded by the live conversation
-  // population — WeCom chats a bot belongs to number in the dozens, so
-  // no cap/eviction is needed (and evicting would re-send the block).
+  // adapter lifetime (jg-p1mk add D). Real deployments hold dozens of
+  // chats, but the ids are provider-controlled — cap the set anyway
+  // (codex r4 finding 3) and evict oldest-first: the cost of eviction
+  // is one re-sent help block, never loss.
+  const replyHelpCap = deps.replyHelpCap ?? 512;
   const replyHelpSent = new Set();
+
+  function markReplyHelpSent(convKey) {
+    replyHelpSent.add(convKey);
+    while (replyHelpSent.size > replyHelpCap) {
+      replyHelpSent.delete(replyHelpSent.values().next().value);
+    }
+  }
 
   // --- peer-bot context buffering (jg-p1mk add A; slack-full gp-kop port) ---
   //
@@ -544,13 +553,14 @@ export function createInboundPipeline(deps) {
       return;
     }
     // A peer frame replayed while the carrying POST was in flight sits
-    // in `current` already — restoring the taken copy unchecked would
-    // deliver it twice next time (codex r2 finding 9).
-    const restored = taken.items.filter((item) => !item.msgid || !current.seen.has(item.msgid));
-    current.items = [...restored, ...current.items];
-    for (const item of restored) {
-      if (item.msgid) current.seen.add(item.msgid);
-    }
+    // in `current` already — the merge must keep exactly one copy, and
+    // the ORIGINAL (older-seq) one, so arrival order survives the
+    // rejection cycle (codex r2 finding 9; r4 finding 4: keeping the
+    // replayed copy instead put it after posts it actually preceded).
+    const replacedByOriginal = current.items.filter((item) => !item.msgid || !taken.seen.has(item.msgid));
+    current.items = [...taken.items, ...replacedByOriginal]
+      .sort((a, b) => (a.seq ?? -1) - (b.seq ?? -1));
+    current.seen = new Set(current.items.filter((item) => item.msgid).map((item) => item.msgid));
     current.dropped += taken.dropped;
     current.touchedAt = arrivalSeq++;
     trimPeerItems(current);
@@ -870,7 +880,7 @@ export function createInboundPipeline(deps) {
       // never saw it); transient failures retry the same built text.
       const firstHelp = replyHelpOnce && !replyHelpSent.has(convKey);
       if (firstHelp) {
-        replyHelpSent.add(convKey);
+        markReplyHelpSent(convKey);
         text = `${text}\n\n${replyHelpBlock(convId)}`;
       }
 
@@ -1021,6 +1031,17 @@ export function createInboundPipeline(deps) {
 
   const enqueueInbound = (frame) => {
     const msg = frame?.body ?? {};
+    // Normalize provider identity fields ONCE at intake (codex r4
+    // finding 2): every internal map, truthiness gate, and allowlist
+    // below assumes strings. A JSON-valid numeric id must behave as its
+    // string form EVERYWHERE — msgid 0 was emitted to gc as "0" but
+    // skipped by truthiness-based dedup (double POST on replay), and a
+    // numeric userid could never match the string peer-bot allowlist
+    // (bot post waking the session). The wire-boundary String() calls
+    // stay as defense in depth for direct callers.
+    if (msg.msgid != null) msg.msgid = String(msg.msgid);
+    if (msg.chatid != null) msg.chatid = String(msg.chatid);
+    if (msg.from && msg.from.userid != null) msg.from.userid = String(msg.from.userid);
     // Peer-bot room posts divert to the context buffer BEFORE any
     // pipeline state opens (jg-p1mk add A): no pending refcount, no
     // hydration (a peer's media URL burns unfetched — context is
