@@ -602,6 +602,125 @@ func TestCoalescerSweptDeliveryDoesNotWaitForTriggerPOST(t *testing.T) {
 	}
 }
 
+// Structural close of the sweep reorder race (gp-9e7 fix round 2c): the
+// swept channel's delivery mutex is acquired AT TAKE TIME, inside the
+// same c.mu critical section that detaches the batch — so there is no
+// instant at which the batch is out of the maps with the mutex free.
+// The delivery goroutine unlocks it after delivering.
+func TestCoalescerSweptMutexHeldFromTakeTime(t *testing.T) {
+	delivered := make(chan string, 1)
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		delivered <- channel
+		return true
+	}
+	c.enqueue("C_SWEPT", testPending("C_SWEPT", "1.0", "older"))
+	c.mu.Lock()
+	swept := c.takeSweepsLocked("C_TRIGGER")
+	c.mu.Unlock()
+	if len(swept) != 1 || swept[0].channel != "C_SWEPT" {
+		t.Fatalf("swept = %+v, want the one buffered channel", swept)
+	}
+	if swept[0].mu.TryLock() {
+		swept[0].mu.Unlock()
+		t.Fatal("swept channel's delivery mutex is FREE after the take — the take-to-lock gap is back")
+	}
+	c.deliverSwept(swept)
+	select {
+	case ch := <-delivered:
+		if ch != "C_SWEPT" {
+			t.Fatalf("delivered %q, want C_SWEPT", ch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("swept delivery did not run")
+	}
+	// After the delivery settles the goroutine releases the mutex.
+	freed := make(chan struct{})
+	go func() {
+		swept[0].mu.Lock()
+		swept[0].mu.Unlock()
+		close(freed)
+	}()
+	select {
+	case <-freed:
+	case <-time.After(2 * time.Second):
+		t.Fatal("swept delivery goroutine never released the handed-off mutex")
+	}
+}
+
+// gp-9e7 fix round 2c, the behavioral guarantee: an urgent flushAheadOf
+// racing a swept delivery can NEVER deliver before the older swept
+// batch. The swept mutex is held from take time, so flushAheadOf —
+// which takes its own batch and then blocks on that same mutex —
+// serializes strictly behind it by construction. Deterministic: the
+// ordering is enforced by the mutex handoff, not by sleeps.
+func TestCoalescerUrgentFlushAheadNeverOvertakesSweptBatch(t *testing.T) {
+	var omu sync.Mutex
+	var order []string
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		omu.Lock()
+		order = append(order, batch[0].inbound.ProviderMessageID)
+		omu.Unlock()
+		return true
+	}
+	c.enqueue("C_SWEPT", testPending("C_SWEPT", "1.0", "older swept chatter"))
+	// The sweep takes exactly as flushTimer does — under c.mu, mutex
+	// acquired with the take.
+	c.mu.Lock()
+	swept := c.takeSweepsLocked("C_TRIGGER")
+	c.mu.Unlock()
+	if len(swept) != 1 {
+		t.Fatalf("swept = %+v, want one batch", swept)
+	}
+	// A newer message lands and its urgent flush-ahead races the swept
+	// delivery goroutine.
+	c.enqueue("C_SWEPT", testPending("C_SWEPT", "2.0", "newer"))
+	aheadDone := make(chan struct{})
+	go func() {
+		c.flushAheadOf("C_SWEPT", "")
+		close(aheadDone)
+	}()
+	c.deliverSwept(swept)
+	select {
+	case <-aheadDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flushAheadOf never completed")
+	}
+	omu.Lock()
+	defer omu.Unlock()
+	if len(order) != 2 || order[0] != "1.0" || order[1] != "2.0" {
+		t.Fatalf("delivery order = %v, want [1.0 2.0] — the urgent flush-ahead overtook the older swept batch", order)
+	}
+}
+
+// The take-time acquisition is TryLock, never a blocking Lock: a
+// channel whose delivery mutex is held (a delivery in flight right now)
+// is SKIPPED by the sweep — blocking under c.mu would deadlock against
+// that delivery's failure-path restore and stall every enqueue — and
+// keeps its buffer and armed timer, flushing on its own schedule.
+func TestCoalescerSweepSkipsChannelWithDeliveryInFlight(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(string, []pendingChannelInbound) bool { return true }
+	c.enqueue("C_BUSY", testPending("C_BUSY", "1.0", "buffered behind an in-flight delivery"))
+	c.mu.Lock()
+	busyMu := c.flushMuFor("C_BUSY")
+	c.mu.Unlock()
+	busyMu.Lock() // simulate the in-flight delivery holding the channel
+	defer busyMu.Unlock()
+	c.mu.Lock()
+	swept := c.takeSweepsLocked("C_OTHER")
+	pendingN := len(c.pending["C_BUSY"])
+	_, timerArmed := c.timers["C_BUSY"]
+	c.mu.Unlock()
+	if len(swept) != 0 {
+		t.Fatalf("swept %d channel(s), want 0 — a contended channel must be skipped, not blocked on", len(swept))
+	}
+	if pendingN != 1 || !timerArmed {
+		t.Fatalf("skipped channel: pending=%d timerArmed=%v, want its buffer and timer intact", pendingN, timerArmed)
+	}
+}
+
 // Shutdown drain fixpoint (gp-9e7 fix round 1a/2b): flushAll must wait
 // out an in-flight timer delivery whose batch is detached from the maps
 // — and, when that delivery fails and restores, re-drain it — while a
@@ -750,9 +869,14 @@ func TestCoalescerFlushAllAwaitsSweptDeliveries(t *testing.T) {
 	}
 }
 
-// A delivery that fails every attempt must not spin flushAll forever:
-// the fixpoint loop is bounded and gives up loudly.
-func TestCoalescerFlushAllBoundedWhenDeliveryAlwaysFails(t *testing.T) {
+// A delivery that fails every attempt must not spin flushAll forever —
+// the fixpoint loop is bounded — and the residue at the bound must NOT
+// be dropped (gp-9e7 fix round 2a'): the liveness watermark advanced
+// when these items were ADMITTED, so neither Slack redelivery nor the
+// startup watermark backfill can ever recover them — the spill hook
+// (the durable spool) is their only redelivery path. This replaces the
+// old test that blessed the drop.
+func TestCoalescerFlushAllBoundedAndSpillsResidue(t *testing.T) {
 	c := newInboundCoalescer(time.Hour, nil)
 	var mu sync.Mutex
 	attempts := 0
@@ -762,7 +886,16 @@ func TestCoalescerFlushAllBoundedWhenDeliveryAlwaysFails(t *testing.T) {
 		mu.Unlock()
 		return false
 	}
-	c.enqueue("C1", testPending("C1", "1.0", "doomed"))
+	spilled := map[string][]pendingChannelInbound{}
+	c.spill = func(channel string, batch []pendingChannelInbound) {
+		mu.Lock()
+		spilled[channel] = append(spilled[channel], batch...)
+		mu.Unlock()
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "doomed message"))
+	if !c.admitReaction("C1", testPending("C1", "2.0", "doomed reaction"), false) {
+		t.Fatal("admitReaction refused")
+	}
 	done := make(chan struct{})
 	go func() {
 		c.flushAll()
@@ -774,10 +907,62 @@ func TestCoalescerFlushAllBoundedWhenDeliveryAlwaysFails(t *testing.T) {
 		t.Fatal("flushAll did not terminate under persistent delivery failure")
 	}
 	mu.Lock()
-	n := attempts
-	mu.Unlock()
-	if n < 1 || n > maxFlushAllPasses {
-		t.Fatalf("attempts = %d, want between 1 and %d", n, maxFlushAllPasses)
+	defer mu.Unlock()
+	if attempts < 1 || attempts > maxFlushAllPasses {
+		t.Fatalf("attempts = %d, want between 1 and %d", attempts, maxFlushAllPasses)
+	}
+	got := spilled["C1"]
+	if len(got) != 2 {
+		t.Fatalf("spilled %d item(s), want the doomed message AND reaction: %+v", len(got), got)
+	}
+	byTS := map[string]bool{}
+	for _, p := range got {
+		byTS[p.inbound.ProviderMessageID] = p.reaction
+	}
+	if r, ok := byTS["1.0"]; !ok || r {
+		t.Errorf("message 1.0 spilled=%v reaction=%v, want spilled as a message", ok, r)
+	}
+	if r, ok := byTS["2.0"]; !ok || !r {
+		t.Errorf("reaction 2.0 spilled=%v reaction=%v, want spilled with its reaction flag", ok, r)
+	}
+	c.mu.Lock()
+	pendingN, reactionsN, closed := len(c.pending), len(c.reactions), c.closed
+	c.mu.Unlock()
+	if pendingN != 0 || reactionsN != 0 || !closed {
+		t.Fatalf("after flushAll: pending=%d reactions=%d closed=%v, want empty maps and a closed barrier", pendingN, reactionsN, closed)
+	}
+}
+
+// Admission barrier (gp-9e7 fix round 2b'): once flushAll's final
+// snapshot closes the coalescer, a straggler admission — an event
+// goroutine that outlived main's bounded eventWG wait — must never land
+// in the maps (it would sit past the final snapshot forever); it routes
+// to the spill hook instead, and no timer arms.
+func TestCoalescerClosedAfterFlushAllSpillsLateAdmissions(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(string, []pendingChannelInbound) bool { return true }
+	var mu sync.Mutex
+	spilled := map[string][]pendingChannelInbound{}
+	c.spill = func(channel string, batch []pendingChannelInbound) {
+		mu.Lock()
+		spilled[channel] = append(spilled[channel], batch...)
+		mu.Unlock()
+	}
+	c.flushAll() // empty drain: the barrier closes with the clean verdict
+	c.enqueue("C1", testPending("C1", "1.0", "straggler message"))
+	if !c.admitReaction("C1", testPending("C1", "2.0", "straggler reaction"), false) {
+		t.Fatal("admitReaction refused")
+	}
+	c.mu.Lock()
+	pendingN, reactionsN, timersN := len(c.pending), len(c.reactions), len(c.timers)
+	c.mu.Unlock()
+	if pendingN != 0 || reactionsN != 0 || timersN != 0 {
+		t.Fatalf("post-close admission reached memory: pending=%d reactions=%d timers=%d, want 0/0/0", pendingN, reactionsN, timersN)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(spilled["C1"]) != 2 {
+		t.Fatalf("spilled %d item(s), want both straggler admissions", len(spilled["C1"]))
 	}
 }
 

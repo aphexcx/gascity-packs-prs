@@ -252,6 +252,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unicode"
@@ -727,6 +728,25 @@ type config struct {
 	// Nil-safe: directly-constructed test configs leave it nil and
 	// event goroutines run untracked.
 	eventWG *sync.WaitGroup
+	// draining is the shutdown admission barrier (gp-9e7 fix round
+	// 2b'): main() flips it as shutdown's FIRST act, and
+	// handleSlackEvents then refuses every envelope with 503 BEFORE the
+	// event is acked to Slack OR the liveness watermark advances — the
+	// Events API retry ladder and the un-acked Socket Mode envelope
+	// keep the event server-side, and whatever the ladder gives up on
+	// stays above the watermark for the startup backfill. Nil-safe:
+	// directly-constructed test configs leave it nil (never draining).
+	draining *atomic.Bool
+	// coalesceSpoolPath / inboundSpool back the durable shutdown spool
+	// (gp-9e7 fix round 2a'): coalescer batches that remain
+	// undeliverable at flushAll's retry bound — already acked to Slack,
+	// already below the admission-time watermark, hence invisible to
+	// both Slack redelivery and the startup backfill — are spooled here
+	// and re-buffered at the next startup. SLACK_COALESCE_SPOOL_PATH;
+	// defaults beside the other city-rooted state; explicitly empty
+	// disables spooling (residue is then LOST, logged per channel).
+	coalesceSpoolPath string
+	inboundSpool      *inboundSpool
 }
 
 func loadConfig() (config, error) {
@@ -896,6 +916,13 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.livenessStatePath = strings.TrimSpace(v)
 	} else {
 		cfg.livenessStatePath = defaultLivenessStatePath
+	}
+	// Shutdown spool for admitted-but-undelivered inbounds (gp-9e7 fix
+	// round 2a'). Set-but-empty disables spooling deliberately.
+	if v, ok := lookup("SLACK_COALESCE_SPOOL_PATH"); ok {
+		cfg.coalesceSpoolPath = strings.TrimSpace(v)
+	} else {
+		cfg.coalesceSpoolPath = companyStateDirDefault(cfg.cityPath, "inbound_spool.jsonl")
 	}
 
 	// Company-rooms (Phase 1) registry + ingress paths. The two JSON
@@ -1617,11 +1644,21 @@ func main() {
 	// coalescer (gp-9e7 fix round 1a) — wired before the handlers below
 	// close over the cfg value.
 	cfg.eventWG = &sync.WaitGroup{}
+	// Shutdown admission barrier + durable spool (gp-9e7 fix round
+	// 2a'/2b') — wired before the handlers close over cfg. The spool
+	// receives what the shutdown drain cannot deliver; with no spool
+	// (SLACK_COALESCE_SPOOL_PATH explicitly empty) spill stays nil and
+	// the coalescer logs that residue as LOST instead.
+	cfg.draining = &atomic.Bool{}
+	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
+	if cfg.inboundSpool != nil {
+		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
+	}
 	deliverCfg := cfg
 	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
-	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d", cfg.coalesceWindow, deliveryPolicy.Len())
+	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d spool=%q", cfg.coalesceWindow, deliveryPolicy.Len(), cfg.coalesceSpoolPath)
 
 	// Public mux: only /slack/events + /slack/interactions
 	// (HMAC-verified) and /healthz. Bound to 0.0.0.0 by default so
@@ -1693,6 +1730,17 @@ func main() {
 		}
 		log.Printf("registered with gc as provider=%s account=%s callback=%s/publish (%s)",
 			cfg.provider, cfg.accountID, cfg.internalCallbackURL, mode)
+	}
+
+	// Replay the previous shutdown's spool (gp-9e7 fix round 2a'):
+	// batches that shutdown could not deliver re-enter the coalescer's
+	// normal buffers — messages deliver on the coalesce window's timer,
+	// reactions rejoin the no-wake side lane. The watermark advanced at
+	// their ADMISSION, so the startup watermark backfill can never
+	// re-fetch these; the spool is their only redelivery path. Runs
+	// before the listeners start, after gc registration.
+	if n := cfg.inboundSpool.replayInto(cfg.coalescer); n > 0 {
+		log.Printf("inbound spool: re-buffered %d item(s) the previous shutdown could not deliver", n)
 	}
 
 	janitorCtx, janitorCancel := context.WithCancel(context.Background())
@@ -1800,6 +1848,17 @@ func main() {
 			log.Printf("listener error: %v", err)
 		}
 	}
+	// 0. Admission barrier FIRST (gp-9e7 fix round 2b'): from here every
+	//    event envelope is refused with 503 BEFORE it is acked to Slack
+	//    or advances the liveness watermark — on the Events API the
+	//    retry ladder redelivers (and whatever it gives up on stays
+	//    above the watermark for the startup backfill); on Socket Mode
+	//    the 503 leaves the envelope un-acked, same effect. The bounded
+	//    waits below (socket stop, eventWG) therefore only govern events
+	//    admitted BEFORE this flip, and any straggler outliving them
+	//    hits the coalescer's post-drain closed gate and spools instead
+	//    of being lost.
+	cfg.draining.Store(true)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = publicSrv.Shutdown(ctx)
@@ -1808,8 +1867,8 @@ func main() {
 	// event source, then await the detached event goroutines those
 	// sources spawned — each can still admit messages/reactions to the
 	// coalescer — and only then drain the buffers. An admission landing
-	// after the drain would be permanently lost on exit: Slack got its
-	// 200 long ago and will never redeliver.
+	// after the drain would otherwise be permanently lost on exit: Slack
+	// got its 200 long ago and will never redeliver.
 	//
 	// 1. HTTP listeners are down (Shutdown above waits for in-flight
 	//    handlers, whose eventWG.Add precedes their return).
@@ -1831,13 +1890,17 @@ func main() {
 	// 3. Await the detached per-event goroutines (bounded: every path
 	//    through processSlackEvent concludes on gc-forward timeouts).
 	if !awaitWaitGroup(cfg.eventWG, shutdownEventDrainTimeout) {
-		log.Printf("shutdown: in-flight event goroutines still running after %s — proceeding to coalescer drain", shutdownEventDrainTimeout)
+		log.Printf("shutdown: in-flight event goroutines still running after %s — proceeding to coalescer drain (a straggler admission lands in the spool via the closed gate, not in memory)", shutdownEventDrainTimeout)
 	}
 	// 4. Buffered coalesced messages were already acked to Slack — drain
 	//    them to gc (to a fixpoint: flushAll also waits out in-flight
 	//    timer/swept deliveries and re-drains what failed ones restore)
 	//    so a normal shutdown never loses a window's worth of chatter
-	//    (gp-729; fixpoint per gp-9e7 fix round 1a/2b).
+	//    (gp-729; fixpoint per gp-9e7 fix round 1a/2b). flushAll closes
+	//    admission atomically with its final snapshot and spools any
+	//    undeliverable residue for startup replay (fix round 2a'/2b') —
+	//    the watermark advanced at admission, so nothing else could
+	//    ever redeliver it.
 	cfg.coalescer.flushAll()
 }
 
@@ -2763,6 +2826,18 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// Shutdown admission barrier (gp-9e7 fix round 2b'): refuse the
+		// event BEFORE it is acked to Slack and BEFORE the liveness
+		// watermark advances (noteInboundEnvelope below), so the event
+		// stays recoverable server-side — the Events API retry ladder /
+		// un-acked Socket Mode envelope redelivers it, and anything the
+		// ladder gives up on remains above the persisted watermark for
+		// the startup backfill. An admission after this point rides the
+		// eventWG/closed-gate machinery instead.
+		if cfg.draining != nil && cfg.draining.Load() {
+			http.Error(w, "shutting down", http.StatusServiceUnavailable)
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))

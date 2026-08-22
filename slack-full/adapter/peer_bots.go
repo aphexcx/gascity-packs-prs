@@ -537,6 +537,18 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	}
 
 	if !matched {
+		// Re-match with the RESOLVED app id (gp-bhq D): an app_id-only
+		// entry can never match a sparse event — one carrying neither
+		// app_id nor bot_profile.app_id on the wire — but bots.info just
+		// resolved the author's real app id, and the corroboration
+		// checks above proved the event contradicts nothing about it.
+		// Without this the peer silently degrades to an unknown bot,
+		// losing its label and its wake / immediate_channels grant.
+		// Deliberately AFTER the fail-closed self-guard: an author that
+		// cannot be proven not-self never reaches any match.
+		entry, matched = cfg.peerBots.matchPeer(botID, info.AppID)
+	}
+	if !matched {
 		entry, matched = cfg.peerBots.matchPeerByBotUserID(info.UserID)
 	}
 	if matched {

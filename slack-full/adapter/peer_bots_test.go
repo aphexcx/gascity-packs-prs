@@ -817,6 +817,66 @@ func TestPeerBot_WakeEntryForwardsImmediately(t *testing.T) {
 	}
 }
 
+// gp-bhq (D): an app_id-only allowlist entry can never match a SPARSE
+// event (one carrying neither app_id nor bot_profile.app_id on the
+// wire), but once bots.info resolves the author, the allowlist must be
+// re-matched with the RESOLVED app id — otherwise the configured peer
+// silently degrades to an unknown bot, losing its label and its
+// wake grant.
+func TestPeerBot_AppIDOnlyEntryRematchesViaResolvedAppID(t *testing.T) {
+	capture := &inboundCapture{}
+	gcStub := httptest.NewServer(capture.handler())
+	t.Cleanup(gcStub.Close)
+
+	cfg := peerTestConfig(gcStub.URL,
+		newTestPeerBotsRegistry(t, `{"peers": [{"label": "citadel", "app_id": "A_CITADEL", "wake": true}]}`),
+		citadelResolver())
+	// Sparse event: bot_id only — no app_id, no bot_profile anywhere.
+	env := peerBotEnvelope(t, "message", "Ev1", "C1", "100.1", "", "handoff ready", peerTestPeerBotID, "")
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
+
+	msgs := capture.snapshot()
+	if len(msgs) != 1 {
+		t.Fatalf("captured %d inbounds, want 1 — the resolved-app_id re-match must keep the wake grant", len(msgs))
+	}
+	if msgs[0].Actor.DisplayName != "peer-bot citadel" {
+		t.Errorf("Actor.DisplayName = %q, want the allowlist label, not an unknown-bot fallback", msgs[0].Actor.DisplayName)
+	}
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Errorf("wake peer also buffered %d item(s)", len(items))
+	}
+}
+
+// The resolved-app_id re-match runs only AFTER not-self is proven: the
+// same sparse event with NO comparable self identity (no envelope
+// authorizations or api_app_id, no SLACK_APP_ID, no switchboard bot
+// user id) must still drop fail-closed — never wake, never buffer.
+func TestPeerBot_AppIDOnlyRematchNeverBypassesSelfProof(t *testing.T) {
+	capture := &inboundCapture{}
+	gcStub := httptest.NewServer(capture.handler())
+	t.Cleanup(gcStub.Close)
+
+	cfg := peerTestConfig(gcStub.URL,
+		newTestPeerBotsRegistry(t, `{"peers": [{"label": "citadel", "app_id": "A_CITADEL", "wake": true}]}`),
+		citadelResolver())
+	rawMsg, err := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", BotID: peerTestPeerBotID, TS: "100.1", Text: "handoff ready",
+	})
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	// No Authorizations, no APIAppID: nothing to prove not-self against.
+	env := slackEventEnvelope{Type: "event_callback", EventID: "Ev1", Event: rawMsg}
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
+
+	if msgs := capture.snapshot(); len(msgs) != 0 {
+		t.Fatalf("forwarded %d inbounds, want 0 — self-proof failure must drop before any allowlist match", len(msgs))
+	}
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatalf("buffered %d item(s), want 0 — self-proof failure must drop fail-closed", len(items))
+	}
+}
+
 func TestFormatPeerContextBlockTruncatesLongPosts(t *testing.T) {
 	long := strings.Repeat("x", maxPeerContextItemChars+50)
 	block := formatPeerContextBlock([]peerContextItem{{Label: "p", Channel: "C1", TS: "1", Text: long}}, 0)

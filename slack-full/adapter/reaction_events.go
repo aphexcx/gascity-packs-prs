@@ -114,18 +114,35 @@ const reactionTargetFetchLimit = 3
 // own epoch seconds, so the bound needs no outbound-history tracking.
 const founderAckRecency = 15 * time.Minute
 
+// slackTSMaxFutureSkew is the only future-ness slackTSWithin tolerates:
+// small producer/consumer clock skew is real, but a ts further in the
+// future than this is malformed or forged input, not a recent message
+// — fail closed (gp-bhq E).
+const slackTSMaxFutureSkew = time.Minute
+
 // slackTSWithin reports whether ts — a Slack "seconds.sequence"
-// message id — is at most maxAge old at now. Unparseable input is
-// false: fail closed to the plain no-wake buffer, never to the
-// founder-ack exception. Small negative ages (producer/consumer clock
-// skew) count as recent.
+// message id — is at most maxAge old at now. Fail closed to the plain
+// no-wake buffer, never to the founder-ack exception (gp-bhq E): the
+// ts must be well-formed end to end — a "." separator with a numeric,
+// non-empty fraction and positive seconds — and at most
+// slackTSMaxFutureSkew in the future; anything else is false.
 func slackTSWithin(ts string, maxAge time.Duration, now time.Time) bool {
-	head, _, _ := strings.Cut(ts, ".")
+	head, frac, ok := strings.Cut(ts, ".")
+	if !ok || head == "" || frac == "" {
+		return false
+	}
 	sec, err := strconv.ParseInt(head, 10, 64)
 	if err != nil || sec <= 0 {
 		return false
 	}
-	return now.Sub(time.Unix(sec, 0)) <= maxAge
+	if _, err := strconv.ParseUint(frac, 10, 64); err != nil {
+		return false
+	}
+	age := now.Sub(time.Unix(sec, 0))
+	if age < -slackTSMaxFutureSkew {
+		return false
+	}
+	return age <= maxAge
 }
 
 // maybeDeliverReactionEvent is the sole handler for

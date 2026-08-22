@@ -4474,6 +4474,98 @@ func TestHandleSlackEventsTracksGoroutinesForShutdownAwait(t *testing.T) {
 	}
 }
 
+// Shutdown admission barrier (gp-9e7 fix round 2b'): with draining
+// flipped, handleSlackEvents refuses the event with 503 BEFORE anything
+// acknowledges it — no 200 to Slack (the Events API retry ladder / the
+// un-acked Socket Mode envelope redelivers it), no event goroutine, no
+// coalescer admission, and crucially NO liveness-watermark advance, so
+// whatever the retry ladder gives up on stays visible to the startup
+// watermark backfill.
+func TestHandleSlackEventsDrainingRefusesPreAck(t *testing.T) {
+	var inboundHits int32
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&inboundHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+
+	draining := &atomic.Bool{}
+	draining.Store(true)
+	liveness := newInboundLiveness(config{}, nil)
+	cfg := config{
+		gcAPIBase:       gcStub.URL,
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+		draining:        draining,
+		inboundLiveness: liveness,
+		coalescer:       newInboundCoalescer(time.Hour, nil),
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "9.0", Text: "hi",
+	})
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", EventID: "EvDrain1", Event: rawMsg})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (the event must NOT be acknowledged while draining)", got)
+	}
+	// The refusal happened before liveness bookkeeping: the watermark /
+	// last-inbound clock must not move, or the startup backfill would
+	// skip the refused event.
+	liveness.mu.Lock()
+	last := liveness.lastInboundAt
+	channels := len(liveness.channels)
+	liveness.mu.Unlock()
+	if !last.IsZero() || channels != 0 {
+		t.Fatalf("liveness advanced for a refused event (last_inbound=%v channels=%d) — the startup backfill would skip it", last, channels)
+	}
+	// No event goroutine was spawned and nothing reached gc.
+	if !awaitWaitGroup(cfg.eventWG, time.Second) {
+		t.Fatal("eventWG busy — a refused event spawned a processing goroutine")
+	}
+	if got := atomic.LoadInt32(&inboundHits); got != 0 {
+		t.Fatalf("inbound POSTs = %d, want 0", got)
+	}
+	cfg.coalescer.mu.Lock()
+	pendingN := len(cfg.coalescer.pending)
+	cfg.coalescer.mu.Unlock()
+	if pendingN != 0 {
+		t.Fatalf("coalescer admitted %d channel(s) for a refused event", pendingN)
+	}
+
+	// Barrier down: the same event is admitted normally.
+	draining.Store(false)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req2.Header.Set("X-Slack-Request-Timestamp", ts)
+	req2.Header.Set("X-Slack-Signature", sig)
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w2, req2)
+	if got := w2.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("status after barrier lift = %d, want 200", got)
+	}
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("event goroutine did not settle after the barrier lift")
+	}
+	liveness.mu.Lock()
+	last = liveness.lastInboundAt
+	liveness.mu.Unlock()
+	if last.IsZero() {
+		t.Fatal("liveness did not advance for the admitted event")
+	}
+}
+
 func TestAwaitWaitGroupNilAndTimeout(t *testing.T) {
 	if !awaitWaitGroup(nil, time.Millisecond) {
 		t.Error("nil WaitGroup must report settled")
