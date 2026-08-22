@@ -719,6 +719,14 @@ type config struct {
 	// turn-dedup (item 5). Nil-safe: nil preserves the historical
 	// double-dispatch behavior.
 	bindingCheck *bindingCheckCache
+	// eventWG tracks the detached per-event processing goroutines
+	// spawned by handleSlackEvents so shutdown can await them BEFORE
+	// draining the coalescer: an event still in flight when flushAll
+	// runs could admit a message or reaction to the buffers after the
+	// drain, losing it permanently on exit (gp-9e7 fix round 1a).
+	// Nil-safe: directly-constructed test configs leave it nil and
+	// event goroutines run untracked.
+	eventWG *sync.WaitGroup
 }
 
 func loadConfig() (config, error) {
@@ -1605,6 +1613,10 @@ func main() {
 	cfg.replyHelp = newOncePerChannel()
 	cfg.bindingCheck = newBindingCheckCache()
 	cfg.coalescer = newInboundCoalescer(cfg.coalesceWindow, deliveryPolicy)
+	// Shutdown must await in-flight event goroutines before draining the
+	// coalescer (gp-9e7 fix round 1a) — wired before the handlers below
+	// close over the cfg value.
+	cfg.eventWG = &sync.WaitGroup{}
 	deliverCfg := cfg
 	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
@@ -1693,13 +1705,25 @@ func main() {
 	// listener; Slack routes each app's events to exactly one of the two
 	// per the app's "Socket Mode" toggle, so the operator's cutover is a
 	// UI flip with the HTTP path kept for rollback.
+	// The socket transport gets its own context + done channel so
+	// shutdown can stop envelope intake and wait for in-flight envelope
+	// handlers BEFORE the coalescer drain (gp-9e7 fix round 1a): the
+	// janitor context is cancelled only by main's deferred cancel, which
+	// runs after flushAll — too late to stop admissions into the drain.
+	socketCtx, socketCancel := context.WithCancel(context.Background())
+	defer socketCancel()
+	socketDone := make(chan struct{})
 	var socketRunner *socketModeRunner
 	if socketModeEnabled(cfg) {
 		socketRunner = newSocketModeRunner(cfg, eventsHandler, interactionsHandler, cfg.inboundLiveness)
 		socketModeHealth.Store(socketRunner)
 		log.Printf("socket mode: enabled (policy=%s) — dialing Slack with the app-level token; Events API listener stays up for rollback/other apps", cfg.socketMode)
-		go socketRunner.run(janitorCtx)
+		go func() {
+			defer close(socketDone)
+			socketRunner.run(socketCtx)
+		}()
 	} else {
+		close(socketDone)
 		log.Printf("socket mode: disabled (policy=%s app_token_set=%v) — inbound relies on the Events API Request URL", cfg.socketMode, cfg.slackAppToken != "")
 	}
 
@@ -1780,10 +1804,71 @@ func main() {
 	defer cancel()
 	_ = publicSrv.Shutdown(ctx)
 	_ = internalSrv.Shutdown(ctx)
-	// Buffered coalesced messages were already acked to Slack — drain
-	// them to gc before exiting so a normal shutdown never loses a
-	// window's worth of chatter (gp-729).
+	// Loss-safe drain ordering (gp-9e7 fix round 1a): first stop every
+	// event source, then await the detached event goroutines those
+	// sources spawned — each can still admit messages/reactions to the
+	// coalescer — and only then drain the buffers. An admission landing
+	// after the drain would be permanently lost on exit: Slack got its
+	// 200 long ago and will never redeliver.
+	//
+	// 1. HTTP listeners are down (Shutdown above waits for in-flight
+	//    handlers, whose eventWG.Add precedes their return).
+	// 2. Socket Mode: cancel its context and wait for run() — which
+	//    itself awaits its in-flight envelope handlers — so no new
+	//    envelope reaches handleSlackEvents after this point. The
+	//    janitors stop with it: the liveness watchdog can inject
+	//    backfill events through the same handler, and a backfill
+	//    starting during the drain would race the loss-safety this
+	//    ordering exists for (the deferred cancel ran only after
+	//    flushAll).
+	janitorCancel()
+	socketCancel()
+	select {
+	case <-socketDone:
+	case <-time.After(shutdownSocketStopTimeout):
+		log.Printf("shutdown: socket mode runner still stopping after %s — proceeding", shutdownSocketStopTimeout)
+	}
+	// 3. Await the detached per-event goroutines (bounded: every path
+	//    through processSlackEvent concludes on gc-forward timeouts).
+	if !awaitWaitGroup(cfg.eventWG, shutdownEventDrainTimeout) {
+		log.Printf("shutdown: in-flight event goroutines still running after %s — proceeding to coalescer drain", shutdownEventDrainTimeout)
+	}
+	// 4. Buffered coalesced messages were already acked to Slack — drain
+	//    them to gc (to a fixpoint: flushAll also waits out in-flight
+	//    timer/swept deliveries and re-drains what failed ones restore)
+	//    so a normal shutdown never loses a window's worth of chatter
+	//    (gp-729; fixpoint per gp-9e7 fix round 1a/2b).
 	cfg.coalescer.flushAll()
+}
+
+// shutdownSocketStopTimeout bounds the wait for the Socket Mode runner
+// to stop consuming envelopes at shutdown; shutdownEventDrainTimeout
+// bounds the wait for detached event goroutines. Both are backstops —
+// the underlying work concludes on its own gc/Slack HTTP timeouts —
+// so a wedged dependency degrades to today's best-effort exit instead
+// of hanging the process.
+const (
+	shutdownSocketStopTimeout = 10 * time.Second
+	shutdownEventDrainTimeout = 20 * time.Second
+)
+
+// awaitWaitGroup waits for wg with a timeout; true when the group
+// settled, false on timeout (or trivially true on a nil group).
+func awaitWaitGroup(wg *sync.WaitGroup, timeout time.Duration) bool {
+	if wg == nil {
+		return true
+	}
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 // listenUDS binds a Unix domain socket at path, removing any stale entry
@@ -2816,7 +2901,19 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// cfg.dispatchSem when an inbound triggers an alias dispatch (which
 		// would otherwise hold two slots concurrently — see gc-cby.26
 		// Phase 4 review fix). The drop paths below release explicitly.
+		// Tracked in cfg.eventWG so shutdown can await every detached
+		// event goroutine before the coalescer drain — an event still
+		// running there can admit to the buffers, and an admission after
+		// flushAll would be lost on exit (gp-9e7 fix round 1a). Add
+		// happens in the handler, before the 200 concludes, so once the
+		// listeners' Shutdown returns the WaitGroup covers every spawn.
+		if cfg.eventWG != nil {
+			cfg.eventWG.Add(1)
+		}
 		go func() {
+			if cfg.eventWG != nil {
+				defer cfg.eventWG.Done()
+			}
 			ownsSlot := release != nil
 			for !proceed {
 				for parked := true; parked; {
@@ -3492,6 +3589,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// skipChannelPost twin still flushes pending chatter ahead (ordering
 	// holds for its alias leg); its same-ts withheld copies are already
 	// delivered by the committed twin, so they simply drop.
+	//
+	// Buffered no-wake reactions do NOT deliver here (gp-9e7 fix round
+	// 1b): a take with no real message in it stays in the side-buffer —
+	// this message's own POST can be skipped (skipChannelPost) or fail,
+	// and a reaction batch posted ahead of it would then be the only
+	// inbound: a solo reaction wake. They drain via
+	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
@@ -3572,6 +3676,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// so sticky thread replies dedup their preambles too.
 			cfg.deliveredIDs.record(target, msg.Channel, msg.TS)
 		}
+		// Buffered no-wake reactions piggyback on this committed
+		// delivery's wake (gp-9e7 fix round 1b): drained only AFTER the
+		// real POST succeeded, so a failed or skipped delivery leaves
+		// them in the side-buffer for the channel's next real moment.
+		cfg.coalescer.deliverBufferedReactions(msg.Channel)
 	}
 
 	// Busy-reaction lifecycle, add side: fires once per inbound (the

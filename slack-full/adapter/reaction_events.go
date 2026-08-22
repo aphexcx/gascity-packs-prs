@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -47,11 +48,12 @@ import (
 // the reaction feature is a token regression): every surviving
 // reaction, rooms and DMs alike, buffers in the coalescer's no-wake
 // side lane and piggybacks on the channel's next real delivery — a
-// coalesce window armed by messages, the flush-ahead of an urgent or
-// DM inbound, or shutdown's drain. Exception: a reaction ON one of the
-// adapter's own outbound messages (item_user == our bot — the founder
-// acking a post) may ride a coalesce window that is ALREADY armed; it
-// still never arms one itself. Admission is final handling and the
+// coalesce window armed by messages, the reaction drain behind an
+// urgent or DM inbound's committed delivery, or shutdown's drain.
+// Exception: a reaction ON one of the adapter's own RECENT outbound
+// messages (item_user == our bot, target ts within founderAckRecency —
+// the founder acking a just-made post) may ride a coalesce window that
+// is ALREADY armed; it still never arms one itself. Admission is final handling and the
 // dedup claim commits either way, so a Slack redelivery cannot
 // double-deliver; a failed batch flush restores the entry to the
 // side-buffer for the next piggyback. Only a nil coalescer (bare test
@@ -101,6 +103,30 @@ const reactionTargetFetchTimeout = 4 * time.Second
 // reply ts anchors at itself on current Slack behavior) — a small
 // margin covers surface variance without paying for a real page.
 const reactionTargetFetchLimit = 3
+
+// founderAckRecency bounds how old the adapter's own reacted-to message
+// may be for the reaction to count as a founder ack — the design's
+// "reaction on our own RECENT message" (gp-9e7 item 1; enforcement
+// added in the fix round, 1c). The ride-armed-window privilege exists
+// for a human acking a post the adapter JUST made; a reaction on an
+// arbitrarily old bot post is ordinary reaction traffic and must take
+// the plain no-wake side-buffer. Slack message ts values carry their
+// own epoch seconds, so the bound needs no outbound-history tracking.
+const founderAckRecency = 15 * time.Minute
+
+// slackTSWithin reports whether ts — a Slack "seconds.sequence"
+// message id — is at most maxAge old at now. Unparseable input is
+// false: fail closed to the plain no-wake buffer, never to the
+// founder-ack exception. Small negative ages (producer/consumer clock
+// skew) count as recent.
+func slackTSWithin(ts string, maxAge time.Duration, now time.Time) bool {
+	head, _, _ := strings.Cut(ts, ".")
+	sec, err := strconv.ParseInt(head, 10, 64)
+	if err != nil || sec <= 0 {
+		return false
+	}
+	return now.Sub(time.Unix(sec, 0)) <= maxAge
+}
 
 // maybeDeliverReactionEvent is the sole handler for
 // reaction_added/reaction_removed events (gp-by3). It either forwards
@@ -164,11 +190,15 @@ func maybeDeliverReactionEvent(cfg config, env slackEventEnvelope) {
 
 	// No-wake buffering (gp-9e7 item 1): rooms and DMs alike, coalescing
 	// enabled or not. ownTarget marks a reaction on one of the adapter's
-	// own outbound posts — the founder-ack case allowed to ride an
-	// ALREADY-armed coalesce window (it never arms one).
+	// own RECENT outbound posts — the founder-ack case allowed to ride
+	// an ALREADY-armed coalesce window (it never arms one). Recency is
+	// part of the definition (fix round 1c): a reaction on an
+	// arbitrarily old bot post is ordinary traffic, not an ack of a
+	// just-made post, and takes the plain side-buffer.
 	ownTarget := ev.ItemUser != "" &&
 		((env.botUserID() != "" && ev.ItemUser == env.botUserID()) ||
-			(cfg.companySelfBotUserID != "" && ev.ItemUser == cfg.companySelfBotUserID))
+			(cfg.companySelfBotUserID != "" && ev.ItemUser == cfg.companySelfBotUserID)) &&
+		slackTSWithin(ev.Item.TS, founderAckRecency, time.Now())
 	if cfg.coalescer.admitReaction(ev.Item.Channel, pendingChannelInbound{inbound: inbound}, ownTarget) {
 		log.Printf("reaction: buffered %s %q by %s chan=%s target_ts=%s own_target=%v (delivers with next real inbound)",
 			ev.Type, ev.Reaction, ev.User, ev.Item.Channel, ev.Item.TS, ownTarget)

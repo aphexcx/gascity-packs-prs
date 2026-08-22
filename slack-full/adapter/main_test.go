@@ -4417,6 +4417,78 @@ func TestHandleSlackEventsDropsWhenSemaphoreFull(t *testing.T) {
 	}
 }
 
+// Shutdown loss-safety (gp-9e7 fix round 1a): the detached per-event
+// goroutine handleSlackEvents spawns is tracked in cfg.eventWG — with
+// Add BEFORE the handler returns its 200 — so main's shutdown can await
+// every in-flight event before draining the coalescer. An event still
+// running during flushAll could admit a message or reaction to the
+// buffers after the drain, losing it permanently on exit.
+func TestHandleSlackEventsTracksGoroutinesForShutdownAwait(t *testing.T) {
+	release := make(chan struct{})
+	var inboundHits int32
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		<-release // hold the event goroutine "in flight" past the handler's return
+		atomic.AddInt32(&inboundHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+
+	cfg := config{
+		gcAPIBase:       gcStub.URL,
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "D0DM", User: "U1", TS: "1.0", Text: "hi",
+	})
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", EventID: "EvWG1", Event: rawMsg})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+
+	// The handler has returned but the event goroutine is parked inside
+	// its gc forward: the shutdown await must NOT report settled.
+	if awaitWaitGroup(cfg.eventWG, 100*time.Millisecond) {
+		t.Fatal("awaitWaitGroup reported settled while an event goroutine was still in flight")
+	}
+	close(release)
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("awaitWaitGroup did not settle after the event goroutine finished")
+	}
+	if got := atomic.LoadInt32(&inboundHits); got != 1 {
+		t.Fatalf("inbound POSTs = %d, want 1", got)
+	}
+}
+
+func TestAwaitWaitGroupNilAndTimeout(t *testing.T) {
+	if !awaitWaitGroup(nil, time.Millisecond) {
+		t.Error("nil WaitGroup must report settled")
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	if awaitWaitGroup(wg, 50*time.Millisecond) {
+		t.Error("held WaitGroup must time out")
+	}
+	wg.Done()
+	if !awaitWaitGroup(wg, time.Second) {
+		t.Error("settled WaitGroup must report settled")
+	}
+}
+
 // newTestHandleAliasRegistry builds an isolated handle-alias registry
 // in a tmpdir for tests that need one.
 func newTestHandleAliasRegistry(t *testing.T) *handleAliasRegistry {

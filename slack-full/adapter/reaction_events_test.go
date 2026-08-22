@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -307,8 +308,12 @@ func TestReaction_BuffersNoWakeInRooms(t *testing.T) {
 	}
 }
 
-// DMs buffer too now — the reaction piggybacks on the next DM inbound's
-// flush-ahead instead of waking the session by itself.
+// DMs buffer too now — the reaction piggybacks BEHIND the next DM
+// inbound's committed delivery (deliverBufferedReactions) instead of
+// waking the session by itself; the flush-ahead of that inbound leaves
+// a reactions-only side lane untouched (gp-9e7 fix round 1b: the real
+// POST can be skipped or fail, and a reaction batch posted ahead of it
+// would be a solo reaction wake).
 func TestReaction_DMBuffersNoWake(t *testing.T) {
 	capture := &inboundCapture{}
 	gcStub := httptest.NewServer(capture.handler())
@@ -325,13 +330,19 @@ func TestReaction_DMBuffersNoWake(t *testing.T) {
 	if msgs := capture.snapshot(); len(msgs) != 0 {
 		t.Fatalf("DM reaction posted immediately: %d inbounds, want 0 (no-wake buffer)", len(msgs))
 	}
+	// The DM inbound's flush-ahead finds only reactions: nothing posts.
 	got := cfg.coalescer.flushAheadOf("D1", "")
 	if len(got) != 0 {
 		t.Fatalf("withheld = %+v, want none", got)
 	}
+	if msgs := capture.snapshot(); len(msgs) != 0 {
+		t.Fatalf("reactions-only flush-ahead posted %d inbounds, want 0 (solo reaction wake)", len(msgs))
+	}
+	// The DM inbound's own POST committed: the drain rides its wake.
+	cfg.coalescer.deliverBufferedReactions("D1")
 	msgs := capture.snapshot()
 	if len(msgs) != 1 {
-		t.Fatalf("flush-ahead delivered %d inbounds, want the buffered reaction", len(msgs))
+		t.Fatalf("reaction drain delivered %d inbounds, want the buffered reaction", len(msgs))
 	}
 	if msgs[0].Conversation.Kind != "dm" || msgs[0].DedupKey != "slack-reaction-Ev1" {
 		t.Errorf("delivered = kind %q dedup %q", msgs[0].Conversation.Kind, msgs[0].DedupKey)
@@ -361,9 +372,10 @@ func TestReaction_BuffersEvenWithCoalescingDisabled(t *testing.T) {
 	}
 }
 
-// Founder-ack exception: a reaction ON one of the adapter's own
+// Founder-ack exception: a reaction ON one of the adapter's own RECENT
 // outbound messages may ride an ALREADY-armed coalesce window — and
-// only an already-armed one; without a window it buffers no-wake.
+// only an already-armed one; without a window it buffers no-wake, and
+// a stale target (gp-9e7 fix round 1c) buffers no-wake regardless.
 func TestReaction_OwnOutboundTargetRidesArmedWindow(t *testing.T) {
 	capture := &inboundCapture{}
 	gcStub := httptest.NewServer(capture.handler())
@@ -371,9 +383,13 @@ func TestReaction_OwnOutboundTargetRidesArmedWindow(t *testing.T) {
 
 	cfg := reactionTestConfig(gcStub.URL)
 	cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+	// A "just posted" own-message ts: the founder-ack recency window
+	// admits it (1c); the literal "50.1"/"100.0" ts elsewhere in these
+	// tests parse as 1970 and are deliberately stale.
+	freshTS := fmt.Sprintf("%d.000100", time.Now().Unix())
 
-	// No armed window: even an own-target reaction buffers no-wake.
-	envCold := reactionEnvelope(t, "reaction_added", "Ev1", "C1", "50.1", reactionTestReactor, "+1", reactionTestOwnBotUserID)
+	// No armed window: even a recent own-target reaction buffers no-wake.
+	envCold := reactionEnvelope(t, "reaction_added", "Ev1", "C1", freshTS, reactionTestReactor, "+1", reactionTestOwnBotUserID)
 	runReactionEvent(t, cfg, envCold)
 	cfg.coalescer.mu.Lock()
 	if _, armed := cfg.coalescer.timers["C1"]; armed {
@@ -386,10 +402,10 @@ func TestReaction_OwnOutboundTargetRidesArmedWindow(t *testing.T) {
 	}
 	cfg.coalescer.mu.Unlock()
 
-	// Armed window (a real message is buffering): the own-target
+	// Armed window (a real message is buffering): the recent own-target
 	// reaction joins the pending batch and delivers with it.
 	cfg.coalescer.enqueue("C1", testPending("C1", "100.0", "chatter"))
-	envWarm := reactionEnvelope(t, "reaction_added", "Ev2", "C1", "100.0", reactionTestReactor, "tada", reactionTestOwnBotUserID)
+	envWarm := reactionEnvelope(t, "reaction_added", "Ev2", "C1", freshTS, reactionTestReactor, "tada", reactionTestOwnBotUserID)
 	runReactionEvent(t, cfg, envWarm)
 	cfg.coalescer.mu.Lock()
 	pendingN := len(cfg.coalescer.pending["C1"])
@@ -407,6 +423,58 @@ func TestReaction_OwnOutboundTargetRidesArmedWindow(t *testing.T) {
 	cfg.coalescer.mu.Unlock()
 	if pendingN != 2 || reactionsN != 2 {
 		t.Fatalf("pending=%d reactions=%d, want 2/2 (other-target reaction stays in the side lane)", pendingN, reactionsN)
+	}
+}
+
+// Founder-ack recency (gp-9e7 fix round 1c): a reaction on an
+// arbitrarily OLD own post is ordinary reaction traffic — it must not
+// ride an armed window, whatever its item_user says. The design's
+// exception is "reaction on our own RECENT message".
+func TestReaction_OwnTargetStaleNeverRides(t *testing.T) {
+	capture := &inboundCapture{}
+	gcStub := httptest.NewServer(capture.handler())
+	t.Cleanup(gcStub.Close)
+
+	cfg := reactionTestConfig(gcStub.URL)
+	cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+	cfg.coalescer.enqueue("C1", testPending("C1", "100.0", "chatter")) // window armed
+
+	staleTS := fmt.Sprintf("%d.000100", time.Now().Add(-2*founderAckRecency).Unix())
+	envStale := reactionEnvelope(t, "reaction_added", "Ev1", "C1", staleTS, reactionTestReactor, "+1", reactionTestOwnBotUserID)
+	runReactionEvent(t, cfg, envStale)
+
+	// Unparseable target ts fails closed to the side lane too.
+	envBadTS := reactionEnvelope(t, "reaction_added", "Ev2", "C1", "not-a-ts", reactionTestReactor, "+1", reactionTestOwnBotUserID)
+	runReactionEvent(t, cfg, envBadTS)
+
+	cfg.coalescer.mu.Lock()
+	pendingN := len(cfg.coalescer.pending["C1"])
+	reactionsN := len(cfg.coalescer.reactions["C1"])
+	cfg.coalescer.mu.Unlock()
+	if pendingN != 1 || reactionsN != 2 {
+		t.Fatalf("pending=%d reactions=%d, want 1/2 (stale/unparseable own-target reactions stay in the side lane)", pendingN, reactionsN)
+	}
+}
+
+func TestSlackTSWithin(t *testing.T) {
+	now := time.Unix(1_787_000_000, 0)
+	fresh := fmt.Sprintf("%d.000100", now.Add(-time.Minute).Unix())
+	stale := fmt.Sprintf("%d.000100", now.Add(-founderAckRecency-time.Minute).Unix())
+	future := fmt.Sprintf("%d.000100", now.Add(time.Minute).Unix())
+	for _, tc := range []struct {
+		ts   string
+		want bool
+	}{
+		{fresh, true},
+		{stale, false},
+		{future, true}, // small clock skew counts as recent
+		{"", false},
+		{"not-a-ts", false},
+		{"0.000100", false},
+	} {
+		if got := slackTSWithin(tc.ts, founderAckRecency, now); got != tc.want {
+			t.Errorf("slackTSWithin(%q) = %v, want %v", tc.ts, got, tc.want)
+		}
 	}
 }
 

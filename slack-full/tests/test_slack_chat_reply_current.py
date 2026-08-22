@@ -795,11 +795,78 @@ def test_company_synthesis_gate_refuses_then_allow_partial_passes(
     assert captured == []
     capsys.readouterr()  # drain
 
-    # With --allow-partial it posts and the report carries allow_partial.
-    assert rc.main(["--body", "partial", "--allow-partial"]) == 0
+    # With --allow-partial it posts; the full report (which records
+    # allow_partial) prints under --verbose — the default is the terse
+    # receipt, same contract as the legacy path (gp-9e7 item 4, 4a).
+    assert rc.main(["--body", "partial", "--allow-partial", "--verbose"]) == 0
     assert len(captured) == 1
     printed = json.loads(capsys.readouterr().out)
     assert printed["allow_partial"] is True
+
+
+def test_company_turn_terse_receipt_default_verbose_full(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture) -> None:
+    """gp-9e7 item 4 fix round (4a): the company-turn path follows the
+    same terse-default / --verbose-full receipt contract as the legacy
+    path — the default stdout carries delivered + conversation_id (+
+    message_id / thread_ts), and --verbose restores the full company
+    report."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    _write_turn(outbound, session="ollie-main", kind="ambient", agent="ollie",
+                ts="1700000000.000500")
+    monkeypatch.setenv("GC_SESSION_NAME", "ollie-main")
+    monkeypatch.setattr(outbound, "_slack_web_post",
+                        lambda *a, **k: (200, {}, {"ok": True, "ts": "1700000000.000800"}))
+
+    assert rc.main(["--body", "answering the room"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed == {
+        "delivered": True,
+        "conversation_id": "C0AAAAAAA",
+        "message_id": "1700000000.000800",
+        "thread_ts": "1700000000.000100",
+    }
+
+    assert rc.main(["--body", "answering the room", "--verbose"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert full["status"] == "posted"
+    assert full["kind"] == "ambient"
+    assert full["posted_ts"] == "1700000000.000800"
+    assert "delivered" not in full  # the verbose print is the raw report
+
+
+def test_company_parked_report_is_delivered_false_exit_1(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture) -> None:
+    """A parked company post (transient failure held by a durable
+    intent) is not a confirmed delivery: the terse receipt must say
+    delivered=false / failure_kind=parked with the recovery note as
+    error, and the command exits 1 — the same delivered=false contract
+    as the legacy path."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    key = _write_delegation(outbound, ts="1700000000.000500", nonce="gcs-parked00000000000")
+    _write_turn(outbound, session="riley-main", kind="peer_delegation", agent="riley",
+                ts="1700000000.000500", delegation_key=key)
+    monkeypatch.setenv("GC_SESSION_NAME", "riley-main")
+    monkeypatch.setattr(outbound, "_sleep", lambda *_a, **_k: None)
+
+    def transient_post(method, token, payload, *, api_base, timeout):
+        return 500, {}, {"ok": False, "error": "internal_error"}
+    monkeypatch.setattr(outbound, "_slack_web_post", transient_post)
+
+    assert rc.main(["--body", "the answer is 42"]) == 1
+    out = capsys.readouterr()
+    printed = json.loads(out.out)
+    assert printed["delivered"] is False
+    assert printed["failure_kind"] == "parked"
+    assert printed["conversation_id"] == "C0AAAAAAA"
+    assert "recovery is automatic" in printed["error"]
+    assert "delivered=false" in out.err
 
 
 @pytest.mark.parametrize("kind", ["ambient", "thread_ambient", "targeted"])

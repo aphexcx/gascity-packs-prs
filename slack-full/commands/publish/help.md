@@ -32,6 +32,8 @@ Pass --raw to send the body byte-for-byte verbatim.
 
 Receipt: on success the command prints a terse JSON receipt — delivered
 flag, message_id, conversation_id, and thread_ts when threaded (gp-9e7).
-A delivered=false receipt adds failure_kind and the error message. Pass
+A delivered=false receipt adds failure_kind, plus an error message when
+the failing layer supplied one (direct-chat failure receipts often
+carry only failure_kind). Pass
 --verbose to print the full result envelope (the raw receipt, including
 gc's transcript entry) instead.

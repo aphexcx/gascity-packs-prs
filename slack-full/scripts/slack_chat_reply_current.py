@@ -285,7 +285,28 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     except (outbound.OutboundError, outbound.TransientPostError,
             outbound.DefinitivePostError) as exc:
         raise SystemExit(f"company reply failed: {exc}") from exc
-    print(json.dumps(result, indent=2, sort_keys=True))
+    # Same terse-default / --verbose-full receipt contract as the legacy
+    # path (gp-9e7 item 4, company gap closed in the fix round, 4a): the
+    # default receipt carries the delivered flag, message_id,
+    # conversation_id, and thread_ts; --verbose restores the full
+    # company report (status/kind/nonce/delegation_key/allow_partial).
+    # A parked report (transient failure held by a durable intent) is
+    # delivered=false — exit 1 with a stderr line, mirroring the legacy
+    # delivered=false handling; a retry is safe (the durable intent
+    # reconciles instead of reposting) and the receipt's error text says
+    # recovery is automatic.
+    if getattr(args, "verbose", False):
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(json.dumps(common.summarize_company_post_report(result), indent=2))
+    delivered = isinstance(result, dict) and result.get("status") == "posted"
+    if not delivered:
+        print(
+            "slack publish failed: delivered=false failure_kind="
+            f"{(result.get('status') if isinstance(result, dict) else '') or 'unknown'}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

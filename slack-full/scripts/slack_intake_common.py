@@ -386,6 +386,46 @@ def summarize_publish_receipt(
     return summary
 
 
+def summarize_company_post_report(report: Any) -> dict[str, Any]:
+    """Terse send receipt for the company-turn reply path (gp-9e7 item 4
+    fix round 4a).
+
+    The company path used to print its raw ``{status, kind, posted_ts,
+    ...}`` report unconditionally — identical with and without
+    ``--verbose``, and carrying neither ``delivered`` nor
+    ``conversation_id``. This normalizes it onto the same terse contract
+    as :func:`summarize_publish_receipt`: the delivered flag, the
+    provider message id, the conversation id, and the thread ts when
+    threaded. A ``parked`` report (transient post failure held by a
+    durable intent) surfaces as ``delivered: false`` with
+    ``failure_kind: "parked"`` and the report's recovery note as
+    ``error`` — parked is "not confirmed delivered", and hiding that
+    behind a success shape would misreport the send. Unknown shapes
+    fail closed exactly like the interpreter.
+    """
+    if not isinstance(report, dict):
+        return {"delivered": False, "conversation_id": "",
+                "failure_kind": "schema_mismatch"}
+    status = str(report.get("status", ""))
+    delivered = status == "posted"
+    summary: dict[str, Any] = {
+        "delivered": delivered,
+        "conversation_id": str(report.get("channel_id", "")),
+    }
+    posted_ts = report.get("posted_ts") or ""
+    if posted_ts:
+        summary["message_id"] = str(posted_ts)
+    thread_ts = report.get("thread_ts") or ""
+    if thread_ts:
+        summary["thread_ts"] = str(thread_ts)
+    if not delivered:
+        summary["failure_kind"] = status or "schema_mismatch"
+        note = report.get("note") or ""
+        if note:
+            summary["error"] = str(note)
+    return summary
+
+
 # --- session resolution ---------------------------------------------------
 
 def current_session_id() -> str:

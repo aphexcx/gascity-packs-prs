@@ -472,17 +472,67 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	if bp := parseBotProfileAppID(msg.BotProfile); bp != "" && bp != info.AppID {
 		return
 	}
+	// Human corroboration (fix round 3b), completing the
+	// resolveCompanyAuthor checklist: a bot-shaped event can carry a
+	// `user` field, and when it names anyone the resolution does not
+	// corroborate — a different user id, or no resolved user id at all
+	// (bots.info may legitimately omit user_id) — this may be a HUMAN
+	// message dressed as a bot. A human must never be buffered or woken
+	// as a bot: drop.
+	if msg.User != "" && msg.User != info.UserID {
+		return
+	}
 
-	// Self-guard, resolved ids (safety rule 1).
-	if info.UserID != "" {
-		if own := env.botUserID(); own != "" && info.UserID == own {
-			return
+	// Self-guard, resolved ids (safety rule 1) — fail CLOSED (fix round
+	// 3a): delivery requires at least one authoritative identity pair
+	// that PROVES the author is not this adapter itself, with the
+	// bots.info resolution on the author side and a known self identity
+	// on the other. Self app ids: SLACK_APP_ID and the envelope's
+	// api_app_id (the app this event was delivered to — present on every
+	// real Events API / Socket Mode delivery). Self user ids: the
+	// envelope authorizations' bot user and SLACK_SWITCHBOARD_BOT_USER_ID.
+	// bots.info can succeed without a user_id, and a deployment can lack
+	// every self identity — in either case, when NO pair is comparable,
+	// the post drops rather than passing: an own post slipping through an
+	// allowlist wake grant would reach postInbound as a self-wake loop.
+	selfAppIDs := make([]string, 0, 2)
+	if cfg.slackAppID != "" {
+		selfAppIDs = append(selfAppIDs, cfg.slackAppID)
+	}
+	if env.APIAppID != "" {
+		selfAppIDs = append(selfAppIDs, env.APIAppID)
+	}
+	selfUserIDs := make([]string, 0, 2)
+	if own := env.botUserID(); own != "" {
+		selfUserIDs = append(selfUserIDs, own)
+	}
+	if cfg.companySelfBotUserID != "" {
+		selfUserIDs = append(selfUserIDs, cfg.companySelfBotUserID)
+	}
+	provenNotSelf := false
+	if info.AppID != "" {
+		for _, id := range selfAppIDs {
+			if info.AppID == id {
+				return // resolved author IS this adapter's app
+			}
 		}
-		if cfg.companySelfBotUserID != "" && info.UserID == cfg.companySelfBotUserID {
-			return
+		if len(selfAppIDs) > 0 {
+			provenNotSelf = true
 		}
 	}
-	if cfg.slackAppID != "" && info.AppID == cfg.slackAppID {
+	if info.UserID != "" {
+		for _, id := range selfUserIDs {
+			if info.UserID == id {
+				return // resolved author IS this adapter's bot user
+			}
+		}
+		if len(selfUserIDs) > 0 {
+			provenNotSelf = true
+		}
+	}
+	if !provenNotSelf {
+		log.Printf("peer-bot: cannot prove bot_id=%s is not self (resolved app=%q user=%q; self ids known: apps=%d users=%d) chan=%s ts=%s — dropped fail-closed",
+			botID, info.AppID, info.UserID, len(selfAppIDs), len(selfUserIDs), msg.Channel, msg.TS)
 		return
 	}
 

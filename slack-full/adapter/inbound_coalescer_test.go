@@ -38,7 +38,7 @@ func TestCoalescerNilAndZeroWindowDisabled(t *testing.T) {
 		t.Fatal("nil coalescer must be disabled")
 	}
 	nilC.enqueue("C1", testPending("C1", "1.0", "x")) // must not panic
-	nilC.flushAheadOf("C1", "")                           // must not panic
+	nilC.flushAheadOf("C1", "")                       // must not panic
 	nilC.flushAll()                                   // must not panic
 	nilC.reconcileTimers()                            // must not panic
 	if nilC.pendingContains("C1", "1.0") {
@@ -400,32 +400,93 @@ func TestCoalescerReactionsRideRealBatchAndRestoreNoWake(t *testing.T) {
 	}
 }
 
-func TestCoalescerReactionsOnlyFailureRestoresWithoutTimer(t *testing.T) {
+// A reactions-only take must never POST from flushAheadOf (gp-9e7 fix
+// round 1b): the urgent message's own delivery has not happened yet and
+// can be skipped or fail — a reaction batch posted ahead of it would be
+// the solo reaction wake the side-buffer exists to prevent. The entries
+// stay in the side lane and drain via deliverBufferedReactions after
+// the caller's real POST commits.
+func TestCoalescerFlushAheadReactionsOnlyDefersToRealDelivery(t *testing.T) {
 	attempts := make(chan []pendingChannelInbound, 4)
+	deliverOK := true
 	c := newInboundCoalescer(time.Hour, nil)
 	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
 		attempts <- batch
-		return false
+		return deliverOK
 	}
 	c.admitReaction("C1", testPending("C1", "1.099", "reaction"), false)
-	c.flushAheadOf("C1", "")
+	if withheld := c.flushAheadOf("C1", ""); len(withheld) != 0 {
+		t.Fatalf("withheld = %+v, want none", withheld)
+	}
 	select {
 	case b := <-attempts:
-		if len(b) != 1 || !b[0].reaction {
-			t.Fatalf("batch = %+v, want the lone reaction entry", b)
-		}
+		t.Fatalf("reactions-only flush-ahead delivered %+v (solo reaction wake)", b)
 	default:
-		t.Fatal("flush-ahead did not deliver the buffered reaction")
 	}
 	c.mu.Lock()
 	reactionsN := len(c.reactions["C1"])
 	_, timerArmed := c.timers["C1"]
 	c.mu.Unlock()
 	if reactionsN != 1 {
+		t.Fatalf("reactions = %d, want the entry kept in the side lane", reactionsN)
+	}
+	if timerArmed {
+		t.Fatal("a deferred reaction must not arm a retry timer (solo wake)")
+	}
+
+	// The caller's real POST committed: the drain delivers the batch.
+	c.deliverBufferedReactions("C1")
+	select {
+	case b := <-attempts:
+		if len(b) != 1 || !b[0].reaction {
+			t.Fatalf("batch = %+v, want the lone reaction entry", b)
+		}
+	default:
+		t.Fatal("deliverBufferedReactions did not deliver the side lane")
+	}
+
+	// A failed drain restores to the side lane, still with no timer.
+	deliverOK = false
+	c.admitReaction("C1", testPending("C1", "2.099", "reaction2"), false)
+	c.deliverBufferedReactions("C1")
+	<-attempts
+	c.mu.Lock()
+	reactionsN = len(c.reactions["C1"])
+	_, timerArmed = c.timers["C1"]
+	c.mu.Unlock()
+	if reactionsN != 1 {
 		t.Fatalf("reactions = %d, want the failed entry restored to the side lane", reactionsN)
 	}
 	if timerArmed {
 		t.Fatal("a reactions-only restore must not arm a retry timer (solo wake)")
+	}
+}
+
+// The urgent twin filter can empty a take down to its riding reactions;
+// that emptied take must defer them too, not post them alone.
+func TestCoalescerFlushAheadTwinOnlyTakeDefersReactions(t *testing.T) {
+	attempts := make(chan []pendingChannelInbound, 4)
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		attempts <- batch
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "5.0", "twin"))
+	c.admitReaction("C1", testPending("C1", "5.099", "reaction"), false)
+	withheld := c.flushAheadOf("C1", "5.0")
+	if len(withheld) != 1 || withheld[0].inbound.ProviderMessageID != "5.0" {
+		t.Fatalf("withheld = %+v, want the twin", withheld)
+	}
+	select {
+	case b := <-attempts:
+		t.Fatalf("twin-emptied flush-ahead delivered %+v (solo reaction wake)", b)
+	default:
+	}
+	c.mu.Lock()
+	reactionsN := len(c.reactions["C1"])
+	c.mu.Unlock()
+	if reactionsN != 1 {
+		t.Fatalf("reactions = %d, want the riding reaction returned to the side lane", reactionsN)
 	}
 }
 
@@ -491,6 +552,232 @@ func TestCoalescerReactionOverflowFlushesNothingDropped(t *testing.T) {
 		}
 	default:
 		t.Fatal("cap-full reaction buffer must flush (bounded memory, nothing dropped)")
+	}
+}
+
+// Swept batches must not wait behind the triggering channel's own POST
+// (gp-9e7 fix round 2a): sequenced after it, a swept channel's batch
+// sits detached — maps empty, flush mutex free — for the whole network
+// call, a window an urgent flushAheadOf overtakes (in-channel reorder),
+// and the seconds-apart POSTs defeat the one-wake fold. The swept
+// delivery must be able to COMPLETE while the trigger's POST is still
+// in flight.
+func TestCoalescerSweptDeliveryDoesNotWaitForTriggerPOST(t *testing.T) {
+	sweptDone := make(chan struct{})
+	overtaken := make(chan bool, 1)
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		switch channel {
+		case "C_TRIGGER":
+			// The firing channel's POST is slow. The swept channel's
+			// delivery must finish during it, not after it.
+			select {
+			case <-sweptDone:
+				overtaken <- false
+			case <-time.After(1500 * time.Millisecond):
+				overtaken <- true
+			}
+		case "C_SWEPT":
+			close(sweptDone)
+		}
+		return true
+	}
+	c.enqueue("C_SWEPT", testPending("C_SWEPT", "2.0", "swept"))
+	c.enqueue("C_TRIGGER", testPending("C_TRIGGER", "1.0", "trigger"))
+	c.mu.Lock()
+	g := c.gen["C_TRIGGER"]
+	c.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		c.flushTimer("C_TRIGGER", g)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flushTimer did not return")
+	}
+	if <-overtaken {
+		t.Fatal("swept channel's delivery waited for the triggering channel's POST to finish")
+	}
+}
+
+// Shutdown drain fixpoint (gp-9e7 fix round 1a/2b): flushAll must wait
+// out an in-flight timer delivery whose batch is detached from the maps
+// — and, when that delivery fails and restores, re-drain it — while a
+// concurrent enqueue lands mid-drain. One snapshot pass would find the
+// maps empty, return, and lose both to the process exit.
+func TestCoalescerFlushAllFixpointUnderConcurrentDeliveryAndEnqueue(t *testing.T) {
+	firstAttempt := make(chan struct{})
+	release := make(chan struct{})
+	delivered := make(chan []pendingChannelInbound, 8)
+	var mu sync.Mutex
+	attempts := 0
+	c := newInboundCoalescer(25*time.Millisecond, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		mu.Lock()
+		attempts++
+		n := attempts
+		mu.Unlock()
+		if n == 1 {
+			close(firstAttempt) // timer fired; batch now detached
+			<-release           // hold it in flight while flushAll starts
+			return false        // fail → restore lands AFTER a one-shot snapshot
+		}
+		delivered <- batch
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "first"))
+	select {
+	case <-firstAttempt:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timer flush did not fire")
+	}
+	flushDone := make(chan struct{})
+	go func() {
+		c.flushAll()
+		close(flushDone)
+	}()
+	// While the drain is waiting on the in-flight delivery, more traffic
+	// arrives (the caller-side event goroutines are only stopped ahead
+	// of flushAll in main's shutdown ordering; the coalescer itself must
+	// still fold a mid-drain enqueue into the fixpoint).
+	c.enqueue("C1", testPending("C1", "2.0", "second"))
+	select {
+	case <-flushDone:
+		t.Fatal("flushAll returned while a taken batch was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-flushDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flushAll did not reach its fixpoint")
+	}
+	var got []string
+	for {
+		select {
+		case batch := <-delivered:
+			for _, p := range batch {
+				got = append(got, p.inbound.ProviderMessageID)
+			}
+			continue
+		default:
+		}
+		break
+	}
+	want := map[string]bool{"1.0": false, "2.0": false}
+	for _, ts := range got {
+		want[ts] = true
+	}
+	if !want["1.0"] || !want["2.0"] {
+		t.Fatalf("flushAll delivered %v, want the restored batch AND the mid-drain enqueue", got)
+	}
+	c.mu.Lock()
+	pendingN := len(c.pending["C1"])
+	inflight := c.inflight
+	c.mu.Unlock()
+	if pendingN != 0 || inflight != 0 {
+		t.Fatalf("after flushAll: pending=%d inflight=%d, want 0/0", pendingN, inflight)
+	}
+}
+
+// flushAll must also await UNTRACKED-goroutine swept deliveries
+// (gp-9e7 fix round 2b): a SIGTERM landing mid-sweep used to exit with
+// swept batches detached and undeliverable — here the swept delivery
+// fails while flushAll runs, and the fixpoint re-drains it.
+func TestCoalescerFlushAllAwaitsSweptDeliveries(t *testing.T) {
+	sweptTaken := make(chan struct{})
+	release := make(chan struct{})
+	delivered := make(chan string, 8)
+	var mu sync.Mutex
+	sweptAttempts := 0
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		if channel == "C_SWEPT" {
+			mu.Lock()
+			sweptAttempts++
+			n := sweptAttempts
+			mu.Unlock()
+			if n == 1 {
+				close(sweptTaken)
+				<-release
+				return false // restore after flushAll's first look
+			}
+		}
+		delivered <- channel
+		return true
+	}
+	c.enqueue("C_SWEPT", testPending("C_SWEPT", "2.0", "swept"))
+	c.enqueue("C_TRIGGER", testPending("C_TRIGGER", "1.0", "trigger"))
+	c.mu.Lock()
+	g := c.gen["C_TRIGGER"]
+	c.mu.Unlock()
+	go c.flushTimer("C_TRIGGER", g)
+	select {
+	case <-sweptTaken:
+	case <-time.After(2 * time.Second):
+		t.Fatal("swept delivery did not start")
+	}
+	flushDone := make(chan struct{})
+	go func() {
+		c.flushAll()
+		close(flushDone)
+	}()
+	select {
+	case <-flushDone:
+		t.Fatal("flushAll returned while the swept goroutine's batch was in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-flushDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flushAll did not await the swept delivery's restore + retry")
+	}
+	seen := map[string]bool{}
+	for {
+		select {
+		case ch := <-delivered:
+			seen[ch] = true
+			continue
+		default:
+		}
+		break
+	}
+	if !seen["C_SWEPT"] || !seen["C_TRIGGER"] {
+		t.Fatalf("delivered %v, want both the trigger and the restored swept batch", seen)
+	}
+}
+
+// A delivery that fails every attempt must not spin flushAll forever:
+// the fixpoint loop is bounded and gives up loudly.
+func TestCoalescerFlushAllBoundedWhenDeliveryAlwaysFails(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	var mu sync.Mutex
+	attempts := 0
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		mu.Lock()
+		attempts++
+		mu.Unlock()
+		return false
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "doomed"))
+	done := make(chan struct{})
+	go func() {
+		c.flushAll()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("flushAll did not terminate under persistent delivery failure")
+	}
+	mu.Lock()
+	n := attempts
+	mu.Unlock()
+	if n < 1 || n > maxFlushAllPasses {
+		t.Fatalf("attempts = %d, want between 1 and %d", n, maxFlushAllPasses)
 	}
 }
 
