@@ -97,10 +97,11 @@ export function conversationForMessage(cfg, msg) {
 // every long voice message's server-side ASR arrived with the same text
 // duplicated 2-3x, with no separator or a single space/newline between
 // copies). Detection is EXACT repetition of the whole content only, and
-// only for blocks of ≥ 8 characters — a polite doubling like 好的好的
-// must never be "deduped" into 好的. Runs to a fixed point so a 4x
-// repeat expressed as 2x-of-2x still collapses fully. Returns
-// { text, repeats }; repeats === 1 means untouched.
+// only for blocks of ≥ 10 characters in content of ≥ 24 — a polite
+// doubling like 好的好的 (or an emphatic 重要的事情说三遍 triple) must
+// never be "deduped". Runs to a fixed point so a 4x repeat expressed as
+// 2x-of-2x still collapses fully. Returns { text, repeats };
+// repeats === 1 means untouched.
 //
 // False-positive stance (codex r2 finding 6): a human deliberately
 // repeating a phrase (重要的事情说三遍-style) IS collapsible when it
@@ -635,18 +636,27 @@ export function createInboundPipeline(deps) {
       seenNonPending--;
       seenHead++;
     }
-    // Compaction: reclaim the dead prefix once it dominates a
-    // beyond-double-cap array. Loop-free copy (no variadic spread), rare
-    // by construction, indices rebuilt for the survivors.
+    // Compaction: reclaim the dead slots once they dominate a
+    // beyond-double-cap array. The prefix behind the cursor is NOT all
+    // dead (codex jg-p1mk r5, pre-existing since jg-c7j): the eviction
+    // loop above advances seenHead PAST pending-exempt marks, which are
+    // live — a slice(seenHead) discarded them into unevictable ghosts
+    // (still in seenMsgIds, stale seenIndex) that consumed the cap and
+    // let a fresh id's replay double-POST. Compact by keeping every
+    // LIVE slot (seenIndex points at it) across the whole array — dead
+    // and stale-duplicate slots drop, pending-exempt survivors keep
+    // their order — and restart the cursor; the next trim re-skips the
+    // (now compact) exempt prefix cheaply.
     if (seenHead > seenMsgIdCap && seenHead * 2 > seenMsgIdOrder.length) {
-      const offset = seenHead;
-      seenMsgIdOrder = seenMsgIdOrder.slice(seenHead);
-      seenHead = 0;
+      const survivors = [];
       for (let i = 0; i < seenMsgIdOrder.length; i++) {
         const id = seenMsgIdOrder[i];
-        // Remap only the LIVE slot for this id — a stale duplicate slot
-        // (same id re-marked later) must not steal the live index.
-        if (seenIndex.get(id) === i + offset) seenIndex.set(id, i);
+        if (seenIndex.get(id) === i) survivors.push(id);
+      }
+      seenMsgIdOrder = survivors;
+      seenHead = 0;
+      for (let i = 0; i < seenMsgIdOrder.length; i++) {
+        seenIndex.set(seenMsgIdOrder[i], i);
       }
     }
   }

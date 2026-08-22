@@ -1515,3 +1515,42 @@ test('restore keeps the ORIGINAL copy of a mid-POST peer replay, preserving arri
   assert.equal((text.match(/旧帖/g) ?? []).length, 1);
   assert.ok(text.indexOf('旧帖') < text.indexOf('新帖'), `original arrival order must survive the rejection cycle:\n${text}`);
 });
+
+// --- codex jg-p1mk round-5 regression ------------------------------------------
+
+test('pending marks surviving compaction stay evictable — no ghost dedup entries (codex r5 f1, pre-existing)', async (t) => {
+  // Scenario at cap 4: deliver A1..A4; queue their replays behind a held
+  // same-chat delivery (pending-exempt); churn B1..B5 in other chats so
+  // eviction skips past A1..A4 and compaction runs with the cursor
+  // beyond them. Pre-fix, compaction discarded the live A-marks into
+  // unevictable ghosts that consumed the cap forever; a fresh X then
+  // evicted early and its replay double-POSTed.
+  let releaseHold;
+  const gate = new Promise((r) => { releaseHold = r; });
+  const posts = [];
+  const { pipeline } = makePipeline(t, {
+    deps: { seenMsgIdCap: 4 },
+    postInbound: async (target, body) => {
+      if (body.message.provider_message_id === 'HOLD') await gate;
+      posts.push(body.message.provider_message_id);
+    },
+  });
+  const inChat = (msgid, userid, content = 'x') => frame(textMessage({ msgid, from: { userid }, text: { content } }));
+
+  for (let i = 1; i <= 4; i++) await pipeline.enqueueInbound(inChat(`A${i}`, 'chatA'));
+  const held = pipeline.enqueueInbound(inChat('HOLD', 'chatA'));
+  const replays = [];
+  for (let i = 1; i <= 4; i++) replays.push(pipeline.enqueueInbound(inChat(`A${i}`, 'chatA')));
+  for (let i = 1; i <= 5; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
+  releaseHold();
+  await held;
+  await Promise.all(replays);
+  assert.equal(posts.filter((id) => id?.startsWith('A')).length, 4, 'replays behind the hold all deduped');
+
+  // The A-marks must have re-entered cap accounting and rolled off as
+  // churn continues — a fresh X's replay must dedup.
+  for (let i = 6; i <= 10; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
+  await pipeline.enqueueInbound(inChat('X', 'chatX'));
+  await pipeline.enqueueInbound(inChat('X', 'chatX'));
+  assert.equal(posts.filter((id) => id === 'X').length, 1, 'the fresh id replays exactly once — no ghost-consumed cap');
+});

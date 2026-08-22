@@ -47,17 +47,28 @@
   **(B) non-waking liveness probes** — satisfied by construction: the
   watchdog never touches gc (log + healthz only) and the reconnect
   cycle generates no agent turns.
-  Codex round-1 fixes: per-conversation keys namespaced by chat type
-  (a DM userid colliding with a group chatid can no longer merge
-  batches, peer buffers, or help marks); one hostile batch member
-  (malformed create_time / non-array mixed items) drops alone instead
-  of aborting siblings or leaking their hydration entries; feedback
-  bases guard non-string idempotency keys and are computed before the
-  ownership claim; the liveness reconnect cycle waits for the SDK's
-  disconnected event (timer fallback) instead of racing the old
-  socket's close handler; shutdown awaits the coalescer drain
-  (bounded) before exiting.
-  51 new tests (214 total).
+  Codex DEEP review, 5 rounds (adapter=infra policy), every blocking
+  finding fixed with a reproduction test: r1 — conversation keys
+  namespaced by chat type (DM/room id collision could merge a private
+  DM into a group batch); hostile batch members drop alone instead of
+  aborting siblings/leaking hydration entries; feedback bases guarded
+  and computed before the ownership claim; reconnect no longer races
+  the SDK close handler; shutdown awaits the coalescer drain. r2 —
+  string coercion in the neutralizer + per-member sender finalization;
+  peer frames render inside containment; connect deferred one
+  macrotask past 'disconnected' with listener cleanup; draining mode
+  awaits chains and late frames; /publish 400s non-string idempotency
+  keys; ASR floors raised (block ≥10 chars, total ≥24); peer map
+  LRU-capped at 64 conversations; peer items seq-split before/after
+  the batch; restore dedup. r3 — all provider-controlled envelope
+  strings coerced at the wire (numeric ids no longer reject batches);
+  peer take bounded by the batch's newest member; LRU recency on the
+  monotonic counter. r4 — identity fields normalized to strings at
+  pipeline intake (msgid 0 dedups; numeric userids match the peer
+  allowlist); attachment provider_id coerced; reply-help cache capped
+  (512); rejection requeue keeps original copies merged by arrival
+  seq.
+  66 new tests (229 total).
 
 - Outbound media hardening (jg-d0xr codex round-1, findings 1–11):
   `/publish-media` is now confined to a REQUIRED

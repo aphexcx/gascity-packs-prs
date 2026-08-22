@@ -209,11 +209,12 @@ delivery is rejected.
 
 **Voice ASR-repeat dedup.** WeCom's server-side voice transcription has
 been observed (8/22, every long voice message) delivering the same text
-repeated 2–3× verbatim. A transcript that is one ≥8-character block
-repeated 2–4 times exactly (no separator, or a single space/newline)
-collapses to one block with an `(ASR重复×N已折叠)` marker; the log
-records counts only, never transcript content. Short doublings like
-好的好的 are deliberately left alone.
+repeated 2–3× verbatim. A transcript of ≥24 characters that is one
+≥10-character block repeated 2–4 times exactly (no separator, or a
+single space/newline) collapses to one block with an
+`(ASR重复×N已折叠)` marker; the log records counts only, never
+transcript content. Short or emphatic repeats (好的好的,
+重要的事情说三遍×3) are deliberately left alone.
 
 **Peer-bot context buffering.** Group posts authored by userids in
 `WECOM_PEER_BOT_USERIDS` (comma-separated; empty disables) never wake
