@@ -461,7 +461,7 @@ def _assert_runner_pin(workflow: str, label: str) -> None:
     Both alternatives are line-anchored (a commented-out pin or a
     breadcrumb on an unrelated line must not satisfy the guard)."""
     if re.search(
-        rf"(?m)^[ \t]*runs-on:[ \t]+{re.escape(label)}[ \t]*(?:#[^\r\n]*)?$",
+        rf"(?m)^[ \t]*runs-on:[ \t]+{re.escape(label)}(?:[ \t]+#[^\r\n]*)?[ \t]*$",
         workflow,
     ):
         return
