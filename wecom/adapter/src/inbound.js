@@ -77,12 +77,17 @@ export async function postJSONWithRetry(target, body, label, log = () => {}) {
 export function conversationForMessage(cfg, msg) {
   // Group chats carry a chatid; DMs ("single") identify the conversation
   // by the peer's userid — the same value sendMessage() expects for each.
+  // Provider-controlled ids are coerced to strings when present (codex
+  // jg-p1mk r3 finding 1): gc's wire types require strings, and a
+  // JSON-valid numeric id would otherwise make gc reject the whole
+  // envelope — in a batch, losing the healthy siblings with it.
   const isGroup = msg.chattype === 'group';
+  const id = isGroup ? msg.chatid : msg.from?.userid;
   return {
     scope_id: cfg.cityName,
     provider: cfg.provider,
     account_id: cfg.botId,
-    conversation_id: isGroup ? msg.chatid : msg.from?.userid,
+    conversation_id: id == null ? id : String(id),
     kind: isGroup ? 'room' : 'dm',
   };
 }
@@ -457,11 +462,11 @@ export function createInboundPipeline(deps) {
     }
     let ctx = peerContexts.get(key);
     if (!ctx) {
-      ctx = { items: [], seen: new Set(), dropped: 0, touchedAt: now() };
+      ctx = { items: [], seen: new Set(), dropped: 0, touchedAt: arrivalSeq++ };
       peerContexts.set(key, ctx);
       evictPeerConversations();
     }
-    ctx.touchedAt = now();
+    ctx.touchedAt = arrivalSeq++;
     if (msg.msgid && ctx.seen.has(msg.msgid)) return;
     if (msg.msgid) ctx.seen.add(msg.msgid);
     ctx.items.push({
@@ -500,21 +505,40 @@ export function createInboundPipeline(deps) {
   }
 
   // takePeerContext removes and returns the conversation's buffered peer
-  // items for one delivery; restorePeerContext puts them back (ahead of
-  // anything buffered meanwhile, deduped by msgid against it) when that
+  // items that arrived BEFORE maxSeq (the carrying batch's newest frame
+  // — codex r3 finding 2: an older queued batch, delayed behind a gc
+  // retry, must not steal a peer post that arrived after a NEWER human
+  // message; that post stays buffered for the delivery it belongs
+  // with). restorePeerContext puts a taken set back (ahead of anything
+  // buffered meanwhile, deduped by msgid against it) when the carrying
   // delivery was rejected.
-  function takePeerContext(key) {
+  function takePeerContext(key, maxSeq = Infinity) {
     const ctx = peerContexts.get(key);
-    if (!ctx || (ctx.items.length === 0 && ctx.dropped === 0)) return null;
-    peerContexts.delete(key);
-    return ctx;
+    if (!ctx) return null;
+    const takenItems = ctx.items.filter((item) => item.seq === undefined || item.seq < maxSeq);
+    if (takenItems.length === 0 && ctx.dropped === 0) return null;
+    const remaining = ctx.items.filter((item) => !(item.seq === undefined || item.seq < maxSeq));
+    const taken = {
+      items: takenItems,
+      seen: new Set(takenItems.filter((item) => item.msgid).map((item) => item.msgid)),
+      dropped: ctx.dropped,
+      touchedAt: ctx.touchedAt,
+    };
+    if (remaining.length === 0) {
+      peerContexts.delete(key);
+    } else {
+      ctx.items = remaining;
+      ctx.seen = new Set(remaining.filter((item) => item.msgid).map((item) => item.msgid));
+      ctx.dropped = 0; // historical drops report with the taken block
+    }
+    return taken;
   }
 
   function restorePeerContext(key, taken) {
     if (!taken) return;
     const current = peerContexts.get(key);
     if (!current) {
-      taken.touchedAt = now();
+      taken.touchedAt = arrivalSeq++;
       peerContexts.set(key, taken);
       evictPeerConversations();
       return;
@@ -528,7 +552,7 @@ export function createInboundPipeline(deps) {
       if (item.msgid) current.seen.add(item.msgid);
     }
     current.dropped += taken.dropped;
-    current.touchedAt = now();
+    current.touchedAt = arrivalSeq++;
     trimPeerItems(current);
   }
 
@@ -705,7 +729,7 @@ export function createInboundPipeline(deps) {
       // the replay the seen set catches across batches; first copy wins).
       const members = [];
       const seenInBatch = new Set();
-      for (const { frame, handle } of entries) {
+      for (const { frame, handle, seq } of entries) {
         const msg = frame?.body;
         if (!msg) continue;
         const hydration = handle?.promise ?? null;
@@ -780,6 +804,7 @@ export function createInboundPipeline(deps) {
             text,
             attachments,
             receivedAt,
+            seq,
             sender: neutralizeMarkupBoundaries(msg.from?.userid ?? 'unknown'),
           });
         } catch (err) {
@@ -791,7 +816,7 @@ export function createInboundPipeline(deps) {
       const newest = members[members.length - 1];
       let text = newest.text;
       let attachments = newest.attachments;
-      let dedupKey = newest.msg.msgid;
+      let dedupKey = newest.msg.msgid == null ? newest.msg.msgid : String(newest.msg.msgid);
       let label = `inbound ${newest.msg.msgid}`;
       if (members.length > 1) {
         // Header and sender interpolations are neutralized; the member
@@ -822,9 +847,14 @@ export function createInboundPipeline(deps) {
       // peer reacting to the buffered human message inside the window)
       // render below it, so a peer response never reads as context that
       // predates the request that caused it.
-      const peerCtx = takePeerContext(convKey);
+      // Take is bounded by the batch's NEWEST member (posts after it stay
+      // buffered for a later delivery); the before/after split anchors on
+      // the first VALID member — a dropped malformed first entry must not
+      // misplace the boundary (codex r3 finding 2).
+      const newestSeq = newest.seq ?? Infinity;
+      const firstSeq = members[0].seq ?? -Infinity;
+      const peerCtx = takePeerContext(convKey, newestSeq);
       if (peerCtx) {
-        const firstSeq = entries[0]?.seq ?? Infinity;
         const before = peerCtx.items.filter((item) => item.seq === undefined || item.seq < firstSeq);
         const after = peerCtx.items.filter((item) => item.seq !== undefined && item.seq >= firstSeq);
         if (before.length > 0 || peerCtx.dropped > 0) {
@@ -845,11 +875,14 @@ export function createInboundPipeline(deps) {
       }
 
       const message = {
-        provider_message_id: newest.msg.msgid,
+        // Every provider-controlled field gc types as a string is
+        // coerced (codex r3 finding 1): a numeric msgid/userid must
+        // degrade to its string form, never to a rejected batch.
+        provider_message_id: newest.msg.msgid == null ? newest.msg.msgid : String(newest.msg.msgid),
         conversation: newest.conversation,
         actor: {
-          id: newest.msg.from?.userid ?? '',
-          display_name: newest.msg.from?.userid ?? '',
+          id: String(newest.msg.from?.userid ?? ''),
+          display_name: String(newest.msg.from?.userid ?? ''),
           is_bot: false,
         },
         // No explicit_target: routing is the default_route fragment's job

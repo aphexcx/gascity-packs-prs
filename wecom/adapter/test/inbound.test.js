@@ -1269,7 +1269,7 @@ test('the peer conversation map is bounded — LRU conversation evicted past the
   assert.equal(logs.filter((l) => l.includes('evicted the least-recently-touched conversation g:wrA')).length, 1);
 });
 
-test('a peer post arriving after a buffered human message renders BELOW it, not as prior context (codex r2 f8)', async (t) => {
+test('a peer post arriving after a buffered human message never rides as its prior context (codex r2 f8 / r3 f2)', async (t) => {
   const { pipeline, posts } = makePipeline(t, {
     cfg: { peerBotUserIds: ['pb'] },
     deps: { coalesceWindowMs: 40 },
@@ -1281,10 +1281,20 @@ test('a peer post arriving after a buffered human message renders BELOW it, not 
     msgid: 'ORD_P', chattype: 'group', chatid: 'wrO', from: { userid: 'pb' }, text: { content: '响应' },
   })));
   await human;
+  // The strict take-bound: the peer post postdates the batch's newest
+  // frame, so it stays buffered rather than decorating a delivery it
+  // did not precede.
   assert.equal(posts.length, 1);
-  const text = posts[0].body.message.text;
-  assert.ok(text.indexOf('请求') < text.indexOf('响应'), `provider order preserved, got:\n${text}`);
-  assert.match(text, /peer-bot posts arriving after the first message above/);
+  assert.equal(posts[0].body.message.text, '请求');
+  // It rides the NEXT human delivery — as prior context, which by then
+  // it truly is.
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'ORD_H2', chattype: 'group', chatid: 'wrO', text: { content: '后续' },
+  })));
+  assert.equal(posts.length, 2);
+  const text = posts[1].body.message.text;
+  assert.ok(text.indexOf('响应') < text.indexOf('后续'), `peer context precedes the next human message:\n${text}`);
+  assert.match(text, /peer-bot context since the last delivery/);
 });
 
 test('restoration after rejection dedups a peer replay buffered mid-POST (codex r2 f9)', async (t) => {
@@ -1346,4 +1356,92 @@ test('the ASR guards protect short deliberate repeats (codex r2 f6)', async (t) 
     voice: { content: phrase + phrase + phrase },
   })));
   assert.equal(posts[0].body.message.text, `[voice] ${phrase}${phrase}${phrase}`);
+});
+
+// --- codex jg-p1mk round-3 regressions -----------------------------------------
+
+test('every provider-controlled envelope string is coerced — numeric ids never reach gc as numbers (codex r3 f1)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 30 } });
+  await Promise.all([
+    pipeline.enqueueInbound(frame(textMessage({
+      msgid: 'NC_1', chattype: 'group', chatid: 'wrNC', text: { content: '正常' },
+    }))),
+    pipeline.enqueueInbound(frame(textMessage({
+      msgid: 9001, chattype: 'group', chatid: 'wrNC', from: { userid: 7 }, text: { content: '数字' },
+    }))),
+  ]);
+  assert.equal(posts.length, 1);
+  const m = posts[0].body.message;
+  assert.equal(typeof m.provider_message_id, 'string');
+  assert.equal(m.provider_message_id, '9001');
+  assert.equal(typeof m.actor.id, 'string');
+  assert.equal(m.actor.id, '7');
+  assert.equal(typeof m.actor.display_name, 'string');
+  assert.equal(typeof m.conversation.conversation_id, 'string');
+  assert.equal(typeof m.dedup_key, 'string');
+});
+
+test('a peer post arriving after a NEWER human message is not stolen by an older queued batch (codex r3 f2)', async (t) => {
+  let releaseH0;
+  const gate = new Promise((r) => { releaseH0 = r; });
+  const delivered = [];
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    deps: { coalesceWindowMs: 25 },
+    postInbound: async (target, body) => {
+      if (body.message.provider_message_id === 'ST_H0') await gate;
+      delivered.push(body.message.text);
+    },
+  });
+  const room = (over) => textMessage({ chattype: 'group', chatid: 'wrST', ...over });
+  // H0's batch flushes and its POST hangs.
+  const h0 = pipeline.enqueueInbound(frame(room({ msgid: 'ST_H0', text: { content: '第零' } })));
+  await new Promise((r) => setTimeout(r, 40));
+  // H1's batch flushes into the chain behind H0.
+  const h1 = pipeline.enqueueInbound(frame(room({ msgid: 'ST_H1', text: { content: '第一' } })));
+  await new Promise((r) => setTimeout(r, 40));
+  // H2 buffers; peer P arrives AFTER H2's frame, then H2's window closes.
+  const h2 = pipeline.enqueueInbound(frame(room({ msgid: 'ST_H2', text: { content: '第二' } })));
+  await pipeline.enqueueInbound(frame(room({ msgid: 'ST_P', from: { userid: 'pb' }, text: { content: '同伴回应' } })));
+  releaseH0();
+  await Promise.all([h0, h1, h2]);
+  assert.equal(delivered.length, 3);
+  assert.ok(!delivered[1].includes('同伴回应'), `H1 must not steal the peer post:\n${delivered[1]}`);
+  assert.ok(!delivered[2].includes('同伴回应'), 'P postdates H2 too — it stays buffered');
+  // P rides the next human delivery as genuinely-prior context.
+  await pipeline.enqueueInbound(frame(room({ msgid: 'ST_H3', text: { content: '第三' } })));
+  assert.equal(delivered.length, 4);
+  assert.ok(delivered[3].indexOf('同伴回应') < delivered[3].indexOf('第三'), delivered[3]);
+});
+
+test('the before/after split anchors on the first VALID member, not a dropped malformed one (codex r3 f2)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    deps: { coalesceWindowMs: 30 },
+  });
+  const room = (over) => textMessage({ chattype: 'group', chatid: 'wrSP', ...over });
+  const bad = pipeline.enqueueInbound(frame(room({ msgid: 'SP_BAD', create_time: 1e15 })));
+  await pipeline.enqueueInbound(frame(room({ msgid: 'SP_P', from: { userid: 'pb' }, text: { content: '上下文' } })));
+  const good = pipeline.enqueueInbound(frame(room({ msgid: 'SP_H', text: { content: '人类消息' } })));
+  await Promise.all([bad, good]);
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  assert.ok(text.indexOf('上下文') < text.indexOf('人类消息'), `peer arrived before the valid human, must render above:\n${text}`);
+  assert.match(text, /peer-bot context since the last delivery/);
+});
+
+test('peer-conversation LRU eviction is deterministic under same-millisecond ties (codex r3 f3)', async (t) => {
+  const logs = [];
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    deps: { peerConversationsCap: 2, log: (...a) => logs.push(a.join(' ')) },
+  });
+  const peer = (room, content) => pipeline.enqueueInbound(frame(textMessage({
+    msgid: `LR_${room}_${content}`, chattype: 'group', chatid: room, from: { userid: 'pb' }, text: { content },
+  })));
+  await peer('wrA', '1'); // A buffered
+  await peer('wrB', '1'); // B buffered
+  await peer('wrA', '2'); // A touched — B is now least recently touched
+  await peer('wrC', '1'); // over cap: B must evict, not A
+  assert.equal(logs.filter((l) => l.includes('evicted the least-recently-touched conversation g:wrB')).length, 1);
 });
