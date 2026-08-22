@@ -96,11 +96,23 @@ export function conversationForMessage(cfg, msg) {
 // must never be "deduped" into 好的. Runs to a fixed point so a 4x
 // repeat expressed as 2x-of-2x still collapses fully. Returns
 // { text, repeats }; repeats === 1 means untouched.
+//
+// False-positive stance (codex r2 finding 6): a human deliberately
+// repeating a phrase (重要的事情说三遍-style) IS collapsible when it
+// exceeds the guards, and no provider signal distinguishes that from
+// the ASR bug. Accepted trade-off per the mayor's order — the observed
+// bug hits EVERY long voice message, the collapse is disclosed in-text
+// by the (ASR重复×N已折叠) marker (never silent), and the guards below
+// (blocks ≥ 10 chars, total ≥ 24 chars) keep short emphatic repeats
+// untouched. Deliberate ≥24-char triple repeats collapsing is the cost
+// of the ~60% payload cut on genuinely broken transcripts.
 const asrRepeatSeparators = ['', ' ', '\n'];
-const asrMinBlockChars = 8;
+const asrMinBlockChars = 10;
+const asrMinContentChars = 24;
 
 export function dedupeAsrRepeats(content) {
   let text = String(content ?? '');
+  if (text.length < asrMinContentChars) return { text, repeats: 1 };
   let repeats = 1;
   for (;;) {
     let hit = null;
@@ -410,42 +422,87 @@ export function createInboundPipeline(deps) {
   //
   // Room posts authored by allowlisted peer bots (cfg.peerBotUserIds —
   // other mayors' bots sharing a group chat) must NOT wake the bound
-  // session: they buffer here as tagged read-only context and ride ahead
-  // of the conversation's next real human delivery. In-memory,
-  // per-conversation, capped: past peerContextCap the OLDEST entries
-  // drop with a count (context is best-effort by contract — unlike
-  // human messages, a dropped peer line is an acceptable loss and the
-  // block says how many). msgid-deduped so an SDK replay of a buffered
-  // peer frame cannot double a line. A deterministic gc rejection of the
-  // carrying delivery restores the items for the next one.
+  // session: they buffer here as tagged read-only context and ride with
+  // the conversation's next real human delivery. In-memory, capped both
+  // ways: per conversation, past peerContextCap the OLDEST entries drop
+  // with a count (context is best-effort by contract — unlike human
+  // messages, a dropped peer line is an acceptable loss and the block
+  // says how many); and across conversations, past
+  // peerConversationsCap the least-recently-touched conversation's
+  // whole buffer drops, logged (codex r2 finding 7 — a peer bot
+  // spanning many one-shot rooms, or hostile frames varying chatid,
+  // must not grow the map without bound). msgid-deduped so an SDK
+  // replay of a buffered peer frame cannot double a line — including
+  // across a rejection-restore cycle (codex r2 finding 9). Every item
+  // carries the pipeline arrival sequence so delivery can preserve
+  // provider order relative to the human batch (codex r2 finding 8).
   const peerContextCap = deps.peerContextCap ?? 20;
+  const peerConversationsCap = deps.peerConversationsCap ?? 64;
   const peerBotUserIds = new Set(cfg.peerBotUserIds ?? []);
-  const peerContexts = new Map(); // convKey → { items: [{msgid, userid, text}], seen: Set, dropped: n }
+  const peerContexts = new Map(); // convKey → { items: [{msgid, userid, text, seq}], seen: Set, dropped: n, touchedAt }
+
+  // Monotonic arrival sequence shared by peer items and pipeline frames.
+  let arrivalSeq = 0;
 
   function bufferPeerContext(key, msg) {
+    // Render FIRST, before any map mutation (codex r2 finding 2): a
+    // hostile peer frame whose render throws must neither crash through
+    // the SDK's emitter nor leave an empty buffer entry behind.
+    let text;
+    try {
+      text = renderText(msg);
+    } catch (err) {
+      log(`peer context: post from ${msg.from?.userid} in ${key} unrenderable (${err.message}); dropped`);
+      return;
+    }
     let ctx = peerContexts.get(key);
     if (!ctx) {
-      ctx = { items: [], seen: new Set(), dropped: 0 };
+      ctx = { items: [], seen: new Set(), dropped: 0, touchedAt: now() };
       peerContexts.set(key, ctx);
+      evictPeerConversations();
     }
+    ctx.touchedAt = now();
     if (msg.msgid && ctx.seen.has(msg.msgid)) return;
     if (msg.msgid) ctx.seen.add(msg.msgid);
     ctx.items.push({
       msgid: msg.msgid,
-      userid: msg.from?.userid ?? 'unknown',
-      text: renderText(msg),
+      userid: String(msg.from?.userid ?? 'unknown'),
+      text,
+      seq: arrivalSeq++,
     });
+    trimPeerItems(ctx);
+    log(`peer context: buffered post from ${msg.from?.userid} in ${key} (pending=${ctx.items.length}); not waking the session`);
+  }
+
+  function trimPeerItems(ctx) {
     while (ctx.items.length > peerContextCap) {
       const evicted = ctx.items.shift();
       if (evicted.msgid) ctx.seen.delete(evicted.msgid);
       ctx.dropped++;
     }
-    log(`peer context: buffered post from ${msg.from?.userid} in ${key} (pending=${ctx.items.length}); not waking the session`);
+  }
+
+  function evictPeerConversations() {
+    while (peerContexts.size > peerConversationsCap) {
+      let victim = null;
+      let victimAt = Infinity;
+      for (const [key, ctx] of peerContexts) {
+        if (ctx.touchedAt < victimAt) {
+          victim = key;
+          victimAt = ctx.touchedAt;
+        }
+      }
+      if (victim === null) return;
+      const dropped = peerContexts.get(victim);
+      peerContexts.delete(victim);
+      log(`peer context: evicted the least-recently-touched conversation ${victim} (${dropped.items.length} buffered posts lost) at the ${peerConversationsCap}-conversation cap`);
+    }
   }
 
   // takePeerContext removes and returns the conversation's buffered peer
   // items for one delivery; restorePeerContext puts them back (ahead of
-  // anything buffered meanwhile) when that delivery was rejected.
+  // anything buffered meanwhile, deduped by msgid against it) when that
+  // delivery was rejected.
   function takePeerContext(key) {
     const ctx = peerContexts.get(key);
     if (!ctx || (ctx.items.length === 0 && ctx.dropped === 0)) return null;
@@ -457,26 +514,29 @@ export function createInboundPipeline(deps) {
     if (!taken) return;
     const current = peerContexts.get(key);
     if (!current) {
+      taken.touchedAt = now();
       peerContexts.set(key, taken);
+      evictPeerConversations();
       return;
     }
-    current.items = [...taken.items, ...current.items];
-    for (const item of taken.items) {
+    // A peer frame replayed while the carrying POST was in flight sits
+    // in `current` already — restoring the taken copy unchecked would
+    // deliver it twice next time (codex r2 finding 9).
+    const restored = taken.items.filter((item) => !item.msgid || !current.seen.has(item.msgid));
+    current.items = [...restored, ...current.items];
+    for (const item of restored) {
       if (item.msgid) current.seen.add(item.msgid);
     }
     current.dropped += taken.dropped;
-    while (current.items.length > peerContextCap) {
-      const evicted = current.items.shift();
-      if (evicted.msgid) current.seen.delete(evicted.msgid);
-      current.dropped++;
-    }
+    current.touchedAt = now();
+    trimPeerItems(current);
   }
 
-  function formatPeerContextBlock(ctx) {
-    const noun = ctx.items.length === 1 ? 'post' : 'posts';
-    const droppedNote = ctx.dropped > 0 ? `; ${ctx.dropped} older dropped at the ${peerContextCap}-item cap` : '';
-    const lines = [`[peer-bot context — ${ctx.items.length} ${noun} since the last delivery${droppedNote}; read-only, no reply expected]`];
-    for (const item of ctx.items) {
+  function formatPeerContextBlock(items, dropped, heading) {
+    const noun = items.length === 1 ? 'post' : 'posts';
+    const droppedNote = dropped > 0 ? `; ${dropped} older dropped at the ${peerContextCap}-item cap` : '';
+    const lines = [`[${heading} — ${items.length} ${noun}${droppedNote}; read-only, no reply expected]`];
+    for (const item of items) {
       lines.push(`${neutralizeMarkupBoundaries(item.userid)}: ${item.text}`);
     }
     return lines.join('\n');
@@ -712,7 +772,16 @@ export function createInboundPipeline(deps) {
             if (hydrated.block) text = `${text}\n${hydrated.block}`;
           }
           if (msg.msgid) seenInBatch.add(msg.msgid);
-          members.push({ msg, conversation, text, attachments, receivedAt });
+          // sender is finalized HERE, inside the containment, so the
+          // shared combine below is throw-free (codex r2 finding 1).
+          members.push({
+            msg,
+            conversation,
+            text,
+            attachments,
+            receivedAt,
+            sender: neutralizeMarkupBoundaries(msg.from?.userid ?? 'unknown'),
+          });
         } catch (err) {
           log(`inbound ${msg.msgid}: member processing failed (${err.message}); dropped from batch`);
         }
@@ -730,7 +799,7 @@ export function createInboundPipeline(deps) {
         // reminder formatter sanitizes the whole text field.
         const lines = [`[${members.length} WeCom messages coalesced, in arrival order]`];
         for (const m of members) {
-          lines.push(`${neutralizeMarkupBoundaries(m.msg.from?.userid ?? 'unknown')}: ${m.text}`);
+          lines.push(`${m.sender}: ${m.text}`);
         }
         text = lines.join('\n');
         attachments = members.flatMap((m) => m.attachments);
@@ -744,16 +813,36 @@ export function createInboundPipeline(deps) {
       // transient failures retry the same built text, help included.
       const convId = newest.conversation.conversation_id;
       const convKey = conversationKeyFor(newest.conversation.kind, convId);
+
+      // Buffered peer-bot posts ride with the human delivery that wakes
+      // the session (jg-p1mk add A) — restored on rejection below.
+      // Provider order is preserved relative to the batch (codex r2
+      // finding 8): items that arrived BEFORE the batch's first frame
+      // render as prior context above it; items that arrived after (a
+      // peer reacting to the buffered human message inside the window)
+      // render below it, so a peer response never reads as context that
+      // predates the request that caused it.
+      const peerCtx = takePeerContext(convKey);
+      if (peerCtx) {
+        const firstSeq = entries[0]?.seq ?? Infinity;
+        const before = peerCtx.items.filter((item) => item.seq === undefined || item.seq < firstSeq);
+        const after = peerCtx.items.filter((item) => item.seq !== undefined && item.seq >= firstSeq);
+        if (before.length > 0 || peerCtx.dropped > 0) {
+          text = `${formatPeerContextBlock(before, peerCtx.dropped, 'peer-bot context since the last delivery')}\n\n${text}`;
+        }
+        if (after.length > 0) {
+          text = `${text}\n\n${formatPeerContextBlock(after, 0, 'peer-bot posts arriving after the first message above')}`;
+        }
+      }
+
+      // Once-per-conversation reply how-to (jg-p1mk add D), always the
+      // final block. A deterministic rejection unmarks (the session
+      // never saw it); transient failures retry the same built text.
       const firstHelp = replyHelpOnce && !replyHelpSent.has(convKey);
       if (firstHelp) {
         replyHelpSent.add(convKey);
         text = `${text}\n\n${replyHelpBlock(convId)}`;
       }
-
-      // Buffered peer-bot posts ride AHEAD of the human delivery that
-      // wakes the session (jg-p1mk add A) — restored on rejection below.
-      const peerCtx = takePeerContext(convKey);
-      if (peerCtx) text = `${formatPeerContextBlock(peerCtx)}\n\n${text}`;
 
       const message = {
         provider_message_id: newest.msg.msgid,
@@ -876,17 +965,25 @@ export function createInboundPipeline(deps) {
     return buf.promise;
   }
 
-  // flushAll synchronously drains every buffered conversation — the
-  // normal-shutdown path, so already-received frames are not lost to a
-  // SIGTERM landing inside a window. Returns a promise that settles when
-  // every flushed delivery settles.
-  function flushAll() {
-    const flushed = [];
+  // flushAll drains every buffered conversation AND awaits the delivery
+  // chains — the normal-shutdown path, so already-received frames are
+  // not lost to a SIGTERM landing inside a window. It also flips the
+  // pipeline into draining mode: frames arriving mid-drain bypass the
+  // window into chains this loop then observes, instead of opening an
+  // unobserved buffer that outlives the snapshot (codex r2 finding 4).
+  // A chain wedged in gc-outage retries never settles — the CALLER
+  // bounds the wait (index.js shutdown caps it at 5s).
+  let draining = false;
+  async function flushAll() {
+    draining = true;
     for (const [key, buf] of [...coalesceBuffers]) {
-      flushed.push(buf.promise);
       flushConversation(key, buf);
     }
-    return Promise.allSettled(flushed);
+    // Chains can grow while being awaited (late frames, chained
+    // batches); loop until the map empties, bounded defensively.
+    for (let round = 0; round < 32 && convoChains.size > 0; round++) {
+      await Promise.allSettled([...convoChains.values()]);
+    }
   }
 
   const enqueueInbound = (frame) => {
@@ -919,10 +1016,13 @@ export function createInboundPipeline(deps) {
       // Namespaced key (codex jg-p1mk r1 finding 1): a DM userid that
       // collides with a group chatid must not share a buffer or chain.
       const key = conversationKeyFor(msg.chattype, msg.chattype === 'group' ? msg.chatid : msg.from?.userid);
-      if (coalesceWindowMs > 0 && key) {
-        return enqueueCoalesced(key, { frame, handle });
+      const entry = { frame, handle, seq: arrivalSeq++ };
+      // Draining (shutdown): bypass the window so late frames join a
+      // chain the drain awaits instead of opening an unobserved buffer.
+      if (coalesceWindowMs > 0 && key && !draining) {
+        return enqueueCoalesced(key, entry);
       }
-      return chainBatch(key, [{ frame, handle }]);
+      return chainBatch(key, [entry]);
     } catch (err) {
       removePending(msg.msgid);
       throw err;

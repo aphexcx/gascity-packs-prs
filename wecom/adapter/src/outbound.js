@@ -1074,6 +1074,22 @@ export function createOutboundPublisher(deps) {
       res.writeHead(400).end('conversation.conversation_id and text are required');
       return;
     }
+    // A non-string idempotency key is a caller bug that silently breaks
+    // the dedup it exists for (codex jg-p1mk r2 finding 5): an object or
+    // array parses to a DISTINCT Map key on every retry (every retry
+    // re-sends), while 0/false read as keyless. /publish-media already
+    // rejects the shape; fail closed here too rather than half-honor it.
+    if (pub.idempotency_key !== undefined
+      && (typeof pub.idempotency_key !== 'string' || pub.idempotency_key === '')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'invalid_request',
+        error: `idempotency_key must be a non-empty string when supplied, got ${Array.isArray(pub.idempotency_key) ? 'array' : typeof pub.idempotency_key}`,
+      }));
+      return;
+    }
 
     // Feedback ids (jg-mlfs): a markdown send carrying markdown.feedback
     // .id gets 👍/👎 controls in the WeCom client, and a user's rating

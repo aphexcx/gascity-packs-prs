@@ -2837,23 +2837,23 @@ test('with feedbackIds off (or unset), the markdown body is unchanged', async ()
   assert.deepEqual(calls[0].body, { msgtype: 'markdown', markdown: { content: 'plain' } });
 });
 
-test('a non-string idempotency_key cannot crash the feedback base or orphan the owner (codex r1 f3)', async () => {
+test('a non-string idempotency_key is rejected 400 — it cannot crash the feedback base, orphan the owner, or fake dedup (codex r1 f3 / r2 f5)', async () => {
   const { publisher, calls } = makePublisher({ cfg: { feedbackIds: true } });
-  const res = await publishText(publisher, {
+  for (const badKey of [7, 0, false, { k: 1 }, ['a']]) {
+    const res = await publishText(publisher, {
+      conversation: { conversation_id: 'zhang_san' },
+      text: 'bad key shape',
+      idempotency_key: badKey,
+    });
+    assert.equal(res.statusCode, 400, `key ${JSON.stringify(badKey)} must be refused`);
+    assert.equal(res.json().failure_kind, 'invalid_request');
+  }
+  assert.equal(calls.length, 0, 'nothing was ever sent for a malformed key');
+  // A well-formed keyless publish still works.
+  const ok = await publishText(publisher, {
     conversation: { conversation_id: 'zhang_san' },
-    text: 'numeric key',
-    idempotency_key: 7,
+    text: 'keyless is fine',
   });
-  assert.equal(res.statusCode, 200);
-  assert.equal(res.json().delivered, true);
-  assert.match(calls[0].body.markdown.feedback.id, /^fb-[0-9a-f-]{36}\.0$/);
-  // A retry of the same (non-string) key must answer, not hang on an
-  // orphaned owner promise.
-  const retry = await publishText(publisher, {
-    conversation: { conversation_id: 'zhang_san' },
-    text: 'numeric key',
-    idempotency_key: 7,
-  });
-  assert.equal(retry.statusCode, 200);
-  assert.equal(calls.length, 1, 'the retry answered from the receipt without re-sending');
+  assert.equal(ok.statusCode, 200);
+  assert.equal(calls.length, 1);
 });

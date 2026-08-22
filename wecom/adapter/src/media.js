@@ -44,6 +44,12 @@ import { pathToFileURL } from 'node:url';
 const zwsp = '​';
 
 export function neutralizeMarkupBoundaries(s) {
+  // Provider-controlled values are not guaranteed to be strings — a
+  // JSON-valid frame can carry a numeric userid/chatid, and a hostile
+  // one anything else. Coerce rather than throw (codex jg-p1mk r2
+  // finding 1: a numeric sender in one batch member threw HERE, outside
+  // the member containment, and dropped the healthy siblings).
+  s = String(s ?? '');
   if (!s.includes('<')) return s;
   let out = '';
   for (let i = 0; i < s.length; i++) {

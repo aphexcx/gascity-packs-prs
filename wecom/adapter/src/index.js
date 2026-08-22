@@ -493,19 +493,27 @@ async function main() {
   // ready-but-dead shape — socket healthy, zero pushes. The optional
   // remediation cycles the connection: disconnect() suppresses the SDK's
   // auto-reconnect (manual close), connect() re-arms it and re-auths.
-  // connect() waits for the SDK's 'disconnected' event (with a timer
-  // fallback for an already-dead socket that emits nothing) — calling it
-  // back-to-back with disconnect() races SDK 1.0.7's asynchronous
-  // old-socket close handler, which can strip the NEW connection's
-  // socket reference and heartbeat (codex jg-p1mk r1 finding 4).
+  // connect() must not run until the old socket's close handler has
+  // FULLY completed (codex jg-p1mk r1 finding 4, r2 finding 3): SDK
+  // 1.0.7 emits 'disconnected' MID-handler, then nulls the shared ws
+  // reference and re-checks isManualClose — so connecting synchronously
+  // inside the event callback still loses the fresh socket to the
+  // handler's tail and re-arms a duplicate auto-reconnect. Defer one
+  // macrotask past the event; keep a timer fallback for an already-dead
+  // socket that emits nothing, and remove the listener on whichever
+  // path fires first so repeated cycles never accumulate listeners.
   const cycleConnection = () => {
     let cycled = false;
     const connectOnce = () => {
       if (cycled) return;
       cycled = true;
+      wsClient.off('disconnected', deferredConnect);
       wsClient.connect();
     };
-    wsClient.once('disconnected', connectOnce);
+    const deferredConnect = () => {
+      setTimeout(connectOnce, 0);
+    };
+    wsClient.once('disconnected', deferredConnect);
     setTimeout(connectOnce, 3000).unref?.();
     wsClient.disconnect();
   };

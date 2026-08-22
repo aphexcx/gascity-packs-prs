@@ -1103,7 +1103,7 @@ test('a peer-bot room post never wakes the session; it rides ahead of the next h
   assert.equal(posts.length, 1);
   const text = posts[0].body.message.text;
   assert.equal(text, [
-    '[peer-bot context — 1 post since the last delivery; read-only, no reply expected]',
+    '[peer-bot context since the last delivery — 1 post; read-only, no reply expected]',
     'citadel_bot: 状态: 部署完成',
     '',
     '大家好',
@@ -1133,7 +1133,7 @@ test('the peer buffer caps with a dropped count and dedups replayed msgids', asy
   await peer('PC_3', '三'); // evicts PC_1 past the cap of 2
   await pipeline.enqueueInbound(frame(groupText({ msgid: 'H_2', text: { content: '人类消息' } })));
   const text = posts[0].body.message.text;
-  assert.match(text, /2 posts since the last delivery; 1 older dropped at the 2-item cap/);
+  assert.match(text, /peer-bot context since the last delivery — 2 posts; 1 older dropped at the 2-item cap/);
   assert.ok(!text.includes('一'), 'evicted post is gone');
   assert.match(text, /citadel_bot: 二\ncitadel_bot: 三/);
 });
@@ -1157,7 +1157,7 @@ test('a rejected carrying delivery restores the peer context for the next one', 
   await pipeline.enqueueInbound(frame(groupText({ msgid: 'HR_1', text: { content: '被拒绝的' } })));
   await pipeline.enqueueInbound(frame(groupText({ msgid: 'HR_2', text: { content: '成功的' } })));
   assert.equal(delivered.length, 1);
-  assert.match(delivered[0], /peer-bot context — 1 post/);
+  assert.match(delivered[0], /peer-bot context since the last delivery — 1 post/);
   assert.match(delivered[0], /citadel_bot: 上下文/);
   assert.match(delivered[0], /成功的/);
 });
@@ -1211,4 +1211,139 @@ test('reply-help marks are per (kind, id) — a DM and a colliding room each get
   assert.equal(posts.length, 2);
   assert.match(posts[0].body.message.text, /full reply how-to/);
   assert.match(posts[1].body.message.text, /full reply how-to/);
+});
+
+// --- codex jg-p1mk round-2 regressions -----------------------------------------
+
+test('a numeric sender in one same-room batch member cannot break the combine or lose siblings (codex r2 f1)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 30 } });
+  const good = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'NS_GOOD', chattype: 'group', chatid: 'wrNS', text: { content: '健康消息' },
+  })));
+  const bad = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'NS_BAD', chattype: 'group', chatid: 'wrNS', from: { userid: 7 }, text: { content: '数字发送者' },
+  })));
+  await Promise.all([good, bad]);
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  // Both members render (String coercion), so the batch keeps both —
+  // the essential guarantee is no thrown combine and no lost sibling.
+  assert.match(text, /健康消息/);
+  assert.match(text, /7: 数字发送者/);
+});
+
+test('a hostile peer frame cannot throw through the emitter or leave an empty buffer entry (codex r2 f2)', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['citadel_bot'] },
+    deps: { log: (...a) => logs.push(a.join(' ')) },
+  });
+  // Non-array msg_item makes renderText throw — must be contained.
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'PH_1',
+    chattype: 'group',
+    chatid: 'wrROOM_9',
+    from: { userid: 'citadel_bot' },
+    msgtype: 'mixed',
+    mixed: { msg_item: { length: 0 } },
+  })));
+  assert.equal(pipeline.stats().peerContexts, 0, 'no empty buffer entry left behind');
+  assert.equal(logs.filter((l) => l.includes('unrenderable')).length, 1);
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'PH_H', chattype: 'group', chatid: 'wrROOM_9', text: { content: '人类' } })));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.message.text, '人类', 'no phantom peer block');
+});
+
+test('the peer conversation map is bounded — LRU conversation evicted past the cap (codex r2 f7)', async (t) => {
+  const logs = [];
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    deps: { peerConversationsCap: 2, log: (...a) => logs.push(a.join(' ')) },
+  });
+  for (const room of ['wrA', 'wrB', 'wrC']) {
+    await pipeline.enqueueInbound(frame(textMessage({
+      msgid: `PB_${room}`, chattype: 'group', chatid: room, from: { userid: 'pb' }, text: { content: room },
+    })));
+  }
+  assert.equal(pipeline.stats().peerContexts, 2);
+  assert.equal(logs.filter((l) => l.includes('evicted the least-recently-touched conversation g:wrA')).length, 1);
+});
+
+test('a peer post arriving after a buffered human message renders BELOW it, not as prior context (codex r2 f8)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    deps: { coalesceWindowMs: 40 },
+  });
+  const human = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'ORD_H', chattype: 'group', chatid: 'wrO', text: { content: '请求' },
+  })));
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'ORD_P', chattype: 'group', chatid: 'wrO', from: { userid: 'pb' }, text: { content: '响应' },
+  })));
+  await human;
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  assert.ok(text.indexOf('请求') < text.indexOf('响应'), `provider order preserved, got:\n${text}`);
+  assert.match(text, /peer-bot posts arriving after the first message above/);
+});
+
+test('restoration after rejection dedups a peer replay buffered mid-POST (codex r2 f9)', async (t) => {
+  let rejectNext = true;
+  const delivered = [];
+  let pipelineRef;
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['pb'] },
+    postInbound: async (target, body) => {
+      if (rejectNext) {
+        rejectNext = false;
+        // Replay of the taken peer msgid lands while the POST is in flight.
+        await pipelineRef.enqueueInbound(frame(textMessage({
+          msgid: 'DUP_P', chattype: 'group', chatid: 'wrD', from: { userid: 'pb' }, text: { content: '重复上下文' },
+        })));
+        const err = new Error('400 Bad Request');
+        err.status = 400;
+        throw err;
+      }
+      delivered.push(body.message.text);
+    },
+  });
+  pipelineRef = pipeline;
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'DUP_P', chattype: 'group', chatid: 'wrD', from: { userid: 'pb' }, text: { content: '重复上下文' },
+  })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'DUP_H1', chattype: 'group', chatid: 'wrD', text: { content: '第一次' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'DUP_H2', chattype: 'group', chatid: 'wrD', text: { content: '第二次' } })));
+  assert.equal(delivered.length, 1);
+  assert.equal((delivered[0].match(/重复上下文/g) ?? []).length, 1, 'the replayed peer line appears exactly once');
+});
+
+test('flushAll in draining mode also awaits in-chain batches and late frames (codex r2 f4)', async (t) => {
+  let releaseFirst;
+  const gate = new Promise((r) => { releaseFirst = r; });
+  const delivered = [];
+  const { pipeline } = makePipeline(t, {
+    deps: { coalesceWindowMs: 60_000 },
+    postInbound: async (target, body) => {
+      if (body.message.provider_message_id === 'DR_1') await gate;
+      delivered.push(body.message.provider_message_id);
+    },
+  });
+  // DR_1 buffered; flush it into a chain whose POST hangs, then start
+  // the drain and enqueue a late frame mid-drain.
+  pipeline.enqueueInbound(frame(textMessage({ msgid: 'DR_1' })));
+  const drain = pipeline.flushAll();
+  pipeline.enqueueInbound(frame(textMessage({ msgid: 'DR_2', text: { content: '迟到' } })));
+  setTimeout(releaseFirst, 20);
+  await drain;
+  assert.deepEqual(delivered, ['DR_1', 'DR_2'], 'the drain returned only after chains and late frames settled');
+});
+
+test('the ASR guards protect short deliberate repeats (codex r2 f6)', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  const phrase = '重要的事情说三遍'; // 8 chars — under the 10-char block floor
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgtype: 'voice',
+    voice: { content: phrase + phrase + phrase },
+  })));
+  assert.equal(posts[0].body.message.text, `[voice] ${phrase}${phrase}${phrase}`);
 });
