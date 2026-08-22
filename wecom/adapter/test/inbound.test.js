@@ -1541,7 +1541,11 @@ test('pending marks surviving compaction stay evictable — no ghost dedup entri
   const held = pipeline.enqueueInbound(inChat('HOLD', 'chatA'));
   const replays = [];
   for (let i = 1; i <= 4; i++) replays.push(pipeline.enqueueInbound(inChat(`A${i}`, 'chatA')));
-  for (let i = 1; i <= 5; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
+  // Enough churn to force ACTUAL compaction under the dead-slot-mass
+  // trigger (each eviction past the cap creates one dead slot; the
+  // trigger needs deadSlots > cap AND > half the array) while the four
+  // A-marks sit pending-exempt in the prefix.
+  for (let i = 1; i <= 13; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
   releaseHold();
   await held;
   await Promise.all(replays);
@@ -1549,7 +1553,7 @@ test('pending marks surviving compaction stay evictable — no ghost dedup entri
 
   // The A-marks must have re-entered cap accounting and rolled off as
   // churn continues — a fresh X's replay must dedup.
-  for (let i = 6; i <= 10; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
+  for (let i = 14; i <= 20; i++) await pipeline.enqueueInbound(inChat(`B${i}`, `chatB${i}`));
   await pipeline.enqueueInbound(inChat('X', 'chatX'));
   await pipeline.enqueueInbound(inChat('X', 'chatX'));
   assert.equal(posts.filter((id) => id === 'X').length, 1, 'the fresh id replays exactly once — no ghost-consumed cap');
