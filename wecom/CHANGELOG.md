@@ -29,7 +29,35 @@
   forward to the bound session as `[user feedback]` signals (rating,
   reason codes, free-text criticism), deduped on the event msgid,
   correlated via the publish log's `feedback_base`.
-  35 new tests (198 total).
+  Mid-flight scope adds (mayor 8/23 01:08):
+  **(D) reply how-to once per conversation** — the registered
+  reply_instructions template is now ONE line per reminder; the full
+  how-to (file-based reply hygiene, media flags, confinement note)
+  rides each conversation's first delivery per adapter lifetime,
+  re-armed if that delivery is rejected.
+  **(C) voice ASR-repeat dedup** — a transcript that is one ≥8-char
+  block repeated 2–4× verbatim (no separator or single space/newline;
+  WeCom ASR bug observed nightly 8/22) collapses to one block with an
+  `(ASR重复×N已折叠)` marker; counts (never content) are logged.
+  **(A) peer-bot context buffering** (slack-full gp-kop port) — group
+  posts from `WECOM_PEER_BOT_USERIDS` never wake the bound session:
+  they buffer (capped at 20/conversation, oldest dropped with a count,
+  msgid-deduped) and ride ahead of the next human delivery as a tagged
+  read-only block, restored if that delivery is rejected.
+  **(B) non-waking liveness probes** — satisfied by construction: the
+  watchdog never touches gc (log + healthz only) and the reconnect
+  cycle generates no agent turns.
+  Codex round-1 fixes: per-conversation keys namespaced by chat type
+  (a DM userid colliding with a group chatid can no longer merge
+  batches, peer buffers, or help marks); one hostile batch member
+  (malformed create_time / non-array mixed items) drops alone instead
+  of aborting siblings or leaking their hydration entries; feedback
+  bases guard non-string idempotency keys and are computed before the
+  ownership claim; the liveness reconnect cycle waits for the SDK's
+  disconnected event (timer fallback) instead of racing the old
+  socket's close handler; shutdown awaits the coalescer drain
+  (bounded) before exiting.
+  51 new tests (214 total).
 
 - Outbound media hardening (jg-d0xr codex round-1, findings 1–11):
   `/publish-media` is now confined to a REQUIRED

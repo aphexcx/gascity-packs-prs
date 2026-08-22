@@ -200,6 +200,30 @@ the event msgid and riding the same per-conversation ordering and
 coalescing as messages. Correlation: the publish log line's
 `feedback_base=fb-…` matches the signal's `feedback_id=fb-….<chunk>`.
 
+**Reply how-to once per conversation.** The reply_instructions template
+registered with gc is one line (rendered into every inbound reminder);
+the full how-to — file-based reply hygiene, media publish flags, the
+`WECOM_OUTBOUND_MEDIA_ROOT` confinement — is appended to each
+conversation's first delivery per adapter lifetime and re-armed if that
+delivery is rejected.
+
+**Voice ASR-repeat dedup.** WeCom's server-side voice transcription has
+been observed (8/22, every long voice message) delivering the same text
+repeated 2–3× verbatim. A transcript that is one ≥8-character block
+repeated 2–4 times exactly (no separator, or a single space/newline)
+collapses to one block with an `(ASR重复×N已折叠)` marker; the log
+records counts only, never transcript content. Short doublings like
+好的好的 are deliberately left alone.
+
+**Peer-bot context buffering.** Group posts authored by userids in
+`WECOM_PEER_BOT_USERIDS` (comma-separated; empty disables) never wake
+the bound session. They buffer per conversation (cap 20, oldest dropped
+with a count, msgid-deduped) and ride ahead of the next human delivery
+as a `[peer-bot context]` read-only block, restored if that delivery is
+rejected. Peer media is not hydrated — context is text-only by
+contract. Liveness watchdog probes generate no gc traffic and no agent
+turns by construction.
+
 ## Adapter tests
 
 ```

@@ -87,18 +87,62 @@ export function conversationForMessage(cfg, msg) {
   };
 }
 
+// dedupeAsrRepeats collapses a WeCom voice transcript that is one block
+// repeated verbatim 2–4 times (jg-p1mk add C — observed nightly on 8/22:
+// every long voice message's server-side ASR arrived with the same text
+// duplicated 2-3x, with no separator or a single space/newline between
+// copies). Detection is EXACT repetition of the whole content only, and
+// only for blocks of ≥ 8 characters — a polite doubling like 好的好的
+// must never be "deduped" into 好的. Runs to a fixed point so a 4x
+// repeat expressed as 2x-of-2x still collapses fully. Returns
+// { text, repeats }; repeats === 1 means untouched.
+const asrRepeatSeparators = ['', ' ', '\n'];
+const asrMinBlockChars = 8;
+
+export function dedupeAsrRepeats(content) {
+  let text = String(content ?? '');
+  let repeats = 1;
+  for (;;) {
+    let hit = null;
+    for (const sep of asrRepeatSeparators) {
+      for (let k = 2; k <= 4 && !hit; k++) {
+        const blockLen = (text.length - sep.length * (k - 1)) / k;
+        if (!Number.isInteger(blockLen) || blockLen < asrMinBlockChars) continue;
+        const block = text.slice(0, blockLen);
+        if (Array(k).fill(block).join(sep) === text) hit = { block, k };
+      }
+      if (hit) break;
+    }
+    if (!hit) break;
+    text = hit.block;
+    repeats *= hit.k;
+  }
+  return { text, repeats };
+}
+
 // renderText flattens each supported WeCom message type into the plain
 // text gc transports. Media placeholders stay as the base text; the
 // hydration block (download+decrypt+store, src/media.js) is appended by
 // bridgeInbound — so a message whose hydration failed entirely still
 // reads as '[file message]' plus the failure note, never as silence.
-export function renderText(msg) {
+// onAsrDedup (optional) is called with {repeats, fromChars, toChars}
+// when a voice transcript's ASR repeats were collapsed — the bridge logs
+// counts there; transcript CONTENT never reaches a log.
+export function renderText(msg, onAsrDedup = null) {
   switch (msg.msgtype) {
     case 'text':
       return msg.text?.content ?? '';
-    case 'voice':
+    case 'voice': {
       // WeCom transcribes voice server-side; content IS the transcript.
-      return msg.voice?.content ? `[voice] ${msg.voice.content}` : '[voice message]';
+      if (!msg.voice?.content) return '[voice message]';
+      const { text, repeats } = dedupeAsrRepeats(msg.voice.content);
+      if (repeats === 1) return `[voice] ${msg.voice.content}`;
+      onAsrDedup?.({ repeats, fromChars: msg.voice.content.length, toChars: text.length });
+      // The marker keeps the collapse auditable in the delivered text —
+      // the no-content-logging policy forbids keeping the original in
+      // the service log.
+      return `[voice] ${text} (ASR重复×${repeats}已折叠)`;
+    }
     case 'mixed': {
       const parts = (msg.mixed?.msg_item ?? []).map((item) =>
         item.msgtype === 'text' ? (item.text?.content ?? '') : '[image]'
@@ -159,6 +203,22 @@ export function renderFeedbackText(msg) {
   return neutralizeMarkupBoundaries(text);
 }
 
+// replyHelpBlock is the full reply how-to, delivered once per
+// conversation per adapter lifetime, appended to that conversation's
+// first forwarded inbound (jg-p1mk add D — the gp-729 item-3 port). The
+// registered reply_instructions template (index.js) is a single line
+// rendered into every reminder; this block carries the mechanics that
+// used to ride every message: file-based reply hygiene and the media
+// publish flags with their confinement constraint.
+export function replyHelpBlock(conversationId) {
+  const id = neutralizeMarkupBoundaries(conversationId ?? '');
+  return `[conversation ${id} — full reply how-to, sent once per chat per adapter session]\n`
+    + `To reply: write your reply to a file, then run: gc wecom publish --chat ${id} --text-file <path>. `
+    + 'File-based so arbitrary reply text (apostrophes, code, Chinese quotes) never needs shell escaping.\n'
+    + `To send an image or video: gc wecom publish --chat ${id} --image <path> (or --video <path>), `
+    + "optional --text caption; media files must live under the adapter's WECOM_OUTBOUND_MEDIA_ROOT directory.";
+}
+
 // emptyPayloadNote detects a media-bearing message whose payload is
 // MISSING — the 8/22 22:53 real case was a voice frame with neither a
 // server-side transcript nor downloadable media, which delivered as a
@@ -194,6 +254,19 @@ export function emptyPayloadNote(msg) {
     default:
       return '';
   }
+}
+
+// conversationKeyFor derives the pipeline's INTERNAL per-conversation
+// key. Namespaced by chat type (codex jg-p1mk r1 finding 1): a DM
+// peer's userid and a group's chatid live in different WeCom id spaces,
+// and a collision between them must never share a coalescing buffer,
+// chain, peer-context buffer, or reply-help mark — a merged buffer
+// would deliver a private DM into the group-bound gc conversation. gc's
+// own conversation identity already distinguishes the two via `kind`;
+// this key mirrors that.
+export function conversationKeyFor(chattypeOrKind, id) {
+  const isGroup = chattypeOrKind === 'group' || chattypeOrKind === 'room';
+  return id == null ? undefined : `${isGroup ? 'g' : 'd'}:${id}`;
 }
 
 // --- pipeline ----------------------------------------------------------------
@@ -239,6 +312,7 @@ export function createInboundPipeline(deps) {
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
     seenMsgIdCap = 2048,
+    replyHelpOnce = true,
     now = Date.now,
     log = () => {},
   } = deps;
@@ -324,6 +398,88 @@ export function createInboundPipeline(deps) {
     } else {
       pendingMsgIds.set(msgid, count - 1);
     }
+  }
+
+  // Conversations that already received the full reply how-to this
+  // adapter lifetime (jg-p1mk add D). Bounded by the live conversation
+  // population — WeCom chats a bot belongs to number in the dozens, so
+  // no cap/eviction is needed (and evicting would re-send the block).
+  const replyHelpSent = new Set();
+
+  // --- peer-bot context buffering (jg-p1mk add A; slack-full gp-kop port) ---
+  //
+  // Room posts authored by allowlisted peer bots (cfg.peerBotUserIds —
+  // other mayors' bots sharing a group chat) must NOT wake the bound
+  // session: they buffer here as tagged read-only context and ride ahead
+  // of the conversation's next real human delivery. In-memory,
+  // per-conversation, capped: past peerContextCap the OLDEST entries
+  // drop with a count (context is best-effort by contract — unlike
+  // human messages, a dropped peer line is an acceptable loss and the
+  // block says how many). msgid-deduped so an SDK replay of a buffered
+  // peer frame cannot double a line. A deterministic gc rejection of the
+  // carrying delivery restores the items for the next one.
+  const peerContextCap = deps.peerContextCap ?? 20;
+  const peerBotUserIds = new Set(cfg.peerBotUserIds ?? []);
+  const peerContexts = new Map(); // convKey → { items: [{msgid, userid, text}], seen: Set, dropped: n }
+
+  function bufferPeerContext(key, msg) {
+    let ctx = peerContexts.get(key);
+    if (!ctx) {
+      ctx = { items: [], seen: new Set(), dropped: 0 };
+      peerContexts.set(key, ctx);
+    }
+    if (msg.msgid && ctx.seen.has(msg.msgid)) return;
+    if (msg.msgid) ctx.seen.add(msg.msgid);
+    ctx.items.push({
+      msgid: msg.msgid,
+      userid: msg.from?.userid ?? 'unknown',
+      text: renderText(msg),
+    });
+    while (ctx.items.length > peerContextCap) {
+      const evicted = ctx.items.shift();
+      if (evicted.msgid) ctx.seen.delete(evicted.msgid);
+      ctx.dropped++;
+    }
+    log(`peer context: buffered post from ${msg.from?.userid} in ${key} (pending=${ctx.items.length}); not waking the session`);
+  }
+
+  // takePeerContext removes and returns the conversation's buffered peer
+  // items for one delivery; restorePeerContext puts them back (ahead of
+  // anything buffered meanwhile) when that delivery was rejected.
+  function takePeerContext(key) {
+    const ctx = peerContexts.get(key);
+    if (!ctx || (ctx.items.length === 0 && ctx.dropped === 0)) return null;
+    peerContexts.delete(key);
+    return ctx;
+  }
+
+  function restorePeerContext(key, taken) {
+    if (!taken) return;
+    const current = peerContexts.get(key);
+    if (!current) {
+      peerContexts.set(key, taken);
+      return;
+    }
+    current.items = [...taken.items, ...current.items];
+    for (const item of taken.items) {
+      if (item.msgid) current.seen.add(item.msgid);
+    }
+    current.dropped += taken.dropped;
+    while (current.items.length > peerContextCap) {
+      const evicted = current.items.shift();
+      if (evicted.msgid) current.seen.delete(evicted.msgid);
+      current.dropped++;
+    }
+  }
+
+  function formatPeerContextBlock(ctx) {
+    const noun = ctx.items.length === 1 ? 'post' : 'posts';
+    const droppedNote = ctx.dropped > 0 ? `; ${ctx.dropped} older dropped at the ${peerContextCap}-item cap` : '';
+    const lines = [`[peer-bot context — ${ctx.items.length} ${noun} since the last delivery${droppedNote}; read-only, no reply expected]`];
+    for (const item of ctx.items) {
+      lines.push(`${neutralizeMarkupBoundaries(item.userid)}: ${item.text}`);
+    }
+    return lines.join('\n');
   }
 
   // Backlog refusals cached by msgid (codex r3): a refused message's
@@ -499,50 +655,67 @@ export function createInboundPipeline(deps) {
             if (current && current.promise === hydration) hydrations.delete(msg.msgid);
           });
         }
-        if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid) || seenInBatch.has(msg.msgid))) {
-          continue;
-        }
-        const conversation = conversationForMessage(cfg, msg);
-        if (!conversation.conversation_id) {
-          log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
-          continue;
-        }
-        let text = renderText(msg);
-        if (!text) {
-          // A frame that renders to nothing (a text message with empty
-          // content) cannot deliver — but it must not vanish silently
-          // (jg-p1mk item 2 discipline).
-          log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message rendered no text; dropped`);
-          continue;
-        }
-        // Empty-payload surfacing (jg-p1mk item 2, 8/22 22:53 real case):
-        // a voice frame with no transcript, or a media frame with no
-        // download URL, delivers with an explicit marker plus a loud log
-        // line — never as a bare placeholder with zero evidence.
-        const note = emptyPayloadNote(msg);
-        if (note) {
-          log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message carried no usable payload; delivering with explicit marker`);
-          text = `${text}\n${note}`;
-        }
-
-        // Media hydration started the moment the frame arrived (the
-        // download URL is on a 5-minute fuse — it cannot wait behind this
-        // conversation's gc retry queue, nor behind the coalescing
-        // window); by the time this chained bridge runs, the promise is
-        // usually already settled. hydrateMessageMedia never rejects, but
-        // a defensive catch keeps an unforeseen bug from dropping the
-        // message: worst case the agent sees the bare placeholder text.
-        let attachments = [];
-        if (hydration) {
-          const hydrated = await hydration.catch((err) => {
-            log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
-            return { attachments: [], block: '' };
+        // Per-member containment: a hostile frame that throws anywhere in
+        // its own processing (the known case is an out-of-range but
+        // JSON-valid create_time making toISOString() throw — which is
+        // why received_at is computed HERE, per member, not in the shared
+        // envelope build) is dropped ALONE. Pre-coalescer, each frame
+        // bridged independently, so one malformed frame could never take
+        // its burst neighbors down with it; that containment must survive
+        // batching.
+        try {
+          if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid) || seenInBatch.has(msg.msgid))) {
+            continue;
+          }
+          const conversation = conversationForMessage(cfg, msg);
+          if (!conversation.conversation_id) {
+            log(`inbound ${msg.msgid}: no conversation id (chattype=${msg.chattype}); dropped`);
+            continue;
+          }
+          let text = renderText(msg, ({ repeats, fromChars, toChars }) => {
+            log(`inbound ${msg.msgid}: voice ASR repeat collapsed ×${repeats} (${fromChars} → ${toChars} chars)`);
           });
-          attachments = hydrated.attachments;
-          if (hydrated.block) text = `${text}\n${hydrated.block}`;
+          if (!text) {
+            // A frame that renders to nothing (a text message with empty
+            // content) cannot deliver — but it must not vanish silently
+            // (jg-p1mk item 2 discipline).
+            log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message rendered no text; dropped`);
+            continue;
+          }
+          // Empty-payload surfacing (jg-p1mk item 2, 8/22 22:53 real case):
+          // a voice frame with no transcript, or a media frame with no
+          // download URL, delivers with an explicit marker plus a loud log
+          // line — never as a bare placeholder with zero evidence.
+          const note = emptyPayloadNote(msg);
+          if (note) {
+            log(`inbound ${msg.msgid}: EMPTY PAYLOAD — ${msg.msgtype} message carried no usable payload; delivering with explicit marker`);
+            text = `${text}\n${note}`;
+          }
+          const receivedAt = msg.create_time
+            ? new Date(msg.create_time * 1000).toISOString()
+            : new Date().toISOString();
+
+          // Media hydration started the moment the frame arrived (the
+          // download URL is on a 5-minute fuse — it cannot wait behind this
+          // conversation's gc retry queue, nor behind the coalescing
+          // window); by the time this chained bridge runs, the promise is
+          // usually already settled. hydrateMessageMedia never rejects, but
+          // a defensive catch keeps an unforeseen bug from dropping the
+          // message: worst case the agent sees the bare placeholder text.
+          let attachments = [];
+          if (hydration) {
+            const hydrated = await hydration.catch((err) => {
+              log(`inbound ${msg.msgid}: media hydration error: ${err.message}`);
+              return { attachments: [], block: '' };
+            });
+            attachments = hydrated.attachments;
+            if (hydrated.block) text = `${text}\n${hydrated.block}`;
+          }
+          if (msg.msgid) seenInBatch.add(msg.msgid);
+          members.push({ msg, conversation, text, attachments, receivedAt });
+        } catch (err) {
+          log(`inbound ${msg.msgid}: member processing failed (${err.message}); dropped from batch`);
         }
-        if (msg.msgid) seenInBatch.add(msg.msgid);
-        members.push({ msg, conversation, text, attachments });
       }
       if (members.length === 0) return;
 
@@ -565,6 +738,23 @@ export function createInboundPipeline(deps) {
         label = `inbound batch ${members[0].msg.msgid}..${newest.msg.msgid}`;
       }
 
+      // Once-per-conversation reply how-to (jg-p1mk add D): appended to
+      // the conversation's FIRST delivery this adapter lifetime. A
+      // deterministic rejection unmarks (the session never saw it);
+      // transient failures retry the same built text, help included.
+      const convId = newest.conversation.conversation_id;
+      const convKey = conversationKeyFor(newest.conversation.kind, convId);
+      const firstHelp = replyHelpOnce && !replyHelpSent.has(convKey);
+      if (firstHelp) {
+        replyHelpSent.add(convKey);
+        text = `${text}\n\n${replyHelpBlock(convId)}`;
+      }
+
+      // Buffered peer-bot posts ride AHEAD of the human delivery that
+      // wakes the session (jg-p1mk add A) — restored on rejection below.
+      const peerCtx = takePeerContext(convKey);
+      if (peerCtx) text = `${formatPeerContextBlock(peerCtx)}\n\n${text}`;
+
       const message = {
         provider_message_id: newest.msg.msgid,
         conversation: newest.conversation,
@@ -581,9 +771,7 @@ export function createInboundPipeline(deps) {
         text,
         ...(attachments.length > 0 ? { attachments } : {}),
         dedup_key: dedupKey,
-        received_at: newest.msg.create_time
-          ? new Date(newest.msg.create_time * 1000).toISOString()
-          : new Date().toISOString(),
+        received_at: newest.receivedAt,
       };
 
       const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
@@ -602,6 +790,8 @@ export function createInboundPipeline(deps) {
         // retry forever): a replay would fail identically, so mark seen to
         // stop pointless re-posts.
         for (const id of msgids) markSeen(id);
+        if (firstHelp) replyHelpSent.delete(convKey);
+        restorePeerContext(convKey, peerCtx);
         log(`${label} rejected by gc (${err.message}); dropped`);
       } finally {
         for (const id of msgids) inflightMsgIds.delete(id);
@@ -701,6 +891,16 @@ export function createInboundPipeline(deps) {
 
   const enqueueInbound = (frame) => {
     const msg = frame?.body ?? {};
+    // Peer-bot room posts divert to the context buffer BEFORE any
+    // pipeline state opens (jg-p1mk add A): no pending refcount, no
+    // hydration (a peer's media URL burns unfetched — context is
+    // text-only by contract), no chain, no wake. They surface as a
+    // tagged read-only block ahead of the next human delivery.
+    if (peerBotUserIds.size > 0 && msg.chattype === 'group'
+      && msg.from?.userid && peerBotUserIds.has(msg.from.userid)) {
+      bufferPeerContext(conversationKeyFor('group', msg.chatid), msg);
+      return Promise.resolve();
+    }
     // Pending ownership opens HERE — before the frame even buffers — so
     // the TTL sweep can tell a live-but-queued hydration from a leak.
     // The refcount now also spans the coalescing window: a buffered
@@ -716,7 +916,9 @@ export function createInboundPipeline(deps) {
       // coalescing window plus an earlier message's gc retry loop can
       // outlast that.
       const handle = startHydration(msg);
-      const key = msg.chattype === 'group' ? msg.chatid : msg.from?.userid;
+      // Namespaced key (codex jg-p1mk r1 finding 1): a DM userid that
+      // collides with a group chatid must not share a buffer or chain.
+      const key = conversationKeyFor(msg.chattype, msg.chattype === 'group' ? msg.chatid : msg.from?.userid);
       if (coalesceWindowMs > 0 && key) {
         return enqueueCoalesced(key, { frame, handle });
       }
@@ -739,6 +941,7 @@ export function createInboundPipeline(deps) {
       pending: pendingMsgIds.size,
       refusals: refusals.size,
       buffered: coalesceBuffers.size,
+      peerContexts: peerContexts.size,
     }),
   };
 }

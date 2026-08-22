@@ -49,6 +49,9 @@ function makePipeline(t, overrides = {}) {
     quota: overrides.quota ?? null,
     postInbound: overrides.postInbound
       ?? (async (target, body) => { posts.push({ target, body }); }),
+    // The suite pins exact envelopes; the once-per-conversation reply
+    // how-to (production default ON) is exercised by its own tests.
+    replyHelpOnce: false,
     ...(overrides.deps ?? {}),
   });
   return { pipeline, posts, mediaDir, cfg };
@@ -959,4 +962,253 @@ test('pipeline state drains clean after coalesced deliveries', async (t) => {
   assert.equal(stats.inflight, 0);
   assert.equal(stats.buffered, 0);
   assert.equal(stats.chains, 0);
+});
+
+test('a hostile member (throwing create_time) drops alone; batch neighbors still deliver', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, {
+    deps: { coalesceWindowMs: 30, log: (...a) => logs.push(a.join(' ')) },
+  });
+  const p1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'H_1', text: { content: '正常消息' } })));
+  const p2 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'H_BAD', create_time: 1e15 })));
+  await Promise.all([p1, p2]);
+  assert.equal(posts.length, 1, 'the healthy neighbor still delivered');
+  assert.equal(posts[0].body.message.text, '正常消息');
+  assert.equal(posts[0].body.message.dedup_key, 'H_1');
+  assert.equal(logs.filter((l) => l.includes('H_BAD') && l.includes('dropped from batch')).length, 1);
+  const stats = pipeline.stats();
+  assert.equal(stats.pending, 0);
+  assert.equal(stats.hydrations, 0);
+});
+
+// --- once-per-conversation reply how-to (jg-p1mk add D) ------------------------
+
+test('the full reply how-to rides the first delivery per conversation, then never again', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { replyHelpOnce: true } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_1' })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_2', text: { content: '第二条' } })));
+  assert.equal(posts.length, 2);
+  const first = posts[0].body.message.text;
+  assert.match(first, /^你好\n\n\[conversation zhang_san — full reply how-to, sent once per chat per adapter session\]/);
+  assert.match(first, /gc wecom publish --chat zhang_san --text-file <path>/);
+  assert.match(first, /WECOM_OUTBOUND_MEDIA_ROOT/);
+  assert.equal(posts[1].body.message.text, '第二条', 'second delivery carries no help block');
+});
+
+test('each conversation gets its own help block; a rejected first delivery re-arms it', async (t) => {
+  let rejectNext = true;
+  const posts = [];
+  const { pipeline } = makePipeline(t, {
+    deps: { replyHelpOnce: true },
+    postInbound: async (target, body) => {
+      if (rejectNext) {
+        rejectNext = false;
+        const err = new Error('400 Bad Request');
+        err.status = 400;
+        throw err;
+      }
+      posts.push(body.message);
+    },
+  });
+  // First delivery for li_si is deterministically rejected — the session
+  // never saw the help, so the next delivery must carry it again.
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_A', from: { userid: 'li_si' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_B', from: { userid: 'li_si' }, text: { content: '再来' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_C', from: { userid: 'wang_wu' } })));
+  assert.equal(posts.length, 2);
+  assert.match(posts[0].text, /conversation li_si — full reply how-to/);
+  assert.match(posts[1].text, /conversation wang_wu — full reply how-to/);
+});
+
+test('a coalesced first delivery appends the help block once, after the batch', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { replyHelpOnce: true, coalesceWindowMs: 30 } });
+  await Promise.all([
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_X1', text: { content: '一' } }))),
+    pipeline.enqueueInbound(frame(textMessage({ msgid: 'RH_X2', text: { content: '二' } }))),
+  ]);
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  assert.match(text, /^\[2 WeCom messages coalesced, in arrival order\]\nzhang_san: 一\nzhang_san: 二\n\n\[conversation zhang_san — full reply how-to/);
+  assert.equal(text.match(/full reply how-to/g).length, 1);
+});
+
+// --- voice ASR-repeat dedup (jg-p1mk add C) ------------------------------------
+
+test('a 2x-repeated voice transcript collapses to one block with the marker, counts logged', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, { deps: { log: (...a) => logs.push(a.join(' ')) } });
+  const block = '我已经在路上了大概十分钟到';
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'ASR_2X',
+    msgtype: 'voice',
+    voice: { content: block + block },
+  })));
+  assert.equal(posts[0].body.message.text, `[voice] ${block} (ASR重复×2已折叠)`);
+  const line = logs.find((l) => l.includes('voice ASR repeat collapsed'));
+  assert.ok(line, 'the collapse must log counts');
+  assert.match(line, /×2 \(26 → 13 chars\)/);
+  assert.ok(!line.includes(block), 'transcript content must never reach the log');
+});
+
+test('a 3x repeat joined by newlines collapses too', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  const block = '明天上午的演示我会提前把机器人架好';
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgtype: 'voice',
+    voice: { content: [block, block, block].join('\n') },
+  })));
+  assert.equal(posts[0].body.message.text, `[voice] ${block} (ASR重复×3已折叠)`);
+});
+
+test('short doubled phrases and honest transcripts pass through untouched', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  await pipeline.enqueueInbound(frame(textMessage({ msgtype: 'voice', voice: { content: '好的好的' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgtype: 'voice', voice: { content: '今天的测试很顺利，明天继续' } })));
+  assert.equal(posts[0].body.message.text, '[voice] 好的好的');
+  assert.equal(posts[1].body.message.text, '[voice] 今天的测试很顺利，明天继续');
+});
+
+test('a nested 4x repeat collapses to the base block in one delivery', async (t) => {
+  const { pipeline, posts } = makePipeline(t);
+  const block = '请把今天的会议纪要发给我一份';
+  await pipeline.enqueueInbound(frame(textMessage({
+    msgtype: 'voice',
+    voice: { content: block.repeat(4) },
+  })));
+  assert.equal(posts[0].body.message.text, `[voice] ${block} (ASR重复×4已折叠)`);
+});
+
+// --- peer-bot context buffering (jg-p1mk add A) --------------------------------
+
+function groupText(overrides = {}) {
+  return textMessage({ chattype: 'group', chatid: 'wrROOM_1', ...overrides });
+}
+
+test('a peer-bot room post never wakes the session; it rides ahead of the next human delivery', async (t) => {
+  const logs = [];
+  const { pipeline, posts } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['citadel_bot'] },
+    deps: { log: (...a) => logs.push(a.join(' ')) },
+  });
+  await pipeline.enqueueInbound(frame(groupText({
+    msgid: 'P_1',
+    from: { userid: 'citadel_bot' },
+    text: { content: '状态: 部署完成' },
+  })));
+  assert.equal(posts.length, 0, 'a peer post alone must not deliver');
+  assert.equal(pipeline.stats().peerContexts, 1);
+  assert.equal(logs.filter((l) => l.includes('not waking the session')).length, 1);
+
+  await pipeline.enqueueInbound(frame(groupText({ msgid: 'H_1', text: { content: '大家好' } })));
+  assert.equal(posts.length, 1);
+  const text = posts[0].body.message.text;
+  assert.equal(text, [
+    '[peer-bot context — 1 post since the last delivery; read-only, no reply expected]',
+    'citadel_bot: 状态: 部署完成',
+    '',
+    '大家好',
+  ].join('\n'));
+  assert.equal(pipeline.stats().peerContexts, 0);
+});
+
+test('peer posts in other conversations or from humans are unaffected', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { cfg: { peerBotUserIds: ['citadel_bot'] } });
+  // Same userid in a DM is NOT peer-buffered (group-only contract).
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'DM_1', from: { userid: 'citadel_bot' }, text: { content: 'dm直达' } })));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].body.message.text, 'dm直达');
+});
+
+test('the peer buffer caps with a dropped count and dedups replayed msgids', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['citadel_bot'] },
+    deps: { peerContextCap: 2 },
+  });
+  const peer = (msgid, content) => pipeline.enqueueInbound(frame(groupText({
+    msgid, from: { userid: 'citadel_bot' }, text: { content },
+  })));
+  await peer('PC_1', '一');
+  await peer('PC_1', '一'); // replay — must not double
+  await peer('PC_2', '二');
+  await peer('PC_3', '三'); // evicts PC_1 past the cap of 2
+  await pipeline.enqueueInbound(frame(groupText({ msgid: 'H_2', text: { content: '人类消息' } })));
+  const text = posts[0].body.message.text;
+  assert.match(text, /2 posts since the last delivery; 1 older dropped at the 2-item cap/);
+  assert.ok(!text.includes('一'), 'evicted post is gone');
+  assert.match(text, /citadel_bot: 二\ncitadel_bot: 三/);
+});
+
+test('a rejected carrying delivery restores the peer context for the next one', async (t) => {
+  let rejectNext = true;
+  const delivered = [];
+  const { pipeline } = makePipeline(t, {
+    cfg: { peerBotUserIds: ['citadel_bot'] },
+    postInbound: async (target, body) => {
+      if (rejectNext) {
+        rejectNext = false;
+        const err = new Error('400 Bad Request');
+        err.status = 400;
+        throw err;
+      }
+      delivered.push(body.message.text);
+    },
+  });
+  await pipeline.enqueueInbound(frame(groupText({ msgid: 'PR_1', from: { userid: 'citadel_bot' }, text: { content: '上下文' } })));
+  await pipeline.enqueueInbound(frame(groupText({ msgid: 'HR_1', text: { content: '被拒绝的' } })));
+  await pipeline.enqueueInbound(frame(groupText({ msgid: 'HR_2', text: { content: '成功的' } })));
+  assert.equal(delivered.length, 1);
+  assert.match(delivered[0], /peer-bot context — 1 post/);
+  assert.match(delivered[0], /citadel_bot: 上下文/);
+  assert.match(delivered[0], /成功的/);
+});
+
+// --- codex jg-p1mk round-1 regressions -----------------------------------------
+
+test('a DM userid colliding with a group chatid never shares a batch (codex r1 f1)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { coalesceWindowMs: 30 } });
+  const dm = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'COLL_DM',
+    from: { userid: 'wrCollision' },
+    text: { content: '私聊内容' },
+  })));
+  const room = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'COLL_ROOM',
+    chattype: 'group',
+    chatid: 'wrCollision',
+    text: { content: '群聊内容' },
+  })));
+  await Promise.all([dm, room]);
+  assert.equal(posts.length, 2, 'one delivery per conversation, never a merged batch');
+  const byKind = Object.fromEntries(posts.map((p) => [p.body.message.conversation.kind, p.body.message]));
+  assert.equal(byKind.dm.text, '私聊内容');
+  assert.equal(byKind.room.text, '群聊内容');
+});
+
+test('a hostile mixed member (non-array msg_item) drops alone; a valid media sibling still delivers with no hydration leak (codex r1 f2)', async (t) => {
+  const { pipeline, posts } = makePipeline(t, {
+    deps: { coalesceWindowMs: 30 },
+    downloadFile: async () => ({ buffer: Buffer.from('img'), filename: 'p.png' }),
+  });
+  const bad = pipeline.enqueueInbound(frame(textMessage({
+    msgid: 'HOSTILE_MIXED',
+    msgtype: 'mixed',
+    mixed: { msg_item: { length: 0 } },
+  })));
+  const good = pipeline.enqueueInbound(frame(fileMessage({ msgid: 'GOOD_FILE' })));
+  await Promise.all([bad, good]);
+  assert.equal(posts.length, 1);
+  assert.match(posts[0].body.message.text, /\[file message\]/);
+  assert.equal(posts[0].body.message.attachments.length, 1);
+  const stats = pipeline.stats();
+  assert.equal(stats.hydrations, 0, 'the valid sibling\'s owner hydration entry must not leak');
+  assert.equal(stats.pending, 0);
+});
+
+test('reply-help marks are per (kind, id) — a DM and a colliding room each get their own block', async (t) => {
+  const { pipeline, posts } = makePipeline(t, { deps: { replyHelpOnce: true } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RHK_1', from: { userid: 'wrX' } })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RHK_2', chattype: 'group', chatid: 'wrX' })));
+  assert.equal(posts.length, 2);
+  assert.match(posts[0].body.message.text, /full reply how-to/);
+  assert.match(posts[1].body.message.text, /full reply how-to/);
 });

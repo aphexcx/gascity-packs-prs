@@ -1075,6 +1075,25 @@ export function createOutboundPublisher(deps) {
       return;
     }
 
+    // Feedback ids (jg-mlfs): a markdown send carrying markdown.feedback
+    // .id gets 👍/👎 controls in the WeCom client, and a user's rating
+    // comes back as an event.feedback_event quoting that id (forwarded
+    // to the bound session by src/inbound.js renderFeedbackText). The id
+    // is adapter-minted, ≤256 bytes: a hash of the idempotency key so an
+    // idempotent chunk RESEND carries the same id as the original (one
+    // physical message, one id), with the chunk index suffixed since
+    // each chunk is its own WeCom message. Keyless — or non-string-keyed
+    // — publishes fall back to a per-invocation random base. Computed
+    // BEFORE the ownership claim below (codex jg-p1mk r1 finding 3): a
+    // throw between claim and send would orphan the owner promise and
+    // hang every retry of that key, so nothing throwable may sit there —
+    // and sha256 of a non-string key throws.
+    const feedbackBase = cfg.feedbackIds
+      ? (typeof pub.idempotency_key === 'string' && pub.idempotency_key
+        ? `fb-${sha256Hex(pub.idempotency_key).slice(0, 40)}`
+        : `fb-${crypto.randomUUID()}`)
+      : '';
+
     // Seeded media receipts answer FIRST (finding 6): gc's recording
     // callback must always find the pinned receipt, whatever the shared
     // dedup map is doing under load.
@@ -1160,23 +1179,10 @@ export function createOutboundPublisher(deps) {
     }
     if (pub.idempotency_key) state.endpoint = 'publish';
 
-    // Feedback ids (jg-mlfs): a markdown send carrying markdown.feedback
-    // .id gets 👍/👎 controls in the WeCom client, and a user's rating
-    // comes back as an event.feedback_event quoting that id (forwarded
-    // to the bound session by src/inbound.js renderFeedbackText). The id
-    // is adapter-minted, ≤256 bytes: a hash of the idempotency key so an
-    // idempotent chunk RESEND carries the same id as the original (one
-    // physical message, one id), with the chunk index suffixed since
-    // each chunk is its own WeCom message. Keyless publishes fall back
-    // to a per-invocation random base. The delivered log line (below)
-    // names the base so a later feedback_event correlates back to this
-    // exact publish — feedback ids are adapter-minted identifiers, not
-    // conversation content, so logging them is within the
-    // no-content-logging policy.
-    const feedbackBase = cfg.feedbackIds
-      ? (pub.idempotency_key ? `fb-${sha256Hex(pub.idempotency_key).slice(0, 40)}` : `fb-${crypto.randomUUID()}`)
-      : '';
-
+    // The delivered log line (below) names feedbackBase so a later
+    // feedback_event correlates back to this exact publish — feedback
+    // ids are adapter-minted identifiers, not conversation content, so
+    // logging them is within the no-content-logging policy.
     const send = async () => {
       const chunks = chunkText(pub.text);
       for (let i = state.chunksDelivered; i < chunks.length; i++) {

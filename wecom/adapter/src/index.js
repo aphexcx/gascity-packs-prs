@@ -144,6 +144,12 @@
 //	                       reply, and a user's rating arrives as an
 //	                       event.feedback_event the adapter forwards to
 //	                       the bound session (jg-mlfs).
+//	WECOM_PEER_BOT_USERIDS Comma-separated userids of peer bots sharing
+//	                       group chats. Their posts never wake the bound
+//	                       session — they buffer (capped, oldest dropped
+//	                       with a count) and ride ahead of the next human
+//	                       delivery as tagged read-only context. Empty
+//	                       (default) disables.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -262,6 +268,13 @@ function loadConfig() {
     // Outbound feedback ids (jg-mlfs): attach a feedback id to markdown
     // sends so WeCom offers 👍/👎 on replies and reports ratings back.
     feedbackIds: getenv('WECOM_FEEDBACK_IDS', 'true') !== 'false',
+    // Peer-bot context buffering (jg-p1mk add A): group posts from these
+    // userids never wake the bound session — they buffer and ride ahead
+    // of the next human delivery. Empty (default) disables.
+    peerBotUserIds: getenv('WECOM_PEER_BOT_USERIDS')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   };
 
   const missing = [];
@@ -371,7 +384,14 @@ async function registerAdapter(cfg) {
     // ship. Point the reply flow at the verb that exists. File-based so
     // arbitrary reply text (apostrophes, code, Chinese quotes) never has
     // to survive shell interpolation.
-    reply_instructions: 'Write your reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>. To send an image or video instead: gc wecom publish --chat {conversation_id} --image <path> (or --video <path>), optional --text caption; media files must live under the adapter\'s WECOM_OUTBOUND_MEDIA_ROOT directory.',
+    //
+    // ONE LINE only (jg-p1mk add D, the gp-729 item-3 port): gc renders
+    // this into EVERY inbound reminder, and the previous ~120-word block
+    // (media flags, root-confinement note) cost that many tokens per
+    // message. The full how-to now arrives once per conversation per
+    // adapter lifetime, appended by the pipeline to that conversation's
+    // first delivery (src/inbound.js replyHelpBlock).
+    reply_instructions: 'Reply: write the reply to a file, then run: gc wecom publish --chat {conversation_id} --text-file <path>',
     capabilities: {
       SupportsChildConversations: false,
       // Inbound: media/file messages hydrate into file:// attachment
@@ -473,11 +493,25 @@ async function main() {
   // ready-but-dead shape — socket healthy, zero pushes. The optional
   // remediation cycles the connection: disconnect() suppresses the SDK's
   // auto-reconnect (manual close), connect() re-arms it and re-auths.
+  // connect() waits for the SDK's 'disconnected' event (with a timer
+  // fallback for an already-dead socket that emits nothing) — calling it
+  // back-to-back with disconnect() races SDK 1.0.7's asynchronous
+  // old-socket close handler, which can strip the NEW connection's
+  // socket reference and heartbeat (codex jg-p1mk r1 finding 4).
+  const cycleConnection = () => {
+    let cycled = false;
+    const connectOnce = () => {
+      if (cycled) return;
+      cycled = true;
+      wsClient.connect();
+    };
+    wsClient.once('disconnected', connectOnce);
+    setTimeout(connectOnce, 3000).unref?.();
+    wsClient.disconnect();
+  };
   const liveness = createInboundLiveness({
     stallAfterMs: cfg.livenessStallAfterMs,
-    reconnect: cfg.livenessReconnect
-      ? () => { wsClient.disconnect(); wsClient.connect(); }
-      : null,
+    reconnect: cfg.livenessReconnect ? cycleConnection : null,
     log,
   });
 
@@ -571,16 +605,31 @@ async function main() {
     registerAdapterUntilDone(cfg);
   }
 
+  let shuttingDown = false;
   const shutdown = (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     log(`${signal} received; shutting down`);
     liveness.stop();
-    // Drain coalescing buffers first: frames received from WeCom inside
-    // an open window must get their delivery attempt before the process
-    // dies (best-effort — the 2s deadline below still bounds shutdown).
-    pipeline.flushAll();
-    wsClient.disconnect();
-    server.close(() => process.exit(0));
-    setTimeout(() => process.exit(0), 2000).unref();
+    const finish = () => {
+      wsClient.disconnect();
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 2000).unref();
+    };
+    // Drain coalescing buffers first and WAIT for the flushed deliveries
+    // to settle (codex jg-p1mk r1 finding 5 — an unawaited drain let the
+    // process exit mid-POST, losing the buffered frames the drain
+    // exists to save). A delivery wedged in gc-outage retries must not
+    // wedge shutdown: the deadline below caps the wait, accepting that
+    // an unreachable gc loses the window's frames either way.
+    let finished = false;
+    const finishOnce = () => {
+      if (finished) return;
+      finished = true;
+      finish();
+    };
+    pipeline.flushAll().then(finishOnce, finishOnce);
+    setTimeout(finishOnce, 5000).unref();
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

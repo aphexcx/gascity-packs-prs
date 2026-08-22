@@ -2836,3 +2836,24 @@ test('with feedbackIds off (or unset), the markdown body is unchanged', async ()
   });
   assert.deepEqual(calls[0].body, { msgtype: 'markdown', markdown: { content: 'plain' } });
 });
+
+test('a non-string idempotency_key cannot crash the feedback base or orphan the owner (codex r1 f3)', async () => {
+  const { publisher, calls } = makePublisher({ cfg: { feedbackIds: true } });
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'numeric key',
+    idempotency_key: 7,
+  });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.json().delivered, true);
+  assert.match(calls[0].body.markdown.feedback.id, /^fb-[0-9a-f-]{36}\.0$/);
+  // A retry of the same (non-string) key must answer, not hang on an
+  // orphaned owner promise.
+  const retry = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'numeric key',
+    idempotency_key: 7,
+  });
+  assert.equal(retry.statusCode, 200);
+  assert.equal(calls.length, 1, 'the retry answered from the receipt without re-sending');
+});
