@@ -35,10 +35,11 @@
   how-to (file-based reply hygiene, media flags, confinement note)
   rides each conversation's first delivery per adapter lifetime,
   re-armed if that delivery is rejected.
-  **(C) voice ASR-repeat dedup** — a transcript that is one ≥8-char
-  block repeated 2–4× verbatim (no separator or single space/newline;
-  WeCom ASR bug observed nightly 8/22) collapses to one block with an
-  `(ASR重复×N已折叠)` marker; counts (never content) are logged.
+  **(C) voice ASR-repeat dedup** — a transcript of ≥24 chars that is
+  one ≥10-char block repeated 2–4× verbatim (no separator or single
+  space/newline; WeCom ASR bug observed nightly 8/22) collapses to one
+  block with an `(ASR重复×N已折叠)` marker; counts (never content) are
+  logged.
   **(A) peer-bot context buffering** (slack-full gp-kop port) — group
   posts from `WECOM_PEER_BOT_USERIDS` never wake the bound session:
   they buffer (capped at 20/conversation, oldest dropped with a count,

@@ -636,27 +636,44 @@ export function createInboundPipeline(deps) {
       seenNonPending--;
       seenHead++;
     }
-    // Compaction: reclaim the dead slots once they dominate a
-    // beyond-double-cap array. The prefix behind the cursor is NOT all
-    // dead (codex jg-p1mk r5, pre-existing since jg-c7j): the eviction
-    // loop above advances seenHead PAST pending-exempt marks, which are
-    // live — a slice(seenHead) discarded them into unevictable ghosts
-    // (still in seenMsgIds, stale seenIndex) that consumed the cap and
-    // let a fresh id's replay double-POST. Compact by keeping every
-    // LIVE slot (seenIndex points at it) across the whole array — dead
-    // and stale-duplicate slots drop, pending-exempt survivors keep
-    // their order — and restart the cursor; the next trim re-skips the
-    // (now compact) exempt prefix cheaply.
-    if (seenHead > seenMsgIdCap && seenHead * 2 > seenMsgIdOrder.length) {
+    // Compaction: reclaim DEAD slots (evicted or re-marked ids) once
+    // they dominate the array. Two invariants, each the fix for a shipped
+    // bug:
+    //
+    //   - Live slots survive wherever they sit (codex jg-p1mk r5,
+    //     pre-existing since jg-c7j): the eviction loop advances
+    //     seenHead PAST pending-exempt marks, which are live — the old
+    //     slice(seenHead) discarded them into unevictable ghosts (still
+    //     in seenMsgIds, stale seenIndex) that consumed the cap and let
+    //     a fresh id's replay double-POST.
+    //   - The trigger is DEAD-SLOT MASS — the thing compaction actually
+    //     reclaims — never cursor position (jg-p1mk post-cap
+    //     verification): a cursor-based trigger with a reset-to-zero
+    //     cursor re-scanned the exempt prefix and re-compacted the full
+    //     array on EVERY delivery once pending marks piled up — O(n²)
+    //     on the inbound hot path. Re-triggering now requires another
+    //     max(cap, half-the-array) evictions/re-marks, each of which
+    //     creates exactly one dead slot: amortized O(1) per delivery.
+    //
+    // seenIndex.size IS the live-slot count (one live slot per id, by
+    // construction). The cursor is remapped, not reset: prefix
+    // survivors stay behind it — "already skipped this pass" — and
+    // removePending's rewind reaches them the moment they re-enter cap
+    // accounting, exactly as before.
+    const deadSlots = seenMsgIdOrder.length - seenIndex.size;
+    if (deadSlots > seenMsgIdCap && deadSlots * 2 > seenMsgIdOrder.length) {
       const survivors = [];
+      let prefixSurvivors = 0;
       for (let i = 0; i < seenMsgIdOrder.length; i++) {
         const id = seenMsgIdOrder[i];
-        if (seenIndex.get(id) === i) survivors.push(id);
+        if (seenIndex.get(id) !== i) continue; // dead or stale duplicate
+        if (i < seenHead) prefixSurvivors++;
+        survivors.push(id);
       }
       seenMsgIdOrder = survivors;
-      seenHead = 0;
-      for (let i = 0; i < seenMsgIdOrder.length; i++) {
-        seenIndex.set(seenMsgIdOrder[i], i);
+      seenHead = prefixSurvivors;
+      for (let i = 0; i < survivors.length; i++) {
+        seenIndex.set(survivors[i], i);
       }
     }
   }
