@@ -57,7 +57,7 @@ env:
 jobs:
   static-contracts:
     name: static pack flow contracts
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest  # TEMP fallback: Blacksmith runners wedged since 8/21; put back blacksmith-2vcpu-ubuntu-2404 after
     timeout-minutes: 15
     steps:
       - name: Check out gascity-packs
@@ -80,7 +80,7 @@ jobs:
   inference:
     name: ${{ matrix.pack }} / ${{ matrix.gate }}
     needs: static-contracts
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-latest  # TEMP fallback: Blacksmith runners wedged since 8/21 (jobs queued 8h+); put back blacksmith-32vcpu-ubuntu-2404 once the account-side wedge is fixed
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
