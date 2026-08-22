@@ -12,7 +12,7 @@ permissions:
 jobs:
   check:
     name: Check
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-latest  # TEMP fallback: Blacksmith runners wedged since 8/21 (jobs queued 8h+); put back blacksmith-32vcpu-ubuntu-2404 once the account-side wedge is fixed
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
