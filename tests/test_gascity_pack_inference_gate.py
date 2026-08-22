@@ -455,14 +455,20 @@ def test_supported_pack_nightly_workflow_uses_manifold_shape_and_pack_matrix() -
 def _assert_runner_pin(workflow: str, label: str) -> None:
     """Runner pin, TEMP-fallback aware (PR #14): the job runs either on
     the Blacksmith label directly, or on the ubuntu-latest fallback whose
-    TEMP comment names the label to put back — so the breadcrumb back to
-    the sponsored runner cannot be silently dropped while the fallback is
-    in effect, and restoring Blacksmith needs no test edit."""
-    if f"runs-on: {label}" in workflow:
+    same-line TEMP comment names the label to put back — so the breadcrumb
+    back to the sponsored runner cannot be silently dropped while the
+    fallback is in effect, and restoring Blacksmith needs no test edit.
+    Both alternatives are line-anchored (a commented-out pin or a
+    breadcrumb on an unrelated line must not satisfy the guard)."""
+    if re.search(
+        rf"(?m)^[ \t]*runs-on:[ \t]+{re.escape(label)}[ \t]*(?:#[^\r\n]*)?$",
+        workflow,
+    ):
         return
     assert re.search(
-        rf"(?m)^\s*runs-on: ubuntu-latest\s+#.*{re.escape(label)}", workflow
-    ), f"no runs-on pin for {label} (direct label or TEMP-fallback comment)"
+        rf"(?m)^[ \t]*runs-on:[ \t]+ubuntu-latest[ \t]+#[^\r\n]*TEMP[^\r\n]*{re.escape(label)}",
+        workflow,
+    ), f"no runs-on pin for {label} (direct label or same-line TEMP-fallback comment naming it)"
 
 
 def test_dispatch_inference_workflow_is_manual_or_external_only() -> None:
