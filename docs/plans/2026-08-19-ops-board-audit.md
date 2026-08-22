@@ -36,7 +36,7 @@ Route: `/city/{city}/beads`. Nav badge "Beads 47" = the NEEDS YOU count.
   filter** select (all / ci / gp / hw), sort toggle.
 - **Kanban, one section per rig** (ci, gp, hw), columns **READY · OPEN · IN PROGRESS · BLOCKED ·
   DONE** (`lib/beadGraph.ts` BOARD_COLUMNS: ready = open with no unresolved deps, open = has
-  unresolved deps, blocked = bd status blocked, done = closed — only when the `closed` chip is on).
+  unresolved deps, blocked = bead status blocked, done = closed — only when the `closed` chip is on).
   Each card: title (2 lines) · id · P<n> · "needs N / blocks M" · "unresolved". **No assignee, no
   age, no last-activity, no session state on the card.** Card click → detail modal.
 - **Detail modal**: title, ID·TYPE·P, STATUS, TYPE, ASSIGNEE, CREATED, DESCRIPTION, DEPENDENCIES,
@@ -85,7 +85,7 @@ session state or hold metadata; the attention model has no `stalled` / `waiting-
 The wire already carries what is needed: bead `assignee`, `metadata.gc.session_id /
 gc.session_name / gc.last_heartbeat_at / gc.checkpoint_hold / gc.founder_gate / gc.checkpoint`,
 and the sessions list's `state`, `last_active`, `session_name`, `alias`, `active_bead`. Only
-`updated_at` is missing from the bead LIST wire (the native store list omits it; `bd show` has
+`updated_at` is missing from the bead LIST wire (the native store list omits it; `gc bd show` has
 it) — not needed for the cue.
 
 **F3 — DONE is opt-in.** The done column is empty until the `closed` chip is toggled (then the
