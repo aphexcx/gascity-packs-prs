@@ -37,6 +37,14 @@ import (
 // flushes every window instead of being deferred indefinitely, at the
 // cost of occasionally splitting a burst that straddles a boundary.
 //
+// Cross-channel coalescing (gp-9e7 item 2): a firing flush timer also
+// drains every other buffered non-digest channel, so one idle wake
+// delivers ALL channels' window traffic as aligned back-to-back
+// per-channel batches (each formatted exactly as before) instead of a
+// string of wakes seconds apart. Reaction notifications additionally
+// buffer in a no-wake side lane (gp-9e7 item 1, admitReaction) that
+// only ever delivers by merging into a real batch take.
+//
 // Concurrency contract: per-channel state is generation-stamped — every
 // drain bumps the generation, and a timer callback armed for an older
 // generation no-ops, so a stale timer can never steal a newer batch. A
@@ -59,11 +67,23 @@ const defaultCoalesceWindow = 8 * time.Second
 // full delivers immediately rather than waiting out its window.
 const maxCoalescePerChannel = 50
 
+// maxBufferedReactionsPerChannel bounds the no-wake reaction
+// side-buffer (gp-9e7 item 1). Reactions must never drop, so overflow
+// delivers the channel's whole take immediately instead of evicting —
+// the one case a reaction is allowed to wake a session solo, and it
+// takes a pathological reaction volume with zero real traffic to reach.
+const maxBufferedReactionsPerChannel = 100
+
 // pendingChannelInbound is one buffered channel inbound awaiting
 // coalesced delivery. The envelope's Text is final per-message text
 // (thread preamble, mention rewrite, and files block already applied).
 type pendingChannelInbound struct {
 	inbound externalInboundMessage
+	// reaction marks a no-wake reaction notification (gp-9e7 item 1):
+	// admitted via admitReaction, merged into the channel's batch at
+	// take time, and returned to the reaction side-buffer — never
+	// re-arming a timer — when a failed delivery restores the batch.
+	reaction bool
 }
 
 // inboundCoalescer owns the per-channel buffers and flush timers.
@@ -72,11 +92,16 @@ type pendingChannelInbound struct {
 type inboundCoalescer struct {
 	mu      sync.Mutex
 	pending map[string][]pendingChannelInbound
-	gen     map[string]uint64
-	timers  map[string]*time.Timer
-	flushMu map[string]*sync.Mutex
-	window  time.Duration
-	policy  *deliveryPolicyRegistry
+	// reactions is the no-wake side-buffer (gp-9e7 item 1): entries
+	// here arm no timer and deliver only by merging into a batch taken
+	// for the channel — a timer flush armed by real messages, the
+	// flush-ahead of an urgent/DM delivery, or shutdown's flushAll.
+	reactions map[string][]pendingChannelInbound
+	gen       map[string]uint64
+	timers    map[string]*time.Timer
+	flushMu   map[string]*sync.Mutex
+	window    time.Duration
+	policy    *deliveryPolicyRegistry
 	// deliver posts one batch as a single inbound; false = failed (the
 	// caller restores the batch). Wired in main() to deliverCoalescedBatch
 	// with the final cfg; tests inject their own.
@@ -85,12 +110,13 @@ type inboundCoalescer struct {
 
 func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *inboundCoalescer {
 	return &inboundCoalescer{
-		pending: make(map[string][]pendingChannelInbound),
-		gen:     make(map[string]uint64),
-		timers:  make(map[string]*time.Timer),
-		flushMu: make(map[string]*sync.Mutex),
-		window:  window,
-		policy:  policy,
+		pending:   make(map[string][]pendingChannelInbound),
+		reactions: make(map[string][]pendingChannelInbound),
+		gen:       make(map[string]uint64),
+		timers:    make(map[string]*time.Timer),
+		flushMu:   make(map[string]*sync.Mutex),
+		window:    window,
+		policy:    policy,
 	}
 }
 
@@ -134,9 +160,11 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	pendingLen := len(c.pending[channel])
 	if pendingLen >= maxCoalescePerChannel {
 		batch, mu := c.takeLocked(channel)
+		swept := c.takeSweepsLocked(channel)
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
 		c.deliverBatch(channel, batch, mu)
+		c.deliverSwept(swept)
 		return
 	}
 	if _, ok := c.timers[channel]; !ok {
@@ -151,10 +179,72 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	log.Printf("coalesce: chan=%s buffered ts=%s (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
 }
 
+// admitReaction buffers one reaction notification (gp-9e7 item 1).
+// Reactions must never wake a session solo, so admission NEVER arms a
+// timer: the entry sits in the no-wake side-buffer and piggybacks on
+// the channel's next real delivery (a timer flush armed by messages,
+// the flush-ahead of an urgent/DM inbound, shutdown's flushAll). The
+// one exception: ridesArmedWindow=true — a reaction ON one of the
+// adapter's own outbound messages (a founder ack) — may join a coalesce
+// window that is ALREADY armed, delivering with that batch; with no
+// armed window it buffers like any other reaction, whatever the
+// target's age, so the exception can never create a wake.
+//
+// Buffering applies regardless of enabled(): a zero-window deployment
+// still routes every real inbound through flushAheadOf, which drains
+// the side-buffer. Admission is final handling of the event — the
+// caller's dedup claim commits, and a failed batch delivery returns
+// the entry here via restore (no retry timer of its own). Returns
+// false only on a nil coalescer (bare test configs); the caller then
+// falls back to an immediate forward rather than dropping.
+func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound, ridesArmedWindow bool) bool {
+	if c == nil {
+		return false
+	}
+	p.reaction = true
+	c.mu.Lock()
+	if ridesArmedWindow {
+		if _, armed := c.timers[channel]; armed {
+			c.pending[channel] = append(c.pending[channel], p)
+			pendingLen := len(c.pending[channel])
+			if pendingLen >= maxCoalescePerChannel {
+				batch, mu := c.takeLocked(channel)
+				swept := c.takeSweepsLocked(channel)
+				c.mu.Unlock()
+				log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
+				c.deliverBatch(channel, batch, mu)
+				c.deliverSwept(swept)
+				return true
+			}
+			c.mu.Unlock()
+			log.Printf("coalesce: chan=%s reaction ts=%s riding armed window (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
+			return true
+		}
+	}
+	c.reactions[channel] = append(c.reactions[channel], p)
+	n := len(c.reactions[channel])
+	if n >= maxBufferedReactionsPerChannel {
+		// Overflow: deliver rather than evict — reactions never drop.
+		// The solo wake this costs takes a pathological reaction volume
+		// with zero real traffic; the cap bounds memory, not content.
+		batch, mu := c.takeLocked(channel)
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s reaction buffer full (%d) — overflow flush", channel, n)
+		c.deliverBatch(channel, batch, mu)
+		return true
+	}
+	c.mu.Unlock()
+	log.Printf("coalesce: chan=%s reaction ts=%s buffered no-wake (reactions=%d)", channel, p.inbound.ProviderMessageID, n)
+	return true
+}
+
 // takeLocked drains the channel's buffer, disarms its timer, and bumps
 // the generation so any armed callback for the old state no-ops.
-// Called with c.mu held; returns the batch and the channel's delivery
-// mutex (NOT held).
+// Buffered no-wake reactions merge into the taken batch (gp-9e7 item
+// 1): every take is a real delivery moment for the channel, so the
+// side-buffer piggybacks here — deliverCoalescedBatch's ts sort slots
+// them into the timeline. Called with c.mu held; returns the batch and
+// the channel's delivery mutex (NOT held).
 func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, *sync.Mutex) {
 	c.gen[channel]++
 	if t, ok := c.timers[channel]; ok {
@@ -163,7 +253,73 @@ func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, 
 	}
 	batch := c.pending[channel]
 	delete(c.pending, channel)
+	if rs := c.reactions[channel]; len(rs) > 0 {
+		batch = append(batch, rs...)
+		delete(c.reactions, channel)
+	}
 	return batch, c.flushMuFor(channel)
+}
+
+// sweptBatch pairs one swept channel's drained buffer with its
+// delivery mutex for the cross-channel flush (gp-9e7 item 2).
+type sweptBatch struct {
+	channel string
+	batch   []pendingChannelInbound
+	mu      *sync.Mutex
+}
+
+// takeSweepsLocked drains every OTHER channel with buffered messages so
+// the flush that is about to happen carries ALL channels' window
+// traffic in one session wake (gp-9e7 item 2) — each channel still
+// delivers as its own per-channel batch, byte-identical formatting, and
+// the back-to-back POSTs land in a single wake exactly the way mid-turn
+// delivery already batches multi-channel traffic. Excluded:
+//   - digest-mode channels: the operator bought their longer latency
+//     deliberately (gp-729 item 6); a neighbor's 8s burst window must
+//     not undo it. They flush only on their own timer (and shutdown).
+//   - channels holding only no-wake reactions: delivering those alone
+//     would be a solo reaction wake for THAT channel's bound session,
+//     the exact thing item 1 forbids.
+//
+// Called with c.mu held; the caller delivers the returned batches after
+// releasing it (sorted for deterministic order across channels; order
+// WITHIN each channel is the buffer order, untouched).
+func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
+	channels := make([]string, 0, len(c.pending))
+	for ch, pend := range c.pending {
+		if ch == except || len(pend) == 0 {
+			continue
+		}
+		if _, digest := c.policy.digestInterval(ch); digest {
+			continue
+		}
+		channels = append(channels, ch)
+	}
+	sort.Strings(channels)
+	swept := make([]sweptBatch, 0, len(channels))
+	for _, ch := range channels {
+		b, m := c.takeLocked(ch)
+		swept = append(swept, sweptBatch{channel: ch, batch: b, mu: m})
+	}
+	return swept
+}
+
+// deliverSwept posts each swept channel's batch through the normal
+// per-channel delivery (failure restores that channel's batch alone).
+// One goroutine per channel: sequential POSTs would hold later swept
+// channels' batches un-delivered for the sum of the earlier POSTs,
+// widening the window where an urgent flushAheadOf for one of them
+// (its buffer already drained into the sweep) could overtake its own
+// chatter. Concurrent delivery shrinks that to the same tiny
+// take-to-lock gap the firing channel has always had, and the
+// near-simultaneous POSTs are what lets gc fold them into one wake.
+// Per-channel flush mutexes still serialize against any in-flight
+// delivery for the same channel.
+func (c *inboundCoalescer) deliverSwept(swept []sweptBatch) {
+	for _, s := range swept {
+		s := s
+		go c.deliverBatch(s.channel, s.batch, s.mu)
+	}
 }
 
 // deliverBatch serializes on the channel's delivery mutex and posts the
@@ -183,14 +339,32 @@ func (c *inboundCoalescer) deliverBatch(channel string, batch []pendingChannelIn
 // restore re-queues a batch whose delivery failed, ahead of anything
 // buffered meanwhile, and re-arms the timer so the flush retries. The
 // re-queued batch may exceed the cap; the next enqueue then triggers an
-// early flush rather than anything being dropped.
+// early flush rather than anything being dropped. Reaction entries
+// split back into the no-wake side-buffer instead (gp-9e7 item 1): a
+// reactions-only failure must not arm a retry timer, or the retry
+// would be the solo reaction wake the buffer exists to prevent — they
+// wait for the channel's next real delivery like any buffered reaction.
 func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound) {
 	if c == nil || len(batch) == 0 {
 		return
 	}
+	var msgs, reactions []pendingChannelInbound
+	for _, p := range batch {
+		if p.reaction {
+			reactions = append(reactions, p)
+		} else {
+			msgs = append(msgs, p)
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.pending[channel] = append(append([]pendingChannelInbound{}, batch...), c.pending[channel]...)
+	if len(reactions) > 0 {
+		c.reactions[channel] = append(reactions, c.reactions[channel]...)
+	}
+	if len(msgs) == 0 {
+		return
+	}
+	c.pending[channel] = append(msgs, c.pending[channel]...)
 	if _, ok := c.timers[channel]; !ok {
 		window := c.windowFor(channel)
 		g := c.gen[channel]
@@ -202,6 +376,15 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 // callback — one whose arming state was drained by flushAheadOf, an
 // early flush, or a reconcile — a strict no-op, so it can never steal
 // or reorder a newer batch.
+//
+// A firing timer is an idle-wake moment, so it sweeps every other
+// buffered non-digest channel along with it (gp-9e7 item 2): the
+// aligned back-to-back deliveries reach the bound session(s) as ONE
+// wake instead of a string of per-channel wakes seconds apart. The
+// urgent path's flushAheadOf deliberately does NOT sweep — the session
+// is waking for the urgent message anyway, and any other channel's
+// window firing during that turn already lands mid-turn without a wake
+// of its own.
 func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 	if c == nil {
 		return
@@ -212,15 +395,20 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 		return
 	}
 	batch, mu := c.takeLocked(channel)
+	swept := c.takeSweepsLocked(channel)
 	c.mu.Unlock()
 	c.deliverBatch(channel, batch, mu)
+	c.deliverSwept(swept)
 }
 
 // flushAheadOf synchronously delivers any pending batch for channel so
 // an urgent (targeted / bot-mentioned) message cannot overtake buffered
-// chatter. It acquires the channel's delivery mutex even when the
-// buffer is empty, so an in-flight coalesced POST completes before the
-// caller proceeds. A failed delivery restores the batch — the urgent
+// chatter. Buffered no-wake reactions ride in the same take (gp-9e7
+// item 1) — the urgent message is the "next real delivery" they were
+// piggybacking on, and its wake covers them; this is also how DM and
+// zero-window deployments drain the reaction side-buffer. It acquires
+// the channel's delivery mutex even when the buffer is empty, so an
+// in-flight coalesced POST completes before the caller proceeds. A failed delivery restores the batch — the urgent
 // message proceeds regardless (logged), and the retry timer covers the
 // buffered ones.
 //
@@ -309,15 +497,28 @@ func (c *inboundCoalescer) reconcileTimers() {
 
 // flushAll synchronously drains every channel's buffer — the normal-
 // shutdown path, so already-acked buffered messages are not lost to a
-// SIGTERM landing inside a window.
+// SIGTERM landing inside a window. Channels holding only no-wake
+// reactions drain too: shutdown is the backstop that keeps "every
+// buffered item eventually delivers" true for a channel whose real
+// traffic never came (gp-9e7 item 1).
 func (c *inboundCoalescer) flushAll() {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
-	channels := make([]string, 0, len(c.pending))
+	seen := make(map[string]bool, len(c.pending)+len(c.reactions))
+	channels := make([]string, 0, len(c.pending)+len(c.reactions))
 	for channel := range c.pending {
-		channels = append(channels, channel)
+		if !seen[channel] {
+			seen[channel] = true
+			channels = append(channels, channel)
+		}
+	}
+	for channel := range c.reactions {
+		if !seen[channel] {
+			seen[channel] = true
+			channels = append(channels, channel)
+		}
 	}
 	sort.Strings(channels)
 	c.mu.Unlock()

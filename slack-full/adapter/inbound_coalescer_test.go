@@ -263,6 +263,237 @@ func TestCoalescerFullBufferFlushesEarlyNothingDropped(t *testing.T) {
 	}
 }
 
+// --- cross-channel coalescing (gp-9e7 item 2) -------------------------------
+
+// A firing timer sweeps every other buffered non-digest channel so one
+// idle wake carries all channels' window traffic, each as its own
+// per-channel batch with in-channel order preserved.
+func TestCoalescerTimerFlushSweepsOtherChannels(t *testing.T) {
+	deliver, got := collectingDeliver()
+	// C1 gets a short window; C2/C3 buffer under it too and must ride
+	// C1's flush instead of waiting out their own timers.
+	c := newInboundCoalescer(40*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C2", testPending("C2", "2.0", "c2 first"))
+	c.enqueue("C2", testPending("C2", "2.1", "c2 second"))
+	c.enqueue("C3", testPending("C3", "3.0", "c3 only"))
+	c.enqueue("C1", testPending("C1", "1.0", "c1 only"))
+
+	batches := map[string][]pendingChannelInbound{}
+	for i := 0; i < 3; i++ {
+		select {
+		case batch := <-got:
+			batches[batch[0].inbound.Conversation.ConversationID] = batch
+		case <-time.After(2 * time.Second):
+			t.Fatalf("delivery %d did not fire (swept channels must ride the first flush)", i)
+		}
+	}
+	if len(batches["C2"]) != 2 || batches["C2"][0].inbound.ProviderMessageID != "2.0" {
+		t.Fatalf("C2 batch = %+v, want both entries in order", batches["C2"])
+	}
+	if len(batches["C1"]) != 1 || len(batches["C3"]) != 1 {
+		t.Fatalf("C1/C3 batches = %d/%d entries, want 1/1", len(batches["C1"]), len(batches["C3"]))
+	}
+	// Everything drained: no timer left to fire a second wave.
+	select {
+	case extra := <-got:
+		t.Fatalf("unexpected second delivery: %+v", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// Digest-mode channels are exempt from the sweep: the operator bought
+// that latency deliberately (gp-729 item 6).
+func TestCoalescerSweepSkipsDigestChannels(t *testing.T) {
+	path := writeDeliveryPolicyFile(t, `{"channels": {"CDIGEST": {"mode": "digest", "interval_minutes": 120}}}`)
+	reg, err := newDeliveryPolicyRegistry(path)
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(30*time.Millisecond, reg)
+	c.deliver = deliver
+	c.enqueue("CDIGEST", testPending("CDIGEST", "9.0", "digest-held"))
+	c.enqueue("C1", testPending("C1", "1.0", "burst"))
+
+	select {
+	case batch := <-got:
+		if batch[0].inbound.Conversation.ConversationID != "C1" {
+			t.Fatalf("first delivery = %+v, want C1's burst", batch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("burst flush did not fire")
+	}
+	select {
+	case batch := <-got:
+		t.Fatalf("digest channel swept by a burst flush: %+v", batch)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if !c.pendingContains("CDIGEST", "9.0") {
+		t.Fatal("digest channel's buffer must survive the sweep")
+	}
+}
+
+// --- no-wake reaction buffering (gp-9e7 item 1) ------------------------------
+
+func TestCoalescerAdmitReactionNeverArmsTimer(t *testing.T) {
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	r := testPending("C1", "5.099", "reacted :+1:")
+	if !c.admitReaction("C1", r, false) {
+		t.Fatal("admitReaction on a live coalescer must admit")
+	}
+	select {
+	case batch := <-got:
+		t.Fatalf("buffered reaction delivered on its own: %+v", batch)
+	case <-time.After(80 * time.Millisecond):
+	}
+	// Nil coalescer refuses so the caller can fall back.
+	var nilC *inboundCoalescer
+	if nilC.admitReaction("C1", r, false) {
+		t.Fatal("nil coalescer must refuse admission")
+	}
+}
+
+// Reactions merge into any real take for the channel: a timer flush
+// armed by messages carries them, and a failed delivery returns them to
+// the side lane WITHOUT arming a retry timer.
+func TestCoalescerReactionsRideRealBatchAndRestoreNoWake(t *testing.T) {
+	var fail bool
+	attempts := make(chan []pendingChannelInbound, 8)
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		attempts <- batch
+		return !fail
+	}
+	c.admitReaction("C1", testPending("C1", "1.099", "reaction"), false)
+	c.enqueue("C1", testPending("C1", "2.0", "message"))
+	batch := c.flushAheadOf("C1", "")
+	_ = batch
+	select {
+	case b := <-attempts:
+		if len(b) != 2 {
+			t.Fatalf("batch = %d entries, want message + reaction", len(b))
+		}
+	default:
+		t.Fatal("flush-ahead did not deliver")
+	}
+
+	// Failure path: restore splits the reaction back into the side lane
+	// and arms NO timer when only reactions remain.
+	fail = true
+	c.admitReaction("C1", testPending("C1", "3.099", "reaction2"), false)
+	c.enqueue("C1", testPending("C1", "4.0", "message2"))
+	c.flushAheadOf("C1", "")
+	<-attempts
+	c.mu.Lock()
+	pendingN := len(c.pending["C1"])
+	reactionsN := len(c.reactions["C1"])
+	_, timerArmed := c.timers["C1"]
+	c.mu.Unlock()
+	if pendingN != 1 || reactionsN != 1 {
+		t.Fatalf("after failed flush: pending=%d reactions=%d, want 1/1 (split restore)", pendingN, reactionsN)
+	}
+	if !timerArmed {
+		t.Fatal("failed real message must re-arm the retry timer")
+	}
+}
+
+func TestCoalescerReactionsOnlyFailureRestoresWithoutTimer(t *testing.T) {
+	attempts := make(chan []pendingChannelInbound, 4)
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		attempts <- batch
+		return false
+	}
+	c.admitReaction("C1", testPending("C1", "1.099", "reaction"), false)
+	c.flushAheadOf("C1", "")
+	select {
+	case b := <-attempts:
+		if len(b) != 1 || !b[0].reaction {
+			t.Fatalf("batch = %+v, want the lone reaction entry", b)
+		}
+	default:
+		t.Fatal("flush-ahead did not deliver the buffered reaction")
+	}
+	c.mu.Lock()
+	reactionsN := len(c.reactions["C1"])
+	_, timerArmed := c.timers["C1"]
+	c.mu.Unlock()
+	if reactionsN != 1 {
+		t.Fatalf("reactions = %d, want the failed entry restored to the side lane", reactionsN)
+	}
+	if timerArmed {
+		t.Fatal("a reactions-only restore must not arm a retry timer (solo wake)")
+	}
+}
+
+// The sweep never touches a channel holding only reactions — that
+// delivery would be a solo reaction wake for that channel's session.
+func TestCoalescerSweepSkipsReactionOnlyChannels(t *testing.T) {
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+	c.admitReaction("C_QUIET", testPending("C_QUIET", "7.099", "reaction"), false)
+	c.enqueue("C1", testPending("C1", "1.0", "burst"))
+
+	select {
+	case batch := <-got:
+		if batch[0].inbound.Conversation.ConversationID != "C1" {
+			t.Fatalf("delivery = %+v, want C1 only", batch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("burst flush did not fire")
+	}
+	select {
+	case batch := <-got:
+		t.Fatalf("reaction-only channel swept: %+v", batch)
+	case <-time.After(80 * time.Millisecond):
+	}
+	c.mu.Lock()
+	kept := len(c.reactions["C_QUIET"])
+	c.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("C_QUIET reactions = %d, want 1 (untouched by the sweep)", kept)
+	}
+}
+
+// Shutdown's flushAll is the delivery backstop for reaction-only
+// channels whose real traffic never came.
+func TestCoalescerFlushAllDrainsReactionOnlyChannels(t *testing.T) {
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.admitReaction("C_QUIET", testPending("C_QUIET", "7.099", "reaction"), false)
+	c.flushAll()
+	select {
+	case batch := <-got:
+		if len(batch) != 1 || !batch[0].reaction {
+			t.Fatalf("flushAll delivered %+v, want the lone reaction", batch)
+		}
+	default:
+		t.Fatal("flushAll must drain reaction-only channels")
+	}
+}
+
+func TestCoalescerReactionOverflowFlushesNothingDropped(t *testing.T) {
+	deliver, got := collectingDeliver()
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	for i := 0; i < maxBufferedReactionsPerChannel; i++ {
+		c.admitReaction("C1", testPending("C1", fmt.Sprintf("%03d.099", i), "r"), false)
+	}
+	select {
+	case batch := <-got:
+		if len(batch) != maxBufferedReactionsPerChannel {
+			t.Fatalf("overflow flush delivered %d, want all %d", len(batch), maxBufferedReactionsPerChannel)
+		}
+	default:
+		t.Fatal("cap-full reaction buffer must flush (bounded memory, nothing dropped)")
+	}
+}
+
 func TestCoalescerFlushAllDrainsEveryChannel(t *testing.T) {
 	deliver, got := collectingDeliver()
 	c := newInboundCoalescer(time.Hour, nil)

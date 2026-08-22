@@ -57,8 +57,36 @@ def test_publish_to_channel_success_returns_zero(
     assert rc == 0
     assert captured["conversation_id"] == "C0CHAN01"
     assert captured["text"] == "ok"
+    # Terse receipt by default (gp-9e7 item 4): no result envelope echo.
     out = json.loads(capsys.readouterr().out)
-    assert out["conversation_id"] == "C0CHAN01"
+    assert out == {
+        "delivered": True,
+        "message_id": "1700.001",
+        "conversation_id": "C0CHAN01",
+    }
+
+
+def test_publish_to_channel_verbose_restores_full_envelope(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    pub, common = _import_modules()
+
+    def fake_publish(**_kwargs):
+        return {"delivered": True, "message_id": "1700.001"}
+
+    monkeypatch.setattr(common, "publish_to_channel_via_adapter", fake_publish)
+
+    rc = pub.main([
+        "--conversation-id", "C0CHAN01",
+        "--session", "gc-1",
+        "--thread-ts", "1690.5",
+        "--body", "ok",
+        "--verbose",
+    ])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["session_id"] == "gc-1"
+    assert out["thread_ts"] == "1690.5"
+    assert out["result"] == {"delivered": True, "message_id": "1700.001"}
 
 
 def test_publish_to_channel_exits_nonzero_on_delivered_false(

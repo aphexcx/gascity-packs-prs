@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Token-efficiency batch (gp-9e7, Afik-approved 1787421193 with items
+  1–4 in scope per follow-up ruling 1787421279):
+  1. **Reaction-event buffering** — reaction notifications (gp-by3)
+     never wake a session solo anymore, in rooms or DMs, coalescing
+     enabled or not: they buffer in a no-wake side lane of the
+     coalescer and ride the channel's next real delivery (batch flush,
+     urgent/DM flush-ahead, or shutdown drain). Exception: a reaction
+     ON one of the adapter's own outbound posts may join an
+     ALREADY-armed coalesce window (founder acks land with the batch);
+     it still never arms one. Overflow past 100 buffered reactions
+     delivers instead of evicting — nothing is ever dropped.
+  2. **Cross-channel coalescing** — a firing flush timer now sweeps
+     every other buffered non-digest channel, so ONE idle wake
+     delivers all channels' window traffic as aligned back-to-back
+     per-channel batches (each formatted byte-identical to before;
+     order preserved within channel). Digest-mode channels keep their
+     operator-configured interval and are never swept; channels
+     holding only buffered reactions are never swept either (that
+     would be a solo reaction wake).
+  3. **Bot-post buffering generalized** — the gp-kop peer-bot buffer
+     now admits ALL bot-authored posts (same fail-closed bots.info
+     self-guard; unknown bots labeled from bot_profile/bots.info).
+     Unknown bots can never wake a session; the peer_bots.json
+     allowlist's role is granting wakes — per-entry `"wake": true` or
+     the existing `immediate_channels` — and none are granted today.
+  4. **Terse send receipts** — `reply-current`, `publish`,
+     `publish-to-channel`, and `upload` no longer echo the full result
+     envelope (gc transcript entry, outbound text included) into the
+     sending session's context. The default receipt is delivered flag
+     + message_id/file_id + conversation_id + thread_ts when threaded;
+     delivered=false receipts keep failure_kind and the error message.
+     `--verbose` restores the full envelope. Exit-code semantics are
+     unchanged.
+
 ### Fixed
 
 - Urgent-path twin double-delivery (gp-ios, pc_c920ff5fe90c live shape,

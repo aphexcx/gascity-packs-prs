@@ -3103,12 +3103,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		return
 	}
 	// Bot-authored messages historically dropped here unconditionally,
-	// which made fleet mayors blind to each other's posts (gp-kop). An
-	// EXPLICITLY ALLOWLISTED fleet app's post is now delivered as tagged
-	// read-only peer context instead (buffered by default, immediate for
-	// configured channels); everything else keeps the drop. The peer
-	// branch terminates here either way: no target parsing, no busy
-	// affordance, no alias dispatch — a peer post is never an ask.
+	// which made fleet mayors blind to each other's posts (gp-kop). Every
+	// bot post that survives the fail-closed author resolution is now
+	// delivered as tagged read-only context (gp-9e7 item 3): buffered by
+	// default — riding the channel's next real delivery, never a wake —
+	// and immediate only for ALLOWLISTED peers granted one (per-entry
+	// "wake" or immediate_channels). The peer branch terminates here
+	// either way: no target parsing, no busy affordance, no alias
+	// dispatch — a bot post is never an ask.
 	if msg.BotID != "" || msg.Subtype == "bot_message" {
 		maybeDeliverPeerBotMessage(cfg, env, msg)
 		return

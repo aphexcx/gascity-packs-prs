@@ -29,3 +29,9 @@ neutralized by default with a visually identical substitute (U+223C).
 Deliberate tight-wrapped `~word~` strikethrough, code spans, lone
 tildes, and every other formatting character pass through untouched.
 Pass --raw to send the body byte-for-byte verbatim.
+
+Receipt: on success the command prints a terse JSON receipt — delivered
+flag, message_id, conversation_id, and thread_ts when threaded (gp-9e7).
+A delivered=false receipt adds failure_kind and the error message. Pass
+--verbose to print the full result envelope (the raw receipt, including
+gc's transcript entry) instead.

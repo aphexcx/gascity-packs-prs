@@ -74,6 +74,45 @@ def test_default_via_routes_through_gc_outbound(monkeypatch: pytest.MonkeyPatch)
     assert captured["body"]["text"] == "*hello*"
 
 
+def test_terse_receipt_by_default_verbose_restores_envelope(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """gp-9e7 item 4: the default stdout is the terse receipt — no result
+    envelope, no echo of the outbound text; --verbose restores today's
+    full print byte-for-byte."""
+    rc, common = _import_modules()
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000100",
+                            "Entry": {"text": "*hello*"}}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    argv = [
+        "--session", "gc-test-session",
+        "--conversation-id", "C0123ROOM",
+        "--reply-to", "1690.5",
+        "--body", "*hello*",
+    ]
+    assert rc.main(argv) == 0
+    captured_stdout = capsys.readouterr().out
+    assert json.loads(captured_stdout) == {
+        "delivered": True,
+        "message_id": "1700000.000100",
+        "conversation_id": "C0123ROOM",
+        "thread_ts": "1690.5",
+    }
+    assert "*hello*" not in captured_stdout
+
+    assert rc.main(argv + ["--verbose"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["session_id"] == "gc-test-session"
+    assert out["via"] == "gc"
+    assert out["result"]["Receipt"]["Entry"]["text"] == "*hello*"
+
+
 def test_via_adapter_keeps_direct_adapter_path(monkeypatch: pytest.MonkeyPatch) -> None:
     rc, common = _import_modules()
     captured: dict[str, Any] = {}

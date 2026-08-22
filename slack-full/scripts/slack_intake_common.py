@@ -329,6 +329,63 @@ def interpret_publish_receipt(result: Any) -> tuple[bool, str]:
     return False, "schema_mismatch"
 
 
+def summarize_publish_receipt(
+    result: Any,
+    *,
+    conversation_id: str = "",
+    thread_ts: str = "",
+) -> dict[str, Any]:
+    """Terse send receipt (gp-9e7 item 4): the caller-facing summary.
+
+    Every send/reply/publish used to echo the FULL result envelope —
+    including gc's transcript entry with the entire outbound message
+    text — back into the sender's context, doubling the token cost of
+    every outbound message. The default receipt is now just the fields
+    a sender can act on: the delivered flag, the provider message id
+    (or file id for uploads), the conversation id, and the thread ts
+    when the send was threaded. Failures additionally carry
+    failure_kind and the receipt's error message so a delivered=false
+    stays diagnosable without --verbose.
+
+    Handles the same three receipt shapes as
+    :func:`interpret_publish_receipt` (adapter-direct lowercase,
+    gc-wrapped capitalized, gc-wrapped lowercase); unknown shapes
+    surface as delivered=false / failure_kind=schema_mismatch, exactly
+    like the interpreter.
+    """
+    delivered, failure_kind = interpret_publish_receipt(result)
+    receipt: dict[str, Any] = {}
+    if isinstance(result, dict):
+        if "delivered" in result:
+            receipt = result
+        else:
+            for key in ("Receipt", "receipt"):
+                candidate = result.get(key)
+                if isinstance(candidate, dict):
+                    receipt = candidate
+                    break
+    summary: dict[str, Any] = {
+        "delivered": delivered,
+        "conversation_id": conversation_id,
+    }
+    message_id = receipt.get("MessageID") or receipt.get("message_id") or ""
+    if message_id:
+        summary["message_id"] = str(message_id)
+    file_id = receipt.get("FileID") or receipt.get("file_id") or ""
+    if file_id:
+        summary["file_id"] = str(file_id)
+    if thread_ts:
+        summary["thread_ts"] = thread_ts
+    if not delivered:
+        if failure_kind:
+            summary["failure_kind"] = failure_kind
+        error = (receipt.get("FailureMessage") or receipt.get("failure_message")
+                 or receipt.get("Error") or receipt.get("error") or "")
+        if error:
+            summary["error"] = str(error)
+    return summary
+
+
 # --- session resolution ---------------------------------------------------
 
 def current_session_id() -> str:

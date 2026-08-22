@@ -43,15 +43,20 @@ import (
 //     helpers exclude it from reply-current/react/upload anchoring)
 //     and the text ("no reply expected").
 //
-// Delivery rides the gp-729 coalescer for rooms — a reaction buffers
-// for the channel's window and then wakes the bound session as its own
-// (possibly batched) inbound, so an ack that is the thread's final
-// word still arrives, while reaction bursts and adjacent chatter
-// collapse into one delivery. DMs (and rooms with coalescing disabled)
-// forward immediately, mirroring the message path's policy. Failures
-// are logged and dropped (coalescer admission retries on its own
-// timer): reaction context is best-effort, and the dedup claim commits
-// either way so a Slack redelivery cannot double-wake the session.
+// Delivery NEVER wakes a session solo (gp-9e7 item 1 — without this,
+// the reaction feature is a token regression): every surviving
+// reaction, rooms and DMs alike, buffers in the coalescer's no-wake
+// side lane and piggybacks on the channel's next real delivery — a
+// coalesce window armed by messages, the flush-ahead of an urgent or
+// DM inbound, or shutdown's drain. Exception: a reaction ON one of the
+// adapter's own outbound messages (item_user == our bot — the founder
+// acking a post) may ride a coalesce window that is ALREADY armed; it
+// still never arms one itself. Admission is final handling and the
+// dedup claim commits either way, so a Slack redelivery cannot
+// double-deliver; a failed batch flush restores the entry to the
+// side-buffer for the next piggyback. Only a nil coalescer (bare test
+// configs) falls back to an immediate forward, where failures are
+// logged and dropped (reaction context is best-effort).
 //
 // Company rooms are out of scope v1: their message flow is gateway-
 // owned, but reaction events fall through to this legacy path, so a
@@ -157,14 +162,19 @@ func maybeDeliverReactionEvent(cfg config, env slackEventEnvelope) {
 		ReceivedAt:       time.Now().UTC(),
 	}
 
-	// Rooms ride the coalescer (admission is final handling — the
-	// coalescer's own timer retries a failed flush); DMs and
-	// coalescing-disabled deployments forward immediately, same policy
-	// split as the message path.
-	if cfg.coalescer.enabled() && inbound.Conversation.Kind == "room" {
-		cfg.coalescer.enqueue(ev.Item.Channel, pendingChannelInbound{inbound: inbound})
+	// No-wake buffering (gp-9e7 item 1): rooms and DMs alike, coalescing
+	// enabled or not. ownTarget marks a reaction on one of the adapter's
+	// own outbound posts — the founder-ack case allowed to ride an
+	// ALREADY-armed coalesce window (it never arms one).
+	ownTarget := ev.ItemUser != "" &&
+		((env.botUserID() != "" && ev.ItemUser == env.botUserID()) ||
+			(cfg.companySelfBotUserID != "" && ev.ItemUser == cfg.companySelfBotUserID))
+	if cfg.coalescer.admitReaction(ev.Item.Channel, pendingChannelInbound{inbound: inbound}, ownTarget) {
+		log.Printf("reaction: buffered %s %q by %s chan=%s target_ts=%s own_target=%v (delivers with next real inbound)",
+			ev.Type, ev.Reaction, ev.User, ev.Item.Channel, ev.Item.TS, ownTarget)
 		return
 	}
+	// Nil coalescer (bare test configs): immediate forward fallback.
 	if err := postInbound(cfg, inbound); err != nil {
 		// Best-effort context: log and drop, dedup claim commits (a
 		// Slack redelivery must not double-wake the session for an

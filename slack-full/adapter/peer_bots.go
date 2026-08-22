@@ -14,13 +14,16 @@ import (
 	"time"
 )
 
-// peer_bots.go — legacy-path peer-bot visibility (gp-kop, Afik-approved
-// Option A). Fleet mayors run as separate Slack apps in shared channels, and
-// the adapter historically dropped every bot-authored message, so mayors
-// could not see each other's posts and double-answered humans. Messages
-// authored by an EXPLICITLY ALLOWLISTED fleet app in a channel this adapter
-// receives events for are now delivered to the channel-bound session as
-// tagged, read-only context.
+// peer_bots.go — legacy-path bot-post visibility (gp-kop, Afik-approved
+// Option A; generalized to ALL bot authors by gp-9e7 item 3). Fleet mayors
+// run as separate Slack apps in shared channels, and the adapter
+// historically dropped every bot-authored message, so mayors could not see
+// each other's posts and double-answered humans. Every bot-authored post in
+// a channel this adapter receives events for is now delivered to the
+// channel-bound session as tagged, read-only context — buffered by default;
+// the peer_bots.json allowlist's role is naming the bots whose posts
+// deserve a WAKE (per-entry "wake", or the per-channel immediate_channels —
+// currently none in any deployment) plus the operator-facing label.
 //
 // Loop + safety rules (hard requirements, enforced here):
 //  1. A bot's own posts are NEVER delivered back to itself. Every candidate
@@ -28,23 +31,25 @@ import (
 //     scaffolding, company_authors.go) and dropped unless it definitively
 //     resolves to a bot user id that is not our own. Fail closed: an
 //     unresolvable author is dropped, not delivered.
-//  2. Only explicitly configured fleet app/bot ids are eligible — unknown
-//     bots keep the pre-existing drop behavior byte-for-byte.
-//  3. Delivered peer posts carry a "peer-bot <label>" provenance tag (in the
+//  2. Only explicitly allowlisted fleet apps can ever WAKE a session —
+//     unknown bots are buffered context at most, never an inbound of their
+//     own.
+//  3. Delivered bot posts carry a "peer-bot <label>" provenance tag (in the
 //     text block AND in Actor{DisplayName, IsBot:true}) distinguishing them
-//     from human inbound.
+//     from human inbound. Unknown bots are labeled best-effort from
+//     bot_profile.name / bots.info.
 //  4. No auto-response semantics anywhere in the path: the peer branch never
 //     parses targets, never busy-marks, never alias-dispatches, and the
 //     intake helpers (slack_intake_common.py) exclude bot-authored inbounds
 //     so `gc slack reply-current` / `react` / `upload` can never anchor on a
 //     peer-bot message.
 //
-// Delivery modes: by default a peer post is buffered per channel and rides
+// Delivery modes: by default a bot post is buffered per channel and rides
 // as a prepended context block on the NEXT inbound forwarded for that
 // channel — no wake of its own; the session reads it alongside the message
-// that naturally woke it. Channels listed in "immediate_channels" instead
-// forward the peer post right away as its own inbound (which does wake the
-// bound session).
+// that naturally woke it. An ALLOWLISTED peer whose entry sets "wake", or
+// posting in a channel listed in "immediate_channels", instead forwards
+// right away as its own inbound (which does wake the bound session).
 
 // peerBotEntry is one allowlisted fleet app in peer_bots.json. Label is the
 // operator-facing peer name used in the provenance tag; at least one of the
@@ -54,6 +59,12 @@ type peerBotEntry struct {
 	AppID     string `json:"app_id,omitempty"`
 	BotID     string `json:"bot_id,omitempty"`
 	BotUserID string `json:"bot_user_id,omitempty"`
+	// Wake forwards this peer's posts immediately as their own (waking)
+	// inbound in every channel, instead of the buffered default —
+	// gp-9e7 item 3's "bots that deserve a wake" knob (currently none
+	// do). The channel-scoped immediate_channels list is the other way
+	// to grant a wake; either suffices.
+	Wake bool `json:"wake,omitempty"`
 }
 
 // peerBotsFile is the on-disk shape of peer_bots.json.
@@ -211,23 +222,6 @@ func (r *peerBotsRegistry) matchPeerByBotUserID(botUserID string) (peerBotEntry,
 		}
 	}
 	return peerBotEntry{}, false
-}
-
-// hasAnyBotUserIDOnly reports whether any entry is matchable ONLY via
-// bots.info resolution (bot_user_id set, no bot_id/app_id). Gates the
-// resolver call for messages that matched no entry directly. Nil-safe.
-func (r *peerBotsRegistry) hasAnyBotUserIDOnly() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	for _, p := range r.peers {
-		if p.BotUserID != "" && p.BotID == "" && p.AppID == "" {
-			return true
-		}
-	}
-	return false
 }
 
 // immediateChannel reports whether channel is configured for immediate
@@ -391,16 +385,45 @@ func peerAuthorIdentifiers(msg slackMessageEvent) (botID, authorAppID string) {
 	return msg.BotID, authorAppID
 }
 
-// maybeDeliverPeerBotMessage is the sole handler for bot-authored message
-// events on the legacy path (gp-kop). It either delivers the message as
-// tagged read-only peer context (buffered, or an immediate inbound for
-// channels configured so) or does nothing — the caller returns either way,
-// so unknown bots keep the historical drop behavior. It never parses
-// targets, never busy-marks, and never alias-dispatches (safety rule 4).
-func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMessageEvent) {
-	if cfg.peerBots == nil || cfg.peerBots.Len() == 0 {
-		return
+// parseBotProfileName extracts bot_profile.name from a raw bot_profile
+// object, tolerating absence — display-only input for unknownBotLabel.
+func parseBotProfileName(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
 	}
+	var bp struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &bp); err != nil {
+		return ""
+	}
+	return bp.Name
+}
+
+// unknownBotLabel picks the provenance label for a bot with no allowlist
+// entry (gp-9e7 item 3): the event's own bot_profile name, the bots.info
+// name, then the resolved bot user id / bot id as last resorts. Display
+// only — identity checks ran against the resolution before this point.
+func unknownBotLabel(msg slackMessageEvent, botID string, info companyBotInfo) string {
+	if name := strings.TrimSpace(parseBotProfileName(msg.BotProfile)); name != "" {
+		return name
+	}
+	if name := strings.TrimSpace(info.Name); name != "" {
+		return name
+	}
+	if info.UserID != "" {
+		return info.UserID
+	}
+	return botID
+}
+
+// maybeDeliverPeerBotMessage is the sole handler for bot-authored message
+// events on the legacy path (gp-kop; generalized by gp-9e7 item 3). It
+// either delivers the message as tagged read-only bot context (buffered by
+// default; an immediate inbound only for allowlisted peers granted a wake)
+// or does nothing — the caller returns either way. It never parses targets,
+// never busy-marks, and never alias-dispatches (safety rule 4).
+func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMessageEvent) {
 	// Only plain "message" events. A peer post @-mentioning our bot ALSO
 	// fires an app_mention delivery for the same ts (hw-vzd5y edge case 2);
 	// admitting both would double-deliver the post since the two carry
@@ -422,28 +445,27 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	}
 
 	entry, matched := cfg.peerBots.matchPeer(botID, authorAppID)
-	if !matched && !cfg.peerBots.hasAnyBotUserIDOnly() {
-		return // unknown bot: historical drop behavior, no API call spent
-	}
 
-	// Author resolution (safety rule 1, fail closed): every delivery
+	// Author resolution (safety rule 1, fail closed): every delivery —
+	// allowlisted or not, now that all bot posts buffer (gp-9e7 item 3) —
 	// requires a definitive bots.info resolution so we know the author's
 	// bot user id and can prove it is not our own. Reuses the company
-	// gateway's resolver scaffolding (company_authors.go). Without a bot_id
-	// there is nothing to resolve against — drop.
+	// gateway's resolver scaffolding (company_authors.go); the per-bot
+	// TTL cache keeps this to one API call per bot, not per post. Without
+	// a bot_id there is nothing to resolve against — drop.
 	if cfg.peerAuthors == nil || botID == "" {
 		return
 	}
 	info, outcome := cfg.peerAuthors.Resolve(botID)
 	if outcome != botResolveOK {
 		if outcome == botResolveTransient {
-			log.Printf("peer-bot: bots.info transient failure for bot_id=%s chan=%s ts=%s — peer post dropped (context is best-effort)",
+			log.Printf("peer-bot: bots.info transient failure for bot_id=%s chan=%s ts=%s — bot post dropped (context is best-effort)",
 				botID, msg.Channel, msg.TS)
 		}
 		return
 	}
 	// Corroborate event-declared identifiers against the resolution, same
-	// checklist as resolveCompanyAuthor: a mismatch is an unknown bot.
+	// checklist as resolveCompanyAuthor: a mismatch fails closed.
 	if msg.AppID != "" && msg.AppID != info.AppID {
 		return
 	}
@@ -466,17 +488,23 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 
 	if !matched {
 		entry, matched = cfg.peerBots.matchPeerByBotUserID(info.UserID)
-		if !matched {
-			return // unknown bot: historical drop behavior
+	}
+	if matched {
+		// Config corroboration: an entry that pins ids the resolution
+		// contradicts does not match (fail closed) — and a contradicted
+		// author must not slip through as a generic unknown bot either,
+		// so this stays a hard drop.
+		if entry.BotUserID != "" && entry.BotUserID != info.UserID {
+			return
 		}
-	}
-	// Config corroboration: an entry that pins ids the resolution
-	// contradicts does not match (fail closed).
-	if entry.BotUserID != "" && entry.BotUserID != info.UserID {
-		return
-	}
-	if entry.AppID != "" && info.AppID != "" && entry.AppID != info.AppID {
-		return
+		if entry.AppID != "" && info.AppID != "" && entry.AppID != info.AppID {
+			return
+		}
+	} else {
+		// Unknown bot (gp-9e7 item 3): no longer dropped — buffered as
+		// tagged read-only context under a best-effort label. Never a
+		// wake (safety rule 2).
+		entry = peerBotEntry{Label: unknownBotLabel(msg, botID, info)}
 	}
 
 	item := peerContextItem{
@@ -487,9 +515,12 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		Text:     msg.Text,
 	}
 
-	if !cfg.peerBots.immediateChannel(msg.Channel) {
+	// Only an allowlisted peer can wake: per-entry "wake" or the
+	// channel-scoped immediate_channels grant. Everything else buffers.
+	if !matched || !(entry.Wake || cfg.peerBots.immediateChannel(msg.Channel)) {
 		cfg.peerContext.add(item)
-		log.Printf("peer-bot: buffered post from %q chan=%s ts=%s (delivered on next inbound)", entry.Label, msg.Channel, msg.TS)
+		log.Printf("peer-bot: buffered post from %q (allowlisted=%v) chan=%s ts=%s (delivered on next inbound)",
+			entry.Label, matched, msg.Channel, msg.TS)
 		return
 	}
 

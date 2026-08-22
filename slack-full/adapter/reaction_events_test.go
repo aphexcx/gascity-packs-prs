@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Tests for human-reaction visibility (gp-by3): reaction_added /
@@ -278,7 +279,10 @@ func TestReaction_TargetLookupFailureDegradesToNoSnippet(t *testing.T) {
 	}
 }
 
-func TestReaction_RoomRidesCoalescer(t *testing.T) {
+// gp-9e7 item 1: a reaction NEVER wakes a session solo. It buffers in
+// the coalescer's no-wake side lane — arming no timer — and delivers
+// only by riding the channel's next real delivery.
+func TestReaction_BuffersNoWakeInRooms(t *testing.T) {
 	capture := &inboundCapture{}
 	gcStub := httptest.NewServer(capture.handler())
 	t.Cleanup(gcStub.Close)
@@ -289,29 +293,120 @@ func TestReaction_RoomRidesCoalescer(t *testing.T) {
 	runReactionEvent(t, cfg, env)
 
 	if msgs := capture.snapshot(); len(msgs) != 0 {
-		t.Fatalf("room reaction bypassed the coalescer: %d immediate inbounds", len(msgs))
+		t.Fatalf("room reaction posted immediately: %d inbounds", len(msgs))
 	}
-	if !cfg.coalescer.pendingContains("C1", "100.199") {
-		t.Error("reaction not buffered in the coalescer (event_ts missing from pending)")
+	cfg.coalescer.mu.Lock()
+	buffered := len(cfg.coalescer.reactions["C1"])
+	_, timerArmed := cfg.coalescer.timers["C1"]
+	cfg.coalescer.mu.Unlock()
+	if buffered != 1 {
+		t.Errorf("reaction side-buffer holds %d entries, want 1", buffered)
+	}
+	if timerArmed {
+		t.Error("a reaction must never arm a flush timer (solo wake)")
 	}
 }
 
-func TestReaction_DMForwardsImmediatelyEvenWithCoalescer(t *testing.T) {
+// DMs buffer too now — the reaction piggybacks on the next DM inbound's
+// flush-ahead instead of waking the session by itself.
+func TestReaction_DMBuffersNoWake(t *testing.T) {
 	capture := &inboundCapture{}
 	gcStub := httptest.NewServer(capture.handler())
 	t.Cleanup(gcStub.Close)
 
 	cfg := reactionTestConfig(gcStub.URL)
 	cfg.coalescer = newInboundCoalescer(defaultCoalesceWindow, nil)
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		return deliverCoalescedBatch(cfg, channel, batch)
+	}
 	env := reactionEnvelope(t, "reaction_added", "Ev1", "D1", "100.1", reactionTestReactor, "+1", "")
 	runReactionEvent(t, cfg, env)
 
+	if msgs := capture.snapshot(); len(msgs) != 0 {
+		t.Fatalf("DM reaction posted immediately: %d inbounds, want 0 (no-wake buffer)", len(msgs))
+	}
+	got := cfg.coalescer.flushAheadOf("D1", "")
+	if len(got) != 0 {
+		t.Fatalf("withheld = %+v, want none", got)
+	}
 	msgs := capture.snapshot()
 	if len(msgs) != 1 {
-		t.Fatalf("captured %d inbounds, want 1 (DMs never buffer)", len(msgs))
+		t.Fatalf("flush-ahead delivered %d inbounds, want the buffered reaction", len(msgs))
 	}
-	if msgs[0].Conversation.Kind != "dm" {
-		t.Errorf("Conversation.Kind = %q, want dm", msgs[0].Conversation.Kind)
+	if msgs[0].Conversation.Kind != "dm" || msgs[0].DedupKey != "slack-reaction-Ev1" {
+		t.Errorf("delivered = kind %q dedup %q", msgs[0].Conversation.Kind, msgs[0].DedupKey)
+	}
+}
+
+// Zero-window (coalescing disabled) deployments must still buffer:
+// "never wake solo" is not conditional on the burst coalescer being on.
+func TestReaction_BuffersEvenWithCoalescingDisabled(t *testing.T) {
+	capture := &inboundCapture{}
+	gcStub := httptest.NewServer(capture.handler())
+	t.Cleanup(gcStub.Close)
+
+	cfg := reactionTestConfig(gcStub.URL)
+	cfg.coalescer = newInboundCoalescer(0, nil)
+	env := reactionEnvelope(t, "reaction_added", "Ev1", "C1", "100.1", reactionTestReactor, "+1", "")
+	runReactionEvent(t, cfg, env)
+
+	if msgs := capture.snapshot(); len(msgs) != 0 {
+		t.Fatalf("disabled-coalescer reaction posted immediately: %d inbounds", len(msgs))
+	}
+	cfg.coalescer.mu.Lock()
+	buffered := len(cfg.coalescer.reactions["C1"])
+	cfg.coalescer.mu.Unlock()
+	if buffered != 1 {
+		t.Errorf("reaction side-buffer holds %d entries, want 1", buffered)
+	}
+}
+
+// Founder-ack exception: a reaction ON one of the adapter's own
+// outbound messages may ride an ALREADY-armed coalesce window — and
+// only an already-armed one; without a window it buffers no-wake.
+func TestReaction_OwnOutboundTargetRidesArmedWindow(t *testing.T) {
+	capture := &inboundCapture{}
+	gcStub := httptest.NewServer(capture.handler())
+	t.Cleanup(gcStub.Close)
+
+	cfg := reactionTestConfig(gcStub.URL)
+	cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+
+	// No armed window: even an own-target reaction buffers no-wake.
+	envCold := reactionEnvelope(t, "reaction_added", "Ev1", "C1", "50.1", reactionTestReactor, "+1", reactionTestOwnBotUserID)
+	runReactionEvent(t, cfg, envCold)
+	cfg.coalescer.mu.Lock()
+	if _, armed := cfg.coalescer.timers["C1"]; armed {
+		cfg.coalescer.mu.Unlock()
+		t.Fatal("own-target reaction armed a window of its own")
+	}
+	if n := len(cfg.coalescer.reactions["C1"]); n != 1 {
+		cfg.coalescer.mu.Unlock()
+		t.Fatalf("cold own-target reaction: side-buffer holds %d, want 1", n)
+	}
+	cfg.coalescer.mu.Unlock()
+
+	// Armed window (a real message is buffering): the own-target
+	// reaction joins the pending batch and delivers with it.
+	cfg.coalescer.enqueue("C1", testPending("C1", "100.0", "chatter"))
+	envWarm := reactionEnvelope(t, "reaction_added", "Ev2", "C1", "100.0", reactionTestReactor, "tada", reactionTestOwnBotUserID)
+	runReactionEvent(t, cfg, envWarm)
+	cfg.coalescer.mu.Lock()
+	pendingN := len(cfg.coalescer.pending["C1"])
+	cfg.coalescer.mu.Unlock()
+	if pendingN != 2 {
+		t.Fatalf("pending = %d entries, want message + riding reaction", pendingN)
+	}
+
+	// A reaction on someone ELSE's message never rides, armed or not.
+	envOther := reactionEnvelope(t, "reaction_added", "Ev3", "C1", "100.0", reactionTestReactor, "+1", reactionTestItemAuthor)
+	runReactionEvent(t, cfg, envOther)
+	cfg.coalescer.mu.Lock()
+	pendingN = len(cfg.coalescer.pending["C1"])
+	reactionsN := len(cfg.coalescer.reactions["C1"])
+	cfg.coalescer.mu.Unlock()
+	if pendingN != 2 || reactionsN != 2 {
+		t.Fatalf("pending=%d reactions=%d, want 2/2 (other-target reaction stays in the side lane)", pendingN, reactionsN)
 	}
 }
 

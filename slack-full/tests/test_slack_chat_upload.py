@@ -91,8 +91,40 @@ def test_default_via_routes_through_gc_outbound_file(
     assert body["file_path"] == str(file_path.resolve())
     assert body["initial_comment"] == "hi peers"
 
+    # Terse receipt by default (gp-9e7 item 4): no result envelope echo.
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "delivered": True,
+        "file_id": "F123",
+        "conversation_id": "C0123ROOM",
+    }
+
+
+def test_verbose_restores_full_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    upload, common = _import_modules()
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        return {"Receipt": {"Delivered": True, "FileID": "F123"}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: _fake_binding())
+
+    file_path = _make_file(tmp_path)
+    exit_code = upload.main([
+        "--file", str(file_path),
+        "--session", "gc-test-session",
+        "--verbose",
+    ])
+    assert exit_code == 0
     out = json.loads(capsys.readouterr().out)
     assert out["via"] == "gc"
+    assert out["session_id"] == "gc-test-session"
+    assert out["result"]["Receipt"]["FileID"] == "F123"
 
 
 def test_via_adapter_keeps_direct_adapter_path(
@@ -125,8 +157,13 @@ def test_via_adapter_keeps_direct_adapter_path(
     # No /extmsg/ prefix — adapter-direct path bypasses gc entirely.
     assert "/extmsg/" not in captured["url"]
 
+    # Terse receipt: adapter-direct receipts summarize identically.
     out = json.loads(capsys.readouterr().out)
-    assert out["via"] == "adapter"
+    assert out == {
+        "delivered": True,
+        "file_id": "F999",
+        "conversation_id": "C0123ROOM",
+    }
 
 
 def test_thread_ts_and_idempotency_propagate_through_gc_path(
@@ -256,10 +293,13 @@ def test_conversation_id_posts_bindingless_via_adapter(
     }
     assert body["initial_comment"] == "evidence photo"
 
+    # Terse receipt by default (gp-9e7 item 4).
     out = json.loads(capsys.readouterr().out)
-    assert out["via"] == "adapter"
-    assert out["conversation_id"] == "C0INCIDENT"
-    assert out["kind"] == "room"
+    assert out == {
+        "delivered": True,
+        "file_id": "F0EVIDENCE",
+        "conversation_id": "C0INCIDENT",
+    }
 
 
 def test_conversation_id_kind_and_thread_ts_propagate(
