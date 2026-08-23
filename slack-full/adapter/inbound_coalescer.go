@@ -48,9 +48,17 @@ import (
 // Concurrency contract: per-channel state is generation-stamped — every
 // drain bumps the generation, and a timer callback armed for an older
 // generation no-ops, so a stale timer can never steal a newer batch. A
-// per-channel flush mutex serializes deliveries; flushAheadOf acquires
-// it even when the buffer is empty, so an urgent message cannot
-// overtake a coalesced POST already in flight.
+// per-channel flush mutex serializes deliveries, and EVERY take
+// acquires it AT TAKE TIME inside the c.mu critical section (TryLock,
+// never a blocking Lock under c.mu — gp-9e7 round 3, generalizing the
+// round-2c sweep discipline): a detached batch holds its channel's
+// mutex until delivered or restored, so any later take/Lock serializes
+// behind ALL older detached batches by construction and a newer POST
+// can never overtake an older one through a take-to-lock gap. A failed
+// TryLock means a delivery is in flight; the taker skips or defers
+// (the armed timer / restore cycle covers the buffered items), and
+// flushAheadOf — whose urgent caller must serialize — waits the mutex
+// out and re-takes.
 //
 // In-memory like peerContextBuffer: messages admitted to the buffer
 // were already acked to Slack, so an adapter CRASH inside the window
@@ -128,9 +136,12 @@ type inboundCoalescer struct {
 	// this process lifetime: the leftovers of flushAll's bounded retry
 	// loop, and post-close straggler admissions. Wired in main() to the
 	// durable inbound spool (replayed at next startup); nil means such
-	// batches are LOST, and every spill site logs loudly either way.
+	// batches are LOST. It returns true ONLY on confirmed durability
+	// (write + fsync verified) — a batch is reported "spooled" solely on
+	// that verdict, and every other outcome gets the loud per-channel
+	// LOSS log, same contract as spool-disabled (gp-9e7 round 3, 1a).
 	// Called without mu held (it does file I/O).
-	spill func(channel string, batch []pendingChannelInbound)
+	spill func(channel string, batch []pendingChannelInbound) bool
 	// deliver posts one batch as a single inbound; false = failed (the
 	// caller restores the batch). Wired in main() to deliverCoalescedBatch
 	// with the final cfg; tests inject their own.
@@ -178,6 +189,17 @@ func (c *inboundCoalescer) flushMuFor(channel string) *sync.Mutex {
 	return m
 }
 
+// armTimerLocked arms the channel's flush timer if none is armed,
+// bound to the CURRENT generation. Called with c.mu held.
+func (c *inboundCoalescer) armTimerLocked(channel string) {
+	if _, ok := c.timers[channel]; ok {
+		return
+	}
+	window := c.windowFor(channel)
+	g := c.gen[channel]
+	c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
+}
+
 // spillLateLocked routes one post-close admission out of the process:
 // to the durable spool when wired (the next startup replays it), else
 // to a loud loss log. It never touches the maps — the admission
@@ -186,12 +208,11 @@ func (c *inboundCoalescer) flushMuFor(channel string) *sync.Mutex {
 func (c *inboundCoalescer) spillLateLocked(channel string, batch []pendingChannelInbound) {
 	spill := c.spill
 	c.mu.Unlock()
-	if spill == nil {
-		log.Printf("coalesce: chan=%s %d item(s) admitted after the shutdown drain with no spool wired — LOST (already acked to Slack)", channel, len(batch))
+	if spill == nil || !spill(channel, batch) {
+		log.Printf("coalesce: LOSS chan=%s %d item(s) admitted after the shutdown drain could not be spooled — LOST (already acked to Slack)", channel, len(batch))
 		return
 	}
 	log.Printf("coalesce: chan=%s %d item(s) admitted after the shutdown drain — spooled for startup replay", channel, len(batch))
-	spill(channel, batch)
 }
 
 // enqueue buffers one inbound and arms the channel's flush timer if it
@@ -210,12 +231,23 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	c.pending[channel] = append(c.pending[channel], p)
 	pendingLen := len(c.pending[channel])
 	if pendingLen >= maxCoalescePerChannel {
-		batch, mu := c.takeLocked(channel)
+		batch, mu, ok := c.takeLocked(channel)
+		if !ok {
+			// A delivery for this channel is in flight (round 3): skip the
+			// early flush — the buffer keeps its items and its armed timer
+			// (defensively re-armed below), so the flush retries once the
+			// in-flight delivery settles. The cap overshoots for at most
+			// one delivery's duration; nothing is dropped.
+			c.armTimerLocked(channel)
+			c.mu.Unlock()
+			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to the timer", channel, pendingLen)
+			return
+		}
 		swept := c.takeSweepsLocked(channel)
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
-		// Swept mutexes are held from take time (gp-9e7 fix round 2c);
-		// launching their goroutines before the triggering channel's
+		// Mutexes are held from take time (gp-9e7 fix round 2c/round 3);
+		// launching the swept goroutines before the triggering channel's
 		// own synchronous POST keeps the one-wake fold (round 2a).
 		c.deliverSwept(swept)
 		c.deliverBatch(channel, batch, mu)
@@ -266,7 +298,15 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 			c.pending[channel] = append(c.pending[channel], p)
 			pendingLen := len(c.pending[channel])
 			if pendingLen >= maxCoalescePerChannel {
-				batch, mu := c.takeLocked(channel)
+				batch, mu, ok := c.takeLocked(channel)
+				if !ok {
+					// Delivery in flight (round 3): the armed timer
+					// retries the flush once it settles; see enqueue.
+					c.armTimerLocked(channel)
+					c.mu.Unlock()
+					log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to the timer", channel, pendingLen)
+					return true
+				}
 				swept := c.takeSweepsLocked(channel)
 				c.mu.Unlock()
 				log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
@@ -286,7 +326,16 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 		// Overflow: deliver rather than evict — reactions never drop.
 		// The solo wake this costs takes a pathological reaction volume
 		// with zero real traffic; the cap bounds memory, not content.
-		batch, mu := c.takeLocked(channel)
+		batch, mu, ok := c.takeLocked(channel)
+		if !ok {
+			// Delivery in flight (round 3): the reactions stay in the
+			// side-buffer — that delivery's take (or the channel's next
+			// real moment) drains them; overflow re-fires on the next
+			// admission if they are still here.
+			c.mu.Unlock()
+			log.Printf("coalesce: chan=%s reaction buffer full (%d) but delivery in flight — overflow flush deferred", channel, n)
+			return true
+		}
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s reaction buffer full (%d) — overflow flush", channel, n)
 		c.deliverBatch(channel, batch, mu)
@@ -302,14 +351,34 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 // Buffered no-wake reactions merge into the taken batch (gp-9e7 item
 // 1): every take is a real delivery moment for the channel, so the
 // side-buffer piggybacks here — deliverCoalescedBatch's ts sort slots
-// them into the timeline. Called with c.mu held; returns the batch and
-// the channel's delivery mutex (NOT held).
+// them into the timeline. Called with c.mu held.
 //
-// Every take opens an in-flight delivery window (c.inflight): the
-// caller MUST route the batch through exactly one deliverBatch call —
-// or, for flushAheadOf's inline delivery, call endDelivery itself — so
-// flushAll can wait out detached batches (gp-9e7 fix round 1a/2b).
-func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, *sync.Mutex) {
+// EVERY take acquires the channel's delivery mutex HERE, inside the
+// caller's c.mu critical section, atomically with the take (gp-9e7
+// round 3, generalizing round 2c from sweeps to all takes): from the
+// instant a batch leaves the maps its mutex is held, so any later
+// Lock/TryLock on that mutex genuinely serializes behind ALL older
+// detached batches by construction — a newer same-channel take can no
+// longer overtake an older one through the take-to-lock gap. The
+// acquisition is TryLock, never a blocking Lock (the round-2 ABBA
+// constraint: never block on a channel mutex while holding c.mu — a
+// failing in-flight delivery holds the channel mutex and needs c.mu to
+// restore). A failed TryLock means a delivery for the channel is in
+// flight RIGHT NOW: ok=false, NO state changes (no gen bump, no timer
+// disarm, no detach, no inflight window), and the caller skips or
+// defers — the channel's armed timer / restore cycle covers the
+// buffered items.
+//
+// On ok=true the returned mutex is HELD and an in-flight delivery
+// window is open (c.inflight): the caller MUST route the batch through
+// exactly one deliverBatch call — or, for flushAheadOf's inline
+// delivery, unlock and call endDelivery itself — so flushAll can wait
+// out detached batches (gp-9e7 fix round 1a/2b).
+func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, *sync.Mutex, bool) {
+	mu := c.flushMuFor(channel)
+	if !mu.TryLock() {
+		return nil, mu, false
+	}
 	c.gen[channel]++
 	c.inflight++
 	if t, ok := c.timers[channel]; ok {
@@ -322,7 +391,7 @@ func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, 
 		batch = append(batch, rs...)
 		delete(c.reactions, channel)
 	}
-	return batch, c.flushMuFor(channel)
+	return batch, mu, true
 }
 
 // endDelivery closes one in-flight delivery window opened by a take:
@@ -338,9 +407,9 @@ func (c *inboundCoalescer) endDelivery() {
 
 // sweptBatch pairs one swept channel's drained buffer with its
 // delivery mutex for the cross-channel flush (gp-9e7 item 2). mu is
-// LOCKED — acquired inside takeSweepsLocked's critical section,
-// atomically with the take — and the delivery goroutine unlocks it
-// after delivering (gp-9e7 fix round 2c).
+// LOCKED — acquired inside takeLocked's critical section, atomically
+// with the take — and the delivery goroutine unlocks it after
+// delivering (gp-9e7 fix round 2c).
 type sweptBatch struct {
 	channel string
 	batch   []pendingChannelInbound
@@ -362,20 +431,16 @@ type sweptBatch struct {
 //   - channels whose delivery mutex is currently held (a delivery in
 //     flight): see below — their own armed timer covers them.
 //
-// Each swept channel's delivery mutex is acquired HERE, inside the
-// caller's c.mu critical section, atomically with the take (gp-9e7 fix
-// round 2c): from the instant a batch leaves the maps its mutex is
-// held, so an urgent flushAheadOf for that channel — which takes under
-// c.mu and then blocks on the same mutex — serializes strictly behind
-// the older swept batch by construction; the take-to-lock gap round 2a
-// only narrowed is gone. The acquisition is TryLock, never a blocking
-// Lock: a blocking Lock under c.mu would deadlock against a failing
-// in-flight delivery (which holds the channel mutex and needs c.mu to
-// restore) and would stall every enqueue behind a slow POST. A failed
-// TryLock means a delivery for that channel is in flight RIGHT NOW; the
-// channel is skipped, keeping its buffer and its armed timer (pending
-// non-empty ⇒ timer armed — enqueue and restore both guarantee it), so
-// it flushes on its own schedule with ordering intact.
+// Each swept channel's delivery mutex is acquired at take time inside
+// takeLocked — the same TryLock-under-c.mu discipline every take now
+// follows (gp-9e7 fix round 2c, generalized in round 3): from the
+// instant a batch leaves the maps its mutex is held, so an urgent
+// flushAheadOf for that channel serializes strictly behind the older
+// swept batch by construction. A failed TryLock means a delivery for
+// that channel is in flight RIGHT NOW; the channel is skipped, keeping
+// its buffer and its armed timer (pending non-empty ⇒ timer armed —
+// enqueue and restore both guarantee it), so it flushes on its own
+// schedule with ordering intact.
 //
 // Called with c.mu held; the caller hands the returned batches — each
 // with its LOCKED mutex — to deliverSwept after releasing it (sorted
@@ -395,12 +460,11 @@ func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
 	sort.Strings(channels)
 	swept := make([]sweptBatch, 0, len(channels))
 	for _, ch := range channels {
-		m := c.flushMuFor(ch)
-		if !m.TryLock() {
+		b, m, ok := c.takeLocked(ch)
+		if !ok {
 			log.Printf("coalesce: chan=%s sweep skipped — delivery in flight; its own timer covers it", ch)
 			continue
 		}
-		b, _ := c.takeLocked(ch)
 		swept = append(swept, sweptBatch{channel: ch, batch: b, mu: m})
 	}
 	return swept
@@ -412,41 +476,27 @@ func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
 // channels' batches un-delivered for the sum of the earlier POSTs, and
 // the near-simultaneous POSTs are what lets gc fold them into one wake.
 // Each batch arrives with its delivery mutex ALREADY HELD — acquired at
-// take time inside takeSweepsLocked (gp-9e7 fix round 2c) — so an
-// urgent flushAheadOf can never slip in between take and delivery.
+// take time inside takeLocked (gp-9e7 fix round 2c) — so an urgent
+// flushAheadOf can never slip in between take and delivery.
 func (c *inboundCoalescer) deliverSwept(swept []sweptBatch) {
 	for _, s := range swept {
 		s := s
-		go c.deliverTakenLocked(s.channel, s.batch, s.mu)
+		go c.deliverBatch(s.channel, s.batch, s.mu)
 	}
 }
 
-// deliverTakenLocked posts one batch whose delivery mutex was acquired
-// at take time by takeSweepsLocked, unlocking it after the delivery
-// settles. The lock was taken on the flushTimer (or early-flush
-// caller's) goroutine and is released here on the delivery goroutine:
-// sync.Mutex is not owner-tracked, so a cross-goroutine unlock is legal
-// Go — the handoff of a LOCKED mutex is the point, it is what makes
-// "batch out of the maps ⇒ mutex held" an invariant with no gap.
-func (c *inboundCoalescer) deliverTakenLocked(channel string, batch []pendingChannelInbound, mu *sync.Mutex) {
-	defer c.endDelivery()
-	defer mu.Unlock()
-	if len(batch) == 0 || c.deliver == nil {
-		return
-	}
-	if !c.deliver(channel, batch) {
-		c.restore(channel, batch)
-	}
-}
-
-// deliverBatch serializes on the channel's delivery mutex and posts the
-// batch, restoring it for a timer retry on failure. Safe with an empty
-// batch (lock-and-release only — the "wait for in-flight flush" case).
-// Closes the in-flight window its take opened, so every taken batch
-// must reach exactly one deliverBatch call (see takeLocked).
+// deliverBatch posts one batch whose delivery mutex was acquired at
+// take time by takeLocked, unlocking it after the delivery settles and
+// restoring the batch for a timer retry on failure. The lock may have
+// been taken on a different goroutine (a sweep's flushTimer) than the
+// one delivering: sync.Mutex is not owner-tracked, so a cross-goroutine
+// unlock is legal Go — the handoff of a LOCKED mutex is the point, it
+// is what makes "batch out of the maps ⇒ mutex held" an invariant with
+// no gap (gp-9e7 round 3). Closes the in-flight window its take opened,
+// so every taken batch must reach exactly one deliverBatch call (see
+// takeLocked).
 func (c *inboundCoalescer) deliverBatch(channel string, batch []pendingChannelInbound, mu *sync.Mutex) {
 	defer c.endDelivery()
-	mu.Lock()
 	defer mu.Unlock()
 	if len(batch) == 0 || c.deliver == nil {
 		return
@@ -521,12 +571,23 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 		c.mu.Unlock()
 		return
 	}
-	batch, mu := c.takeLocked(channel)
+	batch, mu, ok := c.takeLocked(channel)
+	if !ok {
+		// A delivery for this channel is in flight (round 3) — the timer
+		// fired into the gap between another path's take and its POST
+		// settling. Re-arm at the SAME generation (no state changed) so
+		// the flush retries after the in-flight delivery completes; a
+		// failed delivery's restore re-arms/renews on its own.
+		c.timers[channel] = time.AfterFunc(c.windowFor(channel), func() { c.flushTimer(channel, g) })
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s timer flush deferred — delivery in flight; re-armed", channel)
+		return
+	}
 	swept := c.takeSweepsLocked(channel)
 	c.mu.Unlock()
-	// Ordering safety no longer depends on launch order: every swept
-	// batch's delivery mutex was acquired at take time inside the
-	// critical section above (gp-9e7 fix round 2c), so an urgent
+	// Ordering safety no longer depends on launch order: every batch's
+	// delivery mutex was acquired at take time inside the critical
+	// section above (gp-9e7 fix round 2c/round 3), so an urgent
 	// flushAheadOf for a swept channel serializes behind the older
 	// batch by construction. Launching the swept goroutines before this
 	// channel's own synchronous POST remains for the one-wake fold:
@@ -572,10 +633,28 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	if c == nil {
 		return nil
 	}
-	c.mu.Lock()
-	batch, mu := c.takeLocked(channel)
-	c.mu.Unlock()
+	// Take-or-wait (round 3): the take acquires the delivery mutex at
+	// take time (TryLock under c.mu, like every take). A failed TryLock
+	// means an older delivery is in flight — the urgent message must
+	// serialize behind it, so wait the mutex out WITHOUT holding c.mu
+	// (ABBA constraint) and re-take: the settled delivery may have
+	// restored items on failure, and those older items must still flush
+	// ahead of the urgent message.
+	var batch []pendingChannelInbound
+	var mu *sync.Mutex
+	for {
+		c.mu.Lock()
+		var ok bool
+		batch, mu, ok = c.takeLocked(channel)
+		c.mu.Unlock()
+		if ok {
+			break
+		}
+		mu.Lock()
+		mu.Unlock() //nolint:staticcheck // empty critical section is the point: wait out the in-flight flush, then re-take
+	}
 	defer c.endDelivery() // inline delivery below; the take is closed on every path
+	defer mu.Unlock()     // held from take time
 	var withheld []pendingChannelInbound
 	if excludeTS != "" {
 		kept := batch[:0]
@@ -600,17 +679,13 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 		// Reactions-only take (gp-9e7 fix round 1b): never POST — return
 		// the entries to the side-buffer (restore arms no timer for
 		// reactions) and let the caller piggyback them on its own
-		// delivery. Still serialize on the flush mutex so an in-flight
-		// coalesced POST completes before the urgent message proceeds.
+		// delivery. The take already serialized on the flush mutex, so
+		// any in-flight coalesced POST completed before this point.
 		if len(batch) > 0 {
 			c.restore(channel, batch)
 		}
-		mu.Lock()
-		mu.Unlock() //nolint:staticcheck // empty critical section is the point: wait out an in-flight flush
 		return withheld
 	}
-	mu.Lock()
-	defer mu.Unlock()
 	if c.deliver == nil {
 		return withheld
 	}
@@ -640,9 +715,18 @@ func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 		c.mu.Unlock()
 		return
 	}
+	mu := c.flushMuFor(channel)
+	if !mu.TryLock() {
+		// Take-time lock discipline (round 3): a delivery for the channel
+		// is in flight. Leave the reactions in the side-buffer — they
+		// piggyback on the channel's next take/real moment; no timer, no
+		// wake, nothing dropped.
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s buffered reaction drain skipped — delivery in flight; they ride the next real moment", channel)
+		return
+	}
 	delete(c.reactions, channel)
 	c.inflight++ // side-buffer take: closed by deliverBatch below
-	mu := c.flushMuFor(channel)
 	c.mu.Unlock()
 	log.Printf("coalesce: chan=%s delivering %d buffered reaction(s) behind the real delivery", channel, len(rs))
 	c.deliverBatch(channel, rs, mu)
@@ -783,12 +867,16 @@ func (c *inboundCoalescer) flushAll() {
 			log.Printf("coalesce: flushAll giving up after %d passes; %d channel(s) still hold undeliverable batches", maxFlushAllPasses, len(channels))
 			for _, channel := range channels {
 				batch := leftovers[channel]
-				if spill == nil {
-					log.Printf("coalesce: SHUTDOWN LOSS chan=%s %d undeliverable item(s) with no spool wired — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", channel, len(batch))
+				// The batch is forgotten from memory either way — the
+				// process is exiting — but it is reported as SPOOLED only
+				// on the spill's confirmed write+fsync verdict; anything
+				// else is the loud last-resort LOSS log, same contract as
+				// spool-disabled (round 3, 1a).
+				if spill == nil || !spill(channel, batch) {
+					log.Printf("coalesce: SHUTDOWN LOSS chan=%s %d undeliverable item(s) could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", channel, len(batch))
 					continue
 				}
 				log.Printf("coalesce: shutdown chan=%s %d undeliverable item(s) — spooled for startup replay", channel, len(batch))
-				spill(channel, batch)
 			}
 			return
 		}
@@ -796,8 +884,15 @@ func (c *inboundCoalescer) flushAll() {
 		sort.Strings(channels)
 		for _, channel := range channels {
 			c.mu.Lock()
-			batch, mu := c.takeLocked(channel)
+			batch, mu, ok := c.takeLocked(channel)
 			c.mu.Unlock()
+			if !ok {
+				// A delivery for this channel is in flight (round 3): the
+				// next pass's inflight wait joins it and re-takes whatever
+				// a failure restored — nothing is skipped for good.
+				log.Printf("coalesce: shutdown chan=%s drain deferred — delivery in flight; next pass re-takes it", channel)
+				continue
+			}
 			c.deliverBatch(channel, batch, mu)
 		}
 	}

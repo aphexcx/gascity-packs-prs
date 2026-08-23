@@ -168,8 +168,15 @@ func TestCoalescerFlushAheadOfWithholdsUrgentTwin(t *testing.T) {
 
 	// A buffer holding ONLY the twin flushes to nothing.
 	c.mu.Lock()
-	c.takeLocked("C1") // reset buffer state
+	_, resetMu, ok := c.takeLocked("C1") // reset buffer state
 	c.mu.Unlock()
+	if !ok {
+		t.Fatal("reset take failed — no delivery is in flight here")
+	}
+	// The take holds the delivery mutex and opens an in-flight window
+	// (round 3 take-time discipline); settle both for the reset.
+	resetMu.Unlock()
+	c.endDelivery()
 	c.enqueue("C1", testPending("C1", "3.0", "lone twin"))
 	if withheld := c.flushAheadOf("C1", "3.0"); len(withheld) != 1 {
 		t.Fatalf("lone twin must be withheld, got %+v", withheld)
@@ -887,10 +894,11 @@ func TestCoalescerFlushAllBoundedAndSpillsResidue(t *testing.T) {
 		return false
 	}
 	spilled := map[string][]pendingChannelInbound{}
-	c.spill = func(channel string, batch []pendingChannelInbound) {
+	c.spill = func(channel string, batch []pendingChannelInbound) bool {
 		mu.Lock()
 		spilled[channel] = append(spilled[channel], batch...)
 		mu.Unlock()
+		return true
 	}
 	c.enqueue("C1", testPending("C1", "1.0", "doomed message"))
 	if !c.admitReaction("C1", testPending("C1", "2.0", "doomed reaction"), false) {
@@ -943,10 +951,11 @@ func TestCoalescerClosedAfterFlushAllSpillsLateAdmissions(t *testing.T) {
 	c.deliver = func(string, []pendingChannelInbound) bool { return true }
 	var mu sync.Mutex
 	spilled := map[string][]pendingChannelInbound{}
-	c.spill = func(channel string, batch []pendingChannelInbound) {
+	c.spill = func(channel string, batch []pendingChannelInbound) bool {
 		mu.Lock()
 		spilled[channel] = append(spilled[channel], batch...)
 		mu.Unlock()
+		return true
 	}
 	c.flushAll() // empty drain: the barrier closes with the clean verdict
 	c.enqueue("C1", testPending("C1", "1.0", "straggler message"))
@@ -1232,5 +1241,270 @@ func TestOncePerChannel(t *testing.T) {
 	}
 	if o.first("") {
 		t.Fatal("empty channel must never claim")
+	}
+}
+
+// --- gp-9e7 round 3: generalized take-time lock discipline ------------------
+
+// blockableDeliver returns a deliver hook that records every delivery's
+// (channel, first-ts) arrival order and blocks the FIRST delivery for
+// blockChannel until gate closes. entered signals once that first
+// delivery is inside the hook (batch detached, mutex held from take).
+func blockableDeliver(blockChannel string, gate, entered chan struct{}) (func(string, []pendingChannelInbound) bool, func() []string) {
+	var mu sync.Mutex
+	var order []string
+	var blockedOnce bool
+	deliver := func(channel string, batch []pendingChannelInbound) bool {
+		mu.Lock()
+		first := ""
+		if len(batch) > 0 {
+			first = batch[0].inbound.ProviderMessageID
+		}
+		order = append(order, channel+":"+first)
+		block := channel == blockChannel && !blockedOnce
+		if block {
+			blockedOnce = true
+		}
+		mu.Unlock()
+		if block {
+			close(entered)
+			<-gate
+		}
+		return true
+	}
+	read := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), order...)
+	}
+	return deliver, read
+}
+
+// Round 3 headline invariant: an ORDINARY take (the firing channel's
+// own timer) holds the delivery mutex from take time, so while a
+// delivery is in flight (a) a competing timer take for the same channel
+// DEFERS — the newer batch stays in the maps, is never detached into
+// the take-to-lock gap a sweep could overtake — and (b) a sweep skips
+// the channel. Pre-round-3, the manual flushTimer below would DETACH
+// the newer batch and block, emptying pending while 2.0 was still
+// undelivered (and, in the live race, lettable ahead of 1.0 by a sweep).
+func TestCoalescerTimerTakeDefersWhileDeliveryInFlight(t *testing.T) {
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, order := blockableDeliver("C_A", gate, entered)
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+
+	// 1.0 flushes on its timer and blocks inside the deliver hook: the
+	// batch is detached with its delivery mutex held from take time.
+	c.enqueue("C_A", testPending("C_A", "1.0", "older, in flight"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	// A newer message buffers while the older delivery is in flight.
+	c.enqueue("C_A", testPending("C_A", "2.0", "newer"))
+	c.mu.Lock()
+	g := c.gen["C_A"]
+	c.mu.Unlock()
+
+	// (a) A competing timer take must DEFER, not detach: it returns
+	// promptly, 2.0 is still in the maps, and the timer is re-armed.
+	timerDone := make(chan struct{})
+	go func() {
+		c.flushTimer("C_A", g)
+		close(timerDone)
+	}()
+	select {
+	case <-timerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("flushTimer blocked behind the in-flight delivery — the take must defer, not detach-and-wait")
+	}
+	if !c.pendingContains("C_A", "2.0") {
+		t.Fatal("newer batch was detached while an older delivery was in flight — the take-to-lock gap is back")
+	}
+	c.mu.Lock()
+	_, timerArmed := c.timers["C_A"]
+	c.mu.Unlock()
+	if !timerArmed {
+		t.Fatal("deferred timer take must re-arm the flush timer")
+	}
+
+	// (b) A sweep must skip the channel outright.
+	c.mu.Lock()
+	swept := c.takeSweepsLocked("C_OTHER")
+	c.mu.Unlock()
+	if len(swept) != 0 {
+		t.Fatalf("sweep took %d batch(es) from a channel with a delivery in flight", len(swept))
+	}
+
+	// Release the older delivery; the re-armed timer delivers 2.0 after.
+	close(gate)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := order()
+		if len(got) >= 2 {
+			if got[0] != "C_A:1.0" || got[1] != "C_A:2.0" {
+				t.Fatalf("delivery order = %v, want [C_A:1.0 C_A:2.0]", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("2.0 never delivered after the in-flight delivery settled (order=%v)", order())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// The cap-triggered early flush follows the same discipline: with a
+// delivery in flight, enqueue must NOT detach the over-cap buffer (or
+// block the dispatch goroutine behind the in-flight POST, the
+// pre-round-3 behavior) — it defers to the armed timer and keeps every
+// message buffered.
+func TestCoalescerEarlyFlushDefersWhileDeliveryInFlight(t *testing.T) {
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, order := blockableDeliver("C_A", gate, entered)
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+
+	c.enqueue("C_A", testPending("C_A", "000000.0", "older, in flight"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	enqueued := make(chan struct{})
+	go func() {
+		for i := 1; i <= maxCoalescePerChannel; i++ {
+			c.enqueue("C_A", testPending("C_A", fmt.Sprintf("%06d.0", i), "burst"))
+		}
+		close(enqueued)
+	}()
+	select {
+	case <-enqueued:
+	case <-time.After(2 * time.Second):
+		t.Fatal("enqueue blocked behind the in-flight delivery — the early flush must defer, not detach-and-wait")
+	}
+	c.mu.Lock()
+	pendingN := len(c.pending["C_A"])
+	_, timerArmed := c.timers["C_A"]
+	c.mu.Unlock()
+	if pendingN != maxCoalescePerChannel || !timerArmed {
+		t.Fatalf("deferred early flush: pending=%d timerArmed=%v, want %d buffered with an armed timer", pendingN, timerArmed, maxCoalescePerChannel)
+	}
+
+	close(gate)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := order()
+		if len(got) >= 2 {
+			if got[0] != "C_A:000000.0" || got[1] != "C_A:000001.0" {
+				t.Fatalf("delivery order = %v, want the in-flight batch then the deferred burst", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("deferred burst never delivered (order=%v)", order())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// The reaction-overflow flush and the post-delivery reaction drain
+// follow the discipline too: with a delivery in flight they leave the
+// side-buffer intact instead of detaching it.
+func TestCoalescerReactionTakesDeferWhileDeliveryInFlight(t *testing.T) {
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, _ := blockableDeliver("C_A", gate, entered)
+	defer close(gate)
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+
+	c.enqueue("C_A", testPending("C_A", "1.0", "older, in flight"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	r := testPending("C_A", "2.0", "reaction")
+	r.reaction = true
+	if !c.admitReaction("C_A", r, false) {
+		t.Fatal("admitReaction refused")
+	}
+	c.deliverBufferedReactions("C_A")
+	c.mu.Lock()
+	reactionsN := len(c.reactions["C_A"])
+	c.mu.Unlock()
+	if reactionsN != 1 {
+		t.Fatalf("reaction drain detached %d buffered reaction(s) behind an in-flight delivery, want them kept", 1-reactionsN)
+	}
+}
+
+// The bead's verification bar: a same-channel ordinary-take vs sweep
+// overtake interleaving. Channel A's deliveries are triggered both by
+// its own timers/early-flushes and by sweeps from channel B firing
+// concurrently; pre-round-3, an ordinary take detached its batch with
+// the mutex still free, so a sweep (or any later take) could hand a
+// NEWER batch the mutex first and the newer POST overtook the older.
+// With the mutex held from take time the per-channel delivery order is
+// monotone by construction; this stress run asserts exactly that.
+func TestCoalescerSameChannelSweepInterleavingNeverReorders(t *testing.T) {
+	var mu sync.Mutex
+	firstTS := map[string][]string{}
+	c := newInboundCoalescer(2*time.Millisecond, nil)
+	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+		mu.Lock()
+		if len(batch) > 0 {
+			firstTS[channel] = append(firstTS[channel], batch[0].inbound.ProviderMessageID)
+		}
+		mu.Unlock()
+		time.Sleep(200 * time.Microsecond) // widen the in-flight window the old gap raced
+		return true
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // channel A: steady bursts, its own timers + cap flushes
+		defer wg.Done()
+		for i := 0; i < 400; i++ {
+			c.enqueue("C_A", testPending("C_A", fmt.Sprintf("%06d.0", i), "a"))
+			if i%7 == 0 {
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	go func() { // channel B: its timer flushes sweep A concurrently
+		defer wg.Done()
+		for i := 0; i < 400; i++ {
+			c.enqueue("C_B", testPending("C_B", fmt.Sprintf("%06d.0", i), "b"))
+			if i%5 == 0 {
+				time.Sleep(time.Millisecond)
+			}
+		}
+	}()
+	wg.Wait()
+	time.Sleep(20 * time.Millisecond)
+	c.flushAll()
+
+	mu.Lock()
+	defer mu.Unlock()
+	for channel, seq := range firstTS {
+		for i := 1; i < len(seq); i++ {
+			if seq[i] <= seq[i-1] {
+				t.Fatalf("chan=%s delivery %d (first ts %s) overtook delivery %d (first ts %s): full order %v",
+					channel, i, seq[i], i-1, seq[i-1], seq)
+			}
+		}
+	}
+	if len(firstTS["C_A"]) == 0 || len(firstTS["C_B"]) == 0 {
+		t.Fatalf("stress produced no deliveries to check: %v", firstTS)
 	}
 }
