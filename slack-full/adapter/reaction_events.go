@@ -138,7 +138,22 @@ func slackTSWithin(ts string, maxAge time.Duration, now time.Time) bool {
 	if _, err := strconv.ParseUint(frac, 10, 64); err != nil {
 		return false
 	}
-	age := now.Sub(time.Unix(sec, 0))
+	// Slack ts is decimal epoch time — the fraction is sub-second
+	// digits and counts toward the instant (a ts one microsecond past
+	// the future-skew allowance is beyond it, not "exactly at" it).
+	// Integer nanoseconds, not float parsing: float64 loses precision
+	// at epoch-seconds × microsecond scale.
+	nsecDigits := frac
+	if len(nsecDigits) > 9 {
+		nsecDigits = nsecDigits[:9]
+	} else {
+		nsecDigits += strings.Repeat("0", 9-len(nsecDigits))
+	}
+	nsec, err := strconv.ParseInt(nsecDigits, 10, 64)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(time.Unix(sec, nsec))
 	if age < -slackTSMaxFutureSkew {
 		return false
 	}

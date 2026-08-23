@@ -460,7 +460,8 @@ func TestSlackTSWithin(t *testing.T) {
 	now := time.Unix(1_787_000_000, 0)
 	fresh := fmt.Sprintf("%d.000100", now.Add(-time.Minute).Unix())
 	stale := fmt.Sprintf("%d.000100", now.Add(-founderAckRecency-time.Minute).Unix())
-	future := fmt.Sprintf("%d.000100", now.Add(slackTSMaxFutureSkew).Unix())
+	futureAtSkew := fmt.Sprintf("%d.000000", now.Add(slackTSMaxFutureSkew).Unix())
+	futureByFraction := fmt.Sprintf("%d.000100", now.Add(slackTSMaxFutureSkew).Unix())
 	pastSkew := fmt.Sprintf("%d.000100", now.Add(slackTSMaxFutureSkew+time.Second).Unix())
 	farFuture := fmt.Sprintf("%d.000100", now.Add(time.Hour).Unix())
 	bareSeconds := fmt.Sprintf("%d", now.Add(-time.Minute).Unix())
@@ -473,10 +474,12 @@ func TestSlackTSWithin(t *testing.T) {
 	}{
 		{fresh, true},
 		{stale, false},
-		{future, true}, // exactly at the skew allowance: clock skew counts as recent
-		// Fail closed (gp-bhq E): future beyond the skew allowance and
-		// every malformed shape — missing/wrong separator, empty or
-		// non-numeric fraction — is never "recent".
+		{futureAtSkew, true}, // exactly at the skew allowance: clock skew counts as recent
+		// Fail closed (gp-bhq E): future beyond the skew allowance —
+		// even by only the ts fraction, which counts toward the
+		// instant — and every malformed shape (missing/wrong
+		// separator, empty or non-numeric fraction) is never "recent".
+		{futureByFraction, false},
 		{pastSkew, false},
 		{farFuture, false},
 		{bareSeconds, false},
