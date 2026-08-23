@@ -3879,8 +3879,24 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			commitDedup = false
 			displacedOwned = true
 			released = true
+			// The alias leg delivers the addressed-session copy of an
+			// ADMITTED event — watermark advanced, Slack acked — so it is
+			// event-path work and must be inside eventWG (round 5, codex
+			// r4 P0-part): without its own count, main's bounded shutdown
+			// wait could conclude while this leg is still dispatching,
+			// running the coalescer drain and the spool seal underneath a
+			// delivery that can still fail and need the spool. The Add
+			// happens before processSlackEvent returns, while the
+			// handler's own entry-time count is still held (round 3, 2b),
+			// so the group never touches zero across the handoff.
+			if cfg.eventWG != nil {
+				cfg.eventWG.Add(1)
+			}
 			dispatchInflightWG.Add(1)
 			go func(displaced []busyDisplaced) {
+				if cfg.eventWG != nil {
+					defer cfg.eventWG.Done()
+				}
 				defer dispatchInflightWG.Done()
 				defer release()
 				// Alias-injection claim (gp-ios, codex review P1): the
@@ -3958,6 +3974,26 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					}
 					for _, tk := range blocked {
 						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, tk)
+					}
+				}
+				// Failed addressed-session leg DURING THE SHUTDOWN DRAIN
+				// (round 5, mirroring the urgent/DM path — round 3, 2d):
+				// the event is past the watermark, Slack got its 200 long
+				// ago, and with the admission barrier down no redelivery
+				// or parked twin can retry the injection — the spool is
+				// the message's only durability. It replays through the
+				// coalescer's normal CHANNEL buffers at the next startup
+				// (the targeted session injection is not reconstructed;
+				// the ⚠️ reaction below still tells the human this leg
+				// failed, and the per-ts gc dedup key bounds a duplicate
+				// if a parked twin does somehow land). Outside the drain,
+				// the forget below keeps today's redelivery/twin retry
+				// paths and the spool stays untouched.
+				if cfg.draining != nil && cfg.draining.Load() {
+					if cfg.inboundSpool.spillBatch(inbound.Conversation.ConversationID, []pendingChannelInbound{{inbound: inbound}}) {
+						log.Printf("alias dispatch: handle=%s ts=%s failed during shutdown drain — spooled for startup replay", target, inbound.ProviderMessageID)
+					} else {
+						log.Printf("alias dispatch: LOSS handle=%s ts=%s failed during shutdown drain and could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", target, inbound.ProviderMessageID)
 					}
 				}
 				// Release the injection claim after the busy cleanup so

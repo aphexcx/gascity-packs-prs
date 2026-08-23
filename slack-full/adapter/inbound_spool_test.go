@@ -314,3 +314,69 @@ func TestInboundSpoolShutdownResidueRedeliveredAfterRestart(t *testing.T) {
 		t.Fatalf("third-process replay returned %d entries, want 0", n)
 	}
 }
+
+// Round 5 (finding 2): a .replaying file whose tail is a PARTIAL line —
+// a process death mid-append truncated it — must not fuse that tail
+// with the first entry of a newer spool being merged behind it. Before
+// the boundary seal, appendFileTo concatenated the intact source entry
+// directly onto the partial prefix, producing one corrupt fused line:
+// the partial tail's loss silently CONSUMED a perfectly intact entry
+// (and the merge then removed the source file, so nothing retried it).
+func TestInboundSpoolMergeSealsPartialTailNeverConsumesIntactEntry(t *testing.T) {
+	readLog, cleanupLog := captureLog(t)
+	defer cleanupLog()
+	path := filepath.Join(t.TempDir(), "spool.jsonl")
+
+	// A .replaying leftover: one intact entry, then a crash-truncated
+	// partial line (no trailing newline).
+	s1 := newInboundSpool(path)
+	if !s1.spillBatch("C1", []pendingChannelInbound{testPending("C1", "1.0", "intact staged entry")}) {
+		t.Fatal("spillBatch failed")
+	}
+	if e, _ := s1.consume(); len(e) != 1 { // stages into .replaying; "crash" here
+		t.Fatalf("staged %d entries, want 1", len(e))
+	}
+	f, err := os.OpenFile(s1.replayingPath(), os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatalf("open staging file for tail corruption: %v", err)
+	}
+	if _, err := f.WriteString(`{"channel":"C1","inbound":{"provider_message`); err != nil {
+		t.Fatalf("write partial tail: %v", err)
+	}
+	_ = f.Close()
+
+	// A newer spool with one intact entry lands behind the leftover.
+	s2 := newInboundSpool(path)
+	if !s2.spillBatch("C2", []pendingChannelInbound{testPending("C2", "2.0", "intact source entry")}) {
+		t.Fatal("spillBatch failed")
+	}
+
+	entries, done := s2.consume()
+	byTS := map[string]spooledInbound{}
+	for _, e := range entries {
+		byTS[e.Inbound.ProviderMessageID] = e
+	}
+	// The intact source entry must SURVIVE the merge — the corrupt
+	// boundary may cost only the already-truncated partial line.
+	if e, ok := byTS["2.0"]; !ok || e.Channel != "C2" {
+		t.Fatalf("intact source entry 2.0 lost across a partial-tail merge (entries=%+v)", entries)
+	}
+	if e, ok := byTS["1.0"]; !ok || e.Channel != "C1" {
+		t.Fatalf("intact staged entry 1.0 lost (entries=%+v)", entries)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("merged consume returned %d entries, want exactly 2", len(entries))
+	}
+	// The partial line is reported LOUDLY, both when the merge seals it
+	// and when replay drops it.
+	logs := readLog()
+	if !strings.Contains(logs, "CORRUPT LINE") || !strings.Contains(logs, "LOSS") {
+		t.Errorf("partial tail not flagged loudly as loss at replay:\n%s", logs)
+	}
+	if !strings.Contains(logs, "mid-line") {
+		t.Errorf("merge did not loudly report sealing the partial tail:\n%s", logs)
+	}
+	if done != nil {
+		done()
+	}
+}

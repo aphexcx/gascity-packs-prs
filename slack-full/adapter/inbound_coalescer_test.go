@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -1506,5 +1507,218 @@ func TestCoalescerSameChannelSweepInterleavingNeverReorders(t *testing.T) {
 	}
 	if len(firstTS["C_A"]) == 0 || len(firstTS["C_B"]) == 0 {
 		t.Fatalf("stress produced no deliveries to check: %v", firstTS)
+	}
+}
+
+// Round 5 (3a): an over-cap buffer whose early flush lost the take to an
+// in-flight delivery must retry on COALESCE-WINDOW scale, never the
+// channel's digest interval. Before the fix the deferred flush kept the
+// armed digest timer — a digest channel's full buffer sat past the cap
+// for the remainder of a possibly hours-long window while the in-flight
+// delivery had long since settled.
+func TestCoalescerOverCapDeferredFlushRetriesOnWindowScaleNotDigest(t *testing.T) {
+	path := writeDeliveryPolicyFile(t, `{"channels": {"CDIGEST": {"mode": "digest", "interval_minutes": 10}}}`)
+	reg, err := newDeliveryPolicyRegistry(path)
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, order := blockableDeliver("CDIGEST", gate, entered)
+	c := newInboundCoalescer(30*time.Millisecond, reg)
+	c.deliver = deliver
+
+	// One message buffers (arming the 10m digest timer); a manual timer
+	// fire detaches it and blocks inside the deliver hook.
+	c.enqueue("CDIGEST", testPending("CDIGEST", "000000.0", "older, in flight"))
+	c.mu.Lock()
+	g := c.gen["CDIGEST"]
+	c.mu.Unlock()
+	go c.flushTimer("CDIGEST", g)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	// A burst fills the buffer to the cap while the delivery is in
+	// flight: the early flush loses the take and must defer — but to a
+	// short retry, not the re-armed 10-minute digest window.
+	for i := 1; i <= maxCoalescePerChannel; i++ {
+		c.enqueue("CDIGEST", testPending("CDIGEST", fmt.Sprintf("%06d.0", i), "burst"))
+	}
+	c.mu.Lock()
+	pendingN := len(c.pending["CDIGEST"])
+	_, timerArmed := c.timers["CDIGEST"]
+	c.mu.Unlock()
+	if pendingN != maxCoalescePerChannel || !timerArmed {
+		t.Fatalf("deferred early flush: pending=%d timerArmed=%v, want %d buffered with an armed retry timer", pendingN, timerArmed, maxCoalescePerChannel)
+	}
+
+	// Once the in-flight delivery settles, the over-cap buffer must
+	// flush promptly — within seconds, not the digest interval.
+	close(gate)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := order()
+		if len(got) >= 2 {
+			if got[0] != "CDIGEST:000000.0" || got[1] != "CDIGEST:000001.0" {
+				t.Fatalf("delivery order = %v, want the in-flight batch then the deferred over-cap burst", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("over-cap buffer never flushed promptly after the in-flight delivery settled (order=%v) — deferred to the digest timer", order())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// Round 5 (3b): a reaction side-buffer that overflowed its cap while a
+// delivery was in flight must still deliver within a bounded time of
+// that delivery settling — WITHOUT waiting for another admission or the
+// channel's next real moment. Before the fix the deferred overflow
+// armed nothing: with zero further traffic the over-cap side-buffer sat
+// indefinitely.
+func TestCoalescerReactionOverflowDeferredArmsBoundedRetry(t *testing.T) {
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, order := blockableDeliver("C_A", gate, entered)
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+
+	// A real message's timer flush blocks in the deliver hook.
+	c.enqueue("C_A", testPending("C_A", "000000.0", "older, in flight"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	// Reactions overflow the cap while the delivery is in flight. The
+	// overflow flush loses the take and defers.
+	for i := 1; i <= maxBufferedReactionsPerChannel; i++ {
+		r := testPending("C_A", fmt.Sprintf("%06d.0", i), "reaction")
+		r.reaction = true
+		if !c.admitReaction("C_A", r, false) {
+			t.Fatal("admitReaction refused")
+		}
+	}
+	c.mu.Lock()
+	reactionsN := len(c.reactions["C_A"])
+	c.mu.Unlock()
+	if reactionsN != maxBufferedReactionsPerChannel {
+		t.Fatalf("side-buffer holds %d reactions, want the full deferred overflow of %d", reactionsN, maxBufferedReactionsPerChannel)
+	}
+
+	// After the in-flight delivery settles, the deferred overflow must
+	// deliver on its own — no further admission, no real traffic.
+	close(gate)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := order()
+		if len(got) >= 2 {
+			c.mu.Lock()
+			left := len(c.reactions["C_A"])
+			c.mu.Unlock()
+			if left != 0 {
+				t.Fatalf("overflowed side-buffer still holds %d reactions after the retry delivery", left)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("deferred reaction overflow never delivered after the in-flight delivery settled (order=%v)", order())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// Round 5 (3c): flushAheadOf's wait must be a RESERVATION, not a
+// wait-unlock-retake race. The urgent path blocks INTO the channel
+// mutex's wait queue and takes with the mutex held, so from the moment
+// the in-flight delivery settles no competing taker can TryLock-win the
+// channel — the old loop's unlock-to-retake window let a steady stream
+// of timer/early-flush takers starve the urgent flush indefinitely (and
+// steal its batch). Hot competing takers across repeated cycles must
+// record ZERO successful takes.
+func TestCoalescerFlushAheadReservationCannotBeStarved(t *testing.T) {
+	for cycle := 0; cycle < 25; cycle++ {
+		gate := make(chan struct{})
+		entered := make(chan struct{})
+		deliver, order := blockableDeliver("C_A", gate, entered)
+		c := newInboundCoalescer(time.Hour, nil) // no self-firing timers
+		c.deliver = deliver
+
+		// Older delivery in flight, holding the channel mutex.
+		c.enqueue("C_A", testPending("C_A", "1.0", "older, in flight"))
+		c.mu.Lock()
+		g := c.gen["C_A"]
+		c.mu.Unlock()
+		go c.flushTimer("C_A", g)
+		select {
+		case <-entered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("first delivery never started")
+		}
+
+		// The batch the urgent path must win.
+		c.enqueue("C_A", testPending("C_A", "2.0", "urgent must flush this ahead"))
+
+		urgentDone := make(chan struct{})
+		go func() {
+			c.flushAheadOf("C_A", "")
+			close(urgentDone)
+		}()
+		// Let the urgent path reach its blocking wait (>1ms also arms
+		// Go's starvation-mode mutex handoff for it).
+		time.Sleep(10 * time.Millisecond)
+
+		// Hot competing takers: timer/early-flush-style takes hammering
+		// the channel until the urgent path completes.
+		var steals int32
+		stop := make(chan struct{})
+		var spinners sync.WaitGroup
+		for i := 0; i < 4; i++ {
+			spinners.Add(1)
+			go func() {
+				defer spinners.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					c.mu.Lock()
+					batch, mu, ok := c.takeLocked("C_A")
+					c.mu.Unlock()
+					if ok {
+						if len(batch) > 0 {
+							atomic.AddInt32(&steals, 1)
+						}
+						c.deliverBatch("C_A", batch, mu)
+					}
+				}
+			}()
+		}
+
+		close(gate) // settle the in-flight delivery
+		select {
+		case <-urgentDone:
+		case <-time.After(5 * time.Second):
+			close(stop)
+			spinners.Wait()
+			t.Fatalf("cycle %d: urgent flushAheadOf starved by competing takers (order=%v)", cycle, order())
+		}
+		close(stop)
+		spinners.Wait()
+		if n := atomic.LoadInt32(&steals); n != 0 {
+			t.Fatalf("cycle %d: competing takers stole %d batch(es) out from under the waiting urgent flush — the reservation does not hold", cycle, n)
+		}
+		got := order()
+		if len(got) < 2 || got[1] != "C_A:2.0" {
+			t.Fatalf("cycle %d: urgent flush did not deliver the buffered batch ahead (order=%v)", cycle, got)
+		}
 	}
 }

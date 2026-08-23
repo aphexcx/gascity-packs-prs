@@ -5415,3 +5415,140 @@ func TestProcessSlackEventDrainFailureSpoolsUrgentInbound(t *testing.T) {
 		t.Fatalf("a non-drain failure spooled %d entries, want 0 (Slack redelivery owns the retry)", len(entries))
 	}
 }
+
+// Round 5 (finding 1): the alias-dispatch goroutine delivers the
+// addressed-session leg of an ADMITTED event (watermark advanced, Slack
+// acked), so it must be inside cfg.eventWG — otherwise main's bounded
+// shutdown wait concludes while the leg is still dispatching, and the
+// coalescer drain plus spool seal run underneath it.
+func TestAliasDispatchGoroutineJoinsEventWG(t *testing.T) {
+	gate := make(chan struct{})
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gate) }) }
+	entered := make(chan struct{})
+	var enteredOnce sync.Once
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if strings.Contains(r.URL.Path, "/session/") {
+			enteredOnce.Do(func() { close(entered) })
+			<-gate
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+	t.Cleanup(closeGate) // registered after Close: runs first, unblocking the handler
+
+	cfg := config{
+		gcAPIBase:    gcStub.URL,
+		cityName:     "test-city",
+		provider:     "slack",
+		accountID:    "T1",
+		handlePrefix: "@",
+		dispatchSem:  defaultTestDispatchSem,
+		eventWG:      &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "gc-2568"); err != nil {
+		t.Fatalf("aliasReg.Set: %v", err)
+	}
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "1.0",
+		Text: "@mayor please ack",
+	})
+	env := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasWG1", Event: rawMsg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+
+	// The alias leg is blocked inside its gc POST: the event WG must
+	// still be held open by it.
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("alias dispatch never reached the gc stub")
+	}
+	if awaitWaitGroup(cfg.eventWG, 150*time.Millisecond) {
+		t.Fatal("eventWG settled while the alias-dispatch leg was still in flight — the leg is outside the WG and shutdown cannot join it")
+	}
+	closeGate()
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("eventWG never settled after the alias leg completed")
+	}
+}
+
+// Round 5 (finding 1): an alias-dispatch leg that fails DURING the
+// shutdown drain has no retry path — the event is past the watermark,
+// Slack got its 200, and the admission barrier blocks any redelivery —
+// so it must spool exactly like the urgent/DM path (round 3, 2d).
+// Outside the drain the failure keeps the forget-based redelivery/twin
+// retry contract and never touches the spool.
+func TestAliasDispatchDrainFailureSpoolsAddressedLeg(t *testing.T) {
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if strings.Contains(r.URL.Path, "/session/") {
+			w.WriteHeader(http.StatusInternalServerError) // the addressed leg fails
+			return
+		}
+		w.WriteHeader(http.StatusAccepted) // the channel copy delivers
+	}))
+	t.Cleanup(gcStub.Close)
+
+	spoolPath := filepath.Join(t.TempDir(), "spool.jsonl")
+	draining := &atomic.Bool{}
+	draining.Store(true)
+	cfg := config{
+		gcAPIBase:    gcStub.URL,
+		cityName:     "test-city",
+		provider:     "slack",
+		accountID:    "T1",
+		handlePrefix: "@",
+		dispatchSem:  defaultTestDispatchSem,
+		draining:     draining,
+		inboundSpool: newInboundSpool(spoolPath),
+		eventWG:      &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "gc-2568"); err != nil {
+		t.Fatalf("aliasReg.Set: %v", err)
+	}
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "9.0",
+		Text: "@mayor the drain must not lose this",
+	})
+	env := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasDrainSpool1", Event: rawMsg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("alias leg never settled (is it in the eventWG?)")
+	}
+
+	entries, done := newInboundSpool(spoolPath).consume()
+	if len(entries) != 1 {
+		t.Fatalf("spool holds %d entries after a drain-time alias-leg failure, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Channel != "C1" || e.Reaction || e.Inbound.ProviderMessageID != "9.0" {
+		t.Fatalf("spooled entry = %+v, want the C1 message 9.0", e)
+	}
+	if !strings.Contains(e.Inbound.Text, "the drain must not lose this") {
+		t.Fatalf("spooled text = %q, want the message body", e.Inbound.Text)
+	}
+	if done != nil {
+		done()
+	}
+
+	// Outside the drain the same failure must NOT spool — the forget
+	// wakes a redelivery/parked twin, which owns the retry.
+	draining.Store(false)
+	rawMsg2, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "10.0",
+		Text: "@mayor failure outside the drain keeps the retry contract",
+	})
+	env2 := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasDrainSpool2", Event: rawMsg2}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env2, func() {})
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("second alias leg never settled")
+	}
+	if entries, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
+		t.Fatalf("a non-drain alias failure spooled %d entries, want 0 (redelivery owns the retry)", len(entries))
+	}
+}

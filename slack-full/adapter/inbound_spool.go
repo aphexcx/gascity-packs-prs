@@ -230,16 +230,44 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 // appendFileTo appends src's bytes to the end of dst, fsyncing dst
 // before returning. Used to merge a fresh spool behind a leftover
 // .replaying file, preserving oldest-first order.
+//
+// Boundary seal (gp-9e7 round 5, finding 2): a process death mid-append
+// can leave dst's final line PARTIAL (no trailing newline). Appending
+// src directly would fuse that partial prefix with src's first entry
+// into one corrupt line — and since the merge then removes src, the
+// already-lost partial tail would silently CONSUME an intact entry. A
+// dst that does not end on a record boundary therefore gets a newline
+// written first: the partial tail becomes its own complete corrupt line,
+// which replay drops with the loud CORRUPT LINE / LOSS log it already
+// earns, and every intact src entry survives. A dst that ends cleanly is
+// untouched (the seal check reads one byte).
 func appendFileTo(dst, src string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("read %q: %w", src, err)
 	}
-	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_APPEND, 0o600)
+	// O_APPEND affects writes only; ReadAt below is unaffected.
+	f, err := os.OpenFile(dst, os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", dst, err)
 	}
 	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("stat %q: %w", dst, err)
+	}
+	if size := st.Size(); size > 0 {
+		tail := make([]byte, 1)
+		if _, err := f.ReadAt(tail, size-1); err != nil {
+			return fmt.Errorf("read tail of %q: %w", dst, err)
+		}
+		if tail[0] != '\n' {
+			log.Printf("inbound spool: %s ends mid-line — a crash mid-append truncated its final record; sealing the partial line before merging %s so it cannot fuse with (and consume) an intact entry. Replay will drop the partial line LOUDLY as loss.", dst, src)
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				return fmt.Errorf("seal partial tail of %q: %w", dst, err)
+			}
+		}
+	}
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("append to %q: %w", dst, err)
 	}

@@ -55,10 +55,12 @@ import (
 // mutex until delivered or restored, so any later take/Lock serializes
 // behind ALL older detached batches by construction and a newer POST
 // can never overtake an older one through a take-to-lock gap. A failed
-// TryLock means a delivery is in flight; the taker skips or defers
-// (the armed timer / restore cycle covers the buffered items), and
-// flushAheadOf — whose urgent caller must serialize — waits the mutex
-// out and re-takes.
+// TryLock means a delivery is in flight; the taker skips or defers on a
+// short retry (the armed timer / restore cycle covers the buffered
+// items), and flushAheadOf — whose urgent caller must serialize —
+// BLOCKS into the mutex's wait queue and detaches with it held: holding
+// the mutex is its reservation (round 5, 3c), so no competing TryLock
+// taker can steal the batch while it waits.
 //
 // In-memory like peerContextBuffer: messages admitted to the buffer
 // were already acked to Slack, so an adapter CRASH inside the window
@@ -88,6 +90,13 @@ const maxBufferedReactionsPerChannel = 100
 // initial drain plus two retries of persistent failures.
 const maxFlushAllPasses = 3
 
+// overCapRetryCeiling caps the retry cadence for a flush deferred
+// behind an in-flight delivery (gp-9e7 round 5, 3a/3b). The retry must
+// run on COALESCE-WINDOW scale — an over-cap buffer (or an elapsed
+// window) needs to flush promptly once the in-flight POST settles —
+// never on the channel's digest interval, which can be hours.
+const overCapRetryCeiling = time.Second
+
 // pendingChannelInbound is one buffered channel inbound awaiting
 // coalesced delivery. The envelope's Text is final per-message text
 // (thread preamble, mention rewrite, and files block already applied).
@@ -114,8 +123,19 @@ type inboundCoalescer struct {
 	gen       map[string]uint64
 	timers    map[string]*time.Timer
 	flushMu   map[string]*sync.Mutex
-	window    time.Duration
-	policy    *deliveryPolicyRegistry
+	// urgentWaiting counts flushAheadOf callers blocked waiting for the
+	// channel's delivery mutex (gp-9e7 round 5, 3c). Guarded by mu. A
+	// non-zero count is a RESERVATION: takeLocked (and the direct
+	// TryLock in deliverBufferedReactions) refuses the take outright, so
+	// no timer/early-flush/sweep taker can slip in between the in-flight
+	// delivery's unlock and the urgent waiter's wakeup and steal the
+	// batch — the starvation window the old wait-unlock-retake loop had.
+	// Deferrable takers already treat a failed take as "delivery in
+	// flight" and retry on the short cadence, which covers this case
+	// identically.
+	urgentWaiting map[string]int
+	window        time.Duration
+	policy        *deliveryPolicyRegistry
 	// inflight counts batches taken out of the maps but not yet
 	// delivered (or restored by a failed delivery). Guarded by mu;
 	// settled broadcasts every decrement. flushAll's fixpoint drain
@@ -150,13 +170,14 @@ type inboundCoalescer struct {
 
 func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *inboundCoalescer {
 	c := &inboundCoalescer{
-		pending:   make(map[string][]pendingChannelInbound),
-		reactions: make(map[string][]pendingChannelInbound),
-		gen:       make(map[string]uint64),
-		timers:    make(map[string]*time.Timer),
-		flushMu:   make(map[string]*sync.Mutex),
-		window:    window,
-		policy:    policy,
+		pending:       make(map[string][]pendingChannelInbound),
+		reactions:     make(map[string][]pendingChannelInbound),
+		gen:           make(map[string]uint64),
+		timers:        make(map[string]*time.Timer),
+		flushMu:       make(map[string]*sync.Mutex),
+		urgentWaiting: make(map[string]int),
+		window:        window,
+		policy:        policy,
 	}
 	c.settled = sync.NewCond(&c.mu)
 	return c
@@ -189,15 +210,34 @@ func (c *inboundCoalescer) flushMuFor(channel string) *sync.Mutex {
 	return m
 }
 
-// armTimerLocked arms the channel's flush timer if none is armed,
-// bound to the CURRENT generation. Called with c.mu held.
-func (c *inboundCoalescer) armTimerLocked(channel string) {
-	if _, ok := c.timers[channel]; ok {
-		return
+// capRetryDelay is the cadence for retrying a flush that lost its take
+// to an in-flight delivery (gp-9e7 round 5, 3a/3b): the burst window,
+// bounded above by overCapRetryCeiling — deliberately NOT windowFor,
+// whose digest interval would leave an over-cap buffer growing for
+// hours. The wait being covered is only "the in-flight POST settles",
+// which is POST-scale, so a short poll is correct even on a digest
+// channel.
+func (c *inboundCoalescer) capRetryDelay() time.Duration {
+	if c.window > 0 && c.window < overCapRetryCeiling {
+		return c.window
 	}
-	window := c.windowFor(channel)
+	return overCapRetryCeiling
+}
+
+// armCapRetryLocked replaces the channel's armed timer — possibly a
+// digest-scale one — with a SHORT retry at the CURRENT generation
+// (no state changed, so the generation is still live), for flushes
+// deferred behind an in-flight delivery (gp-9e7 round 5, 3a/3b). Every
+// caller attempts the take FIRST and arms this only on a failed
+// TryLock, so repeated re-arms cannot starve the retry: each re-arm was
+// itself a fresh flush attempt, and the timer only needs to cover the
+// quiet tail after the last one. Called with c.mu held.
+func (c *inboundCoalescer) armCapRetryLocked(channel string) {
+	if t, ok := c.timers[channel]; ok {
+		t.Stop()
+	}
 	g := c.gen[channel]
-	c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
+	c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
 }
 
 // spillLateLocked routes one post-close admission out of the process:
@@ -234,13 +274,15 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 		batch, mu, ok := c.takeLocked(channel)
 		if !ok {
 			// A delivery for this channel is in flight (round 3): skip the
-			// early flush — the buffer keeps its items and its armed timer
-			// (defensively re-armed below), so the flush retries once the
+			// early flush — the buffer keeps its items, and a SHORT retry
+			// timer (round 5, 3a: coalesce-window scale, replacing even an
+			// armed digest-scale timer) flushes it promptly once the
 			// in-flight delivery settles. The cap overshoots for at most
-			// one delivery's duration; nothing is dropped.
-			c.armTimerLocked(channel)
+			// one delivery's duration plus one retry delay; nothing is
+			// dropped.
+			c.armCapRetryLocked(channel)
 			c.mu.Unlock()
-			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to the timer", channel, pendingLen)
+			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 			return
 		}
 		swept := c.takeSweepsLocked(channel)
@@ -300,11 +342,11 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 			if pendingLen >= maxCoalescePerChannel {
 				batch, mu, ok := c.takeLocked(channel)
 				if !ok {
-					// Delivery in flight (round 3): the armed timer
-					// retries the flush once it settles; see enqueue.
-					c.armTimerLocked(channel)
+					// Delivery in flight (round 3): a short retry timer
+					// flushes once it settles (round 5, 3a); see enqueue.
+					c.armCapRetryLocked(channel)
 					c.mu.Unlock()
-					log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to the timer", channel, pendingLen)
+					log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 					return true
 				}
 				swept := c.takeSweepsLocked(channel)
@@ -329,11 +371,19 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 		batch, mu, ok := c.takeLocked(channel)
 		if !ok {
 			// Delivery in flight (round 3): the reactions stay in the
-			// side-buffer — that delivery's take (or the channel's next
-			// real moment) drains them; overflow re-fires on the next
-			// admission if they are still here.
+			// side-buffer, and a SHORT retry timer (round 5, 3b) delivers
+			// them promptly once the in-flight delivery settles — waiting
+			// for the next admission or the channel's next real moment
+			// would be unbounded with zero further traffic. The timer this
+			// arms is the overflow exception deferred, not a new wake
+			// class: overflow already crossed the solo-wake line, and any
+			// take before the retry fires merges the side-buffer and
+			// no-ops the timer via its stale generation. Overshoot is
+			// bounded: at most the reactions arriving during one in-flight
+			// delivery plus one retry delay past the cap.
+			c.armCapRetryLocked(channel)
 			c.mu.Unlock()
-			log.Printf("coalesce: chan=%s reaction buffer full (%d) but delivery in flight — overflow flush deferred", channel, n)
+			log.Printf("coalesce: chan=%s reaction buffer full (%d) but delivery in flight — overflow flush deferred to a short retry", channel, n)
 			return true
 		}
 		c.mu.Unlock()
@@ -376,9 +426,28 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 // out detached batches (gp-9e7 fix round 1a/2b).
 func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, *sync.Mutex, bool) {
 	mu := c.flushMuFor(channel)
+	// Reservation check (round 5, 3c): a flushAheadOf caller is blocked
+	// waiting for this channel's mutex — the batch is spoken for. Refuse
+	// even to TryLock: a Go mutex in normal mode lets a TryLock barge in
+	// between the in-flight delivery's unlock and the queued waiter's
+	// wakeup, and that barge is exactly the steal the reservation
+	// forbids. Callers treat this like any failed take (a delivery is,
+	// from their perspective, in flight — the urgent one, imminently).
+	if c.urgentWaiting[channel] > 0 {
+		return nil, mu, false
+	}
 	if !mu.TryLock() {
 		return nil, mu, false
 	}
+	return c.detachLocked(channel), mu, true
+}
+
+// detachLocked is the take itself: drain the maps, disarm the timer,
+// bump the generation, open the in-flight window. Called with BOTH c.mu
+// and the channel's delivery mutex held — takeLocked acquires the
+// latter via TryLock; flushAheadOf's reservation path (round 5, 3c)
+// acquires it by blocking OUTSIDE c.mu and then detaches here.
+func (c *inboundCoalescer) detachLocked(channel string) []pendingChannelInbound {
 	c.gen[channel]++
 	c.inflight++
 	if t, ok := c.timers[channel]; ok {
@@ -391,7 +460,7 @@ func (c *inboundCoalescer) takeLocked(channel string) ([]pendingChannelInbound, 
 		batch = append(batch, rs...)
 		delete(c.reactions, channel)
 	}
-	return batch, mu, true
+	return batch
 }
 
 // endDelivery closes one in-flight delivery window opened by a take:
@@ -575,12 +644,14 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 	if !ok {
 		// A delivery for this channel is in flight (round 3) — the timer
 		// fired into the gap between another path's take and its POST
-		// settling. Re-arm at the SAME generation (no state changed) so
-		// the flush retries after the in-flight delivery completes; a
+		// settling. Re-arm at the SAME generation (no state changed) and
+		// on the SHORT retry cadence (round 5, 3a): the window already
+		// elapsed, so the only wait left is the in-flight POST — a full
+		// re-wait (hours, on a digest channel) would strand the batch. A
 		// failed delivery's restore re-arms/renews on its own.
-		c.timers[channel] = time.AfterFunc(c.windowFor(channel), func() { c.flushTimer(channel, g) })
+		c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
 		c.mu.Unlock()
-		log.Printf("coalesce: chan=%s timer flush deferred — delivery in flight; re-armed", channel)
+		log.Printf("coalesce: chan=%s timer flush deferred — delivery in flight; re-armed on a short retry", channel)
 		return
 	}
 	swept := c.takeSweepsLocked(channel)
@@ -633,26 +704,41 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	if c == nil {
 		return nil
 	}
-	// Take-or-wait (round 3): the take acquires the delivery mutex at
-	// take time (TryLock under c.mu, like every take). A failed TryLock
-	// means an older delivery is in flight — the urgent message must
-	// serialize behind it, so wait the mutex out WITHOUT holding c.mu
-	// (ABBA constraint) and re-take: the settled delivery may have
-	// restored items on failure, and those older items must still flush
-	// ahead of the urgent message.
-	var batch []pendingChannelInbound
-	var mu *sync.Mutex
-	for {
-		c.mu.Lock()
-		var ok bool
-		batch, mu, ok = c.takeLocked(channel)
+	// Take-or-reserve (round 3, reservation hardened in round 5, 3c):
+	// the take acquires the delivery mutex at take time (TryLock under
+	// c.mu, like every take). A failed take means an older delivery is
+	// in flight — the urgent message must serialize behind it, so
+	// RESERVE the channel (urgentWaiting, which makes every competing
+	// take refuse outright), BLOCK into the channel mutex's wait queue
+	// WITHOUT holding c.mu (the ABBA constraint), and detach with the
+	// mutex KEPT. The old wait-unlock-retake loop reserved nothing —
+	// between its Unlock and re-take, any timer/early-flush/sweep taker
+	// could TryLock-win the freed mutex, stealing the batch and sending
+	// the urgent path back to wait, indefinitely under a steady stream
+	// of competitors. With the reservation the win is BOUNDED and the
+	// bound is exact: the urgent path acquires the mutex after the
+	// in-flight delivery ahead of it (plus any urgent peers queued
+	// before it) and nothing else — competing takers cannot enter from
+	// the moment the flag is up, and deferrable ones retry on the short
+	// cadence after the urgent delivery settles. The settled delivery
+	// restores failed items BEFORE releasing the mutex (deliverBatch
+	// body precedes its unlock defer), so detaching after the wakeup
+	// still picks them up and they flush ahead of the urgent message.
+	// Lock order: blocking on mu then taking c.mu is the order restore()
+	// already uses under a held delivery mutex; c.mu-then-mu remains
+	// TryLock-only everywhere. detachLocked opens the in-flight window,
+	// balanced by the deferred endDelivery below.
+	c.mu.Lock()
+	batch, mu, ok := c.takeLocked(channel)
+	if !ok {
+		c.urgentWaiting[channel]++
 		c.mu.Unlock()
-		if ok {
-			break
-		}
 		mu.Lock()
-		mu.Unlock() //nolint:staticcheck // empty critical section is the point: wait out the in-flight flush, then re-take
+		c.mu.Lock()
+		c.urgentWaiting[channel]--
+		batch = c.detachLocked(channel)
 	}
+	c.mu.Unlock()
 	defer c.endDelivery() // inline delivery below; the take is closed on every path
 	defer mu.Unlock()     // held from take time
 	var withheld []pendingChannelInbound
@@ -716,11 +802,13 @@ func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 		return
 	}
 	mu := c.flushMuFor(channel)
-	if !mu.TryLock() {
+	if c.urgentWaiting[channel] > 0 || !mu.TryLock() {
 		// Take-time lock discipline (round 3): a delivery for the channel
-		// is in flight. Leave the reactions in the side-buffer — they
-		// piggyback on the channel's next take/real moment; no timer, no
-		// wake, nothing dropped.
+		// is in flight — or an urgent flushAheadOf holds the channel's
+		// reservation (round 5, 3c) and its take will merge the
+		// side-buffer itself. Leave the reactions in the side-buffer —
+		// they piggyback on the channel's next take/real moment; no
+		// timer, no wake, nothing dropped.
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s buffered reaction drain skipped — delivery in flight; they ride the next real moment", channel)
 		return
