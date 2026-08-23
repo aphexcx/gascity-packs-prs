@@ -233,7 +233,7 @@ export function replyHelpBlock(conversationId) {
   return `[conversation ${id} — full reply how-to, sent once per chat per adapter session]\n`
     + `To reply: write your reply to a file, then run: gc wecom publish --chat ${id} --text-file <path>. `
     + 'File-based so arbitrary reply text (apostrophes, code, Chinese quotes) never needs shell escaping.\n'
-    + `To send an image or video: gc wecom publish --chat ${id} --image <path> (or --video <path>), `
+    + `To send an image, video, or file: gc wecom publish --chat ${id} --image <path> (or --video <path>, or --file <path>), `
     + "optional --text caption; media files must live under the adapter's WECOM_OUTBOUND_MEDIA_ROOT directory.";
 }
 

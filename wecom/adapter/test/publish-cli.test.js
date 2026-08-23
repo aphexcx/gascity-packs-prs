@@ -87,6 +87,36 @@ test('a media publish carries one CLI-generated idempotency key', { skip: !tools
   assert.match(requests[0].body.idempotency_key, /^wecom-cli-[0-9a-f-]+$/);
 });
 
+test('--file posts media_kind file to /publish-media with a CLI-generated key', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, '合同草案.docx');
+  fs.writeFileSync(file, Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('fake docx')]));
+  const { requests, url } = await startCaptureServer(t, () => ({}));
+
+  const run = await runPublish(['--chat', 'he_lihua', '--file', file, '--text', '请查收'], url);
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].url.endsWith('/publish-media'));
+  assert.equal(requests[0].body.media_kind, 'file');
+  assert.equal(requests[0].body.file_path, file);
+  assert.equal(requests[0].body.text, '请查收');
+  assert.match(requests[0].body.idempotency_key, /^wecom-cli-[0-9a-f-]+$/);
+});
+
+test('--image, --video, and --file are mutually exclusive', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const img = path.join(dir, 'photo.png');
+  const doc = path.join(dir, 'contract.docx');
+  fs.writeFileSync(img, pngBytes);
+  fs.writeFileSync(doc, Buffer.from('PK'));
+  const { requests, url } = await startCaptureServer(t, () => ({}));
+
+  const run = await runPublish(['--chat', 'he_lihua', '--image', img, '--file', doc], url);
+  assert.equal(run.code, 2);
+  assert.match(run.stderr, /use only one of --image, --video, or --file/);
+  assert.equal(requests.length, 0, 'nothing may reach the adapter on a usage error');
+});
+
 test('an explicit --idempotency-key is sent verbatim, so a rerun resumes the same send', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
   const dir = tmpDir(t);
   const file = path.join(dir, 'photo.png');
