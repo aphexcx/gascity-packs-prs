@@ -1,7 +1,7 @@
 # gc wecom publish
 
-Send a markdown message, an image, or a video to a WeCom chat through the
-running wecom adapter.
+Send a markdown message, an image, a video, or a file to a WeCom chat
+through the running wecom adapter.
 
 ## Usage
 
@@ -10,6 +10,7 @@ gc wecom publish --chat <chatid-or-userid> --text-file <path>
 gc wecom publish --chat <chatid-or-userid> --text "message"
 gc wecom publish --chat <chatid-or-userid> --image /abs/path/photo.png [--text "caption"]
 gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "caption"]
+gc wecom publish --chat <chatid-or-userid> --file /abs/path/contract.docx [--text "caption"]
 ```
 
 ## Flags
@@ -30,10 +31,17 @@ gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "c
   publishing is disabled entirely when that root is not configured.
 - `--video` — local path to a video to send. WeCom accepts mp4 up to
   10MB; same rejection behavior as `--image`.
-- With `--image`/`--video`, `--text`/`--text-file` becomes an optional
-  caption sent as a **follow-up markdown message** right after the media
-  (WeCom image/video messages carry no caption field). Without media,
-  exactly one of `--text`/`--text-file` is required.
+- `--file` — local path to a file to send (docx, pdf, zip, plain text —
+  any type; WeCom file messages carry arbitrary content). Up to 20MB
+  (`WECOM_FILE_MAX_BYTES` overrides only if your tenant allows more);
+  oversized files are rejected — compress or split first, the adapter
+  never repacks. Same `WECOM_OUTBOUND_MEDIA_ROOT` confinement and
+  rejection behavior as `--image`/`--video`. Mutually exclusive with
+  both.
+- With `--image`/`--video`/`--file`, `--text`/`--text-file` becomes an
+  optional caption sent as a **follow-up markdown message** right after
+  the media (WeCom media messages carry no caption field). Without
+  media, exactly one of `--text`/`--text-file` is required.
 - `--kind` — `dm` or `room`, only consulted for the transcript record of
   a media send when the adapter has never seen inbound traffic from this
   chat (it learns dm/room from inbound frames; replies never need this).

@@ -2,6 +2,17 @@
 
 ## 0.0.1 (unreleased)
 
+- Outbound FILE publish (jg-d0xr scope extension 8/23): `gc wecom
+  publish --chat <id> --file /abs/path.docx [--text caption]` sends a
+  WeCom file message via the same `/publish-media` pipeline as
+  `--image`/`--video` — chunked upload to a `media_id`, then
+  `aibot_send_msg` with `msgtype=file`. Any file type (WeCom file
+  messages carry arbitrary content, so no magic-byte format gate), cap
+  20MB per the smart-robot limit (`WECOM_FILE_MAX_BYTES` overrides;
+  developer.work.weixin.qq.com/document/path/101463, verified 8/23).
+  Identical `WECOM_OUTBOUND_MEDIA_ROOT` confinement, idempotency-key
+  resume semantics, caption follow-up, and `[file sent]` transcript
+  recording. `--image`/`--video`/`--file` are mutually exclusive.
 - Adapter hardening batch (jg-p1mk, Afik overnight order 8/23):
   **(1) Inbound-liveness watchdog** (`src/liveness.js`) — last-inbound
   watermark over every message/event frame; past
