@@ -10,7 +10,7 @@ import { test } from 'node:test';
 
 import { createRequestListener, hardenServer } from '../src/listener.js';
 
-function startServer(t, { maxBodyBytes } = {}) {
+function startServer(t, { maxBodyBytes, healthDetail } = {}) {
   const seen = [];
   const publisher = {
     handlePublish: async (req, res, body) => {
@@ -27,6 +27,7 @@ function startServer(t, { maxBodyBytes } = {}) {
   const server = hardenServer(http.createServer(createRequestListener({
     publisher,
     maxBodyBytes,
+    healthDetail,
   })));
   t.after(() => server.close());
   return new Promise((resolve) => {
@@ -119,4 +120,33 @@ test('hardenServer sets the header and request deadlines', async (t) => {
   const { server } = await startServer(t);
   assert.equal(server.headersTimeout, 10000);
   assert.equal(server.requestTimeout, 60000);
+});
+
+// --- /healthz liveness detail (jg-p1mk item 1) -------------------------------
+
+test('healthz without a detail hook answers the bare ok', async (t) => {
+  const { port } = await startServer(t, {});
+  const r = await request(port, { method: 'GET', path: '/healthz' });
+  assert.equal(r.status, 200);
+  assert.equal(r.text, 'ok');
+});
+
+test('healthz appends the liveness detail line after the ok contract line', async (t) => {
+  const { port } = await startServer(t, {
+    healthDetail: () => 'inbound_liveness=stalled frames=7 alarms=1',
+  });
+  const r = await request(port, { method: 'GET', path: '/healthz' });
+  assert.equal(r.status, 200);
+  const lines = r.text.split('\n');
+  assert.equal(lines[0], 'ok'); // supervisor contract: first line exactly "ok"
+  assert.equal(lines[1], 'inbound_liveness=stalled frames=7 alarms=1');
+});
+
+test('a throwing health detail hook degrades to the bare ok, still 200', async (t) => {
+  const { port } = await startServer(t, {
+    healthDetail: () => { throw new Error('broken'); },
+  });
+  const r = await request(port, { method: 'GET', path: '/healthz' });
+  assert.equal(r.status, 200);
+  assert.equal(r.text, 'ok');
 });
