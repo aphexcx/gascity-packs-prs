@@ -241,7 +241,11 @@ func TestCoalescer_FailedBatchRestoreKeepsMembersIntact(t *testing.T) {
 	// the delivery-time filter drops it from the batch.
 	cfg.deliveredIDs.record("", "C1", "100.000030")
 
-	cfg.coalescer.flushAll() // deliver fails; batch restored
+	// Trigger one delivery attempt that restores on failure. (flushAll
+	// is no longer a restore trigger: since gp-9e7 fix round 2a' it
+	// drains to its retry bound and spools the residue instead of
+	// leaving it in the maps.)
+	cfg.coalescer.flushAheadOf("C1", "") // deliver fails; batch restored
 
 	cfg.coalescer.mu.Lock()
 	pending := append([]pendingChannelInbound(nil), cfg.coalescer.pending["C1"]...)

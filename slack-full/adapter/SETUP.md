@@ -317,19 +317,21 @@ instead — that path eliminates the standalone systemd unit and lets
 gc reverse-proxy `/publish` over a UDS while the public Slack
 endpoint stays bound to TCP `:8765`.
 
-## Optional — peer-bot visibility (fleet deployments)
+## Bot-post visibility (all bot authors; allowlist for wakes)
 
-By default the adapter drops every bot-authored message, so two mayors
-running as separate Slack apps in a shared channel cannot see each
-other's posts (and will double-answer humans). To give the bound
-session read-only visibility into specific fleet peers, create
-`peer_bots.json` (default `<GC_CITY_PATH>/.gc/slack/peer_bots.json`,
-override with `SLACK_PEER_BOTS_PATH`):
+Every bot-authored post in a bound channel is delivered to the bound
+session as tagged, read-only context (gp-9e7 item 3; originally the
+gp-kop fleet-peer allowlist). The default is always BUFFERED — the
+post rides ahead of the next inbound naturally forwarded for that
+channel, never waking the session by itself. `peer_bots.json`
+(default `<GC_CITY_PATH>/.gc/slack/peer_bots.json`, override with
+`SLACK_PEER_BOTS_PATH`) now exists to name the bots whose posts
+deserve a WAKE, and to give fleet peers a friendly label:
 
 ```json
 {
   "peers": [
-    {"label": "citadel", "bot_id": "B0XXXXXXXXX"},
+    {"label": "citadel", "bot_id": "B0XXXXXXXXX", "wake": true},
     {"label": "sinan", "app_id": "A0XXXXXXXXX"},
     {"label": "boomtown", "bot_user_id": "U0XXXXXXXXX"}
   ],
@@ -337,25 +339,30 @@ override with `SLACK_PEER_BOTS_PATH`):
 }
 ```
 
-- The allowlist is strict: only explicitly listed apps/bots are
-  delivered; every other bot keeps the historical drop. Each entry
-  needs a `label` (used in the provenance tag) and at least one of
-  `app_id`, `bot_id`, `bot_user_id`.
+- Unlisted bots buffer under a best-effort label
+  (`bot_profile.name`, then the `bots.info` name, then the resolved
+  ids) and can NEVER wake the session. Each allowlist entry needs a
+  `label` (used in the provenance tag) and at least one of `app_id`,
+  `bot_id`, `bot_user_id`.
+- A wake — an immediate forward as the post's own inbound — is
+  granted only to allowlisted peers: per-entry `"wake": true` (all
+  channels), or `immediate_channels` (that channel, any allowlisted
+  peer). No deployment currently grants either.
 - Delivery is tagged, read-only context (`peer-bot <label> posted in
   <channel> …`), never an ask: no busy reaction, no alias dispatch,
   and `gc slack reply-current` / `react` / `upload` never anchor on a
-  peer post.
-- Default is no wake: peer posts buffer per channel (newest 20) and
-  ride ahead of the next inbound naturally forwarded for that channel.
-  Channels listed in `immediate_channels` deliver each peer post
-  immediately as its own inbound (which wakes the bound session).
-- Loop safety: every candidate is resolved through `bots.info` and the
-  adapter never delivers its own posts back to itself, even if
-  misconfigured into the allowlist.
+  bot post.
+- The buffer keeps the newest 20 posts per channel; the flushed block
+  counts anything older it had to evict, so truncation is never
+  silent.
+- Loop safety: every candidate is resolved through `bots.info` (per-
+  bot TTL cache) and the adapter never delivers its own posts back to
+  itself, even if misconfigured into the allowlist. An author that
+  cannot be definitively resolved is dropped, not delivered.
 - Same reload contract as the other registries: edit the file, then
   SIGHUP or restart the adapter.
 
-## Optional — inbound token efficiency (gp-729)
+## Optional — inbound token efficiency (gp-729, gp-9e7)
 
 The adapter coalesces bursts of untargeted channel chatter into one
 delivered inbound per debounce window (default 8s), registers a
@@ -365,6 +372,21 @@ thread priors in context preambles, suppresses the duplicate direct
 copy for alias targets that are already channel-bound, and renders
 `#name (Cid)` in pack-owned wrapper blocks (needs the `channels:read`
 bot scope; falls back to the raw id without it).
+
+On top of that (gp-9e7):
+
+- A firing flush timer sweeps every other buffered non-digest channel,
+  so one idle wake delivers ALL channels' window traffic as aligned
+  per-channel batches (digest channels keep their own interval).
+- Reaction notifications (`reaction_added`/`reaction_removed`,
+  gp-by3) never wake a session solo: they buffer no-wake and ride the
+  channel's next real delivery. A reaction on one of the adapter's own
+  outbound posts may join an already-armed coalesce window.
+- The send commands (`reply-current`, `publish`, `publish-to-channel`,
+  `upload`) print a terse receipt by default — delivered flag,
+  message/file id, conversation id, thread ts — instead of echoing the
+  full result envelope (and your own outbound text) back into the
+  sending session's context. `--verbose` restores the full envelope.
 
 Knobs:
 

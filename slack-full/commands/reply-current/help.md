@@ -30,3 +30,16 @@ neutralized by default with a visually identical substitute (U+223C).
 Deliberate tight-wrapped `~word~` strikethrough, code spans, lone
 tildes, and every other formatting character pass through untouched.
 Pass --raw to send the body byte-for-byte verbatim.
+
+Receipt: on success the command prints a terse JSON receipt — delivered
+flag, message_id, conversation_id, and thread_ts when threaded (gp-9e7).
+A delivered=false receipt adds failure_kind, plus an error message when
+the failing layer supplied one (direct-chat failure receipts often
+carry only failure_kind). Pass
+--verbose to print the full result envelope (the raw receipt, including
+gc's transcript entry) instead. Company-turn replies follow the same
+contract: the default is the terse receipt, and --verbose prints the
+full company report (status/kind/nonce, delegation_key, allow_partial).
+A company post parked on a transient failure is delivered=false with
+failure_kind "parked" — recovery is automatic, and a retry is safe (the
+durable intent reconciles instead of reposting).

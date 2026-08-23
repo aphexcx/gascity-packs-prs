@@ -88,10 +88,37 @@ def test_publish_routes_through_gc_outbound_by_default(
     assert captured["body"]["conversation"]["kind"] == "room"
     assert captured["body"]["text"] == "*hello*"
 
+    # Terse receipt by default (gp-9e7 item 4): delivered flag +
+    # message_id + conversation_id, nothing else — no result envelope,
+    # no echo of the outbound text.
+    out = json.loads(capsys.readouterr().out)
+    assert out == {
+        "delivered": True,
+        "message_id": "1700.001",
+        "conversation_id": "C0ROOM01",
+    }
+
+
+def test_publish_verbose_restores_full_envelope(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    pub, common = _import_modules()
+
+    def fake_request(method: str, url: str, body=None, *, csrf: bool = True,
+                     timeout: float = 30.0):
+        return {"Receipt": {"Delivered": True, "MessageID": "1700.001",
+                            "Entry": {"text": "*hello*"}}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: _binding_room())
+
+    rc = pub.main(["--session", "gc-82783", "--body", "*hello*", "--verbose"])
+    assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["session_id"] == "gc-82783"
     assert out["conversation_id"] == "C0ROOM01"
     assert out["via"] == "gc"
+    assert out["result"]["Receipt"]["MessageID"] == "1700.001"
+    assert out["result"]["Receipt"]["Entry"]["text"] == "*hello*"
 
 
 def test_publish_via_adapter_keeps_direct_path(
@@ -325,6 +352,51 @@ def test_interpret_publish_receipt_shapes() -> None:
     delivered, kind = common.interpret_publish_receipt("not a dict")
     assert delivered is False
     assert kind == "non_dict_response"
+
+
+def test_summarize_publish_receipt_shapes() -> None:
+    """Terse-receipt summarizer (gp-9e7 item 4): all three receipt
+    shapes, thread_ts inclusion, failure diagnostics, and that the
+    result envelope (transcript entry etc.) never leaks through."""
+    _, common = _import_modules()
+    # gc-wrapped capitalized, success, threaded.
+    assert common.summarize_publish_receipt(
+        {"Receipt": {"Delivered": True, "MessageID": "1700.1",
+                     "Entry": {"text": "the whole outbound text"}}},
+        conversation_id="C1", thread_ts="1690.5",
+    ) == {"delivered": True, "conversation_id": "C1",
+          "message_id": "1700.1", "thread_ts": "1690.5"}
+    # Adapter-direct lowercase, success, unthreaded.
+    assert common.summarize_publish_receipt(
+        {"delivered": True, "message_id": "1700.2", "conversation": {"x": 1}},
+        conversation_id="C1",
+    ) == {"delivered": True, "conversation_id": "C1", "message_id": "1700.2"}
+    # gc-wrapped lowercase.
+    assert common.summarize_publish_receipt(
+        {"receipt": {"delivered": True, "message_id": "1700.3"}},
+        conversation_id="C1",
+    ) == {"delivered": True, "conversation_id": "C1", "message_id": "1700.3"}
+    # File receipts carry file_id instead of message_id.
+    assert common.summarize_publish_receipt(
+        {"Receipt": {"Delivered": True, "FileID": "F42"}},
+        conversation_id="D9",
+    ) == {"delivered": True, "conversation_id": "D9", "file_id": "F42"}
+    # Failures stay diagnosable without --verbose.
+    assert common.summarize_publish_receipt(
+        {"Receipt": {"Delivered": False, "FailureKind": "auth",
+                     "FailureMessage": "no active binding"}},
+        conversation_id="C1",
+    ) == {"delivered": False, "conversation_id": "C1",
+          "failure_kind": "auth", "error": "no active binding"}
+    assert common.summarize_publish_receipt(
+        {"delivered": False, "failure_kind": "permanent", "error": "missing_scope"},
+        conversation_id="C1",
+    ) == {"delivered": False, "conversation_id": "C1",
+          "failure_kind": "permanent", "error": "missing_scope"}
+    # Unknown shape: fail-closed, same as the interpreter.
+    assert common.summarize_publish_receipt({}, conversation_id="C1") == {
+        "delivered": False, "conversation_id": "C1",
+        "failure_kind": "schema_mismatch"}
 
 
 # --------------------------------------------------------------------------
