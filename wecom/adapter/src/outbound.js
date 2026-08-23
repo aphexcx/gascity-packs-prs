@@ -1074,6 +1074,41 @@ export function createOutboundPublisher(deps) {
       res.writeHead(400).end('conversation.conversation_id and text are required');
       return;
     }
+    // A non-string idempotency key is a caller bug that silently breaks
+    // the dedup it exists for (codex jg-p1mk r2 finding 5): an object or
+    // array parses to a DISTINCT Map key on every retry (every retry
+    // re-sends), while 0/false read as keyless. /publish-media already
+    // rejects the shape; fail closed here too rather than half-honor it.
+    if (pub.idempotency_key !== undefined
+      && (typeof pub.idempotency_key !== 'string' || pub.idempotency_key === '')) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        conversation: convo,
+        delivered: false,
+        failure_kind: 'invalid_request',
+        error: `idempotency_key must be a non-empty string when supplied, got ${Array.isArray(pub.idempotency_key) ? 'array' : typeof pub.idempotency_key}`,
+      }));
+      return;
+    }
+
+    // Feedback ids (jg-mlfs): a markdown send carrying markdown.feedback
+    // .id gets 👍/👎 controls in the WeCom client, and a user's rating
+    // comes back as an event.feedback_event quoting that id (forwarded
+    // to the bound session by src/inbound.js renderFeedbackText). The id
+    // is adapter-minted, ≤256 bytes: a hash of the idempotency key so an
+    // idempotent chunk RESEND carries the same id as the original (one
+    // physical message, one id), with the chunk index suffixed since
+    // each chunk is its own WeCom message. Keyless — or non-string-keyed
+    // — publishes fall back to a per-invocation random base. Computed
+    // BEFORE the ownership claim below (codex jg-p1mk r1 finding 3): a
+    // throw between claim and send would orphan the owner promise and
+    // hang every retry of that key, so nothing throwable may sit there —
+    // and sha256 of a non-string key throws.
+    const feedbackBase = cfg.feedbackIds
+      ? (typeof pub.idempotency_key === 'string' && pub.idempotency_key
+        ? `fb-${sha256Hex(pub.idempotency_key).slice(0, 40)}`
+        : `fb-${crypto.randomUUID()}`)
+      : '';
 
     // Seeded media receipts answer FIRST (finding 6): gc's recording
     // callback must always find the pinned receipt, whatever the shared
@@ -1160,12 +1195,19 @@ export function createOutboundPublisher(deps) {
     }
     if (pub.idempotency_key) state.endpoint = 'publish';
 
+    // The delivered log line (below) names feedbackBase so a later
+    // feedback_event correlates back to this exact publish — feedback
+    // ids are adapter-minted identifiers, not conversation content, so
+    // logging them is within the no-content-logging policy.
     const send = async () => {
       const chunks = chunkText(pub.text);
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
         const chunkReceipt = await sendMessage(chatid, {
           msgtype: 'markdown',
-          markdown: { content: chunks[i] },
+          markdown: {
+            content: chunks[i],
+            ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
+          },
         });
         state.messageID = chunkReceipt?.headers?.req_id ?? state.messageID;
         state.chunksDelivered = i + 1;
@@ -1195,7 +1237,7 @@ export function createOutboundPublisher(deps) {
       delivered: true,
     };
     token.finish();
-    log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''})`);
+    log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''}${feedbackBase ? ` feedback_base=${feedbackBase}` : ''})`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(state.receipt));
   }

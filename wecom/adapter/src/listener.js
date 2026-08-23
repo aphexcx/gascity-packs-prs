@@ -21,7 +21,7 @@
 
 export const defaultMaxBodyBytes = 1024 * 1024; // 1MiB
 
-export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes }) {
+export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes, healthDetail = null }) {
   const refuse413 = (req, res) => {
     // Flush the 413 before severing: destroy() alone could race the
     // response bytes out of existence.
@@ -76,7 +76,15 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
       return;
     }
     if (req.method === 'GET' && pathname === '/healthz') {
-      res.writeHead(200).end('ok');
+      // First line stays exactly "ok" (supervisor contract; the HTTP
+      // status stays 200 even while degraded — a stalled INBOUND path
+      // must not make the supervisor restart-loop a healthy process).
+      // Degraded state is the detail line, e.g. inbound_liveness=stalled.
+      let detail = '';
+      try {
+        detail = healthDetail?.() ?? '';
+      } catch { /* health detail must never break the probe */ }
+      res.writeHead(200).end(detail ? `ok\n${detail}\n` : 'ok');
       return;
     }
     if (req.method === 'POST' && pathname === '/publish-media') {
