@@ -34,9 +34,12 @@ const (
 )
 
 // companyBotInfo is the subset of a bots.info result the resolver keeps.
+// Name is display-only (the generalized bot-post buffer labels unknown
+// bots with it, gp-9e7 item 3) and never participates in corroboration.
 type companyBotInfo struct {
 	UserID  string
 	AppID   string
+	Name    string
 	Deleted bool
 }
 
@@ -137,6 +140,7 @@ type slackBotsInfoResp struct {
 		ID      string `json:"id"`
 		AppID   string `json:"app_id"`
 		UserID  string `json:"user_id"`
+		Name    string `json:"name"`
 		Deleted bool   `json:"deleted"`
 	} `json:"bot"`
 }
@@ -194,7 +198,7 @@ func (r *botInfoResolver) fetch(botID string) (companyBotInfo, botResolveOutcome
 	if sr.Bot.Deleted {
 		return companyBotInfo{}, botResolveUnknown
 	}
-	return companyBotInfo{UserID: sr.Bot.UserID, AppID: sr.Bot.AppID, Deleted: false}, botResolveOK
+	return companyBotInfo{UserID: sr.Bot.UserID, AppID: sr.Bot.AppID, Name: sr.Bot.Name, Deleted: false}, botResolveOK
 }
 
 // retryAfterSeconds parses a Retry-After header (integer seconds); 0 when

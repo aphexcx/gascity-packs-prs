@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -43,15 +44,21 @@ import (
 //     helpers exclude it from reply-current/react/upload anchoring)
 //     and the text ("no reply expected").
 //
-// Delivery rides the gp-729 coalescer for rooms — a reaction buffers
-// for the channel's window and then wakes the bound session as its own
-// (possibly batched) inbound, so an ack that is the thread's final
-// word still arrives, while reaction bursts and adjacent chatter
-// collapse into one delivery. DMs (and rooms with coalescing disabled)
-// forward immediately, mirroring the message path's policy. Failures
-// are logged and dropped (coalescer admission retries on its own
-// timer): reaction context is best-effort, and the dedup claim commits
-// either way so a Slack redelivery cannot double-wake the session.
+// Delivery NEVER wakes a session solo (gp-9e7 item 1 — without this,
+// the reaction feature is a token regression): every surviving
+// reaction, rooms and DMs alike, buffers in the coalescer's no-wake
+// side lane and piggybacks on the channel's next real delivery — a
+// coalesce window armed by messages, the reaction drain behind an
+// urgent or DM inbound's committed delivery, or shutdown's drain.
+// Exception: a reaction ON one of the adapter's own RECENT outbound
+// messages (item_user == our bot, target ts within founderAckRecency —
+// the founder acking a just-made post) may ride a coalesce window that
+// is ALREADY armed; it still never arms one itself. Admission is final handling and the
+// dedup claim commits either way, so a Slack redelivery cannot
+// double-deliver; a failed batch flush restores the entry to the
+// side-buffer for the next piggyback. Only a nil coalescer (bare test
+// configs) falls back to an immediate forward, where failures are
+// logged and dropped (reaction context is best-effort).
 //
 // Company rooms are out of scope v1: their message flow is gateway-
 // owned, but reaction events fall through to this legacy path, so a
@@ -96,6 +103,62 @@ const reactionTargetFetchTimeout = 4 * time.Second
 // reply ts anchors at itself on current Slack behavior) — a small
 // margin covers surface variance without paying for a real page.
 const reactionTargetFetchLimit = 3
+
+// founderAckRecency bounds how old the adapter's own reacted-to message
+// may be for the reaction to count as a founder ack — the design's
+// "reaction on our own RECENT message" (gp-9e7 item 1; enforcement
+// added in the fix round, 1c). The ride-armed-window privilege exists
+// for a human acking a post the adapter JUST made; a reaction on an
+// arbitrarily old bot post is ordinary reaction traffic and must take
+// the plain no-wake side-buffer. Slack message ts values carry their
+// own epoch seconds, so the bound needs no outbound-history tracking.
+const founderAckRecency = 15 * time.Minute
+
+// slackTSMaxFutureSkew is the only future-ness slackTSWithin tolerates:
+// small producer/consumer clock skew is real, but a ts further in the
+// future than this is malformed or forged input, not a recent message
+// — fail closed (gp-bhq E).
+const slackTSMaxFutureSkew = time.Minute
+
+// slackTSWithin reports whether ts — a Slack "seconds.sequence"
+// message id — is at most maxAge old at now. Fail closed to the plain
+// no-wake buffer, never to the founder-ack exception (gp-bhq E): the
+// ts must be well-formed end to end — a "." separator with a numeric,
+// non-empty fraction and positive seconds — and at most
+// slackTSMaxFutureSkew in the future; anything else is false.
+func slackTSWithin(ts string, maxAge time.Duration, now time.Time) bool {
+	head, frac, ok := strings.Cut(ts, ".")
+	if !ok || head == "" || frac == "" {
+		return false
+	}
+	sec, err := strconv.ParseInt(head, 10, 64)
+	if err != nil || sec <= 0 {
+		return false
+	}
+	if _, err := strconv.ParseUint(frac, 10, 64); err != nil {
+		return false
+	}
+	// Slack ts is decimal epoch time — the fraction is sub-second
+	// digits and counts toward the instant (a ts one microsecond past
+	// the future-skew allowance is beyond it, not "exactly at" it).
+	// Integer nanoseconds, not float parsing: float64 loses precision
+	// at epoch-seconds × microsecond scale.
+	nsecDigits := frac
+	if len(nsecDigits) > 9 {
+		nsecDigits = nsecDigits[:9]
+	} else {
+		nsecDigits += strings.Repeat("0", 9-len(nsecDigits))
+	}
+	nsec, err := strconv.ParseInt(nsecDigits, 10, 64)
+	if err != nil {
+		return false
+	}
+	age := now.Sub(time.Unix(sec, nsec))
+	if age < -slackTSMaxFutureSkew {
+		return false
+	}
+	return age <= maxAge
+}
 
 // maybeDeliverReactionEvent is the sole handler for
 // reaction_added/reaction_removed events (gp-by3). It either forwards
@@ -157,14 +220,23 @@ func maybeDeliverReactionEvent(cfg config, env slackEventEnvelope) {
 		ReceivedAt:       time.Now().UTC(),
 	}
 
-	// Rooms ride the coalescer (admission is final handling — the
-	// coalescer's own timer retries a failed flush); DMs and
-	// coalescing-disabled deployments forward immediately, same policy
-	// split as the message path.
-	if cfg.coalescer.enabled() && inbound.Conversation.Kind == "room" {
-		cfg.coalescer.enqueue(ev.Item.Channel, pendingChannelInbound{inbound: inbound})
+	// No-wake buffering (gp-9e7 item 1): rooms and DMs alike, coalescing
+	// enabled or not. ownTarget marks a reaction on one of the adapter's
+	// own RECENT outbound posts — the founder-ack case allowed to ride
+	// an ALREADY-armed coalesce window (it never arms one). Recency is
+	// part of the definition (fix round 1c): a reaction on an
+	// arbitrarily old bot post is ordinary traffic, not an ack of a
+	// just-made post, and takes the plain side-buffer.
+	ownTarget := ev.ItemUser != "" &&
+		((env.botUserID() != "" && ev.ItemUser == env.botUserID()) ||
+			(cfg.companySelfBotUserID != "" && ev.ItemUser == cfg.companySelfBotUserID)) &&
+		slackTSWithin(ev.Item.TS, founderAckRecency, time.Now())
+	if cfg.coalescer.admitReaction(ev.Item.Channel, pendingChannelInbound{inbound: inbound}, ownTarget) {
+		log.Printf("reaction: buffered %s %q by %s chan=%s target_ts=%s own_target=%v (delivers with next real inbound)",
+			ev.Type, ev.Reaction, ev.User, ev.Item.Channel, ev.Item.TS, ownTarget)
 		return
 	}
+	// Nil coalescer (bare test configs): immediate forward fallback.
 	if err := postInbound(cfg, inbound); err != nil {
 		// Best-effort context: log and drop, dedup claim commits (a
 		// Slack redelivery must not double-wake the session for an

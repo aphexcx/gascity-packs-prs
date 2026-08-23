@@ -146,3 +146,10 @@ tildes, and every other formatting character pass through untouched.
 (`rsync ~/a ~/b`) can pair, so both are substituted — put twin paths in
 a code span, or pass --raw to send --initial-comment byte-for-byte
 verbatim.
+
+Receipt: on success the command prints a terse JSON receipt — delivered
+flag, file_id, conversation_id, and thread_ts when threaded (gp-9e7).
+A delivered=false receipt adds failure_kind, plus an error message when
+the failing layer supplied one (direct-chat failure receipts often
+carry only failure_kind). Pass
+--verbose to print the full result envelope instead.

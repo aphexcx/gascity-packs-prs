@@ -120,12 +120,17 @@ def test_publish_round_trip_through_gc_to_slack(
     ])
     assert exit_code is None or exit_code == 0  # main may return None on success
 
+    # Terse receipt by default (gp-9e7 item 4): delivered + message_id +
+    # conversation_id + thread_ts, and nothing else — the full envelope
+    # (with the outbound text echoed) is behind --verbose now.
     captured_stdout = capsys.readouterr().out
     parsed = json.loads(captured_stdout)
-    assert parsed["session_id"] == "gc-test-session"
+    assert parsed["delivered"] is True
     assert parsed["conversation_id"] == "C0123ROOM"
-    assert parsed["via"] == "gc"
-    assert parsed["result"]["Receipt"]["Delivered"] is True
+    assert parsed["thread_ts"] == "1700000000.000100"
+    assert parsed["message_id"]
+    assert "result" not in parsed
+    assert "*hello from e2e*" not in captured_stdout
 
     # gc-leg assertions: binding lookup + outbound POST.
     gc_calls = gc_mock.calls()
@@ -247,11 +252,15 @@ def test_reply_current_publishes_via_group_membership_fallback(
         )
 
         rc = _import_reply_current_module()
+        # --verbose: this test pins the gc-side WIRE contract (AuthVia),
+        # which only the full envelope surfaces (gp-9e7 item 4 made the
+        # terse receipt the default).
         exit_code = rc.main([
             "--session", "gc-test-session",
             "--conversation-id", "C0GROUPCHAN",
             "--kind", "room",
             "--body", "publishing via group fallback",
+            "--verbose",
         ])
         assert exit_code is None or exit_code == 0
 
@@ -300,7 +309,9 @@ def test_outbound_returns_auth_failure_when_session_lacks_binding_and_group(
     monkeypatch.setenv("GC_SESSION_ID", "gc-test-session")
 
     try:
-        # Neither binding nor group membership registered.
+        # Neither binding nor group membership registered. First run
+        # pins the terse failure receipt (gp-9e7 item 4): a
+        # delivered=false must stay diagnosable without --verbose.
         rc = _import_reply_current_module()
         rc.main([
             "--session", "gc-test-session",
@@ -308,7 +319,19 @@ def test_outbound_returns_auth_failure_when_session_lacks_binding_and_group(
             "--kind", "room",
             "--body", "should fail at gc auth",
         ])
+        terse = json.loads(capsys.readouterr().out)
+        assert terse["delivered"] is False
+        assert terse["failure_kind"] == "auth"
+        assert "no active binding" in terse.get("error", "")
 
+        # Second run with --verbose pins the raw wire contract.
+        rc.main([
+            "--session", "gc-test-session",
+            "--conversation-id", "C0LONELY",
+            "--kind", "room",
+            "--body", "should fail at gc auth",
+            "--verbose",
+        ])
         out = json.loads(capsys.readouterr().out)
         receipt = out["result"]["Receipt"]
         assert receipt["Delivered"] is False
@@ -515,10 +538,11 @@ def test_reply_current_resolves_conversation_from_inbound_event(
     ])
     assert exit_code is None or exit_code == 0
 
+    # Terse receipt by default (gp-9e7 item 4).
     parsed = json.loads(capsys.readouterr().out)
-    assert parsed["session_id"] == "gc-test-session"
+    assert parsed["delivered"] is True
     assert parsed["conversation_id"] == "C0RIGCHAN"
-    assert parsed["result"]["Receipt"]["Delivered"] is True
+    assert "result" not in parsed
 
     # gc-leg: events query happened, then the outbound POST.
     gc_calls = gc_mock.calls()

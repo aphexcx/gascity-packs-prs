@@ -2189,13 +2189,21 @@ def _durable_company_post(
 
 def _company_post_report(
     intent: dict[str, Any], outcome: str, *, kind: str, delegation_key: str = "",
+    channel_id: str = "", thread_ts: str = "",
 ) -> dict[str, Any]:
     report: dict[str, Any] = {
         "status": "posted" if outcome in ("posted", "reused") else "parked",
         "kind": kind,
         "nonce": intent["nonce"],
         "posted_ts": intent.get("posted_ts", ""),
+        # channel_id/thread_ts feed the caller-facing terse receipt
+        # (gp-9e7 item 4 fix round): the summary must name the
+        # conversation the post landed in, which the intent alone did
+        # not surface. channel_id falls back to the intent's own record.
+        "channel_id": channel_id or intent.get("channel_id", ""),
     }
+    if thread_ts:
+        report["thread_ts"] = thread_ts
     if delegation_key:
         report["delegation_key"] = delegation_key
     if outcome == "reused":
@@ -2260,7 +2268,8 @@ def post_peer_result(
         make_metadata=lambda n: result_metadata(n, delegation_ts),
     )
     return _company_post_report(
-        intent, outcome, kind="peer_result", delegation_key=turn["delegation_key"])
+        intent, outcome, kind="peer_result", delegation_key=turn["delegation_key"],
+        channel_id=turn["channel_id"], thread_ts=record["thread_root_ts"])
 
 
 def _synthesis_gate(turn: dict[str, Any], *, allow_partial: bool) -> dict[str, Any]:
@@ -2360,7 +2369,9 @@ def post_peer_synthesis(
         metadata_nonce="",
         make_metadata=synthesis_metadata,
     )
-    report = _company_post_report(intent, outcome, kind="peer_synthesis")
+    report = _company_post_report(
+        intent, outcome, kind="peer_synthesis",
+        channel_id=turn["channel_id"], thread_ts=turn["thread_root_ts"])
     report.update(report_extra)
     return report
 
@@ -2396,7 +2407,8 @@ def post_company_root_reply(
     posted_ts = post_message(
         token, channel=turn["channel_id"], text=text,
         thread_ts=turn["thread_root_ts"])
-    return {"status": "posted", "kind": turn["kind"], "posted_ts": posted_ts}
+    return {"status": "posted", "kind": turn["kind"], "posted_ts": posted_ts,
+            "channel_id": turn["channel_id"], "thread_ts": turn["thread_root_ts"]}
 
 
 def _post_dm_family_reply(
@@ -2449,7 +2461,9 @@ def _post_dm_family_reply(
         metadata_nonce="",
         make_metadata=dm_metadata,
     )
-    return _company_post_report(intent, outcome, kind=report_kind)
+    return _company_post_report(
+        intent, outcome, kind=report_kind,
+        channel_id=turn["channel_id"], thread_ts=thread_ts)
 
 
 def post_company_dm_reply(
