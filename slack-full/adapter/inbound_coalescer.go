@@ -841,7 +841,13 @@ func (c *inboundCoalescer) pendingContains(channel, ts string) bool {
 // reconcileTimers re-arms every armed timer against the current policy
 // (SIGHUP): a channel flipped digest→immediate must not keep waiting
 // out a stale two-hour window. Each affected channel restarts a full
-// new window from now.
+// new window from now — EXCEPT a channel sitting over either buffer
+// cap, whose armed timer is (or must now behave as) the short over-cap
+// retry (gp-9e7 round 5, 3a/3b): re-arming that at windowFor would
+// downgrade a ≤1s retry back to digest scale and leave an over-cap
+// buffer growing for hours (round-6 gate finding). Over-cap state is
+// read from the maps, so the clamp also self-heals a reconcile that
+// races the retry arming.
 func (c *inboundCoalescer) reconcileTimers() {
 	if c == nil {
 		return
@@ -852,6 +858,10 @@ func (c *inboundCoalescer) reconcileTimers() {
 		t.Stop()
 		c.gen[channel]++
 		window := c.windowFor(channel)
+		if len(c.pending[channel]) >= maxCoalescePerChannel ||
+			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel {
+			window = c.capRetryDelay()
+		}
 		g := c.gen[channel]
 		ch := channel
 		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(ch, g) })

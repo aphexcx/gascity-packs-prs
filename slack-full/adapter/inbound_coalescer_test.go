@@ -1575,6 +1575,68 @@ func TestCoalescerOverCapDeferredFlushRetriesOnWindowScaleNotDigest(t *testing.T
 	}
 }
 
+// Round-6 gate finding: SIGHUP reconciliation must not downgrade an
+// over-cap retry timer back to digest scale. Same shape as the test
+// above, with reconcileTimers() fired while the deferred retry is
+// armed — before the fix the reconcile unconditionally re-armed
+// windowFor (the 10-minute digest interval) and the over-cap buffer
+// sat for the full interval once the in-flight delivery settled.
+func TestCoalescerReconcileKeepsOverCapRetryShort(t *testing.T) {
+	path := writeDeliveryPolicyFile(t, `{"channels": {"CDIGEST": {"mode": "digest", "interval_minutes": 10}}}`)
+	reg, err := newDeliveryPolicyRegistry(path)
+	if err != nil {
+		t.Fatalf("policy: %v", err)
+	}
+	gate := make(chan struct{})
+	entered := make(chan struct{})
+	deliver, order := blockableDeliver("CDIGEST", gate, entered)
+	c := newInboundCoalescer(30*time.Millisecond, reg)
+	c.deliver = deliver
+
+	c.enqueue("CDIGEST", testPending("CDIGEST", "000000.0", "older, in flight"))
+	c.mu.Lock()
+	g := c.gen["CDIGEST"]
+	c.mu.Unlock()
+	go c.flushTimer("CDIGEST", g)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first delivery never started")
+	}
+
+	for i := 1; i <= maxCoalescePerChannel; i++ {
+		c.enqueue("CDIGEST", testPending("CDIGEST", fmt.Sprintf("%06d.0", i), "burst"))
+	}
+	c.mu.Lock()
+	pendingN := len(c.pending["CDIGEST"])
+	_, timerArmed := c.timers["CDIGEST"]
+	c.mu.Unlock()
+	if pendingN != maxCoalescePerChannel || !timerArmed {
+		t.Fatalf("deferred early flush: pending=%d timerArmed=%v, want %d buffered with an armed retry timer", pendingN, timerArmed, maxCoalescePerChannel)
+	}
+
+	// The SIGHUP path fires while the retry is armed and the delivery
+	// is still in flight: the re-armed timer must stay retry-scale.
+	c.reconcileTimers()
+
+	close(gate)
+	deadline := time.After(3 * time.Second)
+	for {
+		got := order()
+		if len(got) >= 2 {
+			if got[0] != "CDIGEST:000000.0" || got[1] != "CDIGEST:000001.0" {
+				t.Fatalf("delivery order = %v, want the in-flight batch then the deferred over-cap burst", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("over-cap buffer never flushed promptly after reconcileTimers + delivery settle (order=%v) — SIGHUP downgraded the retry to digest scale", order())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // Round 5 (3b): a reaction side-buffer that overflowed its cap while a
 // delivery was in flight must still deliver within a bounded time of
 // that delivery settling — WITHOUT waiting for another admission or the
