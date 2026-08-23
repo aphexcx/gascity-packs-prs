@@ -21,8 +21,8 @@
 //     {callback_url}/publish to deliver a bound session's reply; the
 //     adapter forwards it with sendMessage — chatid for group chats, the
 //     peer userid for DMs. /publish-media (gc wecom publish
-//     --image|--video) uploads a local image/video over the long
-//     connection and pushes it as a media message, then records the
+//     --image|--video|--file) uploads a local image/video/file over the
+//     long connection and pushes it as a media message, then records the
 //     outbound transcript through gc /extmsg/outbound. See src/outbound.js.
 //
 // Required env:
@@ -105,6 +105,8 @@
 //	                       your tenant allows more).
 //	WECOM_VIDEO_MAX_BYTES  Outbound video cap (default 10485760 = 10MB,
 //	                       the WeCom smart-robot limit; mp4 only).
+//	WECOM_FILE_MAX_BYTES   Outbound file cap (default 20971520 = 20MB,
+//	                       the WeCom smart-robot limit; any file type).
 //	WECOM_UPLOAD_TIMEOUT_MS
 //	                       Wall-clock deadline for one whole chunked media
 //	                       upload (default 300000 — 10MB in ≤512KB chunks
@@ -249,6 +251,7 @@ function loadConfig() {
     mediaRequireKnownConversation: getenv('WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS') !== 'true',
     imageMaxBytes: intEnv('WECOM_IMAGE_MAX_BYTES', 10 * 1024 * 1024),
     videoMaxBytes: intEnv('WECOM_VIDEO_MAX_BYTES', 10 * 1024 * 1024),
+    fileMaxBytes: intEnv('WECOM_FILE_MAX_BYTES', 20 * 1024 * 1024),
     uploadTimeoutMs: intEnv('WECOM_UPLOAD_TIMEOUT_MS', 300000),
     // Outbound upload admission (src/outbound.js createUploadGate):
     // buffer memory ≤ uploadMaxConcurrent × the media cap; waiters beyond
@@ -319,7 +322,7 @@ function log(...args) {
 // store quota.
 
 // The outbound direction (text /publish with idempotent chunked sends,
-// image/video /publish-media with upload → media_id → aibot_send_msg and
+// image/video/file /publish-media with upload → media_id → aibot_send_msg and
 // gc transcript recording, per-chat send chains) lives in src/outbound.js
 // as a testable publisher; main() below instantiates it with the real SDK
 // client, and startInternalListener routes both endpoints to it.

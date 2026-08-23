@@ -40,12 +40,15 @@
 #                           # audio files deliver with a transcription-failed
 #                           # note (never dropped)
 #   WECOM_OUTBOUND_MEDIA_ROOT  # directory outbound media may be read from;
-#                           # REQUIRED for --image/--video publishing — the
-#                           # adapter refuses media sends (fail closed)
-#                           # when unset; symlinks in media paths rejected
+#                           # REQUIRED for --image/--video/--file publishing
+#                           # — the adapter refuses media sends (fail
+#                           # closed) when unset; symlinks in media paths
+#                           # rejected
 #   WECOM_IMAGE_MAX_BYTES   # outbound image cap; default 10485760 (10MB —
 #                           # WeCom's own smart-robot limit; jpg/png/gif)
 #   WECOM_VIDEO_MAX_BYTES   # outbound video cap; default 10485760 (10MB; mp4)
+#   WECOM_FILE_MAX_BYTES    # outbound file cap; default 20971520 (20MB —
+#                           # WeCom's smart-robot limit; any file type)
 #   WECOM_UPLOAD_TIMEOUT_MS # wall-clock bound on one whole chunked media
 #                           # upload; default 300000
 #   WECOM_UPLOAD_MAX_CONCURRENT  # global outbound-upload admission bound;

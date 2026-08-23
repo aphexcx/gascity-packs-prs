@@ -41,6 +41,12 @@ const movBytes = Buffer.concat([
   Buffer.from('ftypqt  '),
   Buffer.alloc(16, 4),
 ]);
+// A docx is a ZIP container (PK\x03\x04) — content sniffExtension does
+// NOT recognize, which is exactly the common case for file-kind sends.
+const docxBytes = Buffer.concat([
+  Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  Buffer.from('[Content_Types].xml fake docx payload'),
+]);
 
 function tmpDir(t) {
   // realpath'd so fixture paths compare lexically against the confined
@@ -81,6 +87,7 @@ function makePublisher(overrides = {}) {
     gcAPIBase: 'http://gc.test:9443',
     imageMaxBytes: 10 * 1024 * 1024,
     videoMaxBytes: 10 * 1024 * 1024,
+    fileMaxBytes: 20 * 1024 * 1024,
     uploadTimeoutMs: 5000,
     // Every tmpDir fixture lives under the OS temp dir, so this default
     // root confines the whole suite; confinement tests override it.
@@ -273,6 +280,103 @@ test('a .jpeg filename is not double-suffixed for jpg content', async (t) => {
   assert.equal(calls[0].options.filename, 'pic.jpeg');
 });
 
+// --- file kind (jg-d0xr scope extension 8/23) --------------------------------
+
+test('a file publish uploads with type file, sends a file message, and records [file sent]', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, '合同草案.docx', docxBytes);
+  const { publisher, calls, outboundPosts } = makePublisher();
+
+  const res = await publishMedia(publisher, {
+    session_id: 'sess-mayor',
+    conversation: { conversation_id: 'he_lihua' },
+    file_path: file,
+    media_kind: 'file',
+    text: '合同草案，请查收',
+  });
+
+  assert.equal(res.statusCode, 200);
+  const out = res.json();
+  assert.equal(out.delivered, true);
+  assert.equal(out.media_id, 'MEDIA_1');
+  assert.equal(out.transcript_recorded, true);
+  assert.deepEqual(calls.map((c) => c.op), ['uploadMedia', 'sendMediaMessage', 'sendMessage']);
+  assert.equal(calls[0].bytes, docxBytes.length);
+  // Unrecognized content (zip magic) must not rename the upload — the
+  // recipient sees 合同草案.docx, not a sniffed-extension mutation.
+  assert.deepEqual(calls[0].options, { type: 'file', filename: '合同草案.docx' });
+  assert.equal(calls[1].type, 'file');
+  assert.equal(calls[1].mediaId, 'MEDIA_1');
+  assert.equal(calls[1].chatid, 'he_lihua');
+  assert.equal(outboundPosts.length, 1);
+  assert.match(
+    outboundPosts[0].body.text,
+    /^\[file sent\] 合同草案\.docx \(application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document, \d+ bytes, sha256 [0-9a-f]{12}\) — source: /,
+  );
+  assert.ok(outboundPosts[0].body.text.endsWith('\n合同草案，请查收'));
+});
+
+test('file sends have no format gate — unrecognized and recognized content both pass', async (t) => {
+  const dir = tmpDir(t);
+  const plain = writeFixture(dir, 'notes.txt', Buffer.from('plain text, no magic bytes at all'));
+  const pdfNoExt = writeFixture(dir, 'report', Buffer.from('%PDF-1.7 fake pdf body pads'));
+  const { publisher, calls } = makePublisher();
+
+  const txtRes = await publishMedia(publisher, {
+    conversation: { conversation_id: 'he_lihua' }, file_path: plain, media_kind: 'file',
+  });
+  assert.equal(txtRes.statusCode, 200);
+  assert.equal(calls[0].options.filename, 'notes.txt');
+
+  // Recognized content still gains the detected extension, same honest
+  // labeling the image path applies (a real pdf named 'report' uploads
+  // as report.pdf).
+  const pdfRes = await publishMedia(publisher, {
+    conversation: { conversation_id: 'he_lihua' }, file_path: pdfNoExt, media_kind: 'file',
+  });
+  assert.equal(pdfRes.statusCode, 200);
+  assert.equal(calls[2].options.filename, 'report.pdf');
+});
+
+test('an oversized file is rejected with the cap, compress/split advice, and the override env', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'big.docx', docxBytes);
+  const { publisher, calls } = makePublisher({ cfg: { fileMaxBytes: 16 } });
+
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'he_lihua' },
+    file_path: file,
+    media_kind: 'file',
+  });
+  assert.equal(res.statusCode, 400);
+  const out = res.json();
+  assert.equal(out.delivered, false);
+  assert.match(out.error, /too large: \d+ bytes > the 16-byte WeCom file cap/);
+  assert.match(out.error, /compress or split/);
+  assert.match(out.error, /WECOM_FILE_MAX_BYTES/);
+  assert.equal(calls.length, 0);
+});
+
+test('file sends ride the same confinement root — outside the root is refused', async (t) => {
+  const dir = tmpDir(t);
+  const root = path.join(dir, 'root');
+  fs.mkdirSync(root);
+  const inside = writeFixture(root, 'in.docx', docxBytes);
+  const outside = writeFixture(dir, 'out.docx', docxBytes);
+  const { publisher } = makePublisher({ cfg: { outboundMediaRoot: root } });
+
+  const ok = await publishMedia(publisher, {
+    conversation: { conversation_id: 'he_lihua' }, file_path: inside, media_kind: 'file',
+  });
+  assert.equal(ok.statusCode, 200);
+
+  const bad = await publishMedia(publisher, {
+    conversation: { conversation_id: 'he_lihua' }, file_path: outside, media_kind: 'file',
+  });
+  assert.equal(bad.statusCode, 403);
+  assert.equal(bad.json().failure_kind, 'forbidden');
+});
+
 // --- admission rejections ----------------------------------------------------
 
 test('an oversized image is rejected with the cap, the size, and the override env', async (t) => {
@@ -370,7 +474,7 @@ test('missing file, empty file, relative path, and bad media_kind 400; symlink 4
 
   const badKind = await publishMedia(publisher, { conversation: convo, file_path: real, media_kind: 'voice' });
   assert.equal(badKind.statusCode, 400);
-  assert.match(badKind.json().error, /media_kind must be one of: image, video/);
+  assert.match(badKind.json().error, /media_kind must be one of: image, video, file/);
 
   assert.equal(calls.length, 0);
 });

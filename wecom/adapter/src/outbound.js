@@ -11,13 +11,14 @@
 //   /publish        text/markdown. Called by gc's extmsg HTTP adapter to
 //                   deliver a bound session's reply, and by `gc wecom
 //                   publish --text` through the /svc/wecom proxy.
-//   /publish-media  image/video files (jg-d0xr). Called ONLY by `gc wecom
-//                   publish --image|--video` — gc's PublishRequest wire
-//                   carries text alone, so gc itself never posts here.
-//                   The adapter uploads the file over the long connection
-//                   (aibot_upload_media_init → chunk × N → finish, ≤512KB
-//                   per chunk, ≤100 chunks), then pushes the media message
-//                   (aibot_send_msg with image/video.media_id).
+//   /publish-media  image/video/file media (jg-d0xr). Called ONLY by
+//                   `gc wecom publish --image|--video|--file` — gc's
+//                   PublishRequest wire carries text alone, so gc itself
+//                   never posts here. The adapter uploads the file over
+//                   the long connection (aibot_upload_media_init →
+//                   chunk × N → finish, ≤512KB per chunk, ≤100 chunks),
+//                   then pushes the media message (aibot_send_msg with
+//                   image/video/file.media_id).
 //
 // Outbound transcript recording (the piece gc cannot do for media): after
 // a media send is delivered, the adapter POSTs gc's /extmsg/outbound with
@@ -34,10 +35,11 @@
 // WeCom media limits (developer.work.weixin.qq.com/document/path/101463,
 // verified 2026-08-20): image ≤10MB (png/jpg/jpeg/gif), video ≤10MB (mp4),
 // voice ≤2MB (amr), file ≤20MB; uploaded media_ids stay valid 3 days;
-// upload rate ≤30/min and ≤1000/hour per robot. Only image and video are
-// implemented — they are the reply shapes the mayor needs; oversized or
-// wrong-format files are REJECTED with an actionable message (downscale /
-// re-encode is deliberately out of scope for the adapter).
+// upload rate ≤30/min and ≤1000/hour per robot. Image, video, and file
+// are implemented — the reply shapes the mayor needs (voice is amr-only
+// and stays out); oversized or wrong-format media is REJECTED with an
+// actionable message (downscale / re-encode / compress is deliberately
+// out of scope for the adapter).
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -427,19 +429,32 @@ function isDefiniteSendFailure(err) {
 // What each media kind accepts, per the WeCom smart-robot limits above.
 // Detection is by MAGIC BYTES (sniffExtension), not the filename — WeCom
 // validates content server-side, and a clear client error beats a cryptic
-// provider rejection after a full chunked upload.
+// provider rejection after a full chunked upload. `file` carries
+// `allowed: null`: WeCom file messages take any content (docx, pdf, zip,
+// plain text, …), so there is no format gate — only the size cap.
 const mediaKindSpecs = {
   image: {
     wecomType: 'image',
     allowed: new Set(['.jpg', '.png', '.gif']),
     formatsLabel: 'jpg/jpeg, png, or gif',
     capEnv: 'WECOM_IMAGE_MAX_BYTES',
+    capCfgKey: 'imageMaxBytes',
+    oversizeAdvice: 'downscale/re-encode it before sending (the adapter deliberately does not transcode)',
   },
   video: {
     wecomType: 'video',
     allowed: new Set(['.mp4']),
     formatsLabel: 'mp4',
     capEnv: 'WECOM_VIDEO_MAX_BYTES',
+    capCfgKey: 'videoMaxBytes',
+    oversizeAdvice: 'downscale/re-encode it before sending (the adapter deliberately does not transcode)',
+  },
+  file: {
+    wecomType: 'file',
+    allowed: null, // any content — WeCom file messages carry arbitrary types
+    capEnv: 'WECOM_FILE_MAX_BYTES',
+    capCfgKey: 'fileMaxBytes',
+    oversizeAdvice: 'compress or split it before sending (the adapter deliberately does not repack files)',
   },
 };
 
@@ -676,7 +691,7 @@ async function readMediaFile({ fd, filePath, mediaKind, maxBytes }) {
     if (st.size > maxBytes) {
       throw new ClientError(
         `${mediaKind} is too large: ${st.size} bytes > the ${maxBytes}-byte WeCom ${mediaKind} cap — `
-        + `downscale/re-encode it before sending (the adapter deliberately does not transcode); `
+        + `${spec.oversizeAdvice}; `
         + `${spec.capEnv} overrides the cap only if your WeCom tenant allows more`,
       );
     }
@@ -688,7 +703,7 @@ async function readMediaFile({ fd, filePath, mediaKind, maxBytes }) {
       offset += bytesRead;
     }
     const detected = sniffExtension(buffer);
-    if (!spec.allowed.has(detected)) {
+    if (spec.allowed && !spec.allowed.has(detected)) {
       const detectedLabel = detected === '' ? 'unrecognized content' : `${detected.slice(1)} content`;
       throw new ClientError(
         `WeCom ${mediaKind} messages accept ${spec.formatsLabel} — ${filePath} has ${detectedLabel}; convert the file and retry`,
@@ -753,7 +768,7 @@ export function createUploadGate({ slots, maxQueue }) {
 //
 // deps:
 //   cfg              cityName, provider, botId, gcAPIBase, imageMaxBytes,
-//                    videoMaxBytes, uploadTimeoutMs
+//                    videoMaxBytes, fileMaxBytes, uploadTimeoutMs
 //   sendMessage      (chatid, body) → receipt frame   [wsClient.sendMessage]
 //   uploadMedia      (buffer, {type, filename}) → {media_id}
 //                    [wsClient.uploadMedia — init/chunk/finish over the WS]
@@ -1242,7 +1257,7 @@ export function createOutboundPublisher(deps) {
     res.end(JSON.stringify(state.receipt));
   }
 
-  // --- /publish-media: image/video ------------------------------------------
+  // --- /publish-media: image/video/file --------------------------------------
 
   // resolveKind picks the dm/room kind for the outbound transcript ref:
   // an explicit caller kind wins, then the learned inbound map, then the
@@ -1361,7 +1376,7 @@ export function createOutboundPublisher(deps) {
       fail400(`session_id must be at most ${MAX_SESSION_ID_BYTES} bytes`);
       return;
     }
-    const maxBytes = mediaKind === 'image' ? cfg.imageMaxBytes : cfg.videoMaxBytes;
+    const maxBytes = cfg[mediaKindSpecs[mediaKind].capCfgKey];
 
     // The idempotency key is REQUIRED here: the caller (gc wecom publish)
     // generates one per LOGICAL invocation and reuses it on every retry.
@@ -1592,7 +1607,9 @@ export function createOutboundPublisher(deps) {
       // file's basename — sanitized, and always carrying the DETECTED
       // extension so WeCom's own server-side type checks see a name that
       // matches the bytes (a .png named photo.jpg uploads as
-      // photo.jpg.png, not a lie). Starts from the fingerprinted sanitized
+      // photo.jpg.png, not a lie). Unrecognized content (most `file`-kind
+      // sends: docx, zip, plain text) detects as '' and leaves the name
+      // alone. Starts from the fingerprinted sanitized
       // name (finding 11) so the fingerprint and the upload never drift.
       let filename = probe.filename;
       if (!filename.toLowerCase().endsWith(media.detectedExtension)) {

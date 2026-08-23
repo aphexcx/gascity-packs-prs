@@ -37,15 +37,15 @@ no funnel.
     callback URL when delivering a session's reply; the adapter forwards
     it as a WeCom markdown message — to the `chatid` for group chats, to
     the peer `userid` for DMs — chunked at 3800 UTF-8 bytes.
-    `/publish-media` (jg-d0xr) sends a local **image or video** file:
+    `/publish-media` (jg-d0xr) sends a local **image, video, or file**:
     chunked upload over the long connection (`aibot_upload_media_init →
     chunk × N → finish`, ≤512KB/chunk) to a `media_id`, then an
-    `aibot_send_msg` image/video message. See "Outbound media" below and
-    `adapter/src/outbound.js`.
+    `aibot_send_msg` image/video/file message. See "Outbound media" below
+    and `adapter/src/outbound.js`.
 - `commands/publish.sh` — `gc wecom publish`: manual/operator sends through
   the running adapter via gc's `/svc/wecom` reverse proxy — `--text` /
-  `--text-file` for markdown, `--image` / `--video` for media (optional
-  `--text` caption goes out as a follow-up message). Also the verb
+  `--text-file` for markdown, `--image` / `--video` / `--file` for media
+  (optional `--text` caption goes out as a follow-up message). Also the verb
   gc's inbound nudges cite (registered as the adapter's
   `reply_instructions`), so the mayor's reply flow works without a
   `reply-current` verb.
@@ -114,22 +114,26 @@ dead ~5 minutes after receipt, so the note says to ask the sender to
 re-send); a failed transcription still delivers the saved file path with
 a `[transcription failed: …]` note.
 
-## Outbound media (images & videos)
+## Outbound media (images, videos & files)
 
 `gc wecom publish --chat <id> --image /abs/path.png [--text caption]` (or
-`--video /abs/path.mp4`) posts the adapter's `/publish-media`: the adapter
-validates the local file, uploads it over the long connection, and pushes
-the media message. Limits are WeCom's own smart-robot caps
-(developer.work.weixin.qq.com/document/path/101463, verified 2026-08-20):
-**images ≤10MB, jpg/jpeg/png/gif; videos ≤10MB, mp4** — checked by magic
-bytes, not filename. Oversized or wrong-format files are rejected with an
-actionable 400 (the adapter never transcodes — downscale/re-encode and
-retry; `WECOM_IMAGE_MAX_BYTES` / `WECOM_VIDEO_MAX_BYTES` override the caps
-only for tenants allowed more). WeCom image/video messages have no caption
-field, so `--text` is delivered as a follow-up markdown message on the
-same per-chat send chain (nothing can interleave between media and
-caption). Uploads count against WeCom's robot quota (30/min, 1000/hour);
-`media_id`s stay valid 3 days but are not reused across sends.
+`--video /abs/path.mp4`, or `--file /abs/path.docx`) posts the adapter's
+`/publish-media`: the adapter validates the local file, uploads it over
+the long connection, and pushes the media message. Limits are WeCom's own
+smart-robot caps (developer.work.weixin.qq.com/document/path/101463,
+verified 2026-08-20; file re-verified 2026-08-23): **images ≤10MB,
+jpg/jpeg/png/gif; videos ≤10MB, mp4** — checked by magic bytes, not
+filename — and **files ≤20MB, any type** (docx, pdf, zip, plain text —
+WeCom file messages carry arbitrary content, so there is no format gate).
+Oversized or wrong-format media is rejected with an actionable 400 (the
+adapter never transcodes or repacks — downscale/re-encode/compress and
+retry; `WECOM_IMAGE_MAX_BYTES` / `WECOM_VIDEO_MAX_BYTES` /
+`WECOM_FILE_MAX_BYTES` override the caps only for tenants allowed more).
+WeCom media messages have no caption field, so `--text` is delivered as a
+follow-up markdown message on the same per-chat send chain (nothing can
+interleave between media and caption). Uploads count against WeCom's
+robot quota (30/min, 1000/hour); `media_id`s stay valid 3 days but are
+not reused across sends.
 
 **Transcript recording.** gc's outbound wire (`PublishRequest`) is
 text-only, so gc cannot deliver media itself; the adapter therefore sends
@@ -321,8 +325,9 @@ robot's visible scope decides who can talk to it.
 2. **Done (jg-c7j)**: media/file ingestion — download+decrypt in the
    receive path, durable `file://` hand-off, ElevenLabs Scribe transcripts
    for audio files. Voice messages stay on WeCom's server-side ASR.
-3. **Done (jg-d0xr)**: outbound media — `gc wecom publish --image/--video`
-   via chunked upload + `aibot_send_msg`, with extmsg transcript recording
-   through gc `/extmsg/outbound` (idempotency-key dedup against re-sends).
+3. **Done (jg-d0xr)**: outbound media — `gc wecom publish
+   --image/--video/--file` via chunked upload + `aibot_send_msg`, with
+   extmsg transcript recording through gc `/extmsg/outbound`
+   (idempotency-key dedup against re-sends).
 4. Paperwork systems inventory (Duqin/Dongyun) + mandatory
    draft-then-confirm gates (template cards are the natural confirm UI).

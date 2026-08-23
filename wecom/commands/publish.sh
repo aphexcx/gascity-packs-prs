@@ -1,6 +1,6 @@
 #!/bin/sh
-# gc wecom publish — send a markdown message, an image, or a video to a
-# WeCom chat through the running adapter.
+# gc wecom publish — send a markdown message, an image, a video, or a
+# file to a WeCom chat through the running adapter.
 #
 # The wrapper relays to the wecom adapter through gc's /svc/wecom reverse
 # proxy. The adapter holds the bot credentials and pushes over the long
@@ -10,21 +10,22 @@
 # peer's userid for a DM.
 #
 # Text goes to the adapter's /publish (markdown, chunked at ~3800 UTF-8
-# bytes). --image/--video go to /publish-media: the adapter uploads the
-# file over the long connection (WeCom's chunked aibot_upload_media
-# protocol), sends it as an image/video message, and best-effort records
-# the outbound in the gc extmsg transcript via /extmsg/outbound (needs the
-# caller's session to own the conversation's binding — the mayor's replies
-# do). WeCom accepts images ≤10MB (jpg/jpeg/png/gif) and videos ≤10MB
-# (mp4); anything else is rejected with a clear error — convert/downscale
-# before sending. --text alongside --image/--video is sent as a follow-up
-# markdown message right after the media (WeCom image/video messages have
-# no caption field).
+# bytes). --image/--video/--file go to /publish-media: the adapter uploads
+# the file over the long connection (WeCom's chunked aibot_upload_media
+# protocol), sends it as an image/video/file message, and best-effort
+# records the outbound in the gc extmsg transcript via /extmsg/outbound
+# (needs the caller's session to own the conversation's binding — the
+# mayor's replies do). WeCom accepts images ≤10MB (jpg/jpeg/png/gif),
+# videos ≤10MB (mp4), and files ≤20MB (any type); anything else is
+# rejected with a clear error — convert/downscale/compress before
+# sending. --text alongside media is sent as a follow-up markdown message
+# right after it (WeCom media messages have no caption field).
 #
 # Usage:
 #   gc wecom publish --chat <chatid-or-userid> --text "**build** is green"
 #   gc wecom publish --chat <chatid-or-userid> --image /abs/path/photo.png [--text "caption"]
 #   gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "caption"]
+#   gc wecom publish --chat <chatid-or-userid> --file /abs/path/contract.docx [--text "caption"]
 set -eu
 
 chat=""
@@ -32,6 +33,7 @@ text=""
 text_file=""
 image=""
 video=""
+file=""
 kind=""
 session="${GC_SESSION_ID:-}"
 idempotency_key=""
@@ -51,6 +53,7 @@ while [ $# -gt 0 ]; do
     --text-file) require_value "$1" "$#"; text_file="$2"; shift 2 ;;
     --image)     require_value "$1" "$#"; image="$2"; shift 2 ;;
     --video)     require_value "$1" "$#"; video="$2"; shift 2 ;;
+    --file)      require_value "$1" "$#"; file="$2"; shift 2 ;;
     --kind)      require_value "$1" "$#"; kind="$2"; shift 2 ;;
     --session)   require_value "$1" "$#"; session="$2"; shift 2 ;;
     --idempotency-key) require_value "$1" "$#"; idempotency_key="$2"; shift 2 ;;
@@ -59,6 +62,7 @@ while [ $# -gt 0 ]; do
     --text-file=*) text_file="${1#*=}"; shift ;;
     --image=*)     image="${1#*=}"; shift ;;
     --video=*)     video="${1#*=}"; shift ;;
+    --file=*)      file="${1#*=}"; shift ;;
     --kind=*)      kind="${1#*=}"; shift ;;
     --session=*)   session="${1#*=}"; shift ;;
     --idempotency-key=*) idempotency_key="${1#*=}"; shift ;;
@@ -77,8 +81,12 @@ if [ -z "$chat" ]; then
   echo "gc wecom publish: --chat is required" >&2
   exit 2
 fi
-if [ -n "$image" ] && [ -n "$video" ]; then
-  echo "gc wecom publish: use --image or --video, not both" >&2
+media_flag_count=0
+[ -n "$image" ] && media_flag_count=$((media_flag_count + 1))
+[ -n "$video" ] && media_flag_count=$((media_flag_count + 1))
+[ -n "$file" ] && media_flag_count=$((media_flag_count + 1))
+if [ "$media_flag_count" -gt 1 ]; then
+  echo "gc wecom publish: use only one of --image, --video, or --file" >&2
   exit 2
 fi
 if [ -n "$text" ] && [ -n "$text_file" ]; then
@@ -91,8 +99,12 @@ if [ -n "$video" ]; then
   media="$video"
   media_kind="video"
 fi
+if [ -n "$file" ]; then
+  media="$file"
+  media_kind="file"
+fi
 if [ -z "$media" ] && [ -z "$text" ] && [ -z "$text_file" ]; then
-  echo "gc wecom publish: --text, --text-file, --image, or --video is required" >&2
+  echo "gc wecom publish: --text, --text-file, --image, --video, or --file is required" >&2
   exit 2
 fi
 if [ -n "$text_file" ] && [ ! -f "$text_file" ]; then
