@@ -852,6 +852,9 @@ func TestSocketSelfRestartGating(t *testing.T) {
 		t.Fatalf("exits = %d, want 1 (11m failing + streak + everConnected)", exits.Load())
 	}
 
+	// The fire-once latch (gp-ps4) would make the remaining gates
+	// vacuous — clear it so each one is exercised on its own merit.
+	r.restartRequested.Store(false)
 	r.connected.Store(true)
 	r.maybeSelfRestart(now)
 	if exits.Load() != 1 {
@@ -859,6 +862,7 @@ func TestSocketSelfRestartGating(t *testing.T) {
 	}
 
 	r.connected.Store(false)
+	r.restartRequested.Store(false)
 	r.cfg.socketSelfRestartAfter = 0
 	r.maybeSelfRestart(now)
 	if exits.Load() != 1 {

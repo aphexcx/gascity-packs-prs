@@ -137,9 +137,11 @@ const (
 // client. Should the transport STILL stay dark for
 // cfg.socketSelfRestartAfter — across at least
 // socketSelfRestartMinFailures attempts, and only after having
-// connected at least once this process — the adapter exits so the
-// service supervisor restarts it; startup recovery + watermark backfill
-// make that loss-free (proven in both incidents).
+// connected at least once this process — the adapter requests its own
+// exit: main runs the orderly shutdown (drain → spool → seal, as on
+// SIGTERM) and exits 1 so the service supervisor restarts it; spool
+// replay + startup recovery + watermark backfill make that loss-free
+// (proven in both incidents).
 const (
 	socketDNSStreakForFreshResolve = 3
 	socketSelfRestartMinFailures   = 5
@@ -196,9 +198,14 @@ type socketModeRunner struct {
 	// across suspend, so a laptop sleep or wall-clock jump cannot spend
 	// the dark-window budget. Nil while no streak is running.
 	failStreakStart atomic.Pointer[time.Time]
-	exit            func(int) // os.Exit; tests substitute
-	cancelMu        sync.Mutex
-	cycleCancel     context.CancelFunc // cancels the in-flight client cycle
+	// exit requests the process exit for the self-restart. main wires
+	// it to its orderly shutdown (selfRestartRequests) so buffered
+	// inbounds drain to gc or the spool first; the os.Exit default only
+	// stands for a runner main never wired. Tests substitute a recorder.
+	exit             func(int)
+	restartRequested atomic.Bool // exit already called; log/request once
+	cancelMu         sync.Mutex
+	cycleCancel      context.CancelFunc // cancels the in-flight client cycle
 
 	// inflight tracks envelope goroutines so shutdown can wait briefly.
 	inflight sync.WaitGroup
@@ -405,9 +412,9 @@ func (r *socketModeRunner) onInboundAlarm() {
 //     not-found failures flip the runner (stickily) to the pure-Go
 //     resolver and rebuild the client immediately.
 //  3. Self-restart — a transport that once worked but has stayed dark
-//     past cfg.socketSelfRestartAfter exits the process; the service
-//     supervisor restarts it and the watermark backfill makes the
-//     bounce loss-free.
+//     past cfg.socketSelfRestartAfter requests the process exit (via
+//     main's orderly drain); the service supervisor restarts it and
+//     spool replay + watermark backfill make the bounce loss-free.
 func (r *socketModeRunner) noteConnectionError(err error, reportedBackoff time.Duration) {
 	if r.failStreak.Add(1) == 1 {
 		now := time.Now() // monotonic reading — see failStreakStart
@@ -443,8 +450,8 @@ func isDNSNotFound(err error) bool {
 	return strings.Contains(err.Error(), "no such host")
 }
 
-// maybeSelfRestart exits the process when the socket transport has been
-// failing continuously past cfg.socketSelfRestartAfter despite having
+// maybeSelfRestart requests the process exit when the socket transport
+// has been failing continuously past cfg.socketSelfRestartAfter despite having
 // once been connected — the 8/22+8/23 incident class where in-process
 // state was poisoned and only a restart recovered. Gated on
 // everConnected so a never-connecting misconfiguration (Socket Mode
@@ -453,9 +460,12 @@ func isDNSNotFound(err error) bool {
 // current failure streak with MONOTONIC time arithmetic, so a laptop
 // sleep or wall-clock jump cannot spend the budget (monotonic clocks
 // pause across suspend) — only ≥socketSelfRestartAfter of awake,
-// actively-failing time fires. The exit is loss-free: the service
-// supervisor restarts the adapter and startup recovery + watermark
-// backfill replay anything missed — proven in both incidents.
+// actively-failing time fires. The exit is loss-free: r.exit hands the
+// request to main's orderly shutdown (buffered inbounds drain to gc or
+// the durable spool — bare os.Exit would strand them below the
+// admission-time watermark), the service supervisor restarts the
+// adapter, and spool replay + startup recovery + watermark backfill
+// replay anything missed — proven in both incidents. Fires once.
 func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
 	after := r.cfg.socketSelfRestartAfter
 	if after <= 0 || r.connected.Load() || !r.everConnected.Load() {
@@ -472,7 +482,10 @@ func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
 	if failingFor < after {
 		return
 	}
-	log.Printf("socket mode: SELF-RESTART — transport failing for %s (limit %s, down %s total) across %d consecutive connect failures; exiting so the service supervisor restarts the process (startup recovery + watermark backfill make this loss-free)",
+	if r.restartRequested.Swap(true) {
+		return // already requested; main's drain is on its way
+	}
+	log.Printf("socket mode: SELF-RESTART — transport failing for %s (limit %s, down %s total) across %d consecutive connect failures; requesting process exit (orderly drain first) so the service supervisor restarts the process (spool replay + startup recovery + watermark backfill make this loss-free)",
 		failingFor.Round(time.Second), after, now.Sub(r.downSince()).Round(time.Second), r.failStreak.Load())
 	r.liveness.saveState()
 	r.exit(1)

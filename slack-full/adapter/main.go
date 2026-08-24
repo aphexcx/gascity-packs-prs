@@ -70,12 +70,14 @@
 //     transport has connected at least once
 //     and then stays dark this long across
 //     repeated connect failures, the adapter
-//     exits so the service supervisor
+//     runs its orderly shutdown (drain →
+//     spool → seal, exactly as on SIGTERM)
+//     and exits 1 so the service supervisor
 //     restarts it — clearing poisoned
 //     in-process state (DNS); the bounce is
-//     loss-free via startup recovery +
-//     watermark backfill (gp-bsk). "0"
-//     disables the self-restart.
+//     loss-free via the shutdown spool +
+//     startup recovery + watermark backfill
+//     (gp-bsk). "0" disables the self-restart.
 //
 //   - SLACK_LIVENESS_STALL_AFTER   Default "10m". With zero inbound events
 //     for this long, the liveness watchdog
@@ -1784,8 +1786,13 @@ func main() {
 	defer socketCancel()
 	socketDone := make(chan struct{})
 	var socketRunner *socketModeRunner
+	// selfRestart carries the exit code of a gp-bsk socket self-restart
+	// request into the shutdown select below; nil (never fires) when
+	// Socket Mode is disabled.
+	var selfRestart <-chan int
 	if socketModeEnabled(cfg) {
 		socketRunner = newSocketModeRunner(cfg, eventsHandler, interactionsHandler, cfg.inboundLiveness)
+		selfRestart = selfRestartRequests(socketRunner)
 		socketModeHealth.Store(socketRunner)
 		log.Printf("socket mode: enabled (policy=%s) — dialing Slack with the app-level token; Events API listener stays up for rollback/other apps", cfg.socketMode)
 		go func() {
@@ -1862,9 +1869,16 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	exitCode := 0
 	select {
 	case <-stop:
 		log.Println("shutting down (signal)")
+	case code := <-selfRestart:
+		// gp-bsk socket self-restart: the SAME orderly drain as a signal
+		// (admitted-but-undelivered inbounds reach gc or the spool), then
+		// a non-zero exit so the service supervisor restarts the process.
+		log.Printf("shutting down (socket self-restart) — orderly drain first, then exit %d for the service supervisor", code)
+		exitCode = code
 	case err := <-errCh:
 		if !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("listener error: %v", err)
@@ -1933,6 +1947,13 @@ func main() {
 	//    post-seal straggler degrades to the loud LOSS log instead of a
 	//    corrupt spool.
 	cfg.inboundSpool.seal()
+	if exitCode != 0 {
+		// Past the seal nothing else in this process can touch the spool
+		// or the liveness state; exit with the self-restart's code so the
+		// service supervisor restarts the adapter (gp-bsk).
+		log.Printf("shutdown: drain complete — exiting %d (socket self-restart; the service supervisor restarts the adapter)", exitCode)
+		os.Exit(exitCode)
+	}
 }
 
 // shutdownSocketStopTimeout bounds the wait for the Socket Mode runner
@@ -1945,6 +1966,44 @@ const (
 	shutdownSocketStopTimeout = 10 * time.Second
 	shutdownEventDrainTimeout = 20 * time.Second
 )
+
+// selfRestartRequests routes the Socket Mode runner's self-restart exit
+// hook (gp-bsk) through main's orderly shutdown instead of os.Exit.
+//
+// A bare os.Exit skips the gp-9e7 drain, and that is a loss path: the
+// inbound-liveness watermark advances at ADMISSION, so any message
+// sitting in the coalescer's buffers at exit is below the persisted
+// watermark with Slack's 200 long since sent — nothing ever redelivers
+// it. That is not a corner case for the self-restart specifically: the
+// liveness watchdog's probe ALARMS first (which escalates a down runner
+// into the aggressive reconnect whose prompt failure is what trips
+// maybeSelfRestart) and only then backfills the missed messages through
+// the events handler into those very buffers.
+//
+// The returned channel carries the requested exit code once; main's
+// shutdown select drains → spools → seals and then exits with it. The
+// hook never blocks the runner (it is called from inside the client
+// loop) and later calls are no-ops.
+//
+// Deliberately NO preemptive hard-exit timer (codex gate, gp-ps4): the
+// drain is finite by construction — listener Shutdown (5s), socket stop
+// (shutdownSocketStopTimeout), eventWG (shutdownEventDrainTimeout),
+// flushAll (maxFlushAllPasses passes, each gc POST on its own timeout),
+// seal (joins one in-flight write) — but its length scales with the
+// number of channels holding residue, so any fixed timer either fires
+// before the seal on a slow-but-healthy drain (dropping exactly the
+// admitted messages this exists to save) or is too long to mean
+// anything. The self-restart therefore takes the same bounded exit as
+// SIGTERM, and the service supervisor's own kill policy stays the
+// backstop of last resort, as it is for every shutdown.
+func selfRestartRequests(r *socketModeRunner) <-chan int {
+	requests := make(chan int, 1)
+	var once sync.Once
+	r.exit = func(code int) {
+		once.Do(func() { requests <- code }) // buffered; the single send can never block
+	}
+	return requests
+}
 
 // awaitWaitGroup waits for wg with a timeout; true when the group
 // settled, false on timeout (or trivially true on a nil group).

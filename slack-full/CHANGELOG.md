@@ -367,9 +367,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      rebuilds the client immediately. If the transport has connected at
      least once this process and then stays dark past
      `SLACK_SOCKET_SELF_RESTART_AFTER` (default 10m, 0 disables) across
-     repeated failures, the adapter exits so the service supervisor
-     restarts it — startup recovery + watermark backfill make the bounce
-     loss-free (proven in both incidents). Never-connected
+     repeated failures, the adapter runs its orderly shutdown (the
+     gp-9e7 drain: buffered inbounds reach gc or the durable spool —
+     never a bare `os.Exit`, which would strand anything the liveness
+     backfill had just admitted below the watermark) and exits 1 so
+     the service supervisor restarts it — spool replay + startup
+     recovery + watermark backfill make the bounce loss-free (proven in
+     both incidents). Never-connected
      misconfigurations (Socket Mode toggle off, bad app token) still
      only degrade health — no restart loop.
   3. *The inbound-liveness ALARM now escalates.* Its only consumer used
