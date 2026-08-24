@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )
 
@@ -449,6 +452,123 @@ func TestHealthzReportsTransportAndLivenessWhenWired(t *testing.T) {
 	}
 }
 
+// Advisory degraded-health headers (gp-rol): /healthz stays 200 — gc
+// must keep routing outbound /publish — but carries X-GC-Health:
+// degraded when the liveness watchdog has a confirmed stall or the
+// socket transport is down past its grace window, so `gc service list`
+// stops reporting ready while the event stream is dead.
+func TestHealthzAdvisoryDegradedHeaders(t *testing.T) {
+	get := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		handleHealthz(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		return w
+	}
+
+	// Unwired handler: 200, no advisory headers.
+	w := get()
+	if w.Code != http.StatusOK {
+		t.Fatalf("unwired healthz code = %d, want 200", w.Code)
+	}
+	if got := w.Header().Get("X-GC-Health"); got != "" {
+		t.Fatalf("unwired X-GC-Health = %q, want unset", got)
+	}
+
+	// Confirmed liveness stall → degraded, still 200.
+	l := newInboundLiveness(livenessTestConfig(t), nil)
+	l.mu.Lock()
+	l.stalledSince = time.Now().Add(-5 * time.Minute)
+	l.lastInboundAt = time.Now().Add(-30 * time.Minute)
+	l.mu.Unlock()
+	l.lastMissed.Store(7)
+	livenessHealth.Store(l)
+	t.Cleanup(func() { livenessHealth.Store(nil) })
+	w = get()
+	if w.Code != http.StatusOK {
+		t.Fatalf("stalled healthz code = %d, want 200 (advisory only)", w.Code)
+	}
+	if got := w.Header().Get("X-GC-Health"); got != "degraded" {
+		t.Fatalf("stalled X-GC-Health = %q, want degraded", got)
+	}
+	reason := w.Header().Get("X-GC-Health-Reason")
+	if !strings.Contains(reason, "inbound_liveness stalled") || !strings.Contains(reason, "missed=7") {
+		t.Fatalf("stalled reason = %q", reason)
+	}
+
+	// Socket down past its grace window → its reason joins the header.
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	r.startedAt = time.Now().Add(-10 * time.Minute)
+	socketModeHealth.Store(r)
+	t.Cleanup(func() { socketModeHealth.Store(nil) })
+	reason = get().Header().Get("X-GC-Health-Reason")
+	if !strings.Contains(reason, "inbound_liveness stalled") || !strings.Contains(reason, "socket_mode never connected") {
+		t.Fatalf("combined reason = %q", reason)
+	}
+
+	// Recovery on both fronts clears the headers.
+	l.mu.Lock()
+	l.stalledSince = time.Time{}
+	l.mu.Unlock()
+	r.connected.Store(true)
+	w = get()
+	if got := w.Header().Get("X-GC-Health"); got != "" {
+		t.Fatalf("recovered X-GC-Health = %q, want unset (reason=%q)", got, w.Header().Get("X-GC-Health-Reason"))
+	}
+}
+
+// headerSafe strips control characters (remote error text must not be
+// able to corrupt the health response) and bounds the value.
+func TestHeaderSafe(t *testing.T) {
+	if got := headerSafe("a\r\nb\x00c\x7fd", 512); got != "a  b c d" {
+		t.Fatalf("headerSafe = %q", got)
+	}
+	if got := headerSafe(strings.Repeat("x", 600), 512); len(got) != 512 {
+		t.Fatalf("headerSafe len = %d, want 512", len(got))
+	}
+}
+
+// degradedReason's grace window: transient disconnects (the normal
+// slack-go reconnect churn) report nothing; only sustained downtime —
+// measured from the LATER of runner start and last disconnect — trips
+// the advisory signal.
+func TestSocketDegradedReasonGraceWindow(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	now := time.Now()
+
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("fresh runner degradedReason = %q, want empty (grace)", got)
+	}
+	r.startedAt = now.Add(-3 * time.Minute)
+	if got := r.degradedReason(now); !strings.Contains(got, "never connected") {
+		t.Fatalf("never-connected degradedReason = %q, want never connected", got)
+	}
+	r.setLastErr("invalid_auth")
+	if got := r.degradedReason(now); !strings.Contains(got, "invalid_auth") {
+		t.Fatalf("degradedReason = %q, want last_error included", got)
+	}
+
+	r.connected.Store(true)
+	r.everConnected.Store(true)
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("connected degradedReason = %q, want empty", got)
+	}
+
+	r.startedAt = now.Add(-10 * time.Minute)
+	r.connected.Store(false)
+	r.lastDisconnectAt.Store(now.Add(-time.Minute).UnixNano())
+	if got := r.degradedReason(now); got != "" {
+		t.Fatalf("1m-disconnected degradedReason = %q, want empty (grace)", got)
+	}
+	r.lastDisconnectAt.Store(now.Add(-3 * time.Minute).UnixNano())
+	if got := r.degradedReason(now); !strings.Contains(got, "socket_mode disconnected for 3m0s") {
+		t.Fatalf("3m-disconnected degradedReason = %q", got)
+	}
+
+	var nilRunner *socketModeRunner
+	if got := nilRunner.degradedReason(now); got != "" {
+		t.Fatalf("nil runner degradedReason = %q, want empty", got)
+	}
+}
+
 // Real round-trip: a fake Slack serves apps.connections.open and a
 // WebSocket that sends hello + an events_api envelope; the runner (real
 // slack-go client) must forward the payload to the handler and write
@@ -534,6 +654,345 @@ func TestSocketModeWebSocketRoundTrip(t *testing.T) {
 	}
 	if h := r.healthzDetail(); !strings.Contains(h, "socket_mode=connected") || !strings.Contains(h, "socket_acked=1") {
 		t.Errorf("healthzDetail = %q", h)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("runner did not stop after cancel")
+	}
+}
+
+// gp-bsk: the outer reconnect ladder never exceeds the ceiling under
+// repeated failed cycles, resets on a connected cycle, and resets
+// (one-shot) when the liveness alarm has demanded aggressive reconnects.
+func TestSocketOuterBackoffCeilingAndResets(t *testing.T) {
+	if socketReconnectBackoffMax > 2*time.Minute {
+		t.Fatalf("socketReconnectBackoffMax = %s, want <= 2m (gp-bsk: hour-scale waits turned a DNS blip into a 10.5h outage)", socketReconnectBackoffMax)
+	}
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	b := socketReconnectBackoffMin
+	for i := 0; i < 20; i++ {
+		b = r.nextBackoff(b, false)
+		if b > socketReconnectBackoffMax {
+			t.Fatalf("iteration %d: backoff %s exceeds ceiling %s", i, b, socketReconnectBackoffMax)
+		}
+	}
+	if b != socketReconnectBackoffMax {
+		t.Fatalf("ladder converged to %s, want the %s ceiling", b, socketReconnectBackoffMax)
+	}
+	if got := r.nextBackoff(b, true); got != socketReconnectBackoffMin {
+		t.Fatalf("connected cycle backoff = %s, want floor %s", got, socketReconnectBackoffMin)
+	}
+	r.aggressive.Store(true)
+	if got := r.nextBackoff(socketReconnectBackoffMax, false); got != socketReconnectBackoffMin {
+		t.Fatalf("aggressive backoff = %s, want floor %s", got, socketReconnectBackoffMin)
+	}
+	if got := r.nextBackoff(socketReconnectBackoffMax, false); got != socketReconnectBackoffMax {
+		t.Fatalf("aggressive flag not one-shot: backoff = %s, want %s", got, socketReconnectBackoffMax)
+	}
+}
+
+// gp-bsk: a ConnectionError reporting an internal backoff above the
+// ceiling kills the client cycle (slack-go v0.29.0's internal Max is
+// broken — observed backoff=1h49m on 2026-08-23); a reasonable backoff
+// leaves the cycle alone.
+func TestSocketInternalBackoffOverCeilingKillsCycle(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+
+	cycleCtx, cancel := context.WithCancel(context.Background())
+	r.setCycleCancel(cancel)
+	r.handleClientEvent(context.Background(), &recordingAcker{}, socketmode.Event{
+		Type: socketmode.EventTypeConnectionError,
+		Data: &slack.ConnectionErrorEvent{Attempt: 5, Backoff: 30 * time.Second, ErrorObj: errors.New("dial tcp: i/o timeout")},
+	})
+	if cycleCtx.Err() != nil {
+		t.Fatal("30s internal backoff killed the cycle; want it left alone")
+	}
+
+	r.handleClientEvent(context.Background(), &recordingAcker{}, socketmode.Event{
+		Type: socketmode.EventTypeConnectionError,
+		Data: &slack.ConnectionErrorEvent{Attempt: 17, Backoff: 109 * time.Minute, ErrorObj: errors.New("dial tcp: i/o timeout")},
+	})
+	if cycleCtx.Err() == nil {
+		t.Fatalf("109m internal backoff (over the %s ceiling) did not kill the cycle", socketReconnectBackoffMax)
+	}
+	if got := r.failStreak.Load(); got != 2 {
+		t.Errorf("failStreak = %d, want 2", got)
+	}
+}
+
+// gp-bsk: consecutive DNS not-found failures flip the sticky
+// fresh-resolve mode (pure-Go resolver) and rebuild the client; an
+// interleaved non-DNS failure resets the streak; a Connected event
+// resets both streaks.
+func TestSocketDNSStreakTriggersFreshResolve(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	if res := r.newNetDialer().Resolver; res != nil {
+		t.Fatalf("fresh runner dials with resolver %v, want nil (process default)", res)
+	}
+
+	dnsErr := &net.DNSError{Err: "no such host", Name: "slack.com", IsNotFound: true}
+	if !isDNSNotFound(dnsErr) {
+		t.Fatal("typed *net.DNSError(IsNotFound) not classified as DNS not-found")
+	}
+	// slack-go can flatten the chain into text (apps.connections.open
+	// ok=false surfaces the raw string): the classifier must still trip.
+	if !isDNSNotFound(errors.New("connection failed: lookup slack.com: no such host")) {
+		t.Fatal("flattened no-such-host string not classified as DNS not-found")
+	}
+	if isDNSNotFound(errors.New("dial tcp: i/o timeout")) || isDNSNotFound(nil) {
+		t.Fatal("non-DNS error classified as DNS not-found")
+	}
+
+	// Two DNS failures then a non-DNS failure: streak resets, no flip.
+	r.noteConnectionError(dnsErr, 0)
+	r.noteConnectionError(dnsErr, 0)
+	r.noteConnectionError(errors.New("dial tcp: i/o timeout"), 0)
+	if r.freshResolve.Load() {
+		t.Fatal("fresh-resolve flipped after an interrupted DNS streak")
+	}
+
+	cycleCtx, cancel := context.WithCancel(context.Background())
+	r.setCycleCancel(cancel)
+	r.noteConnectionError(dnsErr, 0)
+	r.noteConnectionError(dnsErr, 0)
+	if r.freshResolve.Load() {
+		t.Fatal("fresh-resolve flipped before the streak threshold")
+	}
+	r.noteConnectionError(dnsErr, 0)
+	if !r.freshResolve.Load() {
+		t.Fatalf("fresh-resolve not flipped after %d consecutive DNS failures", socketDNSStreakForFreshResolve)
+	}
+	if cycleCtx.Err() == nil {
+		t.Fatal("cycle not killed on fresh-resolve flip (client must be rebuilt with the new resolver)")
+	}
+	// The flip must reach the wire: the net.Dialer both the HTTP
+	// transport and the WebSocket dialer are built from now carries the
+	// pure-Go resolver.
+	res := r.newNetDialer().Resolver
+	if res == nil || !res.PreferGo {
+		t.Fatalf("dialer resolver after flip = %+v, want PreferGo", res)
+	}
+
+	// A Connected event clears the streaks (and fresh-resolve stays
+	// sticky — the pure-Go resolver is a fine steady state).
+	r.handleClientEvent(context.Background(), &recordingAcker{}, socketmode.Event{Type: socketmode.EventTypeConnected})
+	if r.dnsStreak.Load() != 0 || r.failStreak.Load() != 0 {
+		t.Fatalf("streaks after Connected = dns %d fail %d, want 0 0", r.dnsStreak.Load(), r.failStreak.Load())
+	}
+	if !r.freshResolve.Load() {
+		t.Fatal("fresh-resolve did not stay sticky across a reconnect")
+	}
+}
+
+// gp-bsk: the self-restart fires only when the transport once worked
+// and the CURRENT failure streak has been running past the configured
+// window — never for a never-connected misconfiguration (which would
+// restart-loop), never keyed off the wall-clock disconnect timestamp
+// (a laptop that slept mid-outage carries an hours-old lastDisconnectAt
+// on wake; the streak-start time.Time keeps its monotonic reading, and
+// monotonic clocks pause across suspend, so only awake failing time
+// spends the budget).
+func TestSocketSelfRestartGating(t *testing.T) {
+	cfg := socketTestConfig(t, "http://127.0.0.1:0")
+	cfg.socketSelfRestartAfter = 10 * time.Minute
+	r := newSocketModeRunner(cfg, nil, nil, nil)
+	var exits atomic.Int32
+	r.exit = func(code int) { exits.Add(1) }
+	now := time.Now()
+	streakSince := func(d time.Duration) {
+		ts := now.Add(-d) // Add preserves the monotonic reading
+		r.failStreakStart.Store(&ts)
+	}
+	r.failStreak.Store(socketSelfRestartMinFailures)
+	streakSince(11 * time.Minute)
+
+	r.startedAt = now.Add(-2 * time.Hour)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("never-connected runner self-restarted (would restart-loop on a misconfig)")
+	}
+
+	r.everConnected.Store(true)
+	streakSince(5 * time.Minute)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart fired at 5m of failing, want only past the 10m window")
+	}
+
+	// The codex-gate scenario: an ancient disconnect timestamp (e.g.
+	// wall clock spanning a sleep) with a young failure streak must NOT
+	// fire — the gate keys off the streak start, not lastDisconnectAt.
+	r.lastDisconnectAt.Store(now.Add(-2 * time.Hour).UnixNano())
+	streakSince(time.Minute)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart keyed off the wall-clock disconnect time, want the failure-streak start")
+	}
+
+	// No streak-start recorded (e.g. streak counter carried over a
+	// Connected reset race): never fire.
+	r.failStreakStart.Store(nil)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart fired with no streak start recorded")
+	}
+
+	streakSince(11 * time.Minute)
+	r.failStreak.Store(1)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart fired below the failure-streak threshold")
+	}
+
+	r.failStreak.Store(socketSelfRestartMinFailures)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 1 {
+		t.Fatalf("exits = %d, want 1 (11m failing + streak + everConnected)", exits.Load())
+	}
+
+	// The fire-once latch (gp-ps4) would make the remaining gates
+	// vacuous — clear it so each one is exercised on its own merit.
+	r.restartRequested.Store(false)
+	r.connected.Store(true)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 1 {
+		t.Fatal("self-restart fired while connected")
+	}
+
+	r.connected.Store(false)
+	r.restartRequested.Store(false)
+	r.cfg.socketSelfRestartAfter = 0
+	r.maybeSelfRestart(now)
+	if exits.Load() != 1 {
+		t.Fatal("self-restart fired with the knob disabled (0)")
+	}
+}
+
+// gp-bsk: the liveness alarm flips a down socket runner into aggressive
+// reconnect — backoff floor, kick past the sleep, in-flight cycle
+// killed — and leaves a connected runner alone.
+func TestSocketInboundAlarmAggressiveReconnect(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	cycleCtx, cancel := context.WithCancel(context.Background())
+	r.setCycleCancel(cancel)
+
+	r.connected.Store(true)
+	r.onInboundAlarm()
+	if r.aggressive.Load() || len(r.kick) != 0 || cycleCtx.Err() != nil {
+		t.Fatal("alarm while connected must be a no-op (the stall is elsewhere)")
+	}
+
+	r.connected.Store(false)
+	r.onInboundAlarm()
+	if !r.aggressive.Load() {
+		t.Fatal("alarm did not arm the aggressive-backoff reset")
+	}
+	if len(r.kick) != 1 {
+		t.Fatal("alarm did not queue a kick to skip the backoff sleep")
+	}
+	if cycleCtx.Err() == nil {
+		t.Fatal("alarm did not kill the in-flight cycle")
+	}
+	var nilRunner *socketModeRunner
+	nilRunner.onInboundAlarm() // must not panic
+
+	// End-to-end: the watchdog's alarm() reaches the runner through the
+	// socketModeHealth singleton.
+	prev := socketModeHealth.Load()
+	socketModeHealth.Store(r)
+	t.Cleanup(func() { socketModeHealth.Store(prev) })
+	r.aggressive.Store(false)
+	l := newInboundLiveness(socketTestConfig(t, "http://127.0.0.1:0"), nil)
+	l.alarm("test", []missedMessage{{channel: "C1", msg: slackHistoryMessage{TS: "1.0"}}}, map[string]int{"C1": 1})
+	if !r.aggressive.Load() {
+		t.Fatal("liveness alarm did not reach the socket runner")
+	}
+}
+
+// gp-bsk: end-to-end recovery FLOW for the DNS-poison incident class,
+// against a fake Slack. apps.connections.open fails three times with
+// the exact error text the poisoned resolver produced on 8/22+8/23
+// ("no such host", surfaced through slack-go's flattening ok=false
+// path), which must flip fresh-resolve and rebuild the client; the
+// liveness alarm then skips the outer backoff (the escalation under
+// test — without it the reconnect waits out the 5s outer floor), and
+// the runner must be connected again well inside the backoff ceiling.
+// Deliberately hermetic: no real DNS lookup happens (the fake is a
+// loopback IP), so the resolver actually reaching the dialers is
+// pinned separately in TestSocketDNSStreakTriggersFreshResolve via
+// newNetDialer; bypassing a genuinely poisoned OS resolver is not
+// testable from inside the process.
+func TestSocketDNSPoisonRecoveryReconnectsWithinCeiling(t *testing.T) {
+	if os.Getenv("CI_NO_NET") != "" {
+		t.Skip("loopback websocket test disabled")
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	var wsURL atomic.Pointer[string]
+	var opens atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/apps.connections.open":
+			w.Header().Set("Content-Type", "application/json")
+			if opens.Add(1) <= 3 {
+				_, _ = io.WriteString(w, `{"ok":false,"error":"connection failed: lookup slack.com: no such host"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"ok":true,"url":"`+*wsURL.Load()+`"}`)
+		case "/ws":
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_ = conn.WriteJSON(map[string]any{"type": "hello", "num_connections": 1, "connection_info": map[string]any{"app_id": "A1"}})
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					return
+				}
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	u := "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws"
+	wsURL.Store(&u)
+
+	prev := slackAPIBase
+	slackAPIBase = srv.URL
+	t.Cleanup(func() { slackAPIBase = prev })
+
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	start := time.Now()
+	go func() { r.run(ctx); close(done) }()
+
+	await := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s (opens=%d)", what, opens.Load())
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	await("fresh-resolve flip after the DNS streak", func() bool { return r.freshResolve.Load() })
+	// The watchdog alarm escalation: skip the outer backoff sleep.
+	r.onInboundAlarm()
+	await("reconnect", func() bool { return r.connected.Load() })
+
+	if elapsed := time.Since(start); elapsed > socketReconnectBackoffMax {
+		t.Errorf("recovery took %s, want well inside the %s ceiling", elapsed, socketReconnectBackoffMax)
+	}
+	if got := opens.Load(); got < 4 {
+		t.Errorf("apps.connections.open calls = %d, want >= 4 (3 poisoned + 1 clean)", got)
+	}
+	if h := r.healthzDetail(); !strings.Contains(h, "socket_fresh_resolve=true") {
+		t.Errorf("healthzDetail = %q, want socket_fresh_resolve=true", h)
 	}
 	cancel()
 	select {

@@ -137,6 +137,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block anchor line exclude bot-tagged entries), so `reply-current` /
   `react` / `upload` never anchor on a reaction. Company rooms and
   per-agent DMs are out of scope v1.
+- **Inbound liveness now reaches the gc service health model** (gp-rol;
+  papercuts pc_5ede9badf7b1 / pc_fc584c0e47ba). During the 2026-08-19
+  outages `gc service list` reported `state=ready` for 26 minutes of dead
+  inbound. `/healthz` now stays 200 (so gc keeps routing outbound
+  `/publish`, the one path that kept working) but carries advisory
+  `X-GC-Health: degraded` + `X-GC-Health-Reason` headers whenever the
+  inbound-liveness watchdog has a confirmed stall or the Socket Mode
+  transport has been down for over 2 minutes (including never-connected
+  starts, e.g. a rejected `SLACK_APP_TOKEN`). A gc with the matching
+  proxy_process support (fork `integration`) renders that as
+  `State=degraded` on `gc service list` / the dashboard — the reason on
+  `gc service show slack` and the API — while `LocalState` stays
+  `ready`; older gc binaries ignore the headers.
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
   1. **Burst coalescing** — untargeted, non-bot-mentioned channel
      messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,
@@ -331,6 +344,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   @-mentions of the adapter's own bot user — see Fixed below.
 
 ### Fixed
+
+- **A transient network blip can no longer become an hours-long inbound
+  outage** (gp-bsk; incidents 2026-08-22 12:59 CT and 2026-08-23
+  13:54Z–19:12Z, the latter 10.5h of dead inbound). Three layers, all in
+  the Socket Mode runner:
+  1. *Reconnect backoff is now hard-capped at 2 minutes.* slack-go
+     v0.29.0's internal reconnect ladder is effectively unbounded (its
+     `Max` is applied only on integer overflow), and the 8/23 outage sat
+     in observed waits of 27m/55m/1h49m after the network had already
+     recovered. The runner now kills the client cycle the moment the
+     reported internal backoff exceeds the ceiling and lets its own
+     outer ladder (floor 5s, cap 2m, was 5m) own the pacing —
+     `apps.connections.open` is cheap and every reconnect is loss-free
+     via the watermark backfill, so hour-scale patience is never
+     correct.
+  2. *DNS self-heal.* Three consecutive `no such host` connect failures
+     (the 8/22 poisoned-resolver signature) stop trusting the in-process
+     resolver: the runner flips — stickily — to a pure-Go resolver that
+     re-reads `/etc/resolv.conf` (wired through both the
+     `apps.connections.open` HTTP client and the WebSocket dialer) and
+     rebuilds the client immediately. If the transport has connected at
+     least once this process and then stays dark past
+     `SLACK_SOCKET_SELF_RESTART_AFTER` (default 10m, 0 disables) across
+     repeated failures, the adapter runs its orderly shutdown (the
+     gp-9e7 drain: buffered inbounds reach gc or the durable spool —
+     never a bare `os.Exit`, which would strand anything the liveness
+     backfill had just admitted below the watermark) and exits 1 so
+     the service supervisor restarts it — spool replay + startup
+     recovery + watermark backfill make the bounce loss-free (proven in
+     both incidents). Never-connected
+     misconfigurations (Socket Mode toggle off, bad app token) still
+     only degrade health — no restart loop.
+  3. *The inbound-liveness ALARM now escalates.* Its only consumer used
+     to be the local log (and the 8/23 alarm at 18:47Z fired correctly
+     into the void); with the socket down it now flips the runner into
+     aggressive reconnect — outer backoff reset to the floor, any
+     backoff sleep (internal or outer) abandoned — since the alarm is
+     positive evidence messages are being missed. `/healthz` grows
+     `socket_fresh_resolve=true` once the DNS self-heal has tripped.
 
 - Pack pin bumps can no longer strand the adapter service (gp-d7l):
   the `[[service]]` command is now `adapter/run.sh` (checked in)

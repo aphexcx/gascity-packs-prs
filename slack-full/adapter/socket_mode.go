@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 )
@@ -98,16 +101,50 @@ const socketAckBudget = 5 * time.Second
 // handler slower than this is eating into (or past) Slack's 3s budget.
 const socketSlowHandlerWarn = 2 * time.Second
 
-// socketReconnectBackoffMin/Max bound the OUTER reconnect loop — the
-// one that recreates the slack-go client after RunContext returns
-// (which it does only on fatal auth errors or after its own retries
-// give up). Auth failures are logged loudly each cycle but still
-// retried: a rotated token shows up in the env on the next restart, and
-// an adapter that stops trying is exactly the silent failure this
-// transport exists to prevent.
+// socketReconnectBackoffMin/Max bound EVERY wait between reconnect
+// attempts (gp-bsk). Two ladders exist:
+//
+//   - slack-go's internal connect loop inside RunContext. Its backoff
+//     struct declares Max: 5m, but in v0.29.0 that cap is applied only
+//     when the bit-shift overflows — the normal path grows 100ms·2^n
+//     UNBOUNDED. Observed 2026-08-23: attempt=17 backoff=1h49m, turning
+//     a transient DNS blip into a 10.5-hour inbound outage. The runner
+//     therefore watches each ConnectionErrorEvent and kills the cycle
+//     (killCycle) the moment the reported wait exceeds
+//     socketReconnectBackoffMax, handing pacing back to the outer
+//     ladder.
+//   - the OUTER loop in run(), which recreates the client after
+//     RunContext returns and is capped here.
+//
+// apps.connections.open is cheap and every reconnect is loss-free via
+// the watermark backfill, so hour-scale patience is never correct: the
+// ceiling keeps the worst-case retry cadence to ~2 minutes. Auth
+// failures are logged loudly each cycle but still retried: a rotated
+// token shows up in the env on the next restart, and an adapter that
+// stops trying is exactly the silent failure this transport exists to
+// prevent.
 const (
 	socketReconnectBackoffMin = 5 * time.Second
-	socketReconnectBackoffMax = 5 * time.Minute
+	socketReconnectBackoffMax = 2 * time.Minute
+)
+
+// DNS self-heal thresholds (gp-bsk). On 2026-08-22 a LAN subnet change
+// poisoned the process's resolver state and every apps.connections.open
+// failed with "no such host" until a restart. After
+// socketDNSStreakForFreshResolve consecutive DNS not-found failures the
+// runner stops trusting the in-process resolver: it flips (stickily) to
+// a pure-Go resolver that re-reads /etc/resolv.conf and rebuilds the
+// client. Should the transport STILL stay dark for
+// cfg.socketSelfRestartAfter — across at least
+// socketSelfRestartMinFailures attempts, and only after having
+// connected at least once this process — the adapter requests its own
+// exit: main runs the orderly shutdown (drain → spool → seal, as on
+// SIGTERM) and exits 1 so the service supervisor restarts it; spool
+// replay + startup recovery + watermark backfill make that loss-free
+// (proven in both incidents).
+const (
+	socketDNSStreakForFreshResolve = 3
+	socketSelfRestartMinFailures   = 5
 )
 
 // socketAcker is the slice of the slack-go client the runner needs to
@@ -116,12 +153,20 @@ type socketAcker interface {
 	AckCtx(ctx context.Context, envelopeID string, payload any) error
 }
 
+// socketDegradedAfter is the grace window before a down socket transport
+// is reported as advisory-degraded on /healthz (gp-rol): slack-go's own
+// reconnects resolve in seconds and the outer ladder caps at
+// socketReconnectBackoffMax, so minutes of continuous downtime mean
+// reconnection is failing, not in progress.
+const socketDegradedAfter = 2 * time.Minute
+
 // socketModeRunner owns one app's Socket Mode connection and its status.
 type socketModeRunner struct {
 	cfg          config
 	events       http.Handler
 	interactions http.Handler
 	liveness     *inboundLiveness
+	startedAt    time.Time
 
 	// newClient builds the slack-go socket client; tests swap it.
 	newClient func() *socketmode.Client
@@ -140,6 +185,28 @@ type socketModeRunner struct {
 	envelopesBad     atomic.Uint64 // undecodable / unsupported frames
 	lastErr          atomic.Pointer[string]
 
+	// Reconnect discipline (gp-bsk).
+	kick         chan struct{} // wakes run() out of its backoff sleep
+	aggressive   atomic.Bool   // next cycle starts at the backoff floor
+	freshResolve atomic.Bool   // sticky: dial with the pure-Go resolver
+	dnsStreak    atomic.Int32  // consecutive DNS not-found connect errors
+	failStreak   atomic.Int32  // connect errors since the last Connected
+	// failStreakStart is when the current failure streak began, as a
+	// monotonic time.Time (never round-tripped through unix nanos): the
+	// self-restart window is measured against it so only awake,
+	// actively-failing process time counts — monotonic clocks pause
+	// across suspend, so a laptop sleep or wall-clock jump cannot spend
+	// the dark-window budget. Nil while no streak is running.
+	failStreakStart atomic.Pointer[time.Time]
+	// exit requests the process exit for the self-restart. main wires
+	// it to its orderly shutdown (selfRestartRequests) so buffered
+	// inbounds drain to gc or the spool first; the os.Exit default only
+	// stands for a runner main never wired. Tests substitute a recorder.
+	exit             func(int)
+	restartRequested atomic.Bool // exit already called; log/request once
+	cancelMu         sync.Mutex
+	cycleCancel      context.CancelFunc // cancels the in-flight client cycle
+
 	// inflight tracks envelope goroutines so shutdown can wait briefly.
 	inflight sync.WaitGroup
 }
@@ -155,16 +222,70 @@ func newSocketModeRunner(cfg config, events, interactions http.Handler, liveness
 		events:       events,
 		interactions: interactions,
 		liveness:     liveness,
+		startedAt:    time.Now(),
+		kick:         make(chan struct{}, 1),
+		exit:         os.Exit,
 	}
 	r.newClient = func() *socketmode.Client {
+		httpClient, wsDialer := r.newDialers()
 		api := slack.New(cfg.slackBotToken,
 			slack.OptionAppLevelToken(cfg.slackAppToken),
 			slack.OptionAPIURL(strings.TrimRight(slackAPIBase, "/")+"/"),
-			slack.OptionHTTPClient(&http.Client{Timeout: 30 * time.Second}),
+			slack.OptionHTTPClient(httpClient),
 		)
-		return socketmode.New(api, socketmode.OptionLog(log.Default()))
+		return socketmode.New(api, socketmode.OptionLog(log.Default()), socketmode.OptionDialer(wsDialer))
 	}
 	return r
+}
+
+// netResolver is the resolver clients dial with: nil (the process
+// default) normally, the pure-Go resolver once the DNS self-heal has
+// tripped — it bypasses whatever the default resolver has cached and
+// re-reads /etc/resolv.conf, which is what actually recovers from the
+// 8/22-style poisoned-resolver state without a process restart.
+func (r *socketModeRunner) netResolver() *net.Resolver {
+	if r.freshResolve.Load() {
+		return &net.Resolver{PreferGo: true}
+	}
+	return nil
+}
+
+// newNetDialer builds the one net.Dialer a client cycle dials through —
+// the single point where the DNS self-heal's resolver choice takes
+// effect, for every lookup the transport performs.
+func (r *socketModeRunner) newNetDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Resolver:  r.netResolver(),
+	}
+}
+
+// newDialers builds the HTTP client (apps.connections.open) and the
+// WebSocket dialer for one client cycle, both routed through the same
+// newNetDialer so the DNS self-heal covers every lookup the transport
+// performs. The WebSocket HandshakeTimeout and WriteBufferSize mirror
+// slack-go's own dialer: its 32KiB write buffer is load-bearing (Slack
+// silently drops continuation frames, so acks above gorilla's 4KiB
+// default would vanish).
+func (r *socketModeRunner) newDialers() (*http.Client, *websocket.Dialer) {
+	netDialer := r.newNetDialer()
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           netDialer.DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
+	wsDialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 45 * time.Second,
+		WriteBufferSize:  32 * 1024,
+		NetDialContext:   netDialer.DialContext,
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}, wsDialer
 }
 
 // run blocks until ctx is done, keeping a Socket Mode connection alive
@@ -182,28 +303,29 @@ func (r *socketModeRunner) run(ctx context.Context) {
 		connsBefore := r.connectCount.Load()
 		client := r.newClient()
 		runCtx, cancelRun := context.WithCancel(ctx)
+		r.setCycleCancel(cancelRun)
 		done := make(chan error, 1)
 		go func() { done <- client.RunContext(runCtx) }()
 		err := r.consume(runCtx, client, done)
+		r.setCycleCancel(nil)
 		cancelRun()
-		r.connected.Store(false)
+		if r.connected.Load() {
+			// The Connecting event stamps ordinary reconnects; this path
+			// covers a client loop that ends while still connected, so
+			// degradedReason measures the outage from now, not from an
+			// older disconnect. Timestamp BEFORE flipping connected:
+			// state transitions run on this goroutine only, but health
+			// probes read concurrently and must never see
+			// connected=false with a stale disconnect time (it would
+			// skip the grace window).
+			r.lastDisconnectAt.Store(time.Now().UnixNano())
+			r.connected.Store(false)
+		}
 		if ctx.Err() != nil {
 			r.inflight.Wait()
 			return
 		}
-		if r.connectCount.Load() > connsBefore {
-			// This cycle achieved a connection, so the failure is
-			// fresh — reset the ladder for a quick recovery.
-			backoff = socketReconnectBackoffMin
-		} else {
-			// The whole cycle failed to connect (RunContext already
-			// exhausted its own retries — typically a fatal auth
-			// verdict). Keep retrying — a rotated token appears on
-			// restart, and giving up is the silent failure this
-			// transport exists to prevent — but back off so a revoked
-			// token doesn't hammer apps.connections.open.
-			backoff = min(backoff*2, socketReconnectBackoffMax)
-		}
+		backoff = r.nextBackoff(backoff, r.connectCount.Load() > connsBefore)
 		msg := "socket mode: client loop ended"
 		if err != nil {
 			msg = fmt.Sprintf("socket mode: client loop ended: %v", err)
@@ -215,8 +337,171 @@ func (r *socketModeRunner) run(ctx context.Context) {
 			r.inflight.Wait()
 			return
 		case <-time.After(backoff):
+		case <-r.kick:
+			// Aggressive reconnect (liveness alarm): skip the wait.
 		}
 	}
+}
+
+// nextBackoff advances the outer ladder after one client cycle. Back to
+// the floor when the cycle achieved a connection (the failure is fresh)
+// or when the liveness alarm demanded aggressive reconnects (positive
+// evidence messages are being missed — gp-bsk); otherwise doubled and
+// capped: a whole cycle that never connected means RunContext exhausted
+// its own retries (typically a fatal auth verdict), and we keep
+// retrying — a rotated token appears on restart, and giving up is the
+// silent failure this transport exists to prevent — but back off so a
+// revoked token doesn't hammer apps.connections.open.
+func (r *socketModeRunner) nextBackoff(prev time.Duration, cycleConnected bool) time.Duration {
+	if r.aggressive.Swap(false) || cycleConnected {
+		return socketReconnectBackoffMin
+	}
+	return min(prev*2, socketReconnectBackoffMax)
+}
+
+func (r *socketModeRunner) setCycleCancel(cancel context.CancelFunc) {
+	r.cancelMu.Lock()
+	r.cycleCancel = cancel
+	r.cancelMu.Unlock()
+}
+
+// killCycle cancels the in-flight client cycle, forcing RunContext to
+// return so run() rebuilds the client — the only way to interrupt
+// slack-go's internal retry loop once it is parked in a long backoff
+// sleep. No-op when no cycle is live.
+func (r *socketModeRunner) killCycle() {
+	r.cancelMu.Lock()
+	cancel := r.cycleCancel
+	r.cancelMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// onInboundAlarm is the liveness watchdog's escalation hook (gp-bsk):
+// an alarm is positive evidence that messages are sitting in channel
+// history undelivered, so a patient backoff is exactly wrong. If the
+// socket is down, reset the outer ladder to the floor, abandon any
+// backoff sleep in progress, and kill the in-flight cycle (which may be
+// parked in slack-go's internal ladder — 2026-08-23 it was 1h49m into
+// one when the alarm fired, and the alarm's log line was the only
+// consumer). A connected socket means the stall is elsewhere (event
+// subscriptions, channel membership) and a reconnect would not help.
+// Nil-safe.
+func (r *socketModeRunner) onInboundAlarm() {
+	if r == nil || r.connected.Load() {
+		return
+	}
+	log.Printf("socket mode: inbound-liveness alarm while disconnected — aggressive reconnect (backoff reset to %s)", socketReconnectBackoffMin)
+	r.aggressive.Store(true)
+	select {
+	case r.kick <- struct{}{}:
+	default:
+	}
+	r.killCycle()
+}
+
+// noteConnectionError applies the gp-bsk reconnect discipline to one
+// connect failure reported by slack-go's internal retry loop:
+//
+//  1. Backoff cap — v0.29.0's internal ladder is effectively unbounded
+//     (its Max applies only on overflow), so once the reported wait
+//     passes socketReconnectBackoffMax the cycle is killed and the
+//     capped outer ladder takes over.
+//  2. DNS self-heal — socketDNSStreakForFreshResolve consecutive
+//     not-found failures flip the runner (stickily) to the pure-Go
+//     resolver and rebuild the client immediately.
+//  3. Self-restart — a transport that once worked but has stayed dark
+//     past cfg.socketSelfRestartAfter requests the process exit (via
+//     main's orderly drain); the service supervisor restarts it and
+//     spool replay + watermark backfill make the bounce loss-free.
+func (r *socketModeRunner) noteConnectionError(err error, reportedBackoff time.Duration) {
+	if r.failStreak.Add(1) == 1 {
+		now := time.Now() // monotonic reading — see failStreakStart
+		r.failStreakStart.Store(&now)
+	}
+	if isDNSNotFound(err) {
+		if streak := r.dnsStreak.Add(1); int(streak) >= socketDNSStreakForFreshResolve && !r.freshResolve.Swap(true) {
+			log.Printf("socket mode: %d consecutive DNS not-found failures — in-process resolver looks poisoned; switching to the pure-Go resolver and rebuilding the client", streak)
+			r.killCycle()
+		}
+	} else {
+		r.dnsStreak.Store(0)
+	}
+	if reportedBackoff > socketReconnectBackoffMax {
+		log.Printf("socket mode: internal reconnect backoff %s exceeds the %s ceiling — restarting the client loop instead of waiting it out", reportedBackoff, socketReconnectBackoffMax)
+		r.killCycle()
+	}
+	r.maybeSelfRestart(time.Now())
+}
+
+// isDNSNotFound reports whether err is a DNS name-resolution failure
+// ("lookup slack.com: no such host"). The typed check covers errors
+// that keep their chain; the string check covers slack-go paths that
+// flatten the error into text.
+func isDNSNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return dnsErr.IsNotFound
+	}
+	return strings.Contains(err.Error(), "no such host")
+}
+
+// maybeSelfRestart requests the process exit when the socket transport
+// has been failing continuously past cfg.socketSelfRestartAfter despite having
+// once been connected — the 8/22+8/23 incident class where in-process
+// state was poisoned and only a restart recovered. Gated on
+// everConnected so a never-connecting misconfiguration (Socket Mode
+// toggle off, bad app token) degrades health but does not restart-loop
+// the adapter. The dark window is measured from the start of the
+// current failure streak with MONOTONIC time arithmetic, so a laptop
+// sleep or wall-clock jump cannot spend the budget (monotonic clocks
+// pause across suspend) — only ≥socketSelfRestartAfter of awake,
+// actively-failing time fires. The exit is loss-free: r.exit hands the
+// request to main's orderly shutdown (buffered inbounds drain to gc or
+// the durable spool — bare os.Exit would strand them below the
+// admission-time watermark), the service supervisor restarts the
+// adapter, and spool replay + startup recovery + watermark backfill
+// replay anything missed — proven in both incidents. Fires once.
+func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
+	after := r.cfg.socketSelfRestartAfter
+	if after <= 0 || r.connected.Load() || !r.everConnected.Load() {
+		return
+	}
+	if int(r.failStreak.Load()) < socketSelfRestartMinFailures {
+		return
+	}
+	start := r.failStreakStart.Load()
+	if start == nil {
+		return
+	}
+	failingFor := now.Sub(*start) // monotonic when both carry readings
+	if failingFor < after {
+		return
+	}
+	if r.restartRequested.Swap(true) {
+		return // already requested; main's drain is on its way
+	}
+	log.Printf("socket mode: SELF-RESTART — transport failing for %s (limit %s, down %s total) across %d consecutive connect failures; requesting process exit (orderly drain first) so the service supervisor restarts the process (spool replay + startup recovery + watermark backfill make this loss-free)",
+		failingFor.Round(time.Second), after, now.Sub(r.downSince()).Round(time.Second), r.failStreak.Load())
+	r.liveness.saveState()
+	r.exit(1)
+}
+
+// downSince is the start of the current disconnected period: the last
+// disconnect timestamp, or process start if the transport has not yet
+// connected.
+func (r *socketModeRunner) downSince() time.Time {
+	since := r.startedAt
+	if ts := r.lastDisconnectAt.Load(); ts > 0 {
+		if t := time.Unix(0, ts); t.After(since) {
+			since = t
+		}
+	}
+	return since
 }
 
 // consume drains client.Events until the run goroutine reports (via
@@ -241,8 +526,10 @@ func (r *socketModeRunner) consume(ctx context.Context, client *socketmode.Clien
 func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAcker, evt socketmode.Event) {
 	switch evt.Type {
 	case socketmode.EventTypeConnecting:
-		if r.connected.Swap(false) {
+		if r.connected.Load() {
+			// Timestamp before flipping: see the run() disconnect path.
 			r.lastDisconnectAt.Store(time.Now().UnixNano())
+			r.connected.Store(false)
 			log.Printf("socket mode: connection lost — reconnecting")
 		}
 		if ce, ok := evt.Data.(*slack.ConnectingEvent); ok {
@@ -255,8 +542,10 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 		if ce, ok := evt.Data.(*slack.ConnectionErrorEvent); ok {
 			r.setLastErr(ce.Error())
 			log.Printf("socket mode: connection error (attempt=%d backoff=%s): %v", ce.Attempt, ce.Backoff, ce.ErrorObj)
+			r.noteConnectionError(ce.ErrorObj, ce.Backoff)
 		} else {
 			log.Printf("socket mode: connection error")
+			r.noteConnectionError(nil, 0)
 		}
 	case socketmode.EventTypeInvalidAuth:
 		r.connectErrors.Add(1)
@@ -266,6 +555,9 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 		n := r.connectCount.Add(1)
 		r.connected.Store(true)
 		r.everConnected.Store(true)
+		r.dnsStreak.Store(0)
+		r.failStreak.Store(0)
+		r.failStreakStart.Store(nil)
 		r.lastConnectedAt.Store(time.Now().UnixNano())
 		reconnect := n > 1
 		log.Printf("socket mode: connected (connection=%d reconnect=%v)", n, reconnect)
@@ -284,8 +576,9 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 	case socketmode.EventTypeDisconnect:
 		// slack-go consumes Slack's `disconnect` envelope internally
 		// and reconnects; surfaced here only if that ever changes.
-		r.connected.Store(false)
+		// Timestamp before flipping: see the run() disconnect path.
 		r.lastDisconnectAt.Store(time.Now().UnixNano())
+		r.connected.Store(false)
 		log.Printf("socket mode: disconnect requested by Slack")
 	case socketmode.EventTypeIncomingError:
 		if e, ok := evt.Data.(error); ok {
@@ -547,6 +840,34 @@ func (r *socketModeRunner) setLastErr(s string) {
 	r.lastErr.Store(&s)
 }
 
+// degradedReason reports the advisory service-health reason when the
+// socket transport has been down past socketDegradedAfter, "" otherwise
+// (gp-rol). Read by handleHealthz for the X-GC-Health header: gc keeps
+// routing (outbound is fine) but flips `gc service list` to degraded.
+// Nil receiver (transport not wired) reports nothing — the liveness
+// watchdog is then the only inbound signal. Note a runner configured
+// with SLACK_APP_TOKEN while the Slack app's Socket Mode toggle is off
+// never connects, and correctly reports degraded: either the toggle or
+// SLACK_SOCKET_MODE=off should change.
+func (r *socketModeRunner) degradedReason(now time.Time) string {
+	if r == nil || r.connected.Load() {
+		return ""
+	}
+	down := now.Sub(r.downSince())
+	if down < socketDegradedAfter {
+		return ""
+	}
+	state := "disconnected"
+	if !r.everConnected.Load() {
+		state = "never connected"
+	}
+	reason := fmt.Sprintf("socket_mode %s for %s", state, down.Round(time.Second))
+	if e := r.lastErr.Load(); e != nil && *e != "" {
+		reason += " (last_error=" + *e + ")"
+	}
+	return reason
+}
+
 // healthzDetail renders the socket transport's status lines for
 // /healthz. Nil receiver (transport not wired) reports disabled.
 func (r *socketModeRunner) healthzDetail() string {
@@ -562,6 +883,9 @@ func (r *socketModeRunner) healthzDetail() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "socket_mode=%s socket_connections=%d socket_connect_errors=%d socket_acked=%d socket_unacked=%d socket_bad=%d",
 		state, r.connectCount.Load(), r.connectErrors.Load(), r.envelopesAcked.Load(), r.envelopesUnacked.Load(), r.envelopesBad.Load())
+	if r.freshResolve.Load() {
+		b.WriteString(" socket_fresh_resolve=true")
+	}
 	if ts := r.lastConnectedAt.Load(); ts > 0 {
 		fmt.Fprintf(&b, " socket_last_connected=%s", time.Unix(0, ts).UTC().Format(time.RFC3339))
 	}

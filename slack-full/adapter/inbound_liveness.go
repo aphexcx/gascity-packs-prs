@@ -686,6 +686,11 @@ func (l *inboundLiveness) alarm(reason string, missed []missedMessage, byChannel
 	oldest, newest := missed[0].msg.TS, missed[len(missed)-1].msg.TS
 	log.Printf("INBOUND LIVENESS ALARM: no live inbound for %s but %d new human message(s) in channel history (%s) oldest_ts=%s newest_ts=%s — inbound transport is NOT delivering (%s)",
 		idle.Round(time.Second), len(missed), summary, oldest, newest, reason)
+	// Escalation (gp-bsk): the alarm is positive evidence the transport
+	// is not delivering — flip a down socket runner into aggressive
+	// reconnect (backoff floor, abandon any backoff sleep) instead of
+	// letting it wait out a multi-hour ladder. Nil-safe on both ends.
+	socketModeHealth.Load().onInboundAlarm()
 	if shouldPost {
 		text := fmt.Sprintf(":rotating_light: gc-slack-adapter INBOUND LIVENESS ALARM — no live inbound event for %s, but %d new human message(s) are in channel history (%s). The inbound transport is not delivering. %s",
 			idle.Round(time.Second), len(missed), summary, l.transportHint())
@@ -928,6 +933,31 @@ func (l *inboundLiveness) saveState() {
 	if err := writeFile0600(l.statePath, data); err != nil {
 		log.Printf("inbound liveness: write state %s: %v", l.statePath, err)
 	}
+}
+
+// degradedReason reports the advisory service-health reason while a
+// confirmed inbound stall is active, "" otherwise (gp-rol). Read by
+// handleHealthz for the X-GC-Health header so `gc service list` shows
+// the slack service as degraded — the exact signal the 2026-08-19
+// outage lacked (state=ready for 26 minutes of dead inbound) — while
+// gc keeps routing outbound /publish traffic.
+func (l *inboundLiveness) degradedReason() string {
+	if l == nil {
+		return ""
+	}
+	l.mu.Lock()
+	stalled := l.stalledSince
+	last := l.lastInboundAt
+	l.mu.Unlock()
+	if stalled.IsZero() {
+		return ""
+	}
+	reason := fmt.Sprintf("inbound_liveness stalled since %s (missed=%d)",
+		stalled.UTC().Format(time.RFC3339), l.lastMissed.Load())
+	if !last.IsZero() {
+		reason += " last_inbound=" + last.UTC().Format(time.RFC3339)
+	}
+	return reason
 }
 
 // healthzDetail renders the liveness lines for /healthz. Nil receiver

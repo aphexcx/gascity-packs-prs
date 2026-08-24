@@ -5552,3 +5552,64 @@ func TestAliasDispatchDrainFailureSpoolsAddressedLeg(t *testing.T) {
 		t.Fatalf("a non-drain alias failure spooled %d entries, want 0 (redelivery owns the retry)", len(entries))
 	}
 }
+
+// gp-bsk × gp-9e7: a socket self-restart must ride main's orderly
+// shutdown (drain → spool → seal → exit code), never a bare os.Exit —
+// the liveness backfill admits into the coalescer right before the
+// alarm escalation that trips the restart, and admitted items below the
+// watermark have no other recovery path. The hook hands main the exit
+// code exactly once and never blocks the runner's client loop. (The
+// shutdown sequence itself lives inline in main() and is not unit-
+// exercised here — same standing as the SIGTERM path it shares.)
+func TestSelfRestartRequestsRoutesThroughOrderlyShutdown(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	requests := selfRestartRequests(r)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.exit(1)
+		r.exit(1) // repeat requests (later connect failures) are no-ops
+		r.exit(1)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("self-restart hook blocked the runner (it is called from inside the socket client loop)")
+	}
+	select {
+	case code := <-requests:
+		if code != 1 {
+			t.Fatalf("requested exit code = %d, want 1", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no self-restart request reached main's shutdown select")
+	}
+	select {
+	case code := <-requests:
+		t.Fatalf("duplicate self-restart request %d — main would drain twice", code)
+	default:
+	}
+}
+
+// gp-bsk: maybeSelfRestart fires its exit request once per process —
+// every later connect failure past the window must not re-request (or
+// re-log) while main's drain is already under way.
+func TestSocketSelfRestartRequestsOnce(t *testing.T) {
+	cfg := socketTestConfig(t, "http://127.0.0.1:0")
+	cfg.socketSelfRestartAfter = 10 * time.Minute
+	r := newSocketModeRunner(cfg, nil, nil, nil)
+	var exits atomic.Int32
+	r.exit = func(code int) { exits.Add(1) }
+	now := time.Now()
+	r.everConnected.Store(true)
+	r.failStreak.Store(socketSelfRestartMinFailures)
+	ts := now.Add(-11 * time.Minute)
+	r.failStreakStart.Store(&ts)
+	for i := 0; i < 3; i++ {
+		r.maybeSelfRestart(now.Add(time.Duration(i) * time.Minute))
+	}
+	if exits.Load() != 1 {
+		t.Fatalf("exit requests = %d, want exactly 1 across repeated failures past the window", exits.Load())
+	}
+}

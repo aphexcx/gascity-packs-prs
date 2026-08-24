@@ -302,6 +302,23 @@ backfilled message is dropped. `/healthz` carries both surfaces:
 connection/ack counters, and `inbound_liveness=ok|stalled|watchdog_off`
 with probe/missed/backfill counters.
 
+**Service-health integration** (gp-rol): both signals also reach the gc
+service health model. `/healthz` stays 200 — a non-2xx would make gc
+stop routing `/svc/slack/*`, killing the outbound `/publish` path that
+keeps working (and carries the alarm) during an inbound-only outage —
+but the response carries advisory `X-GC-Health: degraded` +
+`X-GC-Health-Reason` headers whenever the watchdog has a confirmed
+stall or the socket transport has been down for over two minutes
+(including a never-connected start, e.g. a rejected `SLACK_APP_TOKEN`,
+or the app's Socket Mode toggle off while `SLACK_APP_TOKEN` is set). A
+gc with proxy_process advisory-health support renders that as
+`State=degraded` on `gc service list` and the dashboard (the reason on
+`gc service show slack`), while `LocalState` stays `ready` and traffic
+keeps flowing;
+older gc binaries ignore the headers. `state=ready` therefore now means
+the inbound stream is actually believed live, not merely that the
+process answers health checks.
+
 ## Install
 
 ```toml
