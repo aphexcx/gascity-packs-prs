@@ -728,8 +728,8 @@ func TestSocketInternalBackoffOverCeilingKillsCycle(t *testing.T) {
 // resets both streaks.
 func TestSocketDNSStreakTriggersFreshResolve(t *testing.T) {
 	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
-	if res := r.netResolver(); res != nil {
-		t.Fatalf("fresh runner netResolver = %v, want nil (process default)", res)
+	if res := r.newNetDialer().Resolver; res != nil {
+		t.Fatalf("fresh runner dials with resolver %v, want nil (process default)", res)
 	}
 
 	dnsErr := &net.DNSError{Err: "no such host", Name: "slack.com", IsNotFound: true}
@@ -767,9 +767,12 @@ func TestSocketDNSStreakTriggersFreshResolve(t *testing.T) {
 	if cycleCtx.Err() == nil {
 		t.Fatal("cycle not killed on fresh-resolve flip (client must be rebuilt with the new resolver)")
 	}
-	res := r.netResolver()
+	// The flip must reach the wire: the net.Dialer both the HTTP
+	// transport and the WebSocket dialer are built from now carries the
+	// pure-Go resolver.
+	res := r.newNetDialer().Resolver
 	if res == nil || !res.PreferGo {
-		t.Fatalf("netResolver after flip = %+v, want PreferGo", res)
+		t.Fatalf("dialer resolver after flip = %+v, want PreferGo", res)
 	}
 
 	// A Connected event clears the streaks (and fresh-resolve stays
@@ -783,10 +786,14 @@ func TestSocketDNSStreakTriggersFreshResolve(t *testing.T) {
 	}
 }
 
-// gp-bsk: the self-restart fires only when the transport once worked,
-// is currently down past the configured window, and has a real failure
-// streak — never for a never-connected misconfiguration (which would
-// restart-loop) or a mere wall-clock gap (laptop asleep, no attempts).
+// gp-bsk: the self-restart fires only when the transport once worked
+// and the CURRENT failure streak has been running past the configured
+// window — never for a never-connected misconfiguration (which would
+// restart-loop), never keyed off the wall-clock disconnect timestamp
+// (a laptop that slept mid-outage carries an hours-old lastDisconnectAt
+// on wake; the streak-start time.Time keeps its monotonic reading, and
+// monotonic clocks pause across suspend, so only awake failing time
+// spends the budget).
 func TestSocketSelfRestartGating(t *testing.T) {
 	cfg := socketTestConfig(t, "http://127.0.0.1:0")
 	cfg.socketSelfRestartAfter = 10 * time.Minute
@@ -794,7 +801,12 @@ func TestSocketSelfRestartGating(t *testing.T) {
 	var exits atomic.Int32
 	r.exit = func(code int) { exits.Add(1) }
 	now := time.Now()
+	streakSince := func(d time.Duration) {
+		ts := now.Add(-d) // Add preserves the monotonic reading
+		r.failStreakStart.Store(&ts)
+	}
 	r.failStreak.Store(socketSelfRestartMinFailures)
+	streakSince(11 * time.Minute)
 
 	r.startedAt = now.Add(-2 * time.Hour)
 	r.maybeSelfRestart(now)
@@ -803,23 +815,41 @@ func TestSocketSelfRestartGating(t *testing.T) {
 	}
 
 	r.everConnected.Store(true)
-	r.lastDisconnectAt.Store(now.Add(-5 * time.Minute).UnixNano())
+	streakSince(5 * time.Minute)
 	r.maybeSelfRestart(now)
 	if exits.Load() != 0 {
-		t.Fatal("self-restart fired at 5m down, want only past the 10m window")
+		t.Fatal("self-restart fired at 5m of failing, want only past the 10m window")
 	}
 
-	r.lastDisconnectAt.Store(now.Add(-11 * time.Minute).UnixNano())
+	// The codex-gate scenario: an ancient disconnect timestamp (e.g.
+	// wall clock spanning a sleep) with a young failure streak must NOT
+	// fire — the gate keys off the streak start, not lastDisconnectAt.
+	r.lastDisconnectAt.Store(now.Add(-2 * time.Hour).UnixNano())
+	streakSince(time.Minute)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart keyed off the wall-clock disconnect time, want the failure-streak start")
+	}
+
+	// No streak-start recorded (e.g. streak counter carried over a
+	// Connected reset race): never fire.
+	r.failStreakStart.Store(nil)
+	r.maybeSelfRestart(now)
+	if exits.Load() != 0 {
+		t.Fatal("self-restart fired with no streak start recorded")
+	}
+
+	streakSince(11 * time.Minute)
 	r.failStreak.Store(1)
 	r.maybeSelfRestart(now)
 	if exits.Load() != 0 {
-		t.Fatal("self-restart fired without a failure streak (wall-clock gap alone must not restart)")
+		t.Fatal("self-restart fired below the failure-streak threshold")
 	}
 
 	r.failStreak.Store(socketSelfRestartMinFailures)
 	r.maybeSelfRestart(now)
 	if exits.Load() != 1 {
-		t.Fatalf("exits = %d, want 1 (11m dark + streak)", exits.Load())
+		t.Fatalf("exits = %d, want 1 (11m failing + streak + everConnected)", exits.Load())
 	}
 
 	r.connected.Store(true)
@@ -877,11 +907,19 @@ func TestSocketInboundAlarmAggressiveReconnect(t *testing.T) {
 	}
 }
 
-// gp-bsk: end-to-end DNS-poison recovery. apps.connections.open fails
-// three times the way the poisoned resolver failed on 8/22+8/23
-// ("no such host"), which must flip fresh-resolve and rebuild the
-// client; the liveness alarm then skips the outer backoff, and the
-// runner must be connected again well inside the backoff ceiling.
+// gp-bsk: end-to-end recovery FLOW for the DNS-poison incident class,
+// against a fake Slack. apps.connections.open fails three times with
+// the exact error text the poisoned resolver produced on 8/22+8/23
+// ("no such host", surfaced through slack-go's flattening ok=false
+// path), which must flip fresh-resolve and rebuild the client; the
+// liveness alarm then skips the outer backoff (the escalation under
+// test — without it the reconnect waits out the 5s outer floor), and
+// the runner must be connected again well inside the backoff ceiling.
+// Deliberately hermetic: no real DNS lookup happens (the fake is a
+// loopback IP), so the resolver actually reaching the dialers is
+// pinned separately in TestSocketDNSStreakTriggersFreshResolve via
+// newNetDialer; bypassing a genuinely poisoned OS resolver is not
+// testable from inside the process.
 func TestSocketDNSPoisonRecoveryReconnectsWithinCeiling(t *testing.T) {
 	if os.Getenv("CI_NO_NET") != "" {
 		t.Skip("loopback websocket test disabled")

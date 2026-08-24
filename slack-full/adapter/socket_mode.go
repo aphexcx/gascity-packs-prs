@@ -189,9 +189,16 @@ type socketModeRunner struct {
 	freshResolve atomic.Bool   // sticky: dial with the pure-Go resolver
 	dnsStreak    atomic.Int32  // consecutive DNS not-found connect errors
 	failStreak   atomic.Int32  // connect errors since the last Connected
-	exit         func(int)     // os.Exit; tests substitute
-	cancelMu     sync.Mutex
-	cycleCancel  context.CancelFunc // cancels the in-flight client cycle
+	// failStreakStart is when the current failure streak began, as a
+	// monotonic time.Time (never round-tripped through unix nanos): the
+	// self-restart window is measured against it so only awake,
+	// actively-failing process time counts — monotonic clocks pause
+	// across suspend, so a laptop sleep or wall-clock jump cannot spend
+	// the dark-window budget. Nil while no streak is running.
+	failStreakStart atomic.Pointer[time.Time]
+	exit            func(int) // os.Exit; tests substitute
+	cancelMu        sync.Mutex
+	cycleCancel     context.CancelFunc // cancels the in-flight client cycle
 
 	// inflight tracks envelope goroutines so shutdown can wait briefly.
 	inflight sync.WaitGroup
@@ -236,19 +243,26 @@ func (r *socketModeRunner) netResolver() *net.Resolver {
 	return nil
 }
 
+// newNetDialer builds the one net.Dialer a client cycle dials through —
+// the single point where the DNS self-heal's resolver choice takes
+// effect, for every lookup the transport performs.
+func (r *socketModeRunner) newNetDialer() *net.Dialer {
+	return &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		Resolver:  r.netResolver(),
+	}
+}
+
 // newDialers builds the HTTP client (apps.connections.open) and the
 // WebSocket dialer for one client cycle, both routed through the same
-// net.Dialer so the DNS self-heal covers every lookup the transport
+// newNetDialer so the DNS self-heal covers every lookup the transport
 // performs. The WebSocket HandshakeTimeout and WriteBufferSize mirror
 // slack-go's own dialer: its 32KiB write buffer is load-bearing (Slack
 // silently drops continuation frames, so acks above gorilla's 4KiB
 // default would vanish).
 func (r *socketModeRunner) newDialers() (*http.Client, *websocket.Dialer) {
-	netDialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-		Resolver:  r.netResolver(),
-	}
+	netDialer := r.newNetDialer()
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           netDialer.DialContext,
@@ -395,6 +409,10 @@ func (r *socketModeRunner) onInboundAlarm() {
 //     supervisor restarts it and the watermark backfill makes the
 //     bounce loss-free.
 func (r *socketModeRunner) noteConnectionError(err error, reportedBackoff time.Duration) {
+	if r.failStreak.Add(1) == 1 {
+		now := time.Now() // monotonic reading — see failStreakStart
+		r.failStreakStart.Store(&now)
+	}
 	if isDNSNotFound(err) {
 		if streak := r.dnsStreak.Add(1); int(streak) >= socketDNSStreakForFreshResolve && !r.freshResolve.Swap(true) {
 			log.Printf("socket mode: %d consecutive DNS not-found failures — in-process resolver looks poisoned; switching to the pure-Go resolver and rebuilding the client", streak)
@@ -426,15 +444,18 @@ func isDNSNotFound(err error) bool {
 }
 
 // maybeSelfRestart exits the process when the socket transport has been
-// continuously down past cfg.socketSelfRestartAfter despite having once
-// been connected — the 8/22+8/23 incident class where in-process state
-// was poisoned and only a restart recovered. Gated on everConnected so
-// a never-connecting misconfiguration (Socket Mode toggle off, bad app
-// token) degrades health but does not restart-loop the adapter, and on
-// a minimum failure streak so a wall-clock gap alone (laptop asleep,
-// no attempts made) cannot trigger it. The exit is loss-free: the
-// service supervisor restarts the adapter and startup recovery +
-// watermark backfill replay anything missed — proven in both incidents.
+// failing continuously past cfg.socketSelfRestartAfter despite having
+// once been connected — the 8/22+8/23 incident class where in-process
+// state was poisoned and only a restart recovered. Gated on
+// everConnected so a never-connecting misconfiguration (Socket Mode
+// toggle off, bad app token) degrades health but does not restart-loop
+// the adapter. The dark window is measured from the start of the
+// current failure streak with MONOTONIC time arithmetic, so a laptop
+// sleep or wall-clock jump cannot spend the budget (monotonic clocks
+// pause across suspend) — only ≥socketSelfRestartAfter of awake,
+// actively-failing time fires. The exit is loss-free: the service
+// supervisor restarts the adapter and startup recovery + watermark
+// backfill replay anything missed — proven in both incidents.
 func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
 	after := r.cfg.socketSelfRestartAfter
 	if after <= 0 || r.connected.Load() || !r.everConnected.Load() {
@@ -443,12 +464,16 @@ func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
 	if int(r.failStreak.Load()) < socketSelfRestartMinFailures {
 		return
 	}
-	down := now.Sub(r.downSince())
-	if down < after {
+	start := r.failStreakStart.Load()
+	if start == nil {
 		return
 	}
-	log.Printf("socket mode: SELF-RESTART — transport dark for %s (limit %s) across %d consecutive connect failures; exiting so the service supervisor restarts the process (startup recovery + watermark backfill make this loss-free)",
-		down.Round(time.Second), after, r.failStreak.Load())
+	failingFor := now.Sub(*start) // monotonic when both carry readings
+	if failingFor < after {
+		return
+	}
+	log.Printf("socket mode: SELF-RESTART — transport failing for %s (limit %s, down %s total) across %d consecutive connect failures; exiting so the service supervisor restarts the process (startup recovery + watermark backfill make this loss-free)",
+		failingFor.Round(time.Second), after, now.Sub(r.downSince()).Round(time.Second), r.failStreak.Load())
 	r.liveness.saveState()
 	r.exit(1)
 }
@@ -501,7 +526,6 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 		}
 	case socketmode.EventTypeConnectionError:
 		r.connectErrors.Add(1)
-		r.failStreak.Add(1)
 		if ce, ok := evt.Data.(*slack.ConnectionErrorEvent); ok {
 			r.setLastErr(ce.Error())
 			log.Printf("socket mode: connection error (attempt=%d backoff=%s): %v", ce.Attempt, ce.Backoff, ce.ErrorObj)
@@ -520,6 +544,7 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 		r.everConnected.Store(true)
 		r.dnsStreak.Store(0)
 		r.failStreak.Store(0)
+		r.failStreakStart.Store(nil)
 		r.lastConnectedAt.Store(time.Now().UnixNano())
 		reconnect := n > 1
 		log.Printf("socket mode: connected (connection=%d reconnect=%v)", n, reconnect)
