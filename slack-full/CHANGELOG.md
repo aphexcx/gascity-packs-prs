@@ -209,6 +209,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   block anchor line exclude bot-tagged entries), so `reply-current` /
   `react` / `upload` never anchor on a reaction. Company rooms and
   per-agent DMs are out of scope v1.
+- **Inbound liveness now reaches the gc service health model** (gp-rol;
+  papercuts pc_5ede9badf7b1 / pc_fc584c0e47ba). During the 2026-08-19
+  outages `gc service list` reported `state=ready` for 26 minutes of dead
+  inbound. `/healthz` now stays 200 (so gc keeps routing outbound
+  `/publish`, the one path that kept working) but carries advisory
+  `X-GC-Health: degraded` + `X-GC-Health-Reason` headers whenever the
+  inbound-liveness watchdog has a confirmed stall or the Socket Mode
+  transport has been down for over 2 minutes (including never-connected
+  starts, e.g. a rejected `SLACK_APP_TOKEN`). A gc with the matching
+  proxy_process support (fork `integration`) renders that as
+  `State=degraded` on `gc service list` / the dashboard — the reason on
+  `gc service show slack` and the API — while `LocalState` stays
+  `ready`; older gc binaries ignore the headers.
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
   1. **Burst coalescing** — untargeted, non-bot-mentioned channel
      messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,
@@ -501,6 +514,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+
+- **A transient network blip can no longer become an hours-long inbound
+  outage** (gp-bsk; incidents 2026-08-22 12:59 CT and 2026-08-23
+  13:54Z–19:12Z, the latter 10.5h of dead inbound). Three layers, all in
+  the Socket Mode runner:
+  1. *Reconnect backoff is now hard-capped at 2 minutes.* slack-go
+     v0.29.0's internal reconnect ladder is effectively unbounded (its
+     `Max` is applied only on integer overflow), and the 8/23 outage sat
+     in observed waits of 27m/55m/1h49m after the network had already
+     recovered. The runner now kills the client cycle the moment the
+     reported internal backoff exceeds the ceiling and lets its own
+     outer ladder (floor 5s, cap 2m, was 5m) own the pacing —
+     `apps.connections.open` is cheap and every reconnect is loss-free
+     via the watermark backfill, so hour-scale patience is never
+     correct.
+  2. *DNS self-heal.* Three consecutive `no such host` connect failures
+     (the 8/22 poisoned-resolver signature) stop trusting the in-process
+     resolver: the runner flips — stickily — to a pure-Go resolver that
+     re-reads `/etc/resolv.conf` (wired through both the
+     `apps.connections.open` HTTP client and the WebSocket dialer) and
+     rebuilds the client immediately. If the transport has connected at
+     least once this process and then stays dark past
+     `SLACK_SOCKET_SELF_RESTART_AFTER` (default 10m, 0 disables) across
+     repeated failures, the adapter runs its orderly shutdown (the
+     gp-9e7 drain: buffered inbounds reach gc or the durable spool —
+     never a bare `os.Exit`, which would strand anything the liveness
+     backfill had just admitted below the watermark) and exits 1 so
+     the service supervisor restarts it — spool replay + startup
+     recovery + watermark backfill make the bounce loss-free (proven in
+     both incidents). Never-connected
+     misconfigurations (Socket Mode toggle off, bad app token) still
+     only degrade health — no restart loop.
+  3. *The inbound-liveness ALARM now escalates.* Its only consumer used
+     to be the local log (and the 8/23 alarm at 18:47Z fired correctly
+     into the void); with the socket down it now flips the runner into
+     aggressive reconnect — outer backoff reset to the floor, any
+     backoff sleep (internal or outer) abandoned — since the alarm is
+     positive evidence messages are being missed. `/healthz` grows
+     `socket_fresh_resolve=true` once the DNS self-heal has tripped.
+
+- Pack pin bumps can no longer strand the adapter service (gp-d7l):
+  the `[[service]]` command is now `adapter/run.sh` (checked in)
+  instead of the gitignored built binary. `gc import install`
+  re-materializes the pack cache git-only, which used to wipe both the
+  deployed env-wrapper shim and `gc-slack-adapter.real` and leave the
+  supervisor fork/exec-ing a nonexistent path until a human rebuilt by
+  hand (outages 2026-07-30 and 2026-08-05, 15:37–15:51Z). run.sh now
+  sources the secrets env file (absorbing the shim's job), execs an
+  existing binary unchanged (idempotent fast path), and when the
+  binary is missing self-heals: locates a Go toolchain (PATH plus
+  Homebrew/system fallbacks for minimal supervisor environments),
+  rebuilds `gc-slack-adapter.real` from the colocated sources with
+  loud stderr logging, publishes it with an atomic rename safe under
+  concurrent restarts, and execs it.
+
+- `gc slack reply-current` now inherits the thread from the latest
+  inbound (gp-i62): a thread-reply inbound's transcript entry carries
+  the Slack `thread_ts` in `ReplyToMessageID`, and the reply anchors
+  there by default — including when `--conversation-id` names the same
+  conversation explicitly, which previously always posted at channel
+  level (live burns 2026-08-09, #gastown + #fundraising). An unthreaded
+  inbound keeps the channel-level reply; an explicit target naming a
+  *different* conversation never borrows the inbound's thread anchor;
+  a failed lookup degrades to channel level with a stderr warning
+  (`--via adapter` must survive a gc outage). New `--no-thread` flag
+  forces a channel-level post. `--thread-current` now anchors at the
+  thread ROOT when the latest inbound was itself a thread reply —
+  Slack threads hang off the parent ts, so anchoring at the child
+  stranded the reply. Retires the fleet-memory workaround of routing
+  threaded replies through `publish-to-channel --thread-ts`.
+- `slack_intake_common._maybe_load_adapter_env` now strips the shell
+  `export ` prefix when parsing the adapter env file. The live file is
+  written shell-style (`export SLACK_BOT_TOKEN=...`, sourced by the
+  adapter's run.sh), so every key previously parsed as `export KEY` and
+  the loader silently loaded nothing — unnoticed until `gc slack read`
+  became the first pack command to need `SLACK_BOT_TOKEN` in-process.
 - The busy reaction now fires when a human @-mentions the adapter's
   bot user (gp-4vq): live traffic showed the affordance never fired in
   practice because nobody addresses agents with the `@handle:` prefix
