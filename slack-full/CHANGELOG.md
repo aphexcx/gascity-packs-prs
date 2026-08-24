@@ -345,6 +345,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A transient network blip can no longer become an hours-long inbound
+  outage** (gp-bsk; incidents 2026-08-22 12:59 CT and 2026-08-23
+  13:54Z–19:12Z, the latter 10.5h of dead inbound). Three layers, all in
+  the Socket Mode runner:
+  1. *Reconnect backoff is now hard-capped at 2 minutes.* slack-go
+     v0.29.0's internal reconnect ladder is effectively unbounded (its
+     `Max` is applied only on integer overflow), and the 8/23 outage sat
+     in observed waits of 27m/55m/1h49m after the network had already
+     recovered. The runner now kills the client cycle the moment the
+     reported internal backoff exceeds the ceiling and lets its own
+     outer ladder (floor 5s, cap 2m, was 5m) own the pacing —
+     `apps.connections.open` is cheap and every reconnect is loss-free
+     via the watermark backfill, so hour-scale patience is never
+     correct.
+  2. *DNS self-heal.* Three consecutive `no such host` connect failures
+     (the 8/22 poisoned-resolver signature) stop trusting the in-process
+     resolver: the runner flips — stickily — to a pure-Go resolver that
+     re-reads `/etc/resolv.conf` (wired through both the
+     `apps.connections.open` HTTP client and the WebSocket dialer) and
+     rebuilds the client immediately. If the transport has connected at
+     least once this process and then stays dark past
+     `SLACK_SOCKET_SELF_RESTART_AFTER` (default 10m, 0 disables) across
+     repeated failures, the adapter exits so the service supervisor
+     restarts it — startup recovery + watermark backfill make the bounce
+     loss-free (proven in both incidents). Never-connected
+     misconfigurations (Socket Mode toggle off, bad app token) still
+     only degrade health — no restart loop.
+  3. *The inbound-liveness ALARM now escalates.* Its only consumer used
+     to be the local log (and the 8/23 alarm at 18:47Z fired correctly
+     into the void); with the socket down it now flips the runner into
+     aggressive reconnect — outer backoff reset to the floor, any
+     backoff sleep (internal or outer) abandoned — since the alarm is
+     positive evidence messages are being missed. `/healthz` grows
+     `socket_fresh_resolve=true` once the DNS self-heal has tripped.
+
 - Pack pin bumps can no longer strand the adapter service (gp-d7l):
   the `[[service]]` command is now `adapter/run.sh` (checked in)
   instead of the gitignored built binary. `gc import install`

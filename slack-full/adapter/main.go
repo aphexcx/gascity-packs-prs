@@ -66,6 +66,17 @@
 //     without it); "off" never connects even
 //     with a token — the rollback lever.
 //
+//   - SLACK_SOCKET_SELF_RESTART_AFTER  Default "10m". If the Socket Mode
+//     transport has connected at least once
+//     and then stays dark this long across
+//     repeated connect failures, the adapter
+//     exits so the service supervisor
+//     restarts it — clearing poisoned
+//     in-process state (DNS); the bounce is
+//     loss-free via startup recovery +
+//     watermark backfill (gp-bsk). "0"
+//     disables the self-restart.
+//
 //   - SLACK_LIVENESS_STALL_AFTER   Default "10m". With zero inbound events
 //     for this long, the liveness watchdog
 //     probes watched channels' history for
@@ -641,6 +652,12 @@ type config struct {
 	// the token; fail startup without it), "off" (never connect even with
 	// a token present — the operator's rollback lever).
 	socketMode string
+	// socketSelfRestartAfter is how long the Socket Mode transport may
+	// stay continuously dark — after having connected at least once —
+	// before the adapter exits so the service supervisor restarts the
+	// whole process, clearing any poisoned in-process state
+	// (SLACK_SOCKET_SELF_RESTART_AFTER, default 10m; 0 disables; gp-bsk).
+	socketSelfRestartAfter time.Duration
 	// inboundLiveness is the process-wide inbound-liveness tracker +
 	// watchdog (gp-3og). Nil-safe consumer paths; only the production
 	// main() wires it.
@@ -891,6 +908,11 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	}
 	if cfg.slackAppToken != "" && !strings.HasPrefix(cfg.slackAppToken, "xapp-") {
 		return cfg, errors.New("SLACK_APP_TOKEN must be an app-level token (xapp-…), not a bot/user token")
+	}
+	if d, err := time.ParseDuration(envOrFn("SLACK_SOCKET_SELF_RESTART_AFTER", "10m")); err == nil && d >= 0 {
+		cfg.socketSelfRestartAfter = d
+	} else {
+		return cfg, fmt.Errorf("SLACK_SOCKET_SELF_RESTART_AFTER %q invalid (want a non-negative Go duration; 0 disables the self-restart)", getenv("SLACK_SOCKET_SELF_RESTART_AFTER"))
 	}
 	if d, err := time.ParseDuration(envOrFn("SLACK_LIVENESS_STALL_AFTER", "10m")); err == nil && d >= 0 {
 		cfg.livenessStallAfter = d
