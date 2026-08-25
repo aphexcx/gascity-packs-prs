@@ -79,6 +79,24 @@
 //     startup recovery + watermark backfill
 //     (gp-bsk). "0" disables the self-restart.
 //
+//   - SLACK_DNS_LOOPBACK_EXIT_AFTER   Default "5". A Socket Mode connect
+//     failure whose lookup reports one of Go's
+//     fallback nameservers (127.0.0.1:53 /
+//     [::1]:53) means the pure-Go resolver lost
+//     /etc/resolv.conf mid-rewrite and will not
+//     re-read it; the adapter re-parses the
+//     file itself and pins the resolver to a
+//     nameserver from it. If the signature
+//     still persists this many consecutive
+//     attempts with a pin in place, the adapter
+//     takes the orderly self-restart exit so the
+//     service supervisor restarts it and the
+//     fresh process parses the healthy file
+//     (gp-keg). With nothing to pin it keeps
+//     re-parsing instead of exiting (a fresh
+//     process would latch on the same file).
+//     "0" disables the exit (the pin stays).
+//
 //   - SLACK_LIVENESS_STALL_AFTER   Default "10m". With zero inbound events
 //     for this long, the liveness watchdog
 //     probes watched channels' history for
@@ -660,6 +678,12 @@ type config struct {
 	// whole process, clearing any poisoned in-process state
 	// (SLACK_SOCKET_SELF_RESTART_AFTER, default 10m; 0 disables; gp-bsk).
 	socketSelfRestartAfter time.Duration
+	// dnsLoopbackExitAfter is how many consecutive Socket Mode connect
+	// failures reporting one of Go's fallback nameservers — with the
+	// resolv.conf re-parse + resolver pin in place — request the orderly
+	// self-restart (SLACK_DNS_LOOPBACK_EXIT_AFTER, default 5; 0 disables
+	// the exit; gp-keg — see dns_latch.go).
+	dnsLoopbackExitAfter int
 	// inboundLiveness is the process-wide inbound-liveness tracker +
 	// watchdog (gp-3og). Nil-safe consumer paths; only the production
 	// main() wires it.
@@ -915,6 +939,11 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.socketSelfRestartAfter = d
 	} else {
 		return cfg, fmt.Errorf("SLACK_SOCKET_SELF_RESTART_AFTER %q invalid (want a non-negative Go duration; 0 disables the self-restart)", getenv("SLACK_SOCKET_SELF_RESTART_AFTER"))
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(envOrFn("SLACK_DNS_LOOPBACK_EXIT_AFTER", "5"))); err == nil && n >= 0 {
+		cfg.dnsLoopbackExitAfter = n
+	} else {
+		return cfg, fmt.Errorf("SLACK_DNS_LOOPBACK_EXIT_AFTER %q invalid (want a non-negative integer; 0 disables the loopback-latch exit)", getenv("SLACK_DNS_LOOPBACK_EXIT_AFTER"))
 	}
 	if d, err := time.ParseDuration(envOrFn("SLACK_LIVENESS_STALL_AFTER", "10m")); err == nil && d >= 0 {
 		cfg.livenessStallAfter = d
