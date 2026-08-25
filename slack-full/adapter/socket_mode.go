@@ -198,6 +198,30 @@ type socketModeRunner struct {
 	// across suspend, so a laptop sleep or wall-clock jump cannot spend
 	// the dark-window budget. Nil while no streak is running.
 	failStreakStart atomic.Pointer[time.Time]
+	// Loopback-latch escape (gp-keg, see dns_latch.go).
+	//
+	// loopbackDNSStreak counts consecutive connect failures whose lookup
+	// reported one of Go's fallback nameservers (127.0.0.1:53 / [::1]:53)
+	// — the latched-resolver signature. Reset by any other failure and by
+	// Connected.
+	loopbackDNSStreak atomic.Int32
+	// pinnedLoopbackStreak counts the consecutive latch failures observed
+	// with a pin already in place at lookup time — the ones that say the
+	// pin is not taking; only these count toward the self-exit. Reset
+	// with loopbackDNSStreak, and whenever a lookup ran unpinned.
+	pinnedLoopbackStreak atomic.Int32
+	// loopbackEvents counts latch events over the process lifetime; it
+	// rotates the pin across the file's usable nameservers.
+	loopbackEvents atomic.Int32
+	// dnsPin is the "host:port" nameserver the pure-Go resolver's Dial
+	// hook targets instead of whatever net's cached config chose, set
+	// from the runner's own parse of resolv.conf on a latch event; nil =
+	// pass-through. Cleared on Connected (transient, re-derived on the
+	// next event so it cannot go stale across a later DNS change).
+	dnsPin atomic.Pointer[string]
+	// resolvConfPath is the file the latch re-parse reads
+	// (defaultResolvConfPath); tests point it at a fixture.
+	resolvConfPath string
 	// exit requests the process exit for the self-restart. main wires
 	// it to its orderly shutdown (selfRestartRequests) so buffered
 	// inbounds drain to gc or the spool first; the os.Exit default only
@@ -225,6 +249,8 @@ func newSocketModeRunner(cfg config, events, interactions http.Handler, liveness
 		startedAt:    time.Now(),
 		kick:         make(chan struct{}, 1),
 		exit:         os.Exit,
+
+		resolvConfPath: defaultResolvConfPath,
 	}
 	r.newClient = func() *socketmode.Client {
 		httpClient, wsDialer := r.newDialers()
@@ -242,12 +268,41 @@ func newSocketModeRunner(cfg config, events, interactions http.Handler, liveness
 // default) normally, the pure-Go resolver once the DNS self-heal has
 // tripped — it bypasses whatever the default resolver has cached and
 // re-reads /etc/resolv.conf, which is what actually recovers from the
-// 8/22-style poisoned-resolver state without a process restart.
+// 8/22-style poisoned-resolver state without a process restart. The
+// pure-Go resolver dials through dialNameserver, so a loopback-latch pin
+// (gp-keg) redirects its DNS exchanges away from net's cached config.
 func (r *socketModeRunner) netResolver() *net.Resolver {
 	if r.freshResolve.Load() {
-		return &net.Resolver{PreferGo: true}
+		return &net.Resolver{PreferGo: true, Dial: r.dialNameserver}
 	}
 	return nil
+}
+
+// dnsDialTimeout bounds one DNS transport dial from the pure-Go resolver;
+// net applies its own per-exchange timeout on top.
+const dnsDialTimeout = 5 * time.Second
+
+// dialNameserver is the pure-Go resolver's Dial hook (gp-keg): with a
+// loopback-latch pin in place every DNS exchange goes to the pinned
+// nameserver instead of the address net's cached config chose (Go's
+// fallback servers, once it has lost /etc/resolv.conf); without one it
+// passes the address through. The pin is read at dial time, so one set
+// mid-cycle takes effect on the next lookup without rebuilding the
+// client. net only ever passes literal ip:port addresses here.
+func (r *socketModeRunner) dialNameserver(ctx context.Context, network, address string) (net.Conn, error) {
+	if pin := r.dnsPin.Load(); pin != nil && *pin != "" {
+		address = *pin
+	}
+	d := net.Dialer{Timeout: dnsDialTimeout}
+	return d.DialContext(ctx, network, address)
+}
+
+// pinnedNameserver returns the current loopback-latch pin, "" if none.
+func (r *socketModeRunner) pinnedNameserver() string {
+	if pin := r.dnsPin.Load(); pin != nil {
+		return *pin
+	}
+	return ""
 }
 
 // newNetDialer builds the one net.Dialer a client cycle dials through —
@@ -415,6 +470,14 @@ func (r *socketModeRunner) onInboundAlarm() {
 //     past cfg.socketSelfRestartAfter requests the process exit (via
 //     main's orderly drain); the service supervisor restarts it and
 //     spool replay + watermark backfill make the bounce loss-free.
+//  4. Loopback latch (gp-keg) — a lookup reporting one of Go's fallback
+//     nameservers means the pure-Go resolver lost /etc/resolv.conf and
+//     will not recover on its own: re-parse the file here and pin the
+//     resolver to a nameserver from it; if the signature still persists
+//     cfg.dnsLoopbackExitAfter attempts with the pin in place, request
+//     the same orderly exit so the restarted process parses the healthy
+//     file. Not gated on everConnected: a process that starts latched
+//     would otherwise stay dark for good.
 func (r *socketModeRunner) noteConnectionError(err error, reportedBackoff time.Duration) {
 	if r.failStreak.Add(1) == 1 {
 		now := time.Now() // monotonic reading — see failStreakStart
@@ -428,11 +491,74 @@ func (r *socketModeRunner) noteConnectionError(err error, reportedBackoff time.D
 	} else {
 		r.dnsStreak.Store(0)
 	}
+	if isLoopbackDNSServerError(err) {
+		r.onLoopbackLatch(r.loopbackDNSStreak.Add(1), dnsServerOf(err))
+	} else {
+		r.loopbackDNSStreak.Store(0)
+		r.pinnedLoopbackStreak.Store(0)
+	}
 	if reportedBackoff > socketReconnectBackoffMax {
 		log.Printf("socket mode: internal reconnect backoff %s exceeds the %s ceiling — restarting the client loop instead of waiting it out", reportedBackoff, socketReconnectBackoffMax)
 		r.killCycle()
 	}
 	r.maybeSelfRestart(time.Now())
+}
+
+// onLoopbackLatch handles one loopback-latch failure (gp-keg, see
+// dns_latch.go): the streak-th consecutive lookup that reported Go's
+// fallback nameserver `reported`. It re-parses resolv.conf right now and
+// pins the pure-Go resolver to a usable nameserver from it — rotating
+// across the file's candidates on repeated events, and rebuilding the
+// client if it was still dialing with the process-default resolver (on
+// this signature that IS Go's resolver; the flip just routes it through
+// the Dial hook). The exit decision: only a signature that persists for
+// cfg.dnsLoopbackExitAfter consecutive lookups made WITH a pin already in
+// place (the failure that triggers the first pin does not count) requests
+// the orderly exit — a fresh process then parses the healthy file the way
+// net expects, and cannot loop (it reproduces the signature only if the
+// file yields no nameserver, in which case there is no pin and no exit).
+// Nothing to pin — unreadable, no nameserver line, or only Go's own
+// fallback addresses — never exits: a fresh process would latch on the
+// same file and restart-loop the adapter, taking outbound /publish down
+// with it; every further attempt re-parses instead, so the pin applies
+// the moment the file is usable, and an earlier pin is kept meanwhile.
+// A zero knob disables the exit, never the pin.
+func (r *socketModeRunner) onLoopbackLatch(streak int32, reported string) {
+	withPin := int32(0)
+	if r.pinnedNameserver() != "" {
+		withPin = r.pinnedLoopbackStreak.Add(1)
+	} else {
+		r.pinnedLoopbackStreak.Store(0)
+	}
+	events := r.loopbackEvents.Add(1)
+	servers, readErr := readResolvConfNameservers(r.resolvConfPath)
+	usable := usableNameservers(servers)
+	pinned := ""
+	if len(usable) > 0 {
+		pinned = usable[int(events-1)%len(usable)]
+		r.dnsPin.Store(&pinned)
+		if !r.freshResolve.Swap(true) {
+			r.killCycle()
+		}
+	}
+	effective := r.pinnedNameserver()
+	kept := ""
+	if pinned == "" && effective != "" {
+		kept = fmt.Sprintf(" (keeping the earlier pin %s)", effective)
+	}
+	switch {
+	case pinned != "":
+		log.Printf("socket mode: DNS resolver latched on Go's fallback nameserver %s (failure %d; it lost %s mid-rewrite and will not re-read it) — pinning the pure-Go resolver to %s from a fresh parse of the file", reported, streak, r.resolvConfPath, pinned)
+	case readErr != nil:
+		log.Printf("socket mode: DNS resolver latched on Go's fallback nameserver %s (failure %d) — nothing to pin: %s unreadable (%v)%s; re-parsing on every attempt, no self-exit (a fresh process would latch on the same file)", reported, streak, r.resolvConfPath, readErr, kept)
+	case len(servers) == 0:
+		log.Printf("socket mode: DNS resolver latched on Go's fallback nameserver %s (failure %d) — nothing to pin: %s lists no nameserver%s; re-parsing on every attempt, no self-exit (a fresh process would latch on the same file)", reported, streak, r.resolvConfPath, kept)
+	default:
+		log.Printf("socket mode: lookups failing against %s (failure %d) — %s lists only Go's fallback addresses %v, so this is a configured local resolver that is down (or the latch); nothing to pin%s, no self-exit (a fresh process would read the same file)", reported, streak, r.resolvConfPath, servers, kept)
+	}
+	if limit := r.cfg.dnsLoopbackExitAfter; limit > 0 && effective != "" && int(withPin) >= limit {
+		r.requestSelfRestart(fmt.Sprintf("DNS RESOLVER LATCHED — %d consecutive lookups failed against Go's fallback nameserver %s with the pure-Go resolver pinned to %s from %s (%d failures in all); a fresh process parses that file the way net expects", withPin, reported, effective, r.resolvConfPath, streak))
+	}
 }
 
 // isDNSNotFound reports whether err is a DNS name-resolution failure
@@ -482,11 +608,20 @@ func (r *socketModeRunner) maybeSelfRestart(now time.Time) {
 	if failingFor < after {
 		return
 	}
+	r.requestSelfRestart(fmt.Sprintf("transport failing for %s (limit %s, down %s total) across %d consecutive connect failures",
+		failingFor.Round(time.Second), after, now.Sub(r.downSince()).Round(time.Second), r.failStreak.Load()))
+}
+
+// requestSelfRestart asks main for the orderly exit (code 1) that has
+// the service supervisor restart the adapter, logging one line that
+// says why. Shared by the gp-bsk dark-window self-restart and the
+// gp-keg loopback latch; fires once per process — later calls are
+// no-ops while main's drain is on its way.
+func (r *socketModeRunner) requestSelfRestart(why string) {
 	if r.restartRequested.Swap(true) {
 		return // already requested; main's drain is on its way
 	}
-	log.Printf("socket mode: SELF-RESTART — transport failing for %s (limit %s, down %s total) across %d consecutive connect failures; requesting process exit (orderly drain first) so the service supervisor restarts the process (spool replay + startup recovery + watermark backfill make this loss-free)",
-		failingFor.Round(time.Second), after, now.Sub(r.downSince()).Round(time.Second), r.failStreak.Load())
+	log.Printf("socket mode: SELF-RESTART — %s; requesting process exit (orderly drain first) so the service supervisor restarts the process (spool replay + startup recovery + watermark backfill make this loss-free)", why)
 	r.liveness.saveState()
 	r.exit(1)
 }
@@ -556,6 +691,9 @@ func (r *socketModeRunner) handleClientEvent(ctx context.Context, acker socketAc
 		r.connected.Store(true)
 		r.everConnected.Store(true)
 		r.dnsStreak.Store(0)
+		r.loopbackDNSStreak.Store(0)
+		r.pinnedLoopbackStreak.Store(0)
+		r.dnsPin.Store(nil) // transient: re-derived on the next latch event
 		r.failStreak.Store(0)
 		r.failStreakStart.Store(nil)
 		r.lastConnectedAt.Store(time.Now().UnixNano())
@@ -885,6 +1023,12 @@ func (r *socketModeRunner) healthzDetail() string {
 		state, r.connectCount.Load(), r.connectErrors.Load(), r.envelopesAcked.Load(), r.envelopesUnacked.Load(), r.envelopesBad.Load())
 	if r.freshResolve.Load() {
 		b.WriteString(" socket_fresh_resolve=true")
+	}
+	if pin := r.pinnedNameserver(); pin != "" {
+		fmt.Fprintf(&b, " socket_dns_pin=%s", pin)
+	}
+	if n := r.loopbackDNSStreak.Load(); n > 0 {
+		fmt.Fprintf(&b, " socket_dns_loopback_streak=%d", n)
 	}
 	if ts := r.lastConnectedAt.Load(); ts > 0 {
 		fmt.Fprintf(&b, " socket_last_connected=%s", time.Unix(0, ts).UTC().Format(time.RFC3339))

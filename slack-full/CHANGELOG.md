@@ -46,6 +46,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Go resolver loopback latch** (gp-keg / ci-c3zl9 / hw-i6yt7,
+  pc_82ff6cc9d209; citadel 2026-08-24 21:00–21:09 CT). The gp-bsk DNS
+  self-heal had already flipped the Socket Mode runner to Go's built-in
+  resolver during the evening's MagicDNS stalls (20:58: `lookup slack.com
+  on [fd7a:115c:a1e0::53]:53: server misbehaving`). At 21:00:03 the
+  MagicDNS watchdog's `tailscale set --accept-dns=false` rewrote
+  `/etc/resolv.conf`; Go's resolver — which parses that file itself, in a
+  package-level singleton no fresh `net.Resolver` escapes — caught the
+  rewrite, dropped onto its compiled-in fallback `127.0.0.1:53` /
+  `[::1]:53`, and stayed there (`lookup slack.com on [::1]:53: …
+  connection refused`) through two full 12-attempt reconnect cycles until
+  a manual `gc service restart slack` at 21:08:57, with the system
+  resolver healthy throughout; the gp-bsk 10m self-restart would have
+  fired at ~21:10. This signature now recovers in seconds:
+  1. **Detect** — a connect failure whose lookup reports *exactly* one of
+     Go's fallback nameservers (typed `*net.DNSError.Server` through
+     `url.Error`/`net.OpError`, or slack-go's flattened `lookup X on S:`
+     text). A systemd-resolved stub (127.0.0.53) or a local stub on
+     another port never matches.
+  2. **Escape without net's help** — on each such failure the runner
+     re-parses `/etc/resolv.conf` itself, right then, and pins the
+     pure-Go resolver's `Dial` hook to a usable nameserver from it
+     (rotating across candidates on repeated events), so every DNS
+     exchange bypasses net's cached config. The pin is transient —
+     cleared on `Connected`, re-derived on the next event — so it cannot
+     go stale across a later DNS change.
+  3. **If the pin does not take, get out fast** — a signature that
+     persists for `SLACK_DNS_LOOPBACK_EXIT_AFTER` (default 5, `0`
+     disables the exit) consecutive lookups made with a pin already in
+     place takes the same orderly, loss-free exit as the gp-bsk
+     self-restart, and the service supervisor restarts the adapter so a
+     fresh process parses the healthy file the way net expects. That
+     trigger cannot restart-loop: a fresh process reproduces the
+     signature only if the file yields no nameserver, and then there is
+     no pin and no exit. Nothing to pin (file unreadable, no nameserver
+     line, or only Go's own fallback addresses) deliberately never exits
+     — a fresh process would latch on the same file and restart-loop,
+     taking outbound `/publish` down with it — every attempt re-parses
+     instead, keeping an earlier pin meanwhile, so the pin applies the
+     moment the file is usable; the gp-bsk 10m self-restart stays the
+     backstop.
+  `/healthz` grows `socket_dns_pin=<ns>` while a pin is in place and
+  `socket_dns_loopback_streak=<n>` while a streak is running. The
+  gp-bsk 3-strike `no such host` flip and both backoff ladders are
+  unchanged. (`GODEBUG=netdns=cgo` was considered and dropped: it does
+  not apply once `PreferGo` is set — net honors the resolver flag before
+  the GODEBUG mode — and forcing the system resolver would reverse
+  gp-bsk's escape from it.)
+
 - Urgent-path twin double-delivery (gp-ios, pc_c920ff5fe90c live shape,
   2026-08-20 06:44Z): a bot-mention pair (`message` + `app_mention`,
   same ts, distinct event ids) raced BOTH copies down the urgent
