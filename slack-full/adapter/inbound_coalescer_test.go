@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,11 @@ import (
 	"testing"
 	"time"
 )
+
+// errDeliverFailed is the generic (untyped ⇒ TRANSIENT) delivery failure
+// test hooks return where they used to return false: the coalescer
+// restores and retries exactly as before gp-xnc.
+var errDeliverFailed = errors.New("deliver failed (test: transient)")
 
 func testPending(channel, ts, text string) pendingChannelInbound {
 	return pendingChannelInbound{inbound: externalInboundMessage{
@@ -25,11 +31,11 @@ func testPending(channel, ts, text string) pendingChannelInbound {
 
 // collectingDeliver returns a deliver func that records batches and a
 // channel carrying each delivery.
-func collectingDeliver() (func(string, []pendingChannelInbound) bool, chan []pendingChannelInbound) {
+func collectingDeliver() (func(string, []pendingChannelInbound) error, chan []pendingChannelInbound) {
 	ch := make(chan []pendingChannelInbound, 16)
-	return func(channel string, batch []pendingChannelInbound) bool {
+	return func(channel string, batch []pendingChannelInbound) error {
 		ch <- batch
-		return true
+		return nil
 	}, ch
 }
 
@@ -220,15 +226,15 @@ func TestCoalescerFailedFlushRestoresAndRetries(t *testing.T) {
 	fails := 1
 	attempts := make(chan []pendingChannelInbound, 8)
 	c := newInboundCoalescer(25*time.Millisecond, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		mu.Lock()
 		defer mu.Unlock()
 		attempts <- batch
 		if fails > 0 {
 			fails--
-			return false
+			return errDeliverFailed
 		}
-		return true
+		return nil
 	}
 	c.enqueue("C1", testPending("C1", "1.0", "x"))
 
@@ -371,9 +377,12 @@ func TestCoalescerReactionsRideRealBatchAndRestoreNoWake(t *testing.T) {
 	var fail bool
 	attempts := make(chan []pendingChannelInbound, 8)
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		attempts <- batch
-		return !fail
+		if fail {
+			return errDeliverFailed
+		}
+		return nil
 	}
 	c.admitReaction("C1", testPending("C1", "1.099", "reaction"), false)
 	c.enqueue("C1", testPending("C1", "2.0", "message"))
@@ -418,9 +427,12 @@ func TestCoalescerFlushAheadReactionsOnlyDefersToRealDelivery(t *testing.T) {
 	attempts := make(chan []pendingChannelInbound, 4)
 	deliverOK := true
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		attempts <- batch
-		return deliverOK
+		if deliverOK {
+			return nil
+		}
+		return errDeliverFailed
 	}
 	c.admitReaction("C1", testPending("C1", "1.099", "reaction"), false)
 	if withheld := c.flushAheadOf("C1", ""); len(withheld) != 0 {
@@ -475,9 +487,9 @@ func TestCoalescerFlushAheadReactionsOnlyDefersToRealDelivery(t *testing.T) {
 func TestCoalescerFlushAheadTwinOnlyTakeDefersReactions(t *testing.T) {
 	attempts := make(chan []pendingChannelInbound, 4)
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		attempts <- batch
-		return true
+		return nil
 	}
 	c.enqueue("C1", testPending("C1", "5.0", "twin"))
 	c.admitReaction("C1", testPending("C1", "5.099", "reaction"), false)
@@ -574,7 +586,7 @@ func TestCoalescerSweptDeliveryDoesNotWaitForTriggerPOST(t *testing.T) {
 	sweptDone := make(chan struct{})
 	overtaken := make(chan bool, 1)
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		switch channel {
 		case "C_TRIGGER":
 			// The firing channel's POST is slow. The swept channel's
@@ -588,7 +600,7 @@ func TestCoalescerSweptDeliveryDoesNotWaitForTriggerPOST(t *testing.T) {
 		case "C_SWEPT":
 			close(sweptDone)
 		}
-		return true
+		return nil
 	}
 	c.enqueue("C_SWEPT", testPending("C_SWEPT", "2.0", "swept"))
 	c.enqueue("C_TRIGGER", testPending("C_TRIGGER", "1.0", "trigger"))
@@ -618,9 +630,9 @@ func TestCoalescerSweptDeliveryDoesNotWaitForTriggerPOST(t *testing.T) {
 func TestCoalescerSweptMutexHeldFromTakeTime(t *testing.T) {
 	delivered := make(chan string, 1)
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		delivered <- channel
-		return true
+		return nil
 	}
 	c.enqueue("C_SWEPT", testPending("C_SWEPT", "1.0", "older"))
 	c.mu.Lock()
@@ -666,11 +678,11 @@ func TestCoalescerUrgentFlushAheadNeverOvertakesSweptBatch(t *testing.T) {
 	var omu sync.Mutex
 	var order []string
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		omu.Lock()
 		order = append(order, batch[0].inbound.ProviderMessageID)
 		omu.Unlock()
-		return true
+		return nil
 	}
 	c.enqueue("C_SWEPT", testPending("C_SWEPT", "1.0", "older swept chatter"))
 	// The sweep takes exactly as flushTimer does — under c.mu, mutex
@@ -709,7 +721,7 @@ func TestCoalescerUrgentFlushAheadNeverOvertakesSweptBatch(t *testing.T) {
 // keeps its buffer and armed timer, flushing on its own schedule.
 func TestCoalescerSweepSkipsChannelWithDeliveryInFlight(t *testing.T) {
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(string, []pendingChannelInbound) bool { return true }
+	c.deliver = func(string, []pendingChannelInbound) error { return nil }
 	c.enqueue("C_BUSY", testPending("C_BUSY", "1.0", "buffered behind an in-flight delivery"))
 	c.mu.Lock()
 	busyMu := c.flushMuFor("C_BUSY")
@@ -741,18 +753,18 @@ func TestCoalescerFlushAllFixpointUnderConcurrentDeliveryAndEnqueue(t *testing.T
 	var mu sync.Mutex
 	attempts := 0
 	c := newInboundCoalescer(25*time.Millisecond, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		mu.Lock()
 		attempts++
 		n := attempts
 		mu.Unlock()
 		if n == 1 {
-			close(firstAttempt) // timer fired; batch now detached
-			<-release           // hold it in flight while flushAll starts
-			return false        // fail → restore lands AFTER a one-shot snapshot
+			close(firstAttempt)     // timer fired; batch now detached
+			<-release               // hold it in flight while flushAll starts
+			return errDeliverFailed // fail → restore lands AFTER a one-shot snapshot
 		}
 		delivered <- batch
-		return true
+		return nil
 	}
 	c.enqueue("C1", testPending("C1", "1.0", "first"))
 	select {
@@ -820,7 +832,7 @@ func TestCoalescerFlushAllAwaitsSweptDeliveries(t *testing.T) {
 	var mu sync.Mutex
 	sweptAttempts := 0
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		if channel == "C_SWEPT" {
 			mu.Lock()
 			sweptAttempts++
@@ -829,11 +841,11 @@ func TestCoalescerFlushAllAwaitsSweptDeliveries(t *testing.T) {
 			if n == 1 {
 				close(sweptTaken)
 				<-release
-				return false // restore after flushAll's first look
+				return errDeliverFailed // restore after flushAll's first look
 			}
 		}
 		delivered <- channel
-		return true
+		return nil
 	}
 	c.enqueue("C_SWEPT", testPending("C_SWEPT", "2.0", "swept"))
 	c.enqueue("C_TRIGGER", testPending("C_TRIGGER", "1.0", "trigger"))
@@ -888,11 +900,11 @@ func TestCoalescerFlushAllBoundedAndSpillsResidue(t *testing.T) {
 	c := newInboundCoalescer(time.Hour, nil)
 	var mu sync.Mutex
 	attempts := 0
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		mu.Lock()
 		attempts++
 		mu.Unlock()
-		return false
+		return errDeliverFailed
 	}
 	spilled := map[string][]pendingChannelInbound{}
 	c.spill = func(channel string, batch []pendingChannelInbound) bool {
@@ -949,7 +961,7 @@ func TestCoalescerFlushAllBoundedAndSpillsResidue(t *testing.T) {
 // to the spill hook instead, and no timer arms.
 func TestCoalescerClosedAfterFlushAllSpillsLateAdmissions(t *testing.T) {
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(string, []pendingChannelInbound) bool { return true }
+	c.deliver = func(string, []pendingChannelInbound) error { return nil }
 	var mu sync.Mutex
 	spilled := map[string][]pendingChannelInbound{}
 	c.spill = func(channel string, batch []pendingChannelInbound) bool {
@@ -1111,7 +1123,7 @@ func TestDeliverCoalescedBatchSingleMessagePassthrough(t *testing.T) {
 		deliveredIDs: newDeliveredIDs(),
 		// replyHelp deliberately nil: bare configs get no help block.
 	}
-	if !deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "1.0", "hello world")}) {
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "1.0", "hello world")}); err != nil {
 		t.Fatal("deliver failed")
 	}
 	got := <-bodyCh
@@ -1160,7 +1172,7 @@ func TestDeliverCoalescedBatchMultiMergesEnvelopeAndRecords(t *testing.T) {
 		testPending("C1", "2.0", "second"),
 		testPending("C1", "1.0", "first"),
 	}
-	if !deliverCoalescedBatch(cfg, "C1", batch) {
+	if err := deliverCoalescedBatch(cfg, "C1", batch); err != nil {
 		t.Fatal("deliver failed")
 	}
 	got := <-bodyCh
@@ -1183,7 +1195,7 @@ func TestDeliverCoalescedBatchMultiMergesEnvelopeAndRecords(t *testing.T) {
 		t.Fatal("all batch ts must be recorded as delivered")
 	}
 	// Help block is once per channel: second delivery must not repeat it.
-	if !deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "3.0", "third")}) {
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "3.0", "third")}); err != nil {
 		t.Fatal("second deliver failed")
 	}
 	second := <-bodyCh
@@ -1208,7 +1220,7 @@ func TestDeliverCoalescedBatchFailureRestoresPeerAndHelp(t *testing.T) {
 		peerContext: peer,
 		replyHelp:   newOncePerChannel(),
 	}
-	if deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "1.0", "x")}) {
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{testPending("C1", "1.0", "x")}); err == nil {
 		t.Fatal("deliver must report failure")
 	}
 	if items, _ := peer.flush("C1"); len(items) != 1 {
@@ -1251,11 +1263,11 @@ func TestOncePerChannel(t *testing.T) {
 // (channel, first-ts) arrival order and blocks the FIRST delivery for
 // blockChannel until gate closes. entered signals once that first
 // delivery is inside the hook (batch detached, mutex held from take).
-func blockableDeliver(blockChannel string, gate, entered chan struct{}) (func(string, []pendingChannelInbound) bool, func() []string) {
+func blockableDeliver(blockChannel string, gate, entered chan struct{}) (func(string, []pendingChannelInbound) error, func() []string) {
 	var mu sync.Mutex
 	var order []string
 	var blockedOnce bool
-	deliver := func(channel string, batch []pendingChannelInbound) bool {
+	deliver := func(channel string, batch []pendingChannelInbound) error {
 		mu.Lock()
 		first := ""
 		if len(batch) > 0 {
@@ -1271,7 +1283,7 @@ func blockableDeliver(blockChannel string, gate, entered chan struct{}) (func(st
 			close(entered)
 			<-gate
 		}
-		return true
+		return nil
 	}
 	read := func() []string {
 		mu.Lock()
@@ -1461,14 +1473,14 @@ func TestCoalescerSameChannelSweepInterleavingNeverReorders(t *testing.T) {
 	var mu sync.Mutex
 	firstTS := map[string][]string{}
 	c := newInboundCoalescer(2*time.Millisecond, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	c.deliver = func(channel string, batch []pendingChannelInbound) error {
 		mu.Lock()
 		if len(batch) > 0 {
 			firstTS[channel] = append(firstTS[channel], batch[0].inbound.ProviderMessageID)
 		}
 		mu.Unlock()
 		time.Sleep(200 * time.Microsecond) // widen the in-flight window the old gap raced
-		return true
+		return nil
 	}
 
 	var wg sync.WaitGroup

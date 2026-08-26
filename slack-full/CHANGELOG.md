@@ -46,6 +46,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Slack voice clips no longer poison a channel's inbound delivery**
+  (gp-xnc, 2026-08-26 09:48Z incident). Slack-native recordings
+  (`subtype: slack_audio`, `audio_message.m4a`) carry an EMPTY
+  `mimetype`/`filetype` — even from `files.info` — and the adapter
+  passed that through as an omitted `mime_type`, which gc's
+  `extmsg.ExternalAttachment` requires: a deterministic 422. The
+  coalescer then restored the failed batch ahead of everything newer
+  and retried it every window forever, so three founder voice memos
+  and every later message in the channel never reached the mayor, at
+  one 422 log line per 8s. Two fixes:
+  - `mime_type` is always sent: Slack's value when present, else the
+    file name's extension (`.m4a` → `audio/mp4`; a pinned table for
+    the media types Slack clients produce, then the host database),
+    else Slack's `filetype` code, else the `slack_audio`/`slack_video`
+    subtype, else `application/octet-stream`; the field is no longer
+    `omitempty`.
+  - Poison handling in the coalescer: a delivery gc rejects as
+    payload (HTTP 400/413/415/422) no longer retries forever. A
+    rejected multi-message batch is isolated — each member re-posted
+    alone under the same flush — so innocent batch-mates deliver
+    immediately and only the member gc still rejects is charged; the
+    probe stops at the first transient single (a hung gc must not cost
+    one client timeout per member). Reactions are never posted solo and
+    are charged only when their own group is posted and rejected.
+    After 3 rejections the message is written to a per-channel
+    dead-letter file (`SLACK_INBOUND_DEAD_LETTER_DIR`, default
+    `<GC_CITY_PATH>/.gc/slack/inbound_dead_letter/<channel>.jsonl`;
+    full envelope + reason, fsynced, O_NOFOLLOW, 0700/0600 enforced;
+    an unconfirmed write keeps the entry buffered and retries) and the
+    channel moves on. Everything else — gc unreachable, 5xx, 408/429,
+    and operational 4xx such as 401/403/404 — keeps the retry-forever
+    durability unchanged. `postInbound` errors now carry the HTTP
+    status (`inboundPostError`) so the classes can be told apart;
+    their text is unchanged.
+
 - Urgent-path twin double-delivery (gp-ios, pc_c920ff5fe90c live shape,
   2026-08-20 06:44Z): a bot-mention pair (`message` + `app_mention`,
   same ts, distinct event ids) raced BOTH copies down the urgent
