@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Inbound files recorded inside Slack itself — voice clips (file subtype
+  `slack_audio`) and video clips (`slack_video`) — arrive with an empty
+  `mimetype` AND `filetype`, which the adapter passed through verbatim.
+  The inbound payload then omitted `mime_type`, a REQUIRED property of
+  gc's `extmsg.ExternalAttachment`, so gc rejected the whole message
+  with 422 and the recording plus its text caption silently never
+  reached the bound session. The adapter now derives a media type for
+  every inbound file (Slack's `mimetype` → file-name extension → Slack
+  `filetype` code → Slack-native subtype → `application/octet-stream`)
+  and always serializes `mime_type` (no longer `omitempty`), so a
+  payload can never again be rejected for a missing key.
+
 ### Changed
 
 - Renamed the pack directory from `slack-pack/` to `slack-full/` and the
