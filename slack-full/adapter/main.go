@@ -741,6 +741,14 @@ type config struct {
 	// how-to this adapter lifetime (item 3 — the per-message reminder
 	// carries only the registered one-line template). Nil-safe.
 	replyHelp *oncePerChannel
+	// reminderTextBudget bounds one channel delivery's Text field
+	// (gp-0qw + gp-9gc): boilerplate attaches only inside the budget,
+	// and a body that alone overflows it is tail-trimmed behind a
+	// protected head — see reminder_budget.go for the full contract.
+	// SLACK_REMINDER_TEXT_BUDGET overrides; 0 disables (the value
+	// directly-constructed test configs get, keeping the legacy
+	// layout byte-for-byte).
+	reminderTextBudget int
 	// bindingCheck caches gc binding lookups backing alias-dispatch
 	// turn-dedup (item 5). Nil-safe: nil preserves the historical
 	// double-dispatch behavior.
@@ -896,6 +904,14 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.coalesceWindow = d
 	} else {
 		return cfg, fmt.Errorf("SLACK_COALESCE_WINDOW %q invalid (want a non-negative Go duration; 0 disables burst coalescing)", getenv("SLACK_COALESCE_WINDOW"))
+	}
+
+	// Head-protected reminder budget (gp-0qw + gp-9gc); see
+	// reminder_budget.go for the contract. 0 disables.
+	if n, err := strconv.Atoi(envOrFn("SLACK_REMINDER_TEXT_BUDGET", strconv.Itoa(defaultReminderTextBudget))); err == nil && n >= 0 {
+		cfg.reminderTextBudget = n
+	} else {
+		return cfg, fmt.Errorf("SLACK_REMINDER_TEXT_BUDGET %q invalid (want a non-negative integer; 0 disables the reminder budget)", getenv("SLACK_REMINDER_TEXT_BUDGET"))
 	}
 
 	// Socket Mode inbound transport + inbound-liveness watchdog (gp-3og).
@@ -1446,13 +1462,18 @@ type slackFile struct {
 }
 
 type slackMessageEvent struct {
-	Type        string          `json:"type"`
-	Subtype     string          `json:"subtype,omitempty"`
-	User        string          `json:"user,omitempty"`
-	BotID       string          `json:"bot_id,omitempty"`
-	Text        string          `json:"text,omitempty"`
-	Channel     string          `json:"channel,omitempty"`
-	TS          string          `json:"ts,omitempty"`
+	Type    string `json:"type"`
+	Subtype string `json:"subtype,omitempty"`
+	User    string `json:"user,omitempty"`
+	BotID   string `json:"bot_id,omitempty"`
+	Text    string `json:"text,omitempty"`
+	Channel string `json:"channel,omitempty"`
+	TS      string `json:"ts,omitempty"`
+	// DeletedTS names the removed message on a subtype=message_deleted
+	// event — the only field of that event this adapter consumes
+	// (gp-0qw item 3: a buffered copy of the deleted ts is replaced
+	// with an explicit deletion notice before delivery).
+	DeletedTS   string          `json:"deleted_ts,omitempty"`
 	ThreadTS    string          `json:"thread_ts,omitempty"`
 	EventTS     string          `json:"event_ts,omitempty"`
 	ChannelType string          `json:"channel_type,omitempty"`
@@ -1692,6 +1713,19 @@ func main() {
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
+		// Deletions persist alongside spilled entries so a restart still
+		// replays a deleted message as its notice (gp-0qw) — but ONLY
+		// while draining: the spool exists solely across a
+		// shutdown→startup boundary, and a record per deletion through
+		// normal uptime would grow the file unbounded toward the replay
+		// cap (codex round-5 finding 3). A deletion processed before the
+		// drain is an in-memory tombstone every drain-time producer
+		// consults; one processed during the drain lands here.
+		cfg.coalescer.persistDeletion = func(channel, ts string) {
+			if cfg.draining != nil && cfg.draining.Load() {
+				cfg.inboundSpool.recordDeletion(channel, ts)
+			}
+		}
 	}
 	deliverCfg := cfg
 	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
@@ -3436,6 +3470,23 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		maybeDeliverPeerBotMessage(cfg, env, msg)
 		return
 	}
+	// A deletion of a message still sitting in the coalesce buffer must
+	// deliver as an explicit "deleted by sender" notice, never as a
+	// dangling ts whose text then resolves to nothing (gp-0qw item 3,
+	// pc_b334cff7f9c6). Handled before the generic subtype drop below;
+	// the branch terminates either way — a deletion event is never
+	// routable traffic. Deletions of already-delivered (or never-seen)
+	// timestamps are a no-op: the buffered window is the only span this
+	// adapter holds a message where the notice can still replace it.
+	if msg.Subtype == "message_deleted" {
+		if msg.DeletedTS != "" {
+			if n := cfg.coalescer.markDeleted(msg.Channel, msg.DeletedTS); n > 0 {
+				log.Printf("inbound: chan=%s ts=%s deleted by sender before delivery — %d buffered cop(y/ies) replaced with a deletion notice",
+					msg.Channel, msg.DeletedTS, n)
+			}
+		}
+		return
+	}
 	// Skip system messages. Subtyped messages are system noise
 	// (message_changed, message_deleted, channel_join, …) with one
 	// exception: "file_share" is a human posting a file and
@@ -3646,7 +3697,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// twin delivers nothing that could carry the preamble, and marking
 	// the cache without delivering would poison the delta for the next
 	// real visit (codex r1 P2).
-	if !skipChannelPost && msg.ThreadTS != "" && msg.ThreadTS != msg.TS && cfg.threadContextCache != nil {
+	isThreadReply := msg.ThreadTS != "" && msg.ThreadTS != msg.TS
+	preamble := ""
+	parentAuthor, parentFirstLine := "", ""
+	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
 		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
@@ -3655,6 +3709,19 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
 		} else {
 			resolveName := func(id string) string { return resolveUserDisplayName(cfg, id) }
+			// Parent context for the thread-reply anchor (gp-0qw item 2):
+			// the thread root is the reply whose ts equals the thread ts.
+			// Best-effort — a root outside the fetched window (or a failed
+			// fetch) leaves the anchor with the thread ts alone.
+			for _, m := range replies {
+				if m.TS == msg.ThreadTS {
+					if m.User != "" {
+						parentAuthor = resolveName(m.User)
+					}
+					parentFirstLine = rewriteSlackUserMentions(cfg, m.Text)
+					break
+				}
+			}
 			// Priors this audience already received as their own
 			// inbounds collapse to a one-line note instead of a
 			// re-quote (gp-729 item 2). Exact-key lookup only: a
@@ -3671,9 +3738,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 				return target == "" && cfg.coalescer.pendingContains(msg.Channel, ts)
 			}
-			if preamble := formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered); preamble != "" {
-				text = preamble + text
-			}
+			preamble = formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered)
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}
 	}
@@ -3683,8 +3748,25 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// reminder — rewrite them to display names via the users.info
 	// cache (hq-uxln9). Runs AFTER target parsing so address tokens
 	// are untouched, and before the inbound struct is built so the
-	// alias-dispatch copy inherits the rewrite.
+	// alias-dispatch copy inherits the rewrite. The preamble is kept
+	// separate from the body from here on (gp-0qw): the channel-copy
+	// composer needs the bare body to enforce its head-protection
+	// contract, while the alias copy and the gc envelope keep the
+	// legacy preamble+body concatenation byte-for-byte.
 	text = rewriteSlackUserMentions(cfg, text)
+	if preamble != "" {
+		preamble = rewriteSlackUserMentions(cfg, preamble)
+	}
+	textWithPreamble := preamble + text
+	// Thread replies lead with a protected anchor naming the thread ts
+	// and the parent's first line (gp-0qw item 2): the 8/26 incident
+	// delivered a thread reply the reader could not place — the approval
+	// it carried went unread for ~50 minutes. Computed once here so the
+	// buffered copy carries the same anchor the immediate path renders.
+	anchor := ""
+	if isThreadReply {
+		anchor = formatThreadReplyAnchor(msg.ThreadTS, parentAuthor, parentFirstLine)
+	}
 
 	var attachments []externalAttachment
 	if len(msg.Files) > 0 {
@@ -3703,8 +3785,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// than vanish. The alias dispatch below keeps the un-augmented
 	// text: dispatchToAliasedSession renders its own attachments block
 	// and augmenting both would double-list the files.
-	textForChannel := text
-	if filesBlock := formatInboundFilesBlock(msg.Files, attachments); filesBlock != "" {
+	filesBlock := formatInboundFilesBlock(msg.Files, attachments)
+	textForChannel := textWithPreamble
+	if filesBlock != "" {
 		if strings.TrimSpace(textForChannel) == "" {
 			textForChannel = filesBlock
 		} else {
@@ -3726,7 +3809,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			DisplayName: resolveUserDisplayName(cfg, msg.User), // raw id on lookup failure (hq-uxln9)
 			IsBot:       false,
 		},
-		Text:             text,
+		Text:             textWithPreamble,
 		ExplicitTarget:   target,
 		ReplyToMessageID: msg.ThreadTS,
 		Attachments:      attachments,
@@ -3803,7 +3886,16 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
-		cfg.coalescer.enqueue(msg.Channel, pendingChannelInbound{inbound: inboundForChannel})
+		// The parts ride alongside the folded Text so a single-entry
+		// delivery re-composes under the head-protection contract
+		// exactly like the immediate path (gp-0qw).
+		cfg.coalescer.enqueue(msg.Channel, pendingChannelInbound{
+			inbound:      inboundForChannel,
+			threadAnchor: anchor,
+			preamble:     preamble,
+			body:         text,
+			files:        filesBlock,
+		})
 		return
 	}
 	// withheldTwins: buffered copies of THIS message's ts, held back from
@@ -3843,17 +3935,50 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// forward failure so a Slack redelivery re-flushes the same
 		// context.
 		peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
-		if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
-			textForChannel = peerBlock + "\n\n" + textForChannel
-		}
+		peerBlock := formatPeerContextBlock(peerItems, peerDropped)
 		// Once-per-channel full reply how-to (gp-729 item 3): the
 		// per-message reminder carries only the registered one-line
 		// template, so the first delivery for a channel this adapter
 		// lifetime appends the long form (and the channel's name+id
 		// pairing, item 4).
 		firstHelp := cfg.replyHelp.first(msg.Channel)
+		helpBlock := ""
 		if firstHelp {
-			textForChannel += "\n\n" + replyHelpBlock(cfg, msg.Channel)
+			helpBlock = replyHelpBlock(cfg, msg.Channel)
+		}
+		// Head-protected composition (gp-0qw + gp-9gc): the message unit
+		// leads and boilerplate attaches only inside the reminder budget
+		// — see reminder_budget.go for the contract. Optional blocks the
+		// composer withheld unwind their side effects here so they ride
+		// a later delivery instead of being lost.
+		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(channelReminderParts{
+			anchor:    anchor,
+			preamble:  preamble,
+			body:      text,
+			files:     filesBlock,
+			ts:        msg.TS,
+			channelID: msg.Channel,
+		}, peerBlock, helpBlock, cfg.reminderTextBudget)
+		textForChannel = composed
+		if firstHelp && !usedHelp {
+			cfg.replyHelp.unmark(msg.Channel)
+			firstHelp = false
+			log.Printf("inbound: chan=%s ts=%s reply how-to withheld — delivery over reminder budget %d; re-arms for a smaller delivery (gp-9gc)",
+				msg.Channel, msg.TS, cfg.reminderTextBudget)
+		}
+		if peerBlock != "" && !usedPeer {
+			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+			peerItems, peerDropped = nil, 0
+			log.Printf("inbound: chan=%s ts=%s peer context withheld — delivery over reminder budget %d; restored to ride the next delivery",
+				msg.Channel, msg.TS, cfg.reminderTextBudget)
+		}
+		if preamble != "" && !usedPreamble {
+			log.Printf("inbound: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d; thread reachable via the anchor's --thread-ts",
+				msg.Channel, msg.TS, cfg.reminderTextBudget)
+		}
+		if trimmed {
+			log.Printf("inbound: chan=%s ts=%s body tail trimmed to reminder budget %d — head (anchor + first %d runes) preserved, marker names the full text",
+				msg.Channel, msg.TS, cfg.reminderTextBudget, reminderBodyHeadRunes)
 		}
 
 		inboundForChannel := inbound
@@ -3900,7 +4025,20 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			if cfg.draining != nil && cfg.draining.Load() {
 				spoolCopy := inbound
 				spoolCopy.Text = baseTextForChannel
-				if cfg.inboundSpool.spillBatch(msg.Channel, []pendingChannelInbound{{inbound: spoolCopy}}) {
+				// Parts ride the spool line so the replayed delivery
+				// keeps the head-protection contract and the parent
+				// anchor (codex round-2 finding 4); a deletion already
+				// processed must be spooled as its notice — tombstones
+				// do not survive the restart (round-3 finding 3).
+				spoolEntry := []pendingChannelInbound{{
+					inbound:      spoolCopy,
+					threadAnchor: anchor,
+					preamble:     preamble,
+					body:         text,
+					files:        filesBlock,
+				}}
+				cfg.coalescer.applyDeletionTombstones(msg.Channel, spoolEntry)
+				if cfg.inboundSpool.spillBatch(msg.Channel, spoolEntry) {
 					log.Printf("inbound: chan=%s ts=%s failed during shutdown drain — spooled for startup replay", msg.Channel, msg.TS)
 				} else {
 					log.Printf("inbound: LOSS chan=%s ts=%s failed during shutdown drain and could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", msg.Channel, msg.TS)
@@ -3910,11 +4048,28 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			cfg.eventDedup.forget(env.EventID)
 			return
 		}
-		log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch",
-			msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(text))
+		log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch posted=%dch",
+			msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(textWithPreamble), len(textForChannel))
 		// Conclude the (channel, ts) claim: a parked same-ts twin now
 		// continues with its channel copy skipped instead of re-posting
 		// it (gp-ios).
+		//
+		// Delivery-honesty contract (gp-0qw): this commit — and the
+		// deliveredIDs record below — fires ONLY after postInbound
+		// accepted a payload carrying the complete message unit (or an
+		// explicitly-marked trim; see reminder_budget.go). A twin that
+		// later skips on this claim is therefore always skipping a
+		// delivery whose full payload gc accepted. What this commit
+		// CANNOT vouch for is the last hop: gc's inbound handler runs
+		// the member notification in the background and swallows
+		// per-member nudge errors (gascity internal/api/
+		// huma_handlers_extmsg.go runBackground →
+		// extmsgNotifyMembers), so "gc accepted" is the strongest
+		// signal available here. The 8/27 22:57Z fragment (mayor
+		// comment on gp-0qw) was mangled on that hop, not by this
+		// dedup — the posted=NNch field in the log line above exists
+		// so the next incident can be split adapter-vs-transport at a
+		// glance.
 		cfg.channelClaims.commit(claimKey)
 		cfg.deliveredIDs.record("", msg.Channel, msg.TS)
 		if aliasSuppressed {
@@ -4106,7 +4261,19 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// the forget below keeps today's redelivery/twin retry
 				// paths and the spool stays untouched.
 				if cfg.draining != nil && cfg.draining.Load() {
-					if cfg.inboundSpool.spillBatch(inbound.Conversation.ConversationID, []pendingChannelInbound{{inbound: inbound}}) {
+					// Parts ride the spool line (codex round-2 finding
+					// 4). files stays empty: the alias copy's Text was
+					// never file-augmented, matching its legacy shape.
+					// A processed deletion spools as its notice
+					// (round-3 finding 3).
+					spoolEntry := []pendingChannelInbound{{
+						inbound:      inbound,
+						threadAnchor: anchor,
+						preamble:     preamble,
+						body:         text,
+					}}
+					cfg.coalescer.applyDeletionTombstones(inbound.Conversation.ConversationID, spoolEntry)
+					if cfg.inboundSpool.spillBatch(inbound.Conversation.ConversationID, spoolEntry) {
 						log.Printf("alias dispatch: handle=%s ts=%s failed during shutdown drain — spooled for startup replay", target, inbound.ProviderMessageID)
 					} else {
 						log.Printf("alias dispatch: LOSS handle=%s ts=%s failed during shutdown drain and could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", target, inbound.ProviderMessageID)
@@ -5435,6 +5602,19 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 	if msg.Actor.DisplayName != "" && msg.Actor.DisplayName != msg.Actor.ID {
 		sender = msg.Actor.DisplayName + " (" + msg.Actor.ID + ")"
 	}
+	// A thread reply names its thread alongside its own ts (gp-0qw
+	// item 2) so the addressed session can place the message without
+	// re-deriving the thread from Slack.
+	tsContext := neutralizeMarkupBoundaries(msg.ProviderMessageID)
+	// The reply command threads under the ROOT: Slack's thread_ts must
+	// name the parent, not a reply — a child ts here can misthread or
+	// fail outright (codex round-1 finding 5). Top-level messages keep
+	// threading under themselves.
+	replyThreadTS := msg.ProviderMessageID
+	if msg.ReplyToMessageID != "" && msg.ReplyToMessageID != msg.ProviderMessageID {
+		tsContext += ", a reply in thread " + neutralizeMarkupBoundaries(msg.ReplyToMessageID)
+		replyThreadTS = msg.ReplyToMessageID
+	}
 	body := fmt.Sprintf(
 		"<system-reminder>\n"+
 			"Slack address-by-handle: @%s addressed you from channel %s (Slack ts %s) by user %s.\n"+
@@ -5459,12 +5639,12 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 		// item 4); the --conversation-id flag below keeps the bare id
 		// the CLI needs.
 		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
-		neutralizeMarkupBoundaries(msg.ProviderMessageID),
+		tsContext, // already per-field neutralized above
 		neutralizeMarkupBoundaries(sender),
 		neutralizeMarkupBoundaries(msg.Text),
 		attachmentsBlock, // already per-field neutralized; pass raw
 		neutralizeMarkupBoundaries(msg.Conversation.ConversationID),
-		neutralizeMarkupBoundaries(msg.ProviderMessageID),
+		neutralizeMarkupBoundaries(replyThreadTS),
 	)
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters
