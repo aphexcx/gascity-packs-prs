@@ -394,6 +394,20 @@ Knobs:
   (Go duration, default `8s`; `0` restores per-message immediate
   forwarding). Targeted / bot-mentioned messages always deliver
   immediately and flush any pending buffer ahead of themselves.
+- `SLACK_INBOUND_DEAD_LETTER_DIR` — where a coalesced inbound that gc
+  rejects as unacceptable payload (HTTP 400/413/415/422, e.g. a 422
+  validation error) is written after 3 rejected deliveries instead of
+  blocking the channel forever (gp-xnc). One JSONL file per channel
+  (`<channel>.jsonl`, 0700 dir / 0600 file, fsynced); each line carries
+  the full inbound envelope, the attempt count, and the rejection
+  reason, for a manual re-post once the cause is fixed. Default
+  `<GC_CITY_PATH>/.gc/slack/inbound_dead_letter`. A rejected
+  multi-message batch is first isolated (every member re-posted alone)
+  so only the poisoned message is charged; a write that cannot be
+  confirmed keeps the entry buffered and retries next window. Every
+  other failure — gc unreachable, 5xx, 408/429, and operational 4xx
+  such as 401/403/404 (wrong city name, route missing mid-rollout) —
+  keeps retrying every window as before and never dead-letters.
 - `delivery_policy.json` (default
   `<GC_CITY_PATH>/.gc/slack/delivery_policy.json`, override with
   `SLACK_DELIVERY_POLICY_PATH`) — per-channel delivery pacing:
@@ -430,3 +444,11 @@ Knobs:
   secret is correct; check the `message.im` event subscription is active
   in the Slack app config; confirm the session is bound (look up
   `extmsg/bindings` via `gc slack status --session <SID>`).
+- **`coalesced inbound POST failed: … 422 … validation-failed` in the
+  service log**: gc rejected an inbound payload (historically a Slack
+  voice clip with no `mimetype`, gp-xnc). The message is isolated from
+  its batch-mates, retried 3 times, then written to
+  `<SLACK_INBOUND_DEAD_LETTER_DIR>/<channel>.jsonl` with the full
+  envelope and the rejection reason — grep the log for `dead-lettered`
+  for the summary line, and re-post from the file once the cause is
+  fixed. Later messages in the channel keep flowing.

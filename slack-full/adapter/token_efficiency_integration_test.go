@@ -89,7 +89,7 @@ func coalescingTestConfig(gcURL string, window time.Duration) config {
 		coalescer:    newInboundCoalescer(window, nil),
 	}
 	deliverCfg := cfg
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
 	return cfg
