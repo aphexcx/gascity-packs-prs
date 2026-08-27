@@ -173,7 +173,7 @@ func TestCoalescer_BatchSkipsClaimCommittedMember(t *testing.T) {
 	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
 	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
 	deliverCfg := cfg
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
 
@@ -191,8 +191,8 @@ func TestCoalescer_BatchSkipsClaimCommittedMember(t *testing.T) {
 		{inbound: externalInboundMessage{ProviderMessageID: "100.000020", Text: "already delivered by twin",
 			Conversation: conversationRef{ConversationID: "C1", Kind: "room"}}},
 	}
-	if ok := deliverCoalescedBatch(cfg, "C1", batch); !ok {
-		t.Fatal("batch delivery reported failure")
+	if err := deliverCoalescedBatch(cfg, "C1", batch); err != nil {
+		t.Fatalf("batch delivery reported failure: %v", err)
 	}
 
 	got := stub.snapshot()
@@ -227,7 +227,7 @@ func TestCoalescer_FailedBatchRestoreKeepsMembersIntact(t *testing.T) {
 	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
 	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
 	deliverCfg := cfg
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
 

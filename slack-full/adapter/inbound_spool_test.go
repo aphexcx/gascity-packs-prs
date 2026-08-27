@@ -186,7 +186,7 @@ func TestCoalescerFlushAllSpillFailureLogsLoss(t *testing.T) {
 	readLog, cleanupLog := captureLog(t)
 	defer cleanupLog()
 	c := newInboundCoalescer(time.Hour, nil)
-	c.deliver = func(string, []pendingChannelInbound) bool { return false }
+	c.deliver = func(string, []pendingChannelInbound) error { return errDeliverFailed }
 	c.spill = func(string, []pendingChannelInbound) bool { return false }
 	c.enqueue("C1", testPending("C1", "1.0", "doomed"))
 	done := make(chan struct{})
@@ -278,7 +278,7 @@ func TestInboundSpoolShutdownResidueRedeliveredAfterRestart(t *testing.T) {
 	// First process: gc unreachable for the whole shutdown drain.
 	spool := newInboundSpool(path)
 	c1 := newInboundCoalescer(time.Hour, nil)
-	c1.deliver = func(string, []pendingChannelInbound) bool { return false }
+	c1.deliver = func(string, []pendingChannelInbound) error { return errDeliverFailed }
 	c1.spill = spool.spillBatch
 	c1.enqueue("C1", testPending("C1", "1.0", "acked to Slack; gc down at shutdown"))
 	if !c1.admitReaction("C1", testPending("C1", "2.0", "reaction in the side lane"), false) {

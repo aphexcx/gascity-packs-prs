@@ -321,7 +321,7 @@ func TestReaction_DMBuffersNoWake(t *testing.T) {
 
 	cfg := reactionTestConfig(gcStub.URL)
 	cfg.coalescer = newInboundCoalescer(defaultCoalesceWindow, nil)
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(cfg, channel, batch)
 	}
 	env := reactionEnvelope(t, "reaction_added", "Ev1", "D1", "100.1", reactionTestReactor, "+1", "")

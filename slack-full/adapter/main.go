@@ -415,6 +415,12 @@ type config struct {
 	// (no bot-token leak). Files are organized as
 	// <store>/<channel>/<ts>-<safe-filename>.
 	inboundFileStore string
+	// inboundDeadLetterDir receives coalesced inbounds gc rejected as
+	// payload (400/413/415/422) maxCoalesceDeliveryAttempts times — one
+	// JSONL file per channel, see writeInboundDeadLetter (gp-xnc).
+	// SLACK_INBOUND_DEAD_LETTER_DIR; default
+	// <GC_CITY_PATH>/.gc/slack/inbound_dead_letter.
+	inboundDeadLetterDir string
 	// inboundFileTTL is the maximum age (mtime-based) of files in
 	// inboundFileStore before the in-process janitor deletes them.
 	// Empty or zero disables the janitor entirely.
@@ -954,6 +960,9 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	} else {
 		cfg.coalesceSpoolPath = companyStateDirDefault(cfg.cityPath, "inbound_spool.jsonl")
 	}
+	// Dead letters for inbounds gc rejects deterministically (gp-xnc):
+	// beside the spool, one JSONL file per channel.
+	cfg.inboundDeadLetterDir = envOrFn("SLACK_INBOUND_DEAD_LETTER_DIR", companyStateDirDefault(cfg.cityPath, "inbound_dead_letter"))
 
 	// Company-rooms (Phase 1) registry + ingress paths. The two JSON
 	// registries follow the same city-rooted-then-/tmp default with an
@@ -1718,10 +1727,30 @@ func main() {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
 	}
 	deliverCfg := cfg
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
-	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d spool=%q", cfg.coalesceWindow, deliveryPolicy.Len(), cfg.coalesceSpoolPath)
+	// gp-xnc: a message gc rejects deterministically is written here
+	// after maxCoalesceDeliveryAttempts instead of blocking its channel
+	// forever; the record carries the full envelope for a manual re-post.
+	// Pre-create the directory so the write-time path only ever has to
+	// confirm one directory entry (its durability contract, codex r3).
+	if err := os.MkdirAll(cfg.inboundDeadLetterDir, 0o700); err != nil {
+		log.Printf("inbound dead-letter dir %q could not be created at startup (%v) — writes will retry creating it", cfg.inboundDeadLetterDir, err)
+	}
+	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
+		if err != nil {
+			log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) stay buffered and the write retries next window: %v",
+				channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			return false
+		}
+		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
+			channel, len(batch), path)
+		return true
+	}
+	log.Printf("inbound coalescer: window=%s (0 disables) policy_channels=%d spool=%q dead_letter_dir=%q",
+		cfg.coalesceWindow, deliveryPolicy.Len(), cfg.coalesceSpoolPath, cfg.inboundDeadLetterDir)
 
 	// Public mux: only /slack/events + /slack/interactions
 	// (HMAC-verified) and /healthz. Bound to 0.0.0.0 by default so
@@ -5897,7 +5926,7 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("%s: %s", resp.Status, string(respBody))
+		return &inboundPostError{Status: resp.StatusCode, StatusText: resp.Status, Body: string(respBody)}
 	}
 	return nil
 }
