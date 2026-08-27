@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The `[[service]]` proxy_process command pointed straight at
+  `adapter/gc-slack-adapter`, a gitignored build artifact — but
+  `gc import install` re-materializes the pack cache git-only, so every
+  pack pin bump wiped the binary and left the slack service dead until
+  someone rebuilt it by hand. The service command is now
+  `adapter/run.sh` (checked in, survives every materialization): it
+  sources the secrets env file (warns but continues when the file is
+  absent — the adapter fail-fasts on missing required env itself),
+  execs an existing binary untouched, and on a missing binary finds a
+  Go toolchain (PATH plus Homebrew/system fallbacks for minimal
+  supervisor environments), rebuilds from the colocated sources with
+  loud stderr logging, publishes via PID-suffixed temp file + atomic
+  `mv` (safe under concurrent supervisor restarts), and execs.
+
 ### Changed
 
 - Renamed the pack directory from `slack-pack/` to `slack-full/` and the

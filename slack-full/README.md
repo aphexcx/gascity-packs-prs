@@ -474,10 +474,15 @@ GC_CITY_NAME=<your-city-name>
 ### Cutover sequence
 
 ```
-# 1. Build the adapter binary in place (source colocated with the pack)
+# 1. Build the adapter binary in place (source colocated with the pack).
+#    Optional: the [[service]] command is adapter/run.sh, which rebuilds
+#    gc-slack-adapter itself when the binary is missing (e.g. after
+#    `gc import install` re-materialized the pack cache git-only).
 ( cd slack-full/adapter && go build -o gc-slack-adapter )
 
-# 2. Source the secrets so the supervisor inherits them
+# 2. Source the secrets so the supervisor inherits them.
+#    Optional: run.sh sources this same file itself at service start
+#    (override the path with GC_SLACK_ADAPTER_ENV).
 set -a; source "${XDG_CONFIG_HOME:-$HOME/.config}/gc-slack-adapter/env"; set +a
 
 # 3. Stop any manually-managed adapter that may still be running
