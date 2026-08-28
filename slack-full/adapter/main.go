@@ -749,6 +749,14 @@ type config struct {
 	// directly-constructed test configs get, keeping the legacy
 	// layout byte-for-byte).
 	reminderTextBudget int
+	// deliveryReceiptGate arms the same-ts claim's delivery-receipt gate
+	// (gp-32q): a claim concludes only on a receipt that vouches the
+	// complete payload reached the session. SLACK_DELIVERY_RECEIPT_GATE
+	// =off disarms it back to the pre-gp-32q commit-on-2xx behavior.
+	// Directly-constructed test configs get false, which keeps their
+	// legacy expectations exact; a gc that emits no receipt is gated to
+	// the same legacy verdict anyway (see delivery_receipt.go).
+	deliveryReceiptGate bool
 	// bindingCheck caches gc binding lookups backing alias-dispatch
 	// turn-dedup (item 5). Nil-safe: nil preserves the historical
 	// double-dispatch behavior.
@@ -912,6 +920,19 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.reminderTextBudget = n
 	} else {
 		return cfg, fmt.Errorf("SLACK_REMINDER_TEXT_BUDGET %q invalid (want a non-negative integer; 0 disables the reminder budget)", getenv("SLACK_REMINDER_TEXT_BUDGET"))
+	}
+
+	// Same-ts delivery-receipt gate (gp-32q). Armed by default: against
+	// a gc that emits no receipt it is a no-op, so the only thing the
+	// knob buys is an escape hatch if a gc build ever reports receipts
+	// wrongly and the adapter starts re-posting deliveries that landed.
+	switch strings.ToLower(strings.TrimSpace(envOrFn(deliveryReceiptGateEnv, "on"))) {
+	case "off", "0", "false", "no":
+		cfg.deliveryReceiptGate = false
+	case "on", "1", "true", "yes", "":
+		cfg.deliveryReceiptGate = true
+	default:
+		return cfg, fmt.Errorf("%s %q invalid (want on|off)", deliveryReceiptGateEnv, getenv(deliveryReceiptGateEnv))
 	}
 
 	// Socket Mode inbound transport + inbound-liveness watchdog (gp-3og).
@@ -3670,15 +3691,39 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		claimProceed, claimWait := cfg.channelClaims.begin(claimKey)
 		for !claimProceed {
 			if claimWait == nil {
-				log.Printf("inbound: chan=%s ts=%s channel copy already delivered by same-ts twin — skipping channel post", msg.Channel, msg.TS)
+				// Concluded by the twin that owned it. During a drain
+				// that conclusion can mean "spooled for startup replay"
+				// rather than "delivered", and saying so is the whole
+				// point of this bead — the 8/27-28 incidents were read
+				// off exactly this line.
+				if cfg.draining != nil && cfg.draining.Load() {
+					log.Printf("inbound: chan=%s ts=%s channel copy concluded by same-ts twin during the shutdown drain (delivered, or spooled for startup replay) — skipping channel post", msg.Channel, msg.TS)
+				} else {
+					log.Printf("inbound: chan=%s ts=%s channel copy already delivered by same-ts twin — skipping channel post", msg.Channel, msg.TS)
+				}
 				skipChannelPost = true
 				break
 			}
 			log.Printf("inbound: chan=%s ts=%s parked behind in-flight same-ts twin delivery", msg.Channel, msg.TS)
 			<-claimWait
+			// Takeover is not a shutdown strategy (gp-32q). A twin never
+			// has to decide that for itself, though: an owner that fails
+			// during the drain CONCLUDES this claim when its copy
+			// reached the spool and RELEASES it when nothing durable
+			// exists, so waking to a released claim always means the
+			// takeover below is the last recovery path — during a drain
+			// as much as outside one.
 			claimProceed, claimWait = cfg.channelClaims.begin(claimKey)
 		}
 	}
+
+	// threadCtxPrevTS/threadCtxAdvanced remember the watermark this
+	// delivery moved, so a delivery that then fails can put it back
+	// (codex r4 P2 #5). Left advanced, the successor would read this ts
+	// as context already conveyed and send its recovery copy without
+	// the preamble that never verifiably arrived.
+	threadCtxPrevTS := ""
+	threadCtxAdvanced := false
 
 	// gc-px8.5 + gc-px8.6: prepend thread-context preamble for inbounds
 	// that are replies in a thread. The cache stores per-(target,
@@ -3697,6 +3742,18 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// twin delivers nothing that could carry the preamble, and marking
 	// the cache without delivering would poison the delta for the next
 	// real visit (codex r1 P2).
+	//
+	// KNOWN GAP, pre-existing and NOT closed here (codex r5 P2 #4): a
+	// twin that skips the channel copy can still own the alias
+	// injection, and that injection then carries the body with no
+	// preamble in front of it. gp-32q adds one more route to it — the
+	// successor of a drain spill that committed the channel claim but
+	// left an injection owed. Closing it means resolving the alias claim
+	// BEFORE this block so context is built whenever the event owns
+	// either audience, which reorders two claim lifecycles in this
+	// function; that is its own change, not a rider on a delivery-claim
+	// fix. The failure mode is a thinner injection, never a missing or
+	// truncated one.
 	isThreadReply := msg.ThreadTS != "" && msg.ThreadTS != msg.TS
 	preamble := ""
 	parentAuthor, parentFirstLine := "", ""
@@ -3739,6 +3796,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				return target == "" && cfg.coalescer.pendingContains(msg.Channel, ts)
 			}
 			preamble = formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered)
+			threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}
 	}
@@ -3914,7 +3972,15 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 
-	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != ""
+	// A twin whose channel copy was skipped while the drain is running
+	// takes no busy mark (gp-32q, codex r3 P2 #3). The mark's whole
+	// lifecycle is in-memory: it is cleared by the reply to a delivery
+	// this goroutine is no longer making, and the registry that could
+	// remove the reaction does not survive the restart — so marking here
+	// leaves a permanent hourglass on a message the next startup will
+	// replay and answer normally.
+	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != "" &&
+		!(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
 	if busyEligible {
@@ -3983,46 +4049,63 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
-		if err := postInbound(cfg, inboundForChannel); err != nil {
+		receipt, postErr := postInboundWithReceipt(cfg, inboundForChannel)
+		verdict := receipt.verdict(cfg.deliveryReceiptGate)
+		// Delivery-receipt gate (gp-32q): gc accepting the payload is
+		// not the same as the session receiving it — gc's inbound
+		// handler notifies members in the background and answers 200
+		// first, so a mangled last hop looks identical to a clean one
+		// from here. When gc vouches for nothing, re-post ONCE in place
+		// (the claim is still held, so a parked twin cannot duplicate
+		// the attempt) and re-read the verdict. Only if that also fails
+		// to vouch does this fall through to the failure path below,
+		// which releases the claim so the parked twin re-posts.
+		for attempt := 0; postErr == nil && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
+			log.Printf("inbound: chan=%s ts=%s gc did not vouch for delivery (%s) — re-posting in place (attempt %d/%d)",
+				msg.Channel, msg.TS, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
+			receipt, postErr = postInboundWithReceipt(cfg, inboundForChannel)
+			verdict = receipt.verdict(cfg.deliveryReceiptGate)
+		}
+		if postErr == nil && verdict == receiptHeld {
+			// gc took the payload and is still waiting for the session
+			// to reach an idle boundary (mayor ruling, 2026-08-28). The
+			// claim concludes and NOTHING is re-posted; this line exists
+			// so a message that never arrives after a hold is still
+			// greppable against gc's own log for the same receipt id.
+			log.Printf("inbound: HELD chan=%s ts=%s gc accepted the payload and has not finished delivering it — not re-posting (a busy session's normal path) — %s",
+				msg.Channel, msg.TS, receipt.logField(verdict))
+		}
+		if postErr == nil && verdict == receiptUnconfirmed {
+			// The payload reached gc's transcript but nothing vouches
+			// that it reached the SESSION. Treated exactly like a failed
+			// POST: that path already releases the claim (so a parked
+			// twin re-posts — the recovery this bead is about), puts the
+			// withheld buffered copies back, cancels the busy mark no
+			// reply will ever clear, and spools during a drain. gc
+			// dedups a re-posted transcript record by
+			// provider_message_id, so the twin's copy costs a duplicate
+			// notification at worst — the trade this codebase always
+			// takes over loss.
+			log.Printf("inbound: UNDELIVERED chan=%s ts=%s gc accepted the payload but did not vouch that it reached the session after %d re-post(s) — %s",
+				msg.Channel, msg.TS, deliveryReceiptRepostAttempts, receipt.logField(verdict))
+			postErr = errDeliveryUnvouched
+		}
+		if err := postErr; err != nil {
 			log.Printf("inbound POST failed: %v", err)
-			// Release the (channel, ts) claim FIRST so a parked same-ts
-			// twin (or the restored buffered copy below) can take over
-			// as the retry path (gp-ios).
-			cfg.channelClaims.forget(claimKey)
-			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
-			// The urgent copy never reached gc, so the withheld buffered
-			// twins are the only remaining path for this ts — put them
-			// back for the coalescer's timer retry (pc_c920ff5fe90c).
-			cfg.coalescer.restore(msg.Channel, withheldTwins)
-			if firstHelp {
-				cfg.replyHelp.unmark(msg.Channel)
-			}
-			// Nothing reached gc. Cancel the busy mark FIRST — no agent
-			// received the message, so no reply will ever come to clear
-			// it — restoring any marks it displaced (their agents may
-			// still be working, codex r5). Only THEN release the dedup
-			// claim: forget wakes a parked redelivery, and it must not
-			// re-mark this timestamp while the old attempt's cancellation
-			// is still pending (a late cancel would delete the retry's
-			// fresh mark and strand its hourglass).
-			if busyEligible {
-				// Marks whose thread a reply already consumed cannot be
-				// restored (tombstoned) — remove their reactions instead
-				// (codex r8).
-				for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, busyAddDone, busyDisplacedMarks) {
-					go removeBusyReaction(cfg, msg.Channel, tk)
-				}
-			}
 			// Failed urgent/DM delivery DURING THE SHUTDOWN DRAIN (gp-9e7
 			// round 3, 2d): this event is already past the watermark and
-			// Slack got its 200 long ago, and with the admission barrier
-			// down no redelivery or parked twin can take over — the spool
-			// is its only durability, exactly like coalesced residue. It
-			// replays through the coalescer's normal buffers at the next
-			// startup (the per-ts gc dedup key bounds a duplicate if a
-			// parked twin does somehow land). Outside the drain, the
-			// forget below keeps today's redelivery/twin retry paths.
-			if cfg.draining != nil && cfg.draining.Load() {
+			// Slack got its 200 long ago, so the spool is its durability,
+			// exactly like coalesced residue. It replays through the
+			// coalescer's normal buffers at the next startup.
+			//
+			// The spool runs BEFORE anything is released (gp-32q, codex
+			// r3 P1). Whether this copy became durable is what decides
+			// how the claim and the event id conclude below, and
+			// releasing first would wake a parked twin into a decision
+			// this goroutine has not made yet.
+			drainSpooled := false
+			draining := cfg.draining != nil && cfg.draining.Load()
+			if draining {
 				spoolCopy := inbound
 				spoolCopy.Text = baseTextForChannel
 				// Parts ride the spool line so the replayed delivery
@@ -4038,38 +4121,125 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					files:        filesBlock,
 				}}
 				cfg.coalescer.applyDeletionTombstones(msg.Channel, spoolEntry)
-				if cfg.inboundSpool.spillBatch(msg.Channel, spoolEntry) {
+				drainSpooled = cfg.inboundSpool.spillBatch(msg.Channel, spoolEntry)
+				if drainSpooled {
 					log.Printf("inbound: chan=%s ts=%s failed during shutdown drain — spooled for startup replay", msg.Channel, msg.TS)
 				} else {
 					log.Printf("inbound: LOSS chan=%s ts=%s failed during shutdown drain and could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", msg.Channel, msg.TS)
 				}
 			}
+			// EVERY handover to a successor now happens below the
+			// cleanup, not above it (gp-32q, codex r4 P2 #2). Releasing
+			// the claim first — which is what this branch used to do —
+			// wakes a parked twin that can call markBoth before this
+			// goroutine's cancelBoth runs, and the late cancel then
+			// deletes the RETRY's fresh mark and strands its hourglass.
+			// The same ordering makes the restored riders visible before
+			// any successor composes.
+			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+			if drainSpooled {
+				// The withheld copies are same-ts twins of the message
+				// just written to the spool (flushAheadOf withholds by
+				// ts). Putting them back would spill a SECOND durable
+				// copy of it through the coalescer's closed gate, and
+				// the restart would notify the session twice (codex r4
+				// P2 #3).
+				if len(withheldTwins) > 0 {
+					log.Printf("inbound: chan=%s ts=%s %d withheld buffered twin(s) dropped — the spooled copy is their replay", msg.Channel, msg.TS, len(withheldTwins))
+				}
+			} else {
+				// The urgent copy never reached gc, so the withheld
+				// buffered twins are the only remaining path for this ts
+				// — put them back for the coalescer's timer retry
+				// (pc_c920ff5fe90c).
+				cfg.coalescer.restore(msg.Channel, withheldTwins)
+			}
+			if firstHelp {
+				cfg.replyHelp.unmark(msg.Channel)
+			}
+			// The thread-context watermark was advanced for a preamble
+			// that has not verifiably arrived (codex r4 P2 #5). Left
+			// advanced, the successor reads this ts as already conveyed
+			// and sends the recovery copy WITHOUT the context — a
+			// recovery that is complete in body and short of the
+			// decision-making the reader needs. Rolled back only while
+			// the entry still names this ts, so a newer delivery keeps
+			// its own advance; the worst case is one duplicated
+			// preamble, which is the direction this cache already errs
+			// on eviction.
+			if threadCtxAdvanced {
+				cfg.threadContextCache.rollbackDelivered(target, msg.Channel, msg.ThreadTS, msg.TS, threadCtxPrevTS)
+			}
+			// Nothing reached gc. Cancel the busy mark — no agent
+			// received the message, so no reply will ever come to clear
+			// it — restoring any marks it displaced (their agents may
+			// still be working, codex r5).
+			if busyEligible {
+				// Marks whose thread a reply already consumed cannot be
+				// restored (tombstoned) — remove their reactions instead
+				// (codex r8).
+				for _, tk := range cfg.busyMarks.cancelBoth(msg.Channel, msg.ThreadTS, msg.TS, busyAddDone, busyDisplacedMarks) {
+					go removeBusyReaction(cfg, msg.Channel, tk)
+				}
+			}
+			// Cleanup is settled: NOW hand the (channel, ts) claim to a
+			// parked same-ts twin (or the restored buffered copy) as the
+			// retry path (gp-ios) — UNLESS the drain spool made this copy
+			// durable. Then the claim is CONCLUDED instead: a takeover
+			// would post a second copy of a message the next startup
+			// already replays, and its POST can burn the full forward
+			// timeout, outliving both the 20s event drain and the spool
+			// seal, at which point it can neither spool its own failure
+			// nor conclude its claim (codex r3 P1). A spill the spool
+			// REFUSED is the opposite case: nothing durable exists, so
+			// the twin is the last recovery path and must be woken.
+			if drainSpooled {
+				cfg.channelClaims.commit(claimKey)
+			} else {
+				cfg.channelClaims.forget(claimKey)
+			}
+			// The event id concludes on the same evidence as the claim
+			// (codex r3 P2 #4) — with one audience the spool does not
+			// cover (codex r4 P1 #1). A spooled line replays as a
+			// CHANNEL copy; nothing reconstructs an addressed session
+			// injection, and this event's channel copy carries an
+			// ExplicitTarget telling the channel-bound session to stay
+			// silent. So when an injection is still owed, the EVENT is
+			// not fully handled however durable the channel copy is:
+			// the id is forgotten so a redelivery can still run that
+			// leg, while the committed claim above keeps any successor
+			// from re-posting the channel copy the spool already holds.
+			if drainSpooled && !(aliasedSessionID != "" && !aliasSuppressed) {
+				return
+			}
 			commitDedup = false
 			cfg.eventDedup.forget(env.EventID)
 			return
 		}
-		log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch posted=%dch",
-			msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(textWithPreamble), len(textForChannel))
+		log.Printf("inbound: chan=%s user=%s ts=%s thread=%s target=%q bot_mention=%t files=%d spooled=%d text=%dch posted=%dch %s",
+			msg.Channel, msg.User, msg.TS, msg.ThreadTS, target, botMentioned, len(msg.Files), len(attachments), len(textWithPreamble), len(textForChannel), receipt.logField(verdict))
 		// Conclude the (channel, ts) claim: a parked same-ts twin now
 		// continues with its channel copy skipped instead of re-posting
 		// it (gp-ios).
 		//
-		// Delivery-honesty contract (gp-0qw): this commit — and the
-		// deliveredIDs record below — fires ONLY after postInbound
-		// accepted a payload carrying the complete message unit (or an
-		// explicitly-marked trim; see reminder_budget.go). A twin that
-		// later skips on this claim is therefore always skipping a
-		// delivery whose full payload gc accepted. What this commit
-		// CANNOT vouch for is the last hop: gc's inbound handler runs
-		// the member notification in the background and swallows
-		// per-member nudge errors (gascity internal/api/
-		// huma_handlers_extmsg.go runBackground →
-		// extmsgNotifyMembers), so "gc accepted" is the strongest
-		// signal available here. The 8/27 22:57Z fragment (mayor
-		// comment on gp-0qw) was mangled on that hop, not by this
-		// dedup — the posted=NNch field in the log line above exists
-		// so the next incident can be split adapter-vs-transport at a
-		// glance.
+		// Delivery-honesty contract (gp-0qw, tightened by gp-32q): this
+		// commit — and the deliveredIDs record below — fires ONLY after
+		// postInbound accepted a payload carrying the complete message
+		// unit (or an explicitly-marked trim; see reminder_budget.go)
+		// AND the receipt gate above concluded. A twin that later skips
+		// on this claim is therefore skipping a delivery gc vouched
+		// for, not merely one gc acknowledged.
+		//
+		// The last hop is what gp-0qw could not vouch for: gc's inbound
+		// handler runs the member notification in the background and
+		// swallows per-member nudge errors (gascity internal/api/
+		// huma_handlers_extmsg.go runBackground → extmsgNotifyMembers),
+		// so before receipts "gc accepted" was the strongest available
+		// signal — and the 8/27 22:57Z and 8/28 04:08Z fragments were
+		// both mangled on exactly that hop while this claim reported
+		// success (pc_2e2378b9918e). A gc that emits no receipt still
+		// lands here on the unsupported verdict, which is that same old
+		// behavior, named in the log line above rather than assumed.
 		cfg.channelClaims.commit(claimKey)
 		cfg.deliveredIDs.record("", msg.Channel, msg.TS)
 		if aliasSuppressed {
@@ -4200,9 +4370,43 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					log.Printf("alias dispatch: handle=%s ts=%s parked behind in-flight same-ts twin injection",
 						target, inbound.ProviderMessageID)
 					<-aliasWait
+					// No drain deferral on THIS leg, deliberately (gp-32q,
+					// codex r3 P1 #2). The channel leg can defer to the
+					// shutdown spool because the spool replays a channel
+					// copy — but a spooled line replays through the
+					// coalescer as channel audience and does NOT
+					// reconstruct an addressed session injection (see the
+					// drain arm below). So during a drain there is nothing
+					// durable behind this claim, and a twin that deferred
+					// would suppress an addressed delivery that no replay
+					// re-creates. The takeover POST is the only recovery
+					// path there is; it keeps the pre-gp-32q behavior.
 					aliasProceed, aliasWait = cfg.channelClaims.begin(aliasKey)
 				}
-				if dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target) {
+				// Delivery-receipt gate for the injection leg (gp-32q).
+				// Identical contract to the channel copy: a receipt
+				// that vouches for nothing gets ONE in-place re-dispatch
+				// while the injection claim is still held, and only then
+				// falls through to the failure branch, which releases
+				// the claim so a parked twin re-injects.
+				aliasReceipt, aliasOK := dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
+				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
+				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
+					log.Printf("alias dispatch: handle=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
+						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict), attempt+1, deliveryReceiptRepostAttempts)
+					aliasReceipt, aliasOK = dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
+					aliasVerdict = aliasReceipt.verdict(cfg.deliveryReceiptGate)
+				}
+				if aliasOK && aliasVerdict == receiptHeld {
+					log.Printf("alias dispatch: HELD handle=%s ts=%s gc accepted the injection and has not finished delivering it — not re-dispatching — %s",
+						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict))
+				}
+				if aliasOK && aliasVerdict == receiptUnconfirmed {
+					log.Printf("alias dispatch: UNDELIVERED handle=%s ts=%s gc accepted the injection but did not vouch that it reached the session after %d re-dispatch(es) — %s",
+						target, inbound.ProviderMessageID, deliveryReceiptRepostAttempts, aliasReceipt.logField(aliasVerdict))
+					aliasOK = false
+				}
+				if aliasOK {
 					cfg.channelClaims.commit(aliasKey)
 					cfg.deliveredIDs.record(target, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 					// Final delivery landed: NOW retire the marks
@@ -4278,6 +4482,15 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					} else {
 						log.Printf("alias dispatch: LOSS handle=%s ts=%s failed during shutdown drain and could not be spooled — LOST (already acked to Slack; the watermark backfill cannot recover admitted events)", target, inbound.ProviderMessageID)
 					}
+				}
+				// Put the thread-context watermark back for the same
+				// reason the channel leg does (codex r4 P2 #5): this
+				// injection carried the preamble, and a takeover that
+				// read the ts as already conveyed would re-dispatch the
+				// body without it. Conditional on the entry still naming
+				// this ts, so a newer delivery keeps its own advance.
+				if threadCtxAdvanced {
+					cfg.threadContextCache.rollbackDelivered(target, inbound.Conversation.ConversationID, msg.ThreadTS, inbound.ProviderMessageID, threadCtxPrevTS)
 				}
 				// Release the injection claim after the busy cleanup so
 				// a parked same-ts twin taking over re-dispatches into a
@@ -5565,7 +5778,11 @@ func handleHandleAliasDelete(reg *handleAliasRegistry) http.HandlerFunc {
 //
 // Returns true on successful delivery, false on any error. The caller is
 // responsible for surface-visible failure signaling (e.g. a ⚠️ reaction).
-func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundMessage, handle string) bool {
+// dispatchToAliasedSession injects one address-by-handle reminder into
+// the aliased session. Returns gc's delivery receipt (zero-valued when
+// gc emits none) and whether gc ACCEPTED the injection — the receipt is
+// what says it arrived (gp-32q).
+func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundMessage, handle string) (deliveryReceipt, bool) {
 	// Every interpolated string is run through neutralizeMarkupBoundaries
 	// to prevent a Slack workspace member from forging </system-reminder>
 	// boundaries inside the dispatched body and injecting arbitrary
@@ -5657,23 +5874,35 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
 		log.Printf("alias dispatch: build request: %v", err)
-		return false
+		return deliveryReceipt{}, false
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GC-Request", "gc-slack-adapter-alias")
+	// Same ask as the channel forward (gp-32q). The session-message
+	// endpoint is async today — it answers with a request id and emits
+	// the real outcome as an event — so this leg is dishonest in exactly
+	// the way the channel leg was, and it reads whatever receipt a
+	// receipt-emitting gc returns through the shared parser.
+	req.Header.Set("X-GC-Delivery-Receipt", "require")
 	resp, err := gcForwardClient.Do(req)
 	if err != nil {
 		log.Printf("alias dispatch: POST %s: %v", target, err)
-		return false
+		return deliveryReceipt{}, false
 	}
 	defer resp.Body.Close()
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, deliveryReceiptBodyLimit))
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
 		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, string(respBody))
-		return false
+		return deliveryReceipt{}, false
 	}
-	log.Printf("alias dispatch: handle=%s -> session=%s OK", handle, sessionID)
-	return true
+	if readErr != nil {
+		log.Printf("alias dispatch: handle=%s -> session=%s accepted; receipt unreadable: %v", handle, sessionID, readErr)
+		return deliveryReceipt{}, true
+	}
+	receipt := parseDeliveryReceipt(respBody)
+	log.Printf("alias dispatch: handle=%s -> session=%s OK %s",
+		handle, sessionID, receipt.logField(receipt.verdict(cfg.deliveryReceiptGate)))
+	return receipt, true
 }
 
 // reactAliasDispatchFailure fires a best-effort ⚠️ reaction on the original
@@ -5795,7 +6024,21 @@ var slackAPIClient = &http.Client{Timeout: 30 * time.Second}
 // JSON calls.
 var slackUploadClient = &http.Client{Timeout: 120 * time.Second}
 
+// postInbound forwards one inbound to gc, discarding the delivery
+// receipt. For call sites that take no same-ts claim (peer-bot context,
+// reaction notifications) there is nothing a receipt could gate.
 func postInbound(cfg config, msg externalInboundMessage) error {
+	_, err := postInboundWithReceipt(cfg, msg)
+	return err
+}
+
+// postInboundWithReceipt forwards one inbound and returns gc's delivery
+// receipt alongside the transport outcome (gp-32q). A nil error means
+// gc ACCEPTED the payload; whether it REACHED the session is the
+// receipt's question, and only a claim-holding caller needs to ask it —
+// see delivery_receipt.go. A receipt-less gc yields the zero receipt
+// (present=false), which every gate treats as the legacy 2xx verdict.
+func postInboundWithReceipt(cfg config, msg externalInboundMessage) (deliveryReceipt, error) {
 	body, _ := json.Marshal(map[string]any{
 		"message": msg,
 	})
@@ -5803,18 +6046,31 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 	target := fmt.Sprintf("%s/v0/city/%s/extmsg/inbound", cfg.gcAPIBase, url.PathEscape(cfg.cityName))
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return deliveryReceipt{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-GC-Request", "gc-slack-adapter")
+	// Asks a receipt-emitting gc to vouch for the last hop before it
+	// answers. Ignored by every gc that predates gp-2rq, which is
+	// exactly the "unsupported" arm.
+	req.Header.Set("X-GC-Delivery-Receipt", "require")
 	resp, err := gcForwardClient.Do(req)
 	if err != nil {
-		return err
+		return deliveryReceipt{}, err
 	}
 	defer resp.Body.Close()
+	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, deliveryReceiptBodyLimit))
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return &inboundPostError{Status: resp.StatusCode, StatusText: resp.Status, Body: string(respBody)}
+		return deliveryReceipt{}, &inboundPostError{Status: resp.StatusCode, StatusText: resp.Status, Body: string(respBody)}
 	}
-	return nil
+	if readErr != nil {
+		// gc accepted (2xx headers) but the body did not finish. The
+		// message is not lost — but nothing here vouches for the last
+		// hop either, so report the zero receipt and let the caller's
+		// gate treat it as an unsupported/legacy conclusion rather
+		// than inventing a delivery claim from a truncated body.
+		log.Printf("inbound receipt: response body read failed (delivery still accepted): %v", readErr)
+		return deliveryReceipt{}, nil
+	}
+	return parseDeliveryReceipt(respBody), nil
 }

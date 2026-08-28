@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -832,8 +833,44 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 // never returns to the buffer unchanged, so the log carries a bounded
 // number of rejection lines per poisoned entry, not one per window
 // forever (gp-xnc, 2026-08-26 incident).
+// chargeableDeliveryFailure reports whether a failure must be COUNTED
+// against the batch's retry budget instead of being put back uncharged.
+// Two shapes qualify: gc REJECTING the payload (a 4xx it will answer
+// the same way next window), and gc accepting the payload but never
+// vouching that it reached the session (gp-32q). Both are standing
+// conditions, so the uncharged path — which exists for transient faults
+// like a connection reset — would retry either one every window
+// forever. Charging gives them the bounded ladder gp-xnc built:
+// retried under the cap, then dead-lettered for an operator.
+//
+// This matters most inside the isolation loop below, which re-delivers
+// singles AFTER a batch rejection: a single that gc then accepts
+// without vouching is an unvouched delivery reached by a different
+// route, and classifying it as transient there would reopen the
+// unbounded re-notify loop the arm at the top of failed() closes.
+func chargeableDeliveryFailure(err error) bool {
+	return permanentDeliveryFailure(err) || errors.Is(err, errDeliveryUnvouched)
+}
+
 func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound, cause error) {
 	if len(batch) == 0 {
+		return
+	}
+	if errors.Is(cause, errDeliveryUnvouched) {
+		// gc ACCEPTED this batch but would not vouch that it reached the
+		// session (gp-32q). Neither of the two existing classes fits: it
+		// is not a payload rejection (isolation has no poisoned member to
+		// find — the whole delivery is what failed to land), and it must
+		// not restore uncharged like a transient fault, because a receipt
+		// that never vouches would then re-notify this channel every
+		// window forever. Charging every member gives the same bounded
+		// ladder gp-xnc built: retried under the cap, then written to the
+		// dead-letter file for an operator. Reaction entries ride the
+		// same path — charge → restore returns them to their side lane.
+		c.applyDeletionTombstones(channel, batch)
+		for _, p := range batch {
+			c.charge(channel, p, cause)
+		}
 		return
 	}
 	if !permanentDeliveryFailure(cause) {
@@ -876,7 +913,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		if err == nil {
 			continue
 		}
-		if !permanentDeliveryFailure(err) {
+		if !chargeableDeliveryFailure(err) {
 			rest := append(append([]pendingChannelInbound{}, msgs[i:]...), reactions...)
 			log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure; %d entries restored uncharged for the next window: %v",
 				channel, i, len(msgs), len(rest), err)
@@ -899,7 +936,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	err := c.deliver(channel, reactions)
 	switch {
 	case err == nil:
-	case permanentDeliveryFailure(err):
+	case chargeableDeliveryFailure(err):
 		for _, p := range reactions {
 			c.charge(channel, p, err)
 		}
@@ -1565,7 +1602,43 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		}
 	}
 	env.Text = text
-	if err := postInbound(cfg, env); err != nil {
+	receipt, err := postInboundWithReceipt(cfg, env)
+	verdict := receipt.verdict(cfg.deliveryReceiptGate)
+	// Delivery-receipt gate (gp-32q), same contract as the urgent path:
+	// a batch gc accepted but would not vouch for is re-posted once in
+	// place while the member claims are still held.
+	for attempt := 0; err == nil && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
+		log.Printf("coalesce: chan=%s newest_ts=%s gc did not vouch for delivery (%s) — re-posting in place (attempt %d/%d)",
+			channel, env.ProviderMessageID, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
+		receipt, err = postInboundWithReceipt(cfg, env)
+		verdict = receipt.verdict(cfg.deliveryReceiptGate)
+	}
+	if err == nil && verdict == receiptHeld {
+		log.Printf("coalesce: HELD chan=%s batch=%d newest_ts=%s gc accepted the batch and has not finished delivering it — not re-posting — %s",
+			channel, len(batch), env.ProviderMessageID, receipt.logField(verdict))
+	}
+	if err == nil && verdict == receiptUnconfirmed {
+		// gc took the batch but would not vouch that it reached the
+		// session. Routed into the SAME failure path as a rejected POST
+		// (codex r1 P2/P3): that path is what releases the member claims
+		// for a parked same-ts urgent twin, puts peer context and the
+		// once-per-channel reply how-to back, and hands the batch to
+		// failed() — which returns reaction entries to their no-wake side
+		// lane and charges each message so the retry is BOUNDED and ends
+		// in the dead-letter file rather than looping.
+		//
+		// An earlier revision returned nil here to avoid the coalescer's
+		// retry-forever contract turning a never-vouching receipt into an
+		// unbounded re-notify loop. That was worse: an ordinary room
+		// message has ONE Slack event, so retiring the batch discarded
+		// the only copy the adapter still owned — a detected loss with no
+		// recovery. errDeliveryUnvouched is chargeable instead (see
+		// failed()), which bounds the retry without discarding anything.
+		log.Printf("coalesce: UNDELIVERED chan=%s batch=%d newest_ts=%s gc accepted the batch but did not vouch that it reached the session after %d re-post(s) — %s",
+			channel, len(batch), env.ProviderMessageID, deliveryReceiptRepostAttempts, receipt.logField(verdict))
+		err = errDeliveryUnvouched
+	}
+	if err != nil {
 		log.Printf("coalesced inbound POST failed: chan=%s batch=%d: %v", channel, len(batch), err)
 		// Release the member claims this batch owned so a parked
 		// same-ts urgent twin — or this batch's own timer retry — can
@@ -1587,8 +1660,8 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		tss = append(tss, p.inbound.ProviderMessageID)
 	}
 	cfg.deliveredIDs.record("", channel, tss...)
-	log.Printf("inbound (coalesced): chan=%s batch=%d newest_ts=%s text=%dch",
-		channel, len(batch), env.ProviderMessageID, len(env.Text))
+	log.Printf("inbound (coalesced): chan=%s batch=%d newest_ts=%s text=%dch %s",
+		channel, len(batch), env.ProviderMessageID, len(env.Text), receipt.logField(verdict))
 	return nil
 }
 

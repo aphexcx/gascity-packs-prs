@@ -1258,7 +1258,7 @@ func TestDispatchToAliasedSessionPostsWarningReactOnFailure(t *testing.T) {
 		Actor: externalActor{ID: "U0B1N5KD6HF"},
 		Text:  "hello, are you there?",
 	}
-	if !dispatchToAliasedSession(cfg, "gc-dead-session", inbound, "dashboard") {
+	if _, ok := dispatchToAliasedSession(cfg, "gc-dead-session", inbound, "dashboard"); !ok {
 		reactAliasDispatchFailure(cfg.slackBotToken,
 			inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 	}
@@ -1311,7 +1311,7 @@ func TestDispatchToAliasedSessionNoReactWithoutToken(t *testing.T) {
 		Actor:             externalActor{ID: "U1"},
 		Text:              "ping",
 	}
-	if !dispatchToAliasedSession(cfg, "gc-dead", inbound, "bot") {
+	if _, ok := dispatchToAliasedSession(cfg, "gc-dead", inbound, "bot"); !ok {
 		reactAliasDispatchFailure(cfg.slackBotToken,
 			inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 	}
