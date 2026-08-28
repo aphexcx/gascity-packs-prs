@@ -82,7 +82,7 @@ improvises only inside the digest and the open floor, and only from brief conten
                                                      │        ▲
                                                      └──48kHz MediaStreams──┘
                  gc mail send mayor  ◀── outbox: verdicts, notes, call records ── [4]
-                 bd comment          ◀──
+                 gc bd comment          ◀──
 ```
 
 **[1] Mayor-surface adapter (read side).** A compiler, not a live query layer. Before each
@@ -123,7 +123,7 @@ as its own macOS user. It owns the lifecycle: accept an authenticated call order
 the host-wide single-flight lock, run preflight (§7), compile the brief via [1], open the
 browser bridge page, mint an ephemeral realtime session + a per-call capability token for [2],
 dial via [3] and drive the probe loop, run the script as a state machine (§3), turn confirmed
-verdicts and notes into `gc mail` + `bd comment` writes through a durable outbox **as they
+verdicts and notes into `gc mail` + `gc bd comment` writes through a durable outbox **as they
 happen** (§4), hang up, tear down, deliver the call record, and fall back to Slack/mail on any
 failure. It is the only component with gc/bd credentials; the brain has none.
 
@@ -291,7 +291,7 @@ The bead's requirement is that a misheard "merge it" must be impossible. Precise
 
 **Impossible (structural):**
 
-1. **The secretary executes nothing.** Its only sinks are `gc mail` and `bd comment`. There is
+1. **The secretary executes nothing.** Its only sinks are `gc mail` and `gc bd comment`. There is
    no code path from any tool to a merge, a send, or a payment. Even a CONFIRMED verdict is a
    structured message to the mayor; the action still happens through the existing gated
    surfaces, by the mayor, with the logged confirm as justification. `weight: irreversible`
@@ -325,7 +325,7 @@ The bead's requirement is that a misheard "merge it" must be impossible. Precise
   `ended`, `error`. Every record is fsynced before the service acts on it.
 - **Transactional outbox, write-through.** On CONFIRMED (and on every note/queued question)
   the service appends an `outbox_intent` (fsync), then delivers to each sink — `gc mail send
-  mayor`, `bd comment <bead>` — and appends an `outbox_receipt` per sink. Delivery is
+  mayor`, `gc bd comment <bead>` — and appends an `outbox_receipt` per sink. Delivery is
   **at-least-once**: a crash between a sink accepting and the receipt landing causes a
   resend, and every payload carries the verdict key, so the receiver (mayor mail handling;
   the comment text itself) de-duplicates on the key. Mail and comment succeed independently —
