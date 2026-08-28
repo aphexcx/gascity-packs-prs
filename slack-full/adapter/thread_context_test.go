@@ -134,7 +134,13 @@ func TestThreadContext_FirstMentionPrependsPreamble(t *testing.T) {
 		t.Fatalf("captured %d inbound messages, want 1", len(msgs))
 	}
 	body := msgs[0].Text
-	if !strings.HasPrefix(body, "Thread context (2 earlier messages):\n") {
+	// The protected thread-reply anchor leads (gp-0qw item 2), then the
+	// preamble.
+	wantAnchor := "[thread reply — reply with --thread-ts 100.000001; parent @U_ALICE: \"should we ship this?\"]\n"
+	if !strings.HasPrefix(body, wantAnchor) {
+		t.Errorf("body missing thread-reply anchor; got %q", body)
+	}
+	if !strings.HasPrefix(strings.TrimPrefix(body, wantAnchor), "Thread context (2 earlier messages):\n") {
 		t.Errorf("body missing preamble; got %q", body)
 	}
 	if !strings.Contains(body, "@U_ALICE: should we ship this?") {
@@ -230,13 +236,16 @@ func TestThreadContext_SecondMentionWithoutNewActivityNoPreamble(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("captured %d inbound messages, want 2", len(msgs))
 	}
-	if !strings.HasPrefix(msgs[0].Text, "Thread context (1 earlier message):\n") {
-		t.Errorf("first inbound missing preamble; got %q", msgs[0].Text)
+	// Both thread replies lead with the protected anchor (gp-0qw item
+	// 2); only the first carries the preamble.
+	wantAnchor := "[thread reply — reply with --thread-ts 200.000001; parent @U_ALICE: \"context line\"]\n"
+	if !strings.HasPrefix(msgs[0].Text, wantAnchor+"Thread context (1 earlier message):\n") {
+		t.Errorf("first inbound missing anchor+preamble; got %q", msgs[0].Text)
 	}
 	if strings.Contains(msgs[1].Text, "Thread context") {
 		t.Errorf("second inbound carried preamble despite no new peer activity; got %q", msgs[1].Text)
 	}
-	if !strings.HasPrefix(msgs[1].Text, "follow-up question") {
+	if msgs[1].Text != wantAnchor+"follow-up question" {
 		t.Errorf("second inbound text unexpected; got %q", msgs[1].Text)
 	}
 }

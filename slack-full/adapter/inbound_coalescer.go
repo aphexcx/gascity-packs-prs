@@ -126,6 +126,51 @@ type pendingChannelInbound struct {
 	// maxCoalesceDeliveryAttempts it is dead-lettered instead of
 	// restored (gp-xnc). Not spooled: a replayed entry starts over.
 	attempts int
+	// threadAnchor/preamble/body/files carry the message unit's parts
+	// alongside the folded inbound.Text so a single-entry delivery can
+	// re-compose under the head-protection contract exactly like the
+	// immediate path (gp-0qw; codex round-1 findings 1+4). Populated
+	// at enqueue; empty on legacy/spool-replayed entries, which then
+	// deliver inbound.Text as the body. Multi-message batches quote
+	// inbound.Text verbatim per member and ignore these.
+	threadAnchor string
+	preamble     string
+	body         string
+	files        string
+}
+
+// hasReminderParts reports whether the entry carries a foldable message
+// unit (preamble/body/files). The spool stores such entries WITHOUT
+// the redundant folded Text and rebuilds it via foldedText on replay
+// (codex round-3 finding 4: persisting both doubled spool lines and
+// could push a previously replayable spool past the read cap).
+func (p pendingChannelInbound) hasReminderParts() bool {
+	return p.preamble != "" || p.body != "" || p.files != ""
+}
+
+// foldedText rebuilds the legacy folded Text (preamble + body, files
+// block attached) from the parts — byte-identical to what the enqueue
+// and spool producers folded, by construction of assemble.
+func (p pendingChannelInbound) foldedText() string {
+	return channelReminderParts{preamble: p.preamble, body: p.body, files: p.files}.assemble(p.body)
+}
+
+// reminderParts returns the entry's channelReminderParts for the
+// head-protected composer, reporting false when the entry predates the
+// parts fields (legacy spool replays) and the caller must fall back to
+// the folded Text.
+func (p pendingChannelInbound) reminderParts(channel string) (channelReminderParts, bool) {
+	if p.threadAnchor == "" && p.preamble == "" && p.body == "" && p.files == "" {
+		return channelReminderParts{}, false
+	}
+	return channelReminderParts{
+		anchor:    p.threadAnchor,
+		preamble:  p.preamble,
+		body:      p.body,
+		files:     p.files,
+		ts:        p.inbound.ProviderMessageID,
+		channelID: channel,
+	}, true
 }
 
 // inboundCoalescer owns the per-channel buffers and flush timers.
@@ -153,8 +198,16 @@ type inboundCoalescer struct {
 	// flight" and retry on the short cadence, which covers this case
 	// identically.
 	urgentWaiting map[string]int
-	window        time.Duration
-	policy        *deliveryPolicyRegistry
+	// deleted holds per-channel deletion tombstones (ts → when) — see
+	// tombstoneLocked. Guarded by mu.
+	deleted map[string]map[string]time.Time
+	// persistDeletion records a deletion durably (wired in main() to
+	// inboundSpool.recordDeletion) so it survives a restart and applies
+	// to spooled entries on replay whatever the write ordering was
+	// (codex round-4 finding 1). Nil-safe; called without mu held.
+	persistDeletion func(channel, ts string)
+	window          time.Duration
+	policy          *deliveryPolicyRegistry
 	// inflight counts batches taken out of the maps but not yet
 	// delivered (or restored by a failed delivery). Guarded by mu;
 	// settled broadcasts every decrement. flushAll's fixpoint drain
@@ -204,11 +257,94 @@ func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *
 		timers:        make(map[string]*time.Timer),
 		flushMu:       make(map[string]*sync.Mutex),
 		urgentWaiting: make(map[string]int),
+		deleted:       make(map[string]map[string]time.Time),
 		window:        window,
 		policy:        policy,
 	}
 	c.settled = sync.NewCond(&c.mu)
 	return c
+}
+
+// --- deletion tombstones (gp-0qw item 3) --------------------------------------
+//
+// A message_deleted event can beat its own message's enqueue (event
+// goroutines run concurrently), or land while the message sits in a
+// detached in-flight batch whose POST then fails and restores it. A
+// rewrite of the pending buffer alone misses both (codex round-1
+// finding 3), so the deletion is ALSO remembered as a per-(channel,
+// ts) tombstone that enqueue and restore consult. Tombstones expire
+// after deletionTombstoneTTL — the buffered window is seconds to
+// minutes, and deletions arrive at human rate, so the map stays tiny.
+
+const deletionTombstoneTTL = 15 * time.Minute
+
+// tombstoneLocked records (channel, ts) as deleted and prunes expired
+// tombstones for the channel. Caller holds c.mu.
+func (c *inboundCoalescer) tombstoneLocked(channel, ts string, now time.Time) {
+	if c.deleted == nil {
+		c.deleted = make(map[string]map[string]time.Time)
+	}
+	// Sweep expired tombstones across ALL channels: pruning only the
+	// deleting channel leaves channels with no later deletion holding
+	// their entries forever (codex round-2 finding 6). Deletions arrive
+	// at human rate, so the full sweep stays trivial.
+	for ch, m := range c.deleted {
+		for k, at := range m {
+			if now.Sub(at) > deletionTombstoneTTL {
+				delete(m, k)
+			}
+		}
+		if len(m) == 0 {
+			delete(c.deleted, ch)
+		}
+	}
+	m := c.deleted[channel]
+	if m == nil {
+		m = make(map[string]time.Time)
+		c.deleted[channel] = m
+	}
+	m[ts] = now
+}
+
+// isDeletedLocked reports whether (channel, ts) carries a live
+// tombstone. Caller holds c.mu.
+func (c *inboundCoalescer) isDeletedLocked(channel, ts string, now time.Time) bool {
+	at, ok := c.deleted[channel][ts]
+	return ok && now.Sub(at) <= deletionTombstoneTTL
+}
+
+// applyDeletionTombstones rewrites every non-reaction entry in batch
+// whose ts carries a live tombstone. Used by the paths that re-handle
+// entries OUTSIDE the pending buffer — permanent-failure isolation and
+// dead-lettering (codex round-2 finding 2) — where markDeleted's
+// pending rewrite cannot reach.
+func (c *inboundCoalescer) applyDeletionTombstones(channel string, batch []pendingChannelInbound) {
+	if c == nil || len(batch) == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for i := range batch {
+		if batch[i].reaction || batch[i].inbound.Text == deletedBySenderNotice {
+			continue
+		}
+		if c.isDeletedLocked(channel, batch[i].inbound.ProviderMessageID, now) {
+			applyDeletion(&batch[i])
+			log.Printf("coalesce: chan=%s ts=%s deleted while detached — re-handled as a deletion notice", channel, batch[i].inbound.ProviderMessageID)
+		}
+	}
+}
+
+// applyDeletion rewrites one buffered entry into the deletion notice:
+// text and parts collapse to the notice, attachments drop (surfacing a
+// deleted message's files would defeat the sender's deletion). The
+// entry keeps its ts and actor so dedup keys and the batch member line
+// stay intact.
+func applyDeletion(p *pendingChannelInbound) {
+	p.inbound.Text = deletedBySenderNotice
+	p.inbound.Attachments = nil
+	p.threadAnchor, p.preamble, p.body, p.files = "", "", "", ""
 }
 
 // enabled reports whether buffering is active. A nil coalescer or a
@@ -292,6 +428,15 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 		return
 	}
 	c.mu.Lock()
+	// A deletion that raced ahead of this enqueue (gp-0qw item 3).
+	// Checked BEFORE the admission barrier: a post-close straggler
+	// spills to the durable spool, and tombstones are memory-only, so
+	// the spilled line must already carry the notice (codex round-2
+	// finding 3).
+	if c.isDeletedLocked(channel, p.inbound.ProviderMessageID, time.Now()) {
+		applyDeletion(&p)
+		log.Printf("coalesce: chan=%s ts=%s admitted after its deletion — buffered as a deletion notice", channel, p.inbound.ProviderMessageID)
+	}
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
 		return
@@ -624,11 +769,23 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		}
 	}
 	c.mu.Lock()
+	// A deletion that landed while these entries were detached in the
+	// failed delivery (gp-0qw item 3): the retry — or the post-barrier
+	// spill below, whose line must already be the notice because
+	// tombstones do not survive a restart (codex round-3 finding 3) —
+	// must carry the notice, not the deleted text.
+	now := time.Now()
+	for i := range msgs {
+		if c.isDeletedLocked(channel, msgs[i].inbound.ProviderMessageID, now) && msgs[i].inbound.Text != deletedBySenderNotice {
+			applyDeletion(&msgs[i])
+			log.Printf("coalesce: chan=%s ts=%s deleted during an in-flight delivery — restored as a deletion notice", channel, msgs[i].inbound.ProviderMessageID)
+		}
+	}
 	if c.closed {
 		// Post-barrier restore (defensive — no take can follow the
 		// barrier, but a map entry here would sit past the final
 		// snapshot forever): spill instead of re-queueing.
-		c.spillLateLocked(channel, batch)
+		c.spillLateLocked(channel, append(append([]pendingChannelInbound{}, msgs...), reactions...))
 		return
 	}
 	defer c.mu.Unlock()
@@ -683,6 +840,10 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		c.restore(channel, batch)
 		return
 	}
+	// Isolation re-posts and dead-letters entries WITHOUT passing back
+	// through the pending buffer, so a deletion that landed while this
+	// batch was detached must be applied here (codex round-2 finding 2).
+	c.applyDeletionTombstones(channel, batch)
 	var msgs, reactions []pendingChannelInbound
 	for _, p := range batch {
 		if p.reaction {
@@ -705,7 +866,12 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	log.Printf("coalesce: chan=%s batch of %d rejected by gc — isolating %d message(s) to find the poisoned one: %v",
 		channel, len(batch), len(msgs), cause)
 	msgRejected := false
-	for i, p := range msgs {
+	for i := range msgs {
+		// A deletion can land between singles while an earlier POST
+		// blocks (codex round-3 finding 2); msgs[i] is rewritten in place
+		// so the transient-failure rest slice below carries it too.
+		c.applyDeletionTombstones(channel, msgs[i:i+1])
+		p := msgs[i]
 		err := c.deliver(channel, []pendingChannelInbound{p})
 		if err == nil {
 			continue
@@ -751,6 +917,11 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 // window beats losing an already-acked message (codex r1 finding 3).
 // With no hook wired (bare test configs) the entry is dropped, loudly.
 func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause error) {
+	// The dead-letter file is durable and tombstones are not: a deleted
+	// entry must be written as its notice (codex round-3 finding 2).
+	single := []pendingChannelInbound{p}
+	c.applyDeletionTombstones(channel, single)
+	p = single[0]
 	if p.attempts < maxCoalesceDeliveryAttempts {
 		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports the cap (codex r2 finding 3)
 	}
@@ -979,6 +1150,50 @@ func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 // The thread-context preamble filter treats buffered ids as delivered:
 // they are guaranteed to land in the same or an earlier delivery than
 // the message whose preamble is being built.
+// markDeleted records a deletion tombstone for (channel, ts) and
+// replaces every still-buffered copy with an explicit deletion notice
+// (gp-0qw item 3, pc_b334cff7f9c6): a message deleted on Slack before
+// its buffered delivery must reach the session as "message deleted by
+// sender", never as a dangling ts whose text resolves to nothing. The
+// tombstone catches the copies this rewrite cannot see — one whose
+// enqueue the deletion event raced ahead of, and one detached into an
+// in-flight delivery that then fails and restores. A copy whose
+// in-flight POST succeeds was delivered before the deletion was
+// processed; that race is accepted. Returns how many buffered copies
+// were replaced right now (0 when the ts is not currently buffered).
+func (c *inboundCoalescer) markDeleted(channel, ts string) int {
+	if c == nil || channel == "" || ts == "" {
+		return 0
+	}
+	c.mu.Lock()
+	c.tombstoneLocked(channel, ts, time.Now())
+	n := 0
+	for i := range c.pending[channel] {
+		if c.pending[channel][i].inbound.ProviderMessageID == ts {
+			applyDeletion(&c.pending[channel][i])
+			n++
+		}
+	}
+	persist := c.persistDeletion
+	c.mu.Unlock()
+	// Durable record last, outside mu (file I/O): a spool line written
+	// by any producer before OR after this point is rewritten on replay.
+	// Two accepted residuals: the dead-letter file — an operator-
+	// inspection artifact that never auto-delivers — can capture text
+	// deleted in the window between charge()'s tombstone check and its
+	// write; and a deletion straggler that reaches this call only after
+	// main sealed the spool is refused (loudly), the same best-effort
+	// class as any other post-seal straggler (gp-9e7 round 3, 2c).
+	if persist != nil {
+		persist(channel, ts)
+	}
+	return n
+}
+
+// deletedBySenderNotice is the text delivered in place of a buffered
+// message that its sender deleted before delivery.
+const deletedBySenderNotice = "[message deleted by sender before delivery]"
+
 func (c *inboundCoalescer) pendingContains(channel, ts string) bool {
 	if c == nil || ts == "" {
 		return false
@@ -1271,8 +1486,63 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		return nil
 	}
 	env := batch[len(batch)-1].inbound
-	text := env.Text
-	if len(batch) > 1 {
+	peerItems, peerDropped := cfg.peerContext.flush(channel)
+	peerBlock := formatPeerContextBlock(peerItems, peerDropped)
+	firstHelp := cfg.replyHelp.first(channel)
+	helpBlock := ""
+	if firstHelp {
+		helpBlock = replyHelpBlock(cfg, channel)
+	}
+	var text string
+	if len(batch) == 1 {
+		// A single entry delivers under the SAME head-protected contract
+		// as the immediate path (gp-0qw): thread anchor with the parent
+		// line captured at intake, boilerplate only inside the budget,
+		// body tail-trimmed behind the protected head. Entries that
+		// predate the parts fields (legacy spool replays) deliver their
+		// folded Text as the body with a bare-ts anchor synthesized for
+		// thread replies.
+		p, ok := batch[0].reminderParts(channel)
+		if !ok {
+			p = channelReminderParts{body: env.Text, ts: env.ProviderMessageID, channelID: channel}
+			// Reaction notifications carry the thread root in
+			// ReplyToMessageID but are explicitly not asks — a reply
+			// anchor on one would contradict its own "no reply expected"
+			// body (codex round-2 finding 5).
+			if rt := env.ReplyToMessageID; !batch[0].reaction && rt != "" && rt != env.ProviderMessageID {
+				p.anchor = formatThreadReplyAnchor(rt, "", "")
+			}
+		}
+		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(p, peerBlock, helpBlock, cfg.reminderTextBudget)
+		text = composed
+		if firstHelp && !usedHelp {
+			cfg.replyHelp.unmark(channel)
+			firstHelp = false
+			log.Printf("coalesce: chan=%s ts=%s reply how-to withheld — delivery over reminder budget %d; re-arms for a smaller delivery (gp-9gc)",
+				channel, env.ProviderMessageID, cfg.reminderTextBudget)
+		}
+		if peerBlock != "" && !usedPeer {
+			cfg.peerContext.restore(channel, peerItems, peerDropped)
+			peerItems, peerDropped = nil, 0
+			log.Printf("coalesce: chan=%s ts=%s peer context withheld — delivery over reminder budget %d; restored to ride the next delivery",
+				channel, env.ProviderMessageID, cfg.reminderTextBudget)
+		}
+		if p.preamble != "" && !usedPreamble {
+			log.Printf("coalesce: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d",
+				channel, env.ProviderMessageID, cfg.reminderTextBudget)
+		}
+		if trimmed {
+			log.Printf("coalesce: chan=%s ts=%s body tail trimmed to reminder budget %d — head preserved, marker names the full text",
+				channel, env.ProviderMessageID, cfg.reminderTextBudget)
+		}
+	} else {
+		// Multi-message batches stay VERBATIM — the digest contract is
+		// "nothing dropped or summarized", each member line carries its
+		// sender, ts, and "(in thread <ts>)" — and in practice a batch
+		// that overflows the budget is also the delivery shape the
+		// transport handles atomically (bracketed paste above 4096
+		// bytes). Only the boilerplate is budget-gated here (gp-9gc):
+		// the how-to re-arms and rides a later, smaller delivery.
 		text = formatCoalescedBlock(cfg, channel, batch)
 		var attachments []externalAttachment
 		for _, p := range batch {
@@ -1280,14 +1550,19 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		}
 		env.Attachments = attachments
 		env.DedupKey = coalesceBatchDedupKey(batch)
-	}
-	peerItems, peerDropped := cfg.peerContext.flush(channel)
-	if peerBlock := formatPeerContextBlock(peerItems, peerDropped); peerBlock != "" {
-		text = peerBlock + "\n\n" + text
-	}
-	firstHelp := cfg.replyHelp.first(channel)
-	if firstHelp {
-		text += "\n\n" + replyHelpBlock(cfg, channel)
+		if peerBlock != "" {
+			text = peerBlock + "\n\n" + text
+		}
+		if firstHelp {
+			if cfg.reminderTextBudget > 0 && len(text)+2+len(helpBlock) > cfg.reminderTextBudget {
+				cfg.replyHelp.unmark(channel)
+				firstHelp = false
+				log.Printf("coalesce: chan=%s reply how-to withheld — batch over reminder budget %d; re-arms for a smaller delivery (gp-9gc)",
+					channel, cfg.reminderTextBudget)
+			} else {
+				text += "\n\n" + helpBlock
+			}
+		}
 	}
 	env.Text = text
 	if err := postInbound(cfg, env); err != nil {
