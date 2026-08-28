@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // inbound_spool.go — durable shutdown spool for admitted-but-undelivered
@@ -56,6 +57,21 @@ type spooledInbound struct {
 	Channel  string                 `json:"channel"`
 	Reaction bool                   `json:"reaction,omitempty"`
 	Inbound  externalInboundMessage `json:"inbound"`
+	// Message-unit parts for head-protected re-composition on replay
+	// (gp-0qw); absent on lines written before they existed, which
+	// then replay with the folded Inbound.Text as the body.
+	ThreadAnchor string `json:"thread_anchor,omitempty"`
+	Preamble     string `json:"preamble,omitempty"`
+	Body         string `json:"body,omitempty"`
+	Files        string `json:"files,omitempty"`
+	// DeletedTS marks a DELETION record rather than a message: the
+	// sender deleted (Channel, DeletedTS). Persisted by recordDeletion
+	// so a deletion processed after a message was spooled — or in the
+	// window between a tombstone check and the durable write — still
+	// applies on replay (gp-0qw, codex round-4 finding 1). Replay
+	// applies every deletion record to every message entry in the file
+	// regardless of line order, and seeds the in-memory tombstones.
+	DeletedTS string `json:"deleted_ts,omitempty"`
 }
 
 // inboundSpool is the file-backed spool. All methods are nil-safe (a
@@ -111,6 +127,27 @@ func (s *inboundSpool) spillBatch(channel string, batch []pendingChannelInbound)
 	return true
 }
 
+// recordDeletion appends a deletion record for (channel, ts). Same
+// seal and durability contract as spillBatch; the file is created on
+// demand, so a deletion with nothing spooled costs one tiny line that
+// the next replay consumes. Nil-safe.
+func (s *inboundSpool) recordDeletion(channel, ts string) bool {
+	if s == nil || channel == "" || ts == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sealed {
+		log.Printf("inbound spool: SEALED — refusing late deletion record chan=%s ts=%s", channel, ts)
+		return false
+	}
+	if err := s.appendLinesLocked([]spooledInbound{{Channel: channel, DeletedTS: ts}}); err != nil {
+		log.Printf("inbound spool: deletion record write FAILED chan=%s ts=%s: %v", channel, ts, err)
+		return false
+	}
+	return true
+}
+
 // seal joins any in-flight spool write (every write holds mu end to
 // end) and refuses all subsequent ones. Main calls it as the last step
 // of shutdown, after flushAll: from seal's return onward no spool write
@@ -125,6 +162,23 @@ func (s *inboundSpool) seal() {
 }
 
 func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInbound) error {
+	entries := make([]spooledInbound, 0, len(batch))
+	for _, p := range batch {
+		entry := spooledInbound{
+			Channel: channel, Reaction: p.reaction, Inbound: p.inbound,
+			ThreadAnchor: p.threadAnchor, Preamble: p.preamble, Body: p.body, Files: p.files,
+		}
+		if p.hasReminderParts() {
+			// The folded Text is derivable from the parts; storing both
+			// would double the line (gp-0qw, codex round-3 finding 4).
+			entry.Inbound.Text = ""
+		}
+		entries = append(entries, entry)
+	}
+	return s.appendLinesLocked(entries)
+}
+
+func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir %q: %w", filepath.Dir(s.path), err)
 	}
@@ -134,10 +188,10 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 	}
 	defer f.Close()
 	w := bufio.NewWriter(f)
-	for _, p := range batch {
-		line, err := json.Marshal(spooledInbound{Channel: channel, Reaction: p.reaction, Inbound: p.inbound})
+	for _, entry := range entries {
+		line, err := json.Marshal(entry)
 		if err != nil {
-			return fmt.Errorf("encode spool entry chan=%s ts=%s: %w", channel, p.inbound.ProviderMessageID, err)
+			return fmt.Errorf("encode spool entry chan=%s ts=%s: %w", entry.Channel, entry.Inbound.ProviderMessageID, err)
 		}
 		w.Write(line)
 		w.WriteByte('\n')
@@ -171,6 +225,11 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 	defer s.mu.Unlock()
 	rp := s.replayingPath()
 	readPath := rp
+	// Deletion records salvaged read-only from a newer spool whose merge
+	// failed: its messages wait for the next startup, but a deletion of
+	// a message that IS replaying now must still apply (codex round-5
+	// finding 1).
+	var salvagedDeletions []spooledInbound
 	if _, err := os.Stat(s.path); err == nil {
 		if _, rerr := os.Stat(rp); rerr == nil {
 			// Crash-mid-replay leftover AND a newer spool: append the
@@ -180,6 +239,7 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				// The spool file stays for the next startup's retry; only
 				// the already-staged entries replay this time.
 				log.Printf("inbound spool: merging %s into %s FAILED: %v — replaying the staged file only; the spool retries next startup", s.path, rp, err)
+				salvagedDeletions = readDeletionRecords(s.path)
 			} else if err := os.Remove(s.path); err != nil {
 				log.Printf("inbound spool: remove %s after merge: %v (next startup may replay duplicates; gc dedup keys bound the damage)", s.path, err)
 			}
@@ -215,8 +275,16 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 			log.Printf("inbound spool: CORRUPT LINE (%d bytes) DROPPED — LOSS: this can only be a crash mid-spill of that batch (parse err: %v)", len(line), err)
 			continue
 		}
+		// Lines written with parts omit the redundant folded Text;
+		// rebuild it here so every consumer sees a complete entry.
+		if e.Inbound.Text == "" {
+			if p := (pendingChannelInbound{preamble: e.Preamble, body: e.Body, files: e.Files}); p.hasReminderParts() {
+				e.Inbound.Text = p.foldedText()
+			}
+		}
 		entries = append(entries, e)
 	}
+	entries = append(entries, salvagedDeletions...)
 	cleanup := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -241,6 +309,27 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 // which replay drops with the loud CORRUPT LINE / LOSS log it already
 // earns, and every intact src entry survives. A dst that ends cleanly is
 // untouched (the seal check reads one byte).
+// readDeletionRecords returns only the deletion records in the spool
+// file at path (read-only, best-effort; a missing or oversized file
+// yields none).
+func readDeletionRecords(path string) []spooledInbound {
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) > maxInboundSpoolBytes {
+		return nil
+	}
+	var out []spooledInbound
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 0, 64<<10), maxInboundSpoolBytes)
+	for sc.Scan() {
+		var e spooledInbound
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.Channel == "" || e.DeletedTS == "" {
+			continue
+		}
+		out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
+	}
+	return out
+}
+
 func appendFileTo(dst, src string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -286,9 +375,37 @@ func appendFileTo(dst, src string) error {
 // solo reaction wake the side lane exists to prevent.
 func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	entries, done := s.consume()
+	// Deletion records apply to every message entry in the file
+	// regardless of line order, and seed the in-memory tombstones so a
+	// Slack redelivery of the same message after replay is caught too.
+	deleted := make(map[string]map[string]bool)
+	for _, e := range entries {
+		if e.DeletedTS == "" {
+			continue
+		}
+		if deleted[e.Channel] == nil {
+			deleted[e.Channel] = make(map[string]bool)
+		}
+		deleted[e.Channel][e.DeletedTS] = true
+		if c != nil {
+			c.mu.Lock()
+			c.tombstoneLocked(e.Channel, e.DeletedTS, time.Now())
+			c.mu.Unlock()
+		}
+	}
 	n := 0
 	for _, e := range entries {
-		p := pendingChannelInbound{inbound: e.Inbound, reaction: e.Reaction}
+		if e.DeletedTS != "" {
+			continue
+		}
+		p := pendingChannelInbound{
+			inbound: e.Inbound, reaction: e.Reaction,
+			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files,
+		}
+		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
+			applyDeletion(&p)
+			log.Printf("inbound spool: chan=%s ts=%s deleted before restart — replayed as a deletion notice", e.Channel, e.Inbound.ProviderMessageID)
+		}
 		if e.Reaction {
 			if c.admitReaction(e.Channel, p, false) {
 				n++
