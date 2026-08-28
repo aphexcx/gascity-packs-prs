@@ -46,6 +46,127 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A same-ts twin can no longer skip a copy the session never got**
+  (gp-32q, pc_2e2378b9918e; 2026-08-27 22:57 CT and 2026-08-28 04:08
+  CT founder-inbound incidents, both on the PR #23 build). A
+  bot-mention arrives as a twin pair (`message` + `app_mention`, one
+  ts, distinct event ids); the winning twin concluded its
+  `(channel, ts)` claim on gc returning 2xx, and the parked twin then
+  logged `channel copy already delivered by same-ts twin — skipping
+  channel post`. But 2xx cannot see the last hop: gc's
+  `/extmsg/inbound` handler notifies members in the BACKGROUND
+  (`runBackground` -> `extmsgNotifyInboundMembers`) and answers before
+  the session is touched, so an inbound gc accepted whole still
+  reached the session as a fragment — 867 chars posted, only the reply
+  boilerplate tail delivered — and the one copy that could have
+  recovered it was the copy that skipped.
+
+  The claim now concludes on a DELIVERY RECEIPT: gc vouching that the
+  complete payload reached the session (the gascity side is gp-2rq).
+  Applies to all three claim-holding legs — the urgent channel copy,
+  the coalesced batch, and the address-by-handle session injection:
+  - **Vouched** (or `no_route`, where a twin's re-post would resolve
+    the same empty route): claim committed, twin skips — today's
+    behavior.
+  - **Not vouched** — an explicitly negative status (`partial`,
+    `failed`), a member gc names as not delivered, or a `delivered`
+    whose own `delivered_bytes` fall short of `expected_bytes`, checked
+    per member as well as on the summary (the summary counts are SUMS
+    across the notify fan-out, so a member that got half its payload
+    can hide inside a total that adds up; and only when both counts
+    arrive as numbers in the SAME unit — gc measures bytes at the tmux
+    paste buffer, and comparing those against a rune count on an
+    emoji-carrying Slack message is a different number, not a rounding
+    error): the payload is
+    re-posted ONCE in place while the claim is still held, so no twin
+    can duplicate the attempt. If that still does not vouch, the
+    urgent and injection legs release the claim and take the existing
+    failed-delivery path, which is what lets the parked twin re-post;
+    gc dedups a re-posted transcript record by `provider_message_id`,
+    so the cost is a duplicate notification at worst. The coalesced
+    leg fails into the same recovery machinery, with the unvouched
+    error charged like a gp-xnc payload rejection: bounded retries,
+    then the dead-letter file — never restored uncharged, which a
+    never-vouching receipt would turn into an unbounded re-notify
+    loop, and never silently retired, which would discard the only
+    copy an ordinary one-event room message has. Every one of these is
+    logged at `UNDELIVERED` grade with the receipt id.
+  - **`pending` HOLDS — it never re-posts** (mayor ruling,
+    2026-08-28). gc waits for a session to reach an idle boundary
+    before pasting (`NudgeIdleTimeout`, 30s on this city), longer than
+    any HTTP budget the adapter can hold, so `pending` is the NORMAL
+    receipt for a BUSY session — and busy sessions are exactly the
+    population this bug affects, since the truncation only manifests on
+    a busy TUI. Re-posting there would fire at precisely the messages
+    being fixed and deliver both copies: gc never cancelled the first
+    send, it just could not report on it yet. `failed`/`partial` mean
+    gc KNOWS something did not land, which is what makes a re-post
+    clean. A hold concludes the claim and logs a `HELD` line carrying
+    the receipt id, so a message that never arrives afterwards is still
+    greppable against gc's own log.
+  - **Anything not understood fails OPEN** — no receipt block at all
+    (every gc predating gp-2rq, including the binary live today), an
+    unknown status, a renamed field, a count that is not a number — is
+    `receipt=unsupported` and keeps the pre-gp-32q commit-on-2xx
+    behavior exactly. Only statements the adapter recognizes may
+    withhold a claim's conclusion: reading schema drift as "not
+    delivered" would re-post every delivery in the workspace, an
+    outage strictly worse than the mangling this gate catches. So the
+    pack is safe to pin BEFORE the gc rebuild, and the gate arms
+    itself the moment a receipt-emitting gc is running: no flag day,
+    no ordering constraint between the two fixes.
+  - **Anything not understood fails OPEN**, and that now includes any
+    status outside the confirmed enum. `timeout`, `error`, `rejected`
+    are not statements this gc makes; admitting words that merely
+    sound like failures would let a producer's schema drift re-post
+    and dead-letter across the workspace. Counts must also be whole,
+    non-negative numbers in matching units before they can contradict
+    a status, and a block where two keys normalize to one name
+    (`status` beside `Status`) reads as absent rather than as
+    whichever one map order surfaced.
+  - **Never during the shutdown drain.** Each gc round-trip can burn
+    the full forward timeout, and two of them outrun the 20s event
+    drain — a re-post still in flight when shutdown seals the spool
+    could neither spool its own failure nor conclude its claim before
+    process exit. While draining, an unvouched delivery goes straight
+    to its failure path, which now **spools before it releases
+    anything**: a copy the spool accepted CONCLUDES its `(channel, ts)`
+    claim and its event id, so the parked twin and any same-event-id
+    redelivery skip a message the next startup already replays; a spill
+    the spool refused (sealed, disabled, full) releases both, because
+    then the twin's takeover is the only recovery path left. A twin
+    that skips on a drain conclusion also takes no busy mark — the
+    hourglass is cleared by a reply to a delivery that is no longer
+    happening, and the registry that could remove it does not survive
+    the restart. The address-by-handle injection leg deliberately does
+    NOT defer: a spooled line replays as a channel copy and does not
+    reconstruct an addressed injection, so there is nothing durable
+    behind that claim and the takeover stays the recovery path.
+
+  What the receipt has to attest is COMPLETENESS, not arrival. At
+  05:39Z on 2026-08-28 — while this fix was being written — a 223-byte
+  founder message reached the mayor session as 134 bytes: 89 eaten off
+  the HEAD, tail byte-exact, cut mid-word. It read as a complete
+  sentence starting mid-thought, and was caught only because the cut
+  landed inside a word; at a word boundary it would have been acted on
+  as a corrupted founder instruction and never noticed. "It arrived" is
+  not the property worth gating on, "all of it arrived" is, and that is
+  what the byte counts are for. That incident is a test vector in
+  `delivery_receipt_test.go`.
+
+  Every inbound log line now carries `receipt=<id> receipt_status=…
+  receipt_verdict=… receipt_bytes=<delivered>/<expected>` beside the
+  existing `posted=NNch`, so the next incident splits
+  adapter-vs-transport at a glance, plus `receipt_digest=` — the same
+  payload digest gc prints on its own `nudge-receipt` line, so one
+  delivery can be followed across both logs. Members gc names as
+  undelivered are listed with their error text, truncated and capped:
+  a receipt is written by another process and its error strings come
+  from a terminal, so nothing in it can forge or flood a log line. `SLACK_DELIVERY_RECEIPT_GATE=off`
+  disarms the gate wholesale — the escape hatch if a gc build ever
+  reports receipts wrongly and the adapter starts re-posting
+  deliveries that did land.
+
 - **Slack voice clips no longer poison a channel's inbound delivery**
   (gp-xnc, 2026-08-26 09:48Z incident). Slack-native recordings
   (`subtype: slack_audio`, `audio_message.m4a`) carry an EMPTY
