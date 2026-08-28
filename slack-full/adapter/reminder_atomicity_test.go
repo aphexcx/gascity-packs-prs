@@ -343,7 +343,7 @@ func TestAliasDispatch_ThreadReplyThreadsUnderRoot(t *testing.T) {
 		Actor:             externalActor{ID: "U_ALICE"},
 		Text:              "threaded ask",
 	}
-	if !dispatchToAliasedSession(cfg, "sess-mayor", inbound, "mayor") {
+	if _, ok := dispatchToAliasedSession(cfg, "sess-mayor", inbound, "mayor"); !ok {
 		t.Fatalf("dispatch failed")
 	}
 	msgs := stub.snapshotSessionMessages()
