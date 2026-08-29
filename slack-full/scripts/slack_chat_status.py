@@ -9,54 +9,113 @@ Replaces the curl-jq one-liners that pile up while debugging:
     GET /events?type=extmsg.outbound
 
 Default output is a human-readable summary. ``--json`` prints the same
-data as a single object for scripting. ``--session`` narrows the
-binding + recent-activity views to one session.
+data as a single object for scripting (declared to gc via
+``commands/status/schemas/``). ``--session`` narrows the binding +
+recent-activity views to one session.
+
+Each daemon request waits ``--timeout`` seconds (default
+``$GC_SLACK_STATUS_TIMEOUT`` or 60) and is retried once on timeout. A
+second timeout exits 2 with a ``daemon busy (timeout after Ns)`` line
+on stderr — and a ``daemon_busy`` failure object on stdout under
+``--json`` — so monitors can tell "daemon loaded" from "slack broken".
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
 import slack_intake_common as common
 
+# A status probe must stay meaningful while the daemon is grinding through
+# session spawns: 30s was observed timing out on citadel under 5 concurrent
+# spawns while real traffic still flowed (gp-aut). Longer default + one
+# retry per fetch; a second stall aborts with a distinct "daemon busy"
+# verdict instead of a traceback or a false "no traffic" rendering.
+DEFAULT_TIMEOUT = 60.0
+EXIT_DAEMON_BUSY = 2
 
-def _events(event_type: str, limit: int, since: str) -> list[dict[str, Any]]:
-    """Fetch a slice of events. Returns [] on transport failure or empty."""
+
+def _default_timeout() -> float:
+    raw = os.environ.get("GC_SLACK_STATUS_TIMEOUT", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = 0.0
+        if value > 0:
+            return value
+    return DEFAULT_TIMEOUT
+
+
+def _get_with_retry(url: str, timeout: float) -> dict[str, Any]:
+    """GET with ONE retry when the daemon times out mid-answer.
+
+    One stall under load shouldn't fail the probe; a second stall
+    propagates GCAPITimeout so main() can report daemon-busy.
+    """
+    try:
+        return common._request("GET", url, csrf=False, timeout=timeout)
+    except common.GCAPITimeout:
+        return common._request("GET", url, csrf=False, timeout=timeout)
+
+
+def _city_url(suffix: str) -> str:
+    return f"{common.gc_api_base()}/v0/city/{common.gc_city_name()}{suffix}"
+
+
+def _events(event_type: str, limit: int, since: str,
+            timeout: float) -> list[dict[str, Any]]:
+    """Fetch a slice of events. Returns [] on transport failure or empty.
+
+    GCAPITimeout is NOT degraded to []: an empty answer from a busy
+    daemon reads as "no traffic", which is exactly the false alarm this
+    probe must never produce.
+    """
     qs = [f"type={event_type}", f"limit={limit}"]
     if since:
         qs.append(f"since={since}")
-    url = f"{common.gc_api_base()}/v0/city/{common.gc_city_name()}/events?" + "&".join(qs)
+    url = _city_url("/events?" + "&".join(qs))
     try:
-        res = common._request("GET", url, csrf=False)
+        res = _get_with_retry(url, timeout)
+    except common.GCAPITimeout:
+        raise
     except common.GCAPIError:
         return []
     return list(res.get("items") or [])
 
 
-def _adapters() -> list[dict[str, Any]]:
+def _adapters(timeout: float) -> list[dict[str, Any]]:
     try:
-        res = common.gc_get("/extmsg/adapters")
+        res = _get_with_retry(_city_url("/extmsg/adapters"), timeout)
+    except common.GCAPITimeout:
+        raise
     except common.GCAPIError:
         return []
     return list(res.get("items") or [])
 
 
-def _bindings_for_session(session_id: str) -> list[dict[str, Any]]:
+def _bindings_for_session(session_id: str,
+                          timeout: float) -> list[dict[str, Any]]:
     try:
-        res = common.gc_get(f"/extmsg/bindings?session_id={session_id}")
+        res = _get_with_retry(
+            _city_url(f"/extmsg/bindings?session_id={session_id}"), timeout)
+    except common.GCAPITimeout:
+        raise
     except common.GCAPIError:
         return []
     return list(res.get("items") or [])
 
 
-def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
+def collect_status(*, session: str, since: str, limit: int,
+                   timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """Gather the read-only state used by both human and JSON renderers."""
-    adapters = _adapters()
-    inbound = _events("extmsg.inbound", limit, since)
-    outbound = _events("extmsg.outbound", limit, since)
+    adapters = _adapters(timeout)
+    inbound = _events("extmsg.inbound", limit, since, timeout)
+    outbound = _events("extmsg.outbound", limit, since, timeout)
 
     if session:
         inbound = [
@@ -67,7 +126,7 @@ def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
             e for e in outbound
             if (e.get("payload") or {}).get("session") == session
         ]
-        bindings = _bindings_for_session(session)
+        bindings = _bindings_for_session(session, timeout)
     else:
         bindings = []
 
@@ -163,22 +222,47 @@ def main(argv: list[str]) -> int:
                         help="Max events to scan per direction. Default: 50")
     parser.add_argument("--json", dest="as_json", action="store_true",
                         help="Emit machine-readable JSON")
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="Seconds to wait per daemon request (retried once "
+                             "on timeout). Default: $GC_SLACK_STATUS_TIMEOUT "
+                             f"or {DEFAULT_TIMEOUT:g}")
     args = parser.parse_args(argv)
 
     if args.limit < 1:
         raise SystemExit("--limit must be a positive integer")
+    timeout = args.timeout if args.timeout is not None else _default_timeout()
+    if timeout <= 0:
+        raise SystemExit("--timeout must be a positive number of seconds")
 
     try:
         status = collect_status(
             session=args.session.strip(),
             since=args.since.strip(),
             limit=args.limit,
+            timeout=timeout,
         )
+    except common.GCAPITimeout as exc:
+        message = f"daemon busy (timeout after {exc.timeout:g}s)"
+        print(f"gc slack status: {message}; the gc daemon is serving other "
+              "work — retry shortly or raise --timeout / GC_SLACK_STATUS_TIMEOUT",
+              file=sys.stderr)
+        if args.as_json:
+            print(json.dumps({
+                "schema_version": "1",
+                "ok": False,
+                "error": {
+                    "code": "daemon_busy",
+                    "message": message,
+                    "exit_code": EXIT_DAEMON_BUSY,
+                },
+            }, indent=2, sort_keys=True))
+        return EXIT_DAEMON_BUSY
     except common.GCAPIError as exc:
         raise SystemExit(str(exc)) from exc
 
     if args.as_json:
-        print(json.dumps(status, indent=2, sort_keys=True))
+        print(json.dumps({"schema_version": "1", "ok": True, **status},
+                         indent=2, sort_keys=True))
     else:
         print(format_status(status))
     return 0

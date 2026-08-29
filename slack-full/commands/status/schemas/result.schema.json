@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gc slack status --json result",
+  "description": "Read-only slack pack diagnostics: registered extmsg adapters, bindings for the selected session, and the scanned inbound/outbound event window.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "adapters",
+    "session",
+    "bindings",
+    "events"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "ok": {
+      "const": true
+    },
+    "adapters": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "session": {
+      "type": "string",
+      "description": "Session id from --session, or empty when unfiltered."
+    },
+    "bindings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "events": {
+      "type": "object",
+      "required": [
+        "since",
+        "limit",
+        "inbound",
+        "outbound"
+      ],
+      "properties": {
+        "since": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "inbound": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "outbound": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

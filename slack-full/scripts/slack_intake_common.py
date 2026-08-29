@@ -68,6 +68,21 @@ class GCAPIError(RuntimeError):
     """Raised when a gc API call fails."""
 
 
+class GCAPITimeout(GCAPIError):
+    """The daemon accepted the connection but did not answer in time.
+
+    Distinct from other GCAPIErrors so probes can report "daemon busy"
+    instead of "daemon broken": under load the gc daemon stalls mid-
+    response, which urllib surfaces as a bare TimeoutError from the
+    http.client read path — NOT as URLError — so ``_request`` must map
+    it explicitly or callers crash with a traceback (gp-aut).
+    """
+
+    def __init__(self, message: str, *, timeout: float) -> None:
+        super().__init__(message)
+        self.timeout = timeout
+
+
 class AdapterError(RuntimeError):
     """Raised when the local Slack adapter rejects a publish."""
 
@@ -177,7 +192,17 @@ def _request(method: str, url: str, body: dict[str, Any] | None = None,
         detail = exc.read().decode("utf-8", errors="replace")
         raise GCAPIError(f"{method} {url} -> {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
+        if isinstance(exc.reason, TimeoutError):
+            raise GCAPITimeout(
+                f"{method} {url} timed out after {timeout:g}s",
+                timeout=timeout) from exc
         raise GCAPIError(f"{method} {url} failed: {exc}") from exc
+    except TimeoutError as exc:
+        # A timeout during connect arrives wrapped in URLError (above),
+        # but one during the response read escapes urllib raw.
+        raise GCAPITimeout(
+            f"{method} {url} timed out after {timeout:g}s",
+            timeout=timeout) from exc
     if not raw:
         return {}
     try:
