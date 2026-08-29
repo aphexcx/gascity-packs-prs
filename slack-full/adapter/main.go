@@ -817,6 +817,11 @@ type config struct {
 	// legacy expectations exact; a gc that emits no receipt is gated to
 	// the same legacy verdict anyway (see delivery_receipt.go).
 	deliveryReceiptGate bool
+
+	// receiptFollowUps asks gc afterwards whether a delivery the receipt
+	// gate HELD (pending) ever landed, and recovers or dead-letters a
+	// definite loss (gp-3yg). Nil-safe: bare configs follow nothing up.
+	receiptFollowUps *receiptFollowUps
 	// bindingCheck caches gc binding lookups backing alias-dispatch
 	// turn-dedup (item 5). Nil-safe: nil preserves the historical
 	// double-dispatch behavior.
@@ -1855,6 +1860,10 @@ func main() {
 	// the coalescer logs that residue as LOST instead. (cfg.draining is
 	// created above, before the company gateway copies cfg.)
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
+	// gp-3yg: a delivery the receipt gate HELD is followed up with gc
+	// afterwards. Built here, before deliverCfg snapshots the config,
+	// so every leg (urgent, coalesced, alias) shares one component.
+	cfg.receiptFollowUps = receiptFollowUpsFor(cfg)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
 		cfg.coalescer.recordVerdict = cfg.inboundSpool.recordVerdict
@@ -2185,6 +2194,12 @@ func main() {
 	//    the watermark advanced at admission, so nothing else could
 	//    ever redeliver it.
 	cfg.coalescer.flushAll()
+	// 4b. Receipt follow-ups (gp-3yg): each outstanding one takes a
+	//     final poll now that draining is set and makes any unresolved
+	//     hold durable in the dead-letter file — a loss discovered here
+	//     is recorded, not re-posted. Bounded so a wedged gc cannot
+	//     hold the exit.
+	cfg.receiptFollowUps.drain(shutdownReceiptFollowUpTimeout)
 	// 5. Seal the spool as the very last step (gp-9e7 round 3, 2c):
 	//    every spool write runs entirely under the spool mutex, so the
 	//    seal JOINS any write still in flight — e.g. a straggler event
@@ -4763,6 +4778,21 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// greppable against gc's own log for the same receipt id.
 			log.Printf("inbound: HELD chan=%s ts=%s gc accepted the payload and has not finished delivering it — not re-posting (a busy session's normal path) — %s",
 				msg.Channel, msg.TS, receipt.logField(verdict))
+			// The hold is not the end of the story (gp-3yg): ask gc
+			// afterwards whether the background send landed, and
+			// recover or dead-letter a definite loss. The envelope is
+			// captured as posted so the recovery copy is identical.
+			heldCfg, heldEnv := cfg, inboundForChannel
+			cfg.receiptFollowUps.note(heldDelivery{
+				receiptID: receipt.id,
+				leg:       "inbound",
+				channel:   msg.Channel,
+				ts:        msg.TS,
+				repost:    func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
+				deadLetter: func(cause error) bool {
+					return deadLetterHeldLoss(heldCfg, heldEnv.Conversation.ConversationID, []pendingChannelInbound{{inbound: heldEnv}}, cause)
+				},
+			})
 		}
 		if postErr == nil && verdict == receiptUnconfirmed {
 			// The payload reached gc's transcript but nothing vouches
@@ -5095,17 +5125,40 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// reminder lands (codex r1 P2 + r3 P2); rolled back below
 				// when gc rejects the injection.
 				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
-				aliasReceipt, aliasOK := dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
+				// Rendered ONCE: the in-place re-dispatch and the
+				// follow-up's recovery copy re-send these exact bytes.
+				aliasBody := renderAliasDispatch(cfg, inbound, target)
+				aliasReceipt, aliasOK := sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody)
 				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
 					log.Printf("alias dispatch: handle=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
 						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict), attempt+1, deliveryReceiptRepostAttempts)
-					aliasReceipt, aliasOK = dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
+					aliasReceipt, aliasOK = sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody)
 					aliasVerdict = aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				}
 				if aliasOK && aliasVerdict == receiptHeld {
 					log.Printf("alias dispatch: HELD handle=%s ts=%s gc accepted the injection and has not finished delivering it — not re-dispatching — %s",
 						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict))
+					// Follow the held injection up (gp-3yg): a lost one
+					// is re-dispatched once, identically, into the same
+					// aliased session.
+					heldCfg, heldEnv, heldSession, heldTarget, heldBody := cfg, inbound, aliasedSessionID, target, aliasBody
+					cfg.receiptFollowUps.note(heldDelivery{
+						receiptID: aliasReceipt.id,
+						leg:       "alias dispatch",
+						channel:   inbound.Conversation.ConversationID,
+						ts:        inbound.ProviderMessageID,
+						repost: func() (deliveryReceipt, error) {
+							r, ok := sendAliasDispatch(heldCfg, heldSession, heldTarget, heldBody)
+							if !ok {
+								return r, fmt.Errorf("alias dispatch to %s failed", heldTarget)
+							}
+							return r, nil
+						},
+						deadLetter: func(cause error) bool {
+							return deadLetterHeldAliasLoss(heldCfg, heldEnv, heldSession, heldTarget, heldBody, cause)
+						},
+					})
 				}
 				if aliasOK && aliasVerdict == receiptUnconfirmed {
 					log.Printf("alias dispatch: UNDELIVERED handle=%s ts=%s gc accepted the injection but did not vouch that it reached the session after %d re-dispatch(es) — %s",
@@ -6495,6 +6548,15 @@ func handleHandleAliasDelete(reg *handleAliasRegistry) http.HandlerFunc {
 // gc emits none) and whether gc ACCEPTED the injection — the receipt is
 // what says it arrived (gp-32q).
 func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundMessage, handle string) (deliveryReceipt, bool) {
+	return sendAliasDispatch(cfg, sessionID, handle, renderAliasDispatch(cfg, msg, handle))
+}
+
+// renderAliasDispatch builds the address-by-handle reminder body. Split
+// from the send so a recovery re-send after a held receipt (gp-3yg) can
+// re-post the IDENTICAL bytes: the body embeds the channel's display
+// name, which is a cache lookup that can change between attempts
+// (codex r1 P2 #4).
+func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) string {
 	// Every interpolated string is run through neutralizeMarkupBoundaries
 	// to prevent a Slack workspace member from forging </system-reminder>
 	// boundaries inside the dispatched body and injecting arbitrary
@@ -6575,6 +6637,13 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 		neutralizeMarkupBoundaries(msg.Conversation.ConversationID),
 		neutralizeMarkupBoundaries(replyThreadTS),
 	)
+	return body
+}
+
+// sendAliasDispatch injects one rendered reminder body into the aliased
+// session. Returns gc's delivery receipt (zero-valued when gc emits none)
+// and whether gc ACCEPTED the injection.
+func sendAliasDispatch(cfg config, sessionID, handle, body string) (deliveryReceipt, bool) {
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters
 	// (slash, percent, etc.) cannot alter routing on the gc API side
@@ -6604,7 +6673,9 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 	defer resp.Body.Close()
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, deliveryReceiptBodyLimit))
 	if resp.StatusCode >= 400 {
-		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, string(respBody))
+		// The body is gc's and can be large or carry newlines; bounded and
+		// sanitized like every other gc string that reaches a log line.
+		log.Printf("alias dispatch: %s -> %s: %s", target, resp.Status, sanitizeReceiptLogValue(string(respBody), receiptFollowUpLogLimit))
 		return deliveryReceipt{}, false
 	}
 	if readErr != nil {
