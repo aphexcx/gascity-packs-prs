@@ -54,13 +54,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a traceback (or, under `--json`, printed nothing) while real reads
   and sends still completed in under a second; two monitors built on
   it had to be torn down as false-alarm machines. Now:
-  `slack_intake_common._request` maps both connect- and read-phase
-  timeouts to a new `GCAPITimeout(GCAPIError)`; `slack_chat_status`
-  waits `--timeout` seconds per request (default
-  `$GC_SLACK_STATUS_TIMEOUT`, else 60 — up from 30), retries a stalled
-  request once, and on a second stall exits **2** with a distinct
-  `daemon busy (timeout after Ns)` line on stderr instead of a
-  traceback or a false "no adapters / no traffic" rendering. The
+  `slack_intake_common._request` maps connect-phase, read-phase and
+  error-body timeouts to a new `GCAPITimeout(GCAPIError)`;
+  `slack_chat_status` applies `--timeout` as a per-request socket
+  inactivity timeout (default `$GC_SLACK_STATUS_TIMEOUT`, else 60 — up
+  from 30; non-finite/non-positive values are rejected or fall back),
+  retries a stalled request once, and on a second stall exits **2**
+  with a distinct `daemon busy (timeout after Ns)` line on stderr
+  instead of a traceback or a false "no adapters / no traffic"
+  rendering. `gc slack retry-peer-fanout` gets the same guard: a
+  daemon timeout while listing failed fan-outs exits 2 with the
+  daemon-busy line instead of reporting `candidates: 0`. The
   command now declares JSON support (`commands/status/schemas/
   {result,failure}.schema.json`): `--json` output carries the
   `schema_version` / `ok` envelope, the daemon-busy exit emits a

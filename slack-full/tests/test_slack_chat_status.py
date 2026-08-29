@@ -319,33 +319,48 @@ def test_invalid_limit_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 # server so the http.client read-timeout path is exercised end to end.
 
 class _SlowDaemon:
-    """Local HTTP server whose first ``slow_first`` requests stall.
+    """Local HTTP server whose first ``slow_first`` connections stall.
 
-    Stalled requests sleep ``stall`` seconds before answering, which is
-    longer than any client timeout the tests use — the client gives up
-    mid-read exactly like the loaded gc daemon case. Later requests
-    answer immediately with an empty ``items`` list. Requests are
-    counted at accept time so assertions see attempts, not completions.
+    Stalled requests sleep ``stall`` seconds — longer than any client
+    timeout the tests use — so the client gives up mid-read exactly
+    like the loaded gc daemon case. ``stall_phase`` picks where:
+
+    * ``"status"`` (default): before the status line, the shape seen in
+      the citadel incident (http.client readline timeout).
+    * ``"body"``: after status + headers, so the client times out inside
+      the body read — for a 200 that is ``resp.read()``; for an error
+      ``status_code`` it is urllib's ``HTTPError.read()``.
+
+    Later connections answer immediately with an empty ``items`` list.
+    Connections are counted (and the stall decided) in the server's
+    accept path, before any handler thread runs, so exact-count
+    assertions see attempts, not completions — immune to handler-thread
+    scheduling lag.
     """
 
-    def __init__(self, *, slow_first: int, stall: float = 5.0) -> None:
-        self.requests: list[str] = []
-        self._lock = threading.Lock()
+    def __init__(self, *, slow_first: int, stall: float = 5.0,
+                 stall_phase: str = "status", status_code: int = 200) -> None:
+        assert stall_phase in ("status", "body")
+        self.accepted = 0
         outer = self
+        stalled_socks: set[Any] = set()
+        lock = threading.Lock()
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:  # noqa: N802 (http.server API)
-                with outer._lock:
-                    outer.requests.append(self.path)
-                    stalled = len(outer.requests) <= slow_first
-                if stalled:
-                    time.sleep(stall)
+                with lock:
+                    stalled = self.request in stalled_socks
                 try:
+                    if stalled and stall_phase == "status":
+                        time.sleep(stall)
                     body = json.dumps({"items": []}).encode()
-                    self.send_response(200)
+                    self.send_response(status_code)
                     self.send_header("Content-Type", "application/json")
                     self.send_header("Content-Length", str(len(body)))
                     self.end_headers()
+                    self.wfile.flush()
+                    if stalled and stall_phase == "body":
+                        time.sleep(stall)
                     self.wfile.write(body)
                 except Exception:
                     pass  # client hung up mid-stall — expected
@@ -353,8 +368,17 @@ class _SlowDaemon:
             def log_message(self, *args: Any) -> None:
                 pass
 
-        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self._server.daemon_threads = True
+        class Server(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
+            def verify_request(self, request, client_address) -> bool:
+                with lock:
+                    outer.accepted += 1
+                    if outer.accepted <= slow_first:
+                        stalled_socks.add(request)
+                return True
+
+        self._server = Server(("127.0.0.1", 0), Handler)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
     @property
@@ -371,8 +395,10 @@ class _SlowDaemon:
 def slow_daemon_factory():
     servers: list[_SlowDaemon] = []
 
-    def make(*, slow_first: int, stall: float = 5.0) -> _SlowDaemon:
-        server = _SlowDaemon(slow_first=slow_first, stall=stall)
+    def make(*, slow_first: int, stall: float = 5.0,
+             stall_phase: str = "status", status_code: int = 200) -> _SlowDaemon:
+        server = _SlowDaemon(slow_first=slow_first, stall=stall,
+                             stall_phase=stall_phase, status_code=status_code)
         servers.append(server)
         return server
 
@@ -446,7 +472,7 @@ def test_one_timeout_is_retried_and_probe_succeeds(
     assert rc == 0
     assert "Adapters:" in out
     # 3 fetches (adapters, inbound, outbound) + 1 retry of the stalled one
-    assert len(daemon.requests) == 4
+    assert daemon.accepted == 4
 
 
 def test_second_timeout_aborts_without_retry_storm(
@@ -462,7 +488,7 @@ def test_second_timeout_aborts_without_retry_storm(
     capsys.readouterr()
 
     assert rc == 2
-    assert len(daemon.requests) == 2
+    assert daemon.accepted == 2
 
 
 def test_timeout_default_comes_from_env_and_flag_wins(
@@ -564,3 +590,68 @@ def test_declared_failure_schema_validates_daemon_busy_output(
     assert rc == 2
     schema = json.loads((STATUS_SCHEMA_DIR / "failure.schema.json").read_text())
     jsonschema.validate(payload, schema)
+
+
+def test_request_error_body_stall_raises_gcapi_timeout(
+        slow_daemon_factory) -> None:
+    """Status + headers for a 5xx arrive, then the error body stalls:
+    the timeout fires inside urllib's HTTPError.read(), which lives in
+    _request's except-clause — it must still map to GCAPITimeout."""
+    _status_mod, common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body",
+                                 status_code=500)
+
+    with pytest.raises(common.GCAPITimeout) as excinfo:
+        common._request("GET", f"{daemon.base_url}/v0/city/test-city/events",
+                        csrf=False, timeout=0.2)
+    assert excinfo.value.timeout == pytest.approx(0.2)
+
+
+def test_request_success_body_stall_raises_gcapi_timeout(
+        slow_daemon_factory) -> None:
+    """200 + headers arrive, then the body stalls (resp.read() path)."""
+    _status_mod, common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body")
+
+    with pytest.raises(common.GCAPITimeout):
+        common._request("GET", f"{daemon.base_url}/v0/city/test-city/events",
+                        csrf=False, timeout=0.2)
+
+
+def test_status_error_body_stall_is_daemon_busy_not_traceback(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body",
+                                 status_code=503)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--timeout", "0.2"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "daemon busy (timeout after 0.2s)" in captured.err
+    assert daemon.accepted == 2
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_non_finite_timeout_flag_is_rejected(value: str) -> None:
+    status_mod, _common = _import_modules()
+    with pytest.raises(SystemExit):
+        status_mod.main(["--timeout", value])
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0", "-3", "soon"])
+def test_unusable_env_timeout_falls_back_to_default(
+        monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    status_mod, common = _import_modules()
+    fake, captured = _make_router({
+        "/extmsg/adapters": {"items": []},
+        "events?type=extmsg.inbound": [],
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+    monkeypatch.setenv("GC_SLACK_STATUS_TIMEOUT", value)
+
+    assert status_mod.main([]) == 0
+    assert {c["timeout"] for c in captured} == {status_mod.DEFAULT_TIMEOUT}

@@ -52,6 +52,9 @@ def _events(event_type: str, *, since: str, limit: int) -> list[dict[str, Any]]:
     )
     try:
         res = common._request("GET", url, csrf=False)
+    except common.GCAPITimeout:
+        # A busy daemon must not read as "nothing to retry" (gp-aut).
+        raise
     except common.GCAPIError:
         return []
     return list(res.get("items") or [])
@@ -133,20 +136,29 @@ def main(argv: list[str]) -> int:
                         help="Sleep between retries to avoid rate-limit amplification.")
     args = parser.parse_args(argv)
 
-    failed = _events(
-        "extmsg.peer_fanout_failed",
-        since=args.since,
-        limit=DEFAULT_LIMIT,
-    )
-    # Use a wider window for the retried-events lookup so a successful
-    # retry that fell outside --since still suppresses re-delivery.
-    # Without this, re-running the command with the same --since after
-    # a successful retry happened earlier would re-fire that retry.
-    retried = _events(
-        "extmsg.peer_fanout_retried",
-        since=RETRIED_LOOKBACK,
-        limit=DEFAULT_LIMIT,
-    )
+    try:
+        failed = _events(
+            "extmsg.peer_fanout_failed",
+            since=args.since,
+            limit=DEFAULT_LIMIT,
+        )
+        # Use a wider window for the retried-events lookup so a successful
+        # retry that fell outside --since still suppresses re-delivery.
+        # Without this, re-running the command with the same --since after
+        # a successful retry happened earlier would re-fire that retry.
+        retried = _events(
+            "extmsg.peer_fanout_retried",
+            since=RETRIED_LOOKBACK,
+            limit=DEFAULT_LIMIT,
+        )
+    except common.GCAPITimeout as exc:
+        # Either listing timing out means we cannot know what needs a
+        # retry (or what already got one) — say so instead of exiting 0
+        # with an empty summary that reads as "nothing to do".
+        print(f"gc slack retry-peer-fanout: daemon busy (timeout after "
+              f"{exc.timeout:g}s); no retries attempted — retry shortly",
+              file=sys.stderr)
+        return 2
     already_succeeded = _successful_retried_seqs(retried)
 
     convo_filter = args.conversation.strip()

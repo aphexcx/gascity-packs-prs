@@ -21,9 +21,11 @@ Errors are non-fatal: a failed sub-query degrades that section to
 "none / 0" rather than aborting, so a partially-degraded city still
 yields a usable status.
 
-Daemon load is the exception. Each request waits --timeout seconds
-(default $GC_SLACK_STATUS_TIMEOUT, else 60) and is retried once; if
-the daemon still has not answered the command exits 2 with
+Daemon load is the exception. --timeout (default $GC_SLACK_STATUS_TIMEOUT,
+else 60) is a per-request inactivity budget: an attempt fails once the
+daemon has been silent that long (a response that keeps trickling bytes
+is not cut off), and a failed attempt is retried once. If the daemon
+still has not answered the command exits 2 with
 "daemon busy (timeout after Ns)" on stderr (and, under --json, a
 {"ok": false, "error": {"code": "daemon_busy", ...}} object on stdout)
 instead of degrading to a false "no adapters / no traffic" report.

@@ -189,7 +189,18 @@ def _request(method: str, url: str, body: dict[str, Any] | None = None,
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
+        # The error body can stall too, and this read runs inside the
+        # except clause — beyond the reach of the TimeoutError arm below.
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")
+        except TimeoutError as read_exc:
+            raise GCAPITimeout(
+                f"{method} {url} -> {exc.code}: error body timed out after {timeout:g}s",
+                timeout=timeout) from read_exc
+        except OSError as read_exc:
+            raise GCAPIError(
+                f"{method} {url} -> {exc.code}: error body unreadable: {read_exc}"
+            ) from read_exc
         raise GCAPIError(f"{method} {url} -> {exc.code}: {detail}") from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, TimeoutError):

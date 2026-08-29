@@ -13,17 +13,20 @@ data as a single object for scripting (declared to gc via
 ``commands/status/schemas/``). ``--session`` narrows the binding +
 recent-activity views to one session.
 
-Each daemon request waits ``--timeout`` seconds (default
-``$GC_SLACK_STATUS_TIMEOUT`` or 60) and is retried once on timeout. A
-second timeout exits 2 with a ``daemon busy (timeout after Ns)`` line
-on stderr — and a ``daemon_busy`` failure object on stdout under
-``--json`` — so monitors can tell "daemon loaded" from "slack broken".
+``--timeout`` (default ``$GC_SLACK_STATUS_TIMEOUT`` or 60) is a
+per-request socket *inactivity* timeout: an attempt fails once the
+daemon has been silent that long (a response that keeps trickling bytes
+is not cut off). A failed attempt is retried once; a second timeout
+exits 2 with a ``daemon busy (timeout after Ns)`` line on stderr — and
+a ``daemon_busy`` failure object on stdout under ``--json`` — so
+monitors can tell "daemon loaded" from "slack broken".
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
 from typing import Any
@@ -39,6 +42,11 @@ DEFAULT_TIMEOUT = 60.0
 EXIT_DAEMON_BUSY = 2
 
 
+def _usable_timeout(value: float) -> bool:
+    # nan/inf pass a bare "> 0" check and then blow up inside socket setup.
+    return math.isfinite(value) and value > 0
+
+
 def _default_timeout() -> float:
     raw = os.environ.get("GC_SLACK_STATUS_TIMEOUT", "").strip()
     if raw:
@@ -46,7 +54,7 @@ def _default_timeout() -> float:
             value = float(raw)
         except ValueError:
             value = 0.0
-        if value > 0:
+        if _usable_timeout(value):
             return value
     return DEFAULT_TIMEOUT
 
@@ -231,8 +239,8 @@ def main(argv: list[str]) -> int:
     if args.limit < 1:
         raise SystemExit("--limit must be a positive integer")
     timeout = args.timeout if args.timeout is not None else _default_timeout()
-    if timeout <= 0:
-        raise SystemExit("--timeout must be a positive number of seconds")
+    if not _usable_timeout(timeout):
+        raise SystemExit("--timeout must be a positive, finite number of seconds")
 
     try:
         status = collect_status(
