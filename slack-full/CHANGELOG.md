@@ -46,6 +46,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A delivery the receipt gate HELD is now followed up, and a lost one
+  is recovered or dead-lettered — never a silent `HELD` terminal state**
+  (gp-3yg, P0 per Afik 2026-08-29 01:39Z). A hold concludes the same-ts
+  claim — that ruling stands, a re-post into a busy session duplicates
+  the message — but until now a hold was also the END of the story: if
+  gc's background send never landed, the adapter held no second copy
+  and the only trace was the `HELD` log line. Taylor's C0B0Y964Q1Z
+  message of 2026-08-28 (ts 1787901226) was lost exactly this way and
+  found 19 hours later.
+  - gc now records every inbound fan-out's conclusion by receipt id and
+    answers `GET /v0/city/{city}/extmsg/inbound/receipts/{receipt_id}`
+    with `state: pending | concluded | unknown` (gascity gp-3yg, fork
+    PR). After a hold the adapter polls it (5s cadence, 10 min horizon)
+    from all three claim-holding legs — urgent channel copy, coalesced
+    batch, address-by-handle injection.
+  - `concluded` + vouched/no_route → `receipt follow-up: RESOLVED`; the
+    hold was right, nothing else happens.
+  - `concluded` + failed/partial/short, or `unknown` (gc restarted and
+    the fan-out died with it) → `receipt follow-up: LOST`: ONE re-post
+    of the identical envelope (dedup-keyed — gc dedups the transcript by
+    provider message id), `RECOVERED` only when that copy is vouched
+    for or positively landed (complete byte counts, just the submit
+    unconfirmed). A recovery copy that is itself held is followed once more; one
+    gc reports as reaching nobody, accepts without a receipt, or does
+    not vouch for leaves the loss STANDING: written to the channel's
+    dead-letter file and logged at `LOSS` grade. A dead-letter record's
+    reason says which claim it makes — "lost" (the agent did not get
+    this; re-post from the file) or "unknown state" (a human must check
+    the transcript first) — and the `LOSS` log line is the alarm that a
+    record was written (or that the write failed), either way. Every poll answer is
+    checked to be about the receipt that was asked for (a stale or
+    mis-routed answer is not an answer), and a recovery re-sends the
+    exact bytes that were held — the alias leg renders its reminder
+    once and re-sends it, rather than re-rendering.
+  - Still `pending` at the horizon, or at shutdown (one final poll
+    after the drain flips; sleeping loops are woken and in-flight polls
+    cancelled, and a hold noted after the drain began is recorded
+    synchronously): not a loss, so NOT re-posted — but recorded in the
+    dead-letter file with an explicit "state unknown, verify by hand"
+    reason and a `STUCK` log line, never silence. Shutdown waits up to
+    25s for outstanding follow-ups to write their records.
+  - A gc that never offers a usable receipt status for the whole
+    window (a 404 from a gc without the endpoint) fails OPEN to the
+    plain hold with one `UNVERIFIED` line, so this pack is safe to pin
+    ahead of the gc rebuild and arms itself once one is running; a
+    transient 404/5xx (gc restarting, a city's server being replaced)
+    is retried until the deadline, not taken as the answer — and a
+    hold gc did answer for before going silent is recorded as
+    unknown-state at the deadline, never failed open (the endpoint
+    exists; the silence may be a restart that lost the fan-out). A lost
+    address-by-handle injection is recorded with the aliased session,
+    the handle and the exact rendered reminder (`alias_session_id`,
+    `alias_handle`, `alias_body`), so a hand recovery re-injects the
+    right bytes into the right session rather than the channel envelope.
+  - The busy-probe shape is resolved by per-member landing evidence.
+    A complete bracketed paste whose submit merely went unobserved was
+    reported `failed 0/N`, which the gate correctly read as "a retry is
+    clean" — on 2026-08-28 08:24Z the adapter re-posted a 1215-byte
+    message six times and then dead-lettered it while the session had
+    answered two seconds earlier. gc core fixes the classification in
+    bead gp-2io: that member is `pending` WITH its real byte counts
+    (typed delivery evidence; "landed, submit unconfirmed" is "not
+    yet", never "failed"). The follow-up reads that shape on positive
+    per-member proof: a CONCLUDED receipt whose members all either
+    took the payload or had it pasted whole with only the submit
+    unconfirmed is `RESOLVED` when the summary is `pending` or
+    `partial` — never re-posted (the payload is in every pane; a mixed
+    room folds delivered+pending to `partial`, a status the verdict
+    would otherwise read as a clean retry) and
+    never dead-lettered (a "verify by hand" record for every fast turn
+    the probe missed would be the incident's false-alarm noise,
+    reborn). A concluded-but-pending receipt WITHOUT landing evidence
+    still goes to the deadline and is recorded as unknown-state.
 - **A same-ts twin can no longer skip a copy the session never got**
   (gp-32q, pc_2e2378b9918e; 2026-08-27 22:57 CT and 2026-08-28 04:08
   CT founder-inbound incidents, both on the PR #23 build). A

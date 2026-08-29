@@ -452,3 +452,34 @@ Knobs:
   envelope and the rejection reason — grep the log for `dead-lettered`
   for the summary line, and re-post from the file once the cause is
   fixed. Later messages in the channel keep flowing.
+- **`receipt follow-up: LOSS …` or `receipt follow-up: STUCK …` in the
+  service log** (gp-3yg): gc answered `pending` for a delivery (the
+  session was busy; the adapter held rather than duplicate) and the
+  follow-up poll of `GET /extmsg/inbound/receipts/{id}` then learned
+  the background send never landed (`LOST`, re-posted once; `LOSS` when
+  the recovery copy was not vouched for either — reaching nobody or
+  being accepted without a receipt counts as not vouched) or never
+  concluded
+  (`STUCK` — not re-posted, because a slow send is not a lost one).
+  Both write the envelope to the dead-letter file with a reason that
+  says which. The `LOSS` log line itself is the durable-record alarm —
+  one per record written (or per failed write) — not a loss verdict:
+  read the record's reason. A "lost" reason means gc said the delivery
+  never landed and no recovery copy was vouched for or positively
+  landed: re-post from the file. An "unknown, verify by hand" reason
+  (`STUCK`) means nobody can say: check the session's transcript
+  before re-posting. `RESOLVED` and `RECOVERED` lines need
+  no action (one may say the payload "landed whole; only the submit
+  went unconfirmed" — the gp-2io busy-probe shape: gc's per-member
+  byte counts prove the message is in the pane; gc simply could not
+  watch the turn start, and neither a re-post nor a dead letter would
+  be right). `UNVERIFIED` means gc never offered a usable receipt status
+  for the whole follow-up window (10 min) — the running gc predates the
+  receipt endpoint — and the hold stands unverified, as before gp-3yg;
+  a transient 404/5xx (gc restarting, a city's server being replaced)
+  is retried, not taken as the answer, and a hold gc did answer for
+  before going silent is recorded as `STUCK` at the deadline rather
+  than failed open. A lost address-by-handle
+  injection is recorded with `alias_session_id`, `alias_handle` and
+  the exact `alias_body`: re-inject that body into that session by
+  hand, not the channel envelope.

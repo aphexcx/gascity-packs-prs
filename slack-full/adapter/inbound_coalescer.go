@@ -1616,6 +1616,20 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	if err == nil && verdict == receiptHeld {
 		log.Printf("coalesce: HELD chan=%s batch=%d newest_ts=%s gc accepted the batch and has not finished delivering it — not re-posting — %s",
 			channel, len(batch), env.ProviderMessageID, receipt.logField(verdict))
+		// Follow the hold up (gp-3yg). The batch envelope is re-posted
+		// as one unit with the same dedup key; the per-message entries
+		// are what a standing loss writes to the dead-letter file.
+		heldCfg, heldEnv, heldBatch := cfg, env, append([]pendingChannelInbound(nil), batch...)
+		cfg.receiptFollowUps.note(heldDelivery{
+			receiptID: receipt.id,
+			leg:       "coalesce",
+			channel:   channel,
+			ts:        env.ProviderMessageID,
+			repost:    func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
+			deadLetter: func(cause error) bool {
+				return deadLetterHeldLoss(heldCfg, channel, heldBatch, cause)
+			},
+		})
 	}
 	if err == nil && verdict == receiptUnconfirmed {
 		// gc took the batch but would not vouch that it reached the
