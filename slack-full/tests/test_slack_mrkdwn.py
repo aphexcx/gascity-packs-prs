@@ -116,3 +116,38 @@ def test_unclosed_fence_still_guards_outside_text() -> None:
     out = guard(text)
     # The unclosed fence is not a code span; everything is guarded.
     assert out.splitlines()[0] == f"{SUB}$1 vs {SUB}$2"
+
+
+# --- gp-ios (pc_7fe644e666a6): CJK + curly-quote bodies -----------------------
+#
+# A reply-current send failed once with non-JSON output right after the
+# gp-o42 guard rolled, on a body carrying CJK and curly quotes. The guard
+# was suspected; these pin that it handles such bodies without raising,
+# idempotently, and without touching non-ASCII tilde lookalikes.
+
+def test_cjk_and_curly_quotes_pass_through_unharmed() -> None:
+    text = "项目进展顺利，“预算约~$58.5k” 和 ‘约~$16.5k’ 的估算已经更新。"
+    out = guard(text)
+    # Approximately-tildes before currency are neutralized; every CJK
+    # and curly-quote codepoint survives byte-for-byte.
+    assert out == text.replace("~", SUB)
+    assert guard(out) == out
+
+
+def test_fullwidth_tilde_and_wave_dash_are_never_touched() -> None:
+    # U+FF5E FULLWIDTH TILDE and U+301C WAVE DASH are common in CJK text
+    # and are NOT Slack mrkdwn delimiters — the guard must leave them.
+    text = "大概～五点〜六点之间，范围～很宽〜。"
+    assert guard(text) is text
+
+
+def test_mixed_cjk_deliberate_strikethrough_survives() -> None:
+    text = "旧计划 ~已取消~ 新计划照常。"
+    assert guard(text) == text
+
+
+def test_long_cjk_body_with_scattered_tildes_does_not_raise() -> None:
+    line = "预算~50k，进度“正常”，备注〜～ ~x~ 结束。"
+    body = "\n".join(line for _ in range(500))
+    out = guard(body)
+    assert guard(out) == out

@@ -96,6 +96,13 @@ def main(argv: list[str]) -> int:
               "(adapter-only diagnostics; peers in a bind-room won't see "
               "the message)."),
     )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help=("Print the full result envelope (the raw receipt, including "
+              "gc's transcript entry). Default is the terse receipt — "
+              "delivered flag, message_id, conversation_id, thread_ts — "
+              "which keeps the echo of your own outbound text out of your "
+              "context (gp-9e7)."))
     args = parser.parse_args(argv)
 
     body = _load_body(args)
@@ -134,13 +141,22 @@ def main(argv: list[str]) -> int:
     except (common.AdapterError, common.GCAPIError) as exc:
         raise SystemExit(str(exc)) from exc
 
-    print(json.dumps({
-        "session_id": session_id,
-        "conversation_id": conv["conversation_id"],
-        "kind": conv["kind"],
-        "via": args.via,
-        "result": result,
-    }, indent=2))
+    if args.verbose:
+        print(json.dumps({
+            "session_id": session_id,
+            "conversation_id": conv["conversation_id"],
+            "kind": conv["kind"],
+            "via": args.via,
+            "result": result,
+        }, indent=2))
+    else:
+        # Terse receipt (gp-9e7 item 4): the full envelope echoes the
+        # entire outbound text back into the sender's context.
+        print(json.dumps(common.summarize_publish_receipt(
+            result,
+            conversation_id=conv["conversation_id"],
+            thread_ts=args.reply_to,
+        ), indent=2))
 
     delivered, failure_kind = common.interpret_publish_receipt(result)
     if not delivered:

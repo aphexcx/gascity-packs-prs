@@ -1258,7 +1258,7 @@ func TestDispatchToAliasedSessionPostsWarningReactOnFailure(t *testing.T) {
 		Actor: externalActor{ID: "U0B1N5KD6HF"},
 		Text:  "hello, are you there?",
 	}
-	if !dispatchToAliasedSession(cfg, "gc-dead-session", inbound, "dashboard") {
+	if _, ok := dispatchToAliasedSession(cfg, "gc-dead-session", inbound, "dashboard"); !ok {
 		reactAliasDispatchFailure(cfg.slackBotToken,
 			inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 	}
@@ -1311,7 +1311,7 @@ func TestDispatchToAliasedSessionNoReactWithoutToken(t *testing.T) {
 		Actor:             externalActor{ID: "U1"},
 		Text:              "ping",
 	}
-	if !dispatchToAliasedSession(cfg, "gc-dead", inbound, "bot") {
+	if _, ok := dispatchToAliasedSession(cfg, "gc-dead", inbound, "bot"); !ok {
 		reactAliasDispatchFailure(cfg.slackBotToken,
 			inbound.Conversation.ConversationID, inbound.ProviderMessageID)
 	}
@@ -4417,6 +4417,170 @@ func TestHandleSlackEventsDropsWhenSemaphoreFull(t *testing.T) {
 	}
 }
 
+// Shutdown loss-safety (gp-9e7 fix round 1a): the detached per-event
+// goroutine handleSlackEvents spawns is tracked in cfg.eventWG — with
+// Add BEFORE the handler returns its 200 — so main's shutdown can await
+// every in-flight event before draining the coalescer. An event still
+// running during flushAll could admit a message or reaction to the
+// buffers after the drain, losing it permanently on exit.
+func TestHandleSlackEventsTracksGoroutinesForShutdownAwait(t *testing.T) {
+	release := make(chan struct{})
+	var inboundHits int32
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		<-release // hold the event goroutine "in flight" past the handler's return
+		atomic.AddInt32(&inboundHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+
+	cfg := config{
+		gcAPIBase:       gcStub.URL,
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "D0DM", User: "U1", TS: "1.0", Text: "hi",
+	})
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", EventID: "EvWG1", Event: rawMsg})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Result().StatusCode)
+	}
+
+	// The handler has returned but the event goroutine is parked inside
+	// its gc forward: the shutdown await must NOT report settled.
+	if awaitWaitGroup(cfg.eventWG, 100*time.Millisecond) {
+		t.Fatal("awaitWaitGroup reported settled while an event goroutine was still in flight")
+	}
+	close(release)
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("awaitWaitGroup did not settle after the event goroutine finished")
+	}
+	if got := atomic.LoadInt32(&inboundHits); got != 1 {
+		t.Fatalf("inbound POSTs = %d, want 1", got)
+	}
+}
+
+// Shutdown admission barrier (gp-9e7 fix round 2b'): with draining
+// flipped, handleSlackEvents refuses the event with 503 BEFORE anything
+// acknowledges it — no 200 to Slack (the Events API retry ladder / the
+// un-acked Socket Mode envelope redelivers it), no event goroutine, no
+// coalescer admission, and crucially NO liveness-watermark advance, so
+// whatever the retry ladder gives up on stays visible to the startup
+// watermark backfill.
+func TestHandleSlackEventsDrainingRefusesPreAck(t *testing.T) {
+	var inboundHits int32
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&inboundHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+
+	draining := &atomic.Bool{}
+	draining.Store(true)
+	liveness := newInboundLiveness(config{}, nil)
+	cfg := config{
+		gcAPIBase:       gcStub.URL,
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+		draining:        draining,
+		inboundLiveness: liveness,
+		coalescer:       newInboundCoalescer(time.Hour, nil),
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "9.0", Text: "hi",
+	})
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", EventID: "EvDrain1", Event: rawMsg})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (the event must NOT be acknowledged while draining)", got)
+	}
+	// The refusal happened before liveness bookkeeping: the watermark /
+	// last-inbound clock must not move, or the startup backfill would
+	// skip the refused event.
+	liveness.mu.Lock()
+	last := liveness.lastInboundAt
+	channels := len(liveness.channels)
+	liveness.mu.Unlock()
+	if !last.IsZero() || channels != 0 {
+		t.Fatalf("liveness advanced for a refused event (last_inbound=%v channels=%d) — the startup backfill would skip it", last, channels)
+	}
+	// No event goroutine was spawned and nothing reached gc.
+	if !awaitWaitGroup(cfg.eventWG, time.Second) {
+		t.Fatal("eventWG busy — a refused event spawned a processing goroutine")
+	}
+	if got := atomic.LoadInt32(&inboundHits); got != 0 {
+		t.Fatalf("inbound POSTs = %d, want 0", got)
+	}
+	cfg.coalescer.mu.Lock()
+	pendingN := len(cfg.coalescer.pending)
+	cfg.coalescer.mu.Unlock()
+	if pendingN != 0 {
+		t.Fatalf("coalescer admitted %d channel(s) for a refused event", pendingN)
+	}
+
+	// Barrier down: the same event is admitted normally.
+	draining.Store(false)
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/slack/events", bytes.NewReader(envBody))
+	req2.Header.Set("X-Slack-Request-Timestamp", ts)
+	req2.Header.Set("X-Slack-Signature", sig)
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w2, req2)
+	if got := w2.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("status after barrier lift = %d, want 200", got)
+	}
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("event goroutine did not settle after the barrier lift")
+	}
+	liveness.mu.Lock()
+	last = liveness.lastInboundAt
+	liveness.mu.Unlock()
+	if last.IsZero() {
+		t.Fatal("liveness did not advance for the admitted event")
+	}
+}
+
+func TestAwaitWaitGroupNilAndTimeout(t *testing.T) {
+	if !awaitWaitGroup(nil, time.Millisecond) {
+		t.Error("nil WaitGroup must report settled")
+	}
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+	if awaitWaitGroup(wg, 50*time.Millisecond) {
+		t.Error("held WaitGroup must time out")
+	}
+	wg.Done()
+	if !awaitWaitGroup(wg, time.Second) {
+		t.Error("settled WaitGroup must report settled")
+	}
+}
+
 // newTestHandleAliasRegistry builds an isolated handle-alias registry
 // in a tmpdir for tests that need one.
 func newTestHandleAliasRegistry(t *testing.T) *handleAliasRegistry {
@@ -5036,5 +5200,416 @@ func TestSlackHTTPClientSingletonReuse(t *testing.T) {
 	}
 	if fresh.Transport == a.Transport {
 		t.Errorf("buildSlackHTTPClient: expected a fresh Transport distinct from the singleton's")
+	}
+}
+
+// --- gp-9e7 round 3: shutdown admission edges --------------------------------
+
+// flipOnFirstReadBody is a request body whose first Read runs flip —
+// simulating "draining flips while the handler is stalled in the body
+// read", the race window round-3 finding 2a closes.
+type flipOnFirstReadBody struct {
+	r    io.Reader
+	flip func()
+	once sync.Once
+}
+
+func (b *flipOnFirstReadBody) Read(p []byte) (int, error) {
+	b.once.Do(b.flip)
+	return b.r.Read(p)
+}
+
+// gatedBody blocks every Read until gate closes; started signals once
+// the first Read has begun (the handler is inside its body read).
+type gatedBody struct {
+	r       io.Reader
+	gate    chan struct{}
+	started chan struct{}
+	once    sync.Once
+}
+
+func (b *gatedBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { close(b.started) })
+	<-b.gate
+	return b.r.Read(p)
+}
+
+// Round 3 (2a): the entry-time draining check races the request body
+// read — a handler that passed it can stall in the read while draining
+// flips, then advance the liveness watermark and ack an event the
+// drain will never deliver. The barrier is re-checked at the ADMISSION
+// POINT (immediately before noteInboundEnvelope): the stalled request
+// is refused 503 pre-ack with no watermark movement, exactly like the
+// entry check.
+func TestHandleSlackEventsDrainingRecheckedAtAdmission(t *testing.T) {
+	var inboundHits int32
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&inboundHits, 1)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+
+	draining := &atomic.Bool{} // false at the entry check
+	liveness := newInboundLiveness(config{}, nil)
+	cfg := config{
+		gcAPIBase:       gcStub.URL,
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+		draining:        draining,
+		inboundLiveness: liveness,
+		coalescer:       newInboundCoalescer(time.Hour, nil),
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "9.5", Text: "hi",
+	})
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", EventID: "EvDrainRace1", Event: rawMsg})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	// The entry check passes with draining=false; the body read then
+	// flips it — the exact stalled-read interleaving.
+	body := &flipOnFirstReadBody{r: bytes.NewReader(envBody), flip: func() { draining.Store(true) }}
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", body)
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+
+	if got := w.Result().StatusCode; got != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 (draining flipped mid-body-read must refuse at the admission point)", got)
+	}
+	liveness.mu.Lock()
+	last := liveness.lastInboundAt
+	channels := len(liveness.channels)
+	liveness.mu.Unlock()
+	if !last.IsZero() || channels != 0 {
+		t.Fatalf("liveness advanced for an event refused at the admission re-check (last_inbound=%v channels=%d) — the startup backfill would skip it", last, channels)
+	}
+	if !awaitWaitGroup(cfg.eventWG, time.Second) {
+		t.Fatal("eventWG busy — a refused event spawned a processing goroutine")
+	}
+	if got := atomic.LoadInt32(&inboundHits); got != 0 {
+		t.Fatalf("inbound POSTs = %d, want 0", got)
+	}
+}
+
+// Round 3 (2b): the shutdown WaitGroup must cover the handler from
+// ENTRY — before any state movement — not just the detached goroutine
+// spawned after the watermark moved and the 200 went out. A handler
+// stalled in its body read is exactly the admitter the bounded eventWG
+// wait exists to join; pre-fix, the group read zero while it ran.
+func TestHandleSlackEventsWaitGroupCoversHandlerFromEntry(t *testing.T) {
+	cfg := config{
+		cityName:        "test-city",
+		provider:        "slack",
+		accountID:       "T1",
+		slackSigningKey: "secret",
+		dispatchSem:     defaultTestDispatchSem,
+		eventWG:         &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	// url_verification: fully handled in the synchronous phase, no
+	// goroutine, no gc dependency — the WG count observed while the
+	// body read is stalled can only be the handler-entry Add.
+	envBody, _ := json.Marshal(slackEventEnvelope{Type: "url_verification", Challenge: "c1"})
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	sig := signFor(cfg.slackSigningKey, ts, envBody)
+	body := &gatedBody{r: bytes.NewReader(envBody), gate: make(chan struct{}), started: make(chan struct{})}
+	req := httptest.NewRequest(http.MethodPost, "/slack/events", body)
+	req.Header.Set("X-Slack-Request-Timestamp", ts)
+	req.Header.Set("X-Slack-Signature", sig)
+	w := httptest.NewRecorder()
+	handlerDone := make(chan struct{})
+	go func() {
+		handleSlackEvents(cfg, aliasReg, nil, nil, nil, nil)(w, req)
+		close(handlerDone)
+	}()
+	select {
+	case <-body.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler never reached the body read")
+	}
+	if awaitWaitGroup(cfg.eventWG, 100*time.Millisecond) {
+		t.Fatal("eventWG settled while a handler that could still admit was stalled in its body read — shutdown would drain past it")
+	}
+	close(body.gate)
+	select {
+	case <-handlerDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not finish after the body unblocked")
+	}
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("eventWG did not settle after the handler returned")
+	}
+	if got := w.Result().StatusCode; got != http.StatusOK {
+		t.Fatalf("challenge status = %d, want 200", got)
+	}
+}
+
+// Round 3 (2d): an urgent/DM postInbound that fails DURING the shutdown
+// drain has no retry path — the event is past the watermark, Slack got
+// its 200, and the admission barrier blocks any redelivery or parked
+// twin — so it must spool like coalesced residue and replay at the next
+// startup. Outside the drain the failure keeps today's forget-based
+// retry contract and never touches the spool.
+func TestProcessSlackEventDrainFailureSpoolsUrgentInbound(t *testing.T) {
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusInternalServerError) // gc down for the whole drain
+	}))
+	t.Cleanup(gcStub.Close)
+
+	spoolPath := filepath.Join(t.TempDir(), "spool.jsonl")
+	draining := &atomic.Bool{}
+	draining.Store(true)
+	cfg := config{
+		gcAPIBase:    gcStub.URL,
+		cityName:     "test-city",
+		provider:     "slack",
+		accountID:    "T1",
+		dispatchSem:  defaultTestDispatchSem,
+		draining:     draining,
+		inboundSpool: newInboundSpool(spoolPath),
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "D0DM", User: "U1", TS: "7.0",
+		Text: "urgent DM the drain must not lose",
+	})
+	env := slackEventEnvelope{Type: "event_callback", EventID: "EvDrainSpool1", Event: rawMsg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+
+	// The failed delivery landed in the spool with its channel and text.
+	entries, done := newInboundSpool(spoolPath).consume()
+	if len(entries) != 1 {
+		t.Fatalf("spool holds %d entries after a drain-time urgent failure, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Channel != "D0DM" || e.Reaction || e.Inbound.ProviderMessageID != "7.0" {
+		t.Fatalf("spooled entry = %+v, want the D0DM message 7.0", e)
+	}
+	if !strings.Contains(e.Inbound.Text, "urgent DM the drain must not lose") {
+		t.Fatalf("spooled text = %q, want the message body", e.Inbound.Text)
+	}
+	if done != nil {
+		done()
+	}
+
+	// Outside the drain the same failure must NOT spool (the forget-based
+	// redelivery/twin retry contract owns it).
+	draining.Store(false)
+	env2Msg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "D0DM", User: "U1", TS: "8.0",
+		Text: "failure outside the drain keeps the retry contract",
+	})
+	env2 := slackEventEnvelope{Type: "event_callback", EventID: "EvDrainSpool2", Event: env2Msg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env2, func() {})
+	if entries, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
+		t.Fatalf("a non-drain failure spooled %d entries, want 0 (Slack redelivery owns the retry)", len(entries))
+	}
+}
+
+// Round 5 (finding 1): the alias-dispatch goroutine delivers the
+// addressed-session leg of an ADMITTED event (watermark advanced, Slack
+// acked), so it must be inside cfg.eventWG — otherwise main's bounded
+// shutdown wait concludes while the leg is still dispatching, and the
+// coalescer drain plus spool seal run underneath it.
+func TestAliasDispatchGoroutineJoinsEventWG(t *testing.T) {
+	gate := make(chan struct{})
+	var gateOnce sync.Once
+	closeGate := func() { gateOnce.Do(func() { close(gate) }) }
+	entered := make(chan struct{})
+	var enteredOnce sync.Once
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if strings.Contains(r.URL.Path, "/session/") {
+			enteredOnce.Do(func() { close(entered) })
+			<-gate
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	t.Cleanup(gcStub.Close)
+	t.Cleanup(closeGate) // registered after Close: runs first, unblocking the handler
+
+	cfg := config{
+		gcAPIBase:    gcStub.URL,
+		cityName:     "test-city",
+		provider:     "slack",
+		accountID:    "T1",
+		handlePrefix: "@",
+		dispatchSem:  defaultTestDispatchSem,
+		eventWG:      &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "gc-2568"); err != nil {
+		t.Fatalf("aliasReg.Set: %v", err)
+	}
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "1.0",
+		Text: "@mayor please ack",
+	})
+	env := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasWG1", Event: rawMsg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+
+	// The alias leg is blocked inside its gc POST: the event WG must
+	// still be held open by it.
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("alias dispatch never reached the gc stub")
+	}
+	if awaitWaitGroup(cfg.eventWG, 150*time.Millisecond) {
+		t.Fatal("eventWG settled while the alias-dispatch leg was still in flight — the leg is outside the WG and shutdown cannot join it")
+	}
+	closeGate()
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("eventWG never settled after the alias leg completed")
+	}
+}
+
+// Round 5 (finding 1): an alias-dispatch leg that fails DURING the
+// shutdown drain has no retry path — the event is past the watermark,
+// Slack got its 200, and the admission barrier blocks any redelivery —
+// so it must spool exactly like the urgent/DM path (round 3, 2d).
+// Outside the drain the failure keeps the forget-based redelivery/twin
+// retry contract and never touches the spool.
+func TestAliasDispatchDrainFailureSpoolsAddressedLeg(t *testing.T) {
+	gcStub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.ReadAll(r.Body)
+		if strings.Contains(r.URL.Path, "/session/") {
+			w.WriteHeader(http.StatusInternalServerError) // the addressed leg fails
+			return
+		}
+		w.WriteHeader(http.StatusAccepted) // the channel copy delivers
+	}))
+	t.Cleanup(gcStub.Close)
+
+	spoolPath := filepath.Join(t.TempDir(), "spool.jsonl")
+	draining := &atomic.Bool{}
+	draining.Store(true)
+	cfg := config{
+		gcAPIBase:    gcStub.URL,
+		cityName:     "test-city",
+		provider:     "slack",
+		accountID:    "T1",
+		handlePrefix: "@",
+		dispatchSem:  defaultTestDispatchSem,
+		draining:     draining,
+		inboundSpool: newInboundSpool(spoolPath),
+		eventWG:      &sync.WaitGroup{},
+	}
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "gc-2568"); err != nil {
+		t.Fatalf("aliasReg.Set: %v", err)
+	}
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "9.0",
+		Text: "@mayor the drain must not lose this",
+	})
+	env := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasDrainSpool1", Event: rawMsg}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("alias leg never settled (is it in the eventWG?)")
+	}
+
+	entries, done := newInboundSpool(spoolPath).consume()
+	if len(entries) != 1 {
+		t.Fatalf("spool holds %d entries after a drain-time alias-leg failure, want 1", len(entries))
+	}
+	e := entries[0]
+	if e.Channel != "C1" || e.Reaction || e.Inbound.ProviderMessageID != "9.0" {
+		t.Fatalf("spooled entry = %+v, want the C1 message 9.0", e)
+	}
+	if !strings.Contains(e.Inbound.Text, "the drain must not lose this") {
+		t.Fatalf("spooled text = %q, want the message body", e.Inbound.Text)
+	}
+	if done != nil {
+		done()
+	}
+
+	// Outside the drain the same failure must NOT spool — the forget
+	// wakes a redelivery/parked twin, which owns the retry.
+	draining.Store(false)
+	rawMsg2, _ := json.Marshal(slackMessageEvent{
+		Type: "message", Channel: "C1", User: "U1", TS: "10.0",
+		Text: "@mayor failure outside the drain keeps the retry contract",
+	})
+	env2 := slackEventEnvelope{Type: "event_callback", EventID: "EvAliasDrainSpool2", Event: rawMsg2}
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env2, func() {})
+	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
+		t.Fatal("second alias leg never settled")
+	}
+	if entries, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
+		t.Fatalf("a non-drain alias failure spooled %d entries, want 0 (redelivery owns the retry)", len(entries))
+	}
+}
+
+// gp-bsk × gp-9e7: a socket self-restart must ride main's orderly
+// shutdown (drain → spool → seal → exit code), never a bare os.Exit —
+// the liveness backfill admits into the coalescer right before the
+// alarm escalation that trips the restart, and admitted items below the
+// watermark have no other recovery path. The hook hands main the exit
+// code exactly once and never blocks the runner's client loop. (The
+// shutdown sequence itself lives inline in main() and is not unit-
+// exercised here — same standing as the SIGTERM path it shares.)
+func TestSelfRestartRequestsRoutesThroughOrderlyShutdown(t *testing.T) {
+	r := newSocketModeRunner(socketTestConfig(t, "http://127.0.0.1:0"), nil, nil, nil)
+	requests := selfRestartRequests(r)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.exit(1)
+		r.exit(1) // repeat requests (later connect failures) are no-ops
+		r.exit(1)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("self-restart hook blocked the runner (it is called from inside the socket client loop)")
+	}
+	select {
+	case code := <-requests:
+		if code != 1 {
+			t.Fatalf("requested exit code = %d, want 1", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no self-restart request reached main's shutdown select")
+	}
+	select {
+	case code := <-requests:
+		t.Fatalf("duplicate self-restart request %d — main would drain twice", code)
+	default:
+	}
+}
+
+// gp-bsk: maybeSelfRestart fires its exit request once per process —
+// every later connect failure past the window must not re-request (or
+// re-log) while main's drain is already under way.
+func TestSocketSelfRestartRequestsOnce(t *testing.T) {
+	cfg := socketTestConfig(t, "http://127.0.0.1:0")
+	cfg.socketSelfRestartAfter = 10 * time.Minute
+	r := newSocketModeRunner(cfg, nil, nil, nil)
+	var exits atomic.Int32
+	r.exit = func(code int) { exits.Add(1) }
+	now := time.Now()
+	r.everConnected.Store(true)
+	r.failStreak.Store(socketSelfRestartMinFailures)
+	ts := now.Add(-11 * time.Minute)
+	r.failStreakStart.Store(&ts)
+	for i := 0; i < 3; i++ {
+		r.maybeSelfRestart(now.Add(time.Duration(i) * time.Minute))
+	}
+	if exits.Load() != 1 {
+		t.Fatalf("exit requests = %d, want exactly 1 across repeated failures past the window", exits.Load())
 	}
 }

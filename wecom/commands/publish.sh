@@ -1,6 +1,6 @@
 #!/bin/sh
-# gc wecom publish — send a markdown message to a WeCom chat through the
-# running adapter.
+# gc wecom publish — send a markdown message, an image, a video, or a
+# file to a WeCom chat through the running adapter.
 #
 # The wrapper relays to the wecom adapter through gc's /svc/wecom reverse
 # proxy. The adapter holds the bot credentials and pushes over the long
@@ -9,13 +9,34 @@
 # --chat is the WeCom conversation id: the chatid for a group chat, or the
 # peer's userid for a DM.
 #
+# Text goes to the adapter's /publish (markdown, chunked at ~3800 UTF-8
+# bytes). --image/--video/--file go to /publish-media: the adapter uploads
+# the file over the long connection (WeCom's chunked aibot_upload_media
+# protocol), sends it as an image/video/file message, and best-effort
+# records the outbound in the gc extmsg transcript via /extmsg/outbound
+# (needs the caller's session to own the conversation's binding — the
+# mayor's replies do). WeCom accepts images ≤10MB (jpg/jpeg/png/gif),
+# videos ≤10MB (mp4), and files ≤20MB (any type); anything else is
+# rejected with a clear error — convert/downscale/compress before
+# sending. --text alongside media is sent as a follow-up markdown message
+# right after it (WeCom media messages have no caption field).
+#
 # Usage:
 #   gc wecom publish --chat <chatid-or-userid> --text "**build** is green"
+#   gc wecom publish --chat <chatid-or-userid> --image /abs/path/photo.png [--text "caption"]
+#   gc wecom publish --chat <chatid-or-userid> --video /abs/path/demo.mp4 [--text "caption"]
+#   gc wecom publish --chat <chatid-or-userid> --file /abs/path/contract.docx [--text "caption"]
 set -eu
 
 chat=""
 text=""
 text_file=""
+image=""
+video=""
+file=""
+kind=""
+session="${GC_SESSION_ID:-}"
+idempotency_key=""
 
 require_value() {
   # $1 = flag name, $2 = arg count remaining (including the flag itself)
@@ -30,9 +51,21 @@ while [ $# -gt 0 ]; do
     --chat)      require_value "$1" "$#"; chat="$2"; shift 2 ;;
     --text)      require_value "$1" "$#"; text="$2"; shift 2 ;;
     --text-file) require_value "$1" "$#"; text_file="$2"; shift 2 ;;
+    --image)     require_value "$1" "$#"; image="$2"; shift 2 ;;
+    --video)     require_value "$1" "$#"; video="$2"; shift 2 ;;
+    --file)      require_value "$1" "$#"; file="$2"; shift 2 ;;
+    --kind)      require_value "$1" "$#"; kind="$2"; shift 2 ;;
+    --session)   require_value "$1" "$#"; session="$2"; shift 2 ;;
+    --idempotency-key) require_value "$1" "$#"; idempotency_key="$2"; shift 2 ;;
     --chat=*)      chat="${1#*=}"; shift ;;
     --text=*)      text="${1#*=}"; shift ;;
     --text-file=*) text_file="${1#*=}"; shift ;;
+    --image=*)     image="${1#*=}"; shift ;;
+    --video=*)     video="${1#*=}"; shift ;;
+    --file=*)      file="${1#*=}"; shift ;;
+    --kind=*)      kind="${1#*=}"; shift ;;
+    --session=*)   session="${1#*=}"; shift ;;
+    --idempotency-key=*) idempotency_key="${1#*=}"; shift ;;
     -h|--help)
       cat "$(dirname "$0")/publish/help.md"
       exit 0
@@ -48,16 +81,42 @@ if [ -z "$chat" ]; then
   echo "gc wecom publish: --chat is required" >&2
   exit 2
 fi
+media_flag_count=0
+[ -n "$image" ] && media_flag_count=$((media_flag_count + 1))
+[ -n "$video" ] && media_flag_count=$((media_flag_count + 1))
+[ -n "$file" ] && media_flag_count=$((media_flag_count + 1))
+if [ "$media_flag_count" -gt 1 ]; then
+  echo "gc wecom publish: use only one of --image, --video, or --file" >&2
+  exit 2
+fi
 if [ -n "$text" ] && [ -n "$text_file" ]; then
   echo "gc wecom publish: use --text or --text-file, not both" >&2
   exit 2
 fi
-if [ -z "$text" ] && [ -z "$text_file" ]; then
-  echo "gc wecom publish: --text or --text-file is required" >&2
+media="$image"
+media_kind="image"
+if [ -n "$video" ]; then
+  media="$video"
+  media_kind="video"
+fi
+if [ -n "$file" ]; then
+  media="$file"
+  media_kind="file"
+fi
+if [ -z "$media" ] && [ -z "$text" ] && [ -z "$text_file" ]; then
+  echo "gc wecom publish: --text, --text-file, --image, --video, or --file is required" >&2
   exit 2
 fi
 if [ -n "$text_file" ] && [ ! -f "$text_file" ]; then
   echo "gc wecom publish: --text-file $text_file not found" >&2
+  exit 2
+fi
+if [ -n "$media" ] && [ ! -f "$media" ]; then
+  echo "gc wecom publish: --$media_kind $media not found" >&2
+  exit 2
+fi
+if [ -n "$kind" ] && [ "$kind" != "dm" ] && [ "$kind" != "room" ]; then
+  echo "gc wecom publish: --kind must be dm or room" >&2
   exit 2
 fi
 
@@ -70,34 +129,124 @@ if [ -z "$city" ]; then
 fi
 
 # Resolve the adapter endpoint: gc proxies /svc/wecom/* to the adapter's
-# UDS. WECOM_ADAPTER_URL overrides for local testing.
+# UDS. WECOM_ADAPTER_URL overrides for local testing (points at /publish;
+# the media endpoint is derived from it, mirroring slack-full's
+# publish-file derivation).
 url="${WECOM_ADAPTER_URL:-${api_base}/v0/city/${city}/svc/wecom/publish}"
 
 # Build the request body with jq so chat/text are correctly JSON-escaped
-# (text may contain quotes, newlines, etc.). The body reuses the extmsg
-# publishRequest wire shape the adapter already serves for gc callbacks.
+# (text may contain quotes, newlines, etc.). The text body reuses the
+# extmsg publishRequest wire shape the adapter already serves for gc
+# callbacks; the media body is the adapter's /publish-media shape.
 # --text-file exists because reply text regularly contains characters
 # that are unsafe to interpolate into a shell command (apostrophes,
 # backticks, code snippets) — agents write the reply to a file instead.
-if [ -n "$text_file" ]; then
+if [ -n "$media" ]; then
+  # One idempotency key per LOGICAL invocation, generated here — never per
+  # HTTP attempt. The adapter latches every delivery stage under this key,
+  # so the transport retries below and operator reruns (pass the echoed
+  # key back via --idempotency-key) resume the send instead of showing the
+  # user the media twice (codex jg-d0xr finding 2).
+  if [ -z "$idempotency_key" ]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+      idempotency_key="wecom-cli-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    else
+      idempotency_key="wecom-cli-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    fi
+  fi
+  # The adapter reads the file from its own process, so the path must be
+  # absolute (its working directory is not the caller's).
+  case "$media" in
+    /*) ;;
+    *) media="$(pwd)/$media" ;;
+  esac
+  case "$url" in
+    */publish) media_url="${url%/publish}/publish-media" ;;
+    *)         media_url="${url%/}/publish-media" ;;
+  esac
+  if [ -n "$text_file" ]; then
+    body=$(jq -n \
+      --arg chat "$chat" \
+      --arg kind "$kind" \
+      --arg file "$media" \
+      --arg media_kind "$media_kind" \
+      --arg session "$session" \
+      --arg ikey "$idempotency_key" \
+      --rawfile text "$text_file" \
+      '{conversation: ({conversation_id: $chat} + (if $kind != "" then {kind: $kind} else {} end)),
+        file_path: $file, media_kind: $media_kind, text: $text, idempotency_key: $ikey}
+       + (if $session != "" then {session_id: $session} else {} end)')
+  else
+    body=$(jq -n \
+      --arg chat "$chat" \
+      --arg kind "$kind" \
+      --arg file "$media" \
+      --arg media_kind "$media_kind" \
+      --arg session "$session" \
+      --arg ikey "$idempotency_key" \
+      --arg text "$text" \
+      '{conversation: ({conversation_id: $chat} + (if $kind != "" then {kind: $kind} else {} end)),
+        file_path: $file, media_kind: $media_kind, idempotency_key: $ikey}
+       + (if $text != "" then {text: $text} else {} end)
+       + (if $session != "" then {session_id: $session} else {} end)')
+  fi
+  url="$media_url"
+elif [ -n "$text_file" ]; then
   body=$(jq -n \
     --arg chat "$chat" \
+    --arg ikey "$idempotency_key" \
     --rawfile text "$text_file" \
-    '{conversation: {conversation_id: $chat}, text: $text}')
+    '{conversation: {conversation_id: $chat}, text: $text}
+     + (if $ikey != "" then {idempotency_key: $ikey} else {} end)')
 else
   body=$(jq -n \
     --arg chat "$chat" \
+    --arg ikey "$idempotency_key" \
     --arg text "$text" \
-    '{conversation: {conversation_id: $chat}, text: $text}')
+    '{conversation: {conversation_id: $chat}, text: $text}
+     + (if $ikey != "" then {idempotency_key: $ikey} else {} end)')
+fi
+
+# Transport retries are safe ONLY because media requests carry the
+# invocation-stable idempotency key generated above — the adapter answers
+# a retried key from its latched state instead of re-sending. Text goes
+# through gc's own retrying machinery, so no curl retry there.
+retry_args=""
+if [ -n "$media" ]; then
+  retry_args="--retry 2 --retry-connrefused"
+  # --retry-all-errors (curl >= 7.71) widens transport retries beyond the
+  # built-in transient list; safe here for the same idempotency reason.
+  if curl --help all 2>/dev/null | grep -q -- --retry-all-errors; then
+    retry_args="$retry_args --retry-all-errors"
+  fi
+  # The resume key must reach the operator BEFORE any network I/O (codex
+  # jg-d0xr round-2 finding 2): if the request delivered but every
+  # response was lost, curl exits non-zero and — before this fix — set -e
+  # killed the script inside the command substitution below without ever
+  # printing the generated key, so the natural rerun minted a fresh key
+  # and duplicated the media. Print it up front, unconditionally.
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
-# reaches the operator instead of being swallowed by `curl -f`.
-response=$(curl -sS -X POST "$url" \
+# reaches the operator instead of being swallowed by `curl -f`. The
+# `|| curl_rc=$?` keeps set -e from exiting on a transport failure before
+# the failure (and the resume key) can be reported.
+curl_rc=0
+# shellcheck disable=SC2086  # retry_args is deliberately word-split
+response=$(curl -sS $retry_args -X POST "$url" \
   -H 'Content-Type: application/json' \
   -H 'X-GC-Request: gc-wecom' \
   -d "$body" \
-  -w '\n%{http_code}')
+  -w '\n%{http_code}') || curl_rc=$?
+
+if [ "$curl_rc" -ne 0 ]; then
+  echo "gc wecom publish: transport failure (curl exit $curl_rc) — no adapter response received" >&2
+  if [ -n "$media" ]; then
+    echo "gc wecom publish: the send may or may not have been delivered; retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  fi
+  exit 1
+fi
 
 status=$(printf '%s' "$response" | tail -n 1)
 payload=$(printf '%s' "$response" | sed '$d')
@@ -105,7 +254,17 @@ payload=$(printf '%s' "$response" | sed '$d')
 if [ "$status" -ge 400 ] 2>/dev/null; then
   echo "gc wecom publish: adapter returned HTTP $status" >&2
   [ -n "$payload" ] && echo "$payload" >&2
+  # Failed or ambiguous media sends resume under the SAME key — repeating
+  # the command with a fresh key would deliver the media a second time.
+  if [ -n "$media" ] && [ "$status" -ge 429 ]; then
+    echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  fi
   exit 1
 fi
 
 [ -n "$payload" ] && echo "$payload"
+# Surface a transcript-recording miss without failing the (delivered)
+# publish — the adapter reports it in-band on media sends.
+note=$(printf '%s' "$payload" | jq -r '.transcript_note // empty' 2>/dev/null || true)
+[ -n "$note" ] && echo "gc wecom publish: note: $note" >&2
+exit 0

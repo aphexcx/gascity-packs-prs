@@ -119,6 +119,12 @@ def main(argv: list[str]) -> int:
                              "'adapter' bypasses gc for diagnostics only. "
                              "--conversation-id implies 'adapter' (gc's "
                              "outbound-file endpoint requires a binding).")
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help=("Print the full result envelope (the raw receipt, including "
+              "gc's transcript entry). Default is the terse receipt — "
+              "delivered flag, file_id, conversation_id, thread_ts — which "
+              "keeps the envelope echo out of your context (gp-9e7)."))
     args = parser.parse_args(argv)
 
     if args.thread_ts and args.thread_current:
@@ -219,15 +225,27 @@ def main(argv: list[str]) -> int:
     except (common.AdapterError, common.GCAPIError) as exc:
         raise SystemExit(str(exc)) from exc
 
-    print(json.dumps({
-        "session_id": session_id,
-        "conversation_id": conv["conversation_id"],
-        "kind": conv["kind"],
-        "file_path": str(file_path),
-        "thread_ts": thread_ts,
-        "via": via,
-        "result": result,
-    }, indent=2))
+    if args.verbose:
+        print(json.dumps({
+            "session_id": session_id,
+            "conversation_id": conv["conversation_id"],
+            "kind": conv["kind"],
+            "file_path": str(file_path),
+            "thread_ts": thread_ts,
+            "via": via,
+            "result": result,
+        }, indent=2))
+    else:
+        # Terse receipt (gp-9e7 item 4): the full envelope echoes the
+        # whole result (transcript entry included) into the caller's
+        # context. Exit-code semantics are unchanged: the gc path still
+        # exits 0 on delivered=false (documented), the bindingless path
+        # still exits 1 — the terse receipt only changes what prints.
+        print(json.dumps(common.summarize_publish_receipt(
+            result,
+            conversation_id=conv["conversation_id"],
+            thread_ts=thread_ts,
+        ), indent=2))
 
     if conversation_id:
         # Bindingless mode mirrors publish-to-channel's receipt contract:

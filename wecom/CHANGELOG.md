@@ -2,6 +2,144 @@
 
 ## 0.0.1 (unreleased)
 
+- Outbound FILE publish (jg-d0xr scope extension 8/23): `gc wecom
+  publish --chat <id> --file /abs/path.docx [--text caption]` sends a
+  WeCom file message via the same `/publish-media` pipeline as
+  `--image`/`--video` — chunked upload to a `media_id`, then
+  `aibot_send_msg` with `msgtype=file`. Any file type (WeCom file
+  messages carry arbitrary content, so no magic-byte format gate), cap
+  20MB per the smart-robot limit (`WECOM_FILE_MAX_BYTES` overrides;
+  developer.work.weixin.qq.com/document/path/101463, verified 8/23).
+  Identical `WECOM_OUTBOUND_MEDIA_ROOT` confinement, idempotency-key
+  resume semantics, caption follow-up, and `[file sent]` transcript
+  recording. `--image`/`--video`/`--file` are mutually exclusive.
+- Adapter hardening batch (jg-p1mk, Afik overnight order 8/23):
+  **(1) Inbound-liveness watchdog** (`src/liveness.js`) — last-inbound
+  watermark over every message/event frame; past
+  `WECOM_LIVENESS_STALL_AFTER_MS` (default 10min, 0 off) of silence a
+  loud `INBOUND LIVENESS ALARM` logs (repeating 30min) and `/healthz`
+  gains an `inbound_liveness=stalled` detail line (first line stays
+  `ok`, status stays 200); optional `WECOM_LIVENESS_RECONNECT=true`
+  force-cycles the ready-but-dead WS (rate-limited) — the 8/19
+  40-minute silent-socket signature. No probe/backfill port: WeCom has
+  no bot-readable history API.
+  **(2) Empty-payload surfacing** — a voice frame with no transcript, a
+  media frame with no download URL, and URL-less mixed images deliver
+  with explicit `语音转写失败/内容缺失` markers plus an `EMPTY PAYLOAD`
+  log line; empty-text drops are logged too (8/22 22:53 silent
+  `[voice message]` case).
+  **(3) Inbound burst coalescing** (port of slack-full gp-729) —
+  same-chat frames within `WECOM_COALESCE_WINDOW_MS` (default 8s, 0
+  off) deliver as ONE inbound, verbatim in arrival order, attachments
+  concatenated, `wecom-batch-…` dedup key, 50-message early flush,
+  shutdown drain; single-message windows stay byte-identical; hydration
+  still starts at frame arrival.
+  **(4) Reply feedback 👍/👎** (jg-mlfs) — markdown sends carry a
+  deterministic `feedback.id` (`WECOM_FEEDBACK_IDS=false` disables), so
+  WeCom offers feedback controls; `event.feedback_event` callbacks
+  forward to the bound session as `[user feedback]` signals (rating,
+  reason codes, free-text criticism), deduped on the event msgid,
+  correlated via the publish log's `feedback_base`.
+  Mid-flight scope adds (mayor 8/23 01:08):
+  **(D) reply how-to once per conversation** — the registered
+  reply_instructions template is now ONE line per reminder; the full
+  how-to (file-based reply hygiene, media flags, confinement note)
+  rides each conversation's first delivery per adapter lifetime,
+  re-armed if that delivery is rejected.
+  **(C) voice ASR-repeat dedup** — a transcript of ≥24 chars that is
+  one ≥10-char block repeated 2–4× verbatim (no separator or single
+  space/newline; WeCom ASR bug observed nightly 8/22) collapses to one
+  block with an `(ASR重复×N已折叠)` marker; counts (never content) are
+  logged.
+  **(A) peer-bot context buffering** (slack-full gp-kop port) — group
+  posts from `WECOM_PEER_BOT_USERIDS` never wake the bound session:
+  they buffer (capped at 20/conversation, oldest dropped with a count,
+  msgid-deduped) and ride ahead of the next human delivery as a tagged
+  read-only block, restored if that delivery is rejected.
+  **(B) non-waking liveness probes** — satisfied by construction: the
+  watchdog never touches gc (log + healthz only) and the reconnect
+  cycle generates no agent turns.
+  Codex DEEP review, 5 rounds (adapter=infra policy), every blocking
+  finding fixed with a reproduction test: r1 — conversation keys
+  namespaced by chat type (DM/room id collision could merge a private
+  DM into a group batch); hostile batch members drop alone instead of
+  aborting siblings/leaking hydration entries; feedback bases guarded
+  and computed before the ownership claim; reconnect no longer races
+  the SDK close handler; shutdown awaits the coalescer drain. r2 —
+  string coercion in the neutralizer + per-member sender finalization;
+  peer frames render inside containment; connect deferred one
+  macrotask past 'disconnected' with listener cleanup; draining mode
+  awaits chains and late frames; /publish 400s non-string idempotency
+  keys; ASR floors raised (block ≥10 chars, total ≥24); peer map
+  LRU-capped at 64 conversations; peer items seq-split before/after
+  the batch; restore dedup. r3 — all provider-controlled envelope
+  strings coerced at the wire (numeric ids no longer reject batches);
+  peer take bounded by the batch's newest member; LRU recency on the
+  monotonic counter. r4 — identity fields normalized to strings at
+  pipeline intake (msgid 0 dedups; numeric userids match the peer
+  allowlist); attachment provider_id coerced; reply-help cache capped
+  (512); rejection requeue keeps original copies merged by arrival
+  seq.
+  66 new tests (229 total).
+
+- Outbound media hardening (jg-d0xr codex round-1, findings 1–11):
+  `/publish-media` is now confined to a REQUIRED
+  `WECOM_OUTBOUND_MEDIA_ROOT` (fail closed when unset; canonicalized
+  root, lexical descendant check, symlinks refused at any depth → 403).
+  Idempotency keys are generated by the CLI once per invocation
+  (`--idempotency-key` reuses one; the adapter requires and echoes it,
+  and curl transport retries re-POST the identical body). Each key
+  latches an immutable operation fingerprint (endpoint, conversation,
+  media digest, filename, caption, path) — any mismatched reuse answers
+  409 instead of riding a previous attempt's `media_id`; settled retries
+  answer from the cached COMPLETE response without touching the file.
+  Media stage latches persist across restarts in
+  `outbound-attempts.json`; lost acknowledgements (SDK reply-ack
+  timeouts, crash-mid-send) classify as `delivery_unknown` and refuse
+  blind same-key retries; timed-out uploads are retained and re-awaited
+  rather than raced by a second upload. The publish-state claim installs
+  its owner promise synchronously (owner token) so concurrent waiters
+  can never all acquire a failed send. Receipts seeded for gc's
+  transcript-recording callback are pinned in a separate lookup for the
+  recording window, and cap pressure refuses new keys (503) instead of
+  evicting pinned/live entries. Outbound uploads gained a global
+  admission gate (`WECOM_UPLOAD_MAX_CONCURRENT`/`_QUEUE`, 429 on
+  overflow, async file I/O). The internal listener enforces exact
+  routes, a body cap (`WECOM_PUBLISH_MAX_BODY_BYTES`, 413) and socket
+  deadlines. SDK INFO logs are allowlisted to connection lifecycle with
+  filenames and upload/media identifiers redacted. 26 new tests
+  (128 total, including CLI and listener suites).
+
+- Outbound media (jg-d0xr): `gc wecom publish --image <path>` /
+  `--video <path>` send a local image (≤10MB, jpg/jpeg/png/gif) or video
+  (≤10MB, mp4 — WeCom's own smart-robot caps, verified against
+  developer.work.weixin.qq.com/document/path/101463) through the new
+  adapter endpoint `/publish-media`: chunked upload over the long
+  connection to a `media_id`, then an `aibot_send_msg` media message.
+  Optional `--text` becomes a follow-up markdown message on the same
+  per-chat send chain (WeCom media messages carry no caption field).
+  Files are checked by magic bytes; oversized/wrong-format/symlink/
+  relative-path inputs are rejected with actionable 400s (no transcoding
+  — downscale/re-encode and retry; `WECOM_IMAGE_MAX_BYTES` /
+  `WECOM_VIDEO_MAX_BYTES` / `WECOM_UPLOAD_TIMEOUT_MS` are the knobs).
+  Delivered media sends are recorded in the extmsg conversation
+  transcript by POSTing gc `/extmsg/outbound` with the already-settled
+  idempotency key — gc's callback to `/publish` answers from the receipt
+  instead of re-sending — with the attachment metadata (filename, mime,
+  size, sha256, source path, caption) in the entry text; recording is
+  best-effort and downgrades to `transcript_recorded:false` + note (no
+  session, unowned binding, gc outage) after the media already delivered.
+  The dm/room kind gc keys conversations by is learned from inbound
+  frames into a persisted `conversation-kinds.json` (with `--kind` and a
+  `wr` chatid-prefix heuristic as fallbacks; a wrong guess can only make
+  gc reject the recording, never mislabel it). The outbound machinery
+  moved from `index.js` into a testable `src/outbound.js` (same
+  extraction pattern as `src/inbound.js`); text `/publish` behavior is
+  unchanged and now regression-tested. Upload/send stages are latched
+  per idempotency key so a retry resumes at the failed stage — never a
+  second upload (quota: 30/min per robot) or a twice-shown message.
+  26 new tests (93 total).
+
 - Media ingestion hardening round 4 (jg-c7j codex round-4): seen-set
   eviction now exempts msgids with pending frames — 2,048 churned
   deliveries can no longer evict a delivered msgid whose replay is still

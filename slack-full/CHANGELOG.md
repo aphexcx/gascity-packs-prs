@@ -8,8 +8,291 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Token-efficiency batch (gp-9e7, Afik-approved 1787421193 with items
+  1–4 in scope per follow-up ruling 1787421279):
+  1. **Reaction-event buffering** — reaction notifications (gp-by3)
+     never wake a session solo anymore, in rooms or DMs, coalescing
+     enabled or not: they buffer in a no-wake side lane of the
+     coalescer and ride the channel's next real delivery (batch flush,
+     urgent/DM flush-ahead, or shutdown drain). Exception: a reaction
+     ON one of the adapter's own outbound posts may join an
+     ALREADY-armed coalesce window (founder acks land with the batch);
+     it still never arms one. Overflow past 100 buffered reactions
+     delivers instead of evicting — nothing is ever dropped.
+  2. **Cross-channel coalescing** — a firing flush timer now sweeps
+     every other buffered non-digest channel, so ONE idle wake
+     delivers all channels' window traffic as aligned back-to-back
+     per-channel batches (each formatted byte-identical to before;
+     order preserved within channel). Digest-mode channels keep their
+     operator-configured interval and are never swept; channels
+     holding only buffered reactions are never swept either (that
+     would be a solo reaction wake).
+  3. **Bot-post buffering generalized** — the gp-kop peer-bot buffer
+     now admits ALL bot-authored posts (same fail-closed bots.info
+     self-guard; unknown bots labeled from bot_profile/bots.info).
+     Unknown bots can never wake a session; the peer_bots.json
+     allowlist's role is granting wakes — per-entry `"wake": true` or
+     the existing `immediate_channels` — and none are granted today.
+  4. **Terse send receipts** — `reply-current`, `publish`,
+     `publish-to-channel`, and `upload` no longer echo the full result
+     envelope (gc transcript entry, outbound text included) into the
+     sending session's context. The default receipt is delivered flag
+     + message_id/file_id + conversation_id + thread_ts when threaded;
+     delivered=false receipts keep failure_kind and the error message.
+     `--verbose` restores the full envelope. Exit-code semantics are
+     unchanged.
+
+### Fixed
+
+- **A same-ts twin can no longer skip a copy the session never got**
+  (gp-32q, pc_2e2378b9918e; 2026-08-27 22:57 CT and 2026-08-28 04:08
+  CT founder-inbound incidents, both on the PR #23 build). A
+  bot-mention arrives as a twin pair (`message` + `app_mention`, one
+  ts, distinct event ids); the winning twin concluded its
+  `(channel, ts)` claim on gc returning 2xx, and the parked twin then
+  logged `channel copy already delivered by same-ts twin — skipping
+  channel post`. But 2xx cannot see the last hop: gc's
+  `/extmsg/inbound` handler notifies members in the BACKGROUND
+  (`runBackground` -> `extmsgNotifyInboundMembers`) and answers before
+  the session is touched, so an inbound gc accepted whole still
+  reached the session as a fragment — 867 chars posted, only the reply
+  boilerplate tail delivered — and the one copy that could have
+  recovered it was the copy that skipped.
+
+  The claim now concludes on a DELIVERY RECEIPT: gc vouching that the
+  complete payload reached the session (the gascity side is gp-2rq).
+  Applies to all three claim-holding legs — the urgent channel copy,
+  the coalesced batch, and the address-by-handle session injection:
+  - **Vouched** (or `no_route`, where a twin's re-post would resolve
+    the same empty route): claim committed, twin skips — today's
+    behavior.
+  - **Not vouched** — an explicitly negative status (`partial`,
+    `failed`), a member gc names as not delivered, or a `delivered`
+    whose own `delivered_bytes` fall short of `expected_bytes`, checked
+    per member as well as on the summary (the summary counts are SUMS
+    across the notify fan-out, so a member that got half its payload
+    can hide inside a total that adds up; and only when both counts
+    arrive as numbers in the SAME unit — gc measures bytes at the tmux
+    paste buffer, and comparing those against a rune count on an
+    emoji-carrying Slack message is a different number, not a rounding
+    error): the payload is
+    re-posted ONCE in place while the claim is still held, so no twin
+    can duplicate the attempt. If that still does not vouch, the
+    urgent and injection legs release the claim and take the existing
+    failed-delivery path, which is what lets the parked twin re-post;
+    gc dedups a re-posted transcript record by `provider_message_id`,
+    so the cost is a duplicate notification at worst. The coalesced
+    leg fails into the same recovery machinery, with the unvouched
+    error charged like a gp-xnc payload rejection: bounded retries,
+    then the dead-letter file — never restored uncharged, which a
+    never-vouching receipt would turn into an unbounded re-notify
+    loop, and never silently retired, which would discard the only
+    copy an ordinary one-event room message has. Every one of these is
+    logged at `UNDELIVERED` grade with the receipt id.
+  - **`pending` HOLDS — it never re-posts** (mayor ruling,
+    2026-08-28). gc waits for a session to reach an idle boundary
+    before pasting (`NudgeIdleTimeout`, 30s on this city), longer than
+    any HTTP budget the adapter can hold, so `pending` is the NORMAL
+    receipt for a BUSY session — and busy sessions are exactly the
+    population this bug affects, since the truncation only manifests on
+    a busy TUI. Re-posting there would fire at precisely the messages
+    being fixed and deliver both copies: gc never cancelled the first
+    send, it just could not report on it yet. `failed`/`partial` mean
+    gc KNOWS something did not land, which is what makes a re-post
+    clean. A hold concludes the claim and logs a `HELD` line carrying
+    the receipt id, so a message that never arrives afterwards is still
+    greppable against gc's own log.
+  - **Anything not understood fails OPEN** — no receipt block at all
+    (every gc predating gp-2rq, including the binary live today), an
+    unknown status, a renamed field, a count that is not a number — is
+    `receipt=unsupported` and keeps the pre-gp-32q commit-on-2xx
+    behavior exactly. Only statements the adapter recognizes may
+    withhold a claim's conclusion: reading schema drift as "not
+    delivered" would re-post every delivery in the workspace, an
+    outage strictly worse than the mangling this gate catches. So the
+    pack is safe to pin BEFORE the gc rebuild, and the gate arms
+    itself the moment a receipt-emitting gc is running: no flag day,
+    no ordering constraint between the two fixes.
+  - **Anything not understood fails OPEN**, and that now includes any
+    status outside the confirmed enum. `timeout`, `error`, `rejected`
+    are not statements this gc makes; admitting words that merely
+    sound like failures would let a producer's schema drift re-post
+    and dead-letter across the workspace. Counts must also be whole,
+    non-negative numbers in matching units before they can contradict
+    a status, and a block where two keys normalize to one name
+    (`status` beside `Status`) reads as absent rather than as
+    whichever one map order surfaced.
+  - **Never during the shutdown drain.** Each gc round-trip can burn
+    the full forward timeout, and two of them outrun the 20s event
+    drain — a re-post still in flight when shutdown seals the spool
+    could neither spool its own failure nor conclude its claim before
+    process exit. While draining, an unvouched delivery goes straight
+    to its failure path, which now **spools before it releases
+    anything**: a copy the spool accepted CONCLUDES its `(channel, ts)`
+    claim and its event id, so the parked twin and any same-event-id
+    redelivery skip a message the next startup already replays; a spill
+    the spool refused (sealed, disabled, full) releases both, because
+    then the twin's takeover is the only recovery path left. A twin
+    that skips on a drain conclusion also takes no busy mark — the
+    hourglass is cleared by a reply to a delivery that is no longer
+    happening, and the registry that could remove it does not survive
+    the restart. The address-by-handle injection leg deliberately does
+    NOT defer: a spooled line replays as a channel copy and does not
+    reconstruct an addressed injection, so there is nothing durable
+    behind that claim and the takeover stays the recovery path.
+
+  What the receipt has to attest is COMPLETENESS, not arrival. At
+  05:39Z on 2026-08-28 — while this fix was being written — a 223-byte
+  founder message reached the mayor session as 134 bytes: 89 eaten off
+  the HEAD, tail byte-exact, cut mid-word. It read as a complete
+  sentence starting mid-thought, and was caught only because the cut
+  landed inside a word; at a word boundary it would have been acted on
+  as a corrupted founder instruction and never noticed. "It arrived" is
+  not the property worth gating on, "all of it arrived" is, and that is
+  what the byte counts are for. That incident is a test vector in
+  `delivery_receipt_test.go`.
+
+  Every inbound log line now carries `receipt=<id> receipt_status=…
+  receipt_verdict=… receipt_bytes=<delivered>/<expected>` beside the
+  existing `posted=NNch`, so the next incident splits
+  adapter-vs-transport at a glance, plus `receipt_digest=` — the same
+  payload digest gc prints on its own `nudge-receipt` line, so one
+  delivery can be followed across both logs. Members gc names as
+  undelivered are listed with their error text, truncated and capped:
+  a receipt is written by another process and its error strings come
+  from a terminal, so nothing in it can forge or flood a log line. `SLACK_DELIVERY_RECEIPT_GATE=off`
+  disarms the gate wholesale — the escape hatch if a gc build ever
+  reports receipts wrongly and the adapter starts re-posting
+  deliveries that did land.
+
+- **Slack voice clips no longer poison a channel's inbound delivery**
+  (gp-xnc, 2026-08-26 09:48Z incident). Slack-native recordings
+  (`subtype: slack_audio`, `audio_message.m4a`) carry an EMPTY
+  `mimetype`/`filetype` — even from `files.info` — and the adapter
+  passed that through as an omitted `mime_type`, which gc's
+  `extmsg.ExternalAttachment` requires: a deterministic 422. The
+  coalescer then restored the failed batch ahead of everything newer
+  and retried it every window forever, so three founder voice memos
+  and every later message in the channel never reached the mayor, at
+  one 422 log line per 8s. Two fixes:
+  - `mime_type` is always sent: Slack's value when present, else the
+    file name's extension (`.m4a` → `audio/mp4`; a pinned table for
+    the media types Slack clients produce, then the host database),
+    else Slack's `filetype` code, else the `slack_audio`/`slack_video`
+    subtype, else `application/octet-stream`; the field is no longer
+    `omitempty`.
+  - Poison handling in the coalescer: a delivery gc rejects as
+    payload (HTTP 400/413/415/422) no longer retries forever. A
+    rejected multi-message batch is isolated — each member re-posted
+    alone under the same flush — so innocent batch-mates deliver
+    immediately and only the member gc still rejects is charged; the
+    probe stops at the first transient single (a hung gc must not cost
+    one client timeout per member). Reactions are never posted solo and
+    are charged only when their own group is posted and rejected.
+    After 3 rejections the message is written to a per-channel
+    dead-letter file (`SLACK_INBOUND_DEAD_LETTER_DIR`, default
+    `<GC_CITY_PATH>/.gc/slack/inbound_dead_letter/<channel>.jsonl`;
+    full envelope + reason, fsynced, O_NOFOLLOW, 0700/0600 enforced;
+    an unconfirmed write keeps the entry buffered and retries) and the
+    channel moves on. Everything else — gc unreachable, 5xx, 408/429,
+    and operational 4xx such as 401/403/404 — keeps the retry-forever
+    durability unchanged. `postInbound` errors now carry the HTTP
+    status (`inboundPostError`) so the classes can be told apart;
+    their text is unchanged.
+
+- Urgent-path twin double-delivery (gp-ios, pc_c920ff5fe90c live shape,
+  2026-08-20 06:44Z): a bot-mention pair (`message` + `app_mention`,
+  same ts, distinct event ids) raced BOTH copies down the urgent
+  channel path concurrently — the event-id dedup can't collapse the
+  pair, gc's transcript append dedups only the RECORD, and gc's member
+  notification is built from each POST body with no dedup of its own,
+  so the bound session read the same message id twice in one turn
+  (once bare, once wearing the thread-context preamble). A new
+  per-(channel, ts) delivery claim serializes the channel copy: the
+  first twin owns the POST, a concurrent twin parks until the owner
+  concludes and then drops (owner delivered) or takes over (owner
+  failed — never a loss path). The coalesced-batch path claims each
+  member the same way, closing the sliver between an urgent twin's
+  conclusion and its deliveredIDs record; a claim still in flight at
+  batch time is kept without parking (fail open to a duplicate in that
+  narrow window, never to loss).
+- Coalesced-batch restore corruption (gp-ios, latent): the batch
+  delivery filters compacted the batch slice IN PLACE while the
+  caller restores its own slice on failure — a dropped member plus a
+  failed POST re-queued a corrupted batch (tail entries duplicated,
+  dropped-position members lost) for the timer retry. The filters now
+  build fresh slices.
+- reply-current send-pipeline failures now always leave a
+  machine-readable JSON envelope on stdout (gp-ios, pc_7fe644e666a6):
+  a session-resolution or publish failure used to surface as a bare
+  SystemExit message on stderr with an EMPTY stdout — "non-JSON
+  (empty/error)" to the calling agent, indistinguishable from a
+  crashed script. Failures keep exit code 1 and the stderr line but
+  stdout now carries `{"delivered": false, "stage": …, "error": …}`.
+  Usage errors and company-turn contract errors still raise SystemExit
+  (the message is the product there). The accidental-mrkdwn guard
+  (gp-o42) additionally fails OPEN: any fault inside it sends the body
+  unguarded with a stderr warning instead of blocking the send, and
+  new tests pin the guard's behavior on CJK + curly-quote bodies
+  (including U+FF5E/U+301C tilde lookalikes, which are never touched).
+- Reply-current turn anchoring (gp-6j3; fleet repro 8/20, three misfires
+  in one hour across two cities): the default threading scanned for the
+  LATEST inbound at send time, and coalesced delivery + interleaved
+  channel/thread traffic made that a different message than the one the
+  session was answering — threaded asks got answered top-level, and one
+  reply landed in a foreign thread outright. New `--turn-ts <ts>` flag
+  on `gc slack reply-current` pins the anchor to the exact inbound being
+  answered (its thread root when threaded, channel level when not) via a
+  transcript lookup by ts; an unresolvable ts is a hard error with
+  explicit-anchor guidance (`--reply-to` / `--no-thread`), never a
+  silent top-level post. The registered reply template now renders
+  `--turn-ts {message_ts}` into every gc inbound reminder, the
+  once-per-channel how-to documents the flag, and the coalesced-block
+  header steers replies to older batch members (which have no transcript
+  entry of their own) through `--reply-to`/`--no-thread`. A live company
+  turn refuses `--turn-ts` and points at `--turn-ref`. The no-flag
+  latest-inbound inheritance (gp-i62) is unchanged as a fallback.
+- Coalescer twin double-delivery (pc_c920ff5fe90c, folded into gp-6j3):
+  a bot-mention pair (`message` + `app_mention`, same ts, distinct
+  event ids) could split when the bot user id was unknown — one copy
+  buffered as chatter, the other took the urgent path — and the flushed
+  batch's `slack-batch-…` dedup key can never collide with the urgent
+  copy's `slack-<ts>`, so gc delivered the same message id twice in one
+  turn with different decoration. Flush-ahead now withholds the urgent
+  message's own ts from the batch (restored for the timer retry if the
+  urgent post then fails — never dropped), a ts already delivered to
+  the channel audience is skipped at enqueue AND filtered again at
+  batch-delivery time (narrowing the race where the twin buffers while
+  the urgent POST is still in flight to the POST's own in-flight
+  window; an urgent failure never records its ts, so the buffered copy
+  still delivers — the residual is fail-open to a duplicate, never to
+  loss, accepted like gp-729's documented window limitations), and
+  same-ts entries collapse inside a batch.
+
 ### Added
 
+- Human-reaction visibility (gp-by3): the switchboard app subscribes to
+  `reaction_added`/`reaction_removed` (manifest: both events + the
+  `reactions:read` scope — **live apps must add these in their Slack
+  dashboard config and reinstall**; the repo manifest does not update
+  installed apps) and forwards each human reaction to the
+  conversation-bound session as a lightweight tagged notification:
+  reactor, emoji, target message ts, best-effort target snippet
+  (`conversations.replies` lookup, degrades to ts-only), threaded under
+  the target's thread when it has one. Rooms ride the gp-729 coalescer
+  (a lone 👍 still wakes the session after the window — the ack that is
+  a thread's only answer now arrives); DMs and coalescing-disabled
+  deployments forward immediately. Mechanical fleet traffic never
+  echoes: the adapter's own reactions, anything using the configured
+  busy emoji (`BUSY_REACTION`, default `hourglass`), and reactors
+  matching a `peer_bots.json` entry's `bot_user_id` all drop. The
+  notification is non-anchoring by construction (`Actor.IsBot=true`,
+  `"reaction: "` display prefix; the intake helpers and the coalesced-
+  block anchor line exclude bot-tagged entries), so `reply-current` /
+  `react` / `upload` never anchor on a reaction. Company rooms and
+  per-agent DMs are out of scope v1.
 - **Inbound liveness now reaches the gc service health model** (gp-rol;
   papercuts pc_5ede9badf7b1 / pc_fc584c0e47ba). During the 2026-08-19
   outages `gc service list` reported `state=ready` for 26 minutes of dead
@@ -23,7 +306,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `State=degraded` on `gc service list` / the dashboard — the reason on
   `gc service show slack` and the API — while `LocalState` stays
   `ready`; older gc binaries ignore the headers.
-
 - Inbound token-efficiency pass (gp-729, the Aug-17 ranked list):
   1. **Burst coalescing** — untargeted, non-bot-mentioned channel
      messages buffer for a short debounce (`SLACK_COALESCE_WINDOW`,
@@ -218,6 +500,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   @-mentions of the adapter's own bot user — see Fixed below.
 
 ### Fixed
+
+- **A transient network blip can no longer become an hours-long inbound
+  outage** (gp-bsk; incidents 2026-08-22 12:59 CT and 2026-08-23
+  13:54Z–19:12Z, the latter 10.5h of dead inbound). Three layers, all in
+  the Socket Mode runner:
+  1. *Reconnect backoff is now hard-capped at 2 minutes.* slack-go
+     v0.29.0's internal reconnect ladder is effectively unbounded (its
+     `Max` is applied only on integer overflow), and the 8/23 outage sat
+     in observed waits of 27m/55m/1h49m after the network had already
+     recovered. The runner now kills the client cycle the moment the
+     reported internal backoff exceeds the ceiling and lets its own
+     outer ladder (floor 5s, cap 2m, was 5m) own the pacing —
+     `apps.connections.open` is cheap and every reconnect is loss-free
+     via the watermark backfill, so hour-scale patience is never
+     correct.
+  2. *DNS self-heal.* Three consecutive `no such host` connect failures
+     (the 8/22 poisoned-resolver signature) stop trusting the in-process
+     resolver: the runner flips — stickily — to a pure-Go resolver that
+     re-reads `/etc/resolv.conf` (wired through both the
+     `apps.connections.open` HTTP client and the WebSocket dialer) and
+     rebuilds the client immediately. If the transport has connected at
+     least once this process and then stays dark past
+     `SLACK_SOCKET_SELF_RESTART_AFTER` (default 10m, 0 disables) across
+     repeated failures, the adapter runs its orderly shutdown (the
+     gp-9e7 drain: buffered inbounds reach gc or the durable spool —
+     never a bare `os.Exit`, which would strand anything the liveness
+     backfill had just admitted below the watermark) and exits 1 so
+     the service supervisor restarts it — spool replay + startup
+     recovery + watermark backfill make the bounce loss-free (proven in
+     both incidents). Never-connected
+     misconfigurations (Socket Mode toggle off, bad app token) still
+     only degrade health — no restart loop.
+  3. *The inbound-liveness ALARM now escalates.* Its only consumer used
+     to be the local log (and the 8/23 alarm at 18:47Z fired correctly
+     into the void); with the socket down it now flips the runner into
+     aggressive reconnect — outer backoff reset to the floor, any
+     backoff sleep (internal or outer) abandoned — since the alarm is
+     positive evidence messages are being missed. `/healthz` grows
+     `socket_fresh_resolve=true` once the DNS self-heal has tripped.
 
 - Pack pin bumps can no longer strand the adapter service (gp-d7l):
   the `[[service]]` command is now `adapter/run.sh` (checked in)

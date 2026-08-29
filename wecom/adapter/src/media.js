@@ -44,6 +44,12 @@ import { pathToFileURL } from 'node:url';
 const zwsp = '​';
 
 export function neutralizeMarkupBoundaries(s) {
+  // Provider-controlled values are not guaranteed to be strings — a
+  // JSON-valid frame can carry a numeric userid/chatid, and a hostile
+  // one anything else. Coerce rather than throw (codex jg-p1mk r2
+  // finding 1: a numeric sender in one batch member threw HERE, outside
+  // the member containment, and dropped the healthy siblings).
+  s = String(s ?? '');
   if (!s.includes('<')) return s;
   let out = '';
   for (let i = 0; i < s.length; i++) {
@@ -62,6 +68,106 @@ export function scrubErrorMessage(msg) {
   let s = String(msg ?? 'unknown error').replace(/https?:\/\/\S+/g, '[url]');
   if (s.length > 200) s = `${s.slice(0, 200)}…`;
   return neutralizeMarkupBoundaries(s);
+}
+
+// --- SDK logger --------------------------------------------------------------
+
+// scrubSdkLogLine sanitizes one @wecom/aibot-node-sdk log line for the
+// persisted service log (codex jg-d0xr finding 11): everything from the
+// first brace onward goes (serialized frames carry message bodies, user
+// ids, media URLs/AES keys), URLs go, and the SDK's PLAIN-STRING mentions
+// of private identifiers — upload filenames, upload_id, media_id, req/
+// chat/user ids — are redacted too, since the brace scrub never caught
+// those. Filenames are conversation content under the adapter's
+// no-content-logging policy; upload/media ids are live provider
+// capabilities for up to 3 days.
+// The value span runs to the next delimiter, not the next space — a
+// filename with spaces must not leak its tail. Over-redaction is the
+// right failure mode here.
+const sdkIdentifierPattern = /\b(file_?name|upload_?id|media_?id|req_?id|chat_?id|user_?id)\b\s*[=:]?\s*[^,;)]*/gi;
+
+export function scrubSdkLogLine(m) {
+  return String(m)
+    .replace(/\{[\s\S]*$/, '{…redacted}')
+    .replace(/\b(?:https?|wss?):\/\/\S+/g, '[url]')
+    .replace(sdkIdentifierPattern, (_, name) => `${name}=[redacted]`);
+}
+
+// describeProviderError is the single structured sink for a PROVIDER/SDK
+// failure that both publish handlers propagate into responses and logs
+// (codex jg-d0xr round-2 finding 13, hardened in round 3). Round 2
+// scrubbed pattern-matched fragments (braces, URLs, labeled identifiers)
+// out of the raw message — but any errmsg matching NO pattern passed
+// verbatim, so free-text provider errors ("cannot process
+// payroll-secret.png token ABC123") still reached responses and
+// persistent logs. Redaction is now ALLOWLIST-based: the output is
+// synthesized from structured fields only — a numeric provider errcode,
+// a numeric HTTP status, the error class name — plus a canonical label
+// when the message exactly matches a known SDK/adapter error shape. The
+// raw text of anything unrecognized (provider errmsg included) is
+// DISCARDED, never echoed or logged.
+//
+// The shapes are full-string anchored wherever the SDK's own text is
+// constant; where an SDK message embeds runtime values (reqId, close
+// reason, byte counts) the label replaces the whole message, so embedded
+// identifiers and provider-controlled tails never survive into a sink.
+const providerErrorShapes = [
+  [/^WebSocket not connected, unable to send data$/,
+    'the WebSocket is not connected (nothing was written)'],
+  [/^Reply queue for reqId .+ exceeds max size \(\d+\)$/,
+    'the SDK reply queue is full (the send was refused before any frame was written)'],
+  [/^Reply ack timeout \(\d+ms\) for reqId: /,
+    'the provider acknowledgement timed out'],
+  [/, reply for reqId: .+ cancelled$/,
+    'the connection dropped before the acknowledgement arrived'],
+  [/^Max auth failure attempts exceeded \(\d+\)$/,
+    'SDK authentication attempts exhausted'],
+  [/^Max reconnect attempts exceeded \(\d+\)$/,
+    'SDK reconnect attempts exhausted'],
+  [/ exceeded the \d+ms wall-clock deadline$/,
+    'the operation exceeded its wall-clock deadline'],
+  [/^media upload returned no media_id$/,
+    'the upload completed without a media_id'],
+  [/^gc accepted the publish but recorded no transcript entry$/,
+    'gc accepted the publish but recorded no transcript entry'],
+];
+
+export function describeProviderError(err) {
+  if (err && typeof err.errcode === 'number') {
+    // A provider ack frame: the numeric errcode is kept; the free-text
+    // errmsg is provider-controlled and dropped.
+    return `provider rejected the message: errcode ${err.errcode}`;
+  }
+  const msg = String((err && typeof err === 'object' ? err.message : err) ?? '');
+  for (const [re, label] of providerErrorShapes) {
+    if (re.test(msg)) return label;
+  }
+  const name = typeof err?.name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(err.name)
+    ? err.name
+    : 'Error';
+  const status = typeof err?.status === 'number' ? `, HTTP status ${err.status}` : '';
+  return `${name}${status} (unrecognized error text withheld from logs and responses)`;
+}
+
+// createSdkLogger builds the logger handed to the SDK. DEBUG is dropped
+// entirely (full callback frames). INFO is ALLOWLISTED to connection
+// lifecycle — authentication, connect/reconnect/disconnect, heartbeat —
+// because SDK 1.0.7 logs upload progress at INFO, naming the filename and
+// upload_id/media_id of every outbound file; an operator diagnosing the
+// long connection needs the lifecycle lines and nothing else. warn/error
+// pass through (scrubbed, varargs dropped — they carry raw objects).
+const sdkInfoAllowlist = /auth|connect|reconnect|disconnect|handshake|heartbeat|websocket|\bws\b|subscribe/i;
+
+export function createSdkLogger(log) {
+  return {
+    debug: () => {},
+    info: (m) => {
+      const s = scrubSdkLogLine(m);
+      if (sdkInfoAllowlist.test(s)) log('[sdk]', s);
+    },
+    warn: (m) => log('[sdk][warn]', scrubSdkLogLine(m)),
+    error: (m) => log('[sdk][error]', scrubSdkLogLine(m)),
+  };
 }
 
 // --- path sanitization -------------------------------------------------------
@@ -674,7 +780,10 @@ export async function hydrateMessageMedia(msg, deps) {
     const out = {
       line: `  ${n + 1}. ${neutralizeMarkupBoundaries(name)} (${mime || item.kind}) — saved to ${neutralizeMarkupBoundaries(dest)}; Read that path to view it`,
       attachment: {
-        provider_id: item.index === null ? (msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
+        // String-coerced (codex jg-p1mk r4 finding 1): gc types
+        // provider_id as a string, and a numeric msgid reaching it raw
+        // rejects the whole envelope.
+        provider_id: item.index === null ? String(msg.msgid ?? '') : `${msg.msgid ?? ''}/${item.index}`,
         url: pathToFileURL(dest).href,
         ...(mime ? { mime_type: mime } : {}),
       },

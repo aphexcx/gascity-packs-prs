@@ -73,7 +73,7 @@ env:
 jobs:
   supported-pack-formulas:
     name: supported pack formula inference gates
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ubuntu-latest  # TEMP fallback: Blacksmith runners wedged since 8/21 (jobs queued 8h+); put back blacksmith-32vcpu-ubuntu-2404 once the account-side wedge is fixed
     timeout-minutes: 360
 
     steps:

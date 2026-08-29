@@ -74,6 +74,45 @@ def test_default_via_routes_through_gc_outbound(monkeypatch: pytest.MonkeyPatch)
     assert captured["body"]["text"] == "*hello*"
 
 
+def test_terse_receipt_by_default_verbose_restores_envelope(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """gp-9e7 item 4: the default stdout is the terse receipt — no result
+    envelope, no echo of the outbound text; --verbose restores today's
+    full print byte-for-byte."""
+    rc, common = _import_modules()
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000100",
+                            "Entry": {"text": "*hello*"}}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    argv = [
+        "--session", "gc-test-session",
+        "--conversation-id", "C0123ROOM",
+        "--reply-to", "1690.5",
+        "--body", "*hello*",
+    ]
+    assert rc.main(argv) == 0
+    captured_stdout = capsys.readouterr().out
+    assert json.loads(captured_stdout) == {
+        "delivered": True,
+        "message_id": "1700000.000100",
+        "conversation_id": "C0123ROOM",
+        "thread_ts": "1690.5",
+    }
+    assert "*hello*" not in captured_stdout
+
+    assert rc.main(argv + ["--verbose"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["session_id"] == "gc-test-session"
+    assert out["via"] == "gc"
+    assert out["result"]["Receipt"]["Entry"]["text"] == "*hello*"
+
+
 def test_via_adapter_keeps_direct_adapter_path(monkeypatch: pytest.MonkeyPatch) -> None:
     rc, common = _import_modules()
     captured: dict[str, Any] = {}
@@ -756,11 +795,78 @@ def test_company_synthesis_gate_refuses_then_allow_partial_passes(
     assert captured == []
     capsys.readouterr()  # drain
 
-    # With --allow-partial it posts and the report carries allow_partial.
-    assert rc.main(["--body", "partial", "--allow-partial"]) == 0
+    # With --allow-partial it posts; the full report (which records
+    # allow_partial) prints under --verbose — the default is the terse
+    # receipt, same contract as the legacy path (gp-9e7 item 4, 4a).
+    assert rc.main(["--body", "partial", "--allow-partial", "--verbose"]) == 0
     assert len(captured) == 1
     printed = json.loads(capsys.readouterr().out)
     assert printed["allow_partial"] is True
+
+
+def test_company_turn_terse_receipt_default_verbose_full(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture) -> None:
+    """gp-9e7 item 4 fix round (4a): the company-turn path follows the
+    same terse-default / --verbose-full receipt contract as the legacy
+    path — the default stdout carries delivered + conversation_id (+
+    message_id / thread_ts), and --verbose restores the full company
+    report."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    _write_turn(outbound, session="ollie-main", kind="ambient", agent="ollie",
+                ts="1700000000.000500")
+    monkeypatch.setenv("GC_SESSION_NAME", "ollie-main")
+    monkeypatch.setattr(outbound, "_slack_web_post",
+                        lambda *a, **k: (200, {}, {"ok": True, "ts": "1700000000.000800"}))
+
+    assert rc.main(["--body", "answering the room"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed == {
+        "delivered": True,
+        "conversation_id": "C0AAAAAAA",
+        "message_id": "1700000000.000800",
+        "thread_ts": "1700000000.000100",
+    }
+
+    assert rc.main(["--body", "answering the room", "--verbose"]) == 0
+    full = json.loads(capsys.readouterr().out)
+    assert full["status"] == "posted"
+    assert full["kind"] == "ambient"
+    assert full["posted_ts"] == "1700000000.000800"
+    assert "delivered" not in full  # the verbose print is the raw report
+
+
+def test_company_parked_report_is_delivered_false_exit_1(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture) -> None:
+    """A parked company post (transient failure held by a durable
+    intent) is not a confirmed delivery: the terse receipt must say
+    delivered=false / failure_kind=parked with the recovery note as
+    error, and the command exits 1 — the same delivered=false contract
+    as the legacy path."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    key = _write_delegation(outbound, ts="1700000000.000500", nonce="gcs-parked00000000000")
+    _write_turn(outbound, session="riley-main", kind="peer_delegation", agent="riley",
+                ts="1700000000.000500", delegation_key=key)
+    monkeypatch.setenv("GC_SESSION_NAME", "riley-main")
+    monkeypatch.setattr(outbound, "_sleep", lambda *_a, **_k: None)
+
+    def transient_post(method, token, payload, *, api_base, timeout):
+        return 500, {}, {"ok": False, "error": "internal_error"}
+    monkeypatch.setattr(outbound, "_slack_web_post", transient_post)
+
+    assert rc.main(["--body", "the answer is 42"]) == 1
+    out = capsys.readouterr()
+    printed = json.loads(out.out)
+    assert printed["delivered"] is False
+    assert printed["failure_kind"] == "parked"
+    assert printed["conversation_id"] == "C0AAAAAAA"
+    assert "recovery is automatic" in printed["error"]
+    assert "delivered=false" in out.err
 
 
 @pytest.mark.parametrize("kind", ["ambient", "thread_ambient", "targeted"])
@@ -1165,3 +1271,343 @@ def test_company_path_raw_flag_passes_tildes(
     rc_code = rc.main(["--body", _RUNWAY_LINE, "--raw"])
     assert rc_code == 0
     assert captured[0]["payload"]["text"] == _RUNWAY_LINE
+
+
+# --------------------------------------------------------------------------
+# --turn-ts exact anchoring (gp-6j3): anchor the reply to the inbound the
+# session is answering, never to whatever inbound arrived last. Fleet repro
+# (8/20, two cities in one hour): a threaded ask answered TOP-LEVEL twice
+# because a newer top-level inbound had displaced the scan anchor, and a
+# ship announcement landed in a foreign thread because the latest inbound
+# happened to be threaded.
+# --------------------------------------------------------------------------
+
+
+def _forbid_latest_scan(monkeypatch: pytest.MonkeyPatch, common) -> None:
+    def _fail(_sid):
+        raise AssertionError("--turn-ts must not scan for the latest inbound")
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", _fail)
+
+
+def test_turn_ts_threaded_inbound_anchors_at_its_root(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    calls: dict[str, Any] = {}
+
+    def fake_by_ts(conv, ts):
+        calls["conv"] = conv
+        calls["ts"] = ts
+        return "1700000.000100", conv
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", fake_by_ts)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--body", "recap",
+    ])
+    assert code == 0
+    assert calls["ts"] == "1700000.000200"
+    assert calls["conv"]["conversation_id"] == "C0AAAA"
+    assert captured["body"]["reply_to_message_id"] == "1700000.000100"
+
+
+def test_turn_ts_unthreaded_inbound_posts_channel_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Top-level triggering inbound → channel-level post, even when a newer
+    THREADED inbound exists (the scan that would have borrowed its thread
+    must not run at all)."""
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--body", "shipped CN-CRM",
+    ])
+    assert code == 0
+    assert "reply_to_message_id" not in captured["body"]
+
+
+def test_turn_ts_lookup_miss_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ts with no transcript entry (older coalesced-batch member) must be
+    a hard error with explicit-anchor guidance, not a silent top-level post."""
+    rc, common = _import_modules()
+    published: list[Any] = []
+
+    def fake_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        published.append(args)
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: None)
+    with pytest.raises(SystemExit) as exc:
+        rc.main([
+            "--session", "gc-test-session",
+            "--conversation-id", "C0AAAA",
+            "--turn-ts", "1700000.000300",
+            "--body", "x",
+        ])
+    msg = str(exc.value)
+    assert "--reply-to" in msg and "--no-thread" in msg
+    assert not published, "nothing may publish on an unresolvable anchor"
+
+
+def test_explicit_reply_to_wins_over_turn_ts(monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    def _no_lookup(conv, ts):
+        raise AssertionError("--reply-to must skip the --turn-ts lookup")
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", _no_lookup)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--reply-to", "1700000.000900",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000900"
+
+
+def test_no_thread_with_turn_ts_posts_channel_level(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    def _no_lookup(conv, ts):
+        raise AssertionError("--no-thread must skip the --turn-ts lookup")
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", _no_lookup)
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--no-thread",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert "reply_to_message_id" not in captured["body"]
+
+
+def test_thread_current_with_turn_ts_threads_under_turn_inbound(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """--thread-current + --turn-ts anchors under the TURN inbound: its
+    thread root when threaded, the message itself when top-level."""
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    _forbid_latest_scan(monkeypatch, common)
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--thread-current",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000200"
+
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts",
+                        lambda conv, ts: ("1700000.000100", conv))
+    code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0AAAA",
+        "--turn-ts", "1700000.000200",
+        "--thread-current",
+        "--body", "x",
+    ])
+    assert code == 0
+    assert captured["body"]["reply_to_message_id"] == "1700000.000100"
+
+
+def test_turn_ts_refused_on_live_company_turn(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """A live company turn diverts reply-current to the company room, so a
+    channel-binding --turn-ts anchor would be silently ignored — refuse it
+    and point at --turn-ref instead."""
+    rc, _common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    _write_turn(outbound, session="ollie-main", kind="ambient", agent="ollie",
+                ts="1700000000.000500")
+    monkeypatch.setenv("GC_SESSION_NAME", "ollie-main")
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--body", "x", "--turn-ts", "1700000000.000500"])
+    assert "--turn-ref" in str(exc.value)
+
+
+def test_find_inbound_thread_by_ts_matches_exact_entry(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    _rc, common = _import_modules()
+    items = [
+        {"Kind": "inbound", "ProviderMessageID": "3.0", "ReplyToMessageID": "9.9",
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+        # Bot-authored entry with the target ts must be skipped (gp-kop).
+        {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "8.8",
+         "Actor": {"is_bot": True},
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+        {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "1.5",
+         "Actor": {"is_bot": False},
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
+    ]
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": items})
+    conv = {"conversation_id": "C1", "provider": "slack", "kind": "room"}
+
+    match = common.find_inbound_thread_by_ts(conv, "2.0")
+    assert match is not None
+    thread_root, got_conv = match
+    assert thread_root == "1.5"
+    assert got_conv["conversation_id"] == "C1"
+
+    assert common.find_inbound_thread_by_ts(conv, "3.0") == (
+        "9.9", {"scope_id": "test-city", "provider": "slack",
+                "account_id": "T0TESTWS", "conversation_id": "C1",
+                "kind": "room"})
+    assert common.find_inbound_thread_by_ts(conv, "7.7") is None
+
+
+# --- gp-ios (pc_7fe644e666a6): send-pipeline failures leave a JSON envelope ---
+#
+# A publish failure used to surface as a bare SystemExit message on
+# stderr with an EMPTY stdout — "non-JSON (empty/error)" to the calling
+# agent, indistinguishable from a crashed script. The pipeline failure
+# paths (session resolution, publish) now always leave a machine-readable
+# delivered=false envelope on stdout while keeping exit code 1.
+
+def test_publish_failure_emits_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+
+    def failing_request(method: str, url: str, body: dict[str, Any] | None = None,
+                        *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        raise common.GCAPIError(f"POST {url} -> 502: upstream adapter unreachable")
+
+    monkeypatch.setattr(common, "_request", failing_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    exit_code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "hello",
+    ])
+    assert exit_code == 1
+    out = capsys.readouterr()
+    envelope = json.loads(out.out)  # stdout must parse as JSON, never be empty
+    assert envelope["delivered"] is False
+    assert envelope["stage"] == "publish"
+    assert "upstream adapter unreachable" in envelope["error"]
+    assert envelope["conversation_id"] == "C0TESTCHAN"
+    assert envelope["session_id"] == "gc-test-session"
+    assert envelope["via"] == "gc"
+    assert "publish failed" in out.err
+
+
+def test_session_resolution_failure_emits_json_envelope(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+
+    def raise_gcapi() -> str:
+        raise common.GCAPIError("could not resolve session id for name 'x'")
+
+    monkeypatch.setattr(common, "current_session_id", raise_gcapi)
+
+    exit_code = rc.main([
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "hello",
+    ])
+    assert exit_code == 1
+    out = capsys.readouterr()
+    envelope = json.loads(out.out)
+    assert envelope["delivered"] is False
+    assert envelope["stage"] == "session-resolution"
+    assert envelope["conversation_id"] == "C0TESTCHAN"
+
+
+def test_usage_errors_still_raise_system_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    rc, _common = _import_modules()
+    # Caller errors are not pipeline failures: the message IS the product.
+    with pytest.raises(SystemExit, match="either --body or --body-file"):
+        rc.main(["--session", "s", "--conversation-id", "C1"])
+
+
+# --- gp-ios: the mrkdwn guard fails OPEN — a guard fault never blocks a send --
+
+def test_guard_crash_fails_open_to_unguarded_body(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc, common = _import_modules()
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured["body"] = body
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda _sid: None)
+
+    def exploding_guard(_text: str) -> str:
+        raise RuntimeError("synthetic guard fault")
+
+    monkeypatch.setattr(rc.slack_mrkdwn, "escape_accidental_mrkdwn", exploding_guard)
+
+    exit_code = rc.main([
+        "--session", "gc-test-session",
+        "--conversation-id", "C0TESTCHAN",
+        "--body", "approx ~$5k and ~$6k",
+    ])
+    assert exit_code == 0
+    # The body went out UNGUARDED (raw tildes intact) rather than not at all.
+    assert captured["body"]["text"] == "approx ~$5k and ~$6k"
+    err = capsys.readouterr().err
+    assert "accidental-mrkdwn guard failed" in err

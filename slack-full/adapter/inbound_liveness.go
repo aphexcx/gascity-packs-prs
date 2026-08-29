@@ -686,6 +686,11 @@ func (l *inboundLiveness) alarm(reason string, missed []missedMessage, byChannel
 	oldest, newest := missed[0].msg.TS, missed[len(missed)-1].msg.TS
 	log.Printf("INBOUND LIVENESS ALARM: no live inbound for %s but %d new human message(s) in channel history (%s) oldest_ts=%s newest_ts=%s — inbound transport is NOT delivering (%s)",
 		idle.Round(time.Second), len(missed), summary, oldest, newest, reason)
+	// Escalation (gp-bsk): the alarm is positive evidence the transport
+	// is not delivering — flip a down socket runner into aggressive
+	// reconnect (backoff floor, abandon any backoff sleep) instead of
+	// letting it wait out a multi-hour ladder. Nil-safe on both ends.
+	socketModeHealth.Load().onInboundAlarm()
 	if shouldPost {
 		text := fmt.Sprintf(":rotating_light: gc-slack-adapter INBOUND LIVENESS ALARM — no live inbound event for %s, but %d new human message(s) are in channel history (%s). The inbound transport is not delivering. %s",
 			idle.Round(time.Second), len(missed), summary, l.transportHint())

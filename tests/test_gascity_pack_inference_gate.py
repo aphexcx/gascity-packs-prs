@@ -407,8 +407,8 @@ def test_supported_pack_nightly_workflow_uses_manifold_shape_and_pack_matrix() -
     assert "model-smoke)" in workflow
     assert "superpowers|compound-engineering|gstack|bmad)" in workflow
     assert "max-parallel: 2" in workflow
-    assert "runs-on: blacksmith-2vcpu-ubuntu-2404" in workflow
-    assert "runs-on: blacksmith-32vcpu-ubuntu-2404" in workflow
+    _assert_runner_pin(workflow, "blacksmith-2vcpu-ubuntu-2404")
+    _assert_runner_pin(workflow, "blacksmith-32vcpu-ubuntu-2404")
     assert "GATE_TIMEOUT: ${{ github.event.inputs.timeout || matrix.gate_timeout }}" in workflow
     assert '--timeout "$GATE_TIMEOUT"' in workflow
     assert 'DOLT_VERSION: "2.1.7"' in workflow
@@ -452,6 +452,25 @@ def test_supported_pack_nightly_workflow_uses_manifold_shape_and_pack_matrix() -
     assert "include-hidden-files: true" in workflow
 
 
+def _assert_runner_pin(workflow: str, label: str) -> None:
+    """Runner pin, TEMP-fallback aware (PR #14): the job runs either on
+    the Blacksmith label directly, or on the ubuntu-latest fallback whose
+    same-line TEMP comment names the label to put back — so the breadcrumb
+    back to the sponsored runner cannot be silently dropped while the
+    fallback is in effect, and restoring Blacksmith needs no test edit.
+    Both alternatives are line-anchored (a commented-out pin or a
+    breadcrumb on an unrelated line must not satisfy the guard)."""
+    if re.search(
+        rf"(?m)^[ \t]*runs-on:[ \t]+{re.escape(label)}(?:[ \t]+#[^\r\n]*)?[ \t]*$",
+        workflow,
+    ):
+        return
+    assert re.search(
+        rf"(?m)^[ \t]*runs-on:[ \t]+ubuntu-latest[ \t]+#[^\r\n]*TEMP[^\r\n]*{re.escape(label)}",
+        workflow,
+    ), f"no runs-on pin for {label} (direct label or same-line TEMP-fallback comment naming it)"
+
+
 def test_dispatch_inference_workflow_is_manual_or_external_only() -> None:
     workflow = (gascity_pack_inference_gate.REPO_ROOT / ".github" / "workflows" / "gascity-pack-inference.yml").read_text(
         encoding="utf-8"
@@ -462,7 +481,7 @@ def test_dispatch_inference_workflow_is_manual_or_external_only() -> None:
     assert "\n  schedule:" not in workflow
     assert "\n  pull_request:" not in workflow
     assert "\n  push:" not in workflow
-    assert "runs-on: blacksmith-32vcpu-ubuntu-2404" in workflow
+    _assert_runner_pin(workflow, "blacksmith-32vcpu-ubuntu-2404")
     assert 'DOLT_VERSION: "2.1.7"' in workflow
     assert 'BD_VERSION: "v1.1.0"' in workflow
     assert 'go-version: "1.26.5"' in workflow
@@ -475,14 +494,14 @@ def test_dispatch_inference_workflow_is_manual_or_external_only() -> None:
 
 def test_ci_workflows_use_blacksmith_runner_labels() -> None:
     expected = {
-        ".github/workflows/ci.yml": "runs-on: blacksmith-32vcpu-ubuntu-2404",
-        ".github/workflows/codeql.yml": "runs-on: blacksmith-32vcpu-ubuntu-2404",
-        ".github/workflows/pack-release-compatibility.yml": "runs-on: blacksmith-32vcpu-ubuntu-2404",
+        ".github/workflows/ci.yml": "blacksmith-32vcpu-ubuntu-2404",
+        ".github/workflows/codeql.yml": "blacksmith-32vcpu-ubuntu-2404",
+        ".github/workflows/pack-release-compatibility.yml": "blacksmith-32vcpu-ubuntu-2404",
     }
 
-    for relative_path, marker in expected.items():
+    for relative_path, label in expected.items():
         workflow = (gascity_pack_inference_gate.REPO_ROOT / relative_path).read_text(encoding="utf-8")
-        assert marker in workflow
+        _assert_runner_pin(workflow, label)
 
 
 def test_readme_includes_blacksmith_sponsor_badge() -> None:

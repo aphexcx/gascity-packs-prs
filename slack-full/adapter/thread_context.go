@@ -148,6 +148,56 @@ func (c *threadContextCache) lastDeliveredFor(target, channel, threadTS string) 
 	return entry.ts
 }
 
+// rollbackDelivered undoes one markDelivered whose delivery did not
+// land (gp-32q, codex r4 P2 #5). The watermark is advanced BEFORE the
+// forward, so a failed delivery would otherwise leave the next copy of
+// that message — a same-ts twin's takeover, a Slack redelivery, the
+// spool replay — reading the context as already conveyed and shipping
+// a body with no preamble in front of it.
+//
+// prev is the value this delivery displaced ("" when there was none, in
+// which case the entry is removed entirely).
+//
+// The rollback REGRESSES and never advances, and it runs even when a
+// newer delivery has moved the watermark past advancedTo (codex r5 P2
+// #3). Conditioning it on an exact match looked right and was not: with
+// two failing deliveries A then B, A's rollback would no-op because the
+// entry names B, and B's rollback would then put A back — leaving the
+// cache permanently asserting that A's context arrived when neither
+// delivery landed, which is the one direction this cache must never
+// fail in. Regressing under a newer entry can instead re-send context
+// that a SUCCESSFUL newer delivery already conveyed: one duplicated
+// preamble, exactly what an eviction costs, and the trade this cache is
+// designed around.
+//
+// An entry already older than advancedTo is left alone — some other
+// failure regressed past this one, and its verdict is the conservative
+// one.
+func (c *threadContextCache) rollbackDelivered(target, channel, threadTS, advancedTo, prev string) {
+	if c == nil {
+		return
+	}
+	if channel == "" || threadTS == "" || advancedTo == "" {
+		return
+	}
+	key := threadCacheKey(target, channel, threadTS)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cur, ok := c.lastDelivered[key]
+	if !ok || cur.ts < advancedTo {
+		return
+	}
+	if prev == "" {
+		delete(c.lastDelivered, key)
+		return
+	}
+	if prev >= cur.ts {
+		// Never move the watermark forward on a failure.
+		return
+	}
+	c.lastDelivered[key] = threadContextEntry{ts: prev, touched: c.clock()}
+}
+
 // markDelivered records ts as the high-water mark for which preamble
 // context has been delivered for (target, channel, thread). Idempotent
 // when called with a non-increasing ts: the stored value never
@@ -216,6 +266,11 @@ type slackThreadMessage struct {
 	User string `json:"user"`
 	Text string `json:"text"`
 	TS   string `json:"ts"`
+	// ThreadTS identifies the thread the message belongs to (equal to
+	// TS on a thread parent, absent on unthreaded messages). Consumed
+	// by the reaction-target lookup (gp-by3) to thread the reaction
+	// notification under the reacted-to message's thread.
+	ThreadTS string `json:"thread_ts,omitempty"`
 	// BotID is set when the message came from a bot rather than a
 	// human user. Bot-authored messages are skipped from the
 	// preamble — they're often the adapter's own outbound replies

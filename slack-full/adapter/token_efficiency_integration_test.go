@@ -89,7 +89,7 @@ func coalescingTestConfig(gcURL string, window time.Duration) config {
 		coalescer:    newInboundCoalescer(window, nil),
 	}
 	deliverCfg := cfg
-	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) bool {
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
 		return deliverCoalescedBatch(deliverCfg, channel, batch)
 	}
 	return cfg
@@ -194,6 +194,128 @@ func TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn(t *testing.T) {
 	// Help block rode with the first (flush-ahead) delivery only.
 	if !strings.Contains(got[0].Text, "full reply how-to") || strings.Contains(got[1].Text, "full reply how-to") {
 		t.Fatalf("help block must appear exactly once, on the first delivery")
+	}
+}
+
+func TestCoalescer_UrgentTwinNotDoubleDeliveredViaBatch(t *testing.T) {
+	// pc_c920ff5fe90c: a bot-mention pair (message + app_mention, same
+	// ts, distinct event ids) can split when the bot user id is unknown:
+	// the message twin buffers as plain chatter, the app_mention twin
+	// takes the urgent path. The flushed-ahead batch must NOT carry the
+	// twin — its batch dedup key can't collide with the urgent copy's
+	// "slack-<ts>", so gc would hand the session the same message id
+	// twice in one turn with different decoration.
+	stub := &gcRouterStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	aliasReg := newTestHandleAliasRegistry(t)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
+		humanEnvelope(t, "Ev1", "C1", "100.000001", "buffered chatter"), func() {})
+	// The message twin: no envelope authorizations, so the bot user id is
+	// unknown and the raw mention text does not read as a bot mention.
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
+		humanEnvelope(t, "Ev2", "C1", "100.000002", "urgent ask"), func() {})
+
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "app_mention", Channel: "C1", User: "U_ALICE", TS: "100.000002", Text: "urgent ask",
+	})
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
+		slackEventEnvelope{Type: "event_callback", EventID: "Ev3", Event: rawMsg}, func() {})
+
+	got := stub.snapshotInbounds()
+	if len(got) != 2 {
+		t.Fatalf("captured %d inbounds, want 2 (flush-ahead then urgent)", len(got))
+	}
+	if !strings.Contains(got[0].Text, "buffered chatter") || strings.Contains(got[0].Text, "urgent ask") {
+		t.Fatalf("flush-ahead batch must hold the chatter and drop the twin:\n%s", got[0].Text)
+	}
+	if got[0].DedupKey != "slack-100.000001" {
+		t.Fatalf("twin-stripped single-message batch keeps its own dedup key, got %q", got[0].DedupKey)
+	}
+	if !strings.Contains(got[1].Text, "urgent ask") || got[1].DedupKey != "slack-100.000002" {
+		t.Fatalf("urgent copy must deliver with its own key: %q / %q", got[1].Text, got[1].DedupKey)
+	}
+}
+
+func TestCoalescer_TrailingTwinSkippedAfterUrgentDelivery(t *testing.T) {
+	// The reverse ordering of the twin split: the app_mention copy
+	// delivered first (urgent), so the trailing message copy must not
+	// buffer — a later multi-message batch would redeliver the id under
+	// a batch key gc cannot dedup against "slack-<ts>".
+	stub := &gcRouterStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	aliasReg := newTestHandleAliasRegistry(t)
+	rawMsg, _ := json.Marshal(slackMessageEvent{
+		Type: "app_mention", Channel: "C1", User: "U_ALICE", TS: "100.000001", Text: "urgent ask",
+	})
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
+		slackEventEnvelope{Type: "event_callback", EventID: "Ev1", Event: rawMsg}, func() {})
+	if got := stub.snapshotInbounds(); len(got) != 1 {
+		t.Fatalf("urgent copy must deliver immediately, captured %d", len(got))
+	}
+
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
+		humanEnvelope(t, "Ev2", "C1", "100.000001", "urgent ask"), func() {})
+	if cfg.coalescer.pendingContains("C1", "100.000001") {
+		t.Fatal("trailing twin must not enter the buffer")
+	}
+	if got := stub.snapshotInbounds(); len(got) != 1 {
+		t.Fatalf("trailing twin must not deliver again, captured %d", len(got))
+	}
+}
+
+func TestCoalescer_BatchDropsAlreadyDeliveredTS(t *testing.T) {
+	// Delivery-time twin filter: a twin that slipped into the buffer
+	// while the urgent copy was mid-flight (the enqueue-time seen check
+	// races the urgent POST) is dropped when its batch delivers, because
+	// by then the urgent success is recorded. An unseen neighbor still
+	// delivers.
+	stub := &gcRouterStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.coalescer.enqueue("C1", pendingChannelInbound{inbound: externalInboundMessage{
+		ProviderMessageID: "100.000001",
+		Conversation:      conversationRef{ConversationID: "C1", Provider: "slack", Kind: "room"},
+		Actor:             externalActor{ID: "U1", DisplayName: "Afik"},
+		Text:              "raced twin",
+		DedupKey:          "slack-100.000001",
+	}})
+	cfg.coalescer.enqueue("C1", pendingChannelInbound{inbound: externalInboundMessage{
+		ProviderMessageID: "100.000002",
+		Conversation:      conversationRef{ConversationID: "C1", Provider: "slack", Kind: "room"},
+		Actor:             externalActor{ID: "U1", DisplayName: "Afik"},
+		Text:              "fresh chatter",
+		DedupKey:          "slack-100.000002",
+	}})
+	cfg.deliveredIDs.record("", "C1", "100.000001")
+	cfg.coalescer.flushAheadOf("C1", "")
+	got := stub.snapshotInbounds()
+	if len(got) != 1 {
+		t.Fatalf("captured %d inbounds, want 1", len(got))
+	}
+	if strings.Contains(got[0].Text, "raced twin") || !strings.Contains(got[0].Text, "fresh chatter") {
+		t.Fatalf("batch must drop the already-delivered ts and keep the fresh one:\n%s", got[0].Text)
+	}
+
+	// A batch reduced to nothing delivers nothing (and reports success —
+	// there is no work left to retry).
+	cfg.coalescer.enqueue("C1", pendingChannelInbound{inbound: externalInboundMessage{
+		ProviderMessageID: "100.000001",
+		Conversation:      conversationRef{ConversationID: "C1", Provider: "slack", Kind: "room"},
+		Actor:             externalActor{ID: "U1", DisplayName: "Afik"},
+		Text:              "raced twin again",
+		DedupKey:          "slack-100.000001",
+	}})
+	cfg.coalescer.flushAheadOf("C1", "")
+	if got := stub.snapshotInbounds(); len(got) != 1 {
+		t.Fatalf("fully-filtered batch must not deliver, captured %d", len(got))
 	}
 }
 

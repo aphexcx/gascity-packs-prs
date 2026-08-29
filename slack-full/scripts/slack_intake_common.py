@@ -329,6 +329,103 @@ def interpret_publish_receipt(result: Any) -> tuple[bool, str]:
     return False, "schema_mismatch"
 
 
+def summarize_publish_receipt(
+    result: Any,
+    *,
+    conversation_id: str = "",
+    thread_ts: str = "",
+) -> dict[str, Any]:
+    """Terse send receipt (gp-9e7 item 4): the caller-facing summary.
+
+    Every send/reply/publish used to echo the FULL result envelope —
+    including gc's transcript entry with the entire outbound message
+    text — back into the sender's context, doubling the token cost of
+    every outbound message. The default receipt is now just the fields
+    a sender can act on: the delivered flag, the provider message id
+    (or file id for uploads), the conversation id, and the thread ts
+    when the send was threaded. Failures additionally carry
+    failure_kind and the receipt's error message so a delivered=false
+    stays diagnosable without --verbose.
+
+    Handles the same three receipt shapes as
+    :func:`interpret_publish_receipt` (adapter-direct lowercase,
+    gc-wrapped capitalized, gc-wrapped lowercase); unknown shapes
+    surface as delivered=false / failure_kind=schema_mismatch, exactly
+    like the interpreter.
+    """
+    delivered, failure_kind = interpret_publish_receipt(result)
+    receipt: dict[str, Any] = {}
+    if isinstance(result, dict):
+        if "delivered" in result:
+            receipt = result
+        else:
+            for key in ("Receipt", "receipt"):
+                candidate = result.get(key)
+                if isinstance(candidate, dict):
+                    receipt = candidate
+                    break
+    summary: dict[str, Any] = {
+        "delivered": delivered,
+        "conversation_id": conversation_id,
+    }
+    message_id = receipt.get("MessageID") or receipt.get("message_id") or ""
+    if message_id:
+        summary["message_id"] = str(message_id)
+    file_id = receipt.get("FileID") or receipt.get("file_id") or ""
+    if file_id:
+        summary["file_id"] = str(file_id)
+    if thread_ts:
+        summary["thread_ts"] = thread_ts
+    if not delivered:
+        if failure_kind:
+            summary["failure_kind"] = failure_kind
+        error = (receipt.get("FailureMessage") or receipt.get("failure_message")
+                 or receipt.get("Error") or receipt.get("error") or "")
+        if error:
+            summary["error"] = str(error)
+    return summary
+
+
+def summarize_company_post_report(report: Any) -> dict[str, Any]:
+    """Terse send receipt for the company-turn reply path (gp-9e7 item 4
+    fix round 4a).
+
+    The company path used to print its raw ``{status, kind, posted_ts,
+    ...}`` report unconditionally — identical with and without
+    ``--verbose``, and carrying neither ``delivered`` nor
+    ``conversation_id``. This normalizes it onto the same terse contract
+    as :func:`summarize_publish_receipt`: the delivered flag, the
+    provider message id, the conversation id, and the thread ts when
+    threaded. A ``parked`` report (transient post failure held by a
+    durable intent) surfaces as ``delivered: false`` with
+    ``failure_kind: "parked"`` and the report's recovery note as
+    ``error`` — parked is "not confirmed delivered", and hiding that
+    behind a success shape would misreport the send. Unknown shapes
+    fail closed exactly like the interpreter.
+    """
+    if not isinstance(report, dict):
+        return {"delivered": False, "conversation_id": "",
+                "failure_kind": "schema_mismatch"}
+    status = str(report.get("status", ""))
+    delivered = status == "posted"
+    summary: dict[str, Any] = {
+        "delivered": delivered,
+        "conversation_id": str(report.get("channel_id", "")),
+    }
+    posted_ts = report.get("posted_ts") or ""
+    if posted_ts:
+        summary["message_id"] = str(posted_ts)
+    thread_ts = report.get("thread_ts") or ""
+    if thread_ts:
+        summary["thread_ts"] = str(thread_ts)
+    if not delivered:
+        summary["failure_kind"] = status or "schema_mismatch"
+        note = report.get("note") or ""
+        if note:
+            summary["error"] = str(note)
+    return summary
+
+
 # --- session resolution ---------------------------------------------------
 
 def current_session_id() -> str:
@@ -420,10 +517,18 @@ _INBOUND_SCAN_WINDOWS = ("10m", "2h", "48h")
 # transcript entry.
 _PEER_BOT_ACTOR_PREFIX = "peer-bot "
 
+# Same contract for reaction notifications (gp-by3; keep in sync with
+# reactionActorPrefix in adapter/reaction_events.go): a forwarded human
+# reaction is a signal, not a message — anchoring reply-current on one
+# would thread replies at a ts that is no postable message at all.
+_REACTION_ACTOR_PREFIX = "reaction: "
 
-def _is_peer_bot_event(event: dict[str, Any]) -> bool:
+_SYNTHETIC_ACTOR_PREFIXES = (_PEER_BOT_ACTOR_PREFIX, _REACTION_ACTOR_PREFIX)
+
+
+def _is_synthetic_context_event(event: dict[str, Any]) -> bool:
     actor = (event.get("payload") or {}).get("actor") or ""
-    return isinstance(actor, str) and actor.startswith(_PEER_BOT_ACTOR_PREFIX)
+    return isinstance(actor, str) and actor.startswith(_SYNTHETIC_ACTOR_PREFIXES)
 
 
 def _is_bot_transcript_entry(entry: dict[str, Any]) -> bool:
@@ -470,7 +575,7 @@ def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
             e
             for e in raw
             if (e.get("payload") or {}).get("target_session") in identities
-            and not _is_peer_bot_event(e)
+            and not _is_synthetic_context_event(e)
         ]
         if matches:
             return matches[-1]  # events are in chronological order
@@ -530,25 +635,7 @@ def find_latest_inbound_thread_for_session(
     provider = (payload.get("provider") or "").strip()
     if not conv_id or not provider:
         return None
-    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
-    # `kind` is mandatory on the transcript GET (extmsg ConversationRef
-    # validates it). We try room first since rig channels are the
-    # primary use case; fall through to dm if no rows come back.
-    items: list[dict[str, Any]] = []
-    for kind in ("room", "dm"):
-        qs = (
-            f"scope_id={gc_city_name()}&provider={provider}"
-            f"&conversation_id={conv_id}&kind={kind}&order=desc&limit=500"
-        )
-        if workspace:
-            qs += f"&account_id={workspace}"
-        try:
-            res = gc_get(f"/extmsg/transcript?{qs}")
-        except GCAPIError:
-            continue
-        items = res.get("items") or []
-        if items:
-            break
+    items = _transcript_items_desc(conv_id, provider)
     # items are newest-first (order=desc): the first inbound is the latest.
     # Bot-authored entries (peer-bot context, gp-kop) are skipped: a peer
     # post must never anchor reply-current threading, react, or upload.
@@ -561,14 +648,103 @@ def find_latest_inbound_thread_for_session(
                 thread_root = (
                     entry.get("ReplyToMessageID") or entry.get("reply_to_message_id") or ""
                 ).strip()
-                conv = entry.get("Conversation") or entry.get("conversation") or {}
-                return mid, thread_root, {
-                    "scope_id": conv.get("ScopeID") or conv.get("scope_id") or gc_city_name(),
-                    "provider": conv.get("Provider") or conv.get("provider") or provider,
-                    "account_id": conv.get("AccountID") or conv.get("account_id") or workspace,
-                    "conversation_id": conv.get("ConversationID") or conv.get("conversation_id") or conv_id,
-                    "kind": conv.get("Kind") or conv.get("kind") or "room",
-                }
+                return mid, thread_root, _normalize_entry_conversation(entry, provider, conv_id)
+    return None
+
+
+def _transcript_items_desc(
+    conv_id: str, provider: str, kinds: tuple[str, ...] = ("room", "dm")
+) -> list[dict[str, Any]]:
+    """Fetch the newest transcript slice for a conversation (order=desc).
+
+    `kind` is mandatory on the transcript GET (extmsg ConversationRef
+    validates it); each candidate kind is tried until rows come back. The
+    default order tries room first since rig channels are the primary use
+    case, falling through to dm.
+
+    The query MUST be newest-first: the endpoint's oldest-first default
+    with a bounded limit hides the most recent entries on busy
+    conversations.
+    """
+    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
+    for kind in kinds:
+        qs = (
+            f"scope_id={gc_city_name()}&provider={provider}"
+            f"&conversation_id={conv_id}&kind={kind}&order=desc&limit=500"
+        )
+        if workspace:
+            qs += f"&account_id={workspace}"
+        try:
+            res = gc_get(f"/extmsg/transcript?{qs}")
+        except GCAPIError:
+            continue
+        items = res.get("items") or []
+        if items:
+            return items
+    return []
+
+
+def _normalize_entry_conversation(
+    entry: dict[str, Any], provider: str, conv_id: str
+) -> dict[str, str]:
+    """Flatten a transcript entry's Conversation into the publish dict shape."""
+    workspace = os.environ.get("SLACK_WORKSPACE_ID", "").strip()
+    conv = entry.get("Conversation") or entry.get("conversation") or {}
+    return {
+        "scope_id": conv.get("ScopeID") or conv.get("scope_id") or gc_city_name(),
+        "provider": conv.get("Provider") or conv.get("provider") or provider,
+        "account_id": conv.get("AccountID") or conv.get("account_id") or workspace,
+        "conversation_id": conv.get("ConversationID") or conv.get("conversation_id") or conv_id,
+        "kind": conv.get("Kind") or conv.get("kind") or "room",
+    }
+
+
+def find_inbound_thread_by_ts(
+    conversation: dict[str, str], ts: str
+) -> tuple[str, dict[str, str]] | None:
+    """Resolve the thread anchor of a SPECIFIC inbound by its Slack ts.
+
+    reply-current's default scans for the LATEST inbound at send time,
+    but with coalesced delivery + interleaved channel/thread traffic the
+    latest inbound is not necessarily the message the session is
+    answering (gp-6j3: three cross-city misfires in one hour). When the
+    caller names the triggering inbound explicitly (--turn-ts, carried
+    in every delivery reminder), this looks up THAT transcript entry in
+    the given conversation and returns (thread_root, conversation_dict):
+    thread_root is the entry's ReplyToMessageID — "" when the inbound
+    was a top-level message.
+
+    Returns None when no matching human inbound is in the newest
+    transcript window. Callers must treat a miss as "anchor unknown" and
+    fail loudly, NOT as "top-level": older members of a coalesced batch
+    have no transcript entry of their own (the batch records one entry
+    under the newest ts), and silently posting top-level is exactly the
+    misfire this lookup exists to prevent.
+
+    Bot-authored entries are skipped (gp-kop: a peer-bot post must never
+    become a reply anchor).
+    """
+    ts = (ts or "").strip()
+    conv_id = (conversation.get("conversation_id") or "").strip()
+    provider = (conversation.get("provider") or "slack").strip()
+    if not ts or not conv_id:
+        return None
+    # Try the resolved conversation's kind first, then the other.
+    kind = (conversation.get("kind") or "").strip()
+    kinds = ("room", "dm") if kind not in ("room", "dm") else (
+        (kind, "dm") if kind == "room" else (kind, "room"))
+    for entry in _transcript_items_desc(conv_id, provider, kinds):
+        if _is_bot_transcript_entry(entry):
+            continue
+        if (entry.get("Kind") or entry.get("kind")) != "inbound":
+            continue
+        mid = (entry.get("ProviderMessageID") or entry.get("provider_message_id") or "").strip()
+        if mid != ts:
+            continue
+        thread_root = (
+            entry.get("ReplyToMessageID") or entry.get("reply_to_message_id") or ""
+        ).strip()
+        return thread_root, _normalize_entry_conversation(entry, provider, conv_id)
     return None
 
 

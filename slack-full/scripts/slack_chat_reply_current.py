@@ -14,6 +14,16 @@ reply, the reply inherits its thread_ts and lands in the same thread —
 including when --conversation-id names the same conversation explicitly
 (gp-i62). --reply-to / --thread-current still override the anchor, and
 --no-thread forces a channel-level post.
+
+--turn-ts <ts> (gp-6j3) pins the anchor to the exact inbound the session
+is answering — the ts carried in the delivery reminder — instead of the
+latest-inbound scan. Under coalesced delivery + interleaved traffic the
+latest inbound at SEND time is often not the message being answered
+(fleet repro: replies landing top-level instead of in-thread, and in the
+wrong thread outright). With --turn-ts the reply threads at that
+inbound's thread root when it was threaded and posts channel-level when
+it was not; if the ts cannot be resolved in the conversation's
+transcript, the command fails fast with guidance rather than guessing.
 """
 
 from __future__ import annotations
@@ -47,6 +57,37 @@ def _derive_idempotency_key(
     return f"reply-current:{digest}"
 
 
+def _print_failure_envelope(
+    *,
+    stage: str,
+    error: str,
+    conversation_id: str = "",
+    session_id: str = "",
+    via: str = "",
+) -> int:
+    """Emit a machine-readable failure envelope on stdout, return exit 1.
+
+    A send-pipeline failure used to surface as a bare SystemExit message
+    on stderr with an EMPTY stdout — "non-JSON (empty/error)" to the
+    calling agent, indistinguishable from a crashed script
+    (pc_7fe644e666a6). Failures now keep the exit code and a stderr line
+    but always leave a JSON envelope on stdout, mirroring the
+    delivered=false receipt shape interpret_publish_receipt consumes.
+    Argument-validation and company-turn contract errors still raise
+    SystemExit: those are caller errors whose message IS the product.
+    """
+    print(json.dumps({
+        "delivered": False,
+        "stage": stage,
+        "error": error,
+        "conversation_id": conversation_id,
+        "session_id": session_id,
+        "via": via,
+    }, indent=2))
+    print(f"slack reply-current {stage} failed: {error}", file=sys.stderr)
+    return 1
+
+
 def _load_body(args: argparse.Namespace) -> str:
     if args.body and args.body_file:
         raise SystemExit("pass --body OR --body-file, not both")
@@ -59,7 +100,17 @@ def _load_body(args: argparse.Namespace) -> str:
         raise SystemExit("either --body or --body-file is required")
     if not getattr(args, "raw", False):
         # gp-o42: tilde pairs render as strikethrough in Slack mrkdwn.
-        body = slack_mrkdwn.escape_accidental_mrkdwn(body)
+        # The guard is cosmetic — a crash inside it must never block a
+        # send (pc_7fe644e666a6 suspected exactly that): fail OPEN to
+        # the unguarded body with a stderr warning.
+        try:
+            body = slack_mrkdwn.escape_accidental_mrkdwn(body)
+        except Exception as exc:  # noqa: BLE001 — any guard fault fails open
+            print(
+                f"warning: accidental-mrkdwn guard failed ({exc!r}); "
+                f"sending body unguarded",
+                file=sys.stderr,
+            )
     return body
 
 
@@ -129,6 +180,33 @@ def _resolve_conversation(
 _DEFAULT_KIND = "dm"
 
 
+def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str) -> str:
+    """Resolve --turn-ts to its thread anchor via the transcript (gp-6j3).
+
+    Returns the triggering inbound's thread root ("" when it was a
+    top-level message). A lookup miss is a hard error, not a fallback to
+    channel level: posting top-level when the triggering inbound was
+    threaded is exactly the misfire --turn-ts exists to prevent, and the
+    caller has the thread ts in its reminder to pass explicitly.
+    """
+    try:
+        match = common.find_inbound_thread_by_ts(conv, turn_ts)
+    except common.GCAPIError as exc:
+        raise SystemExit(
+            f"--turn-ts {turn_ts}: transcript lookup failed ({exc}); "
+            "re-run with --reply-to <thread ts> (from your delivery "
+            "reminder) or --no-thread for a top-level post") from exc
+    if match is None:
+        raise SystemExit(
+            f"--turn-ts {turn_ts}: no matching inbound in the transcript for "
+            f"conversation {conv.get('conversation_id', '')} (an older member "
+            "of a coalesced batch has no entry of its own). Pass --reply-to "
+            "<thread ts> (shown next to the message in your delivery "
+            "reminder) to thread, or --no-thread for a top-level post.")
+    thread_root, _conv = match
+    return thread_root
+
+
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     """Company-context path: post via the acting agent's own token.
 
@@ -169,6 +247,15 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             session_name, kind_override=kind_override, turn_ref=turn_ref)
         if source is None:
             return None  # no company pointer — fall through to the legacy path
+        if (getattr(args, "turn_ts", "") or "").strip():
+            # --turn-ts anchors a channel-binding inbound; on a session
+            # with a live company turn the reply would divert to the
+            # company room regardless of the anchor. Refuse instead of
+            # silently misrouting (gp-6j3).
+            raise SystemExit(
+                "--turn-ts targets a channel-binding inbound, but this "
+                "session has a live company turn; use --turn-ref from the "
+                "company reminder instead")
         body = _load_body(args)
         if source == "dm":
             result = outbound.post_company_dm_reply(
@@ -198,7 +285,28 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     except (outbound.OutboundError, outbound.TransientPostError,
             outbound.DefinitivePostError) as exc:
         raise SystemExit(f"company reply failed: {exc}") from exc
-    print(json.dumps(result, indent=2, sort_keys=True))
+    # Same terse-default / --verbose-full receipt contract as the legacy
+    # path (gp-9e7 item 4, company gap closed in the fix round, 4a): the
+    # default receipt carries the delivered flag, message_id,
+    # conversation_id, and thread_ts; --verbose restores the full
+    # company report (status/kind/nonce/delegation_key/allow_partial).
+    # A parked report (transient failure held by a durable intent) is
+    # delivered=false — exit 1 with a stderr line, mirroring the legacy
+    # delivered=false handling; a retry is safe (the durable intent
+    # reconciles instead of reposting) and the receipt's error text says
+    # recovery is automatic.
+    if getattr(args, "verbose", False):
+        print(json.dumps(result, indent=2, sort_keys=True))
+    else:
+        print(json.dumps(common.summarize_company_post_report(result), indent=2))
+    delivered = isinstance(result, dict) and result.get("status") == "posted"
+    if not delivered:
+        print(
+            "slack publish failed: delivered=false failure_kind="
+            f"{(result.get('status') if isinstance(result, dict) else '') or 'unknown'}",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
@@ -218,6 +326,17 @@ def main(argv: list[str]) -> int:
                               "reply acts on (default: newest by delivered-at)."))
     parser.add_argument("--reply-to", default="",
                         help="Slack message ts to reply to (threaded reply)")
+    parser.add_argument(
+        "--turn-ts", default="",
+        help=("Slack ts of the inbound this reply answers (carried in the "
+              "delivery reminder). Anchors the reply to that exact message: "
+              "its thread root when it was threaded, channel level when it "
+              "was not — instead of inheriting whatever inbound arrived "
+              "last, which interleaved traffic makes the wrong one "
+              "(gp-6j3). Fails fast when the ts is not in the "
+              "conversation's transcript (e.g. an older member of a "
+              "coalesced batch): pass --reply-to <thread ts> or "
+              "--no-thread instead."))
     parser.add_argument(
         "--origin-ts", default="",
         help=("Company rooms: pin a specific turn ts when a newer wake has "
@@ -274,6 +393,13 @@ def main(argv: list[str]) -> int:
               "(adapter-only diagnostics; peers in a bind-room won't see "
               "the message)."),
     )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help=("Print the full result envelope (the raw receipt, including "
+              "gc's transcript entry). Default is the terse receipt — "
+              "delivered flag, message_id, conversation_id, thread_ts — "
+              "which keeps the echo of your own outbound text out of your "
+              "context (gp-9e7)."))
     args = parser.parse_args(argv)
 
     company_rc = _maybe_company_reply(args)
@@ -287,7 +413,12 @@ def main(argv: list[str]) -> int:
         try:
             session_id = common.current_session_id()
         except common.GCAPIError as exc:
-            raise SystemExit(str(exc)) from exc
+            return _print_failure_envelope(
+                stage="session-resolution",
+                error=str(exc),
+                conversation_id=(args.conversation_id or "").strip(),
+                via=args.via,
+            )
 
     conv = _resolve_conversation(args, session_id)
     if not conv.get("conversation_id"):
@@ -296,23 +427,38 @@ def main(argv: list[str]) -> int:
         raise SystemExit("missing slack account_id (SLACK_WORKSPACE_ID env)")
 
     reply_to = args.reply_to
+    turn_ts = (args.turn_ts or "").strip()
     if args.no_thread and (reply_to or args.thread_current):
         raise SystemExit(
             "--no-thread cannot be combined with --reply-to or --thread-current")
     if args.thread_current:
         if reply_to:
             raise SystemExit("pass --reply-to OR --thread-current, not both")
-        match = common.find_latest_inbound_thread_for_session(session_id)
-        if match is None:
-            raise SystemExit(
-                "no recent inbound transcript entry for this session; "
-                "cannot thread without --reply-to <ts>"
-            )
-        mid, thread_root, _conv = match
-        # A thread-reply inbound anchors at its thread ROOT, not its own
-        # ts — Slack threads hang off the parent message, and a thread_ts
-        # pointing at a child strands the reply outside the conversation.
-        reply_to = thread_root or mid
+        if turn_ts:
+            # Thread under the turn's own inbound: its root when it was a
+            # thread reply, the message itself when top-level.
+            thread_root = _resolve_turn_anchor(conv, turn_ts)
+            reply_to = thread_root or turn_ts
+        else:
+            match = common.find_latest_inbound_thread_for_session(session_id)
+            if match is None:
+                raise SystemExit(
+                    "no recent inbound transcript entry for this session; "
+                    "cannot thread without --reply-to <ts>"
+                )
+            mid, thread_root, _conv = match
+            # A thread-reply inbound anchors at its thread ROOT, not its own
+            # ts — Slack threads hang off the parent message, and a thread_ts
+            # pointing at a child strands the reply outside the conversation.
+            reply_to = thread_root or mid
+    elif turn_ts and not reply_to and not args.no_thread:
+        # gp-6j3: the caller named the exact inbound this reply answers
+        # (the ts every delivery reminder carries). Anchor there — its
+        # thread root when threaded, channel level when not — and never
+        # scan for the latest inbound, whose thread context under
+        # coalesced delivery + interleaved traffic is routinely NOT the
+        # message being answered.
+        reply_to = _resolve_turn_anchor(conv, turn_ts)
     elif not reply_to and not args.no_thread:
         # gp-i62: a threaded inbound means the human is talking to this
         # session IN that thread — "reply to the latest inbound" must land
@@ -360,14 +506,29 @@ def main(argv: list[str]) -> int:
         else:
             result = common.publish_via_gc_outbound(**publish_kwargs)
     except (common.AdapterError, common.GCAPIError) as exc:
-        raise SystemExit(str(exc)) from exc
+        return _print_failure_envelope(
+            stage="publish",
+            error=str(exc),
+            conversation_id=conv["conversation_id"],
+            session_id=session_id,
+            via=args.via,
+        )
 
-    print(json.dumps({
-        "conversation_id": conv["conversation_id"],
-        "session_id": session_id,
-        "via": args.via,
-        "result": result,
-    }, indent=2))
+    if args.verbose:
+        print(json.dumps({
+            "conversation_id": conv["conversation_id"],
+            "session_id": session_id,
+            "via": args.via,
+            "result": result,
+        }, indent=2))
+    else:
+        # Terse receipt (gp-9e7 item 4): the full envelope echoes the
+        # entire outbound text back into the sender's context.
+        print(json.dumps(common.summarize_publish_receipt(
+            result,
+            conversation_id=conv["conversation_id"],
+            thread_ts=reply_to,
+        ), indent=2))
 
     delivered, failure_kind = common.interpret_publish_receipt(result)
     if not delivered:
