@@ -69,7 +69,8 @@ class GCAPIError(RuntimeError):
 
 
 class GCAPITimeout(GCAPIError):
-    """The daemon accepted the connection but did not answer in time.
+    """The daemon did not answer within the socket timeout (any phase:
+    connect, status line, body, or error body).
 
     Distinct from other GCAPIErrors so probes can report "daemon busy"
     instead of "daemon broken": under load the gc daemon stalls mid-
