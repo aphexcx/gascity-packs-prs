@@ -58,7 +58,7 @@ UNIVERSAL = "universal"
 # released gc reports and main no longer does, and this test holds each to the
 # assertion that is true of it. Collapsing the two would mean either CI red on
 # an upstream release, or a real regression waved through on a dev build.
-TOLERATED_SECTIONS = ("pre-5220",)
+TOLERATED_SECTIONS = ("pre-5220", "pre-4995")
 
 
 def gc_binary() -> str | None:
