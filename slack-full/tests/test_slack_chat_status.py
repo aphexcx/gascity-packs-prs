@@ -8,9 +8,12 @@ collected-status structure and the rendered output.
 
 from __future__ import annotations
 
+import http.server
 import json
 import pathlib
 import sys
+import threading
+import time
 from typing import Any
 
 import pytest
@@ -18,6 +21,8 @@ import pytest
 PACK_DIR = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PACK_DIR / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
+
+STATUS_SCHEMA_DIR = PACK_DIR / "commands" / "status" / "schemas"
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +32,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> Non
     monkeypatch.setenv("GC_API_BASE_URL", "http://127.0.0.1:8372")
     monkeypatch.setenv("SLACK_WORKSPACE_ID", "T0TESTWS")
     monkeypatch.delenv("GC_SLACK_ADAPTER_ENV", raising=False)
+    monkeypatch.delenv("GC_SLACK_STATUS_TIMEOUT", raising=False)
 
 
 def _import_modules():
@@ -53,7 +59,8 @@ def _make_router(routes: dict[str, Any]):
 
     def fake_request(method: str, url: str, body=None, *, csrf: bool = True,
                      timeout: float = 30.0):
-        captured.append({"method": method, "url": url, "csrf": csrf})
+        captured.append({"method": method, "url": url, "csrf": csrf,
+                         "timeout": timeout})
         for needle, response in sorted(routes.items(), key=lambda kv: -len(kv[0])):
             if needle in url:
                 if isinstance(response, Exception):
@@ -299,3 +306,352 @@ def test_invalid_limit_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     status_mod, _common = _import_modules()
     with pytest.raises(SystemExit):
         status_mod.main(["--limit", "0"])
+
+
+# --- daemon-busy / slow-socket regression (gp-aut) -------------------------
+#
+# Observed on citadel 2026-08-29: with 5 worker sessions spawning, the gc
+# daemon answered status GETs slower than the client timeout and the probe
+# either died with a bare TimeoutError traceback (http/client.py readline)
+# or printed nothing. A health command must degrade to a distinct
+# "daemon busy" verdict, never a traceback and never a silent empty.
+# These tests drive a REAL socket against a deliberately slow local HTTP
+# server so the http.client read-timeout path is exercised end to end.
+
+class _SlowDaemon:
+    """Local HTTP server whose first ``slow_first`` connections stall.
+
+    Stalled requests sleep ``stall`` seconds — longer than any client
+    timeout the tests use — so the client gives up mid-read exactly
+    like the loaded gc daemon case. ``stall_phase`` picks where:
+
+    * ``"status"`` (default): before the status line, the shape seen in
+      the citadel incident (http.client readline timeout).
+    * ``"body"``: after status + headers, so the client times out inside
+      the body read — for a 200 that is ``resp.read()``; for an error
+      ``status_code`` it is urllib's ``HTTPError.read()``.
+
+    Later connections answer immediately with an empty ``items`` list.
+    Connections are counted (and the stall decided) in the server's
+    accept path, before any handler thread runs, so exact-count
+    assertions see attempts, not completions — immune to handler-thread
+    scheduling lag.
+    """
+
+    def __init__(self, *, slow_first: int, stall: float = 5.0,
+                 stall_phase: str = "status", status_code: int = 200) -> None:
+        assert stall_phase in ("status", "body")
+        self.accepted = 0
+        outer = self
+        stalled_socks: set[Any] = set()
+        lock = threading.Lock()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:  # noqa: N802 (http.server API)
+                with lock:
+                    stalled = self.request in stalled_socks
+                try:
+                    if stalled and stall_phase == "status":
+                        time.sleep(stall)
+                    body = json.dumps({"items": []}).encode()
+                    self.send_response(status_code)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.flush()
+                    if stalled and stall_phase == "body":
+                        time.sleep(stall)
+                    self.wfile.write(body)
+                except Exception:
+                    pass  # client hung up mid-stall — expected
+
+            def log_message(self, *args: Any) -> None:
+                pass
+
+        class Server(http.server.ThreadingHTTPServer):
+            daemon_threads = True
+
+            def verify_request(self, request, client_address) -> bool:
+                with lock:
+                    outer.accepted += 1
+                    if outer.accepted <= slow_first:
+                        stalled_socks.add(request)
+                return True
+
+        self._server = Server(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    @property
+    def base_url(self) -> str:
+        host, port = self._server.server_address[:2]
+        return f"http://{host}:{port}"
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.fixture()
+def slow_daemon_factory():
+    servers: list[_SlowDaemon] = []
+
+    def make(*, slow_first: int, stall: float = 5.0,
+             stall_phase: str = "status", status_code: int = 200) -> _SlowDaemon:
+        server = _SlowDaemon(slow_first=slow_first, stall=stall,
+                             stall_phase=stall_phase, status_code=status_code)
+        servers.append(server)
+        return server
+
+    yield make
+    for server in servers:
+        server.close()
+
+
+def test_request_read_timeout_raises_gcapi_timeout_not_bare_timeouterror(
+        monkeypatch: pytest.MonkeyPatch, slow_daemon_factory) -> None:
+    """The transport helper must map a mid-read socket timeout to the
+    GCAPIError family (as GCAPITimeout) so callers' handlers see it."""
+    _status_mod, common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99)
+
+    with pytest.raises(common.GCAPITimeout) as excinfo:
+        common._request("GET", f"{daemon.base_url}/v0/city/test-city/events",
+                        csrf=False, timeout=0.2)
+
+    assert isinstance(excinfo.value, common.GCAPIError)
+    assert excinfo.value.timeout == pytest.approx(0.2)
+    assert "timed out after 0.2s" in str(excinfo.value)
+
+
+def test_slow_daemon_prints_daemon_busy_line_and_exits_nonzero(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--timeout", "0.2"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "daemon busy (timeout after 0.2s)" in captured.err
+    assert "Traceback" not in captured.err
+
+
+def test_slow_daemon_json_emits_failure_object_on_stdout(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--json", "--timeout", "0.2"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    payload = json.loads(captured.out)
+    assert payload["ok"] is False
+    assert payload["schema_version"] == "1"
+    assert payload["error"]["code"] == "daemon_busy"
+    assert payload["error"]["exit_code"] == 2
+    assert "daemon busy (timeout after 0.2s)" in payload["error"]["message"]
+    assert "daemon busy (timeout after 0.2s)" in captured.err
+
+
+def test_one_timeout_is_retried_and_probe_succeeds(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    """A single stalled request must not fail the probe: retry once."""
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=1)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--timeout", "0.3"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert "Adapters:" in out
+    # 3 fetches (adapters, inbound, outbound) + 1 retry of the stalled one
+    assert daemon.accepted == 4
+
+
+def test_second_timeout_aborts_without_retry_storm(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    """When the daemon stays busy, give up after ONE retry of the first
+    fetch — no per-fetch retry cascades stacking multi-minute delays."""
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--timeout", "0.2"])
+    capsys.readouterr()
+
+    assert rc == 2
+    assert daemon.accepted == 2
+
+
+def test_timeout_default_comes_from_env_and_flag_wins(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    status_mod, common = _import_modules()
+    fake, captured = _make_router({
+        "/extmsg/adapters": {"items": []},
+        "events?type=extmsg.inbound": [],
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+
+    monkeypatch.setenv("GC_SLACK_STATUS_TIMEOUT", "45")
+    assert status_mod.main([]) == 0
+    assert {c["timeout"] for c in captured} == {45.0}
+
+    captured.clear()
+    assert status_mod.main(["--timeout", "7.5"]) == 0
+    assert {c["timeout"] for c in captured} == {7.5}
+
+
+def test_daemon_busy_is_not_swallowed_by_graceful_fallbacks(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """GCAPITimeout subclasses GCAPIError; the per-fetch degrade-to-empty
+    handlers must re-raise it instead of rendering a false 'no traffic'."""
+    status_mod, common = _import_modules()
+    fake, _ = _make_router({
+        "/extmsg/adapters": {"items": [
+            {"provider": "slack", "account_id": "T0TESTWS"}
+        ]},
+        "events?type=extmsg.inbound": common.GCAPITimeout(
+            "GET .../events timed out after 30s", timeout=30.0),
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+
+    rc = status_mod.main([])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "daemon busy (timeout after 30s)" in captured.err
+
+
+def test_json_success_output_carries_contract_envelope(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    status_mod, common = _import_modules()
+    fake, _ = _make_router({
+        "/extmsg/adapters": {"items": []},
+        "events?type=extmsg.inbound": [],
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+
+    rc = status_mod.main(["--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    assert payload["schema_version"] == "1"
+    assert payload["ok"] is True
+
+
+def test_declared_result_schema_validates_json_output(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """gc treats commands/status/schemas/result.schema.json as the JSON
+    support declaration — it must exist and describe real output."""
+    jsonschema = pytest.importorskip("jsonschema")
+    status_mod, common = _import_modules()
+    fake, _ = _make_router({
+        "/extmsg/adapters": {"items": [
+            {"provider": "slack", "account_id": "T0TESTWS"}
+        ]},
+        "events?type=extmsg.inbound": [
+            {"ts": "2026-05-02T17:30:01Z",
+             "payload": {"conversation_id": "C0X", "target_session": "gc-1"}}
+        ],
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+
+    rc = status_mod.main(["--json"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 0
+    schema = json.loads((STATUS_SCHEMA_DIR / "result.schema.json").read_text())
+    jsonschema.validate(payload, schema)
+
+
+def test_declared_failure_schema_validates_daemon_busy_output(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    jsonschema = pytest.importorskip("jsonschema")
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--json", "--timeout", "0.2"])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert rc == 2
+    schema = json.loads((STATUS_SCHEMA_DIR / "failure.schema.json").read_text())
+    jsonschema.validate(payload, schema)
+
+
+def test_request_error_body_stall_raises_gcapi_timeout(
+        slow_daemon_factory) -> None:
+    """Status + headers for a 5xx arrive, then the error body stalls:
+    the timeout fires inside urllib's HTTPError.read(), which lives in
+    _request's except-clause — it must still map to GCAPITimeout."""
+    _status_mod, common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body",
+                                 status_code=500)
+
+    with pytest.raises(common.GCAPITimeout) as excinfo:
+        common._request("GET", f"{daemon.base_url}/v0/city/test-city/events",
+                        csrf=False, timeout=0.2)
+    assert excinfo.value.timeout == pytest.approx(0.2)
+
+
+def test_request_success_body_stall_raises_gcapi_timeout(
+        slow_daemon_factory) -> None:
+    """200 + headers arrive, then the body stalls (resp.read() path)."""
+    _status_mod, common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body")
+
+    with pytest.raises(common.GCAPITimeout):
+        common._request("GET", f"{daemon.base_url}/v0/city/test-city/events",
+                        csrf=False, timeout=0.2)
+
+
+def test_status_error_body_stall_is_daemon_busy_not_traceback(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        slow_daemon_factory) -> None:
+    status_mod, _common = _import_modules()
+    daemon = slow_daemon_factory(slow_first=99, stall_phase="body",
+                                 status_code=503)
+    monkeypatch.setenv("GC_API_BASE_URL", daemon.base_url)
+
+    rc = status_mod.main(["--timeout", "0.2"])
+    captured = capsys.readouterr()
+
+    assert rc == 2
+    assert "daemon busy (timeout after 0.2s)" in captured.err
+    assert daemon.accepted == 2
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
+def test_non_finite_timeout_flag_is_rejected(value: str) -> None:
+    status_mod, _common = _import_modules()
+    with pytest.raises(SystemExit):
+        status_mod.main(["--timeout", value])
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0", "-3", "soon"])
+def test_unusable_env_timeout_falls_back_to_default(
+        monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    status_mod, common = _import_modules()
+    fake, captured = _make_router({
+        "/extmsg/adapters": {"items": []},
+        "events?type=extmsg.inbound": [],
+        "events?type=extmsg.outbound": [],
+    })
+    monkeypatch.setattr(common, "_request", fake)
+    monkeypatch.setenv("GC_SLACK_STATUS_TIMEOUT", value)
+
+    assert status_mod.main([]) == 0
+    assert {c["timeout"] for c in captured} == {status_mod.DEFAULT_TIMEOUT}

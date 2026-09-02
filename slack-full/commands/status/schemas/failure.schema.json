@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "gc slack status --json failure",
+  "description": "Mirrors gc's shared failure envelope. error.code is \"daemon_busy\" when the gc daemon did not answer within --timeout after one retry (exit 2); gc itself emits \"command_failed\" for other non-zero exits.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "ok",
+    "error"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "ok": {
+      "const": false
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "code",
+        "message",
+        "exit_code"
+      ],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

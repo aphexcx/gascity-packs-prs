@@ -104,6 +104,41 @@ def _make_router(routes: dict[str, Any]):
     return fake_request, captured
 
 
+@pytest.mark.parametrize("stalled_listing", [
+    "extmsg.peer_fanout_failed",
+    "extmsg.peer_fanout_retried",
+])
+def test_daemon_timeout_is_not_reported_as_zero_candidates(
+        monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+        stalled_listing: str) -> None:
+    """A gc daemon that times out while listing failed fan-outs — or the
+    prior-retry listing that drives dedupe — must not yield a clean
+    'candidates: 0' exit 0 (or fire retries blind): that reads as
+    'nothing to retry' when the truth is 'could not look'. (gp-aut:
+    GCAPITimeout is a GCAPIError, so the degrade-to-[] handler would
+    swallow it.)"""
+    retry_mod, common = _import_modules()
+
+    routes = {
+        "events?type=extmsg.peer_fanout_failed": {
+            "items": [_failed_event(101)], "total": 1},
+        "events?type=extmsg.peer_fanout_retried": {"items": [], "total": 0},
+        "/extmsg/peer-fanout/retry": {"success": True, "error": ""},
+    }
+    routes[f"events?type={stalled_listing}"] = common.GCAPITimeout(
+        "GET .../events timed out after 30s", timeout=30.0)
+    fake, captured = _make_router(routes)
+    monkeypatch.setattr(common, "_request", fake)
+
+    rc = retry_mod.main([])
+    out, err = capsys.readouterr()
+
+    assert rc == 2
+    assert "daemon busy (timeout after 30s)" in err
+    assert out.strip() == ""
+    assert not [c for c in captured if c["method"] == "POST"]
+
+
 def test_one_success(monkeypatch: pytest.MonkeyPatch,
                      capsys: pytest.CaptureFixture) -> None:
     retry_mod, common = _import_modules()

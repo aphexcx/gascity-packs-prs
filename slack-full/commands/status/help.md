@@ -8,7 +8,8 @@ Examples:
   gc slack status                                # global summary
   gc slack status --session gc-83347             # detail for cos's DM session
   gc slack status --since 5m --limit 100         # last 5 minutes, scan up to 100/dir
-  gc slack status --json                         # machine-readable
+  gc slack status --json                         # machine-readable (schema: --json-schema)
+  gc slack status --timeout 120                  # tolerate a heavily loaded daemon
 
 Sources:
   GET /v0/city/<name>/extmsg/adapters
@@ -19,3 +20,13 @@ Sources:
 Errors are non-fatal: a failed sub-query degrades that section to
 "none / 0" rather than aborting, so a partially-degraded city still
 yields a usable status.
+
+Daemon load is the exception. --timeout (default $GC_SLACK_STATUS_TIMEOUT,
+else 60) is a per-request inactivity budget: an attempt fails once the
+daemon has been silent that long (a response that keeps trickling bytes
+is not cut off), and a failed attempt is retried once. If the daemon
+still has not answered the command exits 2 with
+"daemon busy (timeout after Ns)" on stderr (and, under --json, a
+{"ok": false, "error": {"code": "daemon_busy", ...}} object on stdout)
+instead of degrading to a false "no adapters / no traffic" report.
+Treat exit 2 as "gc is busy", not as a Slack outage.

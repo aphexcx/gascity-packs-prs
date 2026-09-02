@@ -46,6 +46,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`gc slack status` is no longer load-sensitive** (gp-aut,
+  pc_915b4a8ac8b1 / pc_076c045ee7e3; 2026-08-29 00:20–00:57Z on
+  citadel with 5 worker sessions spawning). A gc daemon that stalls
+  mid-response surfaces in urllib as a bare `TimeoutError` from the
+  `http.client` read path — not a `URLError` — so the probe died with
+  a traceback (or, under `--json`, printed nothing) while real reads
+  and sends still completed in under a second; two monitors built on
+  it had to be torn down as false-alarm machines. Now:
+  `slack_intake_common._request` maps connect-phase, read-phase and
+  error-body timeouts to a new `GCAPITimeout(GCAPIError)`;
+  `slack_chat_status` applies `--timeout` as a per-request socket
+  inactivity timeout (default `$GC_SLACK_STATUS_TIMEOUT`, else 60 — up
+  from 30; non-finite/non-positive values are rejected or fall back),
+  retries a stalled request once, and on a second stall exits **2**
+  with a distinct `daemon busy (timeout after Ns)` line on stderr
+  instead of a traceback or a false "no adapters / no traffic"
+  rendering. `gc slack retry-peer-fanout` gets the same guard: a
+  daemon timeout while listing failed fan-outs exits 2 with the
+  daemon-busy line instead of reporting `candidates: 0`. The
+  command now declares JSON support (`commands/status/schemas/
+  {result,failure}.schema.json`): `--json` output carries the
+  `schema_version` / `ok` envelope, the daemon-busy exit emits a
+  `{"ok": false, "error": {"code": "daemon_busy", ...}}` object on
+  stdout, and gc's `--json` pass-through warning is gone. Regression
+  coverage drives a real socket against a deliberately slow local
+  HTTP server so the read-timeout path is exercised end to end.
 - **A same-ts twin can no longer skip a copy the session never got**
   (gp-32q, pc_2e2378b9918e; 2026-08-27 22:57 CT and 2026-08-28 04:08
   CT founder-inbound incidents, both on the PR #23 build). A
