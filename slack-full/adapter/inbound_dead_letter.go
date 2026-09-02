@@ -63,6 +63,15 @@ type inboundDeadLetterRecord struct {
 	Attempts       int                    `json:"attempts"`
 	Reason         string                 `json:"reason"`
 	Inbound        externalInboundMessage `json:"inbound"`
+	// AliasSessionID/AliasHandle/AliasBody are set only for a lost
+	// address-by-handle injection (gp-3yg): the aliased session it was
+	// meant for, the handle, and the exact rendered reminder. A hand
+	// recovery re-injects AliasBody into AliasSessionID; re-posting the
+	// channel envelope instead would route to the channel-bound session
+	// (codex r2 P2 #4).
+	AliasSessionID string `json:"alias_session_id,omitempty"`
+	AliasHandle    string `json:"alias_handle,omitempty"`
+	AliasBody      string `json:"alias_body,omitempty"`
 }
 
 // maxDeadLetterReasonBytes bounds the stored error text INCLUDING the
@@ -97,6 +106,47 @@ func truncateReason(s string) string {
 // redirecting the append), must be a regular file, and is chmod'd 0600
 // (codex r1 finding 5).
 func writeInboundDeadLetter(dir, channel string, batch []pendingChannelInbound, cause error) (string, error) {
+	reason := ""
+	if cause != nil {
+		reason = truncateReason(cause.Error())
+	}
+	now := time.Now().UTC()
+	records := make([]inboundDeadLetterRecord, 0, len(batch))
+	for _, p := range batch {
+		records = append(records, inboundDeadLetterRecord{
+			DeadLetteredAt: now,
+			Channel:        channel,
+			Attempts:       p.attempts,
+			Reason:         reason,
+			Inbound:        p.inbound,
+		})
+	}
+	return writeInboundDeadLetterRecords(dir, channel, records)
+}
+
+// writeAliasDeadLetter appends one record for a lost address-by-handle
+// injection (gp-3yg): the channel envelope plus the aliased session, the
+// handle and the exact rendered reminder, so a hand recovery re-injects
+// the right bytes into the right session. Same file, same durability
+// contract as writeInboundDeadLetter.
+func writeAliasDeadLetter(dir, channel string, inbound externalInboundMessage, sessionID, handle, body string, cause error) (string, error) {
+	reason := ""
+	if cause != nil {
+		reason = truncateReason(cause.Error())
+	}
+	return writeInboundDeadLetterRecords(dir, channel, []inboundDeadLetterRecord{{
+		DeadLetteredAt: time.Now().UTC(),
+		Channel:        channel,
+		Reason:         reason,
+		Inbound:        inbound,
+		AliasSessionID: sessionID,
+		AliasHandle:    handle,
+		AliasBody:      body,
+	}})
+}
+
+// writeInboundDeadLetterRecords is the durable append behind both writers.
+func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLetterRecord) (string, error) {
 	created, err := missingAncestors(dir)
 	if err != nil {
 		return "", err
@@ -136,20 +186,9 @@ func writeInboundDeadLetter(dir, channel string, batch []pendingChannelInbound, 
 			return "", fmt.Errorf("enforce 0600 on %q: %w", path, err)
 		}
 	}
-	reason := ""
-	if cause != nil {
-		reason = truncateReason(cause.Error())
-	}
-	now := time.Now().UTC()
 	enc := json.NewEncoder(f)
-	for _, p := range batch {
-		if err := enc.Encode(inboundDeadLetterRecord{
-			DeadLetteredAt: now,
-			Channel:        channel,
-			Attempts:       p.attempts,
-			Reason:         reason,
-			Inbound:        p.inbound,
-		}); err != nil {
+	for _, rec := range records {
+		if err := enc.Encode(rec); err != nil {
 			_ = f.Close()
 			return path, err
 		}
