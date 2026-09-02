@@ -33,10 +33,21 @@ Use no bead id except one from immediately preceding claim. If terminal calls
 do not retain shell variables, substitute the exact saved values; never update
 or close with an empty id. Never choose or assign continuation work.
 
-A successful claim is authorization to execute immediately.
-Never ask a human whether to proceed after a successful claim. Do not stop for
-confirmation in a headless workflow. If required task input is missing, record
-the bead's failure contract and close it instead of idling.
+A successful claim is authorization to execute immediately. You are operating
+autonomously: no human is watching in real time, so asking whether to proceed
+blocks the work. Do not stop for confirmation in a headless workflow. If
+required task input is missing, record the bead's failure contract and close
+it instead of idling.
+
+Before ending a turn, check your last paragraph. If it is a plan, a list of
+next steps, or a promise about work not yet done, do that work now with tool
+calls — including retrying after errors and gathering missing information
+yourself. End the turn only when the claimed bead is closed (or its failure
+recorded) and you have followed the Continue section below.
+
+This check applies to a bead returned by `action=work`. A failed bead is still
+closed, with its failure metadata set first (see Close). After `action=drain`
+or a failed claim command, follow the Claim section above instead.
 
 ## Close
 
