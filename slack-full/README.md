@@ -482,7 +482,9 @@ GC_CITY_NAME=<your-city-name>
 
 # 2. Source the secrets so the supervisor inherits them.
 #    Optional: run.sh sources this same file itself at service start
-#    (override the path with GC_SLACK_ADAPTER_ENV).
+#    (override the path with GC_SLACK_ADAPTER_ENV — if you set it, the
+#    file must exist: run.sh refuses to start on ambient credentials
+#    rather than post to whatever workspace is in the environment).
 set -a; source "${XDG_CONFIG_HOME:-$HOME/.config}/gc-slack-adapter/env"; set +a
 
 # 3. Stop any manually-managed adapter that may still be running
