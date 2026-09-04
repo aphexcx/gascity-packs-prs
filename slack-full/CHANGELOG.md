@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `filetype` code → Slack-native subtype → `application/octet-stream`)
   and always serializes `mime_type` (no longer `omitempty`), so a
   payload can never again be rejected for a missing key.
+  Scope: this covers the legacy `/extmsg/inbound` delivery path. Files
+  shared in a company/multi-bot room take the company hydration path,
+  which never posts to `/extmsg/inbound` and still renders Slack's raw
+  `filetype`, so a Slack-native recording there is unchanged by this fix
+  and still lists an empty filetype.
 
 ### Changed
 
