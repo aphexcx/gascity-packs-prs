@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Inbound files recorded inside Slack itself — voice clips (file subtype
+  `slack_audio`) and video clips (`slack_video`) — arrive with an empty
+  `mimetype` AND `filetype`, which the adapter passed through verbatim.
+  The inbound payload then omitted `mime_type`, a REQUIRED property of
+  gc's `extmsg.ExternalAttachment`, so gc rejected the whole message
+  with 422 and the recording plus its text caption silently never
+  reached the bound session. The adapter now derives a media type for
+  every inbound file (Slack's `mimetype` → file-name extension → Slack
+  `filetype` code → Slack-native subtype → `application/octet-stream`)
+  and always serializes `mime_type` (no longer `omitempty`), so a
+  payload can never again be rejected for a missing key.
+  Scope: this covers the legacy `/extmsg/inbound` delivery path. Files
+  shared in a company/multi-bot room take the company hydration path,
+  which never posts to `/extmsg/inbound` and still renders Slack's raw
+  `filetype`, so a Slack-native recording there is unchanged by this fix
+  and still lists an empty filetype.
 - The `[[service]]` proxy_process command pointed straight at
   `adapter/gc-slack-adapter`, a gitignored build artifact — but
   `gc import install` re-materializes the pack cache git-only, so every
