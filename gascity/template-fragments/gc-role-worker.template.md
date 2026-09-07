@@ -49,6 +49,24 @@ This check applies to a bead returned by `action=work`. A failed bead is still
 closed, with its failure metadata set first (see Close). After `action=drain`
 or a failed claim command, follow the Claim section above instead.
 
+## Codex gates
+
+When a bead calls for a Codex gate on citadel, commit the delta, then use the
+installed helper so the final verdict is validated:
+
+```bash
+"$GC_CITY_PATH/assets/ops/mayor-tools/codex-gate.sh" review \
+  --base "$REVIEW_BASE" -C "$REPO_DIR" --output "$REVIEW_OUTPUT" \
+  --model gpt-6-astra
+```
+
+The helper invokes `codex -p city -m gpt-6-astra exec --skip-git-repo-check`
+with read-only execution and stdin from `/dev/null`. For a prompt-file gate,
+replace `review --base "$REVIEW_BASE"` with `exec "$PROMPT_FILE"`.
+Provision the `city` profile and helper on the host before using these commands.
+Honor the bead's reviewer requirements: Codex-built changes still need a Fable
+adversarial review when the bead requests the cross-model gate.
+
 ## Close
 
 Honor bead's requested `gc.outcome` metadata. If no failure contract exists,
