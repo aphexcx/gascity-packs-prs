@@ -135,6 +135,26 @@ source = "../gascity-packs/bmad"
 
 Each pack documents its own prerequisites, import snippet, and usage.
 
+## Codex code workers
+
+A Gas City role agent, such as `implementation-worker`, runs on a provider,
+such as `claude` or `codex`. The provider is a field on the agent.
+
+A city can add a second instance of the same role on another provider using a
+schema-2 agent directory: `agents/NAME/agent.toml` declares `scope`, `provider`,
+and `max_active_sessions`. Its sibling `prompt.template.md` carries the role's
+one-line template include: `{{ template "gc-role-worker" . }}` for an
+implementation worker. Inline `[[agent]]` tables in `city.toml` are refused as
+PackV1; use the agent directory for the additional role instance.
+
+The implicit per-provider pool agents (`RIG/codex`, `RIG/codex-astra`, and
+`RIG/claude`) carry the core pack's demo formula `mol-do-work`, which has no
+worktree step. They must not receive code beads on a rig whose `AGENTS` rules
+forbid working in the rig root. Route those beads to a role instance that
+follows the rig's worktree discipline.
+
+Dispatch a code bead with `gc sling --reassign RIG/implementation-worker-codex BEAD`.
+
 ## Layout
 
 Each top-level directory is either a pack or a group of related packs:
