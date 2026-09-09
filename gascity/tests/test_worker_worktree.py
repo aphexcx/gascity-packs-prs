@@ -216,6 +216,25 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual(self.branch_of(other), "gp-ghi3-elsewhere")
         self.assertEqual(proc.stdout.split()[2], "detached")
 
+    def test_existing_local_branch_left_by_a_detached_lane_is_checked_out(self) -> None:
+        # The do-work handoff: the run operator's lane created the item's branch,
+        # committed on it, then detached (git allows one worktree per branch).
+        # The next role's lane reuses that LOCAL branch, which was never pushed:
+        # nothing is created from the base, no WARN, the operator's lane is untouched.
+        operator = self.fx.city / ".worktrees" / "rig" / "lane-operator"
+        self.fx.run(operator, "gp-hand1")
+        sha = commit(operator, "item.txt", "prepared\n", "item branch work")
+        git(operator, "switch", "--detach")
+        proc = self.fx.run(self.lane, "gp-hand1")
+        self.assertEqual(self.branch_of(self.lane), "gp-hand1")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertTrue((self.lane / "item.txt").is_file())
+        self.assertNotIn("WARN", proc.stderr)
+        self.assertEqual(proc.stdout.split()[2], "gp-hand1")
+        self.assertEqual(self.branch_of(operator), "HEAD")  # the operator's lane stays detached
+        self.assertEqual(git(operator, "rev-parse", "HEAD"), sha)
+        self.assertEqual(self.asides(), [])
+
     def test_rerun_under_a_path_with_spaces_keeps_its_own_branch(self) -> None:
         lane = self.fx.city / "lanes with spaces" / "lane worker"
         self.fx.run(lane, "gp-spc1")

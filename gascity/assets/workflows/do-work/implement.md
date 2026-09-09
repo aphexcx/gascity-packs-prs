@@ -4,13 +4,26 @@ synthetic drain-unit convoy, the source anchor is the original drain member in
 `gc.drain_member_id`, not the synthetic convoy id. Read `work_dir` from the source anchor, never read `work_dir` from the synthetic drain-unit convoy,
 validate that it is an absolute existing git worktree, set `WORKTREE` to that
 path, then `cd "$WORKTREE"` before reading or editing source files. If
-`work_dir` is missing, invalid, or points at the launcher checkout, fail this step before editing.
+`work_dir` is missing, invalid, or points at the launcher checkout, fail this step before editing;
+the lane case in the next paragraph is the one exception to a missing `work_dir`.
 
-When `work_dir` equals `$GC_DIR` (`prepare-worktree` recorded the lane gc gave
-this session: `$GC_DIR` is already a git worktree of the rig on a branch and
-not the rig root), there is nothing to switch into: work in `$GC_DIR`, where
-the session already is; `cd "$WORKTREE"` and the `pwd -P` check below then
-hold trivially. Otherwise the steps below apply unchanged.
+When the source anchor has no `work_dir` and records `gc.work_branch`
+(`prepare-worktree` ran in the run operator's lane and recorded the item's
+branch instead of a directory), your own `$GC_DIR` is the worktree: it is a
+lane your `pre_start` put on the item's branch (the branch recorded by
+`prepare-worktree`); work there. Prove it before editing: `git -C "$GC_DIR"
+rev-parse --verify "refs/heads/<gc.work_branch>"` must succeed, and `git -C
+"$GC_DIR" branch --show-current` must print that branch. If it prints another
+branch or nothing, switch your own lane onto the recorded branch with `git -C
+"$GC_DIR" switch "<gc.work_branch>"` (refs are shared by every worktree of the
+rig, and `prepare-worktree` detached its lane from the branch so it is free);
+if git refuses, or the branch is missing from the repository, fail this step
+before editing. Then set `WORKTREE="$GC_DIR"`; `cd "$WORKTREE"` and the `pwd
+-P` check below hold trivially. Never enter another agent's lane, and never
+treat a persisted `work_dir` that points into `.worktrees/<rig>/lane-*` of
+another agent as yours: a `work_dir` naming a lane other than `$GC_DIR` is
+invalid, fail this step before editing. Otherwise the steps below apply
+unchanged.
 
 Do not infer the source anchor from dependency ids such as the
 `prepare-worktree` step. Read the claimed step bead's `gc.root_bead_id`, read
