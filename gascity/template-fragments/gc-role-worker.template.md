@@ -64,6 +64,13 @@ bead, or detached (no trigger bead, or that branch is checked out in another
 worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, create your branch in this directory before committing.
 
+If `$GC_DIR` is the rig root, this role has no `work_dir` in your city. When
+the rig's rules forbid working there, create your worktree under
+`<city>/.worktrees/<rig>/<bead>` from `origin/<default branch>` (check out
+the bead's branch if it already exists), work there, and mail the mayor that
+this role needs a lane (`work_dir` + `pre_start`, see README, Worker
+workspaces).
+
 After the claim, compare the bead's `gc.work_branch` with your branch and
 restamp it when they differ (older `gc` builds stamp the rig root's branch).
 Before closing a bead whose work continues elsewhere, stamp its workspace so
