@@ -187,8 +187,8 @@ root whose `AGENTS` rules forbade working there created its own
 role prompts.)
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
-Copy it into the city's scripts directory, which gc mirrors into every session
-work dir (gc does not sync a pack's `assets/scripts` there):
+Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a
+pack's `assets/scripts` there), and reference it through `{{.CityRoot}}`:
 
 ```sh
 cp path/to/gascity/assets/scripts/worker-worktree.sh "$CITY/.gc/scripts/"
@@ -219,9 +219,12 @@ pre_start = ["sh {{.CityRoot}}/.gc/scripts/worker-worktree.sh"]
 A second role instance on another provider (an `agents/<name>/agent.toml`,
 see the repository README, "Codex code workers") carries the same two keys
 directly. `{{.AgentBase}}` is the agent identity gc resolves the session
-under: a singleton agent (`max_active_sessions = 1`) keeps one lane across
-sessions, so the script's reuse path (fetch, switch to the new bead's branch)
-applies; `gc session list` shows each live session's work dir.
+under. A pool slot is named `<role>-<slot>`, so concurrent sessions of one
+role get distinct lanes (`lane-gc.implementation-worker-1`,
+`lane-gc.implementation-worker-3`, …) and never share a checkout; a singleton
+agent (`max_active_sessions = 1`) keeps one lane across sessions, so the
+script's reuse path (fetch, switch to the new bead's branch) applies.
+`gc session list` shows each live session's work dir.
 
 The pack does not set these keys on its role agents by default. The
 `pre_start` half needs the script installed in the city's `.gc/scripts`, and
