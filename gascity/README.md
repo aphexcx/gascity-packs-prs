@@ -206,33 +206,64 @@ and `gc.publisher`.
 
 ## Worker workspaces
 
-A rig role agent starts in the rig root unless its `work_dir` says otherwise.
-Rigs whose `AGENTS` rules forbid working in the root (a shared checkout that
-lags `origin/main`, other agents' branches) give each worker its own worktree
-before the first turn, using two core surfaces: `work_dir` (gc creates it,
+The unit of isolation is the agent. A rig role agent starts in the rig root
+unless its `work_dir` says otherwise; in the standard model every role agent
+that reads or writes a rig's source has one. gc creates the `work_dir`,
 starts the session in it, exports it as `$GC_DIR`, and materializes the
-agent's skills and hooks into it because it differs from the scope root) and
-`pre_start` (runs before the session, in `$GC_DIR`, with the session
-environment, including `GC_TRIGGER_BEAD_ID` for a slung bead).
+agent's skills and hooks into it (because it differs from the scope root); a
+`pre_start` command runs before the session, in `$GC_DIR`, with the session
+environment (`GC_TRIGGER_BEAD_ID` for a slung bead), and makes that
+directory a git worktree of the rig on the bead's branch. Workers never
+choose, create, or hunt for a workspace, and the rig root stays a human
+checkout that no agent touches. (Earlier, a worker that started in a rig
+root whose `AGENTS` rules forbade working there created its own
+`.worktrees/<rig>/<bead>` from a prompt rule; that rule is gone from the
+role prompts.)
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
 Copy it into the city's scripts directory, which gc mirrors into every session
-work dir, and point the agent at it:
+work dir (gc does not sync a pack's `assets/scripts` there):
 
 ```sh
 cp path/to/gascity/assets/scripts/worker-worktree.sh "$CITY/.gc/scripts/"
 ```
 
+Wire the roles per city with `[[patches.agent]]` in `city.toml`, the
+documented surface for overriding an imported pack agent's fields
+(`work_dir` and `pre_start` are both patchable; `rig = "*"` reaches the role
+in every rig; the bare role name matches the pack agent whatever import
+alias the city gave it). One entry per role. Give the read-only roles
+(reviewers, analysts, planners) a lane too, so no role ever starts in the
+rig root; for them the script's reuse path is a fetch and a checkout.
+
 ```toml
-# agents/implementation-worker-codex/agent.toml — a second role instance on
-# another provider (see the repository README, "Codex code workers"); the same
-# two keys work in a [[rigs.patches]] or [[patches.agent]] entry.
-scope = "rig"
-dir = "my-repo"
-provider = "codex"
+# city.toml — every gc role agent starts in its own lane worktree.
+[[patches.agent]]
+rig = "*"
+name = "implementation-worker"
 work_dir = ".worktrees/{{.Rig}}/lane-{{.AgentBase}}"
 pre_start = ["sh {{.CityRoot}}/.gc/scripts/worker-worktree.sh"]
+
+# Repeat the entry for the other roles this pack ships: publisher,
+# run-operator, review-synthesizer, design-author, requirements-planner,
+# task-decomposer, issue-triager, implementation-reviewer,
+# design-implementation-reviewer, design-test-risk-reviewer, gap-analyst.
 ```
+
+A second role instance on another provider (an `agents/<name>/agent.toml`,
+see the repository README, "Codex code workers") carries the same two keys
+directly. `{{.AgentBase}}` is the agent identity gc resolves the session
+under: a singleton agent (`max_active_sessions = 1`) keeps one lane across
+sessions, so the script's reuse path (fetch, switch to the new bead's branch)
+applies; `gc session list` shows each live session's work dir.
+
+The pack does not set these keys on its role agents by default. The
+`pre_start` half needs the script installed in the city's `.gc/scripts`, and
+a `pre_start` that fails aborts the session start by design, so a pack-level
+default would stop every role session in a city that has not installed it;
+which roles need filesystem isolation is a deployment decision in gc's
+model. `gc doctor` reports a `pre_start` script referenced via
+`{{.CityRoot}}` that is missing on disk.
 
 The script makes `$GC_DIR` a worktree of `$GC_RIG_ROOT`'s repository and
 never touches the rig root's working tree; the rig root, anything inside it,
