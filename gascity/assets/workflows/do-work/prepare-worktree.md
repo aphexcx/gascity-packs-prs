@@ -17,11 +17,21 @@ setup only. Do not edit source files in the launcher checkout.
      drain member
 3. Validate context path {{context_path}}, files ownership, and verification
    policy for the resolved source anchor.
-4. Create or reuse a deterministic git worktree at
+4. Check the workspace gc gave this session before creating anything. When
+   `$GC_DIR` is already a git worktree of the rig on a branch (the agent's
+   lane, prepared by its `pre_start`: `git -C "$GC_DIR" rev-parse
+   --is-inside-work-tree` prints `true` and `git -C "$GC_DIR" branch
+   --show-current` prints a branch name, or the `pre_start` log says so, and
+   `$GC_DIR` is not the rig root), this step creates nothing: set
+   `WORKTREE="$GC_DIR"` and continue at step 6. The lane is the isolated
+   worktree; the rig root stays a human checkout that no step touches.
+   Otherwise (the session started in the rig root; the role has no lane),
+   continue with step 5.
+5. Create or reuse a deterministic git worktree at
    `$(pwd)/worktrees/<source-anchor-id>`. If the path is missing, run
    `git worktree add "$WORKTREE" --detach HEAD`. If the path exists but is not
    the worktree for this repository, fail closed.
-5. Persist the absolute path on the source anchor with
+6. Persist the absolute path on the source anchor with
    `gc bd update <source-anchor-id> --set-metadata work_dir=<absolute worktree path>`.
    For synthetic drain-unit convoys, never persist `work_dir` on the synthetic drain-unit convoy; the original drain member/source anchor is authoritative.
    Verify the source anchor now has `work_dir` before closing this step with

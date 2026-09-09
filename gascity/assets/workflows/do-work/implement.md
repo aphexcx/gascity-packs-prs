@@ -6,6 +6,12 @@ validate that it is an absolute existing git worktree, set `WORKTREE` to that
 path, then `cd "$WORKTREE"` before reading or editing source files. If
 `work_dir` is missing, invalid, or points at the launcher checkout, fail this step before editing.
 
+When `work_dir` equals `$GC_DIR` (`prepare-worktree` recorded the lane gc gave
+this session: `$GC_DIR` is already a git worktree of the rig on a branch and
+not the rig root), there is nothing to switch into: work in `$GC_DIR`, where
+the session already is; `cd "$WORKTREE"` and the `pwd -P` check below then
+hold trivially. Otherwise the steps below apply unchanged.
+
 Do not infer the source anchor from dependency ids such as the
 `prepare-worktree` step. Read the claimed step bead's `gc.root_bead_id`, read
 that do-work root with `gc bd show <root-bead-id> --json`, then read the root

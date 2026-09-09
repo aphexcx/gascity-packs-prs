@@ -1978,6 +1978,35 @@ class FormulaAssetTests(unittest.TestCase):
                 with self.subTest(asset=relative_path, fragment=fragment):
                     self.assertIn(fragment, text)
 
+    def test_do_work_worktree_steps_are_no_ops_in_a_gc_lane(self) -> None:
+        """When gc started the session in an agent lane (work_dir + pre_start),
+        prepare-worktree creates nothing and implement works in $GC_DIR; the
+        original steps stay for a session that started in the rig root."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        rows = {
+            "assets/workflows/do-work/prepare-worktree.md": (
+                "When `$GC_DIR` is already a git worktree of the rig on a branch",
+                '`git -C "$GC_DIR" rev-parse --is-inside-work-tree` prints `true`',
+                '`git -C "$GC_DIR" branch --show-current` prints a branch name',
+                "or the `pre_start` log says so",
+                "and `$GC_DIR` is not the rig root",
+                'this step creates nothing: set `WORKTREE="$GC_DIR"`',
+                "Otherwise (the session started in the rig root; the role has no lane)",
+                "Create or reuse a deterministic git worktree at",
+            ),
+            "assets/workflows/do-work/implement.md": (
+                "When `work_dir` equals `$GC_DIR`",
+                "there is nothing to switch into: work in `$GC_DIR`",
+                "Otherwise the steps below apply unchanged",
+                'then `cd "$WORKTREE"` before reading or editing source files',
+            ),
+        }
+        for relative_path, clauses in rows.items():
+            flat = " ".join((root / relative_path).read_text(encoding="utf-8").split())
+            for clause in clauses:
+                with self.subTest(asset=relative_path, clause=clause):
+                    self.assertIn(clause, flat)
+
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
         path_contracts = {
