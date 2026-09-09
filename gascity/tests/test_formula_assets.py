@@ -1978,10 +1978,15 @@ class FormulaAssetTests(unittest.TestCase):
                 with self.subTest(asset=relative_path, fragment=fragment):
                     self.assertIn(fragment, text)
 
-    def test_do_work_worktree_steps_are_no_ops_in_a_gc_lane(self) -> None:
+    def test_do_work_lane_case_hands_over_the_branch_never_the_directory(self) -> None:
         """When gc started the session in an agent lane (work_dir + pre_start),
-        prepare-worktree creates nothing and implement works in $GC_DIR; the
-        original steps stay for a session that started in the rig root."""
+        prepare-worktree (run operator) records the item's BRANCH on the source
+        anchor and detaches its own lane from it; it never persists a work_dir,
+        because a lane is per agent and a directory is never handed to another
+        agent. implement (implementation worker) works in its own lane on that
+        branch and never enters another agent's lane; close-source-anchor
+        verifies by branch. The rig-root steps stay word for word
+        (test_do_work_formula_requires_persisted_item_worktree)."""
         root = pathlib.Path(__file__).resolve().parents[1]
         rows = {
             "assets/workflows/do-work/prepare-worktree.md": (
@@ -1990,22 +1995,55 @@ class FormulaAssetTests(unittest.TestCase):
                 '`git -C "$GC_DIR" branch --show-current` prints a branch name',
                 "or the `pre_start` log says so",
                 "and `$GC_DIR` is not the rig root",
-                'this step creates nothing: set `WORKTREE="$GC_DIR"`',
+                "this step creates nothing and hands no directory to anyone",
+                "the item's BRANCH is the handoff",
+                'BRANCH="$(git -C "$GC_DIR" branch --show-current)"',
+                'create it from HEAD with `git -C "$GC_DIR" branch "$BRANCH" HEAD`',
+                "gc bd update <source-anchor-id> --set-metadata gc.work_branch=<branch>",
+                'Detach this lane from the branch with `git -C "$GC_DIR" switch --detach`',
+                "Do NOT persist `work_dir` in the lane case: step 6 is skipped",
                 "Otherwise (the session started in the rig root; the role has no lane)",
                 "Create or reuse a deterministic git worktree at",
             ),
             "assets/workflows/do-work/implement.md": (
-                "When `work_dir` equals `$GC_DIR`",
-                "there is nothing to switch into: work in `$GC_DIR`",
+                "When the source anchor has no `work_dir` and records `gc.work_branch`",
+                "your own `$GC_DIR` is the worktree",
+                "a lane your `pre_start` put on the item's branch (the branch recorded by `prepare-worktree`); work there",
+                'switch your own lane onto the recorded branch with `git -C "$GC_DIR" switch "<gc.work_branch>"`',
+                "if git refuses, or the branch is missing from the repository, fail this step before editing",
+                "Never enter another agent's lane",
+                "never treat a persisted `work_dir` that points into `.worktrees/<rig>/lane-*` of another agent as yours",
                 "Otherwise the steps below apply unchanged",
                 'then `cd "$WORKTREE"` before reading or editing source files',
             ),
+            "assets/workflows/do-work/close-source-anchor.md": (
+                "When the source anchor has no `work_dir` and records `gc.work_branch`",
+                'verify from your own lane instead: `git -C "$GC_DIR" log -1 <gc.work_branch>`',
+                "Never enter another agent's lane to verify",
+            ),
+        }
+        flat_by_path = {
+            relative_path: " ".join((root / relative_path).read_text(encoding="utf-8").split())
+            for relative_path in rows
         }
         for relative_path, clauses in rows.items():
-            flat = " ".join((root / relative_path).read_text(encoding="utf-8").split())
             for clause in clauses:
                 with self.subTest(asset=relative_path, clause=clause):
-                    self.assertIn(clause, flat)
+                    self.assertIn(clause, flat_by_path[relative_path])
+
+        # The lane case (step 4) never persists a directory: the work_dir stamp
+        # lives only in the rig-root path (step 6), and the round-2 shape that
+        # recorded the operator's lane as the item worktree is gone from both files.
+        prepare = flat_by_path["assets/workflows/do-work/prepare-worktree.md"]
+        step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
+        self.assertNotIn("work_dir=", step4)
+        self.assertNotIn('WORKTREE="$GC_DIR"', step4)
+        self.assertIn(
+            "6. Persist the absolute path on the source anchor with "
+            "`gc bd update <source-anchor-id> --set-metadata work_dir=<absolute worktree path>`",
+            prepare,
+        )
+        self.assertNotIn("When `work_dir` equals `$GC_DIR`", flat_by_path["assets/workflows/do-work/implement.md"])
 
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

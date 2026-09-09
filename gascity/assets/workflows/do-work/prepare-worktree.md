@@ -22,9 +22,32 @@ setup only. Do not edit source files in the launcher checkout.
    lane, prepared by its `pre_start`: `git -C "$GC_DIR" rev-parse
    --is-inside-work-tree` prints `true` and `git -C "$GC_DIR" branch
    --show-current` prints a branch name, or the `pre_start` log says so, and
-   `$GC_DIR` is not the rig root), this step creates nothing: set
-   `WORKTREE="$GC_DIR"` and continue at step 6. The lane is the isolated
-   worktree; the rig root stays a human checkout that no step touches.
+   `$GC_DIR` is not the rig root), this step creates nothing and hands no
+   directory to anyone: a lane is per agent (this one is the run operator's),
+   and the item's BRANCH is the handoff. Every worktree of the rig shares its
+   refs, so a branch made visible here is reachable from the implementation
+   worker's own lane.
+   - Resolve the item's branch: `BRANCH="$(git -C "$GC_DIR" branch
+     --show-current)"` is the branch `pre_start` put this lane on. If it
+     prints nothing (the lane is detached), use `BRANCH=<source-anchor-id>`
+     and create it from HEAD with `git -C "$GC_DIR" branch "$BRANCH" HEAD`
+     (reuse the branch when it already exists in the repository).
+   - Record the branch on the source anchor with
+     `gc bd update <source-anchor-id> --set-metadata gc.work_branch=<branch>`.
+     This overwrites a claim-time stamp (older `gc` builds stamp the rig
+     root's branch). For synthetic drain-unit convoys, stamp the original
+     drain member/source anchor, never the synthetic drain-unit convoy.
+   - Detach this lane from the branch with `git -C "$GC_DIR" switch --detach`.
+     git allows one worktree per branch, so detaching frees the branch for
+     the next role's lane; HEAD stays at the same commit and untracked files
+     (staged skills, hooks) stay in place.
+   - Verify before closing this step with `gc.outcome=pass`: the source
+     anchor's `gc.work_branch` equals `$BRANCH`, `git -C "$GC_DIR" rev-parse
+     --verify "refs/heads/$BRANCH"` succeeds, and `git -C "$GC_DIR" branch
+     --show-current` prints nothing.
+   Do NOT persist `work_dir` in the lane case: step 6 is skipped. A directory
+   is per agent and is never handed to another agent; the next role works in
+   its own lane on the recorded branch.
    Otherwise (the session started in the rig root; the role has no lane),
    continue with step 5.
 5. Create or reuse a deterministic git worktree at
