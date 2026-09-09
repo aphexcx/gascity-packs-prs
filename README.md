@@ -290,3 +290,4 @@ model-backed formula gate in `scripts/gascity_pack_inference_gate.py`, plus a
 scheduled supported-pack nightly workflow. See
 [Release Compatibility Testing](./docs/design/release-compatibility-testing.md)
 for the release-time and nightly test contract.
+Probe gp-0mvp (gascity-packs): role worker started in its gc-chosen lane, 2026-09-09.
