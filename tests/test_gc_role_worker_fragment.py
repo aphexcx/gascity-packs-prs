@@ -40,8 +40,6 @@ def test_workspace_section_sits_between_claim_and_close() -> None:
     workspace = text[workspace_at:close_at]
     assert "$GC_DIR" in workspace
     assert "worker-worktree.sh" in workspace
-    assert "<city>/.worktrees/<rig>/<bead>" in workspace
-    assert "check that branch out in the new worktree" in workspace
     assert "if `git branch --show-current` prints" in workspace
     assert "restamp it when they differ" in workspace
     assert "--set-metadata 'work_dir=<absolute worktree path>'" in workspace
@@ -50,8 +48,30 @@ def test_workspace_section_sits_between_claim_and_close() -> None:
 
 def test_workspace_section_never_names_the_rig_root_as_a_place_to_work() -> None:
     workspace = fragment().split("## Workspace", 1)[1].split("## Close", 1)[0]
-    assert "rig root and the rig forbids working there" in workspace
+    assert "never work in the rig root" in workspace
+    assert "the rig root is a human\ncheckout" in workspace
     assert "cd " not in workspace
+
+
+HUNTING_RULES = (
+    ".worktrees/<rig>/<bead>",
+    "create your\nown worktree",
+    "create your own worktree",
+    "If you start in the rig root",
+)
+
+
+def test_workers_never_choose_or_create_their_workspace() -> None:
+    """gc chooses the workspace (agent work_dir + pre_start); no role prompt
+    tells a worker to go and make its own worktree."""
+    workspace = fragment().split("## Workspace", 1)[1].split("## Close", 1)[0]
+    assert "You never pick, create, or hunt for\na workspace" in workspace
+    prompts = [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
+    assert len(prompts) > 1
+    for path in prompts:
+        text = path.read_text(encoding="utf-8")
+        for rule in HUNTING_RULES:
+            assert rule not in text, f"{path.relative_to(REPO_ROOT)} still tells the worker to hunt for a worktree: {rule!r}"
 
 
 def test_worker_worktree_script_is_shipped_and_executable() -> None:

@@ -54,17 +54,15 @@ or a failed claim command, follow the Claim section above instead.
 
 ## Workspace
 
-Work in the directory your session started in (`$GC_DIR`); gc materializes
-your skills and hooks there. When a `pre_start` prepared it as a git worktree
-(this pack's `worker-worktree.sh`), it is on a branch named for the claimed
+Work in the directory your session started in (`$GC_DIR`). gc chose it from
+the agent's `work_dir`, created it, ran the agent's `pre_start` in it, and
+materialized your skills and hooks there. You never pick, create, or hunt for
+a workspace, and you never work in the rig root: the rig root is a human
+checkout. When the `pre_start` was this pack's `worker-worktree.sh`, the
+directory is a git worktree of the rig on a branch named for the claimed
 bead, or detached (no trigger bead, or that branch is checked out in another
-worktree, WARN in the pre_start log): if `git branch --show-current` prints
+worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, create your branch in this directory before committing.
-
-If you start in the rig root and the rig forbids working there, create your
-own worktree outside it (`<city>/.worktrees/<rig>/<bead>`) from
-`origin/<default branch>`. If a branch named for the bead already exists,
-check that branch out in the new worktree instead of creating another.
 
 After the claim, compare the bead's `gc.work_branch` with your branch and
 restamp it when they differ (older `gc` builds stamp the rig root's branch).
