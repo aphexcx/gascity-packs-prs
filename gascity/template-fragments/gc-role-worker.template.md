@@ -24,6 +24,9 @@ Read its single JSON result:
   - `bead_id` as `CLAIMED_BEAD_ID`
   - `root_bead_id` as `CLAIMED_ROOT_BEAD_ID`
   - `continuation_group` as `CLAIMED_CONTINUATION_GROUP`
+  - A raw `gc hook --claim --drain-ack --json` line may omit `root_bead_id`
+    and `continuation_group` when they are empty; the claim wrapper prints
+    both. An absent key is an empty value, never a failed claim.
 - `action=drain`: already drain-acked. Exit now.
 - Non-zero exit or malformed result: report failure. Do not search, hand-repair
   assignment, or retry forever. Do not drain or mutate claim state; the command
@@ -48,6 +51,31 @@ recorded) and you have followed the Continue section below.
 This check applies to a bead returned by `action=work`. A failed bead is still
 closed, with its failure metadata set first (see Close). After `action=drain`
 or a failed claim command, follow the Claim section above instead.
+
+## Workspace
+
+Work in the directory your session started in (`$GC_DIR`); gc materializes
+your skills and hooks there. When a `pre_start` prepared it as a git worktree
+(this pack's `worker-worktree.sh`), it is on a branch named for the claimed
+bead, or detached (no trigger bead, or that branch is checked out in another
+worktree, WARN in the pre_start log): if `git branch --show-current` prints
+nothing, create your branch in this directory before committing.
+
+If you start in the rig root and the rig forbids working there, create your
+own worktree outside it (`<city>/.worktrees/<rig>/<bead>`) from
+`origin/<default branch>`. If a branch named for the bead already exists,
+check that branch out in the new worktree instead of creating another.
+
+After the claim, compare the bead's `gc.work_branch` with your branch and
+restamp it when they differ (older `gc` builds stamp the rig root's branch).
+Before closing a bead whose work continues elsewhere, stamp its workspace so
+the next session starts there:
+
+```bash
+gc bd update "$CLAIMED_BEAD_ID" \
+  --set-metadata 'work_dir=<absolute worktree path>' \
+  --set-metadata 'gc.work_branch=<branch>'
+```
 
 ## Close
 
