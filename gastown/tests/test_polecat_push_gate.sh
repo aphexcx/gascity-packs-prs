@@ -165,13 +165,14 @@ if '[ -z "$WORK_JSON" ]' not in body:
     # jq prints nothing for empty input and exits 0, so a dead ledger cannot be
     # caught on jq's exit status alone.
     problems.append("no explicit guard for an empty payload from the ledger read")
-# Four halts write halt_reason in this step: the push gate's three
-# (metadata_unreadable, auto_push_false, no_push_rail_unresolved) plus the
+# Five halts write halt_reason in this step: the push gate's three
+# (metadata_unreadable, auto_push_false, no_push_rail_unresolved), the
 # branch-content gate's single write of "$HALT_REASON", which carries either
-# no_commits or content_gate_error. The count is pinned, not floored, so a
-# fifth unaccounted halt -- or a deleted one -- still reports here.
-if body.count("halt_reason=") != 4:
-    problems.append("expected exactly four halt_reason writes, found %d" % body.count("halt_reason="))
+# no_commits or content_gate_error, and the refinery precondition's
+# base_branch_local_only. The count is pinned, not floored, so a sixth
+# unaccounted halt -- or a deleted one -- still reports here.
+if body.count("halt_reason=") != 5:
+    problems.append("expected exactly five halt_reason writes, found %d" % body.count("halt_reason="))
 if "ascii_downcase" not in body:
     # `False` and `no` are hand-written by humans following the mayor prompt;
     # reading them as "any other value -> explicit consent" fails open on the
