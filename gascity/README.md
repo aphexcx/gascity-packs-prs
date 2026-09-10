@@ -425,8 +425,9 @@ app install` is an install):
 
 - **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...)
   runs as is and touches no marker or lock.
-- **mutate** (`install`, `add`, `remove`, `update`, `link`, `prune`,
-  `dedupe`, `rebuild`, `patch`, ...) is the one path that changes
+- **mutate** (`install`, `ci`, `add`, `remove`, `update`, `link`, `prune`,
+  `dedupe`, `rebuild`, `patch`, `clean`, `purge`, ... every pnpm 11.20
+  built-in that can change `node_modules`) is the one path that changes
   `node_modules`: it runs in the caller's own directory (a workspace
   package stays that package, a relative `-C` resolves as typed) under the
   lane lock, with the marker invalidated first, and leaves it invalid. An
@@ -448,9 +449,10 @@ app install` is an install):
   requested check never runs against a half-installed tree) and never
   leaves an older lockfile's marker trusted.
 
-The lane is the nearest ancestor of the working directory holding
-`pnpm-lock.yaml` (for a first install with no lockfile yet, the working
-directory). A lock whose owner is dead is moved aside by rename (nothing
+The lane is the nearest ancestor holding `pnpm-lock.yaml` above the
+directory pnpm acts on, the last `-C`/`--dir` value resolved against the
+working directory or the working directory itself (for a first install
+with no lockfile yet, that directory). A lock whose owner is dead is moved aside by rename (nothing
 deleted), but only under a second, atomic reclaim lock and after re-reading
 it, so two waiters cannot both clear it and a waiter's fresh live lock is
 never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and
