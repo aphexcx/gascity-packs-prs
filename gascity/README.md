@@ -432,9 +432,10 @@ install:
   `dedupe`, `rebuild`, `clean`, `purge`, ... every pnpm 11.20 built-in that
   can change `node_modules`) runs where typed, arguments unchanged, under
   the lane lock, so it never overlaps another caller's install. A package
-  script named `clean`, `purge`, `rebuild`, `setup` or `deploy` wins over
-  the built-in for pnpm, so it is a project command here too, unless `pnpm
-  pm <name>` forces the built-in.
+  script named `clean`, `purge`, `rebuild` (`rb`), `setup` or `deploy` in
+  the manifest of the directory pnpm acts on wins over the built-in for
+  pnpm, so it is a project command here too, unless `pnpm pm <name>` forces
+  the built-in.
 - **project** (`run`, `exec`, `test`, a bare script or bin name, anything
   else) first makes sure the lane is in sync, then runs.
 
