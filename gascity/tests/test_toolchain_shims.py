@@ -40,14 +40,15 @@ FAKE_PNPM = r"""#!/bin/sh
 # built-ins and --lockfile-only leave the tree out of sync.
 printf '%s|%s|%s\n' "$(pwd -P)" "${pnpm_config_verify_deps_before_run-unset}" "$*" >> "$FAKE_PNPM_LOG"
 printf 'PATH0=%s\n' "${PATH%%:*}" >> "$FAKE_PNPM_LOG"
+start="$(pwd)"
 want=""
 for a in "$@"; do
-    if [ -n "$want" ]; then cd "$a" || exit 3; want=""; continue; fi
+    if [ -n "$want" ]; then cd "$start" && cd "$a" || exit 3; want=""; continue; fi
     case "$a" in
         -C|--dir|--prefix) want=1 ;;
-        -C=*) cd "${a#-C=}" || exit 3 ;;
-        --dir=*) cd "${a#--dir=}" || exit 3 ;;
-        --prefix=*) cd "${a#--prefix=}" || exit 3 ;;
+        -C=*) cd "$start" && cd "${a#-C=}" || exit 3 ;;
+        --dir=*) cd "$start" && cd "${a#--dir=}" || exit 3 ;;
+        --prefix=*) cd "$start" && cd "${a#--prefix=}" || exit 3 ;;
         --) break ;;
     esac
 done
@@ -70,8 +71,14 @@ case "$*" in
         exit 1 ;;
 esac
 first=""
+skip=""
 for a in "$@"; do
-    case "$a" in -*|recursive|multi|m|pm|with|current) ;; *) first="$a"; break ;; esac
+    if [ -n "$skip" ]; then skip=""; continue; fi
+    case "$a" in
+        -C|--dir|--prefix|-F|--filter|--loglevel|--reporter|with) skip=1 ;;
+        -*|recursive|multi|m|pm) ;;
+        *) first="$a"; break ;;
+    esac
 done
 case "$first" in
     install|i|ci|add|update|it|install-test)
@@ -474,7 +481,7 @@ class PnpmShimMutationTests(unittest.TestCase):
 
     def test_every_built_in_that_can_change_node_modules_holds_the_lock_and_pnpm_notices_afterwards(self) -> None:
         proj = self.fx.project()
-        for argv in (["clean"], ["purge"], ["pm", "clean"], ["with", "current", "clean"], ["recursive", "prune"], ["-r", "rebuild"], ["m", "dedupe"], ["remove", "x"], ["--loglevel", "warn", "purge"]):
+        for argv in (["clean"], ["purge"], ["pm", "clean"], ["with", "current", "clean"], ["recursive", "prune"], ["-r", "rebuild"], ["m", "dedupe"], ["remove", "x"], ["--reporter=silent", "purge"]):
             self.fx.run("pnpm", "exec", "vitest", cwd=proj)
             self.assertTrue(in_sync(proj))
             self.fx.reset()
