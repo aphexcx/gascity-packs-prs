@@ -25,11 +25,14 @@
 #                  runs as is, touches no marker or lock.
 #        mutate  — changes node_modules (`install`, `add`, `remove`,
 #                  `update`, `link`, `prune`, `dedupe`, `rebuild`, ...):
-#                  runs under the lane lock with the marker invalidated
-#                  first; on success the marker records the sha256 of the
-#                  lockfile the tree now matches (when one exists); on
-#                  failure the marker stays invalid, so the next project
-#                  command reinstalls rather than trusting a damaged tree.
+#                  runs in the caller's own directory (a workspace package
+#                  stays that package; a relative `-C` resolves as typed)
+#                  under the lane lock with the marker invalidated first,
+#                  and leaves it invalid: an explicit command certifies
+#                  nothing (`install --lockfile-only` writes a lockfile and
+#                  installs nothing; a failed one may have changed the tree),
+#                  so the next project command runs the frozen lane install,
+#                  a no-op of well under a second when the tree is in sync.
 #        project — runs project code (`run`, `exec`, `test`, `dlx`, a bare
 #                  script or bin name, anything else): first makes sure the
 #                  lane is installed for its lockfile, then runs.
@@ -37,8 +40,9 @@
 #      pnpm-lock.yaml; node_modules/.gc-lane-deps is the marker; a marker
 #      equal to the lockfile's sha256 means installed. Otherwise one caller
 #      takes node_modules/.gc-lane-deps.lock (mkdir), invalidates the marker,
-#      runs `pnpm install --frozen-lockfile` in the project, writes the
-#      marker on success and releases; every concurrent caller waits for the
+#      runs `pnpm install --frozen-lockfile` in the project root, writes the
+#      marker on success (the one command that certifies the whole tree
+#      against the lockfile) and releases; every concurrent caller waits for the
 #      lock, then re-reads the marker. A failed install fails the command
 #      (exit status of pnpm install): the requested command does not run.
 #      A lock whose owner pid is dead (or a zombie), or that has no owner
@@ -326,17 +330,20 @@ take_lane_lock() {
 }
 
 # --- the one path that changes node_modules ----------------------------------------
-# run_locked_mutation ARGS: with the lane lock held, invalidate the marker,
-# run pnpm ARGS with the lane bypass exported for its lifecycle scripts, and
-# on success record the lockfile the tree now matches. Returns pnpm's status.
+# run_locked_mutation DIR ARGS: with the lane lock held, invalidate the
+# marker, then run pnpm ARGS in DIR with the lane bypass exported for its
+# lifecycle scripts. Returns pnpm's status. The marker stays invalid: only
+# certify_lane, after a successful frozen install of the whole project,
+# writes a valid one.
 run_locked_mutation() {
+    dir="$1"
+    shift
     printf 'changing %s\n' "$$" > "$MARK"
-    status=0
-    (cd "$ROOT" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$ROOT" run_pnpm "$@") || status=$?
-    if [ "$status" -eq 0 ] && [ -f "$ROOT/pnpm-lock.yaml" ]; then
-        printf '%s\n' "$(sha256_of "$ROOT/pnpm-lock.yaml")" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
-    fi
-    return "$status"
+    (cd "$dir" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$ROOT" run_pnpm "$@")
+}
+
+certify_lane() {
+    printf '%s\n' "$(sha256_of "$ROOT/pnpm-lock.yaml")" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
 }
 
 KIND="$(command_kind "$@")"
@@ -361,7 +368,7 @@ case "$KIND" in
     mutate)
         take_lane_lock always
         status=0
-        run_locked_mutation "$@" || status=$?
+        run_locked_mutation "$(pwd -P)" "$@" || status=$?
         release_lock
         exit "$status"
         ;;
@@ -373,7 +380,8 @@ case "$KIND" in
             short="$(sha256_of "$ROOT/pnpm-lock.yaml" | cut -c1-12)"
             log "installing lane dependencies once for $ROOT (lockfile $short)"
             status=0
-            run_locked_mutation install --frozen-lockfile >&2 || status=$?
+            run_locked_mutation "$ROOT" install --frozen-lockfile >&2 || status=$?
+            [ "$status" -ne 0 ] || certify_lane
             release_lock
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi

@@ -140,20 +140,34 @@ class PnpmShimTests(unittest.TestCase):
             self.assertNotIn("installing lane dependencies", r.stderr)
         self.assertFalse((proj / "node_modules").exists())
 
-    def test_explicit_dependency_commands_run_once_under_the_lock_and_record_the_lockfile(self) -> None:
+    def test_explicit_dependency_commands_run_in_place_under_the_lock_and_certify_nothing(self) -> None:
         proj = self.fx.project()
+        pkg = proj / "packages" / "app"
+        pkg.mkdir(parents=True)
         marker = proj / "node_modules" / ".gc-lane-deps"
-        for argv in (["install"], ["install", "--frozen-lockfile"], ["add", "-D", "x"], ["--filter", "app", "install"]):
+        for argv, cwd in (
+            (["install"], proj),
+            (["install", "--lockfile-only"], proj),
+            (["add", "-D", "x"], pkg),          # a workspace package stays that package
+            (["--filter", "app", "install"], proj),
+            (["-C", "packages/app", "add", "y"], proj),
+        ):
             self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj)
+            r = self.fx.run("pnpm", *argv, cwd=cwd)
             self.assertEqual(r.returncode, 0, r.stderr)
-            # the explicit command itself, never a frozen install before it
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-            self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+            # the explicit command itself, in the caller's directory, never a frozen install before it
+            self.assertEqual(self.fx.calls(), [f"{cwd.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
             self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
-        # the tree the explicit install left matches the lockfile: no lane install follows
+        # an explicit command certifies nothing (`--lockfile-only` installs nothing):
+        # the next project command runs the frozen lane install, once, at the root
         self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.calls(), [f"{proj.resolve()}|false|install --frozen-lockfile", f"{pkg.resolve()}|false|exec vitest"])
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        self.fx.log.unlink(missing_ok=True)
+        self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
         self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["exec vitest"])
 
     def test_first_project_command_installs_once_and_records_the_lockfile_hash(self) -> None:
@@ -768,9 +782,9 @@ class PnpmShimGateRound3Tests(unittest.TestCase):
         for r in results:
             self.assertEqual(r.returncode, 0, r.stderr)
         argv = [c.split("|", 2)[2] for c in self.fx.calls()]
-        self.assertEqual(argv, ["install", "exec vitest"], argv)
+        self.assertEqual(argv, ["install", "install --frozen-lockfile", "exec vitest"], argv)
 
-    def test_first_install_in_a_directory_without_a_lockfile_records_the_lockfile_it_creates(self) -> None:
+    def test_first_install_in_a_directory_without_a_lockfile_makes_that_directory_the_lane(self) -> None:
         d = self.fx.root / "fresh"
         d.mkdir()
         (d / "package.json").write_text('{"name":"f","private":true}\n', encoding="utf-8")
@@ -785,6 +799,12 @@ class PnpmShimGateRound3Tests(unittest.TestCase):
         r = self.fx.run("pnpm", "install", cwd=d)
         self.assertEqual(r.returncode, 0, r.stderr)
         marker = d / "node_modules" / ".gc-lane-deps"
+        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(d / "pnpm-lock.yaml"))
+        # the lockfile it created is the lane's from now on: one frozen install certifies it
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "test", cwd=d)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "test"])
         self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(d / "pnpm-lock.yaml"))
 
     def test_pnpm_install_is_keyed_by_version(self) -> None:
