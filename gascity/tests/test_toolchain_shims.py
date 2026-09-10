@@ -206,6 +206,39 @@ class PnpmShimVerdictTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
+    def test_the_lane_is_the_workspace_root_even_with_per_package_lockfiles(self) -> None:
+        ws = self.fx.root / "ws"
+        ws.mkdir()
+        (ws / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\nsharedWorkspaceLockfile: false\n", encoding="utf-8")
+        (ws / "package.json").write_text('{"name":"ws","private":true}\n', encoding="utf-8")
+        a = self.fx.project("ws/packages/a")
+        b = self.fx.project("ws/packages/b")
+        lock = ws / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            lock.mkdir(parents=True)
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            # both packages contend for the WORKSPACE lock, not their own lockfile directories
+            ra = self.fx.run("pnpm", "install", cwd=a, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            rb = self.fx.run("pnpm", "exec", "vitest", cwd=b, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        for r in (ra, rb):
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn(f"has held {lock.resolve()}", r.stderr)
+        self.assertFalse((a / "node_modules" / ".gc-lane-deps.lock").exists())
+        self.assertFalse((b / "node_modules" / ".gc-lane-deps.lock").exists())
+
+    def test_help_and_version_requests_run_as_is(self) -> None:
+        proj = self.fx.project()
+        for argv in (["run", "--help"], ["install", "--help"], ["exec", "-h"], ["add", "x", "--help"], ["-v"], ["--version", "run", "build"]):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists(), argv)
+
     def test_a_probe_error_that_is_not_a_verdict_runs_the_command_as_is(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_PROBE_ERROR="1", GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
