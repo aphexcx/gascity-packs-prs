@@ -5,6 +5,15 @@ summary evidence are present in that worktree. Write per-item summary to
 `gc.implementation.summary_path` from the preceding implementation step when it
 is present; otherwise use `{{artifact_root}}/task-<source-anchor-id>-summary.md`.
 
+When the source anchor has no `work_dir` and records `gc.work_branch`
+(`prepare-worktree` ran in a lane and handed the item over by branch), verify
+from your own lane instead: `git -C "$GC_DIR" log -1 <gc.work_branch>` shows
+the implementation commit (every worktree of the rig shares its refs) and the
+summary exists at the recorded summary path. Never enter another agent's lane
+to verify, and fail this step if the branch is missing from the repository. A
+persisted `work_dir` that names an agent lane (`.worktrees/<rig>/lane-*`) is
+invalid, whoever's it is: fail this step instead of entering it.
+
 On success, close only `<source-anchor-id>` with `gc.outcome=pass`. Include the
 verified commit and summary path in the source-anchor close reason. Read the
 source anchor back with `gc bd show <source-anchor-id> --json` and verify
