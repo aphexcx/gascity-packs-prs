@@ -2630,6 +2630,7 @@ class FormulaAssetTests(unittest.TestCase):
             "test_detach_at_commit_refuses_to_overwrite_an_ignored_file",
             "test_fix_lane_refreshes_the_recorded_commit_so_the_next_attempt_reviews_the_fix",
             "test_reviewer_in_the_rig_root_never_detaches_the_human_checkout",
+            "test_role_without_a_lane_in_a_rig_without_a_remote_gets_a_workspace_from_the_rig_head",
         ):
             with self.subTest(lifecycle_test=name):
                 self.assertIn(f"def {name}(", lifecycle)

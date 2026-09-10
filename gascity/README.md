@@ -218,8 +218,12 @@ choose, create, or hunt for a workspace, and the rig root stays a human
 checkout that no agent touches. A role the city gave no `work_dir` still
 starts in the rig root; the role prompt's one fallback then has it create
 `<city>/.worktrees/<rig>/<bead>` and mail the mayor for a lane, whatever the
-rig's own rules say. (The earlier prompt rule that keyed this on the rig's
-`AGENTS` rules forbidding root work is gone.)
+rig's own rules say. The fallback resolves its base the way the script does
+(the remote's default branch when the rig has a remote, whatever its name,
+else the rig checkout's `HEAD`), so a local-only rig, or one whose remote is
+not named `origin`, still gets a workspace, and the rig checkout's HEAD never
+moves. (The earlier prompt rule that keyed this on the rig's `AGENTS` rules
+forbidding root work is gone.)
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
 Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a
@@ -275,8 +279,11 @@ and any ancestor of it are refused up front. Runs on one repository are
 serialized by a lock in its git dir, so concurrent sessions cannot race on a
 branch or a lane. With a trigger bead it reuses the one branch whose name
 contains the bead id as a whole token (local or on the remote) or creates
-`<bead id>` from `origin/HEAD`; a branch checked out in another worktree is
-not stolen (the lane is left detached at its tip, with a WARN). Nothing is
+`<bead id>` from a resolved base: `<remote>/HEAD`, else `<remote>/main`, else
+`<remote>/master`, else the rig root's `HEAD` with a WARN (the remote is
+`origin` unless `--remote` names another; `--base` overrides); a branch
+checked out in another worktree is not stolen (the lane is left detached at
+its tip, with a WARN). Nothing is
 ever deleted: a lane with tracked modifications, or a non-empty directory
 that is not a git checkout, is moved to `<lane>.aside-<utc stamp>` first; a
 checkout of another repository is refused. Untracked files (materialized
