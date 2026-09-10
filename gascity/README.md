@@ -386,9 +386,12 @@ the wrapper asks pnpm read-only, in the directory pnpm will act on, with
 (`pnpm exec true`). pnpm's `checkDepsStatus` compares `node_modules` with
 the lockfile, every manifest, the workspace membership and the settings, and
 answers yes or no (a missing `node_modules` included); any other failure
-(a denied write to pnpm's workspace state file on a read-only lane, a
-broken manifest) is no verdict: one WARN and the command runs as is, never
-an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
+(a broken manifest; a denied write to pnpm's workspace state file on a
+read-only lane, which pnpm reports under the same error code with the file
+error as its reason, measured: `[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES:
+permission denied, open '…/.pnpm-workspace-state-v1.json.…'`, so a reason
+that is a system error code is no verdict either) is no verdict: one WARN
+and the command runs as is, never an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
 (the workspace root above the target, the nearest `pnpm-workspace.yaml`,
 because a workspace install writes every member's tree whatever
 `sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; under
