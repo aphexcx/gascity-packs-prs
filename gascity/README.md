@@ -437,8 +437,13 @@ app install` is an install):
   of well under a second when the tree is in sync) instead of trusting it.
 - **project** (`run`, `exec`, `test`, a bare script or bin name, anything
   else) first makes sure the lane is installed for its lockfile:
-  `node_modules/.gc-lane-deps` holds the sha256 of the lockfile the current
-  install was made from, and a match means no install. Otherwise one caller
+  `node_modules/.gc-lane-deps` holds the lane fingerprint the current
+  install was made from (one sha256 over `pnpm-lock.yaml`,
+  `pnpm-workspace.yaml`, `.npmrc`, `package.json` and every importer's
+  `package.json` the lockfile names), and a match means no install; a
+  dependency edited in a manifest without a lockfile update changes it, so
+  the next check runs the frozen install, which pnpm fails closed (outdated
+  lockfile) until the worker runs `pnpm install`. Otherwise one caller
   takes `node_modules/.gc-lane-deps.lock`, runs `pnpm install
   --frozen-lockfile` in the project root through the same mutate path,
   writes the marker on success (the one command that certifies the whole

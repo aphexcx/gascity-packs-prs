@@ -293,7 +293,7 @@ def test_readme_worker_toolchain_section_carries_the_recipe_and_the_decisions() 
         'test "$(md5 -q "$CITY/.gc/shims/toolchain/node")" = <that md5>',
         "`verify-deps-before-run` defaults to `install`",
         "`pnpm_config_verify_deps_before_run=false`",
-        "`node_modules/.gc-lane-deps` holds the sha256 of the lockfile",
+        "`node_modules/.gc-lane-deps` holds the lane fingerprint",
         "`node_modules/.gc-lane-deps.lock`",
         "`pnpm install --frozen-lockfile`",
         "concurrent callers wait for the lock and re-read the marker",
