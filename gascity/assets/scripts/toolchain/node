@@ -13,6 +13,9 @@
 #   3. NODE_VERSION in toolchain.env beside this file (plain KEY=VALUE, never
 #      evaluated).
 #   None: this wrapper is transparent and runs the next node/npm/npx on PATH.
+# The selected install's bin directory goes first on PATH before the
+# program runs, so npm and npx (`#!/usr/bin/env node` scripts) and every
+# script they run find the selected node, whatever PATH the caller had.
 # A major or major.minor resolves to the newest matching install under the
 # toolchain, else to the newest matching release in <dist>/index.json.
 #
@@ -360,4 +363,12 @@ if [ ! -x "$TARGET/bin/node" ]; then
 fi
 
 [ -x "$TARGET/bin/$NAME" ] || die "node v$VERSION under $TARGET has no bin/$NAME"
+# npm and npx are `#!/usr/bin/env node` scripts: they, and every script they
+# run, must find the selected node first on PATH, whatever PATH the caller
+# had (an absolute-path call with no node on PATH exited 127 before).
+case ":$PATH:" in
+    "$TARGET/bin:"*) ;;
+    *) PATH="$TARGET/bin:$PATH" ;;
+esac
+export PATH
 exec "$TARGET/bin/$NAME" "$@"

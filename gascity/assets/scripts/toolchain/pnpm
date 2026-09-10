@@ -111,7 +111,8 @@
 #      except that the chain of commands it runs inside
 #      (GC_TOOLCHAIN_LANE_DEPS_READER=<their pids>) is never waited for and
 #      is marked as upgrading (one mark per waiting descendant, named by
-#      its pid) while it waits for and holds the lock, so
+#      its pid, dropped before the lock is released on every way out) while
+#      it waits for and holds the lock, so
 #      other mutates pass those over (blocked in this child, they read
 #      nothing; two scripts each running a nested mutate would otherwise
 #      wait for each other for ever); a sibling (`pnpm run lint & pnpm
@@ -726,7 +727,10 @@ drop_upgrading() {
     done
     UPGRADE_MARKS=""
 }
-cleanup() { release_lock; drop_token; drop_upgrading; }
+# marks go before the lock on every way out: once the lock is free another
+# mutate may take it, and it must see this command's ancestors as readers
+# again by then (they resume the moment this child ends)
+cleanup() { drop_upgrading; release_lock; drop_token; }
 trap 'cleanup' EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
@@ -898,8 +902,8 @@ case "$KIND" in
         wait_for_readers
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
-        release_lock
         drop_upgrading
+        release_lock
         exit "$status"
         ;;
     project)
@@ -918,8 +922,8 @@ case "$KIND" in
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
         take_token
-        release_lock
         drop_upgrading
+        release_lock
         status=0
         GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="${ANCESTOR_TOKENS:+$ANCESTOR_TOKENS }$$" run_pnpm "$@" || status=$?
         drop_token

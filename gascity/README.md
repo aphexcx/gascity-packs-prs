@@ -477,7 +477,10 @@ lock after a re-read, the same shape as the pnpm lane lock, so two waiters
 never clear it twice and one tree is installed). When the pin cannot be installed (no network, the toolchain
 directory not writable as under a sandbox, a checksum mismatch, installs
 off), the wrapper prints one WARN and falls through to the next `node` on
-PATH, so a toolchain error strands no session. pnpm's own bin resolves
+PATH, so a toolchain error strands no session. The selected install's `bin`
+goes first on PATH before the program runs, so `npm` and `npx` (`#!/usr/bin/env
+node` scripts) find the selected node even when called by absolute path with
+no node on the caller's PATH. pnpm's own bin resolves
 `node` through PATH and the pnpm wrapper puts this directory first, so pnpm
 and every script it runs use the pinned Node.
 
