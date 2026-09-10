@@ -22,8 +22,14 @@
 # staged beside the target and moved into place by rename, under an
 # .installing-v<version> lock (mkdir, owner pid inside, released on exit and
 # on HUP/INT/TERM) that concurrent callers wait for; a lock whose owner is
-# dead, or that has had no owner for two minutes, is an interrupted install
-# and is moved aside by rename, never deleted, and retaken. When
+# dead (or a zombie), or that has had no owner for two minutes, is an
+# interrupted install and is moved aside by rename, never deleted, and
+# retaken, but only under a second, atomic reclaim lock
+# (.installing-v<version>.reclaim) and only after re-reading that it is
+# still the same stale lock, so two waiters that both saw the dead owner
+# cannot both clear it and a live lock (the first waiter's fresh one) is
+# never moved; a reclaim lock left behind for two minutes (a crash inside
+# the reclaim) is reported and the wrapper falls through. When
 # the pinned version is not installed and cannot be (the lock directory is
 # not writable, as under a sandbox; no network; a checksum mismatch; no
 # release matches), the wrapper prints one WARN line and falls through to
@@ -212,6 +218,55 @@ sha256_of() {
     fi
 }
 
+owner_is_dead() {
+    ! kill -0 "$1" 2>/dev/null && return 0
+    case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in
+        Z*) return 0 ;;
+    esac
+    return 1
+}
+
+# lock_is_stale: $lock exists and its owner is dead or a zombie, or it has
+# had no owner for over two minutes (a run died between mkdir and the pid
+# write; a live run publishes within milliseconds). Sets `owner`.
+lock_is_stale() {
+    [ -d "$lock" ] || return 1
+    owner="$(cat "$lock/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ]; then
+        owner_is_dead "$owner"
+    else
+        [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]
+    fi
+}
+
+# reclaim_stale_lock: move $lock aside if, under the reclaim lock, it is
+# still stale. 0 when something was moved; 1 otherwise (lost the reclaim
+# race, the lock turned out live or gone: wait on); 2 when the reclaim lock
+# itself is older than two minutes, a crash residue that is never removed
+# here (two contenders removing it would race exactly like the primary
+# lock): the caller falls through to the node on PATH.
+reclaim_stale_lock() {
+    reclaim="$lock.reclaim"
+    if ! mkdir "$reclaim" 2>/dev/null; then
+        if [ -n "$(find "$reclaim" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+            warn "stale reclaim lock $reclaim is older than two minutes; remove it by hand after checking no node install is alive"
+            return 2
+        fi
+        return 1
+    fi
+    [ -z "${GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM"
+    moved=1
+    if lock_is_stale; then
+        aside="$lock.stale-${owner:-nopid}-$$"
+        if mv "$lock" "$aside" 2>/dev/null; then
+            warn "moved aside an interrupted node v$VERSION install lock (owner pid ${owner:-none}) -> $aside"
+            moved=0
+        fi
+    fi
+    rmdir "$reclaim" 2>/dev/null || true
+    return "$moved"
+}
+
 install_node() {
     [ "$NODE_INSTALL" != "off" ] || { warn "node v$VERSION is not installed under $NODE_ROOT and installs are off"; return 1; }
     command -v curl >/dev/null 2>&1 || { warn "curl is required to install node v$VERSION"; return 1; }
@@ -233,17 +288,17 @@ install_node() {
             return 1
         fi
         # a lock whose owner is dead, or that has had no owner for two minutes,
-        # is an interrupted install: move it aside (nothing deleted) and retake
-        owner="$(cat "$lock/pid" 2>/dev/null || true)"
-        stale=0
-        if [ -n "$owner" ]; then
-            kill -0 "$owner" 2>/dev/null || stale=1
-        elif [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
-            stale=1
-        fi
-        if [ "$stale" -eq 1 ] && mv "$lock" "$lock.stale-${owner:-nopid}-$$" 2>/dev/null; then
-            warn "moved aside an interrupted node v$VERSION install lock (owner pid ${owner:-none})"
-            continue
+        # is an interrupted install: move it aside (nothing deleted) and
+        # retake, one reclaimer at a time, after a re-read under its lock
+        owner=""
+        if lock_is_stale; then
+            [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"
+            reclaimed=0
+            reclaim_stale_lock || reclaimed=$?
+            case "$reclaimed" in
+                0) continue ;;
+                2) return 1 ;;
+            esac
         fi
         [ -x "$TARGET/bin/node" ] && return 0
         [ "$waited" -lt 300 ] || { warn "node v$VERSION install by another caller (pid ${owner:-unknown}) did not complete"; return 1; }
