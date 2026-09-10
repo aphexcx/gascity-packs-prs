@@ -91,7 +91,9 @@ ref name (`git -C "$GC_DIR" for-each-ref --format='%(refname)' refs/heads`
 with `refs/heads/` removed, and `refs/remotes/origin` with
 `refs/remotes/origin/` removed and `HEAD` dropped); exactly one: `git -C
 "$GC_DIR" switch --no-overwrite-ignore <branch>` (`-c <branch> --track
-origin/<branch>` when it is only on `origin`); none: `git -C "$GC_DIR"
+refs/remotes/origin/<branch>` when it is only on `origin`: the start point by
+full ref, since a tag named `origin/<branch>` makes the bare form fail);
+none: `git -C "$GC_DIR"
 switch -c "$CLAIMED_BEAD_ID"`; several, or a refusal (another worktree holds
 it: `branch-held`, holder named from `git worktree list`): close the bead
 `gc.outcome=fail` and mail the mayor, never `--force`. Never write a fresh

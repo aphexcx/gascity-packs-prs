@@ -12,7 +12,8 @@ text fixes one lifecycle (gp-0mvp round 6, codex gate r5):
    the branch it fails closed with the holder named and forces nothing;
 4. a crashed writer's branch is released from that lane by the operator, never
    by another agent's step;
-5. close-source-anchor reads `git log -1 <branch>`.
+5. close-source-anchor reads `git log -1 refs/heads/<branch>` (the full ref
+   since rule 11).
 
 Round 7 (codex gate r6) adds two rules the loop's LATER attempts depend on:
 
@@ -59,6 +60,26 @@ a re-launch depends on:
     the record differs. A recorded item branch is never overwritten by a
     fresh base branch, so the committed work is where the next writer's
     switch lands.
+
+Round 2 of gp-d6gd (the mayor's codex gate r1 on fork #34) adds the rule the
+tag scenario of rule 10 stopped short of:
+
+11. every read that resolves the item's branch NAME to a commit names the FULL
+    ref, `refs/heads/<branch>`. git resolves a bare name tag-first
+    (`refs/tags/<name>` before `refs/heads/<name>`), so with a tag of the
+    branch's name at the base, `git log -1 <branch>` / `git rev-parse
+    <branch>` / `git show <branch>` answer the BASE while `git switch
+    <branch>` still takes the branch: close-source-anchor would have verified
+    the base, the review setup would have recorded it as the commit under
+    review, every review lane would have inspected it, and the fix lane's
+    refresh would have re-recorded it. Only the branch operand of `git
+    switch`, which resolves branches alone, stays bare (codex r5 on this
+    round): a `--track` START POINT is a commit-ish, so the tracked take
+    starts from `refs/remotes/origin/<branch>` (a tag named `origin/<branch>`
+    makes the bare form fail "ambiguous object name"), and the fix lane's
+    refresh reads `rev-parse --verify HEAD` of the worktree it committed in,
+    which in the `work_dir` case is a detached per-item worktree with no item
+    branch to read.
 
 Every step below runs the exact git commands the formula text names, in real
 worktrees under a temporary directory, with no network. The static rows in
@@ -186,6 +207,13 @@ class Rig:
         self.run(lane, "switch", "--detach")
         assert out(lane, "branch", "--show-current") == ""
 
+    def close_verifies(self, lane: pathlib.Path, branch: str = ITEM_BRANCH) -> str:
+        """close-source-anchor, from ITS OWN lane (rules 5 and 11): the
+        implementation commit is the branch's tip, read by FULL ref
+        (`git -C "$GC_DIR" log -1 "refs/heads/<gc.work_branch>"`); a bare
+        name would answer a tag of the same name first."""
+        return out(lane, "log", "-1", "--format=%H", f"refs/heads/{branch}")
+
     # --- rule 10 (gate r9): a re-launched item keeps its branch, found by NAME ---
 
     WORK_BRANCH_KEY = "gc.work_branch"
@@ -254,7 +282,7 @@ class Rig:
         if where == "local":
             took = self.run(lane, "switch", "--no-overwrite-ignore", branch, check=False)
         elif where == "remote":
-            took = self.run(lane, "switch", "--no-overwrite-ignore", "-c", branch, "--track", f"origin/{branch}", check=False)
+            took = self.run(lane, "switch", "--no-overwrite-ignore", "-c", branch, "--track", f"refs/remotes/origin/{branch}", check=False)
         else:
             took = self.run(lane, "switch", "--no-overwrite-ignore", "-c", branch, check=False)
         if took.returncode != 0:
@@ -294,13 +322,15 @@ class Rig:
         branch's commit, the changed files), and `gc.review_commit` on EACH
         source anchor (the anchors' metadata modelled as a dict per anchor id:
         the bead store is not part of this test). Nothing is recorded on the
-        workflow root. The branch is named for the source anchor."""
+        workflow root. The branch is named for the source anchor, and its
+        commit is read by FULL ref (rule 11): a bare name would answer a tag
+        of the same name first."""
         context = self.root / "artifacts" / "code-review-context.md"
         context.parent.mkdir(parents=True, exist_ok=True)
         records = []
         anchor_metadata: dict[str, dict[str, str]] = {}
         for anchor in anchors:
-            commit_id = out(lane, "rev-parse", anchor)
+            commit_id = out(lane, "rev-parse", "--verify", f"refs/heads/{anchor}")
             changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", commit_id)
             records.append(f"anchor: {anchor}\nbranch: {anchor}\ncommit: {commit_id}\nchanged_files: {changed}\n")
             anchor_metadata[anchor] = {self.REVIEW_COMMIT_KEY: commit_id}
@@ -339,8 +369,15 @@ class Rig:
         """apply-review-findings, after its fix commit and BEFORE the release:
         rewrite the commit id and changed files in the record of the source
         anchor it committed on, then record the new commit on that anchor.
-        Every other anchor's record and key are left untouched."""
-        new_commit = out(lane, "rev-parse", "HEAD")
+        Every other anchor's record and key are left untouched. The new
+        commit is HEAD of the worktree the fix was committed in (rule 11,
+        codex r5): in the lane case that lane still holds the branch, so it
+        is the branch's tip by FULL ref; a per-item `work_dir` worktree is
+        detached and has no item branch to read."""
+        new_commit = out(lane, "rev-parse", "--verify", "HEAD")
+        held = out(lane, "branch", "--show-current")
+        if held:
+            assert new_commit == out(lane, "rev-parse", "--verify", f"refs/heads/{held}"), "the fix lane holds the branch it refreshes"
         changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", new_commit)
         blocks = context.read_text(encoding="utf-8").split("\n\n")
         for index, block in enumerate(blocks):
@@ -471,9 +508,9 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(out(operator, "branch", "--show-current"), "")
 
         # close-source-anchor / review setup read the commit by branch (rule 5).
-        recorded = out(reviewer_a, "rev-parse", ITEM_BRANCH)
+        recorded = out(reviewer_a, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}")
         self.assertEqual(recorded, impl_commit)
-        self.assertEqual(out(reviewer_a, "log", "-1", "--format=%H", ITEM_BRANCH), impl_commit)
+        self.assertEqual(rig.close_verifies(reviewer_a), impl_commit)
 
         # TWO reviewers detach at the recorded commit at the same time (rule 2).
         procs = [rig.reader_detaches(reviewer_a, recorded), rig.reader_detaches(reviewer_b, recorded)]
@@ -497,7 +534,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertIsNone(rig.holder_of(ITEM_BRANCH))
 
         # The close reads the branch tip: the fix commit, on top of the implementation.
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
         self.assertEqual(out(operator, "rev-parse", f"{fix_commit}^"), impl_commit)
         # Reviewers still sit at the commit they inspected; nothing moved under them.
         for reviewer in (reviewer_a, reviewer_b):
@@ -551,7 +588,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(rig.holder_of(ITEM_BRANCH), str(fix))
         fix_commit = commit(fix, "feature.txt", "implemented\nfixed\n", "fix")
         rig.writer_releases(fix)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
         self.assert_rig_root_untouched()
 
     def test_detach_at_commit_refuses_to_overwrite_an_ignored_file(self) -> None:
@@ -637,7 +674,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(rig.context_commit(context, ITEM_BRANCH), commit_b)
         self.assertIn("changed_files: feature.txt feature_test.txt", " ".join(context_text.split()))
         self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], commit_b)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), commit_b)
+        self.assertEqual(rig.close_verifies(operator), commit_b)
 
         # Attempt 2: a reader reads B, not A: from the anchor's key first ...
         current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
@@ -678,7 +715,7 @@ class LaneLifecycleTests(unittest.TestCase):
         rig.writer_takes(implement)
         commit_a = commit(implement, "feature.txt", "implemented\n", "implement")
         rig.writer_releases(implement)
-        recorded = out(implement, "rev-parse", ITEM_BRANCH)
+        recorded = out(implement, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}")
         self.assertEqual(recorded, commit_a)
 
         # Positive proof: a real lane passes all three parts.
@@ -823,8 +860,8 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertNotIn(a1, context_text)
         self.assertIn(a2, context_text)
         self.assertEqual(rig.context_records(context)[item_2]["changed_files"], "two.txt")
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_1), b1)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_2), a2)
+        self.assertEqual(rig.close_verifies(operator, item_1), b1)
+        self.assertEqual(rig.close_verifies(operator, item_2), a2)
 
         # Attempt 2: each reader reads ITS anchor's commit and inspects that revision.
         current_1 = rig.reader_reads_current_commit(context, anchors, item_1)
@@ -931,7 +968,7 @@ class LaneLifecycleTests(unittest.TestCase):
         continued = commit(implement_2, "feature.txt", "implemented\nmore\n", "implement, continued")
         rig.writer_releases(implement_2)
         self.assertEqual(out(operator, "rev-parse", f"{continued}^"), impl_commit)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", anchor["gc.work_branch"]), continued)
+        self.assertEqual(rig.close_verifies(operator, anchor["gc.work_branch"]), continued)
         # Round 9 recorded the fresh step branch instead: its tip is the base, without the file.
         self.assertNotEqual(git(rig.rig, "cat-file", "-e", "gp-step7:feature.txt", check=False).returncode, 0)
 
@@ -993,7 +1030,7 @@ class LaneLifecycleTests(unittest.TestCase):
         result = rig.operator_resolves_branch(operator, anchor)
         self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "new", "branch": ITEM_BRANCH, "recorded": True})
         self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
-        self.assertEqual(out(operator, "rev-parse", ITEM_BRANCH), rig.main_sha)
+        self.assertEqual(out(operator, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), rig.main_sha)
         self.assertEqual(out(operator, "rev-parse", "kept/other"), impl_commit)  # untouched
         implement_2 = rig.lane("implementation-worker-2", step="gp-step10")
         rig.writer_takes(implement_2, anchor["gc.work_branch"])
@@ -1033,8 +1070,11 @@ class LaneLifecycleTests(unittest.TestCase):
         """Rule 10, the two takes codex r2 asked to see run. Remote-only: the
         item's branch was pushed and the local name is gone; the enumeration
         finds it under `origin/` (prefix stripped from the remote namespace
-        only), the lane takes it with `switch -c --track origin/<branch>`,
-        the work is present and the record is the unprefixed local name. An
+        only), the lane takes it with `switch -c --track
+        refs/remotes/origin/<branch>` (codex r5: a tag named
+        `origin/<branch>` at the base makes the bare start point ambiguous
+        and git refuse; the full ref is the branch), the work is present and
+        the record is the unprefixed local name. An
         ignored file in the operator lane that the branch tracks makes git
         refuse; the step fails closed quoting git and naming NO holder (there
         is none), records nothing, and the lane and the file are as they were."""
@@ -1053,13 +1093,21 @@ class LaneLifecycleTests(unittest.TestCase):
         git(rig.rig, "push", "--quiet", "origin", ITEM_BRANCH)
         rig.run(operator, "branch", "-m", ITEM_BRANCH, "kept/other")  # the local name is gone; origin still has it
         self.assertEqual(rig.branch_exists(operator, ITEM_BRANCH), "remote")
+        git(rig.rig, "tag", f"origin/{ITEM_BRANCH}", rig.main_sha)  # a tag named like the remote-tracking ref, at the base
+        # The hazard (codex r5): the bare start point is ambiguous, git refuses.
+        hazard = rig.lane("run-operator-3", step="gp-step9")
+        bare = git(hazard, "switch", "--no-overwrite-ignore", "-c", "hazard-take", "--track", f"origin/{ITEM_BRANCH}", check=False)
+        self.assertNotEqual(bare.returncode, 0)
+        self.assertIn("ambiguous", bare.stderr)
+        self.assertEqual(out(hazard, "branch", "--show-current"), "gp-step9")
+        self.assertEqual(git(hazard, "rev-parse", f"origin/{ITEM_BRANCH}").stdout.strip(), rig.main_sha)  # the tag
 
         rig.pre_start(operator, "gp-step7")
         result = rig.operator_resolves_branch(operator, anchor)
         self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": False})
         self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
         self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
-        self.assertEqual(out(operator, "rev-parse", "--abbrev-ref", f"{ITEM_BRANCH}@{{upstream}}"), f"origin/{ITEM_BRANCH}")
+        self.assertEqual(out(operator, "rev-parse", "--symbolic-full-name", f"{ITEM_BRANCH}@{{upstream}}"), f"refs/remotes/origin/{ITEM_BRANCH}")
         self.assertEqual((operator / "build.out").read_text(encoding="utf-8"), "tracked\n")
 
         # The ignored-file refusal: a second operator lane has an ignored
@@ -1118,7 +1166,7 @@ class LaneLifecycleTests(unittest.TestCase):
                 self.assertEqual(result["branch"], ITEM_BRANCH)
                 self.assertEqual(result["chosen_by"], "new" if index == 0 else "name")
                 self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
-                self.assertEqual(out(rig.rig, "rev-parse", stamp), rig.main_sha)  # nothing landed on it
+                self.assertEqual(out(rig.rig, "rev-parse", "--verify", f"refs/heads/{stamp}"), rig.main_sha)  # nothing landed on it
                 self.assertEqual(out(rig.rig, "branch", "--show-current"), rig_root_on)
         git(rig.rig, "switch", "--quiet", "main")
         self.assert_no_contention()
@@ -1153,6 +1201,124 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assert_no_contention()
         self.assert_rig_root_untouched()
 
+    def test_a_tag_at_the_base_never_redirects_review_from_the_branch_tip(self) -> None:
+        """Rule 11 (round 2, the mayor's codex gate r1 on fork #34). Round 1's
+        listing keeps the branch's NAME beside a tag of the same name, but
+        the consumers of `gc.work_branch` then resolved that name bare, and
+        git resolves a bare name tag-first: with the tag at the base, the
+        review setup would have recorded the base as the commit under review,
+        every review lane would have inspected it, close-source-anchor would
+        have verified it, and the fix lane's refresh would have re-recorded
+        it. Every such read names `refs/heads/<branch>`; `git switch`
+        resolves branches only and keeps the bare name. The hazard is shown
+        first, on the same repository, then the lifecycle runs through
+        review-commit recording with the tag in place."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+
+        git(rig.rig, "tag", ITEM_BRANCH, rig.main_sha)  # a tag with the branch's name, at the base
+        self.assertEqual(rig.item_branches(ITEM_BRANCH), [ITEM_BRANCH])  # round 1: the name survives
+
+        # The hazard: a bare name is the TAG (git checks refs/tags before refs/heads) ...
+        for bare in (
+            ("rev-parse", ITEM_BRANCH),
+            ("log", "-1", "--format=%H", ITEM_BRANCH),
+            ("show", "-s", "--format=%H", ITEM_BRANCH),
+        ):
+            with self.subTest(bare=bare[0]):
+                read = git(operator, *bare)
+                self.assertEqual(read.stdout.strip(), rig.main_sha)
+                self.assertIn("ambiguous", read.stderr)
+        # ... the full ref is the branch, and `git switch` resolves branches only.
+        self.assertEqual(out(operator, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(operator, "log", "-1", "--format=%H", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(operator, "show", "-s", "--format=%H", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+
+        # close-source-anchor verifies the IMPLEMENTATION commit from its own lane.
+        self.assertEqual(rig.close_verifies(operator), impl_commit)
+
+        # setup-build-basic-review records the branch TIP as the commit under review.
+        setup = rig.lane("run-operator-2", step="gp-step3")
+        context, anchors = rig.setup_records(setup, [ITEM_BRANCH])
+        self.assertEqual(anchors, {ITEM_BRANCH: {"gc.review_commit": impl_commit}})
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), impl_commit)
+        self.assertNotIn(rig.main_sha, context.read_text(encoding="utf-8"))
+
+        # A review lane detaches at the recorded commit and sees the implementation.
+        reviewer = rig.lane("implementation-reviewer-1", step="gp-step4")
+        current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
+        self.assertEqual(current, impl_commit)
+        proc = rig.reader_detaches(reviewer, current)
+        _, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(out(reviewer, "rev-parse", "HEAD"), impl_commit)
+        self.assertEqual((reviewer / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+
+        # apply-review-findings: the bare `switch <branch>` lands on the BRANCH at
+        # the implementation, the fix advances it, the refresh records the fixed tip.
+        fix = rig.lane("implementation-worker-2", step="gp-step5")
+        rig.writer_takes(fix)
+        self.assertEqual(out(fix, "branch", "--show-current"), ITEM_BRANCH)
+        self.assertEqual(out(fix, "rev-parse", "HEAD"), impl_commit)
+        fix_commit = commit(fix, "feature.txt", "implemented\nfixed\n", "fix")
+        refreshed = rig.fix_lane_refreshes(fix, context, anchors, ITEM_BRANCH)
+        rig.writer_releases(fix)
+        self.assertEqual(refreshed, fix_commit)
+        self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], fix_commit)
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
+        # The tag never moved, and a bare read would still answer the base.
+        self.assertEqual(out(operator, "rev-parse", f"refs/tags/{ITEM_BRANCH}"), rig.main_sha)
+        self.assertEqual(git(operator, "rev-parse", ITEM_BRANCH).stdout.strip(), rig.main_sha)
+        self.assertNotIn(rig.main_sha, context.read_text(encoding="utf-8"))
+
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_fix_in_a_per_item_worktree_refreshes_its_own_head_not_a_branch(self) -> None:
+        """Rule 11, codex r5 finding 1. The refresh applies in the `work_dir`
+        case too: the per-item worktree is detached at the fix commit and has
+        no item branch to read, so the new commit id is `rev-parse --verify
+        HEAD` of the worktree the fix was committed in. A branch named for
+        the anchor at another commit and a tag of that name at the base
+        change nothing, and there is no branch to release."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+        setup = rig.lane("run-operator-2", step="gp-step3")
+        context, anchors = rig.setup_records(setup, [ITEM_BRANCH])
+        git(rig.rig, "tag", ITEM_BRANCH, rig.main_sha)
+
+        # The work_dir case: a per-item worktree, detached at the recorded commit, shared with no one.
+        item_worktree = rig.root / "worktrees" / ITEM_BRANCH
+        git(rig.rig, "worktree", "add", "--quiet", "--detach", str(item_worktree), impl_commit)
+        self.assertEqual(out(item_worktree, "branch", "--show-current"), "")
+        fix_commit = commit(item_worktree, "feature.txt", "implemented\nfixed\n", "fix in the per-item worktree")
+        refreshed = rig.fix_lane_refreshes(item_worktree, context, anchors, ITEM_BRANCH)
+        self.assertEqual(refreshed, fix_commit)
+        self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], fix_commit)
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), fix_commit)
+        # Neither the branch (still at the implementation) nor the tag (the base) was read.
+        self.assertEqual(out(rig.rig, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(rig.rig, "rev-parse", f"refs/tags/{ITEM_BRANCH}"), rig.main_sha)
+        self.assertNotIn(impl_commit, context.read_text(encoding="utf-8"))
+        self.assertEqual(out(item_worktree, "branch", "--show-current"), "")  # nothing to release
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
     def test_claim_without_a_trigger_bead_takes_the_beads_existing_branch(self) -> None:
         """Rule 10, codex r3, the role fragment's no-trigger case. A pooled
         worker's `pre_start` had no trigger bead and left the lane detached at
@@ -1182,7 +1348,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(out(pooled, "rev-parse", "HEAD"), work)
         self.assertEqual((pooled / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
         more = commit(pooled, "feature.txt", "implemented\nmore\n", "continue on the bead's branch")
-        self.assertEqual(out(rig.rig, "rev-parse", "fix/gp-item1-x"), more)
+        self.assertEqual(out(rig.rig, "rev-parse", "--verify", "refs/heads/fix/gp-item1-x"), more)
         self.assertEqual(out(rig.rig, "rev-parse", f"{more}^"), work)
         self.assertEqual(rig.item_branches(bead), ["fix/gp-item1-x"])  # still exactly one
         self.assertNotEqual(git(pooled, "rev-parse", "--verify", "--quiet", "refs/heads/gp-item1", check=False).returncode, 0)

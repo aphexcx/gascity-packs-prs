@@ -44,7 +44,8 @@ command needs a checkout at the commit closes with `gc.outcome=fail`,
 fix: a `work_dir` for this role (README, Worker workspaces). Only when all
 three parts hold: `git -C "$GC_DIR" switch --detach --no-overwrite-ignore
 <commit>` (resolving the branch first with `git -C "$GC_DIR" rev-parse
-"<gc.work_branch>"` when the context carries only the branch; fail closed when
+--verify "refs/heads/<gc.work_branch>"`, the full ref, since a bare name
+resolves tag-first, when the context carries only the branch; fail closed when
 git refuses). A review lane never takes the branch itself: git allows one
 worktree per branch, only the writers hold it, and reviewers detached at one
 commit never contend.

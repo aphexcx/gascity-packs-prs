@@ -305,7 +305,14 @@ lifecycle: a lane holds the item's branch only while it is writing to it and
 releases it (`git switch --detach`) when it hands off, because git allows one
 worktree per branch; every reader inspects the recorded commit detached in its
 own lane (`git switch --detach <commit>`, `git show <commit>:<path>`), so
-parallel reviewers never contend and the fix lane finds the branch free. A
+parallel reviewers never contend and the fix lane finds the branch free.
+Every read that resolves the item's branch to a commit names the full ref,
+`refs/heads/<branch>` (`git log -1 "refs/heads/<branch>"`, `git rev-parse
+--verify "refs/heads/<branch>"`), never the bare name: git resolves a bare
+name tag-first, so a tag with the branch's name would send readers and review
+to the base instead of the implementation; only the branch operand of `git
+switch`, which resolves branches alone, stays bare, and a tracked take starts
+from `refs/remotes/origin/<branch>`. A
 branch left held by a crashed writer is released by the operator from that
 lane, never by another agent's step. Every lane, writer or reader, proves it
 is a lane before it switches or detaches anything (the three-part boundary

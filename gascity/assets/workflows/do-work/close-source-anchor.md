@@ -13,10 +13,14 @@ implementation commit, fail this step instead of closing the source anchor.
 
 When the source anchor has no `work_dir` and records `gc.work_branch`
 (`prepare-worktree` ran in a lane and handed the item over by branch), verify
-from your own lane instead: `git -C "$GC_DIR" log -1 <gc.work_branch>` shows
-the implementation commit (every worktree of the rig shares its refs) and the
+from your own lane instead: `git -C "$GC_DIR" log -1 "refs/heads/<gc.work_branch>"`
+shows the implementation commit (every worktree of the rig shares its refs;
+the FULL ref, never the bare name: git resolves a bare name tag-first, so a
+tag with the branch's name would show the tag's commit, the base, and this
+step would pass an item whose implementation it never looked at) and the
 summary exists at the recorded summary path. Never enter another agent's lane
-to verify, and fail this step if the branch is missing from the repository. A
+to verify, and fail this step if the branch is missing from the repository
+(`git -C "$GC_DIR" rev-parse --verify "refs/heads/<gc.work_branch>"` fails). A
 persisted `work_dir` that names an agent lane (`.worktrees/<rig>/lane-*`) is
 invalid, whoever's it is: fail this step instead of entering it.
 

@@ -99,7 +99,8 @@ setup only. Do not edit source files in the launcher checkout.
         "$BRANCH"` (this lane already on it, a retry of this step after the
         record and before the detach, is a no-op and counts as taken); a
         branch only on `origin`, `git -C "$GC_DIR" switch
-        --no-overwrite-ignore -c "$BRANCH" --track "origin/$BRANCH"`; a new
+        --no-overwrite-ignore -c "$BRANCH" --track
+        "refs/remotes/origin/$BRANCH"`; a new
         branch, `git -C "$GC_DIR" switch --no-overwrite-ignore -c "$BRANCH"`
         from HEAD (the base this lane's `pre_start` branch was cut from).
         Any refusal fails this step closed, creates nothing and records
@@ -149,17 +150,32 @@ setup only. Do not edit source files in the launcher checkout.
      `git -C "$GC_DIR" switch --detach`, after its final commit and before it
      closes its step; every writer releases the branch the same way when it
      hands off. HEAD stays at the commit, so nothing is lost: the next step
-     reads the commit by branch name.
+     reads the commit by the branch's full ref.
    - A reader (close-source-anchor, the review setup, the acceptance,
      simplicity and test-evidence lanes) never takes the branch: it reads the
-     branch's commit with `git log -1` / `git show`, or detaches its own lane
-     at that commit (`git switch --detach --no-overwrite-ignore <commit>`) to
-     run commands there, after the same boundary test above that every
-     writer applies. A reader whose `$GC_DIR` fails it (a role with no
-     `work_dir` starts in the rig root, the human checkout) detaches nothing
-     and reads by `git show` and `git log` only. Readers detached at one
-     commit never contend, however many run in parallel, and never block the
-     next writer.
+     branch's commit with `git log -1 "refs/heads/<branch>"` / `git show`, or
+     detaches its own lane at that commit (`git switch --detach
+     --no-overwrite-ignore <commit>`) to run commands there, after the same
+     boundary test above that every writer applies. A reader whose `$GC_DIR`
+     fails it (a role with no `work_dir` starts in the rig root, the human
+     checkout) detaches nothing and reads by `git show` and `git log` only.
+     Readers detached at one commit never contend, however many run in
+     parallel, and never block the next writer.
+   - Every read that resolves the branch NAME to a commit (`git log -1`,
+     `git rev-parse`, `git show`: close-source-anchor's verification, the
+     commit the review setup records, a review lane resolving a branch the
+     context carries, the fix lane's refresh) names the FULL ref,
+     `refs/heads/<branch>` (`refs/remotes/origin/<branch>` for a branch that
+     is only on `origin`), never the bare name: git resolves a bare name
+     tag-first (`refs/tags/<name>` before `refs/heads/<name>`), so a tag with
+     the branch's name, at the base, would send every reader to the base and
+     review would inspect and record the base instead of the implementation,
+     while the listing above still finds the branch. Only the branch operand
+     of `git switch`, which resolves branches alone, stays bare; a tracked
+     take's start point is `refs/remotes/origin/<branch>`, because a
+     `--track` start point is a commit-ish, not a branch lookup, and a tag
+     named `origin/<branch>` makes the bare form fail "ambiguous object
+     name" (a spurious failure of a resumable item).
    - A writer that commits after a commit was recorded for readers (the
      review fix lane, after the review setup recorded the commit it reviews)
      refreshes the recorded commit before it releases the branch: this
