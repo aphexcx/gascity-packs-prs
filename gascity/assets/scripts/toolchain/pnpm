@@ -110,7 +110,8 @@
 #      other, its own token for a project command, the lock for a mutate,
 #      except that the chain of commands it runs inside
 #      (GC_TOOLCHAIN_LANE_DEPS_READER=<their pids>) is never waited for and
-#      is marked as upgrading while it waits for and holds the lock, so
+#      is marked as upgrading (one mark per waiting descendant, named by
+#      its pid) while it waits for and holds the lock, so
 #      other mutates pass those over (blocked in this child, they read
 #      nothing; two scripts each running a nested mutate would otherwise
 #      wait for each other for ever); a sibling (`pnpm run lint & pnpm
@@ -702,24 +703,26 @@ drop_token() {
     fi
 }
 # A command inside a running project command marks every token of the
-# chain it runs inside as upgrading (<token>.upgrading, this pid inside)
-# for as long as it waits for and holds the lane lock: those ancestors are
-# blocked in this child and read nothing, so a mutate waiting for readers
-# passes them over. Without the mark two scripts each running a nested
-# mutate wait for each other's parent for ever (the first child holds the
-# lock and waits for the second parent, whose child waits for the lock).
-# A mark whose pid is dead is a crashed child's and is dropped.
+# chain it runs inside as upgrading (<token>.upgrading.<this pid>, one
+# mark per waiting descendant, so two children of one command never touch
+# each other's) for as long as it waits for and holds the lane lock: those
+# ancestors are blocked in this child and read nothing, so a mutate
+# waiting for readers passes them over while any live mark stands.
+# Without the mark two scripts each running a nested mutate wait for each
+# other's parent for ever (the first child holds the lock and waits for
+# the second parent, whose child waits for the lock). A mark whose pid is
+# dead is a crashed child's and is dropped.
 UPGRADE_MARKS=""
 mark_upgrading() {
     UPGRADE_MARKS=""
     for anc in $ANCESTOR_TOKENS; do
-        m="$READERS/$anc.upgrading"
-        printf '%s\n' "$$" > "$m" 2>/dev/null && UPGRADE_MARKS="$UPGRADE_MARKS $m"
+        m="$READERS/$anc.upgrading.$$"
+        : > "$m" 2>/dev/null && UPGRADE_MARKS="$UPGRADE_MARKS $m"
     done
 }
 drop_upgrading() {
     for m in $UPGRADE_MARKS; do
-        [ "$(cat "$m" 2>/dev/null || true)" != "$$" ] || rm -f "$m" 2>/dev/null || true
+        rm -f "$m" 2>/dev/null || true
     done
     UPGRADE_MARKS=""
 }
@@ -753,13 +756,18 @@ wait_for_readers() {
                 rm -f "$t" 2>/dev/null || true
                 continue
             fi
-            if [ -f "$t.upgrading" ]; then
-                up="$(cat "$t.upgrading" 2>/dev/null || true)"
-                if [ -n "$up" ] && ! owner_is_dead "$up"; then
-                    continue        # blocked in its own nested mutate (pid $up): reading nothing
+            upgrading=0
+            for m in "$t".upgrading.*; do
+                [ -e "$m" ] || continue
+                up="${m##*.}"
+                case "$up" in ''|*[!0-9]*) continue ;; esac
+                if owner_is_dead "$up"; then
+                    rm -f "$m" 2>/dev/null || true      # a crashed child's mark
+                else
+                    upgrading=1
                 fi
-                rm -f "$t.upgrading" 2>/dev/null || true
-            fi
+            done
+            [ "$upgrading" -eq 0 ] || continue      # blocked in a nested command of its own: reading nothing
             live="$live $rp"
         done
         [ -n "$live" ] || return 0

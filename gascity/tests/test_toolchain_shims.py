@@ -112,6 +112,7 @@ case "$first" in
         echo "fake pnpm: installed"
         exit 0 ;;
     clean|purge|prune|dedupe|rebuild|remove|rm|link|unlink|patch)
+        [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
         L="$(lane)"
         rm -f "$L/node_modules/.fake-state"
         echo "fake pnpm: mutated"
@@ -1211,7 +1212,7 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         # `pnpm run lint & pnpm rebuild; wait` inside a script: the rebuild waits for the
         # lint (its sibling's token), never for the script that runs both
         hook = self.fx.root / "lint-and-rebuild.sh"
-        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_RUN_SLEEP=3 "{self.fx.shims / "pnpm"}" exec lint & lp=$!\nsleep 0.5\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nwait "$lp"\n')
+        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_RUN_SLEEP=4 "{self.fx.shims / "pnpm"}" exec lint & lp=$!\nsleep 1.5\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nwait "$lp"\n')
         self.fx.run("pnpm", "exec", "vitest", cwd=proj)
         self.fx.reset()
         started = time.monotonic()
@@ -1222,6 +1223,34 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 3)
         self.assertLess(elapsed, 20)
         self.assertEqual(self.fx.argv(), ["exec vitest", "exec lint", "rebuild"])
+        self.assertEqual(sorted(readers.iterdir()), [])
+        # two nested rebuilds under one script at once, and a top-level rebuild meanwhile: each
+        # child carries its own mark, so the first to finish never unmarks the script while
+        # the other still waits, and the top-level rebuild never waits for that blocked script
+        hook2 = self.fx.root / "two-rebuilds.sh"
+        write_exec(hook2, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_SLEEP=2 "{self.fx.shims / "pnpm"}" rebuild & a=$!\nFAKE_PNPM_SLEEP=2 "{self.fx.shims / "pnpm"}" rebuild & b=$!\nwait "$a" && wait "$b"\n')
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        trio: dict[str, subprocess.CompletedProcess[str]] = {}
+
+        def script2() -> None:
+            trio["script"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook2), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+
+        def top_level() -> None:
+            time.sleep(1)
+            trio["top"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+
+        started = time.monotonic()
+        threads = [threading.Thread(target=script2), threading.Thread(target=top_level)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=90)
+        elapsed = time.monotonic() - started
+        self.assertEqual(trio["script"].returncode, 0, trio["script"].stderr)
+        self.assertEqual(trio["top"].returncode, 0, trio["top"].stderr)
+        self.assertLess(elapsed, 25)
+        self.assertEqual(sorted(self.fx.argv()), ["exec vitest", "rebuild", "rebuild", "rebuild"])
         self.assertEqual(sorted(readers.iterdir()), [])
         # a mutate inside a running project command (a test script that rebuilds) takes the
         # lock and waits for every reader but its ancestor: it runs inside the command...
