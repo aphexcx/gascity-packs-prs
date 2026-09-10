@@ -293,6 +293,75 @@ Two related core behaviors complete the picture:
   environment) or a command shim that prepends a directory of wrappers. The
   role prompt does not install package managers.
 
+## Codex provider shim
+
+A Codex session has no memory that tells it how to mint a secret-store token,
+so a city that gives its Codex role agents an Infisical machine identity mints
+the token at session start. An agent's `env` map is static and `pre_start`
+runs in its own process; the one city-side place a freshly minted value can
+enter the session environment is a provider `command` wrapper. This pack
+ships that wrapper as `assets/scripts/codex-infisical-shim.sh`: it sources
+`$HOME/.config/infisical-agent/token.sh` fail-open when `INFISICAL_TOKEN` is
+unset (a missing file is silent, a failing login leaves the token unset and
+prints one WARN, the session starts either way), then execs the real codex
+with argv intact. It never execs itself: every PATH entry that resolves to
+its own directory is removed first, and no codex left on PATH is an error
+(exit 127), never a loop. The token is never echoed.
+
+Install it as the city's shim, in its own directory (gc does not sync a
+pack's `assets/scripts` anywhere), with the per-city settings in a
+`codex.env` beside it; the environment overrides the file, the file is plain
+`KEY=VALUE` lines and never evaluated:
+
+```sh
+install -m 0755 path/to/gascity/assets/scripts/codex-infisical-shim.sh \
+  "$CITY/.gc/shims/codex-astra/codex"
+cat > "$CITY/.gc/shims/codex-astra/codex.env" <<'EOT'
+CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain
+CODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3
+EOT
+```
+
+`CODEX_SHIM_PATH_PREPEND` puts the city's toolchain wrappers first on PATH for
+the session and every child process, git hooks included; `CODEX_SHIM_EXEC` is
+the command line that runs the real codex when it is a pinned build rather
+than the `codex` on PATH. Both are optional.
+
+The provider runs the shim and the role agents select the provider. In
+`city.toml`, a provider over `builtin:codex` names the shim as its `command`
+and, because codex resumes by subcommand, its `resume_command`; each Codex
+role agent (an `agents/<name>/agent.toml`, one per rig) sets
+`provider = "codex-astra"` and carries the project id the Infisical CLI needs
+under a machine identity as `[env] INFISICAL_PROJECT_ID` (an id, not a
+secret):
+
+```toml
+# city.toml
+[providers.codex-astra]
+base = "builtin:codex"
+command = "/abs/path/to/city/.gc/shims/codex-astra/codex"
+resume_command = "/abs/path/to/city/.gc/shims/codex-astra/codex resume {{.SessionKey}}"
+
+# agents/implementation-worker-codex/agent.toml
+provider = "codex-astra"
+[env]
+INFISICAL_PROJECT_ID = "<project id>"
+```
+
+The installed copy is city runtime state; the file here is its source of
+record. A city verifies at each wake that the installed shim is this file,
+by md5 against the pack checkout at the installed pin:
+
+```sh
+test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = \
+     "$(md5 -q path/to/gascity/assets/scripts/codex-infisical-shim.sh)"
+```
+
+`gascity/tests/test_codex_infisical_shim.py` holds the contract: fail-open
+with token.sh absent, present and failing; argv intact; PATH pruned through
+symlinked and relative aliases; the self-exec refusals; the settings file
+never evaluated.
+
 ## Build Methodology Contract
 
 `build-base` is the virtual full-lifecycle workflow contract. It defines the
