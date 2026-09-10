@@ -118,6 +118,7 @@ case "$first" in
         exit 0 ;;
 esac
 [ -z "${FAKE_PNPM_RUN_SLEEP-}" ] || sleep "$FAKE_PNPM_RUN_SLEEP"
+if [ -n "${FAKE_PNPM_RUN_HOOK-}" ]; then $FAKE_PNPM_RUN_HOOK || exit 9; fi   # a script of the command re-entering the wrapper
 echo "fake pnpm ran: $*"
 """
 
@@ -1194,29 +1195,54 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         finally:
             holder.kill()
             holder.wait()
-        # a descendant of a running project command runs as is, its parent's token standing for it
+        # a project command inside a running project command runs as is, its ancestor's
+        # token standing for it
         self.fx.reset()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()))
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()), GC_TOOLCHAIN_LANE_DEPS_READER="1")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
-        # a lane whose node_modules refuses the lock refuses every mutate too: pnpm's yes runs, its no fails at once
+        # a mutate inside a running project command (a test script that rebuilds) takes the
+        # lock and waits for every reader but its ancestor: it runs inside the command...
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        started = time.monotonic()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="8")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(time.monotonic() - started, 8)
+        self.assertNotIn("still running", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
+        self.assertEqual(sorted(readers.iterdir()), [])
+        # ...and waits for a foreign reader, failing closed after LANE_DEPS_WAIT
+        holder = subprocess.Popen(["sleep", "60"])
+        try:
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            (readers / str(holder.pid)).write_text("", encoding="utf-8")
+            self.fx.reset()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn(f"still running (pid {holder.pid})", r.stderr)
+            self.assertEqual(self.fx.argv(), ["exec vitest"])      # the nested rebuild never ran
+        finally:
+            holder.kill()
+            holder.wait()
+            (readers / str(holder.pid)).unlink(missing_ok=True)
+        # a lane whose node_modules refuses the lock for this caller cannot be coordinated from
+        # here: the command fails closed at once whatever pnpm would say; LANE_DEPS=off runs it
         ro = self.fx.project("ro")
         self.fx.run("pnpm", "exec", "vitest", cwd=ro)
         (ro / "node_modules").chmod(0o555)
         try:
             self.fx.reset()
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(self.fx.argv(), ["exec vitest"])
-            (ro / "node_modules").chmod(0o755)
-            (ro / "node_modules" / ".fake-state").unlink()
-            (ro / "node_modules").chmod(0o555)
-            self.fx.reset()
+            started = time.monotonic()
             r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
             self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertLess(time.monotonic() - started, 20)
             self.assertIn("cannot create", r.stderr)
-            self.assertIn("out of sync", r.stderr)
-            self.assertEqual(self.fx.argv(), [])
+            self.assertIn("cannot be coordinated from here", r.stderr)
+            self.assertEqual(self.fx.all_calls(), [])
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro, GC_TOOLCHAIN_LANE_DEPS="off")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.fx.all_calls(), [f"{ro.resolve()}|false|exec vitest"])
         finally:
             (ro / "node_modules").chmod(0o755)
         # the new names: prefix/get/set/owners/peers/lane/change are informational, uni and runtime mutate

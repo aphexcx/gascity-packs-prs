@@ -105,9 +105,16 @@
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
 #      that resolves the same lane runs as info, never asking pnpm or
-#      waiting on its parent's lock; likewise a descendant of a running
+#      waiting on its parent's lock; a project command inside a running
 #      project command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) runs as is,
-#      its parent's token standing for it.
+#      its ancestor's token standing for it, while a mutate inside one
+#      takes the lock like any other and waits for every reader but that
+#      ancestor (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>). A lane whose
+#      node_modules refuses the lock for this caller (a sandbox) cannot be
+#      coordinated from here, another caller could change it under the
+#      command, so the command fails closed naming the refusal;
+#      GC_TOOLCHAIN_LANE_DEPS=off is the way to run there when the lane is
+#      this caller's alone.
 #   4. The wrapper's own directory goes first on PATH, so the node pnpm runs
 #      on (and every script it runs) is the toolchain's node when the city
 #      pinned one (see the node wrapper beside this file).
@@ -710,6 +717,7 @@ wait_for_readers() {
             [ -e "$t" ] || continue
             rp="${t##*/}"
             case "$rp" in ''|*[!0-9]*) continue ;; esac
+            [ "$rp" != "$ANCESTOR_TOKEN" ] || continue      # the command this one runs inside
             if owner_is_dead "$rp"; then
                 rm -f "$t" 2>/dev/null || true
             else
@@ -774,9 +782,10 @@ reclaim_stale_lock() {
 
 # take_lane_lock: hold $LOCK on return (0). Fails closed after LANE_DEPS_WAIT
 # seconds behind a live holder; returns 1 with LOCK_REFUSED set when the
-# lock cannot be made because node_modules refuses the write (a sandbox, a
-# read-only lane): with no lock there is nobody to wait for, and no mutate
-# can take that lock either, so the caller decides without it.
+# lock cannot be made because node_modules refuses the write for this
+# caller (a sandbox, a read-only lane): with no lock there is nobody to
+# wait for, and nothing this caller could hold against another that can
+# write, so every caller fails closed on it.
 LOCK_REFUSED=""
 take_lane_lock() {
     mkdir -p "$NM" 2>/dev/null || die "cannot create $NM (read-only here?)"
@@ -825,8 +834,13 @@ fi
 if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
+ANCESTOR_TOKEN=""
 if [ "${GC_TOOLCHAIN_LANE_DEPS_READING:-}" = "$LANE" ]; then
-    exec_pnpm "$@"     # a descendant of a running project command; its parent holds a reader token
+    # a descendant of a running project command: another project command
+    # runs as is, its ancestor's token standing for it; a mutate takes the
+    # lock like any other and waits for every reader but that ancestor
+    [ "$KIND" != project ] || exec_pnpm "$@"
+    ANCESTOR_TOKEN="${GC_TOOLCHAIN_LANE_DEPS_READER:-}"
 fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
@@ -846,13 +860,8 @@ case "$KIND" in
         # waited for first; a rebuild half done still reads as in sync to
         # pnpm), the command then runs holding a reader token, so no mutate
         # starts under it
-        if ! take_lane_lock; then
-            # the lane refuses the lock, so it refuses every mutate too: pnpm's
-            # answer stands on its own; a no cannot be installed here
-            [ "$(deps_status)" != stale ] \
-                || die "cannot create $LOCK ($LOCK_REFUSED) and pnpm says node_modules is out of sync; this command did not run"
-            exec_pnpm "$@"
-        fi
+        take_lane_lock \
+            || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, another caller could change node_modules under this command; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
         if [ "$(deps_status)" = stale ]; then
             wait_for_readers
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
@@ -863,7 +872,7 @@ case "$KIND" in
         take_token
         release_lock
         status=0
-        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" run_pnpm "$@" || status=$?
+        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="$$" run_pnpm "$@" || status=$?
         drop_token
         exit "$status"
         ;;
