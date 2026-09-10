@@ -66,10 +66,12 @@
 #      nothing (`exec true`). pnpm's checkDepsStatus compares node_modules
 #      with the lockfile, every manifest, the workspace membership and the
 #      settings, and answers yes (exit 0) or no (a VERIFY_DEPS_BEFORE_RUN
-#      error, node_modules missing included); any other failure (a denied
-#      write to pnpm's workspace state file on a read-only lane, a broken
-#      manifest) is not a verdict: one WARN and the command runs as is,
-#      never an install. Yes: the command runs. No: one
+#      error, node_modules missing included); any other failure (a broken
+#      manifest, a denied write to pnpm's workspace state file on a
+#      read-only lane, which pnpm reports under the same VERIFY code with
+#      the file error as its reason, measured) is not a verdict: one WARN
+#      and the command runs as is, never an install. Yes: the command
+#      runs. No: one
 #      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
 #      is the workspace root above TARGET, the nearest pnpm-workspace.yaml,
 #      since a workspace install writes every member's tree whatever
@@ -623,7 +625,20 @@ deps_status() {
         cd "$TARGET" && run_pnpm "$@" 2>&1
     )" && { printf 'insync\n'; return 0; }
     case "$probe_err" in
-        *VERIFY_DEPS_BEFORE_RUN*) printf 'stale\n' ;;
+        *VERIFY_DEPS_BEFORE_RUN*)
+            # pnpm reports a file error met inside its check under the same
+            # code (measured: `[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES:
+            # permission denied, open '…/.pnpm-workspace-state-v1.json.…'`
+            # when node_modules refuses the state refresh): a reason that is
+            # a system error code is no verdict either. pnpm's own reasons
+            # never start with one.
+            issue="$(printf '%s\n' "$probe_err" | sed -n 's/^.*ERR_PNPM_VERIFY_DEPS_BEFORE_RUN[]]* *//p' | sed -n '1p')"
+            case "$issue" in
+                E[A-Z0-9]*:\ *)
+                    warn "pnpm could not judge the lane at $TARGET (a file error inside its check), running as is: $(printf '%s\n' "$issue" | cut -c1-160)"
+                    printf 'unknown\n' ;;
+                *) printf 'stale\n' ;;
+            esac ;;
         *) warn "pnpm could not judge the lane at $TARGET, running as is: $(printf '%s\n' "$probe_err" | sed -n '1p' | cut -c1-160)"
            printf 'unknown\n' ;;
     esac
