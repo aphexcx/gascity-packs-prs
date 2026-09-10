@@ -20,12 +20,15 @@
 #      lane path below is the one path that installs.
 #   3. Every command is one of three kinds, decided by the first bare token
 #      after the global options and the prefixes pnpm accepts
-#      (`recursive`/`multi`/`m`, `pm`, `with <runtime>`); an option that
-#      takes a separate value (`--filter app`, `-C dir`) has that value
-#      skipped. The directory pnpm acts on, TARGET, is the last `-C`,
-#      `--dir` or `--prefix` value in pnpm's own option scope (the whole line
-#      for a built-in; for `run`/`exec` up to the script or bin name, whose
-#      own arguments are its own; a bare script name ends the scope), else
+#      (`recursive`/`multi`/`m`, `pm`, `with <runtime>`); which option
+#      swallows which token is pnpm's own option table (below, read from
+#      the pinned pnpm), never a guess: `--child-concurrency 1 install` and
+#      `--recursive false install` are installs. The directory pnpm acts
+#      on, TARGET, is the last `-C`, `--dir` or `--prefix` value in pnpm's
+#      own option scope (the whole line for a built-in; for `run` up to the
+#      script name, whose own arguments are its own; nothing after `exec`,
+#      `test` or `create`, whose next token is the bin or script name
+#      whatever it looks like; a bare script name ends the scope), else
 #      the working directory; `-w`/`--workspace-root` moves it to the
 #      workspace root above that. `--ignore-workspace` (pnpm's "treat this
 #      directory as a standalone project"; measured on 11.20: the flag,
@@ -225,63 +228,239 @@ script_defined() {
     node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).scripts)||{};process.exit(Object.prototype.hasOwnProperty.call(s,process.argv[2])?0:1)' "$TARGET/package.json" "$1" 2>/dev/null
 }
 
-# classify ARGS: sets KIND (info, mutate or project) and TARGET (see header).
-classify() {
-    KIND=info
-    TARGET="$(pwd -P)"
-    want_value=""
+# --- pnpm's own option table ----------------------------------------------------------
+# pnpm 11.20.0 finds its command with one nopt pass over these option types
+# (GLOBAL_OPTIONS + the `add` and `install` option types + filter/help/
+# recursive) and the universal shorthands (parse-cli-args, parseCliArgs);
+# the first token left over is the command. The tables and the rules below
+# are that pass, read from the pinned pnpm.mjs, so what this wrapper takes
+# for the command is what pnpm takes:
+#   - a boolean option swallows only a literal true/false after it (`color`
+#     also always/auto/never, `link-workspace-packages` also deep); an
+#     unknown option is a boolean unless written --name=value;
+#   - a string option swallows the next token unless it looks like an
+#     option (-x, --x); every other value type swallows the next token
+#     unless it is `--`;
+#   - --no-<name> negates a boolean; --name=value is `--name value`; a
+#     unique prefix of an option name is that option (`--ignore-w`); a
+#     shorthand is expanded first (`-C` → --dir, `-s` → --reporter=silent,
+#     `-rw` → --recursive --workspace-root, a unique prefix of a shorthand
+#     word such as `--verb` too), never when it spells an option name;
+#   - `--` (or any run of dashes alone) ends the options; so do the tokens
+#     create, exec and test (pnpm's escapeArgs): everything after them is
+#     positional, `exec`'s next token is the bin name whatever it looks like;
+#   - `run`/`run-script` (pnpm's specially escaped commands) keep taking
+#     pnpm's options up to the script name.
+OPTS_BOOL=" aggregate-output color config dangerously-allow-all-builds dev dry-run engine-strict fail-if-no-match fix-lockfile force frozen-lockfile frozen-store global help hoist ignore-pnpmfile ignore-scripts ignore-workspace ignore-workspace-root-check include-workspace-root link-workspace-packages lockfile lockfile-only merge-git-branch-lockfiles node-experimental-package-map offline optimistic-repeat-install optional parseable prefer-frozen-lockfile prefer-offline production recursive resolution-only runtime save save-dev save-exact save-optional save-peer save-prod save-workspace-protocol shamefully-hoist shared-workspace-lockfile side-effects-cache side-effects-cache-readonly stream strict-peer-dependencies trust-lockfile unsafe-perm update-checksums use-stderr verify-store-integrity virtual-store-only workspace workspace-root yes "
+OPTS_STRING=" cache-dir dir filter global-bin-dir global-dir global-pnpmfile lockfile-dir modules-dir noproxy npm-path pnpmfile reporter save-catalog-name save-prefix store-dir virtual-store-dir "
+OPTS_VALUE=" allow-build changed-files-ignore-pattern child-concurrency cpu fetch-retries fetch-retry-factor fetch-retry-maxtimeout fetch-retry-mintimeout fetch-timeout filter-prod hoist-pattern hoisting-limits https-proxy libc loglevel merge-git-branch-lockfiles-branch-pattern network-concurrency node-linker node-package-map-type only os package-import-method pm-on-fail pnpr-server prefix proxy public-hoist-pattern registry scripts-prepend-node-path test-pattern trust-policy trust-policy-exclude trust-policy-ignore-after workspace-packages "
+ALL_OPTS="$OPTS_BOOL$OPTS_STRING$OPTS_VALUE"
+# Once the command is known pnpm parses the line again with GLOBAL_OPTIONS
+# (help and recursive too) plus that command's own types; the wrapper reads
+# the directory, workspace and fix flags, and `run`'s script name, from
+# that second pass: `install`/`add` use the table above, `run` its own,
+# `audit` adds `fix`, every other command reads the globals and takes an
+# unknown option for a boolean.
+GLOBAL_BOOL=" aggregate-output color fail-if-no-match help ignore-workspace include-workspace-root parseable recursive stream use-stderr workspace-root yes "
+GLOBAL_STRING=" dir filter reporter "
+GLOBAL_VALUE=" changed-files-ignore-pattern filter-prod loglevel pm-on-fail prefix test-pattern workspace-packages "
+RUN_BOOL="$GLOBAL_BOOL bail if-present report-summary reporter-hide-prefix reverse sequential sort unsafe-perm "
+RUN_STRING="$GLOBAL_STRING resume-from "
+RUN_VALUE="$GLOBAL_VALUE scripts-prepend-node-path workspace-concurrency "
+AUDIT_BOOL="$GLOBAL_BOOL fix "
+PHASE=explore
+
+# phase_tables: sets T_BOOL, T_STRING, T_VALUE for PHASE.
+phase_tables() {
+    case "$PHASE" in
+        explore|install) T_BOOL="$OPTS_BOOL"; T_STRING="$OPTS_STRING"; T_VALUE="$OPTS_VALUE" ;;
+        run) T_BOOL="$RUN_BOOL"; T_STRING="$RUN_STRING"; T_VALUE="$RUN_VALUE" ;;
+        audit) T_BOOL="$AUDIT_BOOL"; T_STRING="$GLOBAL_STRING"; T_VALUE="$GLOBAL_VALUE" ;;
+        *) T_BOOL="$GLOBAL_BOOL"; T_STRING="$GLOBAL_STRING"; T_VALUE="$GLOBAL_VALUE" ;;
+    esac
+}
+
+# opt_canonical NAME: the option NAME names in the current phase's table,
+# exactly or as a unique prefix (nopt's abbrev); 1 when it names none or
+# several.
+opt_canonical() {
+    phase_tables
+    table="$T_BOOL$T_STRING$T_VALUE"
+    case "$table" in *" $1 "*) printf '%s\n' "$1"; return 0 ;; esac
+    hit=""
+    hits=0
+    for k in $table; do
+        case "$k" in "$1"*) hit="$k"; hits=$((hits + 1)) ;; esac
+    done
+    [ "$hits" -eq 1 ] || return 1
+    printf '%s\n' "$hit"
+}
+
+# opt_kind NAME: bool, string, value, or unknown, in the current phase's table.
+opt_kind() {
+    phase_tables
+    case "$T_BOOL" in *" $1 "*) printf 'bool\n'; return 0 ;; esac
+    case "$T_STRING" in *" $1 "*) printf 'string\n'; return 0 ;; esac
+    case "$T_VALUE" in *" $1 "*) printf 'value\n'; return 0 ;; esac
+    printf 'unknown\n'
+}
+
+# short_expand WORD: the universal shorthand WORD stands for (pnpm's
+# shorthands plus `r`), 1 when WORD is none.
+short_expand() {
+    case "$1" in
+        s|silent) printf '%s\n' '--reporter=silent' ;;
+        d) printf '%s\n' '--loglevel=info' ;;
+        dd|verbose) printf '%s\n' '--loglevel=verbose' ;;
+        ddd) printf '%s\n' '--loglevel=silly' ;;
+        quiet|q) printf '%s\n' '--loglevel=warn' ;;
+        L) printf '%s\n' '--latest' ;;
+        r) printf '%s\n' '--recursive' ;;
+        h|H|'?'|usage) printf '%s\n' '--help' ;;
+        v) printf '%s\n' '--version' ;;
+        f) printf '%s\n' '--force' ;;
+        local) printf '%s\n' '--no-global' ;;
+        l) printf '%s\n' '--long' ;;
+        p|porcelain) printf '%s\n' '--parseable' ;;
+        prod) printf '%s\n' '--production' ;;
+        development) printf '%s\n' '--dev' ;;
+        g) printf '%s\n' '--global' ;;
+        S) printf '%s\n' '--save' ;;
+        D) printf '%s\n' '--save-dev' ;;
+        P) printf '%s\n' '--save-prod' ;;
+        E) printf '%s\n' '--save-exact' ;;
+        O) printf '%s\n' '--save-optional' ;;
+        C) printf '%s\n' '--dir' ;;
+        w) printf '%s\n' '--workspace-root' ;;
+        i) printf '%s\n' '--interactive' ;;
+        F) printf '%s\n' '--filter' ;;
+        y) printf '%s\n' '--yes' ;;
+        *) return 1 ;;
+    esac
+}
+
+# short_resolve WORD (an option token with its dashes removed): prints the
+# expansion nopt's resolveShort gives it, 1 when it is an option, not a
+# shorthand: an exact option name; else the shorthand; else a run of
+# one-letter shorthands (`rw`); else a unique option prefix is an option;
+# else a unique prefix of a shorthand word (`verb`).
+short_resolve() {
+    case "$ALL_OPTS" in *" $1 "*) return 1 ;; esac
+    if short_expand "$1"; then return 0; fi
+    rest="$1"
+    run=""
+    while [ -n "$rest" ]; do
+        c="${rest%"${rest#?}"}"
+        rest="${rest#?}"
+        case "$c" in
+            s|d|L|r|q|h|H|'?'|v|f|l|p|g|S|D|P|E|O|C|w|i|F|y) run="$run $(short_expand "$c")" ;;
+            *) run=""; break ;;
+        esac
+    done
+    if [ -n "$run" ]; then printf '%s\n' "${run# }"; return 0; fi
+    if opt_canonical "$1" >/dev/null; then return 1; fi
+    hit=""
+    hits=0
+    for k in s d dd ddd L r silent verbose quiet q h H usage v f local l p porcelain prod development g S D P E O C w i F y; do
+        case "$k" in "$1"*) hit="$k"; hits=$((hits + 1)) ;; esac
+    done
+    [ "$hits" -eq 1 ] || return 1
+    short_expand "$hit"
+}
+
+# scan ARGS: one nopt-shaped pass over the normalized arguments with the
+# PHASE table. PHASE=explore takes the first token left over for the
+# command (sets command_name, KIND, pm_forced, override_name) and stops
+# there; any other PHASE reads the option flags (TARGET, IGNORE_WORKSPACE,
+# workspace_root, fix_flag) over the whole of pnpm's option scope and, for
+# `run`, stops at the script name. A help or version request is info.
+scan() {
+    positional=0
     command_seen=0
-    pm_forced=0
-    override_name=""
-    command_name=""
-    fix_flag=0
-    workspace_root=0
-    IGNORE_WORKSPACE=0
-    for a in "$@"; do
-        if [ -n "$want_value" ]; then
-            case "$want_value" in
-                dir) TARGET="$(resolve_dir "$a")"; want_value=""; continue ;;
-                ignore_workspace)
-                    # pnpm's parser takes a literal true/false after a boolean flag
-                    want_value=""
-                    case "$a" in
-                        true)  IGNORE_WORKSPACE=1; continue ;;
-                        false) IGNORE_WORKSPACE=0; continue ;;
-                    esac ;;      # anything else is the next token, read below
-                *) want_value=""; continue ;;
+    while [ $# -gt 0 ]; do
+        a="$1"
+        shift
+        if [ "$positional" -eq 0 ]; then
+            case "$a" in
+                --) positional=1; continue ;;
+                -?*)
+                    had_eq=0
+                    name="$a"
+                    case "$a" in *=*) had_eq=1; name="${a%%=*}"; set -- "${a#*=}" "$@" ;; esac
+                    while [ "${name#-}" != "$name" ]; do name="${name#-}"; done
+                    no=0
+                    while [ "${name#no-}" != "$name" ]; do no=$((1 - no)); name="${name#no-}"; done
+                    canon="$(opt_canonical "$name")" || canon="$name"
+                    kind="$(opt_kind "$canon")"
+                    if [ "$kind" = unknown ] && [ "$had_eq" -eq 0 ]; then kind=bool; fi
+                    la_set=0
+                    la=""
+                    if [ $# -gt 0 ]; then la_set=1; la="$1"; fi
+                    consumed=0
+                    case "$kind" in
+                        bool)
+                            val=1
+                            if [ "$la_set" -eq 1 ]; then
+                                case "$la" in
+                                    true) shift; val=1 ;;
+                                    false) shift; val=0 ;;
+                                    *) case "$canon:$la" in color:always|color:auto|color:never|link-workspace-packages:deep) shift ;; esac ;;
+                                esac
+                            fi
+                            [ "$no" -eq 0 ] || val=$((1 - val))
+                            case "$canon" in
+                                help|version|v) KIND=info; return 1 ;;   # a help or version request runs nothing
+                                ignore-workspace) IGNORE_WORKSPACE="$val" ;;
+                                workspace-root) workspace_root="$val" ;;
+                                fix) fix_flag="$val" ;;
+                            esac ;;
+                        string)
+                            if [ "$la_set" -eq 1 ]; then
+                                case "$la" in
+                                    -[!-]*|--[!-]*) ;;      # looks like an option: not the value
+                                    --|---*) case "$la" in *[!-]*) shift; consumed=1 ;; esac ;;   # nor a run of dashes
+                                    *) shift; consumed=1 ;;
+                                esac
+                            fi
+                            [ "$consumed" -eq 0 ] || case "$canon" in dir) TARGET="$(resolve_dir "$la")" ;; esac ;;
+                        *)
+                            if [ "$la_set" -eq 1 ]; then
+                                case "$la" in
+                                    --|---*) case "$la" in *[!-]*) shift; consumed=1 ;; esac ;;
+                                    *) shift; consumed=1 ;;
+                                esac
+                            fi
+                            if [ "$consumed" -eq 1 ]; then
+                                case "$canon" in
+                                    prefix) TARGET="$(resolve_dir "$la")" ;;
+                                    fix) case "$la" in false) fix_flag=0 ;; *) fix_flag=1 ;; esac ;;   # audit reads --fix as a boolean
+                                esac
+                            fi ;;
+                    esac
+                    continue ;;
             esac
         fi
+        # a positional token
         case "$a" in
-            --) break ;;
-            -h|--help|-v|--version) KIND=info; return 0 ;;   # a help or version request runs nothing
-            -w|--workspace-root) workspace_root=1; continue ;;
-            --ignore-workspace) IGNORE_WORKSPACE=1; want_value=ignore_workspace; continue ;;
-            --ignore-workspace=true) IGNORE_WORKSPACE=1; continue ;;
-            --ignore-workspace=false|--no-ignore-workspace) IGNORE_WORKSPACE=0; continue ;;
-            --fix|--fix=*) fix_flag=1; continue ;;
-            -C|--dir|--prefix) want_value=dir; continue ;;
-            -C=*) TARGET="$(resolve_dir "${a#-C=}")"; continue ;;
-            --dir=*) TARGET="$(resolve_dir "${a#--dir=}")"; continue ;;
-            --prefix=*) TARGET="$(resolve_dir "${a#--prefix=}")"; continue ;;
-            -F|--filter|--filter-prod|--changed-files-ignore-pattern|--test-pattern| \
-            --loglevel|--reporter|--workspace-concurrency|--lockfile-dir|--lockfile-directory| \
-            --store-dir|--virtual-store-dir|--modules-dir|--cache-dir|--state-dir|--registry| \
-            --network-concurrency|--fetch-retries|--fetch-retry-factor|--fetch-retry-mintimeout| \
-            --fetch-retry-maxtimeout|--fetch-timeout|--proxy|--https-proxy|--noproxy|--userconfig| \
-            --use-node-version|--node-version|--resolution-mode|--npm-path|--config-dir)
-                want_value=other; continue ;;
-            -*) continue ;;
+            create|exec|test) positional=1 ;;    # pnpm's escapeArgs: the rest is positional
         esac
         if [ "$command_seen" -eq 2 ]; then
-            return 0        # the script or bin name: what follows belongs to it
+            return 0        # `run`'s script name: what follows belongs to it
         fi
         [ "$command_seen" -eq 0 ] || continue
         case "$a" in
             recursive|multi|m) continue ;;
-            pm) pm_forced=1; continue ;;
-            with) want_value=other; continue ;;
+            pm) [ "$PHASE" != explore ] || pm_forced=1; continue ;;
+            with) shift; continue ;;          # `with <runtime>`: the runtime word is not the command
         esac
         command_seen=1
+        if [ "$PHASE" != explore ]; then
+            case "$a" in run|run-script) command_seen=2; continue ;; esac
+            # a bare script or bin name (pnpm's fallback `run <name>`, or the
+            # token after exec/test/create): what follows belongs to it
+            [ "$KIND" != project ] || return 0
+            continue
+        fi
         command_name="$a"
         case "$a" in
             clean|purge|rebuild|rb|setup|deploy)
@@ -300,16 +479,66 @@ classify() {
             dist-tags|docs|find|home|info|issues|login|logout|owner|ping|pkg|repo|s|sbom|se|search| \
             set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami)
                 KIND=info ;;
-            run|run-script|exec)
-                # pnpm's own options may still follow, up to the script or bin name
-                KIND=project
-                command_seen=2 ;;
             *)
-                # a script or bin name: what follows belongs to it
-                KIND=project
-                return 0 ;;
+                # run, exec, test, a script or bin name
+                KIND=project ;;
         esac
+        return 0
     done
+}
+
+# classify ARGS: sets KIND (info, mutate or project), TARGET and
+# IGNORE_WORKSPACE (see header) from a copy of the arguments: pass 1
+# expands shorthands the way nopt does before it reads an option (an
+# `=value` stays attached to a plain option so a later pass knows it was
+# written that way; after `--` nothing is touched); pass 2 finds the
+# command with the exploratory table; pass 3 reads the flags with the
+# command's table.
+classify() {
+    KIND=info
+    TARGET="$(pwd -P)"
+    IGNORE_WORKSPACE=0
+    pm_forced=0
+    override_name=""
+    command_name=""
+    fix_flag=0
+    workspace_root=0
+    # pass 1: shorthands
+    total=$#
+    i=0
+    ended=0
+    while [ "$i" -lt "$total" ]; do
+        a="$1"
+        shift
+        i=$((i + 1))
+        if [ "$ended" -eq 1 ]; then set -- "$@" "$a"; continue; fi
+        case "$a" in
+            --|---*) case "$a" in *[!-]*) ;; *) set -- "$@" "--"; ended=1; continue ;; esac ;;
+        esac
+        case "$a" in
+            -?*)
+                name="${a%%=*}"
+                while [ "${name#-}" != "$name" ]; do name="${name#-}"; done
+                if [ -n "$name" ] && expansion="$(short_resolve "$name")"; then
+                    # shellcheck disable=SC2086  # the expansion is this file's own words
+                    set -- "$@" $expansion
+                    case "$a" in *=*) set -- "$@" "${a#*=}" ;; esac
+                    continue
+                fi ;;
+        esac
+        set -- "$@" "$a"
+    done
+    # pass 2: the command, by pnpm's exploratory table
+    PHASE=explore
+    scan "$@" || return 0
+    # pass 3: the flags and `run`'s script name, by the command's table
+    case "$command_name" in
+        run|run-script) PHASE=run ;;
+        install|i|install-test|it|add) PHASE=install ;;
+        audit) PHASE=audit ;;
+        *) PHASE=other ;;
+    esac
+    scan "$@" || return 0
     if [ "$workspace_root" -eq 1 ] && [ "$IGNORE_WORKSPACE" -eq 0 ]; then
         # -w/--workspace-root: pnpm acts on the workspace root above the target
         # (under --ignore-workspace there is none and pnpm refuses the flag)
