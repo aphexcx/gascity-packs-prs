@@ -1252,6 +1252,34 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertLess(elapsed, 25)
         self.assertEqual(sorted(self.fx.argv()), ["exec vitest", "rebuild", "rebuild", "rebuild"])
         self.assertEqual(sorted(readers.iterdir()), [])
+        # `pnpm rebuild && node check.js` inside a script while another mutate waits: the
+        # script's mark goes before the lock is released, so the other mutate, taking the
+        # lock next, waits for the script (reading again) and runs only after it
+        hook3 = self.fx.root / "rebuild-then-check.sh"
+        write_exec(hook3, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nsleep 3\n')
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        duo: dict[str, subprocess.CompletedProcess[str]] = {}
+        ends: dict[str, float] = {}
+
+        def script3() -> None:
+            duo["script"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook3), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+            ends["script"] = time.monotonic()
+
+        def other() -> None:
+            time.sleep(0.7)
+            duo["other"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+            ends["other"] = time.monotonic()
+
+        threads = [threading.Thread(target=script3), threading.Thread(target=other)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=90)
+        self.assertEqual(duo["script"].returncode, 0, duo["script"].stderr)
+        self.assertEqual(duo["other"].returncode, 0, duo["other"].stderr)
+        self.assertGreaterEqual(ends["other"], ends["script"])     # the other rebuild ran after the script's check
+        self.assertIn("waiting for running lane command(s)", duo["other"].stderr)
         # a mutate inside a running project command (a test script that rebuilds) takes the
         # lock and waits for every reader but its ancestor: it runs inside the command...
         self.fx.run("pnpm", "exec", "vitest", cwd=proj)
@@ -1633,6 +1661,19 @@ class NodeShimTests(unittest.TestCase):
         self.assertTrue(lock.exists())
         self.assertTrue(reclaim.exists())
         self.assertFalse((self.node_root / "v1.2.3").exists())
+
+    def test_npm_and_npx_find_the_selected_node_first_on_path(self) -> None:
+        """Round 25: npm and npx are `#!/usr/bin/env node` scripts; called by
+        absolute path with no node on PATH they exited 127. The selected
+        install's bin goes first on PATH before the program runs."""
+        tree = fake_node_tree(self.node_root, "9.9.9")
+        write_exec(tree / "bin" / "npm", '#!/bin/sh\nprintf "npm sees %s\\n" "$(command -v node)"\nexec node --version\n')
+        env = self.fx.env(GC_TOOLCHAIN_NODE_VERSION="9.9.9")
+        env["PATH"] = "/usr/bin:/bin"       # no node anywhere on the caller's PATH
+        r = subprocess.run([str(self.fx.shims / "npm"), "--version"], cwd=str(self.fx.root), env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout, f"npm sees {tree / 'bin' / 'node'}\nfake node 9.9.9 --version\n")
+        self.assertEqual(r.stderr, "")
 
     def test_checksum_mismatch_installs_nothing_and_falls_through(self) -> None:
         dist = fake_dist(self.fx.root / "dist", "1.2.3", corrupt_sum=True)
