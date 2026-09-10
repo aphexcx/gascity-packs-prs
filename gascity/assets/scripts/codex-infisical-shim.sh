@@ -8,6 +8,7 @@
 #
 # INSTALL (the city half; this pack does not sync assets/scripts anywhere):
 #
+#   mkdir -p "$CITY/.gc/shims/codex-astra"
 #   install -m 0755 path/to/gascity/assets/scripts/codex-infisical-shim.sh \
 #     "$CITY/.gc/shims/codex-astra/codex"
 #   # optional per-city settings, beside the shim, named <shim>.env:
@@ -27,12 +28,15 @@
 #   [env]
 #   INFISICAL_PROJECT_ID = "<project id, not a secret>"
 #
-#   # verify the installed copy is this file (a wake checks the md5):
-#   test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = \
-#        "$(md5 -q path/to/gascity/assets/scripts/codex-infisical-shim.sh)"
+#   # verify the installed copy is this file at the installed pin (a wake
+#   # checks it): record the canonical md5 once, compare the installed file to
+#   # that literal, so a missing file or a missing md5 tool fails the check.
+#   git -C path/to/gascity-packs show <pin>:gascity/assets/scripts/codex-infisical-shim.sh | md5 -q
+#   test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = <that md5>
 #
-# Inputs (environment wins over <shim>.env; the file is plain KEY=VALUE lines,
-# never evaluated by a shell; unknown keys are ignored with a WARN):
+# Inputs (a variable present in the environment, even empty, wins over
+# <shim>.env; the file is plain KEY=VALUE lines, never evaluated by a shell;
+# unknown keys are ignored with a WARN; a blank value means "not set"):
 #   CODEX_SHIM_PATH_PREPEND  colon-separated directories put first on PATH, so
 #                            the session and every child (git hooks included)
 #                            resolve the city's toolchain wrappers.
@@ -44,99 +48,137 @@
 #   HOME                     token.sh is read from $HOME/.config/infisical-agent/.
 #
 # Contract:
-#   * Fail-open token. If INFISICAL_TOKEN is unset and
-#     $HOME/.config/infisical-agent/token.sh is readable, the shim sources it
-#     (it exports INFISICAL_TOKEN from the universal-auth credentials and unsets
-#     the client id/secret again). A missing token.sh is silent; a failing one
-#     leaves INFISICAL_TOKEN unset and prints one WARN on stderr. The exec
-#     happens either way. The token is never echoed.
-#   * A set INFISICAL_TOKEN is kept as is; token.sh is not sourced.
+#   * Fail-open token. If INFISICAL_TOKEN is unset or empty and
+#     $HOME/.config/infisical-agent/token.sh is readable, the shim sources it in
+#     a subshell with its output discarded and carries over exactly one value,
+#     the INFISICAL_TOKEN it exported; the helper's other exports, an `exit` in
+#     it, or a `set --` in it cannot reach the shim. A missing token.sh is
+#     silent; a helper that fails or leaves the token empty leaves
+#     INFISICAL_TOKEN unset and prints one WARN on stderr. The exec happens
+#     either way. Nothing the helper prints reaches the session output.
+#   * A non-empty INFISICAL_TOKEN is kept as is; token.sh is not sourced.
 #   * argv reaches the real codex intact, in order, nothing added or dropped.
-#   * The shim never execs itself. Every PATH entry that resolves to the shim's
-#     own directory is removed before the lookup (the child's PATH is the pruned
-#     one), and an exec target that is the shim file itself is refused. No
-#     codex left on PATH is an error (exit 127), never a loop.
+#   * The shim never execs itself. It locates itself with shell builtins only
+#     and refuses to run (exit 127) when it cannot; every PATH entry that
+#     resolves to its own directory is removed before the lookup (the child's
+#     PATH is the pruned one, empty entries kept), and an exec target that is
+#     the shim file itself is refused. No codex left on PATH is an error (exit
+#     127), never a loop. No external utility is needed for any of this.
 #   * Nothing else in the environment is changed: PATH (prepend + prune) and
-#     INFISICAL_TOKEN are the only writes.
+#     INFISICAL_TOKEN are the only writes; the shim's own variables carry the
+#     cis_ prefix and are unset before the exec, so an inherited export of an
+#     ordinary name is never overwritten.
 #
 # Relation to the copy this was extracted from (citadel, gp-e8r6, 2026-09-10):
-# same token block and fail-open semantics; the PATH prepend and the pinned
+# same fail-open semantics and the same helper; the PATH prepend and the pinned
 # `npx` command line moved from hardcoded values into <shim>.env so one file
-# installs on any city; the default exec target and the self-exec guard are new;
-# the WARN prefix names this script.
+# installs on any city; the helper now runs in a subshell and only its token
+# crosses over (the original sourced it in-process); the default exec target
+# and the self-exec guard are new; the WARN prefix names this script.
 
-self_path=$0
-case $self_path in
+cis_die() {
+  echo "codex-infisical-shim: ERROR $1" >&2
+  exit 127
+}
+
+# --- locate self with builtins only ---------------------------------------------
+cis_self=$0
+case $cis_self in
   */*) ;;
-  *) self_path=$(command -v -- "$self_path" 2>/dev/null || printf '%s' "$self_path") ;;
+  *) cis_self=$(command -v -- "$cis_self" 2>/dev/null) ;;
 esac
-self_dir=$(cd -- "$(dirname -- "$self_path")" 2>/dev/null && pwd -P)
-self_file="$self_dir/$(basename -- "$self_path")"
+[ -n "$cis_self" ] || cis_die "cannot locate the shim itself from \$0='$0'; refusing to exec"
+cis_self_dir=${cis_self%/*}
+[ "$cis_self_dir" != "$cis_self" ] || cis_self_dir=.
+[ -n "$cis_self_dir" ] || cis_self_dir=/
+cis_self_dir=$(cd -- "$cis_self_dir" 2>/dev/null && pwd -P) \
+  || cis_die "cannot resolve the shim's directory from '$cis_self'; refusing to exec"
+cis_self_file="$cis_self_dir/${cis_self##*/}"
+[ -e "$cis_self_file" ] || cis_die "the shim does not exist at '$cis_self_file'; refusing to exec"
 
-# --- settings: environment, then <shim>.env ------------------------------------
-sidecar="$self_file.env"
-if [ -r "$sidecar" ]; then
-  while IFS= read -r line || [ -n "$line" ]; do
-    case $line in ''|'#'*) continue ;; esac
-    case $line in *=*) ;; *) echo "codex-infisical-shim: WARN ignoring line without '=' in $sidecar" >&2; continue ;; esac
-    key=${line%%=*}
-    val=${line#*=}
-    case $val in
-      \"*\") val=${val#\"}; val=${val%\"} ;;
-      \'*\') val=${val#\'}; val=${val%\'} ;;
+# --- settings: environment (presence wins), then <shim>.env ----------------------
+cis_sidecar="$cis_self_file.env"
+if [ -r "$cis_sidecar" ]; then
+  while IFS= read -r cis_line || [ -n "$cis_line" ]; do
+    case $cis_line in ''|'#'*) continue ;; esac
+    case $cis_line in
+      *=*) ;;
+      *) echo "codex-infisical-shim: WARN ignoring line without '=' in $cis_sidecar" >&2; continue ;;
     esac
-    case $key in
-      CODEX_SHIM_PATH_PREPEND) [ -n "${CODEX_SHIM_PATH_PREPEND:-}" ] || CODEX_SHIM_PATH_PREPEND=$val ;;
-      CODEX_SHIM_EXEC) [ -n "${CODEX_SHIM_EXEC:-}" ] || CODEX_SHIM_EXEC=$val ;;
-      *) echo "codex-infisical-shim: WARN ignoring unknown key $key in $sidecar" >&2 ;;
+    cis_key=${cis_line%%=*}
+    cis_val=${cis_line#*=}
+    case $cis_val in
+      \"*\") cis_val=${cis_val#\"}; cis_val=${cis_val%\"} ;;
+      \'*\') cis_val=${cis_val#\'}; cis_val=${cis_val%\'} ;;
     esac
-  done < "$sidecar"
+    case $cis_key in
+      CODEX_SHIM_PATH_PREPEND) [ -n "${CODEX_SHIM_PATH_PREPEND+x}" ] || cis_prepend=$cis_val ;;
+      CODEX_SHIM_EXEC) [ -n "${CODEX_SHIM_EXEC+x}" ] || cis_exec=$cis_val ;;
+      *) echo "codex-infisical-shim: WARN ignoring unknown key $cis_key in $cis_sidecar" >&2 ;;
+    esac
+  done < "$cis_sidecar"
 fi
+[ -z "${CODEX_SHIM_PATH_PREPEND+x}" ] || cis_prepend=$CODEX_SHIM_PATH_PREPEND
+[ -z "${CODEX_SHIM_EXEC+x}" ] || cis_exec=$CODEX_SHIM_EXEC
 
 # --- PATH: prepend the city's toolchain, then remove the shim's own directory ---
-if [ -n "${CODEX_SHIM_PATH_PREPEND:-}" ]; then
-  PATH="$CODEX_SHIM_PATH_PREPEND:$PATH"
+if [ -n "${cis_prepend:-}" ]; then
+  PATH="$cis_prepend:$PATH"
 fi
-pruned=
-old_ifs=$IFS
-set -f
-IFS=:
-for entry in $PATH; do
-  phys=$(cd -- "${entry:-.}" 2>/dev/null && pwd -P) || phys=
-  if [ -n "$self_dir" ] && [ "$phys" = "$self_dir" ]; then
-    continue
+cis_rest=$PATH
+cis_pruned=
+cis_first=1
+while :; do
+  case $cis_rest in
+    *:*) cis_entry=${cis_rest%%:*}; cis_rest=${cis_rest#*:}; cis_more=1 ;;
+    *) cis_entry=$cis_rest; cis_more=0 ;;
+  esac
+  cis_phys=$(cd -- "${cis_entry:-.}" 2>/dev/null && pwd -P) || cis_phys=
+  if [ "$cis_phys" != "$cis_self_dir" ]; then
+    if [ "$cis_first" = 1 ]; then
+      cis_pruned=$cis_entry
+      cis_first=0
+    else
+      cis_pruned="$cis_pruned:$cis_entry"
+    fi
   fi
-  pruned="${pruned:+$pruned:}$entry"
+  [ "$cis_more" = 1 ] || break
 done
-IFS=$old_ifs
-set +f
-PATH=$pruned
+PATH=$cis_pruned
 export PATH
 
-# --- Infisical machine identity, fail-open -------------------------------------
-token_sh="${HOME:-}/.config/infisical-agent/token.sh"
-if [ -z "${INFISICAL_TOKEN:-}" ] && [ -n "${HOME:-}" ] && [ -r "$token_sh" ]; then
+# --- Infisical machine identity, fail-open, helper isolated in a subshell --------
+cis_token_sh="${HOME:-}/.config/infisical-agent/token.sh"
+if [ -z "${INFISICAL_TOKEN:-}" ] && [ -n "${HOME:-}" ] && [ -r "$cis_token_sh" ]; then
   # shellcheck disable=SC1090
-  . "$token_sh" 2>/dev/null \
-    || { unset INFISICAL_TOKEN; echo "codex-infisical-shim: WARN Infisical machine-identity login failed; INFISICAL_TOKEN unset" >&2; }
+  if cis_token=$(. "$cis_token_sh" >/dev/null 2>&1 && printf '%s' "${INFISICAL_TOKEN-}") \
+     && [ -n "$cis_token" ]; then
+    INFISICAL_TOKEN=$cis_token
+    export INFISICAL_TOKEN
+  else
+    unset INFISICAL_TOKEN
+    echo "codex-infisical-shim: WARN Infisical machine-identity login failed; INFISICAL_TOKEN unset" >&2
+  fi
+  unset cis_token
 fi
 
 # --- exec the real codex --------------------------------------------------------
-if [ -n "${CODEX_SHIM_EXEC:-}" ]; then
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CODEX_SHIM_EXEC "$@"
-  set +f
+set -f
+# shellcheck disable=SC2206
+cis_words=(${cis_exec:-})
+set +f
+if [ "${#cis_words[@]}" -gt 0 ]; then
+  set -- "${cis_words[@]}" "$@"
 else
   set -- codex "$@"
 fi
-target=$(command -v -- "$1" 2>/dev/null)
-if [ -z "$target" ]; then
-  echo "codex-infisical-shim: ERROR no '$1' on PATH after removing the shim's directory ($self_dir); set CODEX_SHIM_EXEC or install codex" >&2
-  exit 127
+cis_target=$(command -v -- "$1" 2>/dev/null)
+[ -n "$cis_target" ] \
+  || cis_die "no '$1' on PATH after removing the shim's directory ($cis_self_dir); set CODEX_SHIM_EXEC or install codex"
+if [ "$cis_target" -ef "$cis_self_file" ]; then
+  cis_die "'$1' resolves to the shim itself ($cis_self_file); refusing to exec"
 fi
-if [ "$target" -ef "$self_file" ]; then
-  echo "codex-infisical-shim: ERROR '$1' resolves to the shim itself ($self_file); refusing to exec" >&2
-  exit 127
-fi
+unset cis_self cis_self_dir cis_self_file cis_sidecar cis_line cis_key cis_val cis_prepend cis_exec \
+  cis_rest cis_pruned cis_first cis_entry cis_more cis_phys cis_token_sh cis_words cis_target
+unset -f cis_die
 exec "$@"

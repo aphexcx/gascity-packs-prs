@@ -211,20 +211,26 @@ so a city that gives its Codex role agents an Infisical machine identity mints
 the token at session start. An agent's `env` map is static and `pre_start`
 runs in its own process; the one city-side place a freshly minted value can
 enter the session environment is a provider `command` wrapper. This pack
-ships that wrapper as `assets/scripts/codex-infisical-shim.sh`: it sources
-`$HOME/.config/infisical-agent/token.sh` fail-open when `INFISICAL_TOKEN` is
-unset (a missing file is silent, a failing login leaves the token unset and
-prints one WARN, the session starts either way), then execs the real codex
-with argv intact. It never execs itself: every PATH entry that resolves to
-its own directory is removed first, and no codex left on PATH is an error
-(exit 127), never a loop. The token is never echoed.
+ships that wrapper as `assets/scripts/codex-infisical-shim.sh`: when
+`INFISICAL_TOKEN` is unset or empty it sources
+`$HOME/.config/infisical-agent/token.sh` fail-open, in a subshell with the
+helper's output discarded, and carries over exactly one value, the token the
+helper exported (a missing file is silent, a failing helper leaves the token
+unset and prints one WARN, an `exit` or a `set --` in the helper cannot reach
+the shim, the session starts either way); then it execs the real codex with
+argv intact. It never execs itself: it locates itself with shell builtins
+only and refuses to run when it cannot, every PATH entry that resolves to its
+own directory is removed first, and no codex left on PATH is an error (exit
+127), never a loop. Nothing the helper prints reaches the session output.
 
 Install it as the city's shim, in its own directory (gc does not sync a
 pack's `assets/scripts` anywhere), with the per-city settings in a
-`codex.env` beside it; the environment overrides the file, the file is plain
-`KEY=VALUE` lines and never evaluated:
+`codex.env` beside it. A variable present in the environment, even empty,
+wins over the file; the file is plain `KEY=VALUE` lines and never evaluated;
+a blank value means "not set":
 
 ```sh
+mkdir -p "$CITY/.gc/shims/codex-astra"
 install -m 0755 path/to/gascity/assets/scripts/codex-infisical-shim.sh \
   "$CITY/.gc/shims/codex-astra/codex"
 cat > "$CITY/.gc/shims/codex-astra/codex.env" <<'EOT'
@@ -260,18 +266,24 @@ INFISICAL_PROJECT_ID = "<project id>"
 ```
 
 The installed copy is city runtime state; the file here is its source of
-record. A city verifies at each wake that the installed shim is this file,
-by md5 against the pack checkout at the installed pin:
+record. A city verifies at each wake that the installed shim is this file at
+the installed pin. Record the canonical md5 once, from the pack checkout at
+that pin, and compare the installed file to the literal, so a missing file or
+a missing md5 tool fails the check instead of matching an empty string
+(`md5sum` on Linux prints the same hash first):
 
 ```sh
-test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = \
-     "$(md5 -q path/to/gascity/assets/scripts/codex-infisical-shim.sh)"
+git -C path/to/gascity-packs show <pin>:gascity/assets/scripts/codex-infisical-shim.sh | md5 -q
+test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = <that md5>
 ```
 
 `gascity/tests/test_codex_infisical_shim.py` holds the contract: fail-open
-with token.sh absent, present and failing; argv intact; PATH pruned through
-symlinked and relative aliases; the self-exec refusals; the settings file
-never evaluated.
+with the helper absent, present, failing, exiting, printing or rewriting
+argv; only the token crosses over; argv intact; PATH pruned through
+symlinked and relative aliases with empty entries kept; the self-exec
+refusals, with no utility on PATH; the settings file never evaluated; the
+install recipe above run from a fresh directory and the md5 check failing on
+a missing file.
 
 ## Build Methodology Contract
 
