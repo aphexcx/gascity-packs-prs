@@ -64,6 +64,16 @@ bead, or detached (no trigger bead, or that branch is checked out in another
 worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, create your branch in this directory before committing.
 
+The lane is yours alone: one live session writes in a lane, and the branch,
+never the directory, is how work moves between agents. A helper you start
+(a nested review, a subagent, a second session of any provider) reads this
+lane and writes nothing into it: it runs read-only here, or inspects the
+recorded commit detached in its own lane (`git show <commit>:<path>`). Two
+agents patching one lane leave edits neither can attribute. Pin the lane
+before your first write: `gc session list` shows your session as the only
+live session whose work dir is `$GC_DIR`; when another live session shares
+it, write nothing and mail the mayor naming both session ids.
+
 A session outside a gc-made lane has no lane: this role has no `work_dir` in
 your city. Prove the lane before you write, with the three-part boundary test
 (every path resolved through symlinks, `pwd -P`): `git -C "$GC_DIR" rev-parse
