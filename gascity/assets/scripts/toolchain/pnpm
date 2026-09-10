@@ -23,8 +23,9 @@
 #        info    — reports or manages state outside node_modules (`store`,
 #                  `config`, `list`, `outdated`, `--version`, `help`, ...):
 #                  runs as is, touches no marker or lock.
-#        mutate  — changes node_modules (`install`, `add`, `remove`,
-#                  `update`, `link`, `prune`, `dedupe`, `rebuild`, ...):
+#        mutate  — changes node_modules (`install`, `ci`, `add`, `remove`,
+#                  `update`, `link`, `prune`, `dedupe`, `rebuild`, `clean`,
+#                  `purge`, ...; every pnpm 11.20 built-in that can):
 #                  runs in the caller's own directory (a workspace package
 #                  stays that package; a relative `-C` resolves as typed)
 #                  under the lane lock with the marker invalidated first,
@@ -75,8 +76,9 @@
 #   GC_TOOLCHAIN_LANE_DEPS_WAIT / LANE_DEPS_WAIT seconds to wait for another
 #                                                caller's lock (default 600)
 #
-# The project is resolved from the working directory only; `pnpm -C <dir>`
-# and `--dir` are passed through unchanged but do not move the lane.
+# The lane is resolved from the directory pnpm acts on: the last `-C <dir>`
+# or `--dir <dir>` (relative to the working directory), else the working
+# directory itself; the arguments reach pnpm unchanged.
 
 set -eu
 
@@ -175,45 +177,63 @@ export pnpm_config_verify_deps_before_run
 
 # --- 3. classify ---------------------------------------------------------------------
 
-# command_kind ARGS: prints info, mutate or project.
-command_kind() {
-    skip_next=0
+# classify ARGS: sets KIND (info, mutate or project) and TARGET_DIR (the
+# directory pnpm will act on: the last -C/--dir value, resolved against the
+# working directory, else the working directory). The kind is the first bare
+# token after the global options; `recursive`/`multi`/`m` are prefixes and
+# the next token decides. Every pnpm 11.20 built-in that can change
+# node_modules is mutate; the read-only built-ins are info; the script and
+# bin runners, and any bare name pnpm would treat as a script or bin, are
+# project. A built-in not listed here is a script name to pnpm too, so it
+# lands in project, the kind that installs before it runs.
+classify() {
+    KIND=info
+    TARGET_DIR="$(pwd -P)"
+    want_value=""
     for a in "$@"; do
-        if [ "$skip_next" -eq 1 ]; then
-            skip_next=0
+        if [ -n "$want_value" ]; then
+            case "$want_value" in
+                dir) case "$a" in /*) TARGET_DIR="$a" ;; *) TARGET_DIR="$(pwd -P)/$a" ;; esac ;;
+            esac
+            want_value=""
             continue
         fi
         case "$a" in
             --) continue ;;
-            -C|--dir|-F|--filter|--filter-prod|--changed-files-ignore-pattern|--test-pattern| \
+            -C|--dir) want_value=dir; continue ;;
+            -C=*) TARGET_DIR="${a#-C=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
+            --dir=*) TARGET_DIR="${a#--dir=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
+            -F|--filter|--filter-prod|--changed-files-ignore-pattern|--test-pattern| \
             --loglevel|--reporter|--workspace-concurrency|--lockfile-dir|--lockfile-directory| \
             --store-dir|--virtual-store-dir|--modules-dir|--cache-dir|--state-dir|--registry| \
             --network-concurrency|--fetch-retries|--fetch-retry-factor|--fetch-retry-mintimeout| \
             --fetch-retry-maxtimeout|--fetch-timeout|--proxy|--https-proxy|--noproxy|--userconfig| \
             --use-node-version|--node-version|--resolution-mode|--npm-path|--config-dir)
-                skip_next=1; continue ;;
+                want_value=other; continue ;;
             -*) continue ;;
+            recursive|multi|m) continue ;;
         esac
         case "$a" in
-            install|i|add|remove|rm|uninstall|un|update|up|upgrade|link|ln|unlink|dislink| \
-            import|prune|fetch|dedupe|rebuild|rb|patch|patch-commit|patch-remove| \
-            approve-builds|deploy|setup)
-                printf 'mutate\n' ;;
-            store|config|c|env|self-update|outdated|audit|list|ls|ll|la|why|pack|publish| \
-            licenses|cat-file|cat-index|find-hash|ignored-builds|init|create|doctor|help| \
-            root|bin|server|completion|cache)
-                printf 'info\n' ;;
+            install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un| \
+            update|up|upgrade|link|ln|unlink|dislink|import|prune|fetch|dedupe|rebuild|rb| \
+            patch|patch-commit|patch-remove|approve-builds|deploy|setup|clean|purge)
+                KIND=mutate ;;
+            store|config|c|env|self-update|outdated|audit|list|ls|ll|la|why|pack|pack-app|publish| \
+            stage|licenses|cat-file|cat-index|find-hash|ignored-builds|init|create|dlx|doctor|help| \
+            root|bin|server|completion|cache|access|adduser|bugs|deprecate|undeprecate|dist-tag| \
+            dist-tags|docs|find|home|info|issues|login|logout|owner|ping|pkg|repo|s|sbom|se|search| \
+            set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami)
+                KIND=info ;;
             *)
-                printf 'project\n' ;;
+                KIND=project ;;
         esac
         return 0
     done
-    printf 'info\n'
 }
 
 # project_root: nearest ancestor of the working directory holding pnpm-lock.yaml.
 project_root() {
-    d="$(pwd -P)"
+    d="$(cd -P "$TARGET_DIR" 2>/dev/null && pwd -P)" || return 1
     while :; do
         if [ -f "$d/pnpm-lock.yaml" ]; then
             printf '%s\n' "$d"
@@ -346,14 +366,15 @@ certify_lane() {
     printf '%s\n' "$(sha256_of "$ROOT/pnpm-lock.yaml")" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
 }
 
-KIND="$(command_kind "$@")"
+classify "$@"
 if [ "$LANE_DEPS" = "off" ] || [ "$KIND" = "info" ]; then
     exec_pnpm "$@"
 fi
 if ROOT="$(project_root)"; then
     :
 elif [ "$KIND" = "mutate" ]; then
-    ROOT="$(pwd -P)"   # a first install creates the lockfile; the lane is the working directory
+    # a first install creates the lockfile; the lane is the directory pnpm acts on
+    ROOT="$(cd -P "$TARGET_DIR" 2>/dev/null && pwd -P)" || exec_pnpm "$@"
 else
     exec_pnpm "$@"     # no lockfile anywhere above: nothing to keep in sync
 fi

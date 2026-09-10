@@ -818,3 +818,56 @@ class PnpmShimGateRound3Tests(unittest.TestCase):
         self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
         r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="11.20.0")
         self.assertEqual(r.stdout, "fake pnpm ran: --version\n", r.stderr)
+
+
+class PnpmShimGateRound5Tests(unittest.TestCase):
+    """Round 5 of the codex gate: cleanup built-ins are mutations; -C/--dir
+    selects the lane."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_every_built_in_that_can_change_node_modules_invalidates_the_marker(self) -> None:
+        proj = self.fx.project()
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        for argv in (["clean"], ["purge"], ["ci"], ["install-test"], ["it"], ["recursive", "install"], ["-r", "rebuild"], ["prune"], ["dedupe"], ["m", "update"]):
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
+            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"), argv)
+
+    def test_dir_option_selects_the_lane_for_project_and_explicit_commands(self) -> None:
+        parent = self.fx.root / "parent"
+        parent.mkdir()
+        front = self.fx.project("parent/frontend")
+        # a project command from a directory without a lockfile installs the -C target's lane
+        r = self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.calls(), [f"{front.resolve()}|false|install --frozen-lockfile", f"{parent.resolve()}|false|-C frontend test"])
+        self.assertEqual((front / "node_modules" / ".gc-lane-deps").read_text(encoding="utf-8").strip(), sha256(front / "pnpm-lock.yaml"))
+        self.assertFalse((parent / "node_modules").exists())
+        for argv in (["--dir", "frontend", "test"], ["--dir=frontend", "run", "lint"], [f"-C={front}", "exec", "vitest"]):
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=parent)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
+        # an explicit mutation targeting another project locks that project and runs where typed
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "-C", "frontend", "add", "x", cwd=parent)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.calls(), [f"{parent.resolve()}|false|-C frontend add x"])
+        self.assertNotEqual((front / "node_modules" / ".gc-lane-deps").read_text(encoding="utf-8").strip(), sha256(front / "pnpm-lock.yaml"))
+        self.assertFalse((parent / "node_modules").exists())
+        # the last -C wins, and a first install without a lockfile makes the target the lane
+        fresh = parent / "fresh"
+        fresh.mkdir()
+        r = self.fx.run("pnpm", "-C", "frontend", "-C", "fresh", "install", cwd=parent)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((fresh / "node_modules" / ".gc-lane-deps").exists())
