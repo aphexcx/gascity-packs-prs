@@ -17,22 +17,27 @@ text fixes one lifecycle (gp-0mvp round 6, codex gate r5):
 Round 7 (codex gate r6) adds two rules the loop's LATER attempts depend on:
 
 6. the review setup runs ONCE, outside the review loop, and records the commit
-   the readers inspect; the FIX lane refreshes that record (the context file
-   and `gc.build.review_commit` on the workflow root) after its commit and
-   before it releases, so the next attempt's readers inspect the fix, not the
-   original code;
+   the readers inspect; the FIX lane refreshes that record after its commit
+   and before it releases, so the next attempt's readers inspect the fix, not
+   the original code;
 7. every lane, reader or writer, proves it is a lane with the three-part
    boundary test before it switches or detaches anything; a reviewer role with
    no `work_dir` starts in the RIG ROOT (the human checkout), fails the test,
    detaches nothing, and inspects by `git show`/`git log` only.
 
-Round 8 (codex gate r7) adds the rule for a role the city gave no lane:
+Round 9 (Afik, 9/9 22:28 CT: "drop the fallback if we don't use it"; codex
+gate r8) replaces round 8's lane-less workspace fallback and reshapes rule 6:
 
-8. the Workspace fallback (a role whose `$GC_DIR` is the rig root) RESOLVES
-   the base of its new branch in worker-worktree.sh's order, `<remote>/HEAD`,
-   `<remote>/main`, `<remote>/master` for the rig's remote whatever its name,
-   else the rig checkout's HEAD, so a rig with no remote still yields a
-   workspace, and the rig checkout's HEAD never moves.
+8. a role session outside a gc-made lane (a role the city gave no `work_dir`
+   starts in the rig root, the human checkout) has no lane: it creates no
+   worktree, creates and moves no branch, writes nothing into the rig
+   checkout, reads the item by `git show` / `git log -1` only, and a step
+   that needs a checkout closes `gc.outcome=fail`, `gc.failure_class=no-lane`;
+9. the review commit is recorded PER SOURCE ANCHOR (`gc.review_commit` on the
+   anchor, and the anchor's own record in the context file), never
+   workflow-wide: separate drains put several items on independent branches,
+   each inspected at its own commit, and a fix on one item leaves the others'
+   recorded commits as they were.
 
 Every step below runs the exact git commands the formula text names, in real
 worktrees under a temporary directory, with no network. The static rows in
@@ -123,19 +128,22 @@ class Rig:
 
     # --- the lifecycle steps, each the formula text's commands ---------------
 
-    def operator_prepares(self, lane: pathlib.Path) -> None:
+    def operator_prepares(self, lane: pathlib.Path, branch: str = ITEM_BRANCH) -> None:
         """prepare-worktree step 4, lane case: create the item's branch from HEAD
-        (the lane was detached) and detach the lane from any branch."""
+        (the lane was detached) and detach the lane from any branch. The
+        branch is named for the source anchor; one per drained item."""
         self.run(lane, "switch", "--detach")  # the operator's lane starts detached here
         assert out(lane, "branch", "--show-current") == ""
-        self.run(lane, "branch", ITEM_BRANCH, "HEAD")
+        self.run(lane, "branch", branch, "HEAD")
         self.run(lane, "switch", "--detach")
-        assert out(lane, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}")
+        assert out(lane, "rev-parse", "--verify", f"refs/heads/{branch}")
         assert out(lane, "branch", "--show-current") == ""
 
-    def writer_takes(self, lane: pathlib.Path, check: bool = True) -> subprocess.CompletedProcess[str]:
+    def writer_takes(
+        self, lane: pathlib.Path, branch: str = ITEM_BRANCH, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
         """implement / apply-review-findings: switch the OWN lane onto the branch."""
-        return self.run(lane, "switch", "--no-overwrite-ignore", ITEM_BRANCH, check=check)
+        return self.run(lane, "switch", "--no-overwrite-ignore", branch, check=check)
 
     def writer_releases(self, lane: pathlib.Path) -> None:
         """Rule 1: after the final commit, before the close."""
@@ -144,49 +152,76 @@ class Rig:
 
     # --- round 7: the recorded commit and the boundary test ------------------
 
-    def setup_records(self, lane: pathlib.Path, branch: str) -> tuple[pathlib.Path, dict[str, str]]:
-        """setup-build-basic-review, from ITS OWN lane: resolve the branch to a
-        commit, write it (and the changed files) into the review context file,
-        and record `gc.build.review_commit` on the workflow root (modelled as a
-        dict: the bead store is not part of this test)."""
-        commit_id = out(lane, "rev-parse", branch)
+    REVIEW_COMMIT_KEY = "gc.review_commit"
+
+    def setup_records(self, lane: pathlib.Path, anchors: list[str]) -> tuple[pathlib.Path, dict[str, dict[str, str]]]:
+        """setup-build-basic-review, from ITS OWN lane: one record PER SOURCE
+        ANCHOR in the review context file (the anchor id, its branch, the
+        branch's commit, the changed files), and `gc.review_commit` on EACH
+        source anchor (the anchors' metadata modelled as a dict per anchor id:
+        the bead store is not part of this test). Nothing is recorded on the
+        workflow root. The branch is named for the source anchor."""
         context = self.root / "artifacts" / "code-review-context.md"
         context.parent.mkdir(parents=True, exist_ok=True)
-        changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", commit_id)
-        context.write_text(
-            f"branch: {branch}\ncommit: {commit_id}\nchanged_files: {changed}\n",
-            encoding="utf-8",
-        )
-        root_metadata = {"gc.build.review_commit": commit_id}
-        return context, root_metadata
+        records = []
+        anchor_metadata: dict[str, dict[str, str]] = {}
+        for anchor in anchors:
+            commit_id = out(lane, "rev-parse", anchor)
+            changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", commit_id)
+            records.append(f"anchor: {anchor}\nbranch: {anchor}\ncommit: {commit_id}\nchanged_files: {changed}\n")
+            anchor_metadata[anchor] = {self.REVIEW_COMMIT_KEY: commit_id}
+        context.write_text("\n".join(records), encoding="utf-8")
+        return context, anchor_metadata
 
     @staticmethod
-    def context_commit(context: pathlib.Path) -> str:
-        for line in context.read_text(encoding="utf-8").splitlines():
-            if line.startswith("commit: "):
-                return line[len("commit: "):]
-        raise AssertionError("no commit in the review context")
+    def context_records(context: pathlib.Path) -> dict[str, dict[str, str]]:
+        """The context file's records, keyed by source anchor id."""
+        records: dict[str, dict[str, str]] = {}
+        for block in context.read_text(encoding="utf-8").split("\n\n"):
+            fields = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+            if "anchor" in fields:
+                records[fields["anchor"]] = fields
+        return records
 
     @staticmethod
-    def reader_reads_current_commit(context: pathlib.Path, root_metadata: dict[str, str]) -> str:
-        """A review lane: `gc.build.review_commit` on the workflow root first,
-        the context file's commit only when the key is absent."""
-        return root_metadata.get("gc.build.review_commit") or Rig.context_commit(context)
+    def context_commit(context: pathlib.Path, anchor: str) -> str:
+        record = Rig.context_records(context).get(anchor)
+        if record is None or "commit" not in record:
+            raise AssertionError(f"no record for {anchor} in the review context")
+        return record["commit"]
 
-    def fix_lane_refreshes(self, lane: pathlib.Path, context: pathlib.Path, root_metadata: dict[str, str]) -> str:
+    @staticmethod
+    def reader_reads_current_commit(
+        context: pathlib.Path, anchor_metadata: dict[str, dict[str, str]], anchor: str
+    ) -> str:
+        """A review lane, for ONE source anchor: `gc.review_commit` on that
+        anchor first, that anchor's record in the context file only when the
+        key is absent. No workflow-wide key exists to read."""
+        return anchor_metadata.get(anchor, {}).get(Rig.REVIEW_COMMIT_KEY) or Rig.context_commit(context, anchor)
+
+    def fix_lane_refreshes(
+        self, lane: pathlib.Path, context: pathlib.Path, anchor_metadata: dict[str, dict[str, str]], anchor: str
+    ) -> str:
         """apply-review-findings, after its fix commit and BEFORE the release:
-        rewrite the commit id and changed files in the context file, then record
-        the new commit on the workflow root."""
+        rewrite the commit id and changed files in the record of the source
+        anchor it committed on, then record the new commit on that anchor.
+        Every other anchor's record and key are left untouched."""
         new_commit = out(lane, "rev-parse", "HEAD")
-        old_commit = self.context_commit(context)
         changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", new_commit)
-        text = context.read_text(encoding="utf-8").replace(f"commit: {old_commit}", f"commit: {new_commit}")
-        text = "\n".join(
-            f"changed_files: {changed}" if line.startswith("changed_files: ") else line
-            for line in text.splitlines()
-        ) + "\n"
-        context.write_text(text, encoding="utf-8")
-        root_metadata["gc.build.review_commit"] = new_commit
+        blocks = context.read_text(encoding="utf-8").split("\n\n")
+        for index, block in enumerate(blocks):
+            if f"anchor: {anchor}\n" not in block + "\n":
+                continue
+            lines = []
+            for line in block.splitlines():
+                if line.startswith("commit: "):
+                    line = f"commit: {new_commit}"
+                elif line.startswith("changed_files: "):
+                    line = f"changed_files: {changed}"
+                lines.append(line)
+            blocks[index] = "\n".join(lines) + ("\n" if block.endswith("\n") else "")
+        context.write_text("\n\n".join(blocks), encoding="utf-8")
+        anchor_metadata.setdefault(anchor, {})[self.REVIEW_COMMIT_KEY] = new_commit
         return new_commit
 
     @staticmethod
@@ -219,39 +254,49 @@ class Rig:
         )
 
 
-    # --- round 8: the Workspace fallback for a role with no lane -------------
+    # --- round 9: a role session outside a lane ------------------------------
 
     @staticmethod
-    def fallback_resolves_base(rig_root: pathlib.Path) -> tuple[str, str]:
-        """The role prompt's Workspace fallback, as the paragraph orders it
-        (the order worker-worktree.sh uses): the rig's remote, `origin` or its
-        other name, fetched, then `<remote>/HEAD`, `<remote>/main`,
-        `<remote>/master`; else the rig checkout's current HEAD. The base is
-        pinned to a commit in the rig. Returns (base, commit)."""
-        remotes = out(rig_root, "remote").split()
-        remote = "origin" if "origin" in remotes else (remotes[0] if remotes else None)
-        base = "HEAD"
-        if remote is not None:
-            git(rig_root, "fetch", "--quiet", remote, check=False)
-            head = git(rig_root, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD", check=False)
-            if head.returncode == 0:
-                base = head.stdout.strip()
-            elif git(rig_root, "show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/main", check=False).returncode == 0:
-                base = f"{remote}/main"
-            elif git(rig_root, "show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/master", check=False).returncode == 0:
-                base = f"{remote}/master"
-        commit_id = out(rig_root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
-        return base, commit_id
+    def repository_state(checkout: pathlib.Path) -> dict[str, object]:
+        """Everything a session could have moved: every file under the
+        checkout (its `.git` aside), the checkout's HEAD, every ref, and the
+        worktree list. Equal before and after means byte-identical."""
+        files = {
+            str(path.relative_to(checkout)): path.read_bytes()
+            for path in sorted(checkout.rglob("*"))
+            if path.is_file() and ".git" not in path.relative_to(checkout).parts
+        }
+        return {
+            "files": files,
+            "head": (checkout / ".git" / "HEAD").read_bytes(),
+            "refs": out(checkout, "for-each-ref"),
+            "worktrees": out(checkout, "worktree", "list", "--porcelain"),
+            "branch": out(checkout, "branch", "--show-current"),
+            "status": out(checkout, "status", "--porcelain"),
+        }
 
-    def fallback_creates_workspace(self, bead: str) -> pathlib.Path:
-        """The fallback's create step: `<city>/.worktrees/<rig>/<bead>` on a
-        new branch named for the bead, from the pinned commit, registered
-        from the rig root (reads refs there, never its working tree)."""
-        _base, commit_id = self.fallback_resolves_base(self.rig)
-        path = self.lanes_root / bead
-        path.parent.mkdir(parents=True, exist_ok=True)
-        git(self.rig, "worktree", "add", "--quiet", "-b", bead, str(path), commit_id)
-        return path
+    def session_without_lane(
+        self, gc_dir: pathlib.Path, commit_id: str, path: str, *, needs_checkout: bool
+    ) -> tuple[dict[str, str], str, str]:
+        """The role prompt's Workspace paragraph for a session outside a
+        gc-made lane: the boundary test fails, so no switch, no detach, no
+        branch, no commit and no worktree; the item is read by `git show` /
+        `git log -1` only, and a step that needs a checkout closes
+        `gc.outcome=fail`, `gc.failure_class=no-lane`, naming the fix."""
+        assert not all(self.boundary_test(gc_dir, self.rig)), "this is a lane"
+        content = out(gc_dir, "show", f"{commit_id}:{path}")
+        seen = out(gc_dir, "log", "-1", "--format=%H", commit_id)
+        if needs_checkout:
+            return (
+                {
+                    "gc.outcome": "fail",
+                    "gc.failure_class": "no-lane",
+                    "reason": "no lane for this role: the city must give it one ([[patches.agent]] work_dir + pre_start in city.toml)",
+                },
+                content,
+                seen,
+            )
+        return {"gc.outcome": "pass"}, content, seen
 
 
 class LaneLifecycleTests(unittest.TestCase):
@@ -406,10 +451,11 @@ class LaneLifecycleTests(unittest.TestCase):
 
     def test_fix_lane_refreshes_the_recorded_commit_so_the_next_attempt_reviews_the_fix(self) -> None:
         """Rule 6 (gate r6 M1). The setup records commit A once; the fix lane
-        commits B and refreshes the context file and the root key BEFORE it
-        releases; a reader on the next attempt reads B (from the key first,
-        from the context when the key is absent), detaches at B, and sees the
-        fix. A is gone from the context. The rig root never changes."""
+        commits B and refreshes the anchor's record in the context file and
+        the anchor's key BEFORE it releases; a reader on the next attempt
+        reads B (from the anchor's key first, from the anchor's record when
+        the key is absent), detaches at B, and sees the fix. A is gone from
+        the context. The rig root never changes."""
         rig = self.rig
         operator = rig.lane("run-operator")
         implement = rig.lane("implementation-worker-1")
@@ -424,13 +470,13 @@ class LaneLifecycleTests(unittest.TestCase):
         rig.writer_releases(implement)
 
         # setup-build-basic-review, ONCE, outside the loop: records A.
-        context, root_metadata = rig.setup_records(setup, ITEM_BRANCH)
-        self.assertEqual(rig.context_commit(context), commit_a)
-        self.assertEqual(root_metadata["gc.build.review_commit"], commit_a)
+        context, anchors = rig.setup_records(setup, [ITEM_BRANCH])
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), commit_a)
+        self.assertEqual(anchors, {ITEM_BRANCH: {"gc.review_commit": commit_a}})
         self.assertIn("changed_files: feature.txt", context.read_text(encoding="utf-8"))
 
         # Attempt 1: a reader reads A, detaches at A, finds the defect.
-        current = rig.reader_reads_current_commit(context, root_metadata)
+        current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
         self.assertEqual(current, commit_a)
         proc = rig.reader_detaches(reviewer_1, current)
         _, err = proc.communicate(timeout=60)
@@ -445,7 +491,7 @@ class LaneLifecycleTests(unittest.TestCase):
         git(fix, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "--amend", "--no-edit")
         commit_b = out(fix, "rev-parse", "HEAD")
         self.assertNotEqual(commit_b, commit_a)
-        refreshed = rig.fix_lane_refreshes(fix, context, root_metadata)
+        refreshed = rig.fix_lane_refreshes(fix, context, anchors, ITEM_BRANCH)
         # The refresh happened while the fix lane still HOLDS the branch (before the release).
         self.assertEqual(rig.holder_of(ITEM_BRANCH), str(fix))
         self.assertEqual(refreshed, commit_b)
@@ -454,16 +500,17 @@ class LaneLifecycleTests(unittest.TestCase):
         # Never leave the old commit in the context after a fix.
         context_text = context.read_text(encoding="utf-8")
         self.assertNotIn(commit_a, context_text)
-        self.assertEqual(rig.context_commit(context), commit_b)
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), commit_b)
         self.assertIn("changed_files: feature.txt feature_test.txt", " ".join(context_text.split()))
-        self.assertEqual(root_metadata["gc.build.review_commit"], commit_b)
+        self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], commit_b)
         self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), commit_b)
 
-        # Attempt 2: a reader reads B, not A: from the key first ...
-        current = rig.reader_reads_current_commit(context, root_metadata)
+        # Attempt 2: a reader reads B, not A: from the anchor's key first ...
+        current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
         self.assertEqual(current, commit_b)
-        # ... and from the context file when the key is absent.
-        self.assertEqual(rig.reader_reads_current_commit(context, {}), commit_b)
+        # ... and from the anchor's record in the context file when the key is absent.
+        self.assertEqual(rig.reader_reads_current_commit(context, {}, ITEM_BRANCH), commit_b)
+        self.assertEqual(rig.reader_reads_current_commit(context, {ITEM_BRANCH: {}}, ITEM_BRANCH), commit_b)
         proc = rig.reader_detaches(reviewer_2, current)
         _, err = proc.communicate(timeout=60)
         self.assertEqual(proc.returncode, 0, err)
@@ -544,52 +591,134 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertNotEqual(rig.snapshot(rig_root_as_gc_dir), rig.rig_before)
 
 
+    def test_role_session_without_a_lane_reads_detached_creates_no_worktree_and_moves_nothing(self) -> None:
+        """Rule 8 (round 9; Afik: drop the fallback). A role the city gave no
+        `work_dir` starts in the rig root: `$GC_DIR` is the human checkout and
+        the boundary test fails. The session reads the item by `git show` /
+        `git log -1` only, creates no worktree, creates and moves no branch,
+        and a step that needs a checkout closes `gc.outcome=fail`,
+        `gc.failure_class=no-lane` naming the fix. The rig checkout is
+        byte-identical after: every file under it, its HEAD, every ref, the
+        worktree list. Rounds 2 to 8 had this session make and enter
+        `<city>/.worktrees/<rig>/<bead>` from here; that path is gone."""
+        rig = self.rig
+        operator = rig.lane("run-operator")
+        implement = rig.lane("implementation-worker-1")
+        rig.operator_prepares(operator)
+        rig.writer_takes(implement)
+        recorded = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+
+        gc_dir = rig.rig  # a role with no lane: $GC_DIR is the rig root
+        self.assertEqual(Rig.boundary_test(gc_dir, rig.rig), (True, False, True))
+        before = rig.repository_state(gc_dir)
+        self.assertEqual(before["worktrees"].count("worktree "), 3)  # the rig, the operator, the implementer
+
+        # A read-only step: reads the item, closes pass.
+        outcome, content, seen = rig.session_without_lane(gc_dir, recorded, "feature.txt", needs_checkout=False)
+        self.assertEqual(outcome, {"gc.outcome": "pass"})
+        self.assertEqual((content, seen), ("implemented", recorded))
+        # A step that needs a checkout at the commit: fails closed, no-lane, names the fix.
+        outcome, content, seen = rig.session_without_lane(gc_dir, recorded, "feature.txt", needs_checkout=True)
+        self.assertEqual((outcome["gc.outcome"], outcome["gc.failure_class"]), ("fail", "no-lane"))
+        self.assertIn("[[patches.agent]]", outcome["reason"])
+        self.assertEqual((content, seen), ("implemented", recorded))
+
+        # Nothing moved: no worktree, no branch, no detach, no file; byte-identical.
+        after = rig.repository_state(gc_dir)
+        self.assertEqual(after, before)
+        self.assertEqual(after["worktrees"].count("worktree "), 3)
+        self.assertEqual(out(gc_dir, "branch", "--show-current"), "main")
+        self.assertEqual(out(gc_dir, "rev-parse", "HEAD"), rig.main_sha)
+        self.assertFalse((gc_dir / "feature.txt").exists())  # the commit was read, never checked out
+        self.assertEqual(sorted(path.name for path in rig.lanes_root.iterdir()), ["lane-gc.implementation-worker-1", "lane-gc.run-operator"])
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_two_source_anchors_keep_their_own_review_commits_when_one_is_fixed(self) -> None:
+        """Rule 9 (gate r8 MAJOR). Two drains produce two source anchors on
+        independent branches. The setup records each item's commit on ITS
+        anchor; a fix on item 1 refreshes item 1's record and key only; item
+        2's recorded commit is unchanged, and item 2's reader detaches at
+        item 2's own revision, where item 1's files do not exist. One
+        workflow-wide key (round 7's shape), overwritten by the fix, would
+        have sent item 2's reader to item 1's fix commit."""
+        rig = self.rig
+        item_1, item_2 = "gp-item1", "gp-item2"
+        operator = rig.lane("run-operator")
+        impl_1 = rig.lane("implementation-worker-1")
+        impl_2 = rig.lane("implementation-worker-2")
+        setup = rig.lane("run-operator-2")
+        reviewer_1 = rig.lane("implementation-reviewer-1")
+        reviewer_2 = rig.lane("implementation-reviewer-2")
+        fix = rig.lane("implementation-worker-3")
+
+        # Two drains: two branches from main, two implementers, both released.
+        rig.operator_prepares(operator, item_1)
+        rig.operator_prepares(operator, item_2)
+        rig.writer_takes(impl_1, item_1)
+        a1 = commit(impl_1, "one.txt", "one\n", "implement item 1")
+        rig.writer_releases(impl_1)
+        rig.writer_takes(impl_2, item_2)
+        a2 = commit(impl_2, "two.txt", "two\n", "implement item 2")
+        rig.writer_releases(impl_2)
+        self.assertNotEqual(a1, a2)
+        # Independent branches: neither commit is an ancestor of the other.
+        self.assertNotEqual(git(rig.rig, "merge-base", "--is-ancestor", a1, a2, check=False).returncode, 0)
+        self.assertNotEqual(git(rig.rig, "merge-base", "--is-ancestor", a2, a1, check=False).returncode, 0)
+
+        # setup-build-basic-review, ONCE: one record and one key per anchor.
+        context, anchors = rig.setup_records(setup, [item_1, item_2])
+        self.assertEqual(anchors, {item_1: {"gc.review_commit": a1}, item_2: {"gc.review_commit": a2}})
+        self.assertEqual(rig.context_commit(context, item_1), a1)
+        self.assertEqual(rig.context_commit(context, item_2), a2)
+        self.assertEqual(rig.context_records(context)[item_2]["changed_files"], "two.txt")
+
+        # apply-review-findings fixes item 1 ONLY: take, commit, refresh item 1's record, release.
+        rig.writer_takes(fix, item_1)
+        b1 = commit(fix, "one.txt", "one\nfixed\n", "fix item 1")
+        self.assertEqual(rig.fix_lane_refreshes(fix, context, anchors, item_1), b1)
+        rig.writer_releases(fix)
+
+        # Item 1 moved to B1; item 2's record and key are exactly as the setup left them.
+        self.assertEqual(anchors, {item_1: {"gc.review_commit": b1}, item_2: {"gc.review_commit": a2}})
+        self.assertEqual(rig.context_commit(context, item_1), b1)
+        self.assertEqual(rig.context_commit(context, item_2), a2)
+        context_text = context.read_text(encoding="utf-8")
+        self.assertNotIn(a1, context_text)
+        self.assertIn(a2, context_text)
+        self.assertEqual(rig.context_records(context)[item_2]["changed_files"], "two.txt")
+        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_1), b1)
+        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_2), a2)
+
+        # Attempt 2: each reader reads ITS anchor's commit and inspects that revision.
+        current_1 = rig.reader_reads_current_commit(context, anchors, item_1)
+        current_2 = rig.reader_reads_current_commit(context, anchors, item_2)
+        self.assertEqual((current_1, current_2), (b1, a2))
+        for reviewer, current in ((reviewer_1, current_1), (reviewer_2, current_2)):
+            proc = rig.reader_detaches(reviewer, current)
+            _, err = proc.communicate(timeout=60)
+            rig.stderr_seen.append(err)
+            self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(out(reviewer_1, "rev-parse", "HEAD"), b1)
+        self.assertEqual((reviewer_1 / "one.txt").read_text(encoding="utf-8"), "one\nfixed\n")
+        self.assertFalse((reviewer_1 / "two.txt").exists())
+        self.assertEqual(out(reviewer_2, "rev-parse", "HEAD"), a2)
+        self.assertEqual((reviewer_2 / "two.txt").read_text(encoding="utf-8"), "two\n")
+        self.assertFalse((reviewer_2 / "one.txt").exists())
+        # The round-7 shape, one key for the workflow overwritten by the fix,
+        # would have sent item 2's reader to B1, where item 2's file does not exist.
+        self.assertNotEqual(git(rig.rig, "cat-file", "-e", f"{b1}:two.txt", check=False).returncode, 0)
+        # The key-absent fallback is per anchor too: item 2's own record, not item 1's.
+        self.assertEqual(rig.reader_reads_current_commit(context, {}, item_2), a2)
+        self.assertEqual(rig.reader_reads_current_commit(context, {}, item_1), b1)
+
+        self.assertIsNone(rig.holder_of(item_1))
+        self.assertIsNone(rig.holder_of(item_2))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+
 if __name__ == "__main__":
     unittest.main()
-
-    def test_role_without_a_lane_in_a_rig_without_a_remote_gets_a_workspace_from_the_rig_head(self) -> None:
-        """Round 8 (gate r7): a role the city gave no work_dir starts in the rig
-        root and takes the Workspace fallback. This rig has NO remote, so the
-        round-7 text's `origin/<default branch>` does not exist; the resolution
-        the paragraph now documents ends at the rig checkout's HEAD, the
-        worker creates `<city>/.worktrees/<rig>/<bead>` from that commit,
-        works there, and the rig checkout's branch, HEAD and status never
-        move. A remote not named origin is then found by the same order."""
-        rig = self.rig
-        self.assertEqual(out(rig.rig, "remote"), "")
-        for ref in ("origin/HEAD", "origin/main", "origin/master"):
-            with self.subTest(missing=ref):
-                self.assertNotEqual(git(rig.rig, "rev-parse", "--verify", "--quiet", ref, check=False).returncode, 0)
-        # $GC_DIR is the rig root: the boundary test fails (part 2), so this is
-        # the fallback, not the lane case, and nothing is switched there.
-        self.assertEqual(Rig.boundary_test(rig.rig, rig.rig), (True, False, True))
-
-        base, commit_id = Rig.fallback_resolves_base(rig.rig)
-        self.assertEqual((base, commit_id), ("HEAD", rig.main_sha))
-
-        bead = "gp-nolane1"
-        self.assertNotEqual(git(rig.rig, "rev-parse", "--verify", "--quiet", f"refs/heads/{bead}", check=False).returncode, 0)
-        workspace = rig.fallback_creates_workspace(bead)
-        self.assertEqual(workspace, rig.lanes_root / bead)
-        self.assertEqual(out(workspace, "branch", "--show-current"), bead)
-        self.assertEqual(out(workspace, "rev-parse", "HEAD"), rig.main_sha)
-        self.assertEqual(Rig.boundary_test(workspace, rig.rig), (True, True, True))
-        # The worker works there: a commit lands on the bead's branch, not on main.
-        done = commit(workspace, "work.txt", "done\n", "work in the fallback workspace")
-        self.assertEqual(out(rig.rig, "rev-parse", bead), done)
-        self.assertEqual(out(rig.rig, "rev-parse", "main"), rig.main_sha)
-        self.assert_rig_root_untouched()
-        self.assert_no_contention()
-
-        # The same order finds a remote that is not named origin: its default
-        # branch wins over the rig's HEAD, so the paragraph's first candidate
-        # is real, not only its last.
-        mirror = rig.root / "mirror.git"
-        subprocess.run(["git", "clone", "--quiet", "--bare", str(rig.rig), str(mirror)], check=True)
-        git(rig.rig, "remote", "add", "upstream", str(mirror))
-        git(rig.rig, "fetch", "--quiet", "upstream")
-        git(rig.rig, "remote", "set-head", "upstream", "--auto")
-        self.assertEqual(out(rig.rig, "remote"), "upstream")
-        base, commit_id = Rig.fallback_resolves_base(rig.rig)
-        self.assertEqual((base, commit_id), ("upstream/main", rig.main_sha))
-        self.assert_rig_root_untouched()

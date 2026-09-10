@@ -25,16 +25,19 @@ checkout.
 
 Contract: `gc.work_dir` is the launcher rig root, not the implementation worktree.
 
-The `## Implementation Worktrees` section names the workspace either as the source anchor's
-`work_dir` or, when the source anchor has no `work_dir` and records
-`gc.work_branch`, as a branch and a commit id. Read the CURRENT commit first:
-`gc.build.review_commit` on the workflow root bead (`gc.root_bead_id` on your
-claimed step bead; `gc bd show <workflow-root-id> --json`), which the review
-setup writes on its first run and the fix lane refreshes after every fix
-commit; fall back to the commit in the review context file only when that key
-is absent. The review loop re-runs this lane after a fix, and a commit read
-from a stale context re-reviews code that was already fixed and repeats
-resolved findings. In the branch case work from
+The `## Implementation Worktrees` section carries one record per source
+anchor, and each names the workspace either as that source anchor's `work_dir`
+or, when the source anchor has no `work_dir` and records `gc.work_branch`, as
+a branch and a commit id. Read the CURRENT commit first, per source anchor:
+`gc.review_commit` on that source anchor bead (`gc bd show <source-anchor-id>
+--json`, the id from its record in the context), which the review setup writes
+on its first run and the fix lane refreshes after every fix commit on that
+item; fall back to the commit in that anchor's record in the review context
+file only when that key is absent. There is no workflow-wide review commit:
+separate drains put several items on independent branches, and each is
+inspected at its own commit. The review loop re-runs this lane after a fix,
+and a commit read from a stale context re-reviews code that was already fixed
+and repeats resolved findings. In the branch case work from
 your OWN lane and never enter another agent's directory: read with `git -C
 "$GC_DIR" log -1 <commit>` and `git -C "$GC_DIR" show <commit>:<path>` (every
 worktree of the rig shares its refs, and both commands are safe from any

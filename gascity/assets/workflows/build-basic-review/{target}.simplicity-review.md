@@ -18,14 +18,17 @@ Contract: `gc.work_dir` is the launcher rig root, not the implementation worktre
 Write findings under the build artifact root. Required findings must be tied to
 specific changed files or artifacts and must explain the smallest useful fix.
 
-Read the changed files where the review context puts them: the source
-anchor's `work_dir`, or, when the source anchor has no `work_dir` and records
-`gc.work_branch`, the recorded branch and commit read from your OWN lane
-(`git -C "$GC_DIR" show <commit>:<path>`; every worktree of the rig shares its
-refs). Read the CURRENT commit first from `gc.build.review_commit` on the
-workflow root bead (written by the review setup, refreshed by the fix lane
-after every fix commit; the loop re-runs this lane after a fix) and fall back
-to the review context file's commit only when that key is absent. Never enter
+Read the changed files where the review context puts them, per source anchor
+(the context carries one record per source anchor): that anchor's `work_dir`,
+or, when the source anchor has no `work_dir` and records `gc.work_branch`, the
+recorded branch and commit read from your OWN lane (`git -C "$GC_DIR" show
+<commit>:<path>`; every worktree of the rig shares its refs). Read the CURRENT
+commit first from `gc.review_commit` on that source anchor bead (`gc bd show
+<source-anchor-id> --json`; written by the review setup, refreshed by the fix
+lane after every fix commit on that item; the loop re-runs this lane after a
+fix) and fall back to that anchor's record in the review context file only
+when that key is absent; there is no workflow-wide review commit, each item is
+inspected at its own. Never enter
 another agent's lane; to run a command in the branch case, inspect the
 recorded commit DETACHED in your own lane as the acceptance lane does, and as
 it does prove the lane FIRST, before any `switch` or detach, with the boundary

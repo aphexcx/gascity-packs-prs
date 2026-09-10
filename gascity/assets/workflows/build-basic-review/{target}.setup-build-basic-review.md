@@ -3,18 +3,26 @@ Prepare the build-basic starter factory review.
 Gather the requirements artifact, implementation plan, decomposition artifact,
 implementation summary, changed-file summaries, task evidence, and verification
 commands into one review context file under the build artifact root. Record that
-path on the workflow root as `gc.build.code_review_context_path`, and record the
-commit id the context carries on the workflow root as well:
-`gc bd update "<workflow-root-id>" --set-metadata 'gc.build.review_commit=<commit>'`.
-This setup runs ONCE, outside the review loop; the review lanes read
-`gc.build.review_commit` first and fall back to the context file's commit, and
-the fix lane refreshes both the context file and this key after every fix
-commit, so each attempt of the loop reviews the CURRENT commit, never the one
-this step saw.
+path on the workflow root as `gc.build.code_review_context_path`. The context
+carries one record PER SOURCE ANCHOR (separate drains produce several source
+anchors, each on its own branch at its own commit), and the commit each record
+carries is recorded on that source anchor, never on the workflow root:
+`gc bd update "<source-anchor-id>" --set-metadata 'gc.review_commit=<commit>'`,
+once per source anchor the context names (for a synthetic drain-unit convoy,
+the original drain member, never the synthetic convoy). There is no
+workflow-wide review commit: one key for several items would send every reader
+to one item's revision for all of them, and a fix on one item would overwrite
+the revision recorded for the others. This setup runs ONCE, outside the review
+loop; the review lanes read each source anchor's `gc.review_commit` first and
+fall back to that anchor's record in the context file, and the fix lane
+refreshes that anchor's record and key after every fix commit, so each attempt
+of the loop reviews the CURRENT commit of each item, never the one this step
+saw.
 
 The implementation source of truth is the closed source anchor/worktree recorded
-by the implementation summary and task evidence. Include the source anchor id,
-its `work_dir`, changed files, commit id, and proof commands in the context. The
+by the implementation summary and task evidence. Include, per source anchor,
+its id, its `work_dir`, changed files, commit id, and proof commands in the
+context. The
 launcher rig root may remain unchanged until an explicit publish step; do not
 present an unchanged root checkout as a review failure when the source
 anchor/worktree contains the verified implementation.
@@ -71,4 +79,5 @@ Do not invoke provider-native subagents. Gas City graph lanes are the
 delegation mechanism.
 
 Close this setup bead with `gc.outcome=pass` only after the review context path
-and `gc.build.review_commit` are recorded.
+is recorded on the workflow root and `gc.review_commit` is recorded on every
+source anchor the context names.

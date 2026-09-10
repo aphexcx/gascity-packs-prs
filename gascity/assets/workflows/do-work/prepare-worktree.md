@@ -99,10 +99,12 @@ setup only. Do not edit source files in the launcher checkout.
      next writer.
    - A writer that commits after a commit was recorded for readers (the
      review fix lane, after the review setup recorded the commit it reviews)
-     refreshes the recorded commit before it releases the branch: the review
-     context file and `gc.build.review_commit` on the workflow root, so the
-     next attempt's readers inspect the new commit, never the one the setup
-     saw.
+     refreshes the recorded commit before it releases the branch: this
+     source anchor's record in the review context file and `gc.review_commit`
+     on this source anchor (per item, never a workflow-wide key: separate
+     drains put several items on independent branches, each inspected at its
+     own commit), so the next attempt's readers inspect the new commit, never
+     the one the setup saw, and no other item's recorded commit moves.
    - A writer that crashed before releasing leaves the branch held. The next
      writer's switch then fails (git: "already checked out at <path>", or
      "already used by worktree at <path>" in newer git); that step fails
