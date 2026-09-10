@@ -139,11 +139,17 @@ func (r *mentionOnlyRegistry) load() error {
 	}
 	var stored mentionOnlyDiskFile
 	if err := json.Unmarshal(data, &stored); err != nil {
-		// A corrupt file must not take the adapter down, but unlike the
-		// thread-session cache the bindings are operator intent and are
-		// NOT rebuildable — so the file is preserved (never overwritten
-		// from an empty in-memory state) and the operator is told.
-		return fmt.Errorf("malformed JSON in %s (%v); repair or remove the file", r.diskPath, err)
+		// A corrupt file must not take the adapter (every Slack lane) down,
+		// but unlike the thread-session cache these bindings are operator
+		// intent and are NOT rebuildable — so the file is moved aside
+		// intact for repair rather than overwritten from the empty
+		// in-memory state the adapter starts with.
+		aside := fmt.Sprintf("%s.corrupt-%d", r.diskPath, time.Now().Unix())
+		if mvErr := os.Rename(r.diskPath, aside); mvErr != nil {
+			return fmt.Errorf("malformed JSON in %s (%v) and could not move it aside (%v); repair or remove the file", r.diskPath, err, mvErr)
+		}
+		log.Printf("WARN: mention-only registry: malformed file %q (%v); moved to %q and starting EMPTY — re-run `gc slack bind-room … --mentions-only` for each binding", r.diskPath, err, aside)
+		return nil
 	}
 	for channel, list := range stored.Channels {
 		channel = strings.TrimSpace(channel)
@@ -725,13 +731,53 @@ func postMentionOnlyReminder(cfg config, sessionID, body string) (deliveryReceip
 	return parseDeliveryReceipt(respBody), true
 }
 
+// ownThreadScanLimit is the conversations.replies window the own-thread
+// fallback scan reads when the preamble's (context-limit-sized) fetch did
+// not run or may have been truncated. Slack pages oldest-first, so a bot
+// reply deep in a long thread needs the wider window (codex r1 P2).
+// Threads longer than this without a registry entry still read as
+// "not posted"; the registry is the primary source.
+const ownThreadScanLimit = 200
+
+// mentionOnlyScanMinRefetch is the reply count at which a preamble fetch
+// capped at limit may have been truncated.
+func mentionOnlyScanMinRefetch(limit int) int {
+	if limit <= 0 {
+		limit = defaultThreadContextLimit
+	}
+	return limit
+}
+
+// recordAliasDeliveryForMentionOnly logs an alias-leg injection under any
+// mention-only binding for the same session, so the pack scripts' latest-
+// inbound resolution sees it (the alias leg skipped the lane's own
+// injection, and no gc event exists for a non-member; codex r1 P2).
+func recordAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding, aliasedSessionID string, inbound externalInboundMessage) {
+	if cfg.mentionOnlyDeliveries == nil || aliasedSessionID == "" {
+		return
+	}
+	for _, b := range bindings {
+		if !b.matchesSession(aliasedSessionID) {
+			continue
+		}
+		cfg.mentionOnlyDeliveries.record(b, mentionOnlyDelivery{
+			SessionID:  b.SessionID,
+			ChannelID:  inbound.Conversation.ConversationID,
+			TS:         inbound.ProviderMessageID,
+			ThreadTS:   inbound.ReplyToMessageID,
+			Reason:     mentionOnlyReasonHandle,
+			ReceivedAt: inbound.ReceivedAt,
+		})
+	}
+}
+
 // deliverMentionOnly injects one reminder per target, synchronously, with
 // a per-(session, channel, ts) claim collapsing Slack's twin deliveries.
 // A failed injection releases its claim (a parked twin or Slack redelivery
 // retries it), logs, and marks the message with ⚠️ so the human sees the
-// session was not reached. Returns the number of injections gc accepted.
-func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage) int {
-	delivered := 0
+// session was not reached. Returns the number of injections gc accepted
+// and the number that failed (skipped twins count as neither).
+func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage) (delivered, failed int) {
 	channel := inbound.Conversation.ConversationID
 	ts := inbound.ProviderMessageID
 	for _, t := range targets {
@@ -770,6 +816,7 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			log.Printf("mention-only: FAILED session=%s chan=%s ts=%s reason=%s — claim released for a twin/redelivery retry",
 				t.binding.SessionID, channel, ts, t.reason)
 			reactMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
+			failed++
 			continue
 		}
 		cfg.channelClaims.commit(key)
@@ -785,7 +832,7 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			t.binding.SessionID, channel, ts, inbound.ReplyToMessageID, t.reason, receipt.logField(verdict))
 		delivered++
 	}
-	return delivered
+	return delivered, failed
 }
 
 // reactMentionOnlyDispatchFailure posts ⚠️ on the message whose mention-only

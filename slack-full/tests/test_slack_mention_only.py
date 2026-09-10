@@ -141,6 +141,71 @@ def test_bind_room_mentions_only_keeps_existing_ambient_record(
     ]
 
 
+def test_bind_room_mentions_only_rejects_session_already_ambient_here(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r1 P1: a gc group member is woken for every message, so
+    layering mention-only on top would keep those wakes AND add injections."""
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "group_id": "jg-grp",
+        "participants": [{"handle": "mayor", "session_name": "mayor"}],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {
+        "items": [{"id": "jg-mayor-1", "alias": "mayor", "session_name": "mayor"}],
+    } if path == "/sessions" else {"items": []})
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: pytest.fail("adapter must not be called on a conflict"))
+    # By name and by resolved id alike.
+    for who in ("mayor", "jg-mayor-1"):
+        with pytest.raises(SystemExit) as exc:
+            bind.main(["C1", who, "--mentions-only"])
+        assert "AMBIENTLY" in str(exc.value)
+
+    # A gc-side binding (binding owner / bind-dm) to the same conversation
+    # is a conflict too, even with no pack-config participant record.
+    cfg["bindings"] = {}
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": {"ConversationID": "C1"}},
+    ]} if path.startswith("/extmsg/bindings") else {"items": []})
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor", "--mentions-only"])
+    assert "AMBIENTLY" in str(exc.value)
+
+
+def test_bind_room_ambient_rejects_session_already_mention_only_here(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "delivery_mode": "mentions_only",
+        "mention_only_participants": [
+            {"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"},
+        ],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "gc_post", lambda *a, **k: pytest.fail("gc must not be called on a conflict"))
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor"])
+    assert "MENTION-ONLY" in str(exc.value)
+
+    # A different session binds ambiently fine, and the mention-only record
+    # for mayor rides along on the rewritten pack-config record.
+    monkeypatch.setattr(common, "gc_post", lambda path, body: {"ID": "grp-1"} if path == "/extmsg/groups" else {"ID": "p-1"})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+    assert bind.main(["C1", "ops-session"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert rec["participants"] == [{"handle": "ops-session", "session_name": "ops-session"}]
+    assert rec["mention_only_participants"][0]["session_id"] == "jg-mayor-1"
+
+
 @pytest.mark.parametrize("flag", [
     ["--enable-peer-fanout"],
     ["--allow-untargeted-publication"],

@@ -2444,7 +2444,7 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			if root == "" {
 				root = slackResp.TS
 			}
-			cfg.ownThreads.record(req.Conversation.ConversationID, root, req.SessionID)
+			cfg.ownThreads.record(req.Conversation.ConversationID, root, identitySessionID)
 		}
 		// Remember delivered receipts so a subsequent retry with the same
 		// idempotency key replays this receipt instead of re-posting. Put
@@ -2618,7 +2618,7 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 		// ts, so it cannot root a thread here — follow-ups to it fall
 		// back to the Slack thread scan.
 		if req.ReplyToMessageID != "" {
-			cfg.ownThreads.record(req.Conversation.ConversationID, req.ReplyToMessageID, req.SessionID)
+			cfg.ownThreads.record(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID)
 		}
 		writeJSON(w, receipt)
 	}
@@ -4042,6 +4042,18 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// (selectMentionOnlyTargets). Everything else in the room stays
 	// silent for them. The channel copy and every ambient member are
 	// untouched by this block; see mention_only.go for the rules.
+	mentionOnlyFailed := false
+	// concludeEvent is how the alias leg's goroutine settles the event id
+	// once it owns the verdict: commit, unless a mention-only injection
+	// for this event failed — then the id stays forgotten so a retry can
+	// still run that leg (codex r1 P1).
+	concludeEvent := func() {
+		if mentionOnlyFailed {
+			cfg.eventDedup.forget(env.EventID)
+			return
+		}
+		cfg.eventDedup.commit(env.EventID)
+	}
 	if len(mentionOnlyBindings) > 0 {
 		moIn := mentionOnlyInput{
 			bindings:         mentionOnlyBindings,
@@ -4059,22 +4071,42 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// the preamble's fetch when it ran; fetches once
 				// otherwise (skipChannelPost twins, nil cache).
 				if botUID := env.botUserID(); botUID != "" {
-					if !threadRepliesFetched {
+					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS)
+					// The preamble's fetch is capped at the context limit
+					// (20 by default) and conversations.replies pages
+					// oldest-first, so a bot reply past that window is
+					// invisible to it (codex r1 P2). Before concluding
+					// "never posted", scan a wider window once — whenever
+					// no fetch ran, or the fetched window may have been
+					// truncated.
+					if !moIn.botPostedInThread && (!threadRepliesFetched || len(threadReplies) >= mentionOnlyScanMinRefetch(cfg.slackThreadContextLimit)) {
 						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
+						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, ownThreadScanLimit)
 						cancel()
 						if err != nil {
 							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
 						} else {
-							threadReplies, threadRepliesFetched = replies, true
+							moIn.botPostedInThread = threadHasOwnBotPost(replies, botUID, msg.TS)
 						}
 					}
-					moIn.botPostedInThread = threadHasOwnBotPost(threadReplies, botUID, msg.TS)
 				}
 			}
 		}
 		if targets := selectMentionOnlyTargets(moIn); len(targets) > 0 {
-			deliverMentionOnly(cfg, targets, inbound)
+			if _, failed := deliverMentionOnly(cfg, targets, inbound); failed > 0 {
+				// An addressed session's copy was not delivered (codex r1
+				// P1). The session-level claim is already released, but
+				// handleSlackEvents refuses a redelivery of an event id
+				// that concluded here — so the id must NOT commit: it is
+				// forgotten now, and the alias leg below concludes it the
+				// same way. The channel copy still proceeds; a retaken
+				// redelivery skips it on its concluded claim (or, for a
+				// buffered copy, costs the channel audience a duplicate
+				// gc dedups by ts) — the trade the alias leg makes too.
+				mentionOnlyFailed = true
+				commitDedup = false
+				cfg.eventDedup.forget(env.EventID)
+			}
 		}
 	}
 	if willBuffer {
@@ -4512,7 +4544,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						for _, d := range displaced {
 							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 						}
-						cfg.eventDedup.commit(env.EventID)
+						recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
+						concludeEvent()
 						return
 					}
 					log.Printf("alias dispatch: handle=%s ts=%s parked behind in-flight same-ts twin injection",
@@ -4562,7 +4595,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					for _, d := range displaced {
 						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 					}
-					cfg.eventDedup.commit(env.EventID)
+					// A mention-only session addressed by alias got its copy
+					// through this leg; log it so the reply tooling can
+					// anchor on it (codex r1 P2).
+					recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
+					concludeEvent()
 					return
 				}
 				// The busy reaction was already launched for this

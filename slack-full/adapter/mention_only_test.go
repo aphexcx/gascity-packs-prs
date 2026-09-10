@@ -360,6 +360,12 @@ func TestMentionOnly_HandleRoutingHonoured(t *testing.T) {
 	if !strings.Contains(injections[1].body, "Slack address-by-handle") {
 		t.Errorf("second delivery should be the alias leg's reminder, got:\n%s", injections[1].body)
 	}
+	// The alias-leg delivery is logged for the mention-only session too,
+	// so the reply tooling anchors on it (codex r1 P2).
+	got := cfg.mentionOnlyDeliveries.forSession("mayor-session")
+	if len(got) != 2 || got[0].TS != "100.000801" || got[0].Reason != mentionOnlyReasonHandle {
+		t.Errorf("delivery log = %+v, want the alias-leg delivery for 100.000801 on top", got)
+	}
 }
 
 // (5b) `@@handle` launcher posts terminate in the launcher branch and
@@ -423,9 +429,20 @@ func TestMentionOnly_FailedInjectionReleasesClaim(t *testing.T) {
 
 	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
 	cfg.busyReaction = "" // keep the reaction recorder to the ⚠️ marker
+	cfg.eventDedup = newEventDedupCache(time.Minute)
 	text := "<@" + testBotUserID + "> fails first"
 	env := botMentionEnvelope(t, "message", "EvF", "C1", "100.001100", "", text, true)
+	// handleSlackEvents claims the event id before dispatching.
+	if proceed, _ := cfg.eventDedup.begin("EvF"); !proceed {
+		t.Fatalf("fresh event id must proceed")
+	}
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
+	// The channel copy succeeded but the addressed session's copy did
+	// not: the event id must be FORGOTTEN (codex r1 P1) so a redelivery
+	// can retry the injection.
+	if proceed, wait := cfg.eventDedup.begin("EvF"); !proceed || wait != nil {
+		t.Fatalf("event id after a failed injection: proceed=%v wait=%v, want forgotten (proceed)", proceed, wait != nil)
+	}
 
 	got := reactions.await(t, 2*time.Second)
 	if got.op != "add" || got.name != "warning" || got.timestamp != "100.001100" {
@@ -442,6 +459,10 @@ func TestMentionOnly_FailedInjectionReleasesClaim(t *testing.T) {
 	_, injections := gc.snapshot()
 	if len(injections) != 1 {
 		t.Fatalf("injections after retry = %d, want 1 (claim was released)", len(injections))
+	}
+	// And a fully delivered event commits its id as before.
+	if proceed, wait := cfg.eventDedup.begin("EvF"); proceed || wait != nil {
+		t.Fatalf("event id after a successful retry: proceed=%v wait=%v, want committed", proceed, wait != nil)
 	}
 }
 
@@ -662,6 +683,16 @@ func TestOwnThreadRegistry_FedByPublish(t *testing.T) {
 	if _, known := own.posters("C1", "999.000001+"); known {
 		t.Fatalf("unexpected record")
 	}
+	// gc-forwarded publishes carry the publisher in metadata, not
+	// session_id (codex r1 P2): the resolved identity is what is recorded.
+	r = post(publishRequest{Conversation: conv, Text: "forwarded", ReplyToMessageID: "600.000001",
+		Metadata: map[string]string{metadataKeySourceSessionID: "mayor-session"}})
+	if !r.Delivered {
+		t.Fatalf("forwarded publish not delivered: %+v", r)
+	}
+	if got, known := own.posters("C1", "600.000001"); !known || len(got) != 1 || got[0] != "mayor-session" {
+		t.Fatalf("forwarded post: posters = (%v, %v), want [mayor-session]", got, known)
+	}
 }
 
 // Admin endpoints: POST/GET/DELETE /mention-only and the deliveries view.
@@ -745,5 +776,36 @@ func TestFormatMentionOnlyReminder_NeutralizesBoundaries(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(body), "</system-reminder>") {
 		t.Fatalf("closing boundary must be the last token:\n%s", body)
+	}
+}
+
+// A corrupt registry file is moved aside and the adapter starts with an
+// empty registry instead of refusing to start (the file is operator
+// intent, so it is never overwritten from the empty state).
+func TestMentionOnlyRegistry_CorruptFileMovedAside(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mention_only.json")
+	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	reg, err := newMentionOnlyRegistry(path)
+	if err != nil {
+		t.Fatalf("corrupt file must not fail startup: %v", err)
+	}
+	if len(reg.All()) != 0 {
+		t.Fatalf("registry should start empty")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("corrupt file should have been moved aside, stat err = %v", err)
+	}
+	entries, _ := os.ReadDir(dir)
+	moved := false
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "mention_only.json.corrupt-") {
+			moved = true
+		}
+	}
+	if !moved {
+		t.Fatalf("no .corrupt-* copy found in %v", entries)
 	}
 }

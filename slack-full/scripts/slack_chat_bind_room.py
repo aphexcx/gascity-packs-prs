@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.parse
 from typing import Any
 
 import slack_intake_common as common
@@ -340,6 +341,18 @@ def main(argv: list[str]) -> int:
     )
     fanout_policy = build_fanout_policy(args)
 
+    # The mirror of the mention-only conflict check: a session registered
+    # mention-only in this room must not also become a gc member (it would
+    # be woken for every message AND injected on mentions).
+    pre_cfg = common.load_pack_config()
+    pre_key = f"{args.kind}:{args.conversation_id}"
+    mo_conflicts = mention_only_conflicts(pre_cfg, pre_key, [s for _, s in participants])
+    if mo_conflicts:
+        raise SystemExit(
+            f"{', '.join(mo_conflicts)}: already bound MENTION-ONLY to {args.conversation_id}. "
+            "Remove that binding first (DELETE …/svc/slack/mention-only?channel_id=&session_id=) "
+            "before binding it ambiently.")
+
     group_body: dict[str, Any] = {
         "root_conversation": conv,
         "mode": args.mode,
@@ -380,6 +393,10 @@ def main(argv: list[str]) -> int:
     cfg = common.load_pack_config()
     cfg.setdefault("bindings", {})
     binding_key = f"{args.kind}:{args.conversation_id}"
+    # Other sessions' mention-only registrations for this room ride along
+    # on the rewritten record (they live in the adapter's registry either
+    # way; this keeps `gc slack status` truthful).
+    prior_mention_only = (cfg["bindings"].get(binding_key) or {}).get("mention_only_participants")
     cfg["bindings"][binding_key] = {
         "kind": args.kind,
         "conversation": conv,
@@ -392,6 +409,8 @@ def main(argv: list[str]) -> int:
         "binding_owner": binding_owner or None,
         "binding_record": (binding_record or {}).get("ID", "") or None,
     }
+    if prior_mention_only:
+        cfg["bindings"][binding_key]["mention_only_participants"] = prior_mention_only
     common.save_pack_config(cfg)
 
     # Deliver the protocol nudge to each participant session so respawned
@@ -421,6 +440,71 @@ def main(argv: list[str]) -> int:
         },
     }, indent=2, default=str))
     return 0
+
+
+def _session_aliases(session: str) -> set[str]:
+    """Every identifier a session may be recorded under (literal + gc id/name)."""
+    ids = {session}
+    try:
+        sid, name = resolve_session_identity(session)
+        ids |= {sid, name}
+    except Exception:  # noqa: BLE001 — best-effort widening only
+        pass
+    return {i for i in ids if i}
+
+
+def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> list[str]:
+    """Sessions already recorded as AMBIENT participants of this room.
+
+    A gc group member is woken for every message, so registering it
+    mention-only on top would keep the ambient wakes AND add injections
+    (codex r1 P1). Checked against the pack config's participant list;
+    the gc-side binding owner is checked by the caller.
+    """
+    rec = (cfg.get("bindings") or {}).get(binding_key) or {}
+    ambient = {p.get("session_name") for p in rec.get("participants") or [] if isinstance(p, dict)}
+    owner = rec.get("binding_owner")
+    if owner:
+        ambient.add(owner)
+    ambient.discard(None)
+    if not ambient:
+        return []
+    out: list[str] = []
+    for session in sessions:
+        if _session_aliases(session) & ambient:
+            out.append(session)
+    return out
+
+
+def mention_only_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> list[str]:
+    """Sessions already recorded as MENTION-ONLY participants of this room
+    (the mirror check for an ambient bind)."""
+    rec = (cfg.get("bindings") or {}).get(binding_key) or {}
+    mo: set[str] = set()
+    for p in rec.get("mention_only_participants") or []:
+        if isinstance(p, dict):
+            mo |= {p.get("session_name") or "", p.get("session_id") or ""}
+    mo.discard("")
+    if not mo:
+        return []
+    return [s for s in sessions if _session_aliases(s) & mo]
+
+
+def gc_binding_to_conversation(session: str, conversation_id: str) -> bool:
+    """True when gc holds an active extmsg binding of session to conversation_id
+    (a `--binding-owner`, or a bind-dm). Best-effort: gc unreachable → False."""
+    try:
+        res = common.gc_get(f"/extmsg/bindings?session_id={urllib.parse.quote(session, safe='')}")
+    except common.GCAPIError:
+        return False
+    for entry in res.get("items", []) or []:
+        if entry.get("Status") != "active":
+            continue
+        conv = entry.get("Conversation") or {}
+        cid = conv.get("ConversationID") or conv.get("conversation_id") or ""
+        if cid == conversation_id:
+            return True
+    return False
 
 
 def mention_only_incompatible_flags(args: argparse.Namespace) -> list[str]:
@@ -503,6 +587,19 @@ def _main_mentions_only(
         workspace_id=workspace_id,
         scope_id=city,
     )
+    cfg = common.load_pack_config()
+    binding_key = f"{args.kind}:{args.conversation_id}"
+    sessions = [session for _, session in participants]
+    conflicts = ambient_conflicts(cfg, binding_key, sessions)
+    conflicts += [s for s in sessions if s not in conflicts
+                  and gc_binding_to_conversation(s, args.conversation_id)]
+    if conflicts:
+        raise SystemExit(
+            f"{', '.join(conflicts)}: already bound AMBIENTLY to {args.conversation_id} "
+            "(gc group participant / binding owner) — a gc member is woken for every "
+            "message, so mention-only cannot be layered on top. Remove the ambient "
+            "membership first (gc extmsg participants / bindings), then re-run.")
+
     registered: list[dict[str, Any]] = []
     records: list[dict[str, str]] = []
     for handle, session in participants:
@@ -522,8 +619,6 @@ def _main_mentions_only(
         registered.append(res)
         records.append({"handle": handle, "session_name": session_name, "session_id": session_id})
 
-    cfg = common.load_pack_config()
-    binding_key = f"{args.kind}:{args.conversation_id}"
     rec = record_mention_only_binding(
         cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)
     common.save_pack_config(cfg)
