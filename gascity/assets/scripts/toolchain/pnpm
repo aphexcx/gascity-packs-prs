@@ -27,8 +27,19 @@
 #      for a built-in; for `run`/`exec` up to the script or bin name, whose
 #      own arguments are its own; a bare script name ends the scope), else
 #      the working directory; `-w`/`--workspace-root` moves it to the
-#      workspace root above that. `pnpm audit --fix` is a mutate (pnpm runs
-#      its update handler).
+#      workspace root above that. `--ignore-workspace` (pnpm's "treat this
+#      directory as a standalone project"; measured on 11.20: the flag,
+#      `--ignore-workspace=true` and a literal `true` after it select,
+#      `--ignore-workspace=false`, a literal `false` and
+#      `--no-ignore-workspace` deselect, the last one wins, and neither
+#      `--config.ignore-workspace`, `npm_config_ignore_workspace` nor an
+#      .npmrc line reaches it, so none is read here) is carried through
+#      everything below: the lane is TARGET itself, the probe and the lane
+#      install pass the flag, and `-w` moves nothing (pnpm refuses it
+#      outside a workspace). A lifecycle script of a standalone install
+#      re-enters without the flag (pnpm hands it no such environment) and
+#      resolves the workspace above, as pnpm itself would.
+#      `pnpm audit --fix` is a mutate (pnpm runs its update handler).
 #        info    — reports or manages state outside node_modules (`store`,
 #                  `config`, `list`, `outdated`, `--version`, `help`, ...),
 #                  and any command carrying `-h`/`--help`/`-v`/`--version`
@@ -58,10 +69,13 @@
 #      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
 #      is the workspace root above TARGET, the nearest pnpm-workspace.yaml,
 #      since a workspace install writes every member's tree whatever
-#      sharedWorkspaceLockfile says, else the nearest pnpm-lock.yaml; a
-#      project command with neither above it runs as is), asks pnpm again under
+#      sharedWorkspaceLockfile says, else the nearest pnpm-lock.yaml; under
+#      `--ignore-workspace` it is TARGET when TARGET holds pnpm-lock.yaml,
+#      the only lockfile pnpm reads then; a project command with no lane
+#      runs as is), asks pnpm again under
 #      the lock (another caller may have installed meanwhile), runs `pnpm
-#      install --frozen-lockfile` in the lane when the answer is still no,
+#      install --frozen-lockfile` (with `--ignore-workspace` when the
+#      command carried it) in the lane when the answer is still no,
 #      and releases; every concurrent caller waits for the lock and asks
 #      pnpm again. A failed install fails the command (exit status of pnpm
 #      install): the requested command does not run. pnpm fails the frozen
@@ -222,18 +236,28 @@ classify() {
     command_name=""
     fix_flag=0
     workspace_root=0
+    IGNORE_WORKSPACE=0
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
-                dir) TARGET="$(resolve_dir "$a")" ;;
+                dir) TARGET="$(resolve_dir "$a")"; want_value=""; continue ;;
+                ignore_workspace)
+                    # pnpm's parser takes a literal true/false after a boolean flag
+                    want_value=""
+                    case "$a" in
+                        true)  IGNORE_WORKSPACE=1; continue ;;
+                        false) IGNORE_WORKSPACE=0; continue ;;
+                    esac ;;      # anything else is the next token, read below
+                *) want_value=""; continue ;;
             esac
-            want_value=""
-            continue
         fi
         case "$a" in
             --) break ;;
             -h|--help|-v|--version) KIND=info; return 0 ;;   # a help or version request runs nothing
             -w|--workspace-root) workspace_root=1; continue ;;
+            --ignore-workspace) IGNORE_WORKSPACE=1; want_value=ignore_workspace; continue ;;
+            --ignore-workspace=true) IGNORE_WORKSPACE=1; continue ;;
+            --ignore-workspace=false|--no-ignore-workspace) IGNORE_WORKSPACE=0; continue ;;
             --fix|--fix=*) fix_flag=1; continue ;;
             -C|--dir|--prefix) want_value=dir; continue ;;
             -C=*) TARGET="$(resolve_dir "${a#-C=}")"; continue ;;
@@ -286,8 +310,9 @@ classify() {
                 return 0 ;;
         esac
     done
-    if [ "$workspace_root" -eq 1 ]; then
+    if [ "$workspace_root" -eq 1 ] && [ "$IGNORE_WORKSPACE" -eq 0 ]; then
         # -w/--workspace-root: pnpm acts on the workspace root above the target
+        # (under --ignore-workspace there is none and pnpm refuses the flag)
         ws="$(workspace_root_of "$TARGET")" && TARGET="$ws"
     fi
     if [ "$command_name" = audit ] && [ "$fix_flag" -eq 1 ]; then
@@ -317,9 +342,16 @@ workspace_root_of() {
 # ancestor holding pnpm-workspace.yaml, because a workspace install writes
 # every member's tree whatever directory it started in and whatever
 # sharedWorkspaceLockfile says; without a workspace, the nearest ancestor
-# holding pnpm-lock.yaml; 1 when there is neither.
+# holding pnpm-lock.yaml; 1 when there is neither. Under --ignore-workspace
+# pnpm reads no workspace file and no lockfile above DIR: the lane is DIR
+# when DIR holds pnpm-lock.yaml, else there is none.
 lane_of() {
     d="$(cd -P "$1" 2>/dev/null && pwd -P)" || return 1
+    if [ "$IGNORE_WORKSPACE" -eq 1 ]; then
+        [ -f "$d/pnpm-lock.yaml" ] || return 1
+        printf '%s\n' "$d"
+        return 0
+    fi
     lockfile_dir=""
     while :; do
         if [ -f "$d/pnpm-workspace.yaml" ]; then
@@ -343,16 +375,28 @@ lane_of() {
 # on a read-only lane, a broken manifest, ...); an unknown verdict is not a
 # reason to install, the command runs as pnpm would run it, after one WARN.
 deps_status() {
+    # the same workspace selection as the command: pnpm judges the project
+    # the command will run in, a standalone one under --ignore-workspace
+    set -- --config.verify-deps-before-run=error exec true
+    [ "$IGNORE_WORKSPACE" -eq 0 ] || set -- --ignore-workspace "$@"
     # pnpm prints the verdict on stdout, the rest on stderr: read both.
     probe_err="$(
         unset pnpm_config_verify_deps_before_run
-        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true 2>&1
+        cd "$TARGET" && run_pnpm "$@" 2>&1
     )" && { printf 'insync\n'; return 0; }
     case "$probe_err" in
         *VERIFY_DEPS_BEFORE_RUN*) printf 'stale\n' ;;
         *) warn "pnpm could not judge the lane at $TARGET, running as is: $(printf '%s\n' "$probe_err" | sed -n '1p' | cut -c1-160)"
            printf 'unknown\n' ;;
     esac
+}
+
+# lane_install: the one frozen install, in LANE, with the command's own
+# workspace selection (a standalone project stays standalone).
+lane_install() {
+    set -- install --frozen-lockfile
+    [ "$IGNORE_WORKSPACE" -eq 0 ] || set -- --ignore-workspace "$@"
+    (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@")
 }
 
 # --- the lane lock -----------------------------------------------------------------
@@ -477,7 +521,7 @@ case "$KIND" in
         if [ "$(deps_status)" = stale ]; then
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
-            (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm install --frozen-lockfile) >&2 || status=$?
+            lane_install >&2 || status=$?
             release_lock
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi

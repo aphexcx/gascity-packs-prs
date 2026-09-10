@@ -34,7 +34,8 @@ CHECK = "--config.verify-deps-before-run=error exec true"
 
 FAKE_PNPM = r"""#!/bin/sh
 # A stand-in for pnpm 11.20: records `<cwd>|<verify env>|<argv>` per call,
-# honours -C/--dir/--prefix, answers the read-only sync question from the
+# honours -C/--dir/--prefix and --ignore-workspace (the working directory is
+# the whole project: no lockfile above it is read), answers the read-only sync question from the
 # state its installs write (lockfile + manifests + workspace membership),
 # installs (optionally slowly, optionally failing), and lets the cleanup
 # built-ins and --lockfile-only leave the tree out of sync.
@@ -42,9 +43,11 @@ printf '%s|%s|%s\n' "$(pwd -P)" "${pnpm_config_verify_deps_before_run-unset}" "$
 printf 'PATH0=%s\n' "${PATH%%:*}" >> "$FAKE_PNPM_LOG"
 start="$(pwd)"
 want=""
+ignore_workspace=0
 for a in "$@"; do
     if [ -n "$want" ]; then cd "$start" && cd "$a" || exit 3; want=""; continue; fi
     case "$a" in
+        --ignore-workspace) ignore_workspace=1 ;;
         -C|--dir|--prefix) want=1 ;;
         -C=*) cd "$start" && cd "${a#-C=}" || exit 3 ;;
         --dir=*) cd "$start" && cd "${a#--dir=}" || exit 3 ;;
@@ -54,6 +57,7 @@ for a in "$@"; do
 done
 lane() {
     d="$(pwd -P)"
+    [ "$ignore_workspace" -eq 0 ] || { printf '%s\n' "$d"; return; }
     while [ ! -f "$d/pnpm-lock.yaml" ] && [ "$d" != / ]; do d="${d%/*}"; [ -n "$d" ] || d=/; done
     if [ -f "$d/pnpm-lock.yaml" ]; then printf '%s\n' "$d"; else pwd -P; fi
 }
@@ -64,7 +68,7 @@ fp() {
     done) | shasum -a 256
 }
 case "$*" in
-    "--config.verify-deps-before-run=error exec true")
+    "--config.verify-deps-before-run=error exec true"|"--ignore-workspace --config.verify-deps-before-run=error exec true")
         if [ "${FAKE_PNPM_PROBE_ERROR-}" = 1 ]; then echo "EACCES: permission denied, open '.pnpm-workspace-state-v1.json'" >&2; exit 2; fi
         L="$(lane)"
         if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
@@ -167,18 +171,22 @@ class Fixture:
             return []
         return [line for line in self.log.read_text(encoding="utf-8").splitlines() if not line.startswith("PATH0=")]
 
+    @staticmethod
+    def is_check(call: str) -> bool:
+        return call.split("|", 2)[2] in (CHECK, "--ignore-workspace " + CHECK)
+
     def calls(self) -> list[str]:
         """Every pnpm call except the wrapper's read-only sync questions."""
-        return [c for c in self.all_calls() if not c.endswith("|" + CHECK)]
+        return [c for c in self.all_calls() if not self.is_check(c)]
 
     def argv(self) -> list[str]:
         return [c.split("|", 2)[2] for c in self.calls()]
 
     def checks(self) -> list[str]:
-        return [c for c in self.all_calls() if c.endswith("|" + CHECK)]
+        return [c for c in self.all_calls() if self.is_check(c)]
 
     def installs(self) -> list[str]:
-        return [c for c in self.calls() if c.split("|", 2)[2] == "install --frozen-lockfile"]
+        return [c for c in self.calls() if c.split("|", 2)[2] in ("install --frozen-lockfile", "--ignore-workspace install --frozen-lockfile")]
 
     def reset(self) -> None:
         self.log.unlink(missing_ok=True)
@@ -786,6 +794,108 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
         self.assertTrue(lock.exists())
 
+    def test_ignore_workspace_makes_the_standalone_project_the_lane_for_probe_lock_and_install(self) -> None:
+        """Round 15: a standalone fixture project inside a workspace, run with
+        --ignore-workspace, is probed, locked and installed as itself; without
+        the flag the same directory belongs to the workspace above it."""
+        ws = self.fx.root / "ws"
+        ws.mkdir()
+        (ws / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
+        (ws / "package.json").write_text('{"name":"ws","private":true}\n', encoding="utf-8")
+        (ws / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        fixture = self.fx.project("ws/fixtures/standalone")
+        r = self.fx.run("pnpm", "--ignore-workspace", "exec", "vitest", cwd=fixture)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # every question and the one install carry the flag and run in the fixture
+        self.assertEqual(
+            self.fx.checks(),
+            [f"{fixture.resolve()}|unset|--ignore-workspace {CHECK}"] * 2,
+        )
+        self.assertEqual(self.fx.calls(), [
+            f"{fixture.resolve()}|false|--ignore-workspace install --frozen-lockfile",
+            f"{fixture.resolve()}|false|--ignore-workspace exec vitest",
+        ])
+        self.assertTrue(in_sync(fixture))
+        self.assertFalse((ws / "node_modules").exists())  # the workspace was neither locked nor installed
+        self.assertFalse((fixture / "node_modules" / ".gc-lane-deps.lock").exists())
+        # the prepared project stays prepared: one question, no install
+        self.fx.reset()
+        r = self.fx.run("pnpm", "--ignore-workspace", "run", "test", cwd=fixture)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.checks()), 1)
+        self.assertEqual(self.fx.argv(), ["--ignore-workspace run test"])
+        # without the flag the lane is the workspace root: the install lands there
+        other = self.fx.project("ws/fixtures/other")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=other)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.installs(), [f"{ws.resolve()}|false|install --frozen-lockfile"])
+        self.assertFalse(in_sync(other))
+        # a mutate with the flag holds the fixture's own lock, never the workspace's:
+        # a live holder on the workspace lock does not stop it, one on the fixture does
+        ws_lock = ws / "node_modules" / ".gc-lane-deps.lock"
+        fx_lock = fixture / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            ws_lock.mkdir(parents=True)
+            (ws_lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            self.fx.reset()
+            r1 = self.fx.run("pnpm", "--ignore-workspace", "add", "left-pad", cwd=fixture, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            fx_lock.mkdir(parents=True)
+            (fx_lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            r2 = self.fx.run("pnpm", "--ignore-workspace", "add", "left-pad", cwd=fixture, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            r3 = self.fx.run("pnpm", "--ignore-workspace", "exec", "vitest", cwd=fixture, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r1.returncode, 0, r1.stderr)
+        self.assertEqual(r2.returncode, 1, r2.stderr)
+        self.assertIn(f"has held {fx_lock.resolve()}", r2.stderr)
+        self.assertEqual(r3.returncode, 0, r3.stderr)  # prepared: pnpm says yes, no lock needed
+        self.assertEqual(self.fx.argv(), ["--ignore-workspace add left-pad", "--ignore-workspace exec vitest"])
+        # every spelling pnpm 11.20 honours (measured: the flag, =true, a literal true after
+        # it; =false, a literal false and --no-ignore-workspace undo it; the last one wins;
+        # after `run` as well), and -w moves nothing under the flag (pnpm refuses it outside
+        # a workspace)
+        for n, argv in enumerate((
+            ["--ignore-workspace=true", "exec", "vitest"],
+            ["--ignore-workspace", "true", "exec", "vitest"],
+            ["run", "--ignore-workspace", "test"],
+            ["--ignore-workspace", "-w", "exec", "vitest"],
+            ["-w", "--ignore-workspace", "exec", "vitest"],
+            ["--ignore-workspace=false", "--ignore-workspace", "exec", "vitest"],
+            ["--no-ignore-workspace", "--ignore-workspace", "exec", "vitest"],
+        )):
+            proj = self.fx.project(f"ws/fixtures/f{n}")
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.installs(), [f"{proj.resolve()}|false|--ignore-workspace install --frozen-lockfile"], argv)
+            self.assertTrue(in_sync(proj), argv)
+            self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
+        # the forms pnpm does not read (measured) select nothing here either
+        for argv in (
+            ["--ignore-workspace", "false", "exec", "vitest"],
+            ["--ignore-workspace", "--no-ignore-workspace", "exec", "vitest"],
+            ["--ignore-workspace", "--ignore-workspace=false", "exec", "vitest"],
+            ["--config.ignore-workspace=true", "exec", "vitest"],
+        ):
+            proj = self.fx.project(f"ws/fixtures/g{len(argv)}{argv[1][:4]}")
+            (ws / "node_modules" / ".fake-state").unlink(missing_ok=True)
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.installs(), [f"{ws.resolve()}|false|install --frozen-lockfile"], argv)
+            self.assertFalse(in_sync(proj), argv)
+        # a standalone directory with no lockfile of its own is no lane: the command runs as is
+        bare = ws / "fixtures" / "bare"
+        bare.mkdir()
+        (bare / "package.json").write_text('{"name":"bare"}\n', encoding="utf-8")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "--ignore-workspace", "exec", "vitest", cwd=bare)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.all_calls(), [f"{bare.resolve()}|false|--ignore-workspace exec vitest"])
+
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
         holder = subprocess.Popen(["sleep", "30"])
@@ -1021,6 +1131,64 @@ class NodeShimTests(unittest.TestCase):
             holder.kill()
             holder.wait()
         self.assertEqual(r.stdout, "downloaded node 1.2.3 -v\n")  # already installed above: no wait needed
+
+    def test_two_waiters_seeing_one_dead_install_owner_clear_it_once_and_install_once(self) -> None:
+        """Round 15: both callers read the dead owner before either reclaims;
+        the reclaim lock lets one move it aside, the other re-reads a live
+        lock and waits, and one tree is installed, never a nested one."""
+        dist = fake_dist(self.fx.root / "dist", "1.2.3")
+        lock = self.node_root / ".installing-v1.2.3"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        results: list[subprocess.CompletedProcess[str]] = []
+        guard = threading.Lock()
+
+        def call() -> None:
+            r = self.fx.run(
+                "node", "-v",
+                GC_TOOLCHAIN_NODE_VERSION="1.2.3", GC_TOOLCHAIN_NODE_DIST=dist,
+                GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM="1",
+            )
+            with guard:
+                results.append(r)
+
+        threads = [threading.Thread(target=call) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertEqual(r.stdout, "downloaded node 1.2.3 -v\n", r.stderr)
+        self.assertEqual(sum(r.stderr.count("moved aside") for r in results), 1, [r.stderr for r in results])
+        self.assertEqual(sum(r.stderr.count("installed node v1.2.3") for r in results), 1, [r.stderr for r in results])
+        aside = [p for p in self.node_root.iterdir() if p.name.startswith(".installing-v1.2.3.stale-")]
+        self.assertEqual(len(aside), 1, aside)
+        self.assertEqual((aside[0] / "pid").read_text(encoding="utf-8").strip(), str(dead.pid))
+        # one install tree, no lock, no reclaim lock, no stage left behind
+        self.assertEqual(sorted(p.name for p in self.node_root.iterdir()), [aside[0].name, "v1.2.3"])
+        self.assertEqual(sorted(p.name for p in (self.node_root / "v1.2.3").iterdir()), ["bin"])
+
+    def test_a_stuck_reclaim_lock_is_reported_and_the_wrapper_falls_through(self) -> None:
+        dist = fake_dist(self.fx.root / "dist", "1.2.3")
+        lock = self.node_root / ".installing-v1.2.3"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        reclaim = self.node_root / ".installing-v1.2.3.reclaim"
+        reclaim.mkdir()
+        old = time.time() - 180
+        os.utime(reclaim, (old, old))
+        r = self.fx.run("node", "-v", GC_TOOLCHAIN_NODE_VERSION="1.2.3", GC_TOOLCHAIN_NODE_DIST=dist)
+        self.assertEqual(r.stdout, "machine node -v\n", r.stderr)
+        self.assertIn("stale reclaim lock", r.stderr)
+        self.assertIn("using the node on PATH", r.stderr)
+        self.assertTrue(lock.exists())
+        self.assertTrue(reclaim.exists())
+        self.assertFalse((self.node_root / "v1.2.3").exists())
 
     def test_checksum_mismatch_installs_nothing_and_falls_through(self) -> None:
         dist = fake_dist(self.fx.root / "dist", "1.2.3", corrupt_sum=True)
