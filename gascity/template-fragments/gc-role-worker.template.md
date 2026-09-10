@@ -64,21 +64,22 @@ bead, or detached (no trigger bead, or that branch is checked out in another
 worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, create your branch in this directory before committing.
 
-If `$GC_DIR` is the rig root, this role has no `work_dir` in your city:
-create your worktree under `<city>/.worktrees/<rig>/<bead>` (check out the
-bead's branch if it already exists), work there, and mail the mayor that this
-role needs a lane (`work_dir` + `pre_start`, see README, Worker workspaces).
-Resolve the base of a new branch, never assume it, in the order
-`worker-worktree.sh` uses: the remote's default branch when the rig has a
-remote (`<remote>/HEAD`, else `<remote>/main`, else `<remote>/master`, where
-`<remote>` is `origin` or, when the remote has another name, that name from
-`git -C <rig root> remote`; fetch it first), else the rig checkout's current
-`HEAD`. Pin the base to a commit in the rig (`git -C <rig root> rev-parse
---verify '<base>^{commit}'`) and create the worktree from that commit
-(`git -C <rig root> worktree add -b <bead> <city>/.worktrees/<rig>/<bead>
-<commit>`). This fallback never fails for lack of a remote, and it never
-writes into the rig checkout: it fetches, reads refs, and registers the
-worktree from there; the checkout's HEAD and files do not move.
+A session outside a gc-made lane has no lane: this role has no `work_dir` in
+your city. Prove the lane before you write, with the three-part boundary test
+(every path resolved through symlinks, `pwd -P`): `git -C "$GC_DIR" rev-parse
+--show-toplevel` is `$GC_DIR` itself; that top-level is neither the rig root
+(`$GC_RIG_ROOT`) nor inside it; `git -C "$GC_DIR" rev-parse --git-common-dir`
+is the rig root's `.git`. When any part fails (`$GC_DIR` is the rig root, a
+directory inside it, or a checkout of another repository), create no
+worktree and write nothing into the rig checkout: no `switch`, no detach, no
+branch, no commit there. Read the item by `git -C "$GC_DIR" show
+<commit>:<path>` and `git -C "$GC_DIR" log -1 <commit>` only; a step that
+needs a checkout closes the item with `gc.outcome=fail` and
+`gc.failure_class=no-lane`, and its close reason says in one line that the
+city must give this role a lane (`[[patches.agent]]` with `work_dir` and
+`pre_start` in `city.toml`; README, Worker workspaces). A formula step whose
+own text creates the item's worktree (`do-work/prepare-worktree` in the rig
+root) runs unchanged.
 
 After the claim, compare the bead's `gc.work_branch` with your branch and
 restamp it when they differ (older `gc` builds stamp the rig root's branch).

@@ -182,14 +182,12 @@ environment (`GC_TRIGGER_BEAD_ID` for a slung bead), and makes that
 directory a git worktree of the rig on the bead's branch. Workers never
 choose, create, or hunt for a workspace, and the rig root stays a human
 checkout that no agent touches. A role the city gave no `work_dir` still
-starts in the rig root; the role prompt's one fallback then has it create
-`<city>/.worktrees/<rig>/<bead>` and mail the mayor for a lane, whatever the
-rig's own rules say. The fallback resolves its base the way the script does
-(the remote's default branch when the rig has a remote, whatever its name,
-else the rig checkout's `HEAD`), so a local-only rig, or one whose remote is
-not named `origin`, still gets a workspace, and the rig checkout's HEAD never
-moves. (The earlier prompt rule that keyed this on the rig's `AGENTS` rules
-forbidding root work is gone.)
+starts in the rig root and has no lane; the role prompt then has it create no
+worktree and write nothing there, whatever the rig's own rules say: it reads
+by `git show` and `git log` only, and a step that needs a checkout closes with
+`gc.outcome=fail` and `gc.failure_class=no-lane`, naming the fix, a lane for
+the role (the `[[patches.agent]]` entry below). No prompt-side path makes a
+workspace for an unconfigured role.
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
 Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a
@@ -276,10 +274,13 @@ test in `do-work/prepare-worktree` step 4: the resolved top-level is `$GC_DIR`
 itself, not the rig root or inside it, and the git common dir is the rig's);
 a role with no `work_dir` starts in the rig root, and a reader there reads by
 `git show` only and never detaches the human checkout. After the fix lane
-commits it refreshes the recorded commit (the review context file and
-`gc.build.review_commit` on the workflow root) before it releases the branch,
-so the next review attempt inspects the fixed code, not the commit the setup
-saw.
+commits it refreshes the recorded commit of the item it fixed (that source
+anchor's record in the review context file and `gc.review_commit` on that
+source anchor, never a workflow-wide key: separate drains put several items
+on independent branches, each reviewed at its own commit) before it releases
+the branch, so the next review attempt inspects the fixed code, not the
+commit the setup saw, and the other items' recorded commits stay as they
+were.
 
 Two related core behaviors complete the picture:
 

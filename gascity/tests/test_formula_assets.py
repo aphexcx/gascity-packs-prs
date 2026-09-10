@@ -2221,7 +2221,7 @@ class FormulaAssetTests(unittest.TestCase):
             (workflows / "build-basic-review/{target}.setup-build-basic-review.md").read_text(encoding="utf-8").split()
         )
         for clause in (
-            "Include the source anchor id, its `work_dir`, changed files, commit id, and proof commands in the context",
+            "Include, per source anchor, its id, its `work_dir`, changed files, commit id, and proof commands in the context",
             "When the source anchor has no `work_dir` and records `gc.work_branch`",
             "record the BRANCH (`gc.work_branch`) and the COMMIT id",
             '`git -C "$GC_DIR" rev-parse "<gc.work_branch>"`, read from your own lane',
@@ -2408,7 +2408,8 @@ class FormulaAssetTests(unittest.TestCase):
             "test_detach_at_commit_refuses_to_overwrite_an_ignored_file",
             "test_fix_lane_refreshes_the_recorded_commit_so_the_next_attempt_reviews_the_fix",
             "test_reviewer_in_the_rig_root_never_detaches_the_human_checkout",
-            "test_role_without_a_lane_in_a_rig_without_a_remote_gets_a_workspace_from_the_rig_head",
+            "test_role_session_without_a_lane_reads_detached_creates_no_worktree_and_moves_nothing",
+            "test_two_source_anchors_keep_their_own_review_commits_when_one_is_fixed",
         ):
             with self.subTest(lifecycle_test=name):
                 self.assertIn(f"def {name}(", lifecycle)
@@ -2422,16 +2423,25 @@ class FormulaAssetTests(unittest.TestCase):
     # would have moved the human checkout's HEAD. Both rows below are
     # grep-driven over the whole workflows tree (DO-NOT 218), and
     # test_lane_lifecycle.py runs both scenarios in real worktrees.
-    REVIEW_COMMIT_KEY = "gc.build.review_commit"
+    REVIEW_COMMIT_KEY = "gc.review_commit"
+    # Round 7's key lived on the workflow root; round 9 (gate r8 MAJOR) removed
+    # it. Spelled in two halves so this constant is not itself a hit.
+    ROOT_REVIEW_COMMIT_KEY = "gc.build." + "review_commit"
 
     def test_review_context_is_refreshed_after_a_fix_and_readers_read_the_current_commit(self) -> None:
-        """Gate r6 M1: the fix lane rewrites the commit id in the review
-        context file and records `gc.build.review_commit` on the workflow root
-        after its fix commit and BEFORE it releases the branch; the setup
-        writes the same key on its first run; every reader reads the key
-        first and falls back to the context file's commit. Grep-driven: every
+        """Gate r6 M1, reshaped by gate r8 MAJOR: the review commit is recorded
+        PER SOURCE ANCHOR (`gc.review_commit` on the anchor, and the anchor's
+        own record in the context file), never workflow-wide, because separate
+        drains produce several source anchors on independent branches and one
+        key would send every reader to one item's revision and let a fix on
+        one item overwrite the others'. The fix lane rewrites the record and
+        key of the anchor it committed on, after its fix commit and BEFORE it
+        releases the branch, and touches no other anchor's; the setup writes
+        each anchor's key on its first run; every reader reads its anchor's
+        key first and falls back to that anchor's record. Grep-driven: every
         workflow step that commits against a recorded review context carries
-        the refresh."""
+        the refresh, nothing writes the key on the workflow root, and the old
+        workflow-wide key is gone from the tree (no dual path)."""
         root = pathlib.Path(__file__).resolve().parents[1]
         workflows = root / "assets" / "workflows"
 
@@ -2439,31 +2449,42 @@ class FormulaAssetTests(unittest.TestCase):
             return " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
 
         key = self.REVIEW_COMMIT_KEY
-        # The setup writes the key on first run and says why (it runs once).
+        # The setup writes the key per anchor on first run and says why (it runs once).
         setup = flat("build-basic-review/{target}.setup-build-basic-review.md")
         for clause in (
-            f"`gc bd update \"<workflow-root-id>\" --set-metadata '{key}=<commit>'`",
+            "The context carries one record PER SOURCE ANCHOR",
+            "the commit each record carries is recorded on that source anchor, never on the workflow root",
+            f"`gc bd update \"<source-anchor-id>\" --set-metadata '{key}=<commit>'`",
+            "once per source anchor the context names",
+            "the original drain member, never the synthetic convoy",
+            "There is no workflow-wide review commit",
             "This setup runs ONCE, outside the review loop",
-            f"the review lanes read `{key}` first and fall back to the context file's commit",
-            "the fix lane refreshes both the context file and this key after every fix commit",
-            "reviews the CURRENT commit, never the one this step saw",
-            f"only after the review context path and `{key}` are recorded",
+            f"the review lanes read each source anchor's `{key}` first and fall back to that anchor's record in the context file",
+            "the fix lane refreshes that anchor's record and key after every fix commit",
+            "reviews the CURRENT commit of each item, never the one this step saw",
+            f"only after the review context path is recorded on the workflow root and `{key}` is recorded on every source anchor the context names",
         ):
             with self.subTest(setup=clause):
                 self.assertIn(clause, setup)
 
         # The fix lane refreshes AFTER the fix commit and BEFORE the release,
-        # in the context file AND on the root, and states the retry sequence.
+        # in ITS anchor's record AND on ITS anchor and no other, and states
+        # the retry sequence.
         fix = flat("build-basic-review/{target}.apply-review-findings.md")
         for clause in (
             "Refresh the review context after the fix commit and BEFORE releasing the branch",
             "The review setup ran ONCE, outside the review loop",
             "review the ORIGINAL code and repeat the findings you just resolved until the attempts run out",
-            "Rewrite the commit id (and the changed-file list, when the context carries one) in the review context file at `gc.build.code_review_context_path`",
-            f"`gc bd update \"<workflow-root-id>\" --set-metadata '{key}=<sha>'`",
+            "The record is PER SOURCE ANCHOR",
+            "rewrite the commit id (and the changed-file list, when the context carries one) in the record of the source anchor you committed on, in the review context file at `gc.build.code_review_context_path`",
+            f"`gc bd update \"<source-anchor-id>\" --set-metadata '{key}=<sha>'`",
+            "the review lanes read that anchor's key first and fall back to that anchor's record in the context file",
+            "Touch no other source anchor's record or key",
+            "there is no workflow-wide review commit to update",
             "The retry sequence is: fix, commit, refresh the context, release the branch; then the loop re-runs the reviewers on the new commit",
             "Never leave the old commit in the context after a fix",
             "The refresh applies in the `work_dir` case too",
+            "the commit id in the context and on the source anchor are rewritten the same way",
         ):
             with self.subTest(fix_lane=clause):
                 self.assertIn(clause, fix)
@@ -2477,35 +2498,53 @@ class FormulaAssetTests(unittest.TestCase):
         self.assertLess(refresh_at, key_at)
         self.assertLess(key_at, release_at, "the refresh comes before the release")
 
-        # Every reader reads the key first and falls back to the context.
+        # Every reader reads ITS anchor's key first and falls back to that
+        # anchor's record; none reads the workflow root for it.
         for relative_path in self.LIFECYCLE_READERS:
             text = flat(relative_path)
             with self.subTest(reader=relative_path):
+                self.assertIn("one record per source anchor", text)
                 self.assertIn("Read the CURRENT commit first", text)
-                self.assertIn(f"`{key}` on the workflow root bead", text)
-                self.assertRegex(text, r"fall back to the (commit in the )?review context file")
+                self.assertIn(f"`{key}` on that source anchor bead", text)
+                self.assertIn("`gc bd show <source-anchor-id> --json`", text)
+                self.assertRegex(text, r"fall back to (the commit in )?that anchor's record in the review context file")
                 self.assertIn("only when that key is absent", text)
+                self.assertIn("no workflow-wide review commit", text)
                 self.assertRegex(text, r"(?i)the (review )?loop re-runs this lane after a fix")
                 read_at = text.index("Read the CURRENT commit first")
                 detach_at = text.index('`git -C "$GC_DIR" switch --detach --no-overwrite-ignore <commit>`')
                 self.assertLess(read_at, detach_at, "the current commit is read before the detach")
+                self.assertNotIn(f"`{key}` on the workflow root", text)
+                self.assertNotIn("<workflow-root-id>", text)
 
-        # The contract paragraph names the refresh as part of the lifecycle.
+        # The contract paragraph names the per-anchor refresh as part of the lifecycle.
         prepare = flat("do-work/prepare-worktree.md")
         step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
         self.assertIn("A writer that commits after a commit was recorded for readers", step4)
-        self.assertIn(f"the review context file and `{key}` on the workflow root", step4)
+        self.assertIn(
+            f"this source anchor's record in the review context file and `{key}` on this source anchor", step4
+        )
+        self.assertIn("per item, never a workflow-wide key", step4)
         self.assertIn("never the one the setup saw", step4)
+        self.assertIn("no other item's recorded commit moves", step4)
 
         # Grep-driven: every workflow step that names the review context AND
-        # commits code carries the refresh; every step that names the key is
-        # the setup (writes), a reader (reads first) or the fix lane
-        # (refreshes), or the contract that states the lifecycle.
+        # commits code carries the per-anchor refresh; every step that names
+        # the key is the setup (writes), a reader (reads first) or the fix
+        # lane (refreshes), or the contract that states the lifecycle; no step
+        # writes the key on the workflow root; and the old workflow-wide key
+        # is gone from every step, the README and the role fragment (no dual
+        # path).
         writers_against_a_context = []
         key_holders = []
+        old_key = self.ROOT_REVIEW_COMMIT_KEY
+        root_write = re.compile(r"<workflow-root-id>\"? --set-metadata '?" + re.escape(key) + "=")
         for path in sorted(workflows.rglob("*.md")):
             text = " ".join(path.read_text(encoding="utf-8").split())
             rel = path.relative_to(workflows).as_posix()
+            with self.subTest(no_dual_path=rel):
+                self.assertNotIn(old_key, text)
+                self.assertNotRegex(text, root_write)
             if key in text:
                 key_holders.append(rel)
             # A step COMMITS when it names the git action (readers only speak of
@@ -2513,7 +2552,8 @@ class FormulaAssetTests(unittest.TestCase):
             if "review context" in text and re.search(r"commit the fix on|`git commit`", text):
                 writers_against_a_context.append(rel)
                 with self.subTest(writer_against_context=rel):
-                    self.assertIn(f"--set-metadata '{key}=<sha>'", text)
+                    self.assertIn(f"\"<source-anchor-id>\" --set-metadata '{key}=<sha>'", text)
+                    self.assertIn("Touch no other source anchor's record or key", text)
                     self.assertIn("Never leave the old commit in the context after a fix", text)
         self.assertEqual(writers_against_a_context, ["build-basic-review/{target}.apply-review-findings.md"])
         self.assertEqual(
@@ -2527,13 +2567,18 @@ class FormulaAssetTests(unittest.TestCase):
                 + self.LIFECYCLE_READERS
             ),
         )
+        for relative_path in ("README.md", "template-fragments/gc-role-worker.template.md"):
+            with self.subTest(no_dual_path=relative_path):
+                self.assertNotIn(old_key, (root / relative_path).read_text(encoding="utf-8"))
 
         readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
         section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
         self.assertIn(
-            f"After the fix lane commits it refreshes the recorded commit (the review context file and `{key}` on the workflow root) before it releases the branch",
+            "After the fix lane commits it refreshes the recorded commit of the item it fixed (that source "
+            f"anchor's record in the review context file and `{key}` on that source anchor, never a workflow-wide key",
             section,
         )
+        self.assertIn("the other items' recorded commits stay as they were", section)
 
     def test_every_switch_or_detach_in_the_workflows_tree_is_preceded_by_the_boundary_test(self) -> None:
         """Gate r6 M2: a reviewer role with no configured `work_dir` starts in

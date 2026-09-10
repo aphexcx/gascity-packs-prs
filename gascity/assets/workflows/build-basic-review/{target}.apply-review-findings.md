@@ -49,17 +49,21 @@ Refresh the review context after the fix commit and BEFORE releasing the
 branch. The review setup ran ONCE, outside the review loop, and the three
 review lanes inspect the commit it recorded; a context left at that commit
 makes every later attempt review the ORIGINAL code and repeat the findings you
-just resolved until the attempts run out. Rewrite the commit id (and the
-changed-file list, when the context carries one) in the review context file at
-`gc.build.code_review_context_path` on the workflow root, then record the new
-commit there too: `gc bd update "<workflow-root-id>" --set-metadata
-'gc.build.review_commit=<sha>'` (the review lanes read that key first and fall
-back to the context file's commit). The retry sequence is: fix, commit,
+just resolved until the attempts run out. The record is PER SOURCE ANCHOR:
+rewrite the commit id (and the changed-file list, when the context carries
+one) in the record of the source anchor you committed on, in the review
+context file at `gc.build.code_review_context_path` on the workflow root, then
+record the new commit on that source anchor: `gc bd update
+"<source-anchor-id>" --set-metadata 'gc.review_commit=<sha>'` (the review
+lanes read that anchor's key first and fall back to that anchor's record in
+the context file). Touch no other source anchor's record or key: the other
+items sit on independent branches at their own commits, and there is no
+workflow-wide review commit to update. The retry sequence is: fix, commit,
 refresh the context, release the branch; then the loop re-runs the reviewers
 on the new commit. Never leave the old commit in the context after a fix. The
 refresh applies in the `work_dir` case too (a fix committed in the per-item
-worktree): the commit id in the context and on the root are rewritten the same
-way; only the release below is the lane case.
+worktree): the commit id in the context and on the source anchor are
+rewritten the same way; only the release below is the lane case.
 
 After the final commit and BEFORE closing this
 step with `gc.outcome=pass`, release the branch from your lane: `git -C

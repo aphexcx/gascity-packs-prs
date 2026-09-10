@@ -11,6 +11,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAGMENT = REPO_ROOT / "gascity" / "template-fragments" / "gc-role-worker.template.md"
+README = REPO_ROOT / "gascity" / "README.md"
 
 
 def fragment() -> str:
@@ -58,10 +59,11 @@ HUNTING_RULES = (
     ".worktrees/<rig>/<bead>",
     "create your\nown worktree",
     "create your own worktree",
+    "create your worktree",
     "If you start in the rig root",
+    "If `$GC_DIR` is the rig root",
+    "worktree add",
 )
-
-FALLBACK_OPENER = "If `$GC_DIR` is the rig root"
 
 
 def paragraphs(text: str) -> list[str]:
@@ -73,122 +75,104 @@ def workspace_section() -> str:
     return fragment().split("## Workspace", 1)[1].split("## Close", 1)[0]
 
 
+def role_prompts() -> list[Path]:
+    return [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
+
+
 def test_workers_never_choose_or_create_their_workspace() -> None:
-    """gc chooses the workspace (agent work_dir + pre_start). The PRIMARY text
-    of every role prompt never tells a worker to go and make its own worktree;
-    the hunting phrases may appear only inside the one conditional fallback
-    paragraph (see test_workspace_fallback_covers_every_unconfigured_role)."""
+    """gc chooses the workspace (agent work_dir + pre_start). No role prompt
+    tells a worker to go and make its own worktree, in ANY paragraph: the one
+    conditional fallback that rounds 2 to 8 exempted here is gone (round 9,
+    see test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane)."""
     workspace = workspace_section()
     assert "You never pick, create, or hunt for\na workspace" in workspace
-    prompts = [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
+    prompts = role_prompts()
     assert len(prompts) > 1
     for path in prompts:
         for para in paragraphs(path.read_text(encoding="utf-8")):
-            if para.startswith(FALLBACK_OPENER):
-                continue
             for rule in HUNTING_RULES:
                 assert rule not in para, (
-                    f"{path.relative_to(REPO_ROOT)} tells the worker to hunt for a worktree "
-                    f"outside the conditional fallback: {rule!r} in {para[:60]!r}"
+                    f"{path.relative_to(REPO_ROOT)} tells the worker to make or hunt for a worktree: "
+                    f"{rule!r} in {para[:60]!r}"
                 )
 
 
-def test_workspace_fallback_covers_every_unconfigured_role() -> None:
-    """One fallback paragraph for a city that gave the role no work_dir. It is
-    conditional ONLY on $GC_DIR being the rig root: the pack ships every role
-    without work_dir/pre_start, so in a default installation a role starts in
-    the rig root, is told never to work there, and needs one permitted place
-    (gate r3 M2). Round 2 keyed the fallback on the rig's rules forbidding
-    root work, which left a rig without such a rule no workspace at all; that
-    condition is gone. The paragraph sits after the primary text and tells the
-    worker to mail the mayor for a lane."""
+def test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane() -> None:
+    """Round 9 (Afik, 9/9 22:28 CT: "drop the fallback if we don't use it").
+    Rounds 2, 3, 4, 7 and 8 each patched one paragraph that had a role the
+    city gave no lane make its own worktree; no citadel dispatch takes that
+    path since the city half went live. The fragment now carries NO
+    worktree-creating instruction anywhere in its role-session text (no `git
+    worktree add` verb, no `.worktrees/...` path to make, no base to resolve),
+    and ONE paragraph says what a session outside a gc-made lane does: the
+    three-part boundary test, then read by `git show` / `git log -1` only,
+    and `gc.outcome=fail` + `gc.failure_class=no-lane` naming the lane the
+    city must give the role. Grep-driven over the fragment and the README."""
+    text = fragment()
+    flat = " ".join(text.split())
+    # No worktree-creating verb and no trace of the fallback, anywhere in the fragment.
+    for gone in (
+        "worktree add",
+        ".worktrees/<rig>/<bead>",
+        "create your worktree",
+        "mail the mayor that this role needs a lane",
+        "Resolve the base of a new branch",
+        "<remote>/HEAD",
+        "<remote>/main",
+        "<remote>/master",
+        "rev-parse --verify '<base>^{commit}'",
+        "This fallback never fails",
+        "If `$GC_DIR` is the rig root",
+    ):
+        assert gone not in flat, f"the fragment still carries the lane-less fallback: {gone!r}"
+    assert "fallback" not in flat.lower()
+    assert not any(para.startswith("If ") for para in paragraphs(workspace_section())), (
+        "no conditional workspace paragraph: there is no fallback to condition"
+    )
+
+    # ONE paragraph for a session outside a lane, after the primary text.
     workspace = workspace_section()
-    fallbacks = [para for para in paragraphs(workspace) if para.startswith(FALLBACK_OPENER)]
-    assert len(fallbacks) == 1, "exactly one conditional fallback paragraph"
-    fallback = fallbacks[0]
-    assert workspace.index("You never pick, create, or hunt for") < workspace.index(FALLBACK_OPENER)
-    # The primary text still describes the configured case.
-    assert "never work in the rig root" in workspace
-    flat = " ".join(fallback.split())
+    opener = "A session outside a gc-made lane has no lane"
+    no_lane = [para for para in paragraphs(workspace) if para.startswith(opener)]
+    assert len(no_lane) == 1, "exactly one no-lane paragraph"
+    para = " ".join(no_lane[0].split())
+    assert workspace.index("You never pick, create, or hunt for") < workspace.index(opener)
+    # The three-part boundary test, in order, then the rule that depends on it.
+    probes = (
+        '`git -C "$GC_DIR" rev-parse --show-toplevel` is `$GC_DIR` itself',
+        "that top-level is neither the rig root (`$GC_RIG_ROOT`) nor inside it",
+        '`git -C "$GC_DIR" rev-parse --git-common-dir` is the rig root\'s `.git`',
+    )
+    positions = [para.index(probe) for probe in probes]
+    assert positions == sorted(positions), para
     for clause in (
-        "If `$GC_DIR` is the rig root, this role has no `work_dir` in your city: create your worktree under",
-        "`<city>/.worktrees/<rig>/<bead>` (check out the bead's branch if it already exists)",
-        "work there, and mail the mayor that this role needs a lane",
-        "(`work_dir` + `pre_start`, see README, Worker workspaces)",
+        "this role has no `work_dir` in your city",
+        "Prove the lane before you write, with the three-part boundary test",
+        "When any part fails (`$GC_DIR` is the rig root, a directory inside it, or a checkout of another repository)",
+        "create no worktree and write nothing into the rig checkout: no `switch`, no detach, no branch, no commit there",
+        'Read the item by `git -C "$GC_DIR" show <commit>:<path>` and `git -C "$GC_DIR" log -1 <commit>` only',
+        "a step that needs a checkout closes the item with `gc.outcome=fail` and `gc.failure_class=no-lane`",
+        "its close reason says in one line that the city must give this role a lane",
+        "`[[patches.agent]]` with `work_dir` and `pre_start` in `city.toml`",
+        "README, Worker workspaces",
+        "A formula step whose own text creates the item's worktree (`do-work/prepare-worktree` in the rig root) runs unchanged",
     ):
-        assert clause in flat, f"fallback paragraph lacks: {clause!r}"
-    # The only condition is the rig root; nothing in the Workspace section keys
-    # the fallback on the rig's rules.
-    for gone in ("When the rig's rules forbid", "rules forbid", "forbid working there"):
-        assert gone not in " ".join(workspace.split()), f"round-2 condition still present: {gone!r}"
-    # The fallback never fires where lanes are configured: no other paragraph
-    # of the Workspace section is conditional on the rig root.
-    assert sum(para.startswith("If ") for para in paragraphs(workspace)) == 1
+        assert clause in para, f"the no-lane paragraph lacks: {clause!r}"
+    assert positions[-1] < para.index("When any part fails") < para.index("`gc.failure_class=no-lane`")
 
-
-SCRIPT = REPO_ROOT / "gascity" / "assets" / "scripts" / "worker-worktree.sh"
-WORKFLOWS = REPO_ROOT / "gascity" / "assets" / "workflows"
-FORMULAS = REPO_ROOT / "gascity" / "formulas"
-
-
-def script_base_order() -> list[str]:
-    """The `--base` resolution order worker-worktree.sh implements, read from
-    the script itself so the prompt cannot drift from it: the remote refs it
-    probes, in source order, then its literal HEAD fallback."""
-    block = SCRIPT.read_text(encoding="utf-8").split('if [ -z "$BASE" ]; then', 1)[1].split("BASE_SHA=", 1)[0]
-    probes = re.findall(r"refs/remotes/\$REMOTE/(HEAD|main|master)", block)
-    assert 'BASE="HEAD"' in block, "the script no longer falls back to the rig's HEAD"
-    return [f"<remote>/{name}" for name in probes] + ["HEAD"]
-
-
-def test_workspace_fallback_resolves_its_base_and_needs_no_origin_remote() -> None:
-    """Gate r7 (round 8): the fallback required `origin/<default branch>`, so a
-    local-only rig, or one whose remote is not named origin, could never get a
-    workspace under a paragraph that now covers every unconfigured role. The
-    fallback RESOLVES the base in worker-worktree.sh's order and ends at the
-    rig checkout's HEAD; the order is read from the script, not retyped."""
-    fallback = [para for para in paragraphs(workspace_section()) if para.startswith(FALLBACK_OPENER)][0]
-    flat = " ".join(fallback.split())
-    order = script_base_order()
-    assert order == ["<remote>/HEAD", "<remote>/main", "<remote>/master", "HEAD"]
-    # Every candidate is named, in the script's order, after the sentence
-    # that says the base is resolved; the last one is the rig's own HEAD.
-    resolve_at = flat.index("Resolve the base of a new branch, never assume it")
-    positions = [flat.index(f"`{ref}`", resolve_at) for ref in order[:-1]]
-    positions.append(flat.index("else the rig checkout's current `HEAD`", resolve_at))
-    assert positions == sorted(positions), flat
+    # README, Worker workspaces: the same rule, and no fallback left half-removed.
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
+    assert "fallback" not in section.lower()
+    assert ".worktrees/<rig>/<bead>" not in section
     for clause in (
-        "in the order `worker-worktree.sh` uses",
-        "the remote's default branch when the rig has a remote",
-        "when the remote has another name, that name from `git -C <rig root> remote`",
-        "Pin the base to a commit in the rig",
-        "create the worktree from that commit",
-        "This fallback never fails for lack of a remote",
-        "never writes into the rig checkout",
-        "the checkout's HEAD and files do not move",
+        "A role the city gave no `work_dir` still starts in the rig root and has no lane",
+        "the role prompt then has it create no worktree and write nothing there",
+        "reads by `git show` and `git log` only",
+        "closes with `gc.outcome=fail` and `gc.failure_class=no-lane`, naming the fix, a lane for the role",
+        "No prompt-side path makes a workspace for an unconfigured role",
     ):
-        assert clause in flat, f"fallback paragraph lacks: {clause!r}"
-    # The sweep, pinned. The fragment and every role prompt name no `origin/`
-    # at all. A workflow step or formula may name `origin/` only where it
-    # RESOLVES the remote's HEAD itself (`git symbolic-ref
-    # refs/remotes/origin/HEAD`; upstream's do-work prepare-worktree step 5
-    # does, and fails closed without it by its own tested design, see
-    # tests/test_default_branch_resolution.py there) and never as the
-    # `origin/<default branch>` assumption this round removed.
-    prompts = [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
-    steps = [*sorted(WORKFLOWS.rglob("*.md")), *sorted(FORMULAS.glob("*.toml"))]
-    assert len(prompts) > 1 and len(steps) > 20
-    for path in prompts:
-        text = path.read_text(encoding="utf-8")
-        for bare in ("origin/", "<default branch>"):
-            assert bare not in text, f"{path.relative_to(REPO_ROOT)} assumes a remote named origin: {bare!r}"
-    for path in steps:
-        text = path.read_text(encoding="utf-8")
-        assert "origin/<default branch>" not in text, f"{path.relative_to(REPO_ROOT)} assumes `origin/<default branch>`"
-        if "origin/" in text:
-            assert "symbolic-ref" in text and "refs/remotes/origin/HEAD" in text, (
-                f"{path.relative_to(REPO_ROOT)} names origin/ without resolving refs/remotes/origin/HEAD"
-            )
+        assert clause in section, f"README Worker workspaces lacks: {clause!r}"
 
 
 def test_worker_worktree_script_is_shipped_and_executable() -> None:
