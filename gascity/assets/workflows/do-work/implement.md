@@ -11,19 +11,28 @@ When the source anchor has no `work_dir` and records `gc.work_branch`
 (`prepare-worktree` ran in the run operator's lane and recorded the item's
 branch instead of a directory), your own `$GC_DIR` is the worktree: it is a
 lane your `pre_start` put on the item's branch (the branch recorded by
-`prepare-worktree`); work there. Prove it before editing: `git -C "$GC_DIR"
-rev-parse --verify "refs/heads/<gc.work_branch>"` must succeed, and `git -C
-"$GC_DIR" branch --show-current` must print that branch. If it prints another
-branch or nothing, switch your own lane onto the recorded branch with `git -C
-"$GC_DIR" switch "<gc.work_branch>"` (refs are shared by every worktree of the
-rig, and `prepare-worktree` detached its lane from the branch so it is free);
-if git refuses, or the branch is missing from the repository, fail this step
-before editing. Then set `WORKTREE="$GC_DIR"`; `cd "$WORKTREE"` and the `pwd
--P` check below hold trivially. Never enter another agent's lane, and never
-treat a persisted `work_dir` that points into `.worktrees/<rig>/lane-*` of
-another agent as yours: a `work_dir` naming a lane other than `$GC_DIR` is
-invalid, fail this step before editing. Otherwise the steps below apply
-unchanged.
+`prepare-worktree`); work there. Prove it before editing, and before any
+`switch`, with the boundary test `prepare-worktree` step 4 applies (every
+path resolved through symlinks, `pwd -P`): `git -C "$GC_DIR" rev-parse
+--show-toplevel` equals `$GC_DIR` itself, that top-level is neither the rig
+root (`gc.work_dir` on the workflow root bead) nor inside the rig root, and
+`git -C "$GC_DIR" rev-parse --git-common-dir` is the rig root's `.git`. When
+any part fails, `$GC_DIR` is not a lane (a subdirectory of the human
+checkout, or a worktree of another repository): fail this step before
+editing and never run `switch` there, because switching a subdirectory of
+the rig checkout would switch the human checkout's branch. Then `git -C
+"$GC_DIR" rev-parse --verify "refs/heads/<gc.work_branch>"` must succeed, and
+`git -C "$GC_DIR" branch --show-current` must print that branch. If it prints
+another branch or nothing, switch your own lane onto the recorded branch with
+`git -C "$GC_DIR" switch "<gc.work_branch>"` (refs are shared by every
+worktree of the rig, and `prepare-worktree` detached its lane from the branch
+so it is free); if git refuses, or the branch is missing from the repository,
+fail this step before editing. Then set `WORKTREE="$GC_DIR"`; `cd
+"$WORKTREE"` and the `pwd -P` check below hold trivially. Never enter another
+agent's lane, and never treat a persisted `work_dir` that points into
+`.worktrees/<rig>/lane-*` of another agent as yours: a `work_dir` naming a
+lane other than `$GC_DIR` is invalid, fail this step before editing.
+Otherwise the steps below apply unchanged.
 
 Do not infer the source anchor from dependency ids such as the
 `prepare-worktree` step. Read the claimed step bead's `gc.root_bead_id`, read

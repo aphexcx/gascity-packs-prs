@@ -215,10 +215,11 @@ agent's skills and hooks into it (because it differs from the scope root); a
 environment (`GC_TRIGGER_BEAD_ID` for a slung bead), and makes that
 directory a git worktree of the rig on the bead's branch. Workers never
 choose, create, or hunt for a workspace, and the rig root stays a human
-checkout that no agent touches. (Earlier, a worker that started in a rig
-root whose `AGENTS` rules forbade working there created its own
-`.worktrees/<rig>/<bead>` from a prompt rule; that rule is gone from the
-role prompts.)
+checkout that no agent touches. A role the city gave no `work_dir` still
+starts in the rig root; the role prompt's one fallback then has it create
+`<city>/.worktrees/<rig>/<bead>` and mail the mayor for a lane, whatever the
+rig's own rules say. (The earlier prompt rule that keyed this on the rig's
+`AGENTS` rules forbidding root work is gone.)
 
 This pack ships `assets/scripts/worker-worktree.sh` for the `pre_start` half.
 Copy it into the city's scripts directory, `.gc/scripts` (gc does not sync a

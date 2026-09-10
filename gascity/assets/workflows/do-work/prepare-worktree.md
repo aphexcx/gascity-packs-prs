@@ -25,11 +25,34 @@ setup only. Do not edit source files in the launcher checkout.
    lane, prepared by its `pre_start`: `git -C "$GC_DIR" rev-parse
    --is-inside-work-tree` prints `true` and `git -C "$GC_DIR" branch
    --show-current` prints a branch name, or the `pre_start` log says so, and
-   `$GC_DIR` is not the rig root), this step creates nothing and hands no
-   directory to anyone: a lane is per agent (this one is the run operator's),
-   and the item's BRANCH is the handoff. Every worktree of the rig shares its
-   refs, so a branch made visible here is reachable from the implementation
-   worker's own lane.
+   `$GC_DIR` is not the rig root), this MAY be the lane case. Prove it with
+   the boundary test below before recording a branch or detaching anything:
+   those two probes also succeed from any SUBDIRECTORY of a checkout, and a
+   subdirectory of a human checkout must never be detached. In the lane case
+   this step creates nothing and hands no directory to anyone: a lane is per
+   agent (this one is the run operator's), and the item's BRANCH is the
+   handoff. Every worktree of the rig shares its refs, so a branch made
+   visible here is reachable from the implementation worker's own lane.
+   - Boundary test. Resolve every path through symlinks before comparing
+     (`cd <path> && pwd -P`, or `realpath`; on macOS `/tmp` resolves to
+     `/private/tmp`). ALL three must hold:
+     1. The canonical git top-level of `$GC_DIR` IS `$GC_DIR`: `git -C
+        "$GC_DIR" rev-parse --show-toplevel`, resolved, equals `$GC_DIR`,
+        resolved. A subdirectory of any checkout fails this.
+     2. That top-level is NOT the rig root and is NOT inside the rig root
+        (the launcher checkout: `gc.work_dir` on the workflow root bead read
+        in step 1, resolved). Equality fails, and so does a prefix match of
+        the resolved rig root path plus a path separator.
+     3. `$GC_DIR` belongs to the rig's repository: `git -C "$GC_DIR"
+        rev-parse --git-common-dir`, resolved, is the same directory as the
+        rig root's `.git` (`git -C <rig root> rev-parse --git-common-dir`,
+        resolved). A worktree of another repository fails this.
+     When any part fails, this is NOT the lane case: record no branch, run
+     no `switch` in `$GC_DIR`, detach nothing (a `switch --detach` in a
+     subdirectory of the rig checkout would detach the human checkout's
+     HEAD), and continue with step 5 exactly as before (the per-item
+     worktree under `$(pwd)/worktrees/<source-anchor-id>`, then step 6
+     persists `work_dir`).
    - Resolve the item's branch: `BRANCH="$(git -C "$GC_DIR" branch
      --show-current)"` is the branch `pre_start` put this lane on. If it
      prints nothing (the lane is detached), use `BRANCH=<source-anchor-id>`

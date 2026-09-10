@@ -2208,7 +2208,15 @@ class FormulaAssetTests(unittest.TestCase):
         agent. implement (implementation worker) works in its own lane on that
         branch and never enters another agent's lane; close-source-anchor
         verifies by branch. The rig-root steps stay word for word
-        (test_do_work_formula_requires_persisted_item_worktree)."""
+        (test_do_work_formula_requires_persisted_item_worktree).
+
+        Round 4 (gate r3 M1): `--is-inside-work-tree` and `branch
+        --show-current` both succeed from any SUBDIRECTORY of the rig checkout,
+        so a work_dir inside the human checkout passed the round-3 lane test and
+        `switch --detach` would have detached the human checkout's HEAD. Both
+        steps now run a three-part boundary test (resolved top-level equals
+        `$GC_DIR`; not the rig root nor inside it; `--git-common-dir` is the
+        rig's) BEFORE recording the branch, detaching, or switching."""
         root = pathlib.Path(__file__).resolve().parents[1]
         rows = {
             "assets/workflows/do-work/prepare-worktree.md": (
@@ -2217,7 +2225,18 @@ class FormulaAssetTests(unittest.TestCase):
                 '`git -C "$GC_DIR" branch --show-current` prints a branch name',
                 "or the `pre_start` log says so",
                 "and `$GC_DIR` is not the rig root",
+                "this MAY be the lane case",
+                "Prove it with the boundary test below before recording a branch or detaching anything",
+                "a subdirectory of a human checkout must never be detached",
                 "this step creates nothing and hands no directory to anyone",
+                'The canonical git top-level of `$GC_DIR` IS `$GC_DIR`: `git -C "$GC_DIR" rev-parse --show-toplevel`, resolved, equals `$GC_DIR`, resolved',
+                "A subdirectory of any checkout fails this",
+                "That top-level is NOT the rig root and is NOT inside the rig root",
+                "a prefix match of the resolved rig root path plus a path separator",
+                '`git -C "$GC_DIR" rev-parse --git-common-dir`, resolved, is the same directory as the rig root\'s `.git`',
+                "A worktree of another repository fails this",
+                "When any part fails, this is NOT the lane case: record no branch, run no `switch` in `$GC_DIR`, detach nothing",
+                "continue with step 5 exactly as before",
                 "the item's BRANCH is the handoff",
                 'BRANCH="$(git -C "$GC_DIR" branch --show-current)"',
                 'create it from HEAD with `git -C "$GC_DIR" branch "$BRANCH" HEAD`',
@@ -2231,6 +2250,12 @@ class FormulaAssetTests(unittest.TestCase):
                 "When the source anchor has no `work_dir` and records `gc.work_branch`",
                 "your own `$GC_DIR` is the worktree",
                 "a lane your `pre_start` put on the item's branch (the branch recorded by `prepare-worktree`); work there",
+                "Prove it before editing, and before any `switch`, with the boundary test `prepare-worktree` step 4 applies",
+                '`git -C "$GC_DIR" rev-parse --show-toplevel` equals `$GC_DIR` itself',
+                "neither the rig root (`gc.work_dir` on the workflow root bead) nor inside the rig root",
+                '`git -C "$GC_DIR" rev-parse --git-common-dir` is the rig root\'s `.git`',
+                "fail this step before editing and never run `switch` there",
+                "switching a subdirectory of the rig checkout would switch the human checkout's branch",
                 'switch your own lane onto the recorded branch with `git -C "$GC_DIR" switch "<gc.work_branch>"`',
                 "if git refuses, or the branch is missing from the repository, fail this step before editing",
                 "Never enter another agent's lane",
@@ -2266,6 +2291,28 @@ class FormulaAssetTests(unittest.TestCase):
             prepare,
         )
         self.assertNotIn("When `work_dir` equals `$GC_DIR`", flat_by_path["assets/workflows/do-work/implement.md"])
+
+        # Round 4 (gate r3 M1): the three-part boundary test comes BEFORE the
+        # branch is recorded and BEFORE the detach in step 4, and BEFORE the
+        # switch in implement's lane paragraph. A subdirectory of the human
+        # checkout passes the two round-3 probes; it must never be detached or
+        # switched.
+        record_at = step4.index("--set-metadata gc.work_branch=")
+        detach_at = step4.index("switch --detach")
+        for probe in ("rev-parse --show-toplevel", "NOT inside the rig root", "rev-parse --git-common-dir"):
+            with self.subTest(step4_probe=probe):
+                self.assertLess(step4.index(probe), record_at)
+                self.assertLess(step4.index(probe), detach_at)
+        implement = flat_by_path["assets/workflows/do-work/implement.md"]
+        lane = implement[
+            implement.index("When the source anchor has no `work_dir`") : implement.index(
+                "Otherwise the steps below apply unchanged"
+            )
+        ]
+        switch_at = lane.index('switch "<gc.work_branch>"')
+        for probe in ("rev-parse --show-toplevel", "nor inside the rig root", "rev-parse --git-common-dir"):
+            with self.subTest(implement_probe=probe):
+                self.assertLess(lane.index(probe), switch_at)
 
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
