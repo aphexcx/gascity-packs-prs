@@ -168,19 +168,27 @@ def test_workspace_fallback_resolves_its_base_and_needs_no_origin_remote() -> No
         "the checkout's HEAD and files do not move",
     ):
         assert clause in flat, f"fallback paragraph lacks: {clause!r}"
-    # No bare origin requirement anywhere a worker reads: the fragment, every
-    # role prompt, every workflow step, every formula (the sweep, pinned).
-    consumers = [
-        FRAGMENT,
-        *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md")),
-        *sorted(WORKFLOWS.rglob("*.md")),
-        *sorted(FORMULAS.glob("*.toml")),
-    ]
-    assert len(consumers) > 20
-    for path in consumers:
+    # The sweep, pinned. The fragment and every role prompt name no `origin/`
+    # at all. A workflow step or formula may name `origin/` only where it
+    # RESOLVES the remote's HEAD itself (`git symbolic-ref
+    # refs/remotes/origin/HEAD`; upstream's do-work prepare-worktree step 5
+    # does, and fails closed without it by its own tested design, see
+    # tests/test_default_branch_resolution.py there) and never as the
+    # `origin/<default branch>` assumption this round removed.
+    prompts = [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
+    steps = [*sorted(WORKFLOWS.rglob("*.md")), *sorted(FORMULAS.glob("*.toml"))]
+    assert len(prompts) > 1 and len(steps) > 20
+    for path in prompts:
         text = path.read_text(encoding="utf-8")
         for bare in ("origin/", "<default branch>"):
             assert bare not in text, f"{path.relative_to(REPO_ROOT)} assumes a remote named origin: {bare!r}"
+    for path in steps:
+        text = path.read_text(encoding="utf-8")
+        assert "origin/<default branch>" not in text, f"{path.relative_to(REPO_ROOT)} assumes `origin/<default branch>`"
+        if "origin/" in text:
+            assert "symbolic-ref" in text and "refs/remotes/origin/HEAD" in text, (
+                f"{path.relative_to(REPO_ROOT)} names origin/ without resolving refs/remotes/origin/HEAD"
+            )
 
 
 def test_worker_worktree_script_is_shipped_and_executable() -> None:
