@@ -74,7 +74,7 @@ class Fixture:
         for name in ("node", "npm", "npx"):
             write_exec(self.bin / name, f'#!/bin/sh\necho "machine {name} $*"\n')
         # fake pinned pnpm at the place the shim installs it
-        self.fake_pnpm = self.toolchain / "pnpm" / "node_modules" / ".bin" / "pnpm"
+        self.fake_pnpm = self.toolchain / "pnpm" / "v11.20.0" / "node_modules" / ".bin" / "pnpm"
         write_exec(self.fake_pnpm, FAKE_PNPM)
         self.log = root / "pnpm-calls.log"
 
@@ -129,16 +129,32 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(calls[-1].split("|", 2)[1], "false")
         self.assertTrue(calls[-1].endswith("|exec vitest run --reporter=dot"), calls)
 
-    def test_package_management_commands_pass_through_without_a_lane_install(self) -> None:
+    def test_info_commands_run_as_is_and_touch_no_marker(self) -> None:
         proj = self.fx.project()
-        for argv in (["install"], ["install", "--frozen-lockfile"], ["add", "-D", "x"], ["store", "path"], ["--version"], []):
+        for argv in (["store", "path"], ["--version"], [], ["config", "get", "x"], ["outdated"], ["-r", "list"]):
             self.fx.log.unlink(missing_ok=True)
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, r.stderr)
             # exactly the caller's own command reaches pnpm, nothing before it
             self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
             self.assertNotIn("installing lane dependencies", r.stderr)
-        self.assertFalse((proj / "node_modules" / ".gc-lane-deps").exists())
+        self.assertFalse((proj / "node_modules").exists())
+
+    def test_explicit_dependency_commands_run_once_under_the_lock_and_record_the_lockfile(self) -> None:
+        proj = self.fx.project()
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        for argv in (["install"], ["install", "--frozen-lockfile"], ["add", "-D", "x"], ["--filter", "app", "install"]):
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            # the explicit command itself, never a frozen install before it
+            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+        # the tree the explicit install left matches the lockfile: no lane install follows
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["exec vitest"])
 
     def test_first_project_command_installs_once_and_records_the_lockfile_hash(self) -> None:
         proj = self.fx.project()
@@ -686,3 +702,99 @@ class PnpmShimGateRound2Tests(unittest.TestCase):
         r = self.fx.run("pnpm", "--filter", "app", "run", "test", cwd=proj)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "--filter app run test"])
+
+
+class PnpmShimGateRound3Tests(unittest.TestCase):
+    """Round 3 of the codex gate: every command that changes node_modules is
+    the same locked, marker-invalidating path; pnpm's own install is keyed by
+    version."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_failed_explicit_install_leaves_no_trusted_marker_so_the_way_back_reinstalls(self) -> None:
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        lock_a = (proj / "pnpm-lock.yaml").read_text(encoding="utf-8")
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        (proj / "pnpm-lock.yaml").write_text(lock_a + "b: true\n", encoding="utf-8")
+        r = self.fx.run("pnpm", "install", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
+        self.assertEqual(r.returncode, 7)  # pnpm's own status, passed through
+        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+        (proj / "pnpm-lock.yaml").write_text(lock_a, encoding="utf-8")
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "exec vitest"])
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+
+    def test_explicit_install_waits_behind_a_live_lock_and_project_commands_wait_behind_an_explicit_install(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            r = self.fx.run("pnpm", "add", "x", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held", r.stderr)
+        self.assertEqual(self.fx.calls(), [])
+        lock.rmdir() if not (lock / "pid").exists() else ((lock / "pid").unlink(), lock.rmdir())
+        # an explicit install that takes 2 s: a concurrent project command waits for it, then needs no install
+        results: list[subprocess.CompletedProcess[str]] = []
+        guard = threading.Lock()
+
+        def call(argv: list[str], sleep: str) -> None:
+            r = self.fx.run("pnpm", *argv, cwd=proj, FAKE_PNPM_SLEEP=sleep)
+            with guard:
+                results.append(r)
+
+        t1 = threading.Thread(target=call, args=(["install"], "2"))
+        t2 = threading.Thread(target=call, args=(["exec", "vitest"], "0"))
+        t1.start()
+        time.sleep(0.5)
+        t2.start()
+        t1.join(timeout=60)
+        t2.join(timeout=60)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        argv = [c.split("|", 2)[2] for c in self.fx.calls()]
+        self.assertEqual(argv, ["install", "exec vitest"], argv)
+
+    def test_first_install_in_a_directory_without_a_lockfile_records_the_lockfile_it_creates(self) -> None:
+        d = self.fx.root / "fresh"
+        d.mkdir()
+        (d / "package.json").write_text('{"name":"f","private":true}\n', encoding="utf-8")
+        write_exec(
+            self.fx.fake_pnpm,
+            FAKE_PNPM.replace(
+                '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
+                '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
+                "    echo \"lockfileVersion: '9.0'\" > pnpm-lock.yaml\n",
+            ),
+        )
+        r = self.fx.run("pnpm", "install", cwd=d)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        marker = d / "node_modules" / ".gc-lane-deps"
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(d / "pnpm-lock.yaml"))
+
+    def test_pnpm_install_is_keyed_by_version(self) -> None:
+        proj = self.fx.project()
+        other = self.fx.toolchain / "pnpm" / "v9.9.9" / "node_modules" / ".bin" / "pnpm"
+        write_exec(other, '#!/bin/sh\necho "fake pnpm 9.9.9 $*"\n')
+        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="9.9.9")
+        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
+        (self.fx.shims / "toolchain.env").write_text("PNPM_VERSION=9.9.9\n", encoding="utf-8")
+        r = self.fx.run("pnpm", "--version", cwd=proj)
+        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
+        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="11.20.0")
+        self.assertEqual(r.stdout, "fake pnpm ran: --version\n", r.stderr)
