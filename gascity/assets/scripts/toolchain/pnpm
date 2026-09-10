@@ -26,11 +26,23 @@
 #      the marker on success and releases; every concurrent caller waits for
 #      the lock, then re-reads the marker. A failed install writes no marker
 #      and fails this command (exit status of pnpm install); the requested
-#      command does not run against a half-installed tree. A lock whose owner
-#      pid is dead (or a zombie), or that has no owner after two minutes, is
-#      moved aside by rename (atomic; nothing is deleted) and retaken; a live
+#      command does not run against a half-installed tree; the marker is
+#      invalidated before the install starts, so a failed install for one
+#      lockfile never leaves an older lockfile's marker trusted. A lock whose
+#      owner pid is dead (or a zombie), or that has no owner after two
+#      minutes, is moved aside by rename (atomic; nothing is deleted) and
+#      retaken, but only under a second, atomic reclaim lock and only after
+#      re-checking it is still the same stale lock, so two waiters cannot
+#      both clear it and a live lock (a waiter's fresh one) is never moved;
+#      a reclaim lock stuck for two minutes fails the command closed. A live
 #      lock is waited for up to <wait> seconds, then this command fails
-#      closed naming the holder.
+#      closed naming the holder. Only the pid that took the lock releases it.
+#      Lifecycle scripts the install itself runs (a `postinstall` that calls
+#      `pnpm run build`) re-enter this wrapper with the lane install already
+#      in progress: the installing wrapper exports
+#      GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<project root> and a descendant that
+#      resolves the same project skips step 3 instead of waiting on its
+#      parent's lock.
 #   4. The wrapper's own directory goes first on PATH, so the node pnpm runs
 #      on (and every script it runs) is the toolchain's node when the city
 #      pinned one (see the node wrapper beside this file).
@@ -188,9 +200,10 @@ LOCK=""
 LOCKED=0
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
+        LOCKED=0
+        [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$$" ] || return 0
         rm -f "$LOCK/pid" 2>/dev/null || true
         rmdir "$LOCK" 2>/dev/null || true
-        LOCKED=0
     fi
 }
 trap 'release_lock' EXIT
@@ -208,8 +221,50 @@ owner_is_dead() {
 
 marker_ok() { [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null)" = "$WANT" ]; }
 
+# lock_is_stale: $LOCK exists and its owner is dead or a zombie, or it has had
+# no owner for over two minutes (a run died between mkdir and the pid write;
+# a live run publishes within milliseconds). Sets `owner`.
+lock_is_stale() {
+    [ -d "$LOCK" ] || return 1
+    owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ]; then
+        owner_is_dead "$owner"
+    else
+        [ -n "$(find "$LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ]
+    fi
+}
+
+# reclaim_stale_lock: move $LOCK aside if, under the reclaim lock, it is still
+# stale. 0 when something was moved, 1 otherwise (lost the reclaim race, the
+# lock turned out live or gone). A reclaim lock older than two minutes is a
+# crash residue and fails the command closed rather than being removed here
+# (two contenders removing it would race exactly like the primary lock).
+reclaim_stale_lock() {
+    reclaim="$LOCK.reclaim"
+    if ! mkdir "$reclaim" 2>/dev/null; then
+        if [ -n "$(find "$reclaim" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+            die "stale reclaim lock $reclaim is older than two minutes; remove it by hand after checking no lane install is alive"
+        fi
+        return 1
+    fi
+    [ -z "${GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM"
+    moved=1
+    if lock_is_stale; then
+        aside="$LOCK.stale-${owner:-nopid}-$$"
+        if mv "$LOCK" "$aside" 2>/dev/null; then
+            warn "moved aside a stale lane install lock (owner pid ${owner:-none}) -> $aside"
+            moved=0
+        fi
+    fi
+    rmdir "$reclaim" 2>/dev/null || true
+    return "$moved"
+}
+
 ensure_lane_deps() {
     ROOT="$(project_root)" || return 0
+    if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$ROOT" ]; then
+        return 0   # a lifecycle script of the install in progress; its parent holds the lock
+    fi
     NM="$ROOT/node_modules"
     MARK="$NM/.gc-lane-deps"
     LOCK="$NM/.gc-lane-deps.lock"
@@ -224,21 +279,11 @@ ensure_lane_deps() {
             break
         fi
         marker_ok && return 0
-        owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
-        stale=0
-        if [ -n "$owner" ]; then
-            owner_is_dead "$owner" && stale=1
-        elif [ -n "$(find "$LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
-            stale=1
-        fi
-        if [ "$stale" -eq 1 ]; then
-            aside="$LOCK.stale-${owner:-nopid}-$$"
-            if mv "$LOCK" "$aside" 2>/dev/null; then
-                warn "moved aside a stale lane install lock (owner pid ${owner:-none}) -> $aside"
+        if lock_is_stale; then
+            [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"
+            if reclaim_stale_lock; then
                 continue
             fi
-            # lost the rename race to another waiter; loop and retake
-            continue
         fi
         [ "$waited" -lt "$LANE_DEPS_WAIT" ] \
             || die "another lane install (pid ${owner:-unknown}) has held $LOCK for ${LANE_DEPS_WAIT}s; this command did not run"
@@ -253,8 +298,11 @@ ensure_lane_deps() {
     fi
     short="$(printf '%s' "$WANT" | cut -c1-12)"
     log "installing lane dependencies once for $ROOT (lockfile $short)"
+    # No marker is trusted while the tree is being changed: a failed install
+    # for this lockfile must not leave an older lockfile's marker in place.
+    printf 'installing %s\n' "$WANT" > "$MARK"
     status=0
-    (cd "$ROOT" && run_pnpm install --frozen-lockfile) >&2 || status=$?
+    (cd "$ROOT" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$ROOT" run_pnpm install --frozen-lockfile) >&2 || status=$?
     if [ "$status" -eq 0 ]; then
         printf '%s\n' "$WANT" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
     fi

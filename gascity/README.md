@@ -362,12 +362,20 @@ install was made from, and a match means no install. Otherwise one caller
 takes `node_modules/.gc-lane-deps.lock`, runs `pnpm install
 --frozen-lockfile` in the project, writes the marker on success and
 releases; concurrent callers wait for the lock and re-read the marker, so a
-lane is installed once per lockfile whatever runs in parallel. A failed
-install writes no marker and fails the command (the requested check never
-runs against a half-installed tree); a lock whose owner is dead is moved
-aside by rename (nothing deleted), a live one is waited for
-(`LANE_DEPS_WAIT`, default 600 s) and then the command fails closed naming
-the holder. A worker that edits `package.json` runs `pnpm install` itself
+lane is installed once per lockfile whatever runs in parallel. The marker
+is invalidated before the install starts and rewritten only on success, so
+a failed install fails the command (the requested check never runs against
+a half-installed tree) and never leaves an older lockfile's marker trusted.
+A lock whose owner is dead is moved aside by rename (nothing deleted), but
+only under a second, atomic reclaim lock and after re-reading it, so two
+waiters cannot both clear it and a waiter's fresh live lock is never moved;
+a live lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and then the
+command fails closed naming the holder, and only the pid that took a lock
+releases it. A lifecycle script the install itself runs (a `postinstall`
+that calls `pnpm run build`) re-enters the wrapper with
+`GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<project root>` set by its parent and
+skips the lane install instead of waiting on its parent's lock. A worker
+that edits `package.json` runs `pnpm install` itself
 (a pass-through); the next check sees the new lockfile hash and makes one
 no-op frozen install. To take even that first install out of the worker's
 first check, a city can pre-warm the lane in `pre_start` after the worktree
