@@ -543,22 +543,21 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
         self.assertTrue(lock.exists())
 
-    def test_a_caller_whose_lane_is_already_in_sync_never_touches_the_lock(self) -> None:
+    def test_a_caller_whose_lane_is_in_sync_and_unlocked_never_touches_the_lock(self) -> None:
+        # (until round 19 this row ran the in-sync caller past a LIVE holder; a mutate in
+        # flight reads as in sync to pnpm, so a live lock is now waited for: see
+        # test_a_project_command_waits_behind_a_live_lock_even_when_pnpm_says_in_sync)
         proj = self.fx.project()
         self.fx.run("pnpm", "test", cwd=proj)
         lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir()
-        holder = subprocess.Popen(["sleep", "30"])
-        try:
-            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
-            self.fx.reset()
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
-        finally:
-            holder.kill()
-            holder.wait()
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertEqual(len(self.fx.checks()), 1)
         self.assertNotIn("waiting", r.stderr)
+        self.assertFalse(lock.exists())
+        self.assertFalse([p for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock")])
 
     def test_lane_deps_can_be_switched_off_by_environment_or_sidecar(self) -> None:
         proj = self.fx.project()
@@ -890,8 +889,9 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(r1.returncode, 0, r1.stderr)
         self.assertEqual(r2.returncode, 1, r2.stderr)
         self.assertIn(f"has held {fx_lock.resolve()}", r2.stderr)
-        self.assertEqual(r3.returncode, 0, r3.stderr)  # prepared: pnpm says yes, no lock needed
-        self.assertEqual(self.fx.argv(), ["--ignore-workspace add left-pad", "--ignore-workspace exec vitest"])
+        self.assertEqual(r3.returncode, 1, r3.stderr)  # prepared, but a live lock is waited for first (round 19)
+        self.assertIn(f"has held {fx_lock.resolve()}", r3.stderr)
+        self.assertEqual(self.fx.argv(), ["--ignore-workspace add left-pad"])
         # every spelling pnpm 11.20 honours (measured: the flag, =true, a literal true after
         # it; =false, a literal false and --no-ignore-workspace undo it; the last one wins;
         # after `run` as well), and -w moves nothing under the flag (pnpm refuses it outside
@@ -974,14 +974,13 @@ class PnpmShimGateRoundTests(unittest.TestCase):
                 self.assertEqual(r.returncode, 1, (argv, r.stderr))
                 self.assertIn(f"has held {lock.resolve()}", r.stderr, argv)
                 self.assertEqual(self.fx.all_calls(), [], argv)
-            # the same values in front of a project command wait for the lock too (a project
-            # command asks pnpm first: the fake's answer is stale here, so the lock is wanted)
+            # the same values in front of a project command wait for the lock too (a live
+            # lock is waited for before pnpm is even asked, round 19)
             for argv in (["--child-concurrency", "1", "exec", "vitest"], ["--recursive", "false", "run", "test"], ["-r", "false", "test"]):
                 self.fx.reset()
                 r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
                 self.assertEqual(r.returncode, 1, (argv, r.stderr))
-                self.assertEqual(self.fx.argv(), [], argv)
-                self.assertEqual(len(self.fx.checks()), 1, argv)
+                self.assertEqual(self.fx.all_calls(), [], argv)
             # `--recursive=maybe install`: nopt leaves `maybe` positional, so pnpm's command is
             # `maybe` (a script name), never install: no lock, pnpm's own error
             self.fx.reset()
@@ -1078,6 +1077,60 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertNotIn("waiting for another caller", r.stderr)
         self.assertLess(elapsed, 20)
         self.assertEqual(self.fx.argv(), [])
+
+    def test_a_project_command_waits_behind_a_live_lock_even_when_pnpm_says_in_sync(self) -> None:
+        """Round 19: a mutate in flight (a slow rebuild) leaves pnpm's answer
+        yes while the tree is half built, so the live lock is waited for
+        before the fast path; a disabled help flag is not a help request."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)   # prepared: pnpm says yes from here on
+        self.assertTrue(in_sync(proj))
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "60"])
+        try:
+            lock.mkdir()
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            self.fx.reset()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn(f"another lane install (pid {holder.pid}) has held", r.stderr)
+            self.assertEqual(self.fx.all_calls(), [])     # not even asked: the holder comes first
+            # --no-help / --help=false / -h false are not help requests: installs, under the lock
+            for argv in (["--no-help", "install"], ["install", "--help=false"], ["-h", "false", "install"], ["--version=false", "add", "x"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 1, (argv, r.stderr))
+                self.assertIn("has held", r.stderr, argv)
+                self.assertEqual(self.fx.all_calls(), [], argv)
+        finally:
+            holder.kill()
+            holder.wait()
+        # the holder gone (its lock now stale): the command asks pnpm once and runs
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("moved aside a stale lane install lock", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        # a concurrent mutate: the project command runs only after it released the lane
+        self.fx.reset()
+        results: dict[str, subprocess.CompletedProcess[str]] = {}
+
+        def mutate() -> None:
+            results["add"] = self.fx.run("pnpm", "add", "left-pad", cwd=proj, FAKE_PNPM_SLEEP="3")
+
+        def check() -> None:
+            time.sleep(1)
+            results["exec"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
+
+        threads = [threading.Thread(target=mutate), threading.Thread(target=check)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=60)
+        self.assertEqual(results["add"].returncode, 0, results["add"].stderr)
+        self.assertEqual(results["exec"].returncode, 0, results["exec"].stderr)
+        self.assertIn("waiting for another caller's lane install", results["exec"].stderr)
+        self.assertEqual(self.fx.argv(), ["add left-pad", "exec vitest"])
 
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
