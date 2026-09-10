@@ -65,14 +65,59 @@ just publish-to-thread.
 """
 
 
-def deliver_protocol_nudge(session_id: str, conversation_id: str) -> None:
+# Reply protocol for a MENTION-ONLY participant (jg-vobf70). The session is
+# not a gc member of the room: the adapter injects a reminder only when the
+# message @mentions the bot user, addresses the session's handle, or replies
+# in a thread the session posted in — and the reply tooling resolves those
+# injections through the adapter's delivery log, so the same react-first /
+# threaded-reply protocol applies. Sent on every mention-only bind, like the
+# ambient nudge.
+MENTION_ONLY_NUDGE_TEMPLATE = """<system-reminder>
+Slack MENTION-ONLY room binding established for {conversation_id}.
+You are bound to this room in mention-only mode: you are woken only when a
+message @mentions your bot user, addresses your handle (@{handle}: ...), or is
+a reply in a thread you posted in. Everything else in the room stays silent
+for you — read it on demand with:
+  gc slack read --conversation-id {conversation_id}
+
+Reply protocol when you receive a `Slack mention-only room delivery` reminder:
+
+  1. **FIRST**: react with writing_hand — BEFORE you compose anything:
+       gc slack react --emoji writing_hand
+     (the reminder also carries the explicit --conversation-id/--message-id form)
+
+  2. THEN compose your reply to a tmpfile.
+
+  3. THEN publish as a threaded reply:
+       gc slack reply-current --body-file <tmpfile> --thread-current
+     (the reminder carries the explicit --conversation-id/--reply-to form;
+     posts go through the slack adapter directly — you hold no channel
+     binding here, so peers are not fanned out)
+
+The order is non-negotiable even when you have an instant answer. React
+first, every time.
+
+Use `gc slack publish-to-channel --conversation-id {conversation_id} --no-thread`
+ONLY for explicit top-level status broadcasts initiated by you, never as a
+reply to an inbound. Replies you post in threads make follow-ups in those
+threads reach you without a mention.
+</system-reminder>
+"""
+
+
+def deliver_protocol_nudge(
+    session_id: str,
+    conversation_id: str,
+    template: str = PROTOCOL_NUDGE_TEMPLATE,
+    **fields: str,
+) -> None:
     """Send the slack reply-protocol nudge to a session via `gc session nudge`.
 
     Best-effort — failures (session asleep, unknown target, gc binary
     missing) are logged to stderr and do not abort the bind. The nudge is
     idempotent so re-delivery on every bind is safe.
     """
-    body = PROTOCOL_NUDGE_TEMPLATE.format(conversation_id=conversation_id)
+    body = template.format(conversation_id=conversation_id, **fields)
     try:
         result = subprocess.run(
             ["gc", "session", "nudge", session_id, body],
@@ -137,6 +182,32 @@ def _default_handle_for_session(session_name: str) -> str:
     if "." in session_name:
         return session_name.rsplit(".", 1)[-1]
     return session_name
+
+
+def resolve_session_identity(session_name: str) -> tuple[str, str]:
+    """Resolve an operator-supplied session name or id to (id, name).
+
+    The adapter's mention-only lane injects into the session by id and
+    matches the session's own posts by the id /publish carries, so a
+    name-bound participant must be resolved to gc's id at bind time.
+    Consults ``GET /sessions``; when the session is not listed (gc
+    unreachable, or a session that is not running yet) the literal
+    string is used for both and a warning is printed — gc's
+    session-message endpoint accepts names too.
+    """
+    try:
+        res = common.gc_get("/sessions")
+    except common.GCAPIError as exc:
+        sys.stderr.write(f"warn: could not resolve session {session_name!r} via gc /sessions ({exc}); using it verbatim\n")
+        return session_name, session_name
+    for entry in res.get("items", []) or []:
+        sid = (entry.get("id") or "").strip()
+        alias = (entry.get("alias") or "").strip()
+        sname = (entry.get("session_name") or "").strip()
+        if session_name in (sid, alias, sname) and sid:
+            return sid, (alias or sname or session_name)
+    sys.stderr.write(f"warn: session {session_name!r} not found in gc /sessions; using it verbatim\n")
+    return session_name, session_name
 
 
 def build_conversation_ref(
@@ -222,6 +293,16 @@ def main(argv: list[str]) -> int:
                         help="Cap peer-triggered publishes per inbound (0 = unlimited)")
     parser.add_argument("--max-total-peer-deliveries", type=int, default=0,
                         help="Cap total peer deliveries per inbound (0 = unlimited)")
+    parser.add_argument("--mentions-only", action="store_true",
+                        help="Bind the listed sessions in MENTION-ONLY mode: the adapter "
+                             "wakes each one only for messages that @mention the bot user, "
+                             "address its handle (`@handle: ...`), or reply in a thread it "
+                             "posted in; everything else in the room is dropped for it "
+                             "(still readable via `gc slack read`). The sessions are "
+                             "registered with the adapter (POST /mention-only), NOT added "
+                             "as gc group participants — ambient participants bound in a "
+                             "separate invocation are unaffected. Incompatible with the "
+                             "peer-fanout flags, --default-handle and --binding-owner.")
     parser.add_argument("--no-protocol-nudge", action="store_true",
                         help="Skip auto-delivery of the slack reply-protocol nudge "
                              "(react first, threaded reply, ack) to each newly-bound "
@@ -246,6 +327,9 @@ def main(argv: list[str]) -> int:
     city = common.gc_city_name()
     overrides = _parse_handle_overrides(args.handle)
     participants = build_participants(args.session_names, overrides, args.default_handle)
+    if args.mentions_only:
+        return _main_mentions_only(args, workspace_id=workspace_id, city=city,
+                                   participants=participants)
     default_handle = args.default_handle or participants[0][0]
     binding_owner = args.binding_owner.strip()
     conv = build_conversation_ref(
@@ -330,6 +414,138 @@ def main(argv: list[str]) -> int:
         "participants": participant_records,
         "binding_owner": binding_owner or None,
         "binding_record": binding_record,
+        "protocol_nudge": {
+            "delivered_to": nudged,
+            "failures": nudge_failures,
+            "skipped": args.no_protocol_nudge,
+        },
+    }, indent=2, default=str))
+    return 0
+
+
+def mention_only_incompatible_flags(args: argparse.Namespace) -> list[str]:
+    """Flags that only make sense for a gc group participant."""
+    bad: list[str] = []
+    if args.enable_peer_fanout:
+        bad.append("--enable-peer-fanout")
+    if args.allow_untargeted_publication:
+        bad.append("--allow-untargeted-publication")
+    if args.max_peer_triggered_publishes:
+        bad.append("--max-peer-triggered-publishes")
+    if args.max_total_peer_deliveries:
+        bad.append("--max-total-peer-deliveries")
+    if (args.default_handle or "").strip():
+        bad.append("--default-handle")
+    if (args.binding_owner or "").strip():
+        bad.append("--binding-owner")
+    return bad
+
+
+def record_mention_only_binding(
+    cfg: dict[str, Any],
+    *,
+    binding_key: str,
+    kind: str,
+    conv: dict[str, str],
+    records: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Merge mention-only participants into the pack config's binding record.
+
+    An existing AMBIENT record for the same room keeps its participants /
+    group untouched; the mention-only list is a sibling field, upserted by
+    session_name. A room with no record yet gets a minimal one whose
+    ``delivery_mode`` says what it is.
+    """
+    cfg.setdefault("bindings", {})
+    rec = cfg["bindings"].get(binding_key)
+    if not isinstance(rec, dict):
+        rec = {"kind": kind, "conversation": conv, "delivery_mode": "mentions_only"}
+        cfg["bindings"][binding_key] = rec
+    existing = [r for r in rec.get("mention_only_participants") or [] if isinstance(r, dict)]
+    by_name = {r.get("session_name"): r for r in existing}
+    for r in records:
+        by_name[r["session_name"]] = r
+    rec["mention_only_participants"] = [by_name[k] for k in sorted(by_name)]
+    if not rec.get("participants"):
+        rec["delivery_mode"] = "mentions_only"
+    return rec
+
+
+def _main_mentions_only(
+    args: argparse.Namespace,
+    *,
+    workspace_id: str,
+    city: str,
+    participants: list[tuple[str, str]],
+) -> int:
+    """`gc slack bind-room ... --mentions-only` (jg-vobf70).
+
+    1. Reject flags that only apply to gc group participants.
+    2. Resolve each session to its gc id (the adapter injects by id).
+    3. POST /mention-only on the adapter for each (channel, session, handle).
+    4. Record the binding under the pack config (inspectable via
+       `gc slack status` and the registry file).
+    5. Deliver the mention-only reply-protocol nudge.
+
+    No gc group, participant, or /extmsg/bind call is made: a gc member
+    would be woken for every message, which is exactly what this mode
+    exists to avoid.
+    """
+    bad = mention_only_incompatible_flags(args)
+    if bad:
+        raise SystemExit(
+            "--mentions-only cannot be combined with " + ", ".join(bad)
+            + " (those configure gc group participants; a mention-only session is not one)")
+
+    conv = build_conversation_ref(
+        conversation_id=args.conversation_id,
+        kind=args.kind,
+        workspace_id=workspace_id,
+        scope_id=city,
+    )
+    registered: list[dict[str, Any]] = []
+    records: list[dict[str, str]] = []
+    for handle, session in participants:
+        session_id, session_name = resolve_session_identity(session)
+        try:
+            res = common.register_mention_only_via_adapter(
+                channel_id=args.conversation_id,
+                session_id=session_id,
+                session_name=session_name,
+                handle=handle,
+            )
+        except common.AdapterError as exc:
+            raise SystemExit(
+                f"register mention-only {handle}={session}: {exc}\n"
+                "(the running adapter must include mention-only support — "
+                "POST /mention-only — restart it on the current pack build)") from exc
+        registered.append(res)
+        records.append({"handle": handle, "session_name": session_name, "session_id": session_id})
+
+    cfg = common.load_pack_config()
+    binding_key = f"{args.kind}:{args.conversation_id}"
+    rec = record_mention_only_binding(
+        cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)
+    common.save_pack_config(cfg)
+
+    nudged: list[str] = []
+    nudge_failures: list[str] = []
+    if not args.no_protocol_nudge:
+        for r in records:
+            try:
+                deliver_protocol_nudge(
+                    r["session_id"], args.conversation_id,
+                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"])
+                nudged.append(r["session_id"])
+            except Exception as exc:  # noqa: BLE001 — best-effort, never abort bind
+                nudge_failures.append(f"{r['session_id']}: {exc}")
+
+    print(json.dumps({
+        "binding_key": binding_key,
+        "delivery_mode": "mentions_only",
+        "conversation_id": args.conversation_id,
+        "mention_only_participants": rec.get("mention_only_participants", []),
+        "adapter": registered,
         "protocol_nudge": {
             "delivered_to": nudged,
             "failures": nudge_failures,

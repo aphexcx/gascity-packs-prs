@@ -161,6 +161,26 @@
 //     JSON file backing the cross-channel
 //     handle → session-id alias registry.
 //
+//   - SLACK_MENTION_ONLY_BINDINGS_FILE Default "<GC_CITY_PATH>/.gc/slack/mention_only_bindings.json"
+//     when GC_CITY_PATH is set, otherwise
+//     "/tmp/gc-slack-adapter/mention_only_bindings.json".
+//     JSON file backing the mention-only room
+//     binding registry written by
+//     `gc slack bind-room --mentions-only`
+//     (POST/DELETE /mention-only). A session
+//     listed here for a channel is woken only
+//     by @mentions of the bot user, messages
+//     addressed to its handle, and replies in
+//     threads it posted in (jg-vobf70).
+//
+//   - SLACK_OWN_THREADS_FILE        Default "<GC_CITY_PATH>/.gc/slack/own_threads.json"
+//     when GC_CITY_PATH is set, otherwise
+//     "/tmp/gc-slack-adapter/own_threads.json".
+//     JSON file recording which sessions posted
+//     into which threads via /publish and
+//     /publish-file; read by the mention-only
+//     lane for thread follow-ups.
+//
 //   - INBOUND_FILE_STORE           Default "/tmp/gc-slack-adapter/inbound".
 //     Directory for downloaded inbound Slack
 //     file attachments. Files are organized as
@@ -383,6 +403,28 @@ type config struct {
 	// channel routes to the session registered under the "ops" handle
 	// even when that session has no Slack binding for the channel).
 	handleAliasStorePath string
+	// mentionOnlyStorePath is the JSON file backing the mention-only room
+	// binding registry (jg-vobf70): channel id → sessions that receive an
+	// inbound only when addressed (bot @mention / handle) or when it is a
+	// reply in a thread they posted in. Written by the /mention-only admin
+	// endpoints (`gc slack bind-room --mentions-only`). Sourced from
+	// SLACK_MENTION_ONLY_BINDINGS_FILE, defaulting to
+	// <GC_CITY_PATH>/.gc/slack/mention_only_bindings.json when GC_CITY_PATH
+	// is set, else /tmp/gc-slack-adapter/mention_only_bindings.json.
+	mentionOnlyStorePath string
+	// ownThreadsStorePath is the JSON file backing the own-thread registry:
+	// (channel, thread root) → sessions that posted into that thread
+	// through /publish or /publish-file. Consulted by the mention-only lane
+	// so follow-ups to a session's own posts still reach it. Sourced from
+	// SLACK_OWN_THREADS_FILE, same default convention as
+	// mentionOnlyStorePath (own_threads.json).
+	ownThreadsStorePath string
+	// mentionOnly / ownThreads / mentionOnlyDeliveries are the live
+	// registries behind the paths above, wired in main(). Nil in bare
+	// test configs: nil registries have no bindings and record nothing.
+	mentionOnly           *mentionOnlyRegistry
+	ownThreads            *ownThreadRegistry
+	mentionOnlyDeliveries *mentionOnlyDeliveryLog
 	// threadSessionsStorePath is the JSON file backing the thread →
 	// session registry used by Slack launcher mode (cby.5). When a
 	// `@@<handle>` post arrives in a thread, the adapter checks this
@@ -884,7 +926,11 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	defaultSubteamAliasPath := "/tmp/gc-slack-adapter/subteam-aliases.json"
 	defaultUserAliasPath := "/tmp/gc-slack-adapter/slack-user-aliases.json"
 	defaultPeerBotsPath := "/tmp/gc-slack-adapter/peer_bots.json"
+	defaultMentionOnlyPath := "/tmp/gc-slack-adapter/mention_only_bindings.json"
+	defaultOwnThreadsPath := "/tmp/gc-slack-adapter/own_threads.json"
 	if cityPath := getenv("GC_CITY_PATH"); cityPath != "" {
+		defaultMentionOnlyPath = filepath.Join(cityPath, ".gc", "slack", "mention_only_bindings.json")
+		defaultOwnThreadsPath = filepath.Join(cityPath, ".gc", "slack", "own_threads.json")
 		defaultMappingPath = filepath.Join(cityPath, ".gc", "slack", "channel_mappings.json")
 		defaultRigMappingPath = filepath.Join(cityPath, ".gc", "slack", "rig_mappings.json")
 		defaultAppsRegistryPath = filepath.Join(cityPath, ".gc", "slack", "apps.json")
@@ -907,6 +953,8 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	cfg.subteamAliasStorePath = envOrFn("SLACK_SUBTEAM_ALIAS_FILE", defaultSubteamAliasPath)
 	cfg.userAliasStorePath = envOrFn("SLACK_USER_ALIAS_FILE", defaultUserAliasPath)
 	cfg.peerBotsPath = envOrFn("SLACK_PEER_BOTS_PATH", defaultPeerBotsPath)
+	cfg.mentionOnlyStorePath = envOrFn("SLACK_MENTION_ONLY_BINDINGS_FILE", defaultMentionOnlyPath)
+	cfg.ownThreadsStorePath = envOrFn("SLACK_OWN_THREADS_FILE", defaultOwnThreadsPath)
 	cfg.deliveryPolicyPath = envOrFn("SLACK_DELIVERY_POLICY_PATH", companyStateDirDefault(cfg.cityPath, "delivery_policy.json"))
 	if d, err := time.ParseDuration(envOrFn("SLACK_COALESCE_WINDOW", defaultCoalesceWindow.String())); err == nil && d >= 0 {
 		cfg.coalesceWindow = d
@@ -1570,6 +1618,8 @@ func main() {
 		cfg.appsRegistryPath,
 		cfg.threadSessionsStorePath,
 		cfg.roomLaunchPath,
+		cfg.mentionOnlyStorePath,
+		cfg.ownThreadsStorePath,
 	} {
 		if err := sweepOrphanTmpFiles(p); err != nil {
 			log.Printf("orphan-tmp sweep: %v", err)
@@ -1596,6 +1646,25 @@ func main() {
 
 	threadHandleSticky := newThreadHandleStickiness()
 	log.Printf("thread handle stickiness: in-memory only (no persistence in v1)")
+
+	// Mention-only room bindings + the own-thread registry that feeds
+	// their thread-follow-up rule (jg-vobf70). Both are cfg fields so
+	// processSlackEvent, /publish and /publish-file see them through the
+	// cfg value every handler closes over — assigned here, before any
+	// handler is constructed.
+	mentionOnlyReg, err := newMentionOnlyRegistry(cfg.mentionOnlyStorePath)
+	if err != nil {
+		log.Fatalf("mention-only registry: %v", err)
+	}
+	cfg.mentionOnly = mentionOnlyReg
+	log.Printf("mention-only registry: store=%s channels=%d", cfg.mentionOnlyStorePath, len(mentionOnlyReg.All()))
+	ownThreadsReg, err := newOwnThreadRegistry(cfg.ownThreadsStorePath)
+	if err != nil {
+		log.Fatalf("own-thread registry: %v", err)
+	}
+	cfg.ownThreads = ownThreadsReg
+	cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+	log.Printf("own-thread registry: store=%s", cfg.ownThreadsStorePath)
 
 	roomLaunchReg, err := newRoomLaunchMappingRegistry(cfg.roomLaunchPath)
 	if err != nil {
@@ -1805,6 +1874,12 @@ func main() {
 	internalMux.HandleFunc("DELETE /identity", handleIdentityDelete(identityReg))
 	internalMux.HandleFunc("POST /handle-alias", handleHandleAlias(aliasReg))
 	internalMux.HandleFunc("DELETE /handle-alias", handleHandleAliasDelete(aliasReg))
+	// Mention-only room bindings (jg-vobf70): bind/unbind/list, plus the
+	// recent-deliveries view the pack scripts use to anchor replies.
+	internalMux.HandleFunc("POST /mention-only", handleMentionOnlyBind(cfg.mentionOnly))
+	internalMux.HandleFunc("DELETE /mention-only", handleMentionOnlyDelete(cfg.mentionOnly))
+	internalMux.HandleFunc("GET /mention-only", handleMentionOnlyList(cfg.mentionOnly))
+	internalMux.HandleFunc("GET /mention-only/deliveries", handleMentionOnlyDeliveries(cfg.mentionOnlyDeliveries))
 	// Company-rooms operator surface: the receipt listing + redrive endpoints
 	// (Phase 3b) backing the `gc slack company-status` / `company-redrive` verbs,
 	// plus the Phase 5 body-redaction hook (`gc slack company-redact`).
@@ -2361,6 +2436,15 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		// re-checking: the original delivery already consumed the mark.
 		if receipt.Delivered {
 			clearBusyReaction(cfg, req.Conversation.ConversationID, req.ReplyToMessageID)
+			// Own-thread registry (jg-vobf70): a threaded reply joins its
+			// thread; a top-level post roots a new one under its own ts.
+			// Either way, replies in that thread now reach the posting
+			// session even when it is bound mention-only.
+			root := req.ReplyToMessageID
+			if root == "" {
+				root = slackResp.TS
+			}
+			cfg.ownThreads.record(req.Conversation.ConversationID, root, req.SessionID)
 		}
 		// Remember delivered receipts so a subsequent retry with the same
 		// idempotency key replays this receipt instead of re-posting. Put
@@ -2529,6 +2613,13 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).
 		clearBusyReaction(cfg, req.Conversation.ConversationID, req.ReplyToMessageID)
+		// Own-thread registry (jg-vobf70): a threaded upload joins its
+		// thread. A top-level file post yields a file id, not a message
+		// ts, so it cannot root a thread here — follow-ups to it fall
+		// back to the Slack thread scan.
+		if req.ReplyToMessageID != "" {
+			cfg.ownThreads.record(req.Conversation.ConversationID, req.ReplyToMessageID, req.SessionID)
+		}
 		writeJSON(w, receipt)
 	}
 }
@@ -3757,11 +3848,23 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	isThreadReply := msg.ThreadTS != "" && msg.ThreadTS != msg.TS
 	preamble := ""
 	parentAuthor, parentFirstLine := "", ""
+	// Mention-only room bindings for this channel (jg-vobf70). Resolved
+	// here so the thread-context fetch below can be reused by the
+	// own-thread fallback scan instead of calling Slack twice.
+	var mentionOnlyBindings []mentionOnlyBinding
+	if convKind == "room" {
+		mentionOnlyBindings = cfg.mentionOnly.ForChannel(msg.Channel)
+	}
+	var threadReplies []slackThreadMessage
+	threadRepliesFetched := false
 	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
 		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
 		cancel()
+		if err == nil {
+			threadReplies, threadRepliesFetched = replies, true
+		}
 		if err != nil {
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
 		} else {
@@ -3929,6 +4032,51 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// via Slack redelivery.
 	// Rooms only: DMs/MPIMs are direct conversations where latency
 	// matters more than wrapper overhead — they keep the immediate path.
+	// Mention-only lane (jg-vobf70): sessions bound to this room in
+	// mention-only mode are NOT gc members, so neither the buffered nor
+	// the urgent channel copy below can reach them. They get their own
+	// injection here — synchronously, ahead of the channel copy, under a
+	// per-(session, channel, ts) claim that collapses Slack's
+	// message/app_mention twin pair — and only when the message
+	// addresses them or lands in a thread they posted in
+	// (selectMentionOnlyTargets). Everything else in the room stays
+	// silent for them. The channel copy and every ambient member are
+	// untouched by this block; see mention_only.go for the rules.
+	if len(mentionOnlyBindings) > 0 {
+		moIn := mentionOnlyInput{
+			bindings:         mentionOnlyBindings,
+			botMentioned:     botMentioned,
+			target:           target,
+			aliasedSessionID: aliasedSessionID,
+			aliasLegDelivers: aliasedSessionID != "" && !aliasSuppressed,
+			isThreadReply:    isThreadReply,
+		}
+		if isThreadReply {
+			moIn.threadPosters, moIn.threadKnown = cfg.ownThreads.posters(msg.Channel, msg.ThreadTS)
+			if !moIn.threadKnown {
+				// Threads that predate the own-thread registry: scan
+				// the thread for the adapter's own bot user. Reuses
+				// the preamble's fetch when it ran; fetches once
+				// otherwise (skipChannelPost twins, nil cache).
+				if botUID := env.botUserID(); botUID != "" {
+					if !threadRepliesFetched {
+						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
+						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
+						cancel()
+						if err != nil {
+							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
+						} else {
+							threadReplies, threadRepliesFetched = replies, true
+						}
+					}
+					moIn.botPostedInThread = threadHasOwnBotPost(threadReplies, botUID, msg.TS)
+				}
+			}
+		}
+		if targets := selectMentionOnlyTargets(moIn); len(targets) > 0 {
+			deliverMentionOnly(cfg, targets, inbound)
+		}
+	}
 	if willBuffer {
 		// A ts the channel audience already received is the trailing
 		// half of a bot-mention pair (message + app_mention, same ts)

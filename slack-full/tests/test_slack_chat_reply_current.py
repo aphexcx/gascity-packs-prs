@@ -1355,7 +1355,11 @@ def test_turn_ts_lookup_miss_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None
     published: list[Any] = []
 
     def fake_request(*args: Any, **kwargs: Any) -> dict[str, Any]:
-        published.append(args)
+        # Only POSTs publish. The transcript miss also consults the
+        # adapter's mention-only delivery log (a GET, jg-vobf70) before
+        # failing; that read must not count as a publish.
+        if args and args[0] == "POST":
+            published.append(args)
         return {"Receipt": {"Delivered": True}}
 
     monkeypatch.setattr(common, "_request", fake_request)
