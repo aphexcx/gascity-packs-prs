@@ -422,9 +422,15 @@ read-only, with `ERR_PNPM_VERIFY_DEPS_BEFORE_RUN` instead of an install.
 The wrapper exports the `false` value for the command it runs and sorts
 each command into one of three kinds by the first bare token after the
 global options and the prefixes pnpm accepts (`recursive`/`m`, `pm`, `with
-<runtime>`); the value of an option that takes one (`--filter app`, `-C
-dir`, `--loglevel warn`) is skipped, so `pnpm --filter app install` is an
-install:
+<runtime>`). Which option swallows which token is pnpm's own option table,
+copied from the pinned `pnpm.mjs` (the nopt pass pnpm finds its command
+with: the global options plus `add`'s and `install`'s, the universal
+shorthands, unique prefixes, `--no-` negation, a boolean swallowing only a
+literal `true`/`false`, `--` and the words `create`/`exec`/`test` ending the
+options), so `pnpm --filter app install`, `pnpm --child-concurrency 1
+install` and `pnpm --recursive false install` are installs, and the flags
+the wrapper acts on are read again with the command's own table, as pnpm
+reads them:
 
 - **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...,
   and any command carrying `-h`/`--help`/`-v`/`--version` in pnpm's option
@@ -471,10 +477,12 @@ workspace package). The question costs one pnpm start (about a third of a
 second) per project command.
 
 The directory pnpm acts on is the last `-C`, `--dir` or `--prefix` value in
-pnpm's own option scope (the whole line for a built-in; for `run`/`exec` up
-to the script or bin name, whose own arguments are its own; a bare script
-name ends it), resolved against the working directory, else the working
-directory itself. A lock whose owner is dead is moved aside by rename
+pnpm's own option scope (the whole line for a built-in; for `run` up to
+the script name, whose own arguments are its own; nothing after `exec`,
+`test` or `create`, whose next token is the bin or script name whatever it
+looks like, measured: `pnpm exec -C x vitest` is 'Command "-C" not found';
+a bare script name ends it), resolved against the working directory, else
+the working directory itself. A lock whose owner is dead is moved aside by rename
 (nothing deleted), but only under a second, atomic reclaim lock and after
 re-reading it, so two waiters cannot both clear it and a waiter's fresh live
 lock is never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default

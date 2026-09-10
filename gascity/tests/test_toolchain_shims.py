@@ -78,14 +78,22 @@ case "$*" in
 esac
 first=""
 skip=""
+after_flag=""
 for a in "$@"; do
     if [ -n "$skip" ]; then skip=""; continue; fi
+    if [ -n "$after_flag" ]; then
+        after_flag=""
+        case "$a" in true|false) continue ;; esac     # a boolean option's literal value
+    fi
     case "$a" in
-        -C|--dir|--prefix|-F|--filter|--loglevel|--reporter|with) skip=1 ;;
-        -*|recursive|multi|m|pm) ;;
+        --) break ;;
+        -C|--dir|--prefix|-F|--filter|--loglevel|--reporter|--child-concurrency|--network-concurrency|with) skip=1 ;;
+        -*) after_flag=1 ;;
+        recursive|multi|m|pm) ;;
         *) first="$a"; break ;;
     esac
 done
+[ -n "$first" ] || for a in "$@"; do case "$a" in install|i|ci|add|update|it|install-test) first="$a"; break ;; esac; done   # `pnpm -- install`
 case "$first" in
     install|i|ci|add|update|it|install-test)
         [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
@@ -240,12 +248,19 @@ class PnpmShimVerdictTests(unittest.TestCase):
 
     def test_help_and_version_requests_run_as_is(self) -> None:
         proj = self.fx.project()
-        for argv in (["run", "--help"], ["install", "--help"], ["exec", "-h"], ["add", "x", "--help"], ["-v"], ["--version", "run", "build"]):
+        for argv in (["run", "--help"], ["install", "--help"], ["-h", "exec", "vitest"], ["add", "x", "--help"], ["-v"], ["--version", "run", "build"]):
             self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, (argv, r.stderr))
             self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
             self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists(), argv)
+        # after `exec` pnpm reads no options (measured on 11.20: `pnpm exec -h` is
+        # 'Command "-h" not found'), so `-h` there is the bin name: a project command
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "-h", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.checks()), 1)     # asked (the fake's `add` above left the tree in sync)
+        self.assertEqual(self.fx.argv(), ["exec -h"])
 
     def test_audit_fix_and_workspace_root_are_resolved_before_the_lock_and_the_override(self) -> None:
         ws = self.fx.root / "ws"
@@ -896,6 +911,95 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.fx.all_calls(), [f"{bare.resolve()}|false|--ignore-workspace exec vitest"])
 
+    def test_option_values_are_read_by_pnpm_own_table_so_an_install_behind_them_is_a_mutate(self) -> None:
+        """Round 16: `--child-concurrency 1 install`, `--recursive false
+        install` and their kin are installs (pnpm's exploratory parse
+        swallows the value, a boolean swallows a literal true/false), so
+        they hold the lane lock and never run the frozen install first."""
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "60"])
+        try:
+            lock.mkdir(parents=True)
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            mutates = (
+                ["--child-concurrency", "1", "install"],
+                ["--recursive", "false", "install"],
+                ["-r", "false", "install"],
+                ["--frozen-lockfile", "false", "install"],
+                ["--use-stderr", "false", "install"],
+                ["--color", "auto", "install"],
+                ["--link-workspace-packages", "deep", "install"],
+                ["--network-concurrency", "4", "add", "x"],
+                ["--loglevel", "warn", "install"],
+                ["--reporter", "append-only", "install"],
+                ["-s", "install"],                       # -s is --reporter=silent: no value
+                ["-rw", "install"],                      # a run of one-letter shorthands
+                ["--child-conc", "1", "install"],        # a unique prefix of an option name
+                ["--no-frozen-lockfile", "install"],
+                ["--no-frozen-lockfile", "true", "install"],
+                ["--", "install"],                       # `--` ends the options; the command follows
+                ["--filter", "--dir", str(proj), "install"],   # a string option never swallows an option-like token
+                ["--store-dir", "--", "install"],        # nor a lone `--`
+                ["--child-concurrency", "--", "install"],
+                ["--dir", str(proj), "install"],
+            )
+            for argv in mutates:
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 1, (argv, r.stderr))
+                self.assertIn(f"has held {lock.resolve()}", r.stderr, argv)
+                self.assertEqual(self.fx.all_calls(), [], argv)
+            # the same values in front of a project command wait for the lock too (a project
+            # command asks pnpm first: the fake's answer is stale here, so the lock is wanted)
+            for argv in (["--child-concurrency", "1", "exec", "vitest"], ["--recursive", "false", "run", "test"], ["-r", "false", "test"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 1, (argv, r.stderr))
+                self.assertEqual(self.fx.argv(), [], argv)
+                self.assertEqual(len(self.fx.checks()), 1, argv)
+            # `--recursive=maybe install`: nopt leaves `maybe` positional, so pnpm's command is
+            # `maybe` (a script name), never install: no lock, pnpm's own error
+            self.fx.reset()
+            r = self.fx.run("pnpm", "--recursive=maybe", "install", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertEqual(self.fx.argv(), [])   # project: asked pnpm, stale, waited for the lock
+        finally:
+            holder.kill()
+            holder.wait()
+        # without a holder the install runs where typed, arguments unchanged, once
+        self.fx.reset()
+        r = self.fx.run("pnpm", "--child-concurrency", "1", "install", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|--child-concurrency 1 install"])
+        self.assertFalse(lock.exists())
+        # `run`'s own options up to the script name: --resume-from and --workspace-concurrency
+        # take a value there, so the script is the token after; help anywhere before it is info
+        self.fx.reset()
+        r = self.fx.run("pnpm", "run", "--resume-from", "pkg", "--workspace-concurrency", "2", "--dir", str(proj), "build", cwd=self.fx.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(proj.resolve()))
+        # after `exec` pnpm reads no options: `exec -C x vitest` runs the bin `-C`, so the
+        # target is the working directory, never x
+        other = self.fx.project("other")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "--dir", str(other), "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(proj.resolve()))
+        self.assertFalse((other / "node_modules").exists())
+        # an abbreviated global option and a shorthand prefix are read as pnpm reads them
+        ws = self.fx.root / "ws"
+        ws.mkdir()
+        (ws / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
+        (ws / "package.json").write_text('{"name":"ws","private":true}\n', encoding="utf-8")
+        (ws / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        fixture = self.fx.project("ws/fixtures/standalone")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "--ignore-w", "--verb", "exec", "vitest", cwd=fixture)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.installs(), [f"{fixture.resolve()}|false|--ignore-workspace install --frozen-lockfile"])
+        self.assertEqual(self.fx.argv()[-1], "--ignore-w --verb exec vitest")
+
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
         holder = subprocess.Popen(["sleep", "30"])
@@ -936,9 +1040,10 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         for argv in (
             ["-C", "frontend", "test"], ["--dir", "frontend", "test"], ["--dir=frontend", "run", "lint"],
             [f"-C={front}", "exec", "vitest"], ["--prefix", "frontend", "test"], ["--prefix=frontend", "test"],
-            ["run", "--dir", "frontend", "build"], ["exec", "-C", "frontend", "vitest"],
+            ["run", "--dir", "frontend", "build"], ["-C", "frontend", "exec", "vitest"],
             ["run", "--dir=frontend", "--if-present", "lint"], ["run-script", "-C", "frontend", "test"],
-        ):
+            ["--child-concurrency", "1", "-C", "frontend", "test"], ["run", "--resume-from", "frontend", "-C", "frontend", "build"],
+        ):   # (`exec -C frontend vitest` is not among them: after `exec` pnpm reads no options, measured; see round 16)
             (front / "node_modules" / ".fake-state").unlink(missing_ok=True)
             self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=parent)
