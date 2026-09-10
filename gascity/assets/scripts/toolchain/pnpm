@@ -39,7 +39,9 @@
 #                  lane is installed for its lockfile, then runs.
 #      The lane is the nearest ancestor of the working directory holding
 #      pnpm-lock.yaml; node_modules/.gc-lane-deps is the marker; a marker
-#      equal to the lockfile's sha256 means installed. Otherwise one caller
+#      equal to the lane fingerprint (one sha256 over pnpm-lock.yaml,
+#      pnpm-workspace.yaml, .npmrc, package.json and every importer's
+#      package.json the lockfile names) means installed. Otherwise one caller
 #      takes node_modules/.gc-lane-deps.lock (mkdir), invalidates the marker,
 #      runs `pnpm install --frozen-lockfile` in the project root, writes the
 #      marker on success (the one command that certifies the whole tree
@@ -218,6 +220,9 @@ classify() {
                 want_value=other; continue ;;
             -*) continue ;;
         esac
+        if [ "$command_seen" -eq 2 ]; then
+            return 0        # the script or bin name: what follows belongs to it
+        fi
         [ "$command_seen" -eq 0 ] || continue
         case "$a" in
             recursive|multi|m|pm) continue ;;
@@ -235,8 +240,12 @@ classify() {
             dist-tags|docs|find|home|info|issues|login|logout|owner|ping|pkg|repo|s|sbom|se|search| \
             set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami)
                 KIND=info ;;
+            run|run-script|exec)
+                # pnpm's own options may still follow, up to the script or bin name
+                KIND=project
+                command_seen=2 ;;
             *)
-                # a project command: what follows belongs to the script or bin
+                # a script or bin name: what follows belongs to it
                 KIND=project
                 return 0 ;;
         esac
@@ -265,6 +274,43 @@ sha256_of() {
     else
         cksum -- "$1" | sed 's/ .*//'
     fi
+}
+
+# lockfile_importers LOCKFILE: the importer paths the lockfile names (`.`,
+# `packages/app`, ...), one per line; quotes around a key are stripped.
+lockfile_importers() {
+    awk '
+        /^importers:/ { f = 1; next }
+        f && /^[^ ]/ { f = 0 }
+        f && /^  [^ ]/ {
+            s = $0; sub(/^  /, "", s); sub(/:[ \t]*$/, "", s)
+            gsub(/^["\047]|["\047]$/, "", s); print s
+        }' "$1" 2>/dev/null
+}
+
+# lane_fingerprint: one sha256 over the lockfile and every manifest that
+# decides what the tree must hold: pnpm-lock.yaml, pnpm-workspace.yaml,
+# .npmrc, package.json, and the package.json of each importer the lockfile
+# names. A dependency edited in a manifest without a lockfile update changes
+# the fingerprint, so the next project command runs the frozen install,
+# which pnpm fails closed (outdated lockfile) until `pnpm install` runs.
+lane_fingerprint() {
+    {
+        for f in pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json; do
+            if [ -f "$ROOT/$f" ]; then
+                printf '%s %s\n' "$f" "$(sha256_of "$ROOT/$f")"
+            fi
+        done
+        lockfile_importers "$ROOT/pnpm-lock.yaml" | while IFS= read -r d; do
+            [ "$d" != "." ] || continue
+            if [ -f "$ROOT/$d/package.json" ]; then
+                printf '%s/package.json %s\n' "$d" "$(sha256_of "$ROOT/$d/package.json")"
+            fi
+        done
+    } > "$NM/.gc-lane-deps.fp.$$" 2>/dev/null || true
+    fp="$(sha256_of "$NM/.gc-lane-deps.fp.$$")"
+    rm -f "$NM/.gc-lane-deps.fp.$$"
+    printf '%s\n' "$fp"
 }
 
 # --- the lane lock -----------------------------------------------------------------
@@ -330,7 +376,7 @@ reclaim_stale_lock() {
     return "$moved"
 }
 
-marker_ok() { [ -f "$MARK" ] && [ "$(cat "$MARK" 2>/dev/null)" = "$(sha256_of "$ROOT/pnpm-lock.yaml")" ]; }
+marker_ok() { [ -f "$MARK" ] && [ -d "$NM" ] && [ "$(cat "$MARK" 2>/dev/null)" = "$(lane_fingerprint)" ]; }
 
 # take_lane_lock: hold $LOCK on return. Returns 1 without the lock when the
 # marker became valid while waiting (a project command then needs nothing).
@@ -375,7 +421,7 @@ run_locked_mutation() {
 }
 
 certify_lane() {
-    printf '%s\n' "$(sha256_of "$ROOT/pnpm-lock.yaml")" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
+    printf '%s\n' "$(lane_fingerprint)" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
 }
 
 classify "$@"
@@ -410,8 +456,8 @@ case "$KIND" in
             exec_pnpm "$@"
         fi
         if take_lane_lock unless-installed && ! marker_ok; then
-            short="$(sha256_of "$ROOT/pnpm-lock.yaml" | cut -c1-12)"
-            log "installing lane dependencies once for $ROOT (lockfile $short)"
+            short="$(lane_fingerprint | cut -c1-12)"
+            log "installing lane dependencies once for $ROOT (lockfile+manifests $short)"
             status=0
             run_locked_mutation "$ROOT" install --frozen-lockfile >&2 || status=$?
             [ "$status" -ne 0 ] || certify_lane
