@@ -26,6 +26,14 @@ Round 7 (codex gate r6) adds two rules the loop's LATER attempts depend on:
    no `work_dir` starts in the RIG ROOT (the human checkout), fails the test,
    detaches nothing, and inspects by `git show`/`git log` only.
 
+Round 8 (codex gate r7) adds the rule for a role the city gave no lane:
+
+8. the Workspace fallback (a role whose `$GC_DIR` is the rig root) RESOLVES
+   the base of its new branch in worker-worktree.sh's order, `<remote>/HEAD`,
+   `<remote>/main`, `<remote>/master` for the rig's remote whatever its name,
+   else the rig checkout's HEAD, so a rig with no remote still yields a
+   workspace, and the rig checkout's HEAD never moves.
+
 Every step below runs the exact git commands the formula text names, in real
 worktrees under a temporary directory, with no network. The static rows in
 test_formula_assets pin the sentences; this file pins that the sentences work.
@@ -209,6 +217,41 @@ class Rig:
             stderr=subprocess.PIPE,
             text=True,
         )
+
+
+    # --- round 8: the Workspace fallback for a role with no lane -------------
+
+    @staticmethod
+    def fallback_resolves_base(rig_root: pathlib.Path) -> tuple[str, str]:
+        """The role prompt's Workspace fallback, as the paragraph orders it
+        (the order worker-worktree.sh uses): the rig's remote, `origin` or its
+        other name, fetched, then `<remote>/HEAD`, `<remote>/main`,
+        `<remote>/master`; else the rig checkout's current HEAD. The base is
+        pinned to a commit in the rig. Returns (base, commit)."""
+        remotes = out(rig_root, "remote").split()
+        remote = "origin" if "origin" in remotes else (remotes[0] if remotes else None)
+        base = "HEAD"
+        if remote is not None:
+            git(rig_root, "fetch", "--quiet", remote, check=False)
+            head = git(rig_root, "symbolic-ref", "--quiet", "--short", f"refs/remotes/{remote}/HEAD", check=False)
+            if head.returncode == 0:
+                base = head.stdout.strip()
+            elif git(rig_root, "show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/main", check=False).returncode == 0:
+                base = f"{remote}/main"
+            elif git(rig_root, "show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/master", check=False).returncode == 0:
+                base = f"{remote}/master"
+        commit_id = out(rig_root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
+        return base, commit_id
+
+    def fallback_creates_workspace(self, bead: str) -> pathlib.Path:
+        """The fallback's create step: `<city>/.worktrees/<rig>/<bead>` on a
+        new branch named for the bead, from the pinned commit, registered
+        from the rig root (reads refs there, never its working tree)."""
+        _base, commit_id = self.fallback_resolves_base(self.rig)
+        path = self.lanes_root / bead
+        path.parent.mkdir(parents=True, exist_ok=True)
+        git(self.rig, "worktree", "add", "--quiet", "-b", bead, str(path), commit_id)
+        return path
 
 
 class LaneLifecycleTests(unittest.TestCase):
@@ -503,3 +546,50 @@ class LaneLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_role_without_a_lane_in_a_rig_without_a_remote_gets_a_workspace_from_the_rig_head(self) -> None:
+        """Round 8 (gate r7): a role the city gave no work_dir starts in the rig
+        root and takes the Workspace fallback. This rig has NO remote, so the
+        round-7 text's `origin/<default branch>` does not exist; the resolution
+        the paragraph now documents ends at the rig checkout's HEAD, the
+        worker creates `<city>/.worktrees/<rig>/<bead>` from that commit,
+        works there, and the rig checkout's branch, HEAD and status never
+        move. A remote not named origin is then found by the same order."""
+        rig = self.rig
+        self.assertEqual(out(rig.rig, "remote"), "")
+        for ref in ("origin/HEAD", "origin/main", "origin/master"):
+            with self.subTest(missing=ref):
+                self.assertNotEqual(git(rig.rig, "rev-parse", "--verify", "--quiet", ref, check=False).returncode, 0)
+        # $GC_DIR is the rig root: the boundary test fails (part 2), so this is
+        # the fallback, not the lane case, and nothing is switched there.
+        self.assertEqual(Rig.boundary_test(rig.rig, rig.rig), (True, False, True))
+
+        base, commit_id = Rig.fallback_resolves_base(rig.rig)
+        self.assertEqual((base, commit_id), ("HEAD", rig.main_sha))
+
+        bead = "gp-nolane1"
+        self.assertNotEqual(git(rig.rig, "rev-parse", "--verify", "--quiet", f"refs/heads/{bead}", check=False).returncode, 0)
+        workspace = rig.fallback_creates_workspace(bead)
+        self.assertEqual(workspace, rig.lanes_root / bead)
+        self.assertEqual(out(workspace, "branch", "--show-current"), bead)
+        self.assertEqual(out(workspace, "rev-parse", "HEAD"), rig.main_sha)
+        self.assertEqual(Rig.boundary_test(workspace, rig.rig), (True, True, True))
+        # The worker works there: a commit lands on the bead's branch, not on main.
+        done = commit(workspace, "work.txt", "done\n", "work in the fallback workspace")
+        self.assertEqual(out(rig.rig, "rev-parse", bead), done)
+        self.assertEqual(out(rig.rig, "rev-parse", "main"), rig.main_sha)
+        self.assert_rig_root_untouched()
+        self.assert_no_contention()
+
+        # The same order finds a remote that is not named origin: its default
+        # branch wins over the rig's HEAD, so the paragraph's first candidate
+        # is real, not only its last.
+        mirror = rig.root / "mirror.git"
+        subprocess.run(["git", "clone", "--quiet", "--bare", str(rig.rig), str(mirror)], check=True)
+        git(rig.rig, "remote", "add", "upstream", str(mirror))
+        git(rig.rig, "fetch", "--quiet", "upstream")
+        git(rig.rig, "remote", "set-head", "upstream", "--auto")
+        self.assertEqual(out(rig.rig, "remote"), "upstream")
+        base, commit_id = Rig.fallback_resolves_base(rig.rig)
+        self.assertEqual((base, commit_id), ("upstream/main", rig.main_sha))
+        self.assert_rig_root_untouched()

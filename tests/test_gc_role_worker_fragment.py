@@ -112,8 +112,7 @@ def test_workspace_fallback_covers_every_unconfigured_role() -> None:
     flat = " ".join(fallback.split())
     for clause in (
         "If `$GC_DIR` is the rig root, this role has no `work_dir` in your city: create your worktree under",
-        "`<city>/.worktrees/<rig>/<bead>` from `origin/<default branch>`",
-        "(check out the bead's branch if it already exists)",
+        "`<city>/.worktrees/<rig>/<bead>` (check out the bead's branch if it already exists)",
         "work there, and mail the mayor that this role needs a lane",
         "(`work_dir` + `pre_start`, see README, Worker workspaces)",
     ):
@@ -125,6 +124,63 @@ def test_workspace_fallback_covers_every_unconfigured_role() -> None:
     # The fallback never fires where lanes are configured: no other paragraph
     # of the Workspace section is conditional on the rig root.
     assert sum(para.startswith("If ") for para in paragraphs(workspace)) == 1
+
+
+SCRIPT = REPO_ROOT / "gascity" / "assets" / "scripts" / "worker-worktree.sh"
+WORKFLOWS = REPO_ROOT / "gascity" / "assets" / "workflows"
+FORMULAS = REPO_ROOT / "gascity" / "formulas"
+
+
+def script_base_order() -> list[str]:
+    """The `--base` resolution order worker-worktree.sh implements, read from
+    the script itself so the prompt cannot drift from it: the remote refs it
+    probes, in source order, then its literal HEAD fallback."""
+    block = SCRIPT.read_text(encoding="utf-8").split('if [ -z "$BASE" ]; then', 1)[1].split("BASE_SHA=", 1)[0]
+    probes = re.findall(r"refs/remotes/\$REMOTE/(HEAD|main|master)", block)
+    assert 'BASE="HEAD"' in block, "the script no longer falls back to the rig's HEAD"
+    return [f"<remote>/{name}" for name in probes] + ["HEAD"]
+
+
+def test_workspace_fallback_resolves_its_base_and_needs_no_origin_remote() -> None:
+    """Gate r7 (round 8): the fallback required `origin/<default branch>`, so a
+    local-only rig, or one whose remote is not named origin, could never get a
+    workspace under a paragraph that now covers every unconfigured role. The
+    fallback RESOLVES the base in worker-worktree.sh's order and ends at the
+    rig checkout's HEAD; the order is read from the script, not retyped."""
+    fallback = [para for para in paragraphs(workspace_section()) if para.startswith(FALLBACK_OPENER)][0]
+    flat = " ".join(fallback.split())
+    order = script_base_order()
+    assert order == ["<remote>/HEAD", "<remote>/main", "<remote>/master", "HEAD"]
+    # Every candidate is named, in the script's order, after the sentence
+    # that says the base is resolved; the last one is the rig's own HEAD.
+    resolve_at = flat.index("Resolve the base of a new branch, never assume it")
+    positions = [flat.index(f"`{ref}`", resolve_at) for ref in order[:-1]]
+    positions.append(flat.index("else the rig checkout's current `HEAD`", resolve_at))
+    assert positions == sorted(positions), flat
+    for clause in (
+        "in the order `worker-worktree.sh` uses",
+        "the remote's default branch when the rig has a remote",
+        "when the remote has another name, that name from `git -C <rig root> remote`",
+        "Pin the base to a commit in the rig",
+        "create the worktree from that commit",
+        "This fallback never fails for lack of a remote",
+        "never writes into the rig checkout",
+        "the checkout's HEAD and files do not move",
+    ):
+        assert clause in flat, f"fallback paragraph lacks: {clause!r}"
+    # No bare origin requirement anywhere a worker reads: the fragment, every
+    # role prompt, every workflow step, every formula (the sweep, pinned).
+    consumers = [
+        FRAGMENT,
+        *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md")),
+        *sorted(WORKFLOWS.rglob("*.md")),
+        *sorted(FORMULAS.glob("*.toml")),
+    ]
+    assert len(consumers) > 20
+    for path in consumers:
+        text = path.read_text(encoding="utf-8")
+        for bare in ("origin/", "<default branch>"):
+            assert bare not in text, f"{path.relative_to(REPO_ROOT)} assumes a remote named origin: {bare!r}"
 
 
 def test_worker_worktree_script_is_shipped_and_executable() -> None:

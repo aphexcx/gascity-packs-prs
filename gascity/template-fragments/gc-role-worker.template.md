@@ -65,10 +65,20 @@ worktree; WARN in the pre_start log): if `git branch --show-current` prints
 nothing, create your branch in this directory before committing.
 
 If `$GC_DIR` is the rig root, this role has no `work_dir` in your city:
-create your worktree under `<city>/.worktrees/<rig>/<bead>` from
-`origin/<default branch>` (check out the bead's branch if it already exists),
-work there, and mail the mayor that this role needs a lane (`work_dir` +
-`pre_start`, see README, Worker workspaces).
+create your worktree under `<city>/.worktrees/<rig>/<bead>` (check out the
+bead's branch if it already exists), work there, and mail the mayor that this
+role needs a lane (`work_dir` + `pre_start`, see README, Worker workspaces).
+Resolve the base of a new branch, never assume it, in the order
+`worker-worktree.sh` uses: the remote's default branch when the rig has a
+remote (`<remote>/HEAD`, else `<remote>/main`, else `<remote>/master`, where
+`<remote>` is `origin` or, when the remote has another name, that name from
+`git -C <rig root> remote`; fetch it first), else the rig checkout's current
+`HEAD`. Pin the base to a commit in the rig (`git -C <rig root> rev-parse
+--verify '<base>^{commit}'`) and create the worktree from that commit
+(`git -C <rig root> worktree add -b <bead> <city>/.worktrees/<rig>/<bead>
+<commit>`). This fallback never fails for lack of a remote, and it never
+writes into the rig checkout: it fetches, reads refs, and registers the
+worktree from there; the checkout's HEAD and files do not move.
 
 After the claim, compare the bead's `gc.work_branch` with your branch and
 restamp it when they differ (older `gc` builds stamp the rig root's branch).
