@@ -3,15 +3,17 @@
 Each test installs the wrappers into a throwaway shim directory the way the
 README recipe does (`node` once, `npm` and `npx` as links to it), points
 GC_TOOLCHAIN_DIR at a throwaway toolchain, and drives them with fake
-programs: a fake pnpm that records every call and can sleep or fail on
-`install`, fake node trees, and a fake nodejs.org served over file://.
-Nothing touches the network or the machine's toolchain.
+programs: a fake pnpm that records every call and answers the wrapper's
+read-only sync question the way pnpm's checkDepsStatus does (from a state
+its own installs write over the lockfile, every manifest and the workspace
+membership; `--lockfile-only` and the cleanup built-ins leave it out of
+sync), fake node trees, and a fake nodejs.org served over file://. Nothing
+touches the network or the machine's toolchain.
 """
 
 from __future__ import annotations
 
 import hashlib
-import io
 import os
 import pathlib
 import platform
@@ -28,49 +30,76 @@ TOOLCHAIN = pathlib.Path(__file__).resolve().parents[1] / "assets" / "scripts" /
 PNPM_SHIM = TOOLCHAIN / "pnpm"
 NODE_SHIM = TOOLCHAIN / "node"
 
+CHECK = "--config.verify-deps-before-run=error exec true"
+
 FAKE_PNPM = r"""#!/bin/sh
-# records: <cwd>|<verify env>|<argv...>
+# A stand-in for pnpm 11.20: records `<cwd>|<verify env>|<argv>` per call,
+# honours -C/--dir/--prefix, answers the read-only sync question from the
+# state its installs write (lockfile + manifests + workspace membership),
+# installs (optionally slowly, optionally failing), and lets the cleanup
+# built-ins and --lockfile-only leave the tree out of sync.
 printf '%s|%s|%s\n' "$(pwd -P)" "${pnpm_config_verify_deps_before_run-unset}" "$*" >> "$FAKE_PNPM_LOG"
 printf 'PATH0=%s\n' "${PATH%%:*}" >> "$FAKE_PNPM_LOG"
-if [ "${1-}" = "install" ]; then
-    [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
-    if [ "${FAKE_PNPM_FAIL_INSTALL-}" = "1" ]; then
-        echo "fake pnpm: install failed" >&2
-        exit 7
-    fi
-    mkdir -p node_modules && : > node_modules/.fake-installed
-    echo "fake pnpm: installed"
-    exit 0
-fi
+want=""
+for a in "$@"; do
+    if [ -n "$want" ]; then cd "$a" || exit 3; want=""; continue; fi
+    case "$a" in
+        -C|--dir|--prefix) want=1 ;;
+        -C=*) cd "${a#-C=}" || exit 3 ;;
+        --dir=*) cd "${a#--dir=}" || exit 3 ;;
+        --prefix=*) cd "${a#--prefix=}" || exit 3 ;;
+        --) break ;;
+    esac
+done
+lane() {
+    d="$(pwd -P)"
+    while [ ! -f "$d/pnpm-lock.yaml" ] && [ "$d" != / ]; do d="${d%/*}"; [ -n "$d" ] || d=/; done
+    if [ -f "$d/pnpm-lock.yaml" ]; then printf '%s\n' "$d"; else pwd -P; fi
+}
+fp() {
+    L="$(lane)"
+    (cd "$L" && for f in pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json packages/*/package.json server/*/package.json; do
+        [ -f "$f" ] && { printf '%s ' "$f"; shasum -a 256 < "$f"; }
+    done) | shasum -a 256
+}
+case "$*" in
+    "--config.verify-deps-before-run=error exec true")
+        L="$(lane)"
+        if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
+        echo "ERR_PNPM_VERIFY_DEPS_BEFORE_RUN fake" >&2
+        exit 1 ;;
+esac
+first=""
+for a in "$@"; do
+    case "$a" in -*|recursive|multi|m|pm|with|current) ;; *) first="$a"; break ;; esac
+done
+case "$first" in
+    install|i|ci|add|update|it|install-test)
+        [ -z "${FAKE_PNPM_SLEEP-}" ] || sleep "$FAKE_PNPM_SLEEP"
+        if [ "${FAKE_PNPM_FAIL_INSTALL-}" = 1 ]; then echo "fake pnpm: install failed" >&2; exit 7; fi
+        L="$(lane)"
+        mkdir -p "$L/node_modules" && : > "$L/node_modules/.fake-installed"
+        [ -f "$L/pnpm-lock.yaml" ] || echo "lockfileVersion: '9.0'" > "$L/pnpm-lock.yaml"
+        case "$*" in
+            *--lockfile-only*) echo "# resolved $(date +%s%N)" >> "$L/pnpm-lock.yaml" ;;   # the lockfile moves, the tree does not
+            *) fp > "$L/node_modules/.fake-state" ;;
+        esac
+        if [ -n "${FAKE_PNPM_HOOK-}" ]; then "$FAKE_PNPM_HOOK" run build || exit 9; fi
+        [ -z "${FAKE_PNPM_TAKEOVER_PID-}" ] || echo "$FAKE_PNPM_TAKEOVER_PID" > "$L/node_modules/.gc-lane-deps.lock/pid"
+        echo "fake pnpm: installed"
+        exit 0 ;;
+    clean|purge|prune|dedupe|rebuild|remove|rm|link|unlink|patch)
+        L="$(lane)"
+        rm -f "$L/node_modules/.fake-state"
+        echo "fake pnpm: mutated"
+        exit 0 ;;
+esac
 echo "fake pnpm ran: $*"
 """
 
 
 def sha256(path: pathlib.Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def fingerprint(root: pathlib.Path) -> str:
-    """Mirror of the wrapper's lane_fingerprint: one sha256 over 'name hash'
-    lines for the lockfile and every manifest the lockfile's importers name."""
-    lines: list[str] = []
-    for name in ("pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc", "package.json"):
-        if (root / name).is_file():
-            lines.append(f"{name} {sha256(root / name)}\n")
-    importers: list[str] = []
-    active = False
-    for raw in (root / "pnpm-lock.yaml").read_text(encoding="utf-8").splitlines():
-        if raw.startswith("importers:"):
-            active = True
-            continue
-        if active and raw and not raw.startswith(" "):
-            active = False
-        if active and raw.startswith("  ") and not raw.startswith("   "):
-            importers.append(raw.strip().rstrip(":").strip("\"'"))
-    for d in importers:
-        if d != "." and (root / d / "package.json").is_file():
-            lines.append(f"{d}/package.json {sha256(root / d / 'package.json')}\n")
-    return hashlib.sha256("".join(lines).encode()).hexdigest()
 
 
 def write_exec(path: pathlib.Path, text: str) -> None:
@@ -120,20 +149,37 @@ class Fixture:
             text=True,
         )
 
-    def calls(self) -> list[str]:
+    def all_calls(self) -> list[str]:
         if not self.log.exists():
             return []
         return [line for line in self.log.read_text(encoding="utf-8").splitlines() if not line.startswith("PATH0=")]
 
+    def calls(self) -> list[str]:
+        """Every pnpm call except the wrapper's read-only sync questions."""
+        return [c for c in self.all_calls() if not c.endswith("|" + CHECK)]
+
+    def argv(self) -> list[str]:
+        return [c.split("|", 2)[2] for c in self.calls()]
+
+    def checks(self) -> list[str]:
+        return [c for c in self.all_calls() if c.endswith("|" + CHECK)]
+
     def installs(self) -> list[str]:
-        return [c for c in self.calls() if c.split("|", 2)[2].startswith("install ")]
+        return [c for c in self.calls() if c.split("|", 2)[2] == "install --frozen-lockfile"]
+
+    def reset(self) -> None:
+        self.log.unlink(missing_ok=True)
 
     def project(self, name: str = "proj", lock: str = "lockfileVersion: '9.0'\n") -> pathlib.Path:
         p = self.root / name
-        p.mkdir()
+        p.mkdir(parents=True)
         (p / "package.json").write_text('{"name":"p","private":true}\n', encoding="utf-8")
         (p / "pnpm-lock.yaml").write_text(lock, encoding="utf-8")
         return p
+
+
+def in_sync(proj: pathlib.Path) -> bool:
+    return (proj / "node_modules" / ".fake-state").exists()
 
 
 class PnpmShimTests(unittest.TestCase):
@@ -144,86 +190,79 @@ class PnpmShimTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_pnpm_own_dependency_check_is_off_and_argv_reaches_pnpm(self) -> None:
+    def test_pnpm_own_in_command_install_is_off_and_argv_reaches_pnpm(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", "run", "--reporter=dot", cwd=proj)
         self.assertEqual(r.returncode, 0, r.stderr)
-        calls = self.fx.calls()
-        self.assertEqual(calls[-1].split("|", 2)[1], "false")
-        self.assertTrue(calls[-1].endswith("|exec vitest run --reporter=dot"), calls)
+        last = self.fx.calls()[-1]
+        self.assertEqual(last.split("|", 2)[1], "false")
+        self.assertTrue(last.endswith("|exec vitest run --reporter=dot"), last)
+        # the sync question is asked with the flag and without the environment value
+        self.assertEqual([c.split("|", 2)[1] for c in self.fx.checks()], ["unset", "unset"])
 
-    def test_info_commands_run_as_is_and_touch_no_marker(self) -> None:
+    def test_info_commands_run_as_is_and_ask_nothing(self) -> None:
         proj = self.fx.project()
-        for argv in (["store", "path"], ["--version"], [], ["config", "get", "x"], ["outdated"], ["-r", "list"]):
-            self.fx.log.unlink(missing_ok=True)
+        for argv in (["store", "path"], ["--version"], [], ["config", "get", "x"], ["outdated"], ["-r", "list"], ["with", "current", "list"], ["dlx", "cowsay"]):
+            self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, r.stderr)
-            # exactly the caller's own command reaches pnpm, nothing before it
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-            self.assertNotIn("installing lane dependencies", r.stderr)
+            self.assertEqual(self.fx.argv(), [" ".join(argv)], argv)
+            self.assertEqual(self.fx.checks(), [], argv)
         self.assertFalse((proj / "node_modules").exists())
 
-    def test_explicit_dependency_commands_run_in_place_under_the_lock_and_certify_nothing(self) -> None:
-        proj = self.fx.project()
-        pkg = proj / "packages" / "app"
-        pkg.mkdir(parents=True)
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        for argv, cwd in (
-            (["install"], proj),
-            (["install", "--lockfile-only"], proj),
-            (["add", "-D", "x"], pkg),          # a workspace package stays that package
-            (["--filter", "app", "install"], proj),
-            (["-C", "packages/app", "add", "y"], proj),
-        ):
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=cwd)
-            self.assertEqual(r.returncode, 0, r.stderr)
-            # the explicit command itself, in the caller's directory, never a frozen install before it
-            self.assertEqual(self.fx.calls(), [f"{cwd.resolve()}|false|{' '.join(argv)}"], argv)
-            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
-        # an explicit command certifies nothing (`--lockfile-only` installs nothing):
-        # the next project command runs the frozen lane install, once, at the root
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.calls(), [f"{proj.resolve()}|false|install --frozen-lockfile", f"{pkg.resolve()}|false|exec vitest"])
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        self.fx.log.unlink(missing_ok=True)
-        self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["exec vitest"])
-
-    def test_first_project_command_installs_once_and_records_the_lockfile_hash(self) -> None:
+    def test_first_project_command_asks_pnpm_installs_once_and_runs(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "eslint", ".", cwd=proj)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("installing lane dependencies once", r.stderr)
-        calls = self.fx.calls()
-        self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(calls[0], f"{proj.resolve()}|false|install --frozen-lockfile")
-        self.assertTrue(calls[1].endswith("|exec eslint ."))
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
+        self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "exec eslint ."])
+        self.assertEqual(self.fx.calls()[0], f"{proj.resolve()}|false|install --frozen-lockfile")
+        # asked before the lock and again under it, then never during the command
+        self.assertEqual(len(self.fx.checks()), 2)
+        self.assertTrue(in_sync(proj))
         self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
 
-    def test_later_commands_do_not_install_again(self) -> None:
+    def test_later_commands_ask_once_and_do_not_install(self) -> None:
         proj = self.fx.project()
         self.fx.run("pnpm", "test", cwd=proj)
-        for argv in (["exec", "vitest"], ["run", "lint"], ["agreement:pdf", "a.md"], ["vitest", "run"]):
+        for argv in (["exec", "vitest"], ["run", "lint"], ["agreement:pdf", "a.md"], ["vitest", "run"], ["test", "--", "-C", "x"]):
+            self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertNotIn("installing", r.stderr)
-        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
+            self.assertEqual(self.fx.argv(), [" ".join(argv)], argv)
+            self.assertEqual(len(self.fx.checks()), 1, argv)
 
-    def test_a_changed_lockfile_installs_exactly_once_more(self) -> None:
+    def test_anything_that_makes_pnpm_say_out_of_sync_installs_exactly_once_more(self) -> None:
         proj = self.fx.project()
+        (proj / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n\n  packages/app:\n    dependencies: {}\n", encoding="utf-8")
+        app = proj / "packages" / "app"
+        app.mkdir(parents=True)
+        (app / "package.json").write_text('{"name":"app"}\n', encoding="utf-8")
         self.fx.run("pnpm", "test", cwd=proj)
-        (proj / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\nchanged: true\n", encoding="utf-8")
+        self.assertEqual(len(self.fx.installs()), 1)
+        edits = (
+            (proj / "pnpm-lock.yaml", "lockfileVersion: '9.0'\nchanged: true\n"),
+            (proj / "package.json", '{"name":"p","private":true,"dependencies":{"new":"1"}}\n'),
+            (app / "package.json", '{"name":"app","dependencies":{"x":"1"}}\n'),
+            (proj / "pnpm-workspace.yaml", "packages:\n  - packages/*\n"),
+            (proj / ".npmrc", "node-linker=hoisted\n"),
+            (proj / "packages" / "new" / "package.json", '{"name":"new"}\n'),  # a workspace member pnpm sees
+        )
+        for path, text in edits:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            self.fx.reset()
+            r = self.fx.run("pnpm", "test", cwd=proj)
+            self.assertEqual(r.returncode, 0, (path, r.stderr))
+            self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "test"], path)
+            self.fx.reset()
+            self.fx.run("pnpm", "test", cwd=proj)
+            self.assertEqual(self.fx.argv(), ["test"], path)
+        (proj / "src.ts").write_text("export {}\n", encoding="utf-8")
+        self.fx.reset()
         self.fx.run("pnpm", "test", cwd=proj)
-        self.fx.run("pnpm", "test", cwd=proj)
-        self.assertEqual(len(self.fx.installs()), 2, self.fx.calls())
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
+        self.assertEqual(self.fx.argv(), ["test"])
 
     def test_command_from_a_subdirectory_installs_at_the_lockfile_root(self) -> None:
         proj = self.fx.project()
@@ -232,16 +271,16 @@ class PnpmShimTests(unittest.TestCase):
         r = self.fx.run("pnpm", "exec", "tsc", cwd=sub)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.fx.installs(), [f"{proj.resolve()}|false|install --frozen-lockfile"])
-        self.assertTrue((proj / "node_modules" / ".gc-lane-deps").exists())
+        self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(sub.resolve()))
+        self.assertTrue(in_sync(proj))
         self.assertFalse((sub / "node_modules").exists())
 
-    def test_no_lockfile_means_no_lane_install(self) -> None:
+    def test_no_lockfile_above_means_no_question_and_no_install(self) -> None:
         d = self.fx.root / "plain"
         d.mkdir()
         r = self.fx.run("pnpm", "exec", "node", "-e", "1", cwd=d)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.installs(), [])
-        self.assertEqual(len(self.fx.calls()), 1)
+        self.assertEqual(self.fx.all_calls(), [f"{d.resolve()}|false|exec node -e 1"])
 
     def test_concurrent_callers_wait_for_one_install_instead_of_racing_it(self) -> None:
         proj = self.fx.project()
@@ -262,23 +301,22 @@ class PnpmShimTests(unittest.TestCase):
         for r in results:
             self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
-        ran = sorted(c.split("|", 2)[2] for c in self.fx.calls() if not c.endswith("install --frozen-lockfile"))
+        ran = sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile")
         self.assertEqual(ran, ["exec eslint", "exec tsc", "exec vitest"])
         waited = [r for r in results if "waiting for another caller's lane install" in r.stderr]
         self.assertEqual(len(waited), 2, [r.stderr for r in results])
 
-    def test_failed_install_writes_no_marker_and_the_command_does_not_run(self) -> None:
+    def test_failed_install_leaves_the_lane_out_of_sync_and_the_command_does_not_run(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
         self.assertEqual(r.returncode, 1)
         self.assertIn("lane install failed", r.stderr)
         self.assertIn("exit 7", r.stderr)
         self.assertIn("this command did not run", r.stderr)
-        self.assertEqual(len(self.fx.calls()), 1, self.fx.calls())
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
+        self.assertEqual(self.fx.argv(), ["install --frozen-lockfile"])
+        self.assertFalse(in_sync(proj))
         self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
-        # the next caller retries the install rather than trusting a half tree
+        # the next caller asks pnpm again and installs, rather than trusting a half tree
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fx.installs()), 2)
@@ -326,32 +364,34 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
         self.assertTrue(lock.exists())
 
-    def test_a_waiter_that_finds_the_marker_written_meanwhile_runs_without_installing(self) -> None:
+    def test_a_caller_whose_lane_is_already_in_sync_never_touches_the_lock(self) -> None:
         proj = self.fx.project()
+        self.fx.run("pnpm", "test", cwd=proj)
         lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir(parents=True)
+        lock.mkdir()
         holder = subprocess.Popen(["sleep", "30"])
         try:
             (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
-            # the "holder" finishes its install: marker appears, lock stays a moment
-            (proj / "node_modules" / ".gc-lane-deps").write_text(fingerprint(proj) + "\n", encoding="utf-8")
+            self.fx.reset()
             r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
         finally:
             holder.kill()
             holder.wait()
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.installs(), [])
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertNotIn("waiting", r.stderr)
 
     def test_lane_deps_can_be_switched_off_by_environment_or_sidecar(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS="off")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.installs(), [])
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
         (self.fx.shims / "toolchain.env").write_text("LANE_DEPS=off\n", encoding="utf-8")
+        self.fx.reset()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.installs(), [])
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
         # environment wins over the sidecar
+        self.fx.reset()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS="on")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(len(self.fx.installs()), 1)
@@ -365,13 +405,338 @@ class PnpmShimTests(unittest.TestCase):
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse(canary.exists())
-        self.assertEqual(len(self.fx.installs()), 1)  # a non-"off" LANE_DEPS value keeps the install on
+        self.assertEqual(len(self.fx.installs()), 1)  # a non-"off" LANE_DEPS value keeps the lane path on
 
     def test_shim_directory_is_first_on_the_path_pnpm_runs_with(self) -> None:
         proj = self.fx.project()
         self.fx.run("pnpm", "--version", cwd=proj)
         path0 = [l for l in self.fx.log.read_text(encoding="utf-8").splitlines() if l.startswith("PATH0=")]
         self.assertEqual(path0, [f"PATH0={self.fx.shims.resolve()}"])
+
+    def test_pnpm_install_is_keyed_by_version(self) -> None:
+        proj = self.fx.project()
+        other = self.fx.toolchain / "pnpm" / "v9.9.9" / "node_modules" / ".bin" / "pnpm"
+        write_exec(other, '#!/bin/sh\necho "fake pnpm 9.9.9 $*"\n')
+        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="9.9.9")
+        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
+        (self.fx.shims / "toolchain.env").write_text("PNPM_VERSION=9.9.9\n", encoding="utf-8")
+        r = self.fx.run("pnpm", "--version", cwd=proj)
+        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
+        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="11.20.0")
+        self.assertEqual(r.stdout, "fake pnpm ran: --version\n", r.stderr)
+
+
+class PnpmShimMutationTests(unittest.TestCase):
+    """Explicit dependency commands: where they run, what they hold, what
+    pnpm says afterwards."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_explicit_dependency_commands_run_in_place_under_the_lock_and_pnpm_judges_the_result(self) -> None:
+        proj = self.fx.project()
+        pkg = proj / "packages" / "app"
+        pkg.mkdir(parents=True)
+        for argv, cwd in (
+            (["install"], proj),
+            (["add", "-D", "x"], pkg),          # a workspace package stays that package
+            (["--filter", "app", "install"], proj),
+            (["-C", "packages/app", "add", "y"], proj),
+            (["add", "--dir", "packages/app", "z"], proj),
+            (["--prefix=packages/app", "install"], proj),
+            (["with", "current", "install"], proj),
+        ):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=cwd)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            # the explicit command itself, in the caller's directory, never a frozen install before it
+            self.assertEqual(self.fx.all_calls(), [f"{cwd.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+            self.assertFalse((pkg / "node_modules").exists(), argv)
+        # a successful explicit install leaves pnpm saying in sync: the next check runs as is
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        # an install that certifies nothing (`--lockfile-only` after a manifest edit moves the
+        # lockfile, not the tree) makes the next project command install
+        (proj / "package.json").write_text('{"name":"p","private":true,"dependencies":{"new":"1"}}\n', encoding="utf-8")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "install", "--lockfile-only", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=pkg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.calls(), [f"{proj.resolve()}|false|install --frozen-lockfile", f"{pkg.resolve()}|false|exec vitest"])
+
+    def test_every_built_in_that_can_change_node_modules_holds_the_lock_and_pnpm_notices_afterwards(self) -> None:
+        proj = self.fx.project()
+        for argv in (["clean"], ["purge"], ["pm", "clean"], ["with", "current", "clean"], ["recursive", "prune"], ["-r", "rebuild"], ["m", "dedupe"], ["remove", "x"], ["--loglevel", "warn", "purge"]):
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            self.assertTrue(in_sync(proj))
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertFalse(in_sync(proj), argv)
+            self.fx.reset()
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "exec vitest"], argv)
+
+    def test_failed_explicit_install_after_a_lockfile_switch_reinstalls_on_the_way_back(self) -> None:
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        lock_a = (proj / "pnpm-lock.yaml").read_text(encoding="utf-8")
+        (proj / "pnpm-lock.yaml").write_text(lock_a + "b: true\n", encoding="utf-8")
+        r = self.fx.run("pnpm", "install", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
+        self.assertEqual(r.returncode, 7)  # pnpm's own status, passed through
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+        (proj / "pnpm-lock.yaml").write_text(lock_a, encoding="utf-8")
+        # the tree still matches lockfile A here; pnpm decides, and it says in sync
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+
+    def test_explicit_install_waits_behind_a_live_lock_and_project_commands_wait_behind_an_explicit_install(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            r = self.fx.run("pnpm", "add", "x", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held", r.stderr)
+        self.assertEqual(self.fx.calls(), [])
+        (lock / "pid").unlink()
+        lock.rmdir()
+        results: list[subprocess.CompletedProcess[str]] = []
+        guard = threading.Lock()
+
+        def call(argv: list[str], sleep: str) -> None:
+            r = self.fx.run("pnpm", *argv, cwd=proj, FAKE_PNPM_SLEEP=sleep)
+            with guard:
+                results.append(r)
+
+        t1 = threading.Thread(target=call, args=(["install"], "2"))
+        t2 = threading.Thread(target=call, args=(["exec", "vitest"], "0"))
+        t1.start()
+        time.sleep(0.5)
+        t2.start()
+        t1.join(timeout=60)
+        t2.join(timeout=60)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        # the explicit install finished first and left the lane in sync: no frozen install followed
+        self.assertEqual(self.fx.argv(), ["install", "exec vitest"])
+
+    def test_first_install_in_a_directory_without_a_lockfile_makes_that_directory_the_lane(self) -> None:
+        d = self.fx.root / "fresh"
+        d.mkdir()
+        (d / "package.json").write_text('{"name":"f","private":true}\n', encoding="utf-8")
+        r = self.fx.run("pnpm", "install", cwd=d)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((d / "pnpm-lock.yaml").exists())
+        self.assertFalse((d / "node_modules" / ".gc-lane-deps.lock").exists())
+        self.fx.reset()
+        r = self.fx.run("pnpm", "test", cwd=d)
+        self.assertEqual(self.fx.argv(), ["test"])
+
+
+class PnpmShimGateRoundTests(unittest.TestCase):
+    """Rows for the codex gate rounds 1 to 8 that are not covered above."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_lifecycle_script_that_reenters_the_wrapper_during_the_install_does_not_deadlock(self) -> None:
+        proj = self.fx.project()
+        r = self.fx.run(
+            "pnpm", "exec", "vitest", cwd=proj,
+            FAKE_PNPM_HOOK=str(self.fx.shims / "pnpm"), GC_TOOLCHAIN_LANE_DEPS_WAIT="8",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("waiting for another caller", r.stderr)
+        self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "run build", "exec vitest"])
+        # the descendant asked pnpm nothing: the parent holds the lane
+        self.assertEqual(len(self.fx.checks()), 2)
+        # the bypass is scoped to that lane: a sibling project still gets its own install
+        other = self.fx.project("other")
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=other, GC_TOOLCHAIN_LANE_DEPS_INSTALLING=str(proj.resolve()))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "exec vitest"])
+
+    def test_two_waiters_seeing_one_dead_owner_clear_it_once_and_never_move_a_live_lock(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        results: list[subprocess.CompletedProcess[str]] = []
+        guard = threading.Lock()
+
+        def call(name: str) -> None:
+            r = self.fx.run(
+                "pnpm", "exec", name, cwd=proj,
+                FAKE_PNPM_SLEEP="3", GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM="1",
+            )
+            with guard:
+                results.append(r)
+
+        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
+        aside = [p for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock.stale-")]
+        self.assertEqual(len(aside), 1, aside)
+        self.assertEqual((aside[0] / "pid").read_text(encoding="utf-8").strip(), str(dead.pid))
+        self.assertFalse(lock.exists())
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock.reclaim").exists())
+
+    def test_reclaim_reread_finds_the_lock_live_again_and_moves_nothing(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            proc = subprocess.Popen(
+                [str(self.fx.shims / "pnpm"), "exec", "vitest"], cwd=str(proj),
+                env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="4"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            time.sleep(1)
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            out, err = proc.communicate(timeout=60)
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(proc.returncode, 1, err)
+        self.assertNotIn("moved aside", err)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held", err)
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
+
+    def test_stuck_reclaim_lock_fails_closed_when_old(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        reclaim = proj / "node_modules" / ".gc-lane-deps.lock.reclaim"
+        reclaim.mkdir()
+        old = time.time() - 180
+        os.utime(reclaim, (old, old))
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("stale reclaim lock", r.stderr)
+        self.assertEqual(self.fx.calls(), [])
+        self.assertTrue(lock.exists())
+
+    def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
+        proj = self.fx.project()
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_TAKEOVER_PID=str(holder.pid))
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
+
+    def test_option_values_and_prefixes_never_stand_in_for_the_subcommand(self) -> None:
+        proj = self.fx.project()
+        for argv in (
+            ["--filter", "app", "install"], ["-F", "app", "add", "x"], ["--filter=app", "install"],
+            ["--loglevel", "warn", "--reporter", "silent", "install", "--frozen-lockfile"],
+            ["-r", "--filter", "app", "outdated"], ["with", "current", "list"],
+        ):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.argv(), [" ".join(argv)], argv)
+            self.assertEqual(self.fx.checks(), [], argv)
+        for argv in (["--filter", "app", "run", "test"], ["--loglevel", "warn", "vitest", "run"], ["with", "current", "exec", "vitest"]):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
+            self.assertGreaterEqual(len(self.fx.checks()), 1, argv)
+
+    def test_directory_options_anywhere_in_pnpm_option_scope_select_the_lane(self) -> None:
+        parent = self.fx.root / "parent"
+        parent.mkdir()
+        front = self.fx.project("parent/frontend")
+        # a project command from a directory without a lockfile installs the target's lane
+        for argv in (
+            ["-C", "frontend", "test"], ["--dir", "frontend", "test"], ["--dir=frontend", "run", "lint"],
+            [f"-C={front}", "exec", "vitest"], ["--prefix", "frontend", "test"], ["--prefix=frontend", "test"],
+            ["run", "--dir", "frontend", "build"], ["exec", "-C", "frontend", "vitest"],
+            ["run", "--dir=frontend", "--if-present", "lint"], ["run-script", "-C", "frontend", "test"],
+        ):
+            (front / "node_modules" / ".fake-state").unlink(missing_ok=True)
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=parent)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.calls(), [f"{front.resolve()}|false|install --frozen-lockfile", f"{parent.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(front.resolve()), argv)
+            self.assertFalse((parent / "node_modules").exists(), argv)
+        # an explicit mutation targeting another project holds that project's lock and runs where typed
+        lock = front / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            lock.mkdir()
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            self.fx.reset()
+            r = self.fx.run("pnpm", "add", "--dir", "frontend", "x", cwd=parent, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held {lock.resolve()}", r.stderr)
+        self.assertEqual(self.fx.calls(), [])
+        (lock / "pid").unlink()
+        lock.rmdir()
+        # the last -C wins, and a first install without a lockfile makes the target the lane
+        fresh = parent / "fresh"
+        fresh.mkdir()
+        r = self.fx.run("pnpm", "-C", "frontend", "-C", "fresh", "install", cwd=parent)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((fresh / "pnpm-lock.yaml").exists())
+
+    def test_arguments_after_the_script_or_bin_name_belong_to_it(self) -> None:
+        proj = self.fx.project()
+        elsewhere = self.fx.project("elsewhere")
+        for argv in (["run", "build", "--dir", "../elsewhere"], ["exec", "vitest", "-C", "../elsewhere"], ["vitest", "run", "--dir=../elsewhere"], ["test", "--", "-C", "../elsewhere"], ["run", "build", "--prefix", "../elsewhere"]):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
+            self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(proj.resolve()), argv)
+            self.assertFalse((elsewhere / "node_modules").exists(), argv)
 
 
 def fake_node_tree(root: pathlib.Path, version: str) -> pathlib.Path:
@@ -534,506 +899,3 @@ class NodeShimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class PnpmShimGateRound1Tests(unittest.TestCase):
-    """Rows for the codex gate's round-1 findings: a lifecycle script that
-    re-enters the wrapper during the install, two waiters clearing one stale
-    lock, and a failed reinstall leaving an older lockfile's marker."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_lifecycle_script_that_reenters_the_wrapper_during_the_install_does_not_deadlock(self) -> None:
-        proj = self.fx.project()
-        # the fake install runs a postinstall-style `pnpm run build` through the wrapper
-        write_exec(
-            self.fx.fake_pnpm,
-            FAKE_PNPM.replace(
-                '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
-                '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
-                '    "$FAKE_WRAPPER" run build || exit 9\n',
-            ),
-        )
-        r = self.fx.run(
-            "pnpm", "exec", "vitest", cwd=proj,
-            FAKE_WRAPPER=str(self.fx.shims / "pnpm"), GC_TOOLCHAIN_LANE_DEPS_WAIT="8",
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("waiting for another caller", r.stderr)
-        argv = [c.split("|", 2)[2] for c in self.fx.calls()]
-        self.assertEqual(argv, ["install --frozen-lockfile", "run build", "exec vitest"])
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        # the bypass is scoped to that project: a sibling project still gets its own install
-        other = self.fx.project("other")
-        r = self.fx.run(
-            "pnpm", "exec", "vitest", cwd=other,
-            FAKE_WRAPPER=str(self.fx.shims / "pnpm"), GC_TOOLCHAIN_LANE_DEPS_INSTALLING=str(proj.resolve()),
-        )
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("installing lane dependencies once", r.stderr)
-
-    def test_two_waiters_seeing_one_dead_owner_clear_it_once_and_never_move_a_live_lock(self) -> None:
-        proj = self.fx.project()
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir(parents=True)
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
-        results: list[subprocess.CompletedProcess[str]] = []
-        guard = threading.Lock()
-
-        def call(name: str) -> None:
-            # both observe the stale lock, then pause before reclaiming, so the
-            # second reclaim happens after the first has taken a fresh live lock
-            r = self.fx.run(
-                "pnpm", "exec", name, cwd=proj,
-                FAKE_PNPM_SLEEP="3", GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM="1",
-            )
-            with guard:
-                results.append(r)
-
-        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint")]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=60)
-        self.assertEqual(len(results), 2)
-        for r in results:
-            self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
-        aside = [p for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock.stale-")]
-        self.assertEqual(len(aside), 1, aside)
-        self.assertEqual((aside[0] / "pid").read_text(encoding="utf-8").strip(), str(dead.pid))
-        self.assertFalse(lock.exists())
-        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock.reclaim").exists())
-
-    def test_reclaim_reread_finds_the_lock_live_again_and_moves_nothing(self) -> None:
-        proj = self.fx.project()
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir(parents=True)
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
-        holder = subprocess.Popen(["sleep", "30"])
-        try:
-            # the wrapper sees the dead owner, takes the reclaim lock, pauses; meanwhile
-            # the lock is taken over by a live holder (as a faster waiter would do)
-            proc = subprocess.Popen(
-                [str(self.fx.shims / "pnpm"), "exec", "vitest"], cwd=str(proj),
-                env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="4"),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            )
-            time.sleep(1)
-            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
-            out, err = proc.communicate(timeout=60)
-        finally:
-            holder.kill()
-            holder.wait()
-        self.assertEqual(proc.returncode, 1, err)
-        self.assertNotIn("moved aside", err)
-        self.assertIn(f"another lane install (pid {holder.pid}) has held", err)
-        self.assertTrue(lock.exists())
-        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
-
-    def test_stuck_reclaim_lock_fails_closed_when_old(self) -> None:
-        proj = self.fx.project()
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir(parents=True)
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
-        reclaim = proj / "node_modules" / ".gc-lane-deps.lock.reclaim"
-        reclaim.mkdir()
-        old = time.time() - 180
-        os.utime(reclaim, (old, old))
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
-        self.assertEqual(r.returncode, 1)
-        self.assertIn("stale reclaim lock", r.stderr)
-        self.assertEqual(self.fx.calls(), [])
-        self.assertTrue(lock.exists())
-
-    def test_failed_reinstall_for_a_new_lockfile_leaves_no_trusted_marker(self) -> None:
-        proj = self.fx.project()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        lock_a = (proj / "pnpm-lock.yaml").read_text(encoding="utf-8")
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        (proj / "pnpm-lock.yaml").write_text(lock_a + "b: true\n", encoding="utf-8")
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
-        self.assertEqual(r.returncode, 1)
-        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        # back on lockfile A: the tree may have been changed by the failed install, so it installs again
-        (proj / "pnpm-lock.yaml").write_text(lock_a, encoding="utf-8")
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(len(self.fx.installs()), 3, self.fx.calls())
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-
-    def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
-        proj = self.fx.project()
-        holder = subprocess.Popen(["sleep", "30"])
-        try:
-            # the fake install replaces the lock's pid (as a waiter that reclaimed
-            # a lock it wrongly judged stale would); the installer must leave it
-            write_exec(
-                self.fx.fake_pnpm,
-                FAKE_PNPM.replace(
-                    '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
-                    '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
-                    f'    echo {holder.pid} > node_modules/.gc-lane-deps.lock/pid\n',
-                ),
-            )
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        finally:
-            holder.kill()
-            holder.wait()
-        self.assertEqual(r.returncode, 0, r.stderr)
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        self.assertTrue(lock.exists())
-        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
-
-
-class PnpmShimGateRound2Tests(unittest.TestCase):
-    """Round 2 of the codex gate: an option value is not a subcommand."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_option_values_are_skipped_when_classifying_the_subcommand(self) -> None:
-        proj = self.fx.project()
-        (proj / "package.json").write_text('{"name":"p","private":true,"dependencies":{"new":"1"}}\n', encoding="utf-8")
-        # package management behind option values passes through: no frozen install first
-        for argv in (
-            ["--filter", "app", "install"],
-            ["-F", "app", "add", "x"],
-            ["-C", str(proj), "install"],
-            ["--filter=app", "install"],
-            ["--loglevel", "warn", "--reporter", "silent", "install", "--frozen-lockfile"],
-            ["-r", "--filter", "app", "outdated"],
-        ):
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-            self.assertNotIn("installing lane dependencies", r.stderr)
-        # a project command behind the same options still gets the lane install
-        for argv in (["--filter", "app", "run", "test"], ["-C", str(proj), "exec", "vitest"], ["--loglevel", "warn", "vitest", "run"]):
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_INSTALLING="")
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            calls = [c.split("|", 2)[2] for c in self.fx.calls()]
-            self.assertEqual(calls[-1], " ".join(argv), argv)
-        (proj / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\nnew: 1\n", encoding="utf-8")
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "--filter", "app", "run", "test", cwd=proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "--filter app run test"])
-
-
-class PnpmShimGateRound3Tests(unittest.TestCase):
-    """Round 3 of the codex gate: every command that changes node_modules is
-    the same locked, marker-invalidating path; pnpm's own install is keyed by
-    version."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_failed_explicit_install_leaves_no_trusted_marker_so_the_way_back_reinstalls(self) -> None:
-        proj = self.fx.project()
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        lock_a = (proj / "pnpm-lock.yaml").read_text(encoding="utf-8")
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        (proj / "pnpm-lock.yaml").write_text(lock_a + "b: true\n", encoding="utf-8")
-        r = self.fx.run("pnpm", "install", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
-        self.assertEqual(r.returncode, 7)  # pnpm's own status, passed through
-        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
-        (proj / "pnpm-lock.yaml").write_text(lock_a, encoding="utf-8")
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "exec vitest"])
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-
-    def test_explicit_install_waits_behind_a_live_lock_and_project_commands_wait_behind_an_explicit_install(self) -> None:
-        proj = self.fx.project()
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        lock.mkdir(parents=True)
-        holder = subprocess.Popen(["sleep", "30"])
-        try:
-            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
-            r = self.fx.run("pnpm", "add", "x", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
-        finally:
-            holder.kill()
-            holder.wait()
-        self.assertEqual(r.returncode, 1)
-        self.assertIn(f"another lane install (pid {holder.pid}) has held", r.stderr)
-        self.assertEqual(self.fx.calls(), [])
-        lock.rmdir() if not (lock / "pid").exists() else ((lock / "pid").unlink(), lock.rmdir())
-        # an explicit install that takes 2 s: a concurrent project command waits for it, then needs no install
-        results: list[subprocess.CompletedProcess[str]] = []
-        guard = threading.Lock()
-
-        def call(argv: list[str], sleep: str) -> None:
-            r = self.fx.run("pnpm", *argv, cwd=proj, FAKE_PNPM_SLEEP=sleep)
-            with guard:
-                results.append(r)
-
-        t1 = threading.Thread(target=call, args=(["install"], "2"))
-        t2 = threading.Thread(target=call, args=(["exec", "vitest"], "0"))
-        t1.start()
-        time.sleep(0.5)
-        t2.start()
-        t1.join(timeout=60)
-        t2.join(timeout=60)
-        for r in results:
-            self.assertEqual(r.returncode, 0, r.stderr)
-        argv = [c.split("|", 2)[2] for c in self.fx.calls()]
-        self.assertEqual(argv, ["install", "install --frozen-lockfile", "exec vitest"], argv)
-
-    def test_first_install_in_a_directory_without_a_lockfile_makes_that_directory_the_lane(self) -> None:
-        d = self.fx.root / "fresh"
-        d.mkdir()
-        (d / "package.json").write_text('{"name":"f","private":true}\n', encoding="utf-8")
-        write_exec(
-            self.fx.fake_pnpm,
-            FAKE_PNPM.replace(
-                '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
-                '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
-                "    echo \"lockfileVersion: '9.0'\" > pnpm-lock.yaml\n",
-            ),
-        )
-        r = self.fx.run("pnpm", "install", cwd=d)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        marker = d / "node_modules" / ".gc-lane-deps"
-        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(d))
-        # the lockfile it created is the lane's from now on: one frozen install certifies it
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "test", cwd=d)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "test"])
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(d))
-
-    def test_pnpm_install_is_keyed_by_version(self) -> None:
-        proj = self.fx.project()
-        other = self.fx.toolchain / "pnpm" / "v9.9.9" / "node_modules" / ".bin" / "pnpm"
-        write_exec(other, '#!/bin/sh\necho "fake pnpm 9.9.9 $*"\n')
-        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="9.9.9")
-        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
-        (self.fx.shims / "toolchain.env").write_text("PNPM_VERSION=9.9.9\n", encoding="utf-8")
-        r = self.fx.run("pnpm", "--version", cwd=proj)
-        self.assertEqual(r.stdout, "fake pnpm 9.9.9 --version\n", r.stderr)
-        r = self.fx.run("pnpm", "--version", cwd=proj, GC_TOOLCHAIN_PNPM_VERSION="11.20.0")
-        self.assertEqual(r.stdout, "fake pnpm ran: --version\n", r.stderr)
-
-
-class PnpmShimGateRound5Tests(unittest.TestCase):
-    """Round 5 of the codex gate: cleanup built-ins are mutations; -C/--dir
-    selects the lane."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_every_built_in_that_can_change_node_modules_invalidates_the_marker(self) -> None:
-        proj = self.fx.project()
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        for argv in (["clean"], ["purge"], ["ci"], ["install-test"], ["it"], ["recursive", "install"], ["-r", "rebuild"], ["prune"], ["dedupe"], ["m", "update"]):
-            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-            self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj), argv)
-
-    def test_dir_option_selects_the_lane_for_project_and_explicit_commands(self) -> None:
-        parent = self.fx.root / "parent"
-        parent.mkdir()
-        front = self.fx.project("parent/frontend")
-        # a project command from a directory without a lockfile installs the -C target's lane
-        r = self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.calls(), [f"{front.resolve()}|false|install --frozen-lockfile", f"{parent.resolve()}|false|-C frontend test"])
-        self.assertEqual((front / "node_modules" / ".gc-lane-deps").read_text(encoding="utf-8").strip(), fingerprint(front))
-        self.assertFalse((parent / "node_modules").exists())
-        for argv in (["--dir", "frontend", "test"], ["--dir=frontend", "run", "lint"], [f"-C={front}", "exec", "vitest"]):
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=parent)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-        # an explicit mutation targeting another project locks that project and runs where typed
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "-C", "frontend", "add", "x", cwd=parent)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.calls(), [f"{parent.resolve()}|false|-C frontend add x"])
-        self.assertNotEqual((front / "node_modules" / ".gc-lane-deps").read_text(encoding="utf-8").strip(), fingerprint(front))
-        self.assertFalse((parent / "node_modules").exists())
-        # the last -C wins, and a first install without a lockfile makes the target the lane
-        fresh = parent / "fresh"
-        fresh.mkdir()
-        r = self.fx.run("pnpm", "-C", "frontend", "-C", "fresh", "install", cwd=parent)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertTrue((fresh / "node_modules" / ".gc-lane-deps").exists())
-
-
-class PnpmShimGateRound6Tests(unittest.TestCase):
-    """Round 6 of the codex gate: directory options anywhere in pnpm's option
-    scope, and the `pm` / `with <runtime>` prefixes."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_directory_options_after_the_command_select_the_lane_for_built_ins(self) -> None:
-        parent = self.fx.root / "parent"
-        parent.mkdir()
-        front = self.fx.project("parent/frontend")
-        marker = front / "node_modules" / ".gc-lane-deps"
-        self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(front))
-        for argv in (["add", "--dir", "frontend", "x"], ["install", "-C", "frontend"], ["add", "x", "--dir=frontend"], ["with", "current", "clean", "-C", "frontend"]):
-            self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=parent)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual(self.fx.calls(), [f"{parent.resolve()}|false|{' '.join(argv)}"], argv)
-            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(front), argv)
-            # the wrapper's lane artifacts never land under the caller's directory
-            # (the fake pnpm ignores -C and writes its own node_modules in cwd; real pnpm would not)
-            self.assertFalse((parent / "node_modules" / ".gc-lane-deps").exists(), argv)
-            self.assertFalse((parent / "node_modules" / ".gc-lane-deps.lock").exists(), argv)
-
-    def test_a_project_command_keeps_its_scripts_own_dir_arguments(self) -> None:
-        proj = self.fx.project()
-        elsewhere = self.fx.project("elsewhere")
-        # `--dir` after the script or bin name belongs to it: the lane stays the working directory
-        for argv in (["run", "build", "--dir", "../elsewhere"], ["exec", "vitest", "-C", "../elsewhere"], ["vitest", "run", "--dir=../elsewhere"], ["test", "--", "-C", "../elsewhere"]):
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            calls = [c.split("|", 2)[2] for c in self.fx.calls()]
-            self.assertEqual(calls[-1], " ".join(argv), argv)
-            self.assertFalse((elsewhere / "node_modules").exists(), argv)
-        self.assertTrue((proj / "node_modules" / ".gc-lane-deps").exists())
-
-    def test_pm_and_with_prefixes_are_unwrapped_before_classification(self) -> None:
-        proj = self.fx.project()
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        for argv in (["pm", "clean"], ["with", "current", "clean"], ["with", "current", "install"], ["pm", "purge"], ["with", "current", "-r", "ci"]):
-            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-            self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", *argv, cwd=proj)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
-            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj), argv)
-        # the same prefixes in front of a read-only built-in stay info
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "with", "current", "list", cwd=proj)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["with current list"])
-
-
-class PnpmShimGateRound7Tests(unittest.TestCase):
-    """Round 7 of the codex gate: options between the runner and the script
-    name are pnpm's; the marker covers the manifests, not just the lockfile."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
-
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-
-    def test_options_between_the_runner_and_the_script_name_select_the_lane(self) -> None:
-        parent = self.fx.root / "parent"
-        parent.mkdir()
-        front = self.fx.project("parent/frontend")
-        for argv in (["run", "--dir", "frontend", "build"], ["exec", "-C", "frontend", "vitest"], ["run", "--dir=frontend", "--if-present", "lint"], ["run-script", "-C", "frontend", "test"]):
-            self.fx.log.unlink(missing_ok=True)
-            marker = front / "node_modules" / ".gc-lane-deps"
-            if marker.exists():
-                marker.write_text("stale\n", encoding="utf-8")
-            r = self.fx.run("pnpm", *argv, cwd=parent)
-            self.assertEqual(r.returncode, 0, (argv, r.stderr))
-            self.assertEqual(self.fx.calls(), [f"{front.resolve()}|false|install --frozen-lockfile", f"{parent.resolve()}|false|{' '.join(argv)}"], argv)
-            self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(front))
-            self.assertFalse((parent / "node_modules").exists(), argv)
-        # after the script name the arguments are the script's: `run build --dir x` stays in cwd
-        self.fx.log.unlink(missing_ok=True)
-        r = self.fx.run("pnpm", "run", "build", "--dir", "frontend", cwd=parent)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["run build --dir frontend"])
-
-    def test_a_manifest_edit_without_a_lockfile_change_reinstalls_once(self) -> None:
-        proj = self.fx.project()
-        (proj / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n\nimporters:\n\n  .:\n    dependencies: {}\n\n  packages/app:\n    dependencies: {}\n\n  'server/api':\n    dependencies: {}\n\npackages: {}\n", encoding="utf-8")
-        app = proj / "packages" / "app"
-        app.mkdir(parents=True)
-        (app / "package.json").write_text('{"name":"app"}\n', encoding="utf-8")
-        api = proj / "server" / "api"
-        api.mkdir(parents=True)
-        (api / "package.json").write_text('{"name":"api"}\n', encoding="utf-8")
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        self.assertEqual(len(self.fx.installs()), 1)
-        # a dependency edit in the root manifest, a workspace manifest (importer, quoted or not),
-        # pnpm-workspace.yaml or .npmrc each change the fingerprint: one frozen install follows
-        edits = (
-            (proj / "package.json", '{"name":"p","private":true,"dependencies":{"new":"1"}}\n'),
-            (app / "package.json", '{"name":"app","dependencies":{"x":"1"}}\n'),
-            (api / "package.json", '{"name":"api","devDependencies":{"y":"1"}}\n'),
-            (proj / "pnpm-workspace.yaml", "packages:\n  - packages/*\n"),
-            (proj / ".npmrc", "node-linker=hoisted\n"),
-        )
-        for path, text in edits:
-            path.write_text(text, encoding="utf-8")
-            self.fx.log.unlink(missing_ok=True)
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-            self.assertEqual(r.returncode, 0, (path, r.stderr))
-            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "exec vitest"], path)
-            self.assertEqual(marker.read_text(encoding="utf-8").strip(), fingerprint(proj))
-        # a file the lockfile does not govern changes nothing
-        (proj / "src.ts").write_text("export {}\n", encoding="utf-8")
-        (proj / "packages" / "unlisted").mkdir()
-        (proj / "packages" / "unlisted" / "package.json").write_text('{"name":"u"}\n', encoding="utf-8")
-        self.fx.log.unlink(missing_ok=True)
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["exec vitest"])
-
-    def test_a_marker_without_a_node_modules_directory_is_not_trusted(self) -> None:
-        proj = self.fx.project()
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        marker = proj / "node_modules" / ".gc-lane-deps"
-        text = marker.read_text(encoding="utf-8")
-        # a fresh lane whose node_modules was replaced by a stray marker-only directory still installs
-        for p in sorted((proj / "node_modules").rglob("*"), reverse=True):
-            if p.is_file() and p != marker:
-                p.unlink()
-        self.fx.log.unlink(missing_ok=True)
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["exec vitest"])  # marker + dir present: trusted, by design
-        self.assertEqual(marker.read_text(encoding="utf-8"), text)
