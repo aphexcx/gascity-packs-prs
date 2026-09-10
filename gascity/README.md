@@ -426,8 +426,9 @@ global options and the prefixes pnpm accepts (`recursive`/`m`, `pm`, `with
 dir`, `--loglevel warn`) is skipped, so `pnpm --filter app install` is an
 install:
 
-- **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...)
-  runs as is and touches no lock.
+- **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...,
+  and any command carrying `-h`/`--help`/`-v`/`--version` in pnpm's option
+  scope) runs as is and touches no lock.
 - **mutate** (`install`, `ci`, `add`, `remove`, `update`, `link`, `prune`,
   `dedupe`, `rebuild`, `clean`, `purge`, ... every pnpm 11.20 built-in that
   can change `node_modules`) runs where typed, arguments unchanged, under
@@ -448,8 +449,10 @@ answers yes or no (a missing `node_modules` included); any other failure
 (a denied write to pnpm's workspace state file on a read-only lane, a
 broken manifest) is no verdict: one WARN and the command runs as is, never
 an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
-(the nearest ancestor holding `pnpm-lock.yaml`; a project command with no
-lockfile above it runs as is), asks pnpm again under the lock, runs `pnpm
+(the workspace root above the target, the nearest `pnpm-workspace.yaml`,
+because a workspace install writes every member's tree whatever
+`sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; a project
+command with neither above it runs as is), asks pnpm again under the lock, runs `pnpm
 install --frozen-lockfile` in the lane when the answer is still no, and
 releases; concurrent callers wait for the lock and ask pnpm again, so a lane
 is installed once whatever runs in parallel. A failed install fails the
