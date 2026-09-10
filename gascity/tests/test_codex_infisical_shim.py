@@ -35,6 +35,8 @@ printf '%s\\n' "${INFISICAL_TOKEN-<unset>}" > "$out/token"
 printf '%s\\n' "${SHIM_TEST_MARKER-<unset>}" > "$out/marker"
 printf '%s\\n' "${INFISICAL_UNIVERSAL_AUTH_CLIENT_ID-<unset>}" > "$out/client_id"
 printf '%s\\n' "${entry-<unset>}" > "$out/entry"
+printf '%s\\n' "${cis_argv0-<unset>}" > "$out/cis_argv0"
+printf '%s\\n' "${cis_token-<unset>}" > "$out/cis_token"
 printf '%s\\n' "${line-<unset>}" > "$out/line"
 exit 0
 """
@@ -171,7 +173,7 @@ class CodexInfisicalShimTests(unittest.TestCase):
         # by the one restore line just before the exec.
         body = text.split("\n\n", 1)[1]  # past the header comment
         self.assertEqual(text.count("set -x"), 1)
-        self.assertIn('[ "$cis_restore_xtrace" = 1 ] && set -x', text)
+        self.assertIn('{ set -x; exec -a "$3" "$2" "${@:4}" 2>&3 3>&-; } 3>&2 2>/dev/null', text)
         self.assertLess(body.index("set +x"), body.index("INFISICAL_TOKEN"))
 
     def test_readme_carries_the_install_recipe(self) -> None:
@@ -580,12 +582,41 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assertNotIn("review-dummy-secret", proc.stdout + proc.stderr)
         self.assertEqual(self.fx.recorded("token"), "review-dummy-secret")
         self.assertIn("xtrace", self.fx.recorded("shellopts"))
-        self.assertIn("+ exec -a codex", proc.stderr, "tracing is back on for the exec")
         self.fx.write_token_sh("export INFISICAL_TOKEN=minted-dummy-secret\n")
         proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "xtrace"})
         self.assert_exec_ok(proc, ["-p", "city"])
         self.assertNotIn("minted-dummy-secret", proc.stdout + proc.stderr)
         self.assertEqual(self.fx.recorded("token"), "minted-dummy-secret")
+        # A PS4 that expands the token: the shim's own trace lines never print.
+        # The fake, a shell script that inherits xtrace, PS4 and the token by
+        # design, traces exactly its first two lines before its own `set +x`;
+        # every other stderr line would be the shim's.
+        proc = self.fx.run("-p", "city", env_extra={
+            "SHELLOPTS": "xtrace", "PS4": "${INFISICAL_TOKEN} ", "INFISICAL_TOKEN": "ps4-dummy-secret"})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(proc.stdout, "")
+        fake_own = [l for l in proc.stderr.splitlines() if l.endswith("set +x") or "printf" in l]
+        self.assertEqual(len(fake_own), 2, proc.stderr)
+        self.assertEqual([l for l in proc.stderr.splitlines() if l not in fake_own], [], proc.stderr)
+        self.assertIn("xtrace", self.fx.recorded("shellopts"))
+        self.assertEqual(self.fx.recorded("token"), "ps4-dummy-secret")
+
+    def test_inherited_errexit_keeps_the_diagnostics_and_reaches_codex(self) -> None:
+        proc = self.fx.run("-p", "city", path=f"{self.fx.shim_dir}:{SYSTEM_PATH}", env_extra={"SHELLOPTS": "errexit"})
+        self.assert_refused(proc, "ERROR no 'codex' on PATH after removing the shim's directory")
+        proc = subprocess.run(
+            ["/bin/bash", "-c", '. "$1"', "codex-not-on-path", str(self.fx.shim)], cwd=str(self.fx.root),
+            env={"HOME": str(self.fx.home), "PATH": "/nonexistent", "SHIM_TEST_OUT": str(self.fx.out),
+                 "SHELLOPTS": "errexit", "CODEX_SHIM_EXEC": str(self.fx.fake)},
+            capture_output=True, text=True, timeout=20,
+        )
+        self.assertEqual(proc.returncode, 127, proc.stderr)
+        self.assertIn("cannot locate the shim itself", proc.stderr)
+        self.fx.write_token_sh("export INFISICAL_TOKEN=tok\n")
+        proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "errexit"})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("token"), "tok")
+        self.assertIn("errexit", self.fx.recorded("shellopts"))
 
     def test_inherited_noglob_reaches_codex_and_the_override_still_splits(self) -> None:
         proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "noglob", "CODEX_SHIM_EXEC": "codex --a --b"})
@@ -600,6 +631,25 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assert_exec_ok(proc, ["-p", "city"])
         self.assertEqual(pathlib.Path(self.fx.recorded("argv0")).resolve(), self.fx.fake.resolve())
         self.assertEqual(self.fx.recorded("path"), f"{self.fx.bin}:{SYSTEM_PATH}")
+
+    def test_no_cis_scratch_name_reaches_codex_even_under_allexport(self) -> None:
+        # Every name the shim assigns is unset before the exec whether or not
+        # the assignment ran (cis_token only runs with a helper); a cis_ name the
+        # shim never touches passes through like any other inherited export.
+        for extra in ({}, {"SHELLOPTS": "allexport"}):
+            self.fx.reset_out()
+            proc = self.fx.run("-p", "city", env_extra={"cis_argv0": "preserve-me", "cis_token": "keep", **extra})
+            self.assert_exec_ok(proc, ["-p", "city"])
+            self.assertEqual(self.fx.recorded("cis_argv0"), "preserve-me")
+            self.assertEqual(self.fx.recorded("cis_token"), "<unset>")
+            self.assertEqual(self.fx.recorded("entry"), "<unset>")
+        text = SCRIPT.read_text(encoding="utf-8")
+        body = text.split("\n\n", 1)[1]
+        assigned = set(re.findall(r"^\s*(cis_[a-z_0-9]+)=", body, re.M))
+        unset_line = re.search(r"^unset (cis_[^\n]*\\\n[^\n]*)$", body, re.M)
+        self.assertIsNotNone(unset_line, "the unconditional unset list")
+        listed = set(re.findall(r"cis_[a-z_0-9]+", unset_line.group(1)))
+        self.assertEqual(assigned - listed, set(), "every assigned cis_ name is in the unset list")
 
 
 if __name__ == "__main__":

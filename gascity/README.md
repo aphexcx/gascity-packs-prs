@@ -317,7 +317,9 @@ directory), the target is the executable file `type -P` finds (an exported
 function or alias named `codex` is ignored) and that checked path is what
 runs, and no codex left on PATH is an error (exit 127), never a loop.
 Inherited shell options reach codex as they came: xtrace is off while the
-token is handled and back on for the exec, noglob is left as found.
+token is handled and back on for the exec with the shim's own trace lines
+discarded (a `PS4` that expands the token prints nothing), noglob and
+errexit are left as found.
 
 Install it as the city's shim, in its own directory (gc does not sync a
 pack's `assets/scripts` anywhere), with the per-city settings in a
