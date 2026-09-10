@@ -479,12 +479,14 @@ runs in parallel. A lane whose `node_modules` refuses the lock for this
 caller (a sandbox, a read-only checkout) cannot be coordinated from here,
 another caller could change it under the command, so the command fails
 closed at once naming the refusal; `GC_TOOLCHAIN_LANE_DEPS=off` runs there
-when the lane is this caller's alone. A project command inside a running
-project command runs as is (its ancestor's token stands for it); a mutate
-inside one takes the lock like any other and waits for every reader but
-that ancestor, which it marks as upgrading meanwhile so other mutates pass
-it over (it is blocked in this child and reads nothing; two scripts each
-running a nested mutate would otherwise wait for each other for ever). A failed install fails the
+when the lane is this caller's alone. A command inside a running project
+command coordinates like any other (its own token, or the lock), except
+that the chain of commands it runs inside is never waited for and is
+marked as upgrading while it waits for and holds the lock, so other mutates
+pass those over (blocked in this child, they read nothing; two scripts each
+running a nested mutate would otherwise wait for each other for ever); a
+sibling (`pnpm run lint & pnpm rebuild`) holds its own token and is waited
+for. A failed install fails the
 command (the requested check never runs against a half-installed tree);
 pnpm fails the frozen install closed when a manifest is ahead of the
 lockfile, and the worker's own `pnpm install` (a mutate) resolves that.
@@ -495,9 +497,10 @@ already covers (`install --lockfile-only`, a cleanup built-in, a new
 workspace package). The question costs one pnpm start (about a third of a
 second) per project command.
 
-The directory pnpm acts on is the last `-C`/`--dir` value in pnpm's own
-option scope, else the last `--prefix` (`--dir` wins wherever it stands
-beside `--prefix`, measured) (the whole line for a built-in; for `run` up to
+The directory pnpm acts on is the last `-C`/`--dir`/`--config.dir=` value
+in pnpm's own option scope, else the last `--prefix` (`--dir` wins wherever
+it stands beside `--prefix`, measured; `--config.prefix=` and
+`--config.workspace-root=` are not read by pnpm) (the whole line for a built-in; for `run` up to
 the script name, whose own arguments are its own; nothing after `exec`,
 `test` or `create`, whose next token is the bin or script name whatever it
 looks like, measured: `pnpm exec -C x vitest` is 'Command "-C" not found';

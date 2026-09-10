@@ -24,9 +24,9 @@
 #      swallows which token is pnpm's own option table (below, read from
 #      the pinned pnpm), never a guess: `--child-concurrency 1 install` and
 #      `--recursive false install` are installs. The directory pnpm acts
-#      on, TARGET, is the last `-C`/`--dir` value in pnpm's own option
-#      scope, else the last `--prefix` (`--dir` wins wherever it stands,
-#      measured) (the whole line for a built-in; for `run` up to the
+#      on, TARGET, is the last `-C`/`--dir`/`--config.dir=` value in pnpm's
+#      own option scope, else the last `--prefix` (`--dir` wins wherever
+#      it stands, measured) (the whole line for a built-in; for `run` up to the
 #      script name, whose own arguments are its own; nothing after `exec`,
 #      `test` or `create`, whose next token is the bin or script name
 #      whatever it looks like; a bare script name ends the scope), else
@@ -105,14 +105,16 @@
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
 #      that resolves the same lane runs as info, never asking pnpm or
-#      waiting on its parent's lock; a project command inside a running
-#      project command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) runs as is,
-#      its ancestor's token standing for it, while a mutate inside one
-#      takes the lock like any other and waits for every reader but that
-#      ancestor (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>), which it marks
-#      as upgrading meanwhile so that other mutates pass it over (it is
-#      blocked in this child and reads nothing; two scripts each running a
-#      nested mutate would otherwise wait for each other for ever). A lane whose
+#      waiting on its parent's lock. A command inside a running project
+#      command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) coordinates like any
+#      other, its own token for a project command, the lock for a mutate,
+#      except that the chain of commands it runs inside
+#      (GC_TOOLCHAIN_LANE_DEPS_READER=<their pids>) is never waited for and
+#      is marked as upgrading while it waits for and holds the lock, so
+#      other mutates pass those over (blocked in this child, they read
+#      nothing; two scripts each running a nested mutate would otherwise
+#      wait for each other for ever); a sibling (`pnpm run lint & pnpm
+#      rebuild`) holds its own token and is waited for. A lane whose
 #      node_modules refuses the lock for this caller (a sandbox) cannot be
 #      coordinated from here, another caller could change it under the
 #      command, so the command fails closed naming the refusal;
@@ -453,6 +455,7 @@ scan() {
                             if [ "$consumed" -eq 1 ]; then
                                 case "$canon" in
                                     prefix) prefix_target="$(resolve_dir "$la")" ;;
+                                    config.dir) [ "$had_eq" -eq 0 ] || dir_target="$(resolve_dir "$la")" ;;   # `--config.dir=V` is `--dir V` for pnpm (measured; the space form is not)
                                     fix) case "$la" in false) fix_flag=0 ;; *) fix_flag=1 ;; esac ;;   # audit reads --fix as a boolean
                                 esac
                             fi ;;
@@ -561,9 +564,12 @@ classify() {
         *) PHASE=other ;;
     esac
     scan "$@" || return 0
-    # pnpm acts in --dir (-C) when given, whatever its place beside --prefix
-    # (measured: `--prefix B --dir A` and `--dir A --prefix B` both act in A;
-    # of two --dir the last wins), else in --prefix, else here
+    # pnpm acts in --dir (-C, `--config.dir=`) when given, whatever its place
+    # beside --prefix (measured: `--prefix B --dir A` and `--dir A --prefix B`
+    # both act in A; of two --dir the last wins, `--config.dir=` among them;
+    # `--config.prefix=`, `--config.workspace-root=` and
+    # `--config.ignore-workspace=` are not read by pnpm), else in --prefix,
+    # else here
     if [ -n "$dir_target" ]; then TARGET="$dir_target"
     elif [ -n "$prefix_target" ]; then TARGET="$prefix_target"
     fi
@@ -695,25 +701,27 @@ drop_token() {
         TOKEN=""
     fi
 }
-# A mutate inside a running project command marks its ancestor's token
-# as upgrading (<token>.upgrading, this pid inside) for as long as it waits
-# for and holds the lane lock: that ancestor is blocked in this child and
-# reads nothing, so a mutate waiting for readers passes it over. Without
-# the mark two scripts each running a nested mutate wait for each other's
-# parent for ever (the first child holds the lock and waits for the second
-# parent, whose child waits for the lock). A mark whose pid is dead is a
-# crashed child's and is dropped.
-UPGRADE_MARK=""
+# A command inside a running project command marks every token of the
+# chain it runs inside as upgrading (<token>.upgrading, this pid inside)
+# for as long as it waits for and holds the lane lock: those ancestors are
+# blocked in this child and read nothing, so a mutate waiting for readers
+# passes them over. Without the mark two scripts each running a nested
+# mutate wait for each other's parent for ever (the first child holds the
+# lock and waits for the second parent, whose child waits for the lock).
+# A mark whose pid is dead is a crashed child's and is dropped.
+UPGRADE_MARKS=""
 mark_upgrading() {
-    [ -n "$ANCESTOR_TOKEN" ] || return 0
-    UPGRADE_MARK="$READERS/$ANCESTOR_TOKEN.upgrading"
-    printf '%s\n' "$$" > "$UPGRADE_MARK" 2>/dev/null || UPGRADE_MARK=""
+    UPGRADE_MARKS=""
+    for anc in $ANCESTOR_TOKENS; do
+        m="$READERS/$anc.upgrading"
+        printf '%s\n' "$$" > "$m" 2>/dev/null && UPGRADE_MARKS="$UPGRADE_MARKS $m"
+    done
 }
 drop_upgrading() {
-    if [ -n "$UPGRADE_MARK" ]; then
-        [ "$(cat "$UPGRADE_MARK" 2>/dev/null || true)" != "$$" ] || rm -f "$UPGRADE_MARK" 2>/dev/null || true
-        UPGRADE_MARK=""
-    fi
+    for m in $UPGRADE_MARKS; do
+        [ "$(cat "$m" 2>/dev/null || true)" != "$$" ] || rm -f "$m" 2>/dev/null || true
+    done
+    UPGRADE_MARKS=""
 }
 cleanup() { release_lock; drop_token; drop_upgrading; }
 trap 'cleanup' EXIT
@@ -740,7 +748,7 @@ wait_for_readers() {
             [ -e "$t" ] || continue
             rp="${t##*/}"
             case "$rp" in ''|*[!0-9]*) continue ;; esac
-            [ "$rp" != "$ANCESTOR_TOKEN" ] || continue      # the command this one runs inside
+            case " $ANCESTOR_TOKENS " in *" $rp "*) continue ;; esac     # a command this one runs inside
             if owner_is_dead "$rp"; then
                 rm -f "$t" 2>/dev/null || true
                 continue
@@ -864,13 +872,12 @@ fi
 if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
-ANCESTOR_TOKEN=""
+ANCESTOR_TOKENS=""
 if [ "${GC_TOOLCHAIN_LANE_DEPS_READING:-}" = "$LANE" ]; then
-    # a descendant of a running project command: another project command
-    # runs as is, its ancestor's token standing for it; a mutate takes the
-    # lock like any other and waits for every reader but that ancestor
-    [ "$KIND" != project ] || exec_pnpm "$@"
-    ANCESTOR_TOKEN="${GC_TOOLCHAIN_LANE_DEPS_READER:-}"
+    # a descendant of a running project command coordinates like any other
+    # (its own token, its own wait), except that the chain of commands it
+    # runs inside is never waited for: those are blocked in it
+    ANCESTOR_TOKENS="${GC_TOOLCHAIN_LANE_DEPS_READER:-}"
 fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
@@ -892,6 +899,7 @@ case "$KIND" in
         # waited for first; a rebuild half done still reads as in sync to
         # pnpm), the command then runs holding a reader token, so no mutate
         # starts under it
+        mark_upgrading
         take_lane_lock \
             || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, another caller could change node_modules under this command; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
         if [ "$(deps_status)" = stale ]; then
@@ -903,8 +911,9 @@ case "$KIND" in
         fi
         take_token
         release_lock
+        drop_upgrading
         status=0
-        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="$$" run_pnpm "$@" || status=$?
+        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="${ANCESTOR_TOKENS:+$ANCESTOR_TOKENS }$$" run_pnpm "$@" || status=$?
         drop_token
         exit "$status"
         ;;
