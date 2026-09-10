@@ -88,8 +88,18 @@ setup only. Do not edit source files in the launcher checkout.
      simplicity and test-evidence lanes) never takes the branch: it reads the
      branch's commit with `git log -1` / `git show`, or detaches its own lane
      at that commit (`git switch --detach --no-overwrite-ignore <commit>`) to
-     run commands there. Readers detached at one commit never contend, however
-     many run in parallel, and never block the next writer.
+     run commands there, after the same boundary test above that every
+     writer applies. A reader whose `$GC_DIR` fails it (a role with no
+     `work_dir` starts in the rig root, the human checkout) detaches nothing
+     and reads by `git show` and `git log` only. Readers detached at one
+     commit never contend, however many run in parallel, and never block the
+     next writer.
+   - A writer that commits after a commit was recorded for readers (the
+     review fix lane, after the review setup recorded the commit it reviews)
+     refreshes the recorded commit before it releases the branch: the review
+     context file and `gc.build.review_commit` on the workflow root, so the
+     next attempt's readers inspect the new commit, never the one the setup
+     saw.
    - A writer that crashed before releasing leaves the branch held. The next
      writer's switch then fails (git: "already checked out at <path>", or
      "already used by worktree at <path>" in newer git); that step fails

@@ -2406,9 +2406,238 @@ class FormulaAssetTests(unittest.TestCase):
             "test_hold_while_writing_release_on_handoff_inspect_detached",
             "test_writer_that_did_not_release_blocks_the_fix_lane_with_the_holder_named",
             "test_detach_at_commit_refuses_to_overwrite_an_ignored_file",
+            "test_fix_lane_refreshes_the_recorded_commit_so_the_next_attempt_reviews_the_fix",
+            "test_reviewer_in_the_rig_root_never_detaches_the_human_checkout",
         ):
             with self.subTest(lifecycle_test=name):
                 self.assertIn(f"def {name}(", lifecycle)
+
+    # Round 7 (gate r6). Two findings, both about the review loop's second
+    # and later attempts: (M1) the review setup runs ONCE, outside the loop,
+    # and recorded the commit the reviewers inspect, so after a fix every
+    # later attempt re-reviewed the ORIGINAL code; (M2) the review lanes
+    # detached `$GC_DIR` without the boundary test the writers apply, and a
+    # reviewer role with no `work_dir` starts in the RIG ROOT, so that detach
+    # would have moved the human checkout's HEAD. Both rows below are
+    # grep-driven over the whole workflows tree (DO-NOT 218), and
+    # test_lane_lifecycle.py runs both scenarios in real worktrees.
+    REVIEW_COMMIT_KEY = "gc.build.review_commit"
+
+    def test_review_context_is_refreshed_after_a_fix_and_readers_read_the_current_commit(self) -> None:
+        """Gate r6 M1: the fix lane rewrites the commit id in the review
+        context file and records `gc.build.review_commit` on the workflow root
+        after its fix commit and BEFORE it releases the branch; the setup
+        writes the same key on its first run; every reader reads the key
+        first and falls back to the context file's commit. Grep-driven: every
+        workflow step that commits against a recorded review context carries
+        the refresh."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflows = root / "assets" / "workflows"
+
+        def flat(relative_path: str) -> str:
+            return " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
+
+        key = self.REVIEW_COMMIT_KEY
+        # The setup writes the key on first run and says why (it runs once).
+        setup = flat("build-basic-review/{target}.setup-build-basic-review.md")
+        for clause in (
+            f"`gc bd update \"<workflow-root-id>\" --set-metadata '{key}=<commit>'`",
+            "This setup runs ONCE, outside the review loop",
+            f"the review lanes read `{key}` first and fall back to the context file's commit",
+            "the fix lane refreshes both the context file and this key after every fix commit",
+            "reviews the CURRENT commit, never the one this step saw",
+            f"only after the review context path and `{key}` are recorded",
+        ):
+            with self.subTest(setup=clause):
+                self.assertIn(clause, setup)
+
+        # The fix lane refreshes AFTER the fix commit and BEFORE the release,
+        # in the context file AND on the root, and states the retry sequence.
+        fix = flat("build-basic-review/{target}.apply-review-findings.md")
+        for clause in (
+            "Refresh the review context after the fix commit and BEFORE releasing the branch",
+            "The review setup ran ONCE, outside the review loop",
+            "review the ORIGINAL code and repeat the findings you just resolved until the attempts run out",
+            "Rewrite the commit id (and the changed-file list, when the context carries one) in the review context file at `gc.build.code_review_context_path`",
+            f"`gc bd update \"<workflow-root-id>\" --set-metadata '{key}=<sha>'`",
+            "The retry sequence is: fix, commit, refresh the context, release the branch; then the loop re-runs the reviewers on the new commit",
+            "Never leave the old commit in the context after a fix",
+            "The refresh applies in the `work_dir` case too",
+        ):
+            with self.subTest(fix_lane=clause):
+                self.assertIn(clause, fix)
+        commit_at = fix.index("commit the fix on that branch")
+        refresh_at = fix.index("Refresh the review context after the fix commit")
+        key_at = fix.index(f"--set-metadata '{key}=<sha>'")
+        release_at = fix.index(
+            "After the final commit and BEFORE closing this step with `gc.outcome=pass`, release the branch"
+        )
+        self.assertLess(commit_at, refresh_at, "the refresh comes after the fix commit")
+        self.assertLess(refresh_at, key_at)
+        self.assertLess(key_at, release_at, "the refresh comes before the release")
+
+        # Every reader reads the key first and falls back to the context.
+        for relative_path in self.LIFECYCLE_READERS:
+            text = flat(relative_path)
+            with self.subTest(reader=relative_path):
+                self.assertIn("Read the CURRENT commit first", text)
+                self.assertIn(f"`{key}` on the workflow root bead", text)
+                self.assertRegex(text, r"fall back to the (commit in the )?review context file")
+                self.assertIn("only when that key is absent", text)
+                self.assertRegex(text, r"(?i)the (review )?loop re-runs this lane after a fix")
+                read_at = text.index("Read the CURRENT commit first")
+                detach_at = text.index('`git -C "$GC_DIR" switch --detach --no-overwrite-ignore <commit>`')
+                self.assertLess(read_at, detach_at, "the current commit is read before the detach")
+
+        # The contract paragraph names the refresh as part of the lifecycle.
+        prepare = flat("do-work/prepare-worktree.md")
+        step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
+        self.assertIn("A writer that commits after a commit was recorded for readers", step4)
+        self.assertIn(f"the review context file and `{key}` on the workflow root", step4)
+        self.assertIn("never the one the setup saw", step4)
+
+        # Grep-driven: every workflow step that names the review context AND
+        # commits code carries the refresh; every step that names the key is
+        # the setup (writes), a reader (reads first) or the fix lane
+        # (refreshes), or the contract that states the lifecycle.
+        writers_against_a_context = []
+        key_holders = []
+        for path in sorted(workflows.rglob("*.md")):
+            text = " ".join(path.read_text(encoding="utf-8").split())
+            rel = path.relative_to(workflows).as_posix()
+            if key in text:
+                key_holders.append(rel)
+            # A step COMMITS when it names the git action (readers only speak of
+            # "the fix commit" as a noun and commit nothing).
+            if "review context" in text and re.search(r"commit the fix on|`git commit`", text):
+                writers_against_a_context.append(rel)
+                with self.subTest(writer_against_context=rel):
+                    self.assertIn(f"--set-metadata '{key}=<sha>'", text)
+                    self.assertIn("Never leave the old commit in the context after a fix", text)
+        self.assertEqual(writers_against_a_context, ["build-basic-review/{target}.apply-review-findings.md"])
+        self.assertEqual(
+            sorted(key_holders),
+            sorted(
+                (
+                    "do-work/prepare-worktree.md",
+                    "build-basic-review/{target}.setup-build-basic-review.md",
+                    "build-basic-review/{target}.apply-review-findings.md",
+                )
+                + self.LIFECYCLE_READERS
+            ),
+        )
+
+        readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+        section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
+        self.assertIn(
+            f"After the fix lane commits it refreshes the recorded commit (the review context file and `{key}` on the workflow root) before it releases the branch",
+            section,
+        )
+
+    def test_every_switch_or_detach_in_the_workflows_tree_is_preceded_by_the_boundary_test(self) -> None:
+        """Gate r6 M2: a reviewer role with no configured `work_dir` starts in
+        the RIG ROOT (the human checkout), and the round-6 reader clause ran
+        `switch --detach --no-overwrite-ignore <commit>` in `$GC_DIR` with no
+        boundary test, which would have moved the human checkout's HEAD.
+        Grep-driven over the whole workflows tree: every backticked span that
+        switches or detaches comes AFTER the three-part boundary test in its
+        file and the file says what happens when a part fails; every reader
+        names the rig-root case and the "no lane for this role" failure and,
+        failing the test, inspects by `git show`/`git log` only."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflows = root / "assets" / "workflows"
+        probes = ("rev-parse --show-toplevel", "rev-parse --git-common-dir")
+        switching_files: dict[str, list[str]] = {}
+        for path in sorted(workflows.rglob("*.md")):
+            flat = " ".join(path.read_text(encoding="utf-8").split())
+            # Command spans only: a span that RUNS git (`git ... switch`,
+            # `git switch --detach ...`, `git worktree add ... --detach`), not
+            # the prose mention `switch` in "before any `switch`".
+            spans = [
+                s for s in re.findall(r"`[^`]*`", flat)
+                if re.search(r"\bgit\b", s) and re.search(r"\bswitch\b|--detach|\bcheckout\b", s)
+            ]
+            if not spans:
+                continue
+            rel = path.relative_to(workflows).as_posix()
+            switching_files[rel] = spans
+            with self.subTest(asset=rel):
+                self.assertRegex(flat, r"(?i)when any part fails")
+                for probe in probes:
+                    self.assertIn(probe, flat)
+            for span in spans:
+                with self.subTest(asset=rel, span=span):
+                    self.assertNotIn("--force", span)
+                    self.assertNotIn("git checkout", span)  # switch is the only checkout verb in the tree
+                    span_at = flat.index(span)
+                    for probe in probes:
+                        self.assertLess(flat.index(probe), span_at, f"{probe} must come before {span}")
+        # The floor, found by grep: the contract, the five writers, the three readers.
+        for relative_path in ("do-work/prepare-worktree.md",) + self.LIFECYCLE_WRITERS + self.LIFECYCLE_READERS:
+            with self.subTest(switching_file=relative_path):
+                self.assertIn(relative_path, switching_files)
+        # Nothing else in the tree switches, detaches or checks out.
+        self.assertEqual(
+            sorted(switching_files),
+            sorted(("do-work/prepare-worktree.md",) + self.LIFECYCLE_WRITERS + self.LIFECYCLE_READERS),
+        )
+
+        # Every reader: boundary test before its detach; the rig-root case is
+        # named; failing the test it detaches nothing, inspects by git
+        # show/log only, and fails closed "no lane for this role" naming the fix.
+        for relative_path in self.LIFECYCLE_READERS:
+            flat = " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
+            with self.subTest(reader=relative_path):
+                detach_at = flat.index('`git -C "$GC_DIR" switch --detach --no-overwrite-ignore <commit>`')
+                boundary_at = flat.index("boundary test `do-work/prepare-worktree` step 4 applies")
+                self.assertLess(boundary_at, detach_at)
+                for probe in probes:
+                    self.assertLess(flat.index(probe), detach_at)
+                self.assertRegex(flat, r"prove the lane FIRST, before any `switch` or detach")
+                self.assertIn("starts in the RIG ROOT, the human checkout", flat)
+                self.assertRegex(flat, r"(?i)switch(es)? and detach(es)? nothing")
+                self.assertIn("moves the human checkout's HEAD", flat)
+                self.assertIn('`git -C "$GC_DIR" show <commit>:<path>` and `git -C "$GC_DIR" log -1 <commit>` only', flat)
+                self.assertIn("`gc.outcome=fail`, `gc.failure_class=no-lane`", flat)
+                self.assertIn('"no lane for this role"', flat)
+                self.assertIn("a `work_dir` for this role (README, Worker workspaces)", flat)
+                self.assertIn("Only when all three parts hold:", flat)
+                self.assertLess(flat.index("Only when all three parts hold:"), detach_at)
+                # A reader still releases nothing and never takes the branch (round 6).
+                self.assertNotIn("switch --detach`", flat)
+                self.assertNotIn('switch --no-overwrite-ignore "<gc.work_branch>"', flat)
+
+        # The fix lane's release sits inside the guarded lane case.
+        fix = " ".join(
+            (workflows / "build-basic-review/{target}.apply-review-findings.md").read_text(encoding="utf-8").split()
+        )
+        release_at = fix.index('release the branch from your lane: `git -C "$GC_DIR" switch --detach`')
+        for probe in probes:
+            self.assertLess(fix.index(probe), release_at)
+        for clause in (
+            "This release is inside the guarded lane case above",
+            "only after the boundary test passed and your switch onto the branch succeeded",
+            "was never switched and detaches nothing",
+            "a detach there would move the human checkout's HEAD",
+            "the per-item worktree is already detached and shared with no one, so there is nothing to release",
+        ):
+            with self.subTest(fix_release=clause):
+                self.assertIn(clause, fix)
+
+        # The contract paragraph: readers apply the same boundary test.
+        prepare = " ".join((workflows / "do-work/prepare-worktree.md").read_text(encoding="utf-8").split())
+        step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
+        self.assertIn("after the same boundary test above that every writer applies", step4)
+        self.assertIn("detaches nothing and reads by `git show` and `git log` only", step4)
+
+        readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+        section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
+        for clause in (
+            "Every lane, writer or reader, proves it is a lane before it switches or detaches anything",
+            "a reader there reads by `git show` only and never detaches the human checkout",
+        ):
+            with self.subTest(readme=clause):
+                self.assertIn(clause, section)
 
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

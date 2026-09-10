@@ -43,11 +43,35 @@ the close reason and mail the mayor (`gc mail send mayor -s "branch held:
 <gc.work_branch>" -m "<holder path>"`); the run operator (a human or the
 mayor) releases it with `git -C <holder lane> switch --detach`.
 Never enter that lane, never `--force`, never remove its checkout, never
-release another agent's lane. After the final commit and BEFORE closing this
+release another agent's lane.
+
+Refresh the review context after the fix commit and BEFORE releasing the
+branch. The review setup ran ONCE, outside the review loop, and the three
+review lanes inspect the commit it recorded; a context left at that commit
+makes every later attempt review the ORIGINAL code and repeat the findings you
+just resolved until the attempts run out. Rewrite the commit id (and the
+changed-file list, when the context carries one) in the review context file at
+`gc.build.code_review_context_path` on the workflow root, then record the new
+commit there too: `gc bd update "<workflow-root-id>" --set-metadata
+'gc.build.review_commit=<sha>'` (the review lanes read that key first and fall
+back to the context file's commit). The retry sequence is: fix, commit,
+refresh the context, release the branch; then the loop re-runs the reviewers
+on the new commit. Never leave the old commit in the context after a fix. The
+refresh applies in the `work_dir` case too (a fix committed in the per-item
+worktree): the commit id in the context and on the root are rewritten the same
+way; only the release below is the lane case.
+
+After the final commit and BEFORE closing this
 step with `gc.outcome=pass`, release the branch from your lane: `git -C
 "$GC_DIR" switch --detach` (HEAD stays at your commit; untracked files stay),
 then verify `git -C "$GC_DIR" branch --show-current` prints nothing, and name
-the commit id in this step's close reason.
+the commit id in this step's close reason. This release is inside the guarded
+lane case above: it runs only after the boundary test passed and your switch
+onto the branch succeeded. A `$GC_DIR` that failed the boundary test (the rig
+root, a subdirectory of it, or a worktree of another repository) was never
+switched and detaches nothing, because a detach there would move the human
+checkout's HEAD; in the `work_dir` case the per-item worktree is already
+detached and shared with no one, so there is nothing to release.
 
 Set `code_review.verdict=done` only when acceptance, test evidence, and
 simplicity all approve after this pass. Set `code_review.verdict=iterate` when
