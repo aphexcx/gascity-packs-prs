@@ -4585,6 +4585,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// while the injection claim is still held, and only then
 				// falls through to the failure branch, which releases
 				// the claim so a parked twin re-injects.
+				// A mention-only session addressed by alias gets its copy
+				// through this leg; log the anchor BEFORE the injection so
+				// the session's react/reply can resolve it as soon as the
+				// reminder lands (codex r1 P2 + r3 P2); rolled back below
+				// when gc rejects the injection.
+				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 				aliasReceipt, aliasOK := dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
 				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
@@ -4610,13 +4616,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					for _, d := range displaced {
 						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 					}
-					// A mention-only session addressed by alias got its copy
-					// through this leg; log it so the reply tooling can
-					// anchor on it (codex r1 P2).
-					recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 					concludeEvent()
 					return
 				}
+				forgetAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 				// The busy reaction was already launched for this
 				// message, but no reply is coming — the addressed
 				// session never got it and the channel-bound session

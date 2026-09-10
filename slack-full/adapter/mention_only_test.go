@@ -152,7 +152,7 @@ func TestMentionOnly_BotMentionDelivered(t *testing.T) {
 		"Slack mention-only room delivery: you were @mentioned",
 		"(Slack ts 100.000100)",
 		"can you take this?",
-		"gc slack reply-current --conversation-id C1 --reply-to 100.000100",
+		"gc slack publish-to-channel \\\n    --conversation-id C1 \\\n    --thread-ts 100.000100 \\\n    --body-file <tmpfile>",
 		"gc slack react --conversation-id C1 --message-id 100.000100",
 		"gc slack read --conversation-id C1",
 	} {
@@ -221,7 +221,7 @@ func TestMentionOnly_ThreadFollowUpOnOwnPostDelivered(t *testing.T) {
 	if !strings.Contains(body, "a reply in thread 100.000300") {
 		t.Errorf("injection must name the thread root:\n%s", body)
 	}
-	if !strings.Contains(body, "--reply-to 100.000300") {
+	if !strings.Contains(body, "--thread-ts 100.000300") {
 		t.Errorf("reply command must anchor at the thread ROOT:\n%s", body)
 	}
 	got := cfg.mentionOnlyDeliveries.forSession("mayor-session")

@@ -414,8 +414,9 @@ and `gc slack upload --thread-current` resolve mention-only deliveries
 through the adapter's delivery log (`GET
 …/svc/slack/mention-only/deliveries?session_id=…`) and publish via the
 adapter, because the session holds no gc binding for the room; the
-reminder also carries the explicit `--conversation-id`/`--reply-to`
-form. Inspect bindings with `gc slack status`, the registry file
+reminder itself prescribes the bindingless
+`gc slack publish-to-channel --conversation-id C… --thread-ts <root>`
+form, which no company-room pointer can divert. Inspect bindings with `gc slack status`, the registry file
 (`SLACK_MENTION_ONLY_BINDINGS_FILE`), or `GET …/svc/slack/mention-only`;
 remove one with `DELETE …/svc/slack/mention-only?channel_id=&session_id=`.
 

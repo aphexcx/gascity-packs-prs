@@ -30,7 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   endpoints: `POST`/`DELETE`/`GET /mention-only`,
   `GET /mention-only/deliveries?session_id=`; new env
   `SLACK_MENTION_ONLY_BINDINGS_FILE`, `SLACK_OWN_THREADS_FILE`.
-  Pack side: `reply-current --thread-current`/`--turn-ts`, `react`, and
+  The reminder prescribes the bindingless `publish-to-channel
+  --thread-ts` reply. Pack side: `reply-current --thread-current`/`--turn-ts`, `react`, and
   `upload --thread-current` resolve mention-only deliveries through the
   adapter's delivery log and publish via the adapter (the session has
   no gc binding there); `gc slack status` lists mention-only bindings

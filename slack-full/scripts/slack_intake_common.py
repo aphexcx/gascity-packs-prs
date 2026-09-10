@@ -725,27 +725,42 @@ def session_is_mention_only_in(session_id: str, channel_id: str) -> bool:
 def mention_only_deliveries_via_adapter(session_id: str) -> list[dict[str, Any]]:
     """Recent mention-only injections for session_id, newest first.
 
+    Queried under every identifier the session is known by (id,
+    GC_SESSION_NAME, gc-reported alias/session_name — the same candidate
+    set the gc-event scan uses): a binding made before the session was
+    listed in ``/sessions`` is keyed by its NAME, while the running
+    session asks by id (codex r3 P2). Results are merged, de-duplicated
+    by (channel, ts), newest first.
+
     Best-effort: any transport/shape problem yields [] — the caller's
     gc-side lookup is unaffected. Records missing the fields the reply
     tooling anchors on (channel_id, ts) are dropped.
     """
     if not session_id:
         return []
-    qs = urllib.parse.urlencode({"session_id": session_id})
+    identities = {session_id}
     try:
-        res = _adapter_json("GET", "/mention-only/deliveries?" + qs)
-    except (AdapterError, GCAPIError, OSError, ValueError):
-        return []
-    items = res.get("items") if isinstance(res, dict) else None
-    out: list[dict[str, Any]] = []
-    for item in items or []:
-        if not isinstance(item, dict):
+        identities |= session_identity_candidates(session_id)
+    except GCAPIError:
+        pass
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for ident in sorted(identities):
+        qs = urllib.parse.urlencode({"session_id": ident})
+        try:
+            res = _adapter_json("GET", "/mention-only/deliveries?" + qs)
+        except (AdapterError, GCAPIError, OSError, ValueError):
             continue
-        if not isinstance(item.get("channel_id"), str) or not isinstance(item.get("ts"), str):
-            continue
-        if not item["channel_id"] or not item["ts"]:
-            continue
-        out.append(item)
+        items = res.get("items") if isinstance(res, dict) else None
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            if not isinstance(item.get("channel_id"), str) or not isinstance(item.get("ts"), str):
+                continue
+            if not item["channel_id"] or not item["ts"]:
+                continue
+            merged.setdefault((item["channel_id"], item["ts"]), item)
+    out = list(merged.values())
+    out.sort(key=lambda d: (_event_time({"ts": d.get("received_at") or ""}) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), d["ts"]), reverse=True)
     return out
 
 

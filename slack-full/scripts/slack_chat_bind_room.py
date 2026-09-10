@@ -89,11 +89,13 @@ Reply protocol when you receive a `Slack mention-only room delivery` reminder:
 
   2. THEN compose your reply to a tmpfile.
 
-  3. THEN publish as a threaded reply:
-       gc slack reply-current --body-file <tmpfile> --thread-current
-     (the reminder carries the explicit --conversation-id/--reply-to form;
-     posts go through the slack adapter directly — you hold no channel
-     binding here, so peers are not fanned out)
+  3. THEN publish as a threaded reply, using the command the reminder
+     carries (bindingless, straight through the slack adapter):
+       gc slack publish-to-channel --conversation-id {conversation_id} \
+           --thread-ts <thread ts from the reminder> --body-file <tmpfile>
+     (`gc slack reply-current --thread-current` also resolves this
+     delivery; you hold no channel binding here, so peers are not fanned
+     out either way)
 
 The order is non-negotiable even when you have an instant answer. React
 first, every time.
@@ -505,36 +507,38 @@ def mention_only_conflicts(
     """
     rec = (cfg.get("bindings") or {}).get(binding_key) or {}
     entries = [p for p in rec.get("mention_only_participants") or [] if isinstance(p, dict)]
-    if not entries:
-        return []
+    live: list[dict[str, Any]] | None = None
     if conversation_id:
         try:
             # A room absent from the answer means "no bindings there"; only
             # a transport failure leaves the local record unverified.
-            live = common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or []
+            live = [b for b in (common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or [])
+                    if isinstance(b, dict)]
         except (common.AdapterError, common.GCAPIError):
             live = None
-        if live is not None:
-            live_ids = set()
-            for b in live:
-                if isinstance(b, dict):
-                    live_ids |= {b.get("session_id") or "", b.get("session_name") or ""}
-            live_ids.discard("")
-            kept = [p for p in entries
-                    if {p.get("session_name") or "", p.get("session_id") or ""} & live_ids]
-            if len(kept) != len(entries):
-                if kept:
-                    rec["mention_only_participants"] = kept
-                else:
-                    rec.pop("mention_only_participants", None)
-                    if rec.get("delivery_mode") == "mentions_only" and not rec.get("participants"):
-                        cfg["bindings"].pop(binding_key, None)
-                common.save_pack_config(cfg)
-            entries = kept
     mo: set[str] = set()
-    for p in entries:
-        mo |= {p.get("session_name") or "", p.get("session_id") or ""}
-    mo.discard("")
+    if live is not None:
+        # The adapter's registry is authoritative when reachable (codex r3
+        # P2): it also covers bindings made directly via POST /mention-only
+        # or by a partially failed multi-session bind that never reached
+        # the pack record.
+        for b in live:
+            mo |= {b.get("session_id") or "", b.get("session_name") or ""}
+        mo.discard("")
+        kept = [p for p in entries
+                if {p.get("session_name") or "", p.get("session_id") or ""} & mo]
+        if len(kept) != len(entries):
+            if kept:
+                rec["mention_only_participants"] = kept
+            else:
+                rec.pop("mention_only_participants", None)
+                if rec.get("delivery_mode") == "mentions_only" and not rec.get("participants"):
+                    cfg["bindings"].pop(binding_key, None)
+            common.save_pack_config(cfg)
+    else:
+        for p in entries:
+            mo |= {p.get("session_name") or "", p.get("session_id") or ""}
+        mo.discard("")
     if not mo:
         return []
     return [s for s in sessions if _session_aliases(s) & mo]

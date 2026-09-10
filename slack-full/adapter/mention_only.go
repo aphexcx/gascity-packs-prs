@@ -502,6 +502,31 @@ func (l *mentionOnlyDeliveryLog) record(b mentionOnlyBinding, d mentionOnlyDeliv
 	}
 }
 
+// remove drops the (channel, ts) record under every identifier the
+// binding is known by — the rollback for an injection gc did not accept.
+func (l *mentionOnlyDeliveryLog) remove(b mentionOnlyBinding, channel, ts string) {
+	if l == nil {
+		return
+	}
+	keys := []string{b.SessionID}
+	if b.SessionName != "" && b.SessionName != b.SessionID {
+		keys = append(keys, b.SessionName)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, k := range keys {
+		list := l.bySession[k]
+		kept := list[:0:0]
+		for _, d := range list {
+			if d.ChannelID == channel && d.TS == ts {
+				continue
+			}
+			kept = append(kept, d)
+		}
+		l.bySession[k] = kept
+	}
+}
+
 // forSession returns the session's recent deliveries, newest first.
 func (l *mentionOnlyDeliveryLog) forSession(id string) []mentionOnlyDelivery {
 	if l == nil || id == "" {
@@ -679,9 +704,12 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 			"  gc slack react --conversation-id %s --message-id %s --emoji writing_hand\n"+
 			"\n"+
 			"To reply in that thread, write your reply to a tmpfile and run:\n"+
-			"  gc slack reply-current --conversation-id %s --reply-to %s --body-file <tmpfile>\n"+
+			"  gc slack publish-to-channel \\\n"+
+			"    --conversation-id %s \\\n"+
+			"    --thread-ts %s \\\n"+
+			"    --body-file <tmpfile>\n"+
 			"\n"+
-			"(`gc slack reply-current --thread-current`, `gc slack react`, and `gc slack upload --thread-current` also resolve this delivery on their own; posts go through the slack adapter directly since you hold no channel binding here.)\n"+
+			"This posts directly through the slack adapter with your registered identity (you hold no channel binding here, and it is unaffected by any company-room pointer your session may carry). `gc slack react`, `reply-current --thread-current` and `upload --thread-current` also resolve this delivery on their own.\n"+
 			"</system-reminder>",
 		mentionOnlyReasonLine(reason, neutralizeMarkupBoundaries(handle)),
 		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
@@ -771,6 +799,19 @@ func recordAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding
 	}
 }
 
+// forgetAliasDeliveryForMentionOnly is the rollback of
+// recordAliasDeliveryForMentionOnly for an alias injection gc rejected.
+func forgetAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding, aliasedSessionID string, inbound externalInboundMessage) {
+	if cfg.mentionOnlyDeliveries == nil || aliasedSessionID == "" {
+		return
+	}
+	for _, b := range bindings {
+		if b.matchesSession(aliasedSessionID) {
+			cfg.mentionOnlyDeliveries.remove(b, inbound.Conversation.ConversationID, inbound.ProviderMessageID)
+		}
+	}
+}
+
 // deliverMentionOnly injects one reminder per target, synchronously, with
 // a per-(session, channel, ts) claim collapsing Slack's twin deliveries.
 // A failed injection releases its claim (a parked twin or Slack redelivery
@@ -798,6 +839,19 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			continue
 		}
 		body := formatMentionOnlyReminder(cfg, inbound, t.reason, t.binding.Handle)
+		// The anchor is logged BEFORE the POST (codex r3 P2): gc can hand
+		// the reminder to the session — and the session can run the
+		// prescribed react/reply — before the HTTP response returns here.
+		// A rejected injection rolls it back below.
+		record := mentionOnlyDelivery{
+			SessionID:  t.binding.SessionID,
+			ChannelID:  channel,
+			TS:         ts,
+			ThreadTS:   inbound.ReplyToMessageID,
+			Reason:     t.reason,
+			ReceivedAt: inbound.ReceivedAt,
+		}
+		cfg.mentionOnlyDeliveries.record(t.binding, record)
 		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
 		for attempt := 0; ok && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
@@ -812,6 +866,7 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			ok = false
 		}
 		if !ok {
+			cfg.mentionOnlyDeliveries.remove(t.binding, channel, ts)
 			cfg.channelClaims.forget(key)
 			log.Printf("mention-only: FAILED session=%s chan=%s ts=%s reason=%s — claim released for a twin/redelivery retry",
 				t.binding.SessionID, channel, ts, t.reason)
@@ -820,14 +875,6 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			continue
 		}
 		cfg.channelClaims.commit(key)
-		cfg.mentionOnlyDeliveries.record(t.binding, mentionOnlyDelivery{
-			SessionID:  t.binding.SessionID,
-			ChannelID:  channel,
-			TS:         ts,
-			ThreadTS:   inbound.ReplyToMessageID,
-			Reason:     t.reason,
-			ReceivedAt: inbound.ReceivedAt,
-		})
 		log.Printf("mention-only: delivered session=%s chan=%s ts=%s thread=%s reason=%s %s",
 			t.binding.SessionID, channel, ts, inbound.ReplyToMessageID, t.reason, receipt.logField(verdict))
 		delivered++

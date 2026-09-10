@@ -396,6 +396,7 @@ def test_latest_inbound_falls_back_to_mention_only_when_gc_has_nothing(
 def test_mention_only_deliveries_tolerate_transport_and_shape_problems(
         monkeypatch: pytest.MonkeyPatch) -> None:
     (common,) = _import()
+    monkeypatch.setattr(common, "session_identity_candidates", lambda sid: {sid})
 
     def refuse(method: str, url: str, body=None, *, csrf: bool = True, timeout: float = 30.0):
         raise common.GCAPIError("GET ... -> 404")
@@ -417,6 +418,42 @@ def test_mention_only_deliveries_tolerate_transport_and_shape_problems(
     got = common.mention_only_deliveries_via_adapter("jg-mayor-1")
     assert [d["ts"] for d in got] == ["1.000"]
     assert common.mention_only_deliveries_via_adapter("") == []
+
+
+def test_mention_only_deliveries_merge_identity_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r3 P2: a binding keyed by NAME (made before the session was
+    listed) must be found when the running session asks by id."""
+    (common,) = _import()
+    monkeypatch.setattr(common, "session_identity_candidates", lambda sid: {sid, "mayor"})
+    asked: list[str] = []
+
+    def fake_request(method: str, url: str, body=None, *, csrf: bool = True, timeout: float = 30.0):
+        sid = url.rsplit("session_id=", 1)[-1]
+        asked.append(sid)
+        if sid == "mayor":
+            return {"items": [_delivery("C1", "1.000", received_at="2026-09-10T08:00:00Z"),
+                              _delivery("C1", "0.500", received_at="2026-09-10T07:00:00Z")]}
+        return {"items": [_delivery("C1", "1.000", received_at="2026-09-10T08:00:00Z"),
+                          _delivery("C2", "2.000", received_at="2026-09-10T09:00:00Z")]}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    got = common.mention_only_deliveries_via_adapter("jg-mayor-1")
+    assert sorted(asked) == ["jg-mayor-1", "mayor"]
+    assert [(d["channel_id"], d["ts"]) for d in got] == [("C2", "2.000"), ("C1", "1.000"), ("C1", "0.500")]
+
+
+def test_ambient_bind_conflict_uses_live_registry_even_without_local_record(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r3 P2: a binding made straight via POST /mention-only has no
+    pack-config record; the live registry still blocks an ambient bind."""
+    common, bind = _import("slack_chat_bind_room")
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel_id="": {
+        "C1": [{"session_id": "jg-mayor-1", "session_name": "mayor", "handle": "mayor"}]})
+    monkeypatch.setattr(common, "gc_post", lambda *a, **k: pytest.fail("gc must not be called on a conflict"))
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor"])
+    assert "MENTION-ONLY" in str(exc.value)
 
 
 def test_mention_only_delivery_by_ts(monkeypatch: pytest.MonkeyPatch) -> None:
