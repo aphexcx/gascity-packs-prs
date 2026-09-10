@@ -24,8 +24,9 @@
 #      swallows which token is pnpm's own option table (below, read from
 #      the pinned pnpm), never a guess: `--child-concurrency 1 install` and
 #      `--recursive false install` are installs. The directory pnpm acts
-#      on, TARGET, is the last `-C`, `--dir` or `--prefix` value in pnpm's
-#      own option scope (the whole line for a built-in; for `run` up to the
+#      on, TARGET, is the last `-C`/`--dir` value in pnpm's own option
+#      scope, else the last `--prefix` (`--dir` wins wherever it stands,
+#      measured) (the whole line for a built-in; for `run` up to the
 #      script name, whose own arguments are its own; nothing after `exec`,
 #      `test` or `create`, whose next token is the bin or script name
 #      whatever it looks like; a bare script name ends the scope), else
@@ -422,7 +423,7 @@ scan() {
                                     *) shift; consumed=1 ;;
                                 esac
                             fi
-                            [ "$consumed" -eq 0 ] || case "$canon" in dir) TARGET="$(resolve_dir "$la")" ;; esac ;;
+                            [ "$consumed" -eq 0 ] || case "$canon" in dir) dir_target="$(resolve_dir "$la")" ;; esac ;;
                         *)
                             if [ "$la_set" -eq 1 ]; then
                                 case "$la" in
@@ -432,7 +433,7 @@ scan() {
                             fi
                             if [ "$consumed" -eq 1 ]; then
                                 case "$canon" in
-                                    prefix) TARGET="$(resolve_dir "$la")" ;;
+                                    prefix) prefix_target="$(resolve_dir "$la")" ;;
                                     fix) case "$la" in false) fix_flag=0 ;; *) fix_flag=1 ;; esac ;;   # audit reads --fix as a boolean
                                 esac
                             fi ;;
@@ -497,6 +498,8 @@ scan() {
 classify() {
     KIND=info
     TARGET="$(pwd -P)"
+    dir_target=""
+    prefix_target=""
     IGNORE_WORKSPACE=0
     pm_forced=0
     override_name=""
@@ -539,6 +542,12 @@ classify() {
         *) PHASE=other ;;
     esac
     scan "$@" || return 0
+    # pnpm acts in --dir (-C) when given, whatever its place beside --prefix
+    # (measured: `--prefix B --dir A` and `--dir A --prefix B` both act in A;
+    # of two --dir the last wins), else in --prefix, else here
+    if [ -n "$dir_target" ]; then TARGET="$dir_target"
+    elif [ -n "$prefix_target" ]; then TARGET="$prefix_target"
+    fi
     if [ "$workspace_root" -eq 1 ] && [ "$IGNORE_WORKSPACE" -eq 0 ]; then
         # -w/--workspace-root: pnpm acts on the workspace root above the target
         # (under --ignore-workspace there is none and pnpm refuses the flag)
@@ -692,7 +701,9 @@ reclaim_stale_lock() {
 }
 
 # take_lane_lock: hold $LOCK on return. Fails closed after LANE_DEPS_WAIT
-# seconds behind a live holder.
+# seconds behind a live holder, and at once when the lock cannot be made
+# because node_modules refuses the write (a sandbox, a read-only lane):
+# with no lock there is nobody to wait for.
 take_lane_lock() {
     mkdir -p "$NM" 2>/dev/null || die "cannot create $NM (read-only here?)"
     waited=0
@@ -701,6 +712,15 @@ take_lane_lock() {
             LOCKED=1
             printf '%s\n' "$$" > "$LOCK/pid"
             return 0
+        fi
+        if [ ! -d "$LOCK" ]; then
+            # refused, and no lock to wait for: the holder may have just left, so once more
+            if mkdir_err="$(mkdir "$LOCK" 2>&1)"; then
+                LOCKED=1
+                printf '%s\n' "$$" > "$LOCK/pid"
+                return 0
+            fi
+            [ -d "$LOCK" ] || die "cannot create $LOCK (${mkdir_err#mkdir: }); this command did not run"
         fi
         if lock_is_stale; then
             [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"

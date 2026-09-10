@@ -1000,6 +1000,61 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(self.fx.installs(), [f"{fixture.resolve()}|false|--ignore-workspace install --frozen-lockfile"])
         self.assertEqual(self.fx.argv()[-1], "--ignore-w --verb exec vitest")
 
+    def test_dir_wins_over_prefix_wherever_it_stands_and_a_refused_lock_fails_at_once(self) -> None:
+        """Round 17: pnpm acts in --dir (-C) whatever its place beside --prefix
+        (measured on 11.20), so that is the lane the wrapper prepares and locks;
+        a lock mkdir that node_modules refuses is a permission failure, not a
+        holder to wait ten minutes for."""
+        a = self.fx.project("a")
+        b = self.fx.project("b")
+        for argv in (
+            ["--dir", "a", "--prefix", "b", "exec", "vitest"], ["--prefix", "b", "--dir", "a", "exec", "vitest"],
+            ["-C", "a", "--prefix", "b", "run", "test"], ["--prefix", "b", "-C=a", "test"],
+            ["--prefix", "b", "--dir", "b", "--dir", "a", "exec", "vitest"],
+        ):
+            (a / "node_modules" / ".fake-state").unlink(missing_ok=True)
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=self.fx.root)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.installs(), [f"{a.resolve()}|false|install --frozen-lockfile"], argv)
+            self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(a.resolve()), argv)
+            self.assertFalse((b / "node_modules").exists(), argv)
+        # --prefix alone still selects; the last of two --prefix wins
+        self.fx.reset()
+        r = self.fx.run("pnpm", "--prefix", "a", "--prefix", "b", "exec", "vitest", cwd=self.fx.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.installs(), [f"{b.resolve()}|false|install --frozen-lockfile"])
+        # a mutate holds the --dir project's lock, not the --prefix one's
+        lock_a = a / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            lock_a.mkdir(parents=True)
+            (lock_a / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            r = self.fx.run("pnpm", "--prefix", "b", "--dir", "a", "add", "x", cwd=self.fx.root, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn(f"has held {lock_a.resolve()}", r.stderr)
+        # node_modules that refuses the lock: the command fails at once, naming the refusal,
+        # never waiting LANE_DEPS_WAIT for a holder that does not exist
+        c = self.fx.project("c")
+        (c / "node_modules").mkdir()
+        (c / "node_modules").chmod(0o555)
+        self.fx.reset()
+        try:
+            started = time.monotonic()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=c)
+            elapsed = time.monotonic() - started
+        finally:
+            (c / "node_modules").chmod(0o755)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("cannot create", r.stderr)
+        self.assertIn("Permission denied", r.stderr)
+        self.assertNotIn("waiting for another caller", r.stderr)
+        self.assertLess(elapsed, 20)
+        self.assertEqual(self.fx.argv(), [])
+
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
         holder = subprocess.Popen(["sleep", "30"])

@@ -410,8 +410,9 @@ already covers (`install --lockfile-only`, a cleanup built-in, a new
 workspace package). The question costs one pnpm start (about a third of a
 second) per project command.
 
-The directory pnpm acts on is the last `-C`, `--dir` or `--prefix` value in
-pnpm's own option scope (the whole line for a built-in; for `run` up to
+The directory pnpm acts on is the last `-C`/`--dir` value in pnpm's own
+option scope, else the last `--prefix` (`--dir` wins wherever it stands
+beside `--prefix`, measured) (the whole line for a built-in; for `run` up to
 the script name, whose own arguments are its own; nothing after `exec`,
 `test` or `create`, whose next token is the bin or script name whatever it
 looks like, measured: `pnpm exec -C x vitest` is 'Command "-C" not found';
@@ -420,7 +421,9 @@ the working directory itself. A lock whose owner is dead is moved aside by renam
 (nothing deleted), but only under a second, atomic reclaim lock and after
 re-reading it, so two waiters cannot both clear it and a waiter's fresh live
 lock is never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default
-600 s) and then the command fails closed naming the holder, and only the
+600 s) and then the command fails closed naming the holder, a lock that
+cannot be made at all (`node_modules` refusing the write under a sandbox)
+fails the command at once with the refusal, and only the
 pid that took a lock releases it. A lifecycle script the mutation itself
 runs (a `postinstall` that calls `pnpm run build`) re-enters the wrapper
 with `GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane>` set by its parent and runs
