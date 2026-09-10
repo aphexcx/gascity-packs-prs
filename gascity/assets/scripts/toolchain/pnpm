@@ -26,7 +26,9 @@
 #      `--dir` or `--prefix` value in pnpm's own option scope (the whole line
 #      for a built-in; for `run`/`exec` up to the script or bin name, whose
 #      own arguments are its own; a bare script name ends the scope), else
-#      the working directory.
+#      the working directory; `-w`/`--workspace-root` moves it to the
+#      workspace root above that. `pnpm audit --fix` is a mutate (pnpm runs
+#      its update handler).
 #        info    — reports or manages state outside node_modules (`store`,
 #                  `config`, `list`, `outdated`, `--version`, `help`, ...),
 #                  and any command carrying `-h`/`--help`/`-v`/`--version`
@@ -217,6 +219,9 @@ classify() {
     command_seen=0
     pm_forced=0
     override_name=""
+    command_name=""
+    fix_flag=0
+    workspace_root=0
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
@@ -228,6 +233,8 @@ classify() {
         case "$a" in
             --) break ;;
             -h|--help|-v|--version) KIND=info; return 0 ;;   # a help or version request runs nothing
+            -w|--workspace-root) workspace_root=1; continue ;;
+            --fix|--fix=*) fix_flag=1; continue ;;
             -C|--dir|--prefix) want_value=dir; continue ;;
             -C=*) TARGET="$(resolve_dir "${a#-C=}")"; continue ;;
             --dir=*) TARGET="$(resolve_dir "${a#--dir=}")"; continue ;;
@@ -251,6 +258,7 @@ classify() {
             with) want_value=other; continue ;;
         esac
         command_seen=1
+        command_name="$a"
         case "$a" in
             clean|purge|rebuild|rb|setup|deploy)
                 # a package script of the same name wins over the built-in unless `pm`
@@ -278,9 +286,31 @@ classify() {
                 return 0 ;;
         esac
     done
+    if [ "$workspace_root" -eq 1 ]; then
+        # -w/--workspace-root: pnpm acts on the workspace root above the target
+        ws="$(workspace_root_of "$TARGET")" && TARGET="$ws"
+    fi
+    if [ "$command_name" = audit ] && [ "$fix_flag" -eq 1 ]; then
+        KIND=mutate      # `pnpm audit --fix` runs pnpm's update handler
+    fi
     if [ -n "$override_name" ] && script_defined "$override_name"; then
         KIND=project
     fi
+}
+
+# workspace_root_of DIR: nearest ancestor of DIR (DIR included) holding
+# pnpm-workspace.yaml; 1 when there is none.
+workspace_root_of() {
+    d="$(cd -P "$1" 2>/dev/null && pwd -P)" || return 1
+    while :; do
+        if [ -f "$d/pnpm-workspace.yaml" ]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+        [ "$d" != "/" ] || return 1
+        d="${d%/*}"
+        [ -n "$d" ] || d="/"
+    done
 }
 
 # lane_of DIR: the workspace root above DIR (DIR included), the nearest
