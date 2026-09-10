@@ -108,6 +108,23 @@ def fenced_blocks(section: str, lang: str) -> list[str]:
     return re.findall(rf"```{lang}\n(.*?)```", section, re.S)
 
 
+def md5_tool_dir(root: pathlib.Path) -> str:
+    """Directory holding an `md5 -q` command: the macOS tool, else a wrapper over
+    md5sum (the README names it as the Linux equivalent) so the recipe runs on
+    the repository's Ubuntu CI as well."""
+    found = shutil.which("md5")
+    if found:
+        return os.path.dirname(found)
+    if shutil.which("md5sum") is None:
+        raise unittest.SkipTest("neither md5 nor md5sum on PATH")
+    d = root / "md5-tool"
+    d.mkdir()
+    tool = d / "md5"
+    tool.write_text('#!/bin/sh\n[ "$1" = -q ] && shift\nmd5sum -- "$@" | cut -d" " -f1\n', encoding="utf-8")
+    tool.chmod(0o755)
+    return str(d)
+
+
 class CodexInfisicalShimTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
@@ -139,7 +156,7 @@ class CodexInfisicalShimTests(unittest.TestCase):
             "CODEX_SHIM_PATH_PREPEND",
             "CODEX_SHIM_EXEC",
             "INFISICAL_PROJECT_ID",
-            "| md5 -q",
+            '&& md5 -q "$canonical"',
             "= <that md5>",
         ):
             self.assertIn(needle, text)
@@ -157,18 +174,14 @@ class CodexInfisicalShimTests(unittest.TestCase):
             "CODEX_SHIM_EXEC",
             "resume_command",
             "INFISICAL_PROJECT_ID",
-            "| md5 -q",
+            '&& md5 -q "$canonical"',
             "= <that md5>",
             "fail-open",
         ):
             self.assertIn(needle, section)
 
     def test_readme_install_recipe_works_from_a_fresh_directory(self) -> None:
-        if shutil.which("md5") is None:
-            self.skipTest("md5 (macOS) not on PATH")
-        blocks = fenced_blocks(readme_section(), "sh")
-        self.assertEqual(len(blocks), 2, "README section: one install block, one verify block")
-        install, verify = blocks
+        install = fenced_blocks(readme_section(), "sh")[0]
         city = self.fx.root / "fresh-city"
         city.mkdir()
         install = install.replace("path/to/gascity/", f"{PACK}/")
@@ -184,13 +197,47 @@ class CodexInfisicalShimTests(unittest.TestCase):
             (installed.parent / "codex.env").read_text(encoding="utf-8"),
             "CODEX_SHIM_PATH_PREPEND=/abs/path/to/city/.gc/shims/toolchain\nCODEX_SHIM_EXEC=npx -y @openai/codex@0.153.3\n",
         )
-        # The verify block: the recorded md5 is a literal, so the check fails when
-        # the installed file is missing instead of matching two empty strings.
-        canonical_md5 = subprocess.run(["md5", "-q", str(SCRIPT)], capture_output=True, text=True, check=True).stdout.strip()
-        check = verify.splitlines()[-1].replace("<that md5>", canonical_md5)
-        self.assertTrue(check.startswith('test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" ='), check)
-        env = {"PATH": f"{SYSTEM_PATH}:{os.path.dirname(shutil.which('md5'))}", "CITY": str(city)}
+
+    def test_readme_verify_recipe_records_a_literal_md5_and_fails_closed(self) -> None:
+        import hashlib
+        blocks = fenced_blocks(readme_section(), "sh")
+        self.assertEqual(len(blocks), 2, "README section: one install block, one verify block")
+        record, check = blocks[1].splitlines()
+        tool_path = f"{SYSTEM_PATH}:{md5_tool_dir(self.fx.root)}"
+        repo = subprocess.run(["git", "-C", str(PACK), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        if repo.returncode != 0:
+            self.skipTest("pack is not inside a git checkout")
+        repo_root = repo.stdout.strip()
+        rel = SCRIPT.relative_to(repo_root).as_posix()
+        self.assertIn(f"show <pin>:{rel} >", record)
+        committed = subprocess.run(["git", "-C", repo_root, "show", f"HEAD:{rel}"], capture_output=True)
+        if committed.returncode != 0:
+            self.skipTest("canonical file not committed yet")
+        expected = hashlib.md5(committed.stdout).hexdigest()
+        # Recording: the pipeline-free form prints the committed file's md5 and
+        # prints nothing (non-zero) for a pin that does not resolve.
+        rec = record.replace("path/to/gascity-packs", repo_root).replace("<pin>", "HEAD")
+        proc = subprocess.run(["/bin/sh", "-c", rec], env={"PATH": tool_path, "TMPDIR": str(self.fx.root)},
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), expected)
+        bad = record.replace("path/to/gascity-packs", repo_root).replace("<pin>", "no-such-pin-000")
+        proc = subprocess.run(["/bin/sh", "-c", bad], env={"PATH": tool_path, "TMPDIR": str(self.fx.root)},
+                              capture_output=True, text=True)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(proc.stdout, "", "a bad pin must record nothing, not the hash of empty input")
+        # Checking: the recorded md5 is a literal, so the check fails when the
+        # installed file is missing or the md5 tool is, instead of matching "".
+        city = self.fx.root / "city"
+        installed = city / ".gc" / "shims" / "codex-astra" / "codex"
+        installed.parent.mkdir(parents=True)
+        installed.write_bytes(committed.stdout)
+        self.assertTrue(check.startswith('test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = <that md5>'), check)
+        check = check.replace("<that md5>", expected)
+        env = {"PATH": tool_path, "CITY": str(city)}
         self.assertEqual(subprocess.run(["/bin/sh", "-c", check], env=env).returncode, 0)
+        installed.write_bytes(committed.stdout + b"# drift\n")
+        self.assertNotEqual(subprocess.run(["/bin/sh", "-c", check], env=env).returncode, 0)
         env["CITY"] = str(self.fx.root / "no-such-city")
         self.assertNotEqual(subprocess.run(["/bin/sh", "-c", check], env=env, capture_output=True).returncode, 0)
         self.assertEqual(subprocess.run(["/bin/sh", "-c", check], env={"PATH": "/nonexistent", "CITY": str(city)},
@@ -259,6 +306,24 @@ class CodexInfisicalShimTests(unittest.TestCase):
         proc = self.fx.run("-p", "city", "keep")
         self.assert_exec_ok(proc, ["-p", "city", "keep"])
         self.assertEqual(self.fx.recorded("token"), "tok")
+
+    def test_helper_tracing_cannot_print_the_token(self) -> None:
+        self.fx.write_token_sh("set -x\nexport INFISICAL_TOKEN=traced-token-xyz\n")
+        proc = self.fx.run("-p", "city")
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("token"), "traced-token-xyz")
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(proc.stderr, "")
+
+    def test_helper_exit_trap_cannot_print_or_alter_the_token(self) -> None:
+        self.fx.write_token_sh(
+            "trap 'echo trailing-stdout; echo trailing-stderr >&2' EXIT\nexport INFISICAL_TOKEN=exact-token\n"
+        )
+        proc = self.fx.run("-p", "city")
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("token"), "exact-token")
+        self.assertEqual(proc.stdout, "")
+        self.assertEqual(proc.stderr, "")
 
     def test_a_set_token_is_kept_and_token_sh_is_not_sourced(self) -> None:
         self.fx.write_token_sh("export INFISICAL_TOKEN=minted\ntouch \"$SHIM_TEST_OUT/sourced\"\n")
@@ -330,6 +395,24 @@ class CodexInfisicalShimTests(unittest.TestCase):
     def test_no_codex_left_on_path_is_an_error_not_a_loop(self) -> None:
         proc = self.fx.run("-p", "city", path=f"{self.fx.shim_dir}:{SYSTEM_PATH}")
         self.assert_refused(proc, "ERROR no 'codex' on PATH after removing the shim's directory")
+
+    def test_pruning_every_entry_never_makes_path_the_current_directory(self) -> None:
+        cwd = self.fx.root / "cwd-with-codex"
+        self.fx.write_exec(cwd / "codex", FAKE_CODEX)
+        proc = self.fx.run("-p", "city", path=str(self.fx.shim_dir), cwd=cwd)
+        self.assert_refused(proc, "ERROR no 'codex' on PATH")
+        proc = self.fx.run("-p", "city", path=str(self.fx.shim_dir), cwd=cwd, env_extra={"CODEX_SHIM_EXEC": str(self.fx.fake)})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("path"), "/dev/null")
+        self.assertEqual(pathlib.Path(self.fx.recorded("argv0")).resolve(), self.fx.fake.resolve())
+
+    def test_cdpath_does_not_disturb_self_location_or_pruning(self) -> None:
+        rel_shim = os.path.relpath(self.fx.shim, self.fx.root)
+        rel_dir = os.path.relpath(self.fx.shim_dir, self.fx.root)
+        proc = self.fx.run("-p", "city", argv0=rel_shim, path=f"{rel_dir}:{self.fx.bin}:{SYSTEM_PATH}",
+                           env_extra={"CDPATH": f".:{self.fx.root}"})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("path"), f"{self.fx.bin}:{SYSTEM_PATH}")
 
     def test_a_symlink_to_the_shim_elsewhere_on_path_is_refused_not_execd(self) -> None:
         link_dir = self.fx.root / "elsewhere"
@@ -447,6 +530,14 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assert_exec_ok(proc, ["--ok", "-p", "city"])
         self.assertEqual(self.fx.recorded("entry"), "keep-me")
         self.assertEqual(self.fx.recorded("line"), "keep-line")
+
+    def test_inherited_cis_variables_are_not_configuration(self) -> None:
+        proc = self.fx.run("-p", "city", env_extra={
+            "cis_exec": "/bin/echo INJECTED", "cis_prepend": "/nonexistent-inherited", "cis_first": "0", "cis_pruned": "/x",
+        })
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(pathlib.Path(self.fx.recorded("argv0")).resolve(), self.fx.fake.resolve())
+        self.assertEqual(self.fx.recorded("path"), f"{self.fx.bin}:{SYSTEM_PATH}")
 
 
 if __name__ == "__main__":
