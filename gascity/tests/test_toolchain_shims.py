@@ -1226,6 +1226,29 @@ class PnpmShimGateRoundTests(unittest.TestCase):
             holder.kill()
             holder.wait()
             (readers / str(holder.pid)).unlink(missing_ok=True)
+        # two scripts each running a nested rebuild at once: neither waits for the other's
+        # parent (the parent is blocked in its child, marked upgrading), both finish
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        pair: dict[str, subprocess.CompletedProcess[str]] = {}
+
+        def script(name: str) -> None:
+            pair[name] = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+
+        started = time.monotonic()
+        threads = [threading.Thread(target=script, args=(n,)) for n in ("vitest", "eslint")]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=90)
+        elapsed = time.monotonic() - started
+        for name in ("vitest", "eslint"):
+            self.assertEqual(pair[name].returncode, 0, (name, pair[name].stderr))
+        self.assertLess(elapsed, 25)
+        # (the first nested rebuild leaves the fake's tree stale, so the second script's
+        # readiness check may install once before it runs)
+        self.assertEqual(sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile"), ["exec eslint", "exec vitest", "rebuild", "rebuild"])
+        self.assertEqual(sorted(readers.iterdir()), [])     # tokens and marks dropped
         # a lane whose node_modules refuses the lock for this caller cannot be coordinated from
         # here: the command fails closed at once whatever pnpm would say; LANE_DEPS=off runs it
         ro = self.fx.project("ro")

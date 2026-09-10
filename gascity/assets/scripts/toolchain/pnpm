@@ -109,7 +109,10 @@
 #      project command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) runs as is,
 #      its ancestor's token standing for it, while a mutate inside one
 #      takes the lock like any other and waits for every reader but that
-#      ancestor (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>). A lane whose
+#      ancestor (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>), which it marks
+#      as upgrading meanwhile so that other mutates pass it over (it is
+#      blocked in this child and reads nothing; two scripts each running a
+#      nested mutate would otherwise wait for each other for ever). A lane whose
 #      node_modules refuses the lock for this caller (a sandbox) cannot be
 #      coordinated from here, another caller could change it under the
 #      command, so the command fails closed naming the refusal;
@@ -692,7 +695,27 @@ drop_token() {
         TOKEN=""
     fi
 }
-cleanup() { release_lock; drop_token; }
+# A mutate inside a running project command marks its ancestor's token
+# as upgrading (<token>.upgrading, this pid inside) for as long as it waits
+# for and holds the lane lock: that ancestor is blocked in this child and
+# reads nothing, so a mutate waiting for readers passes it over. Without
+# the mark two scripts each running a nested mutate wait for each other's
+# parent for ever (the first child holds the lock and waits for the second
+# parent, whose child waits for the lock). A mark whose pid is dead is a
+# crashed child's and is dropped.
+UPGRADE_MARK=""
+mark_upgrading() {
+    [ -n "$ANCESTOR_TOKEN" ] || return 0
+    UPGRADE_MARK="$READERS/$ANCESTOR_TOKEN.upgrading"
+    printf '%s\n' "$$" > "$UPGRADE_MARK" 2>/dev/null || UPGRADE_MARK=""
+}
+drop_upgrading() {
+    if [ -n "$UPGRADE_MARK" ]; then
+        [ "$(cat "$UPGRADE_MARK" 2>/dev/null || true)" != "$$" ] || rm -f "$UPGRADE_MARK" 2>/dev/null || true
+        UPGRADE_MARK=""
+    fi
+}
+cleanup() { release_lock; drop_token; drop_upgrading; }
 trap 'cleanup' EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
@@ -720,9 +743,16 @@ wait_for_readers() {
             [ "$rp" != "$ANCESTOR_TOKEN" ] || continue      # the command this one runs inside
             if owner_is_dead "$rp"; then
                 rm -f "$t" 2>/dev/null || true
-            else
-                live="$live $rp"
+                continue
             fi
+            if [ -f "$t.upgrading" ]; then
+                up="$(cat "$t.upgrading" 2>/dev/null || true)"
+                if [ -n "$up" ] && ! owner_is_dead "$up"; then
+                    continue        # blocked in its own nested mutate (pid $up): reading nothing
+                fi
+                rm -f "$t.upgrading" 2>/dev/null || true
+            fi
+            live="$live $rp"
         done
         [ -n "$live" ] || return 0
         [ "$rwaited" -lt "$LANE_DEPS_WAIT" ] \
@@ -848,11 +878,13 @@ READERS="$NM/.gc-lane-deps.readers"
 
 case "$KIND" in
     mutate)
+        mark_upgrading
         take_lane_lock || die "cannot create $LOCK ($LOCK_REFUSED); this command did not run"
         wait_for_readers
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
         release_lock
+        drop_upgrading
         exit "$status"
         ;;
     project)
