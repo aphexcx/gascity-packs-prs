@@ -217,14 +217,25 @@ class PnpmShimVerdictTests(unittest.TestCase):
 
     def test_a_package_script_named_like_a_built_in_is_a_project_command_unless_pm_forces_the_built_in(self) -> None:
         proj = self.fx.project()
-        (proj / "package.json").write_text('{"name":"p","private":true,"scripts":{"clean":"rimraf dist","deploy":"echo","setup":"echo"}}\n', encoding="utf-8")
-        for argv in (["clean"], ["deploy"], ["setup", "--flag"]):
+        (proj / "package.json").write_text('{"name":"p","private":true,"scripts":{"clean":"rimraf dist","deploy":"echo","setup":"echo","rb":"echo"}}\n', encoding="utf-8")
+        for argv in (["clean"], ["deploy"], ["setup", "--flag"], ["rb"]):
             self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, (argv, r.stderr))
             # a fresh lane: the script's dependencies are installed first, then the script runs
             self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
             self.assertGreaterEqual(len(self.fx.checks()), 1, argv)
+        self.assertTrue(in_sync(proj))
+        # the manifest that decides is the one of the directory pnpm acts on, even when
+        # that directory is named after the command: B has no `clean` script, so B's
+        # built-in runs under B's lock, not A's script
+        other = self.fx.project("other")
+        self.fx.run("pnpm", "exec", "vitest", cwd=other)
+        self.fx.reset()
+        r = self.fx.run("pnpm", "clean", "--dir", "../other", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|clean --dir ../other"])
+        self.assertFalse(in_sync(other))
         self.assertTrue(in_sync(proj))
         # `purge` and `rebuild` are not scripts here: still built-ins
         for argv in (["purge"], ["rebuild"], ["pm", "clean"]):

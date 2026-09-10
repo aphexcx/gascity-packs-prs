@@ -35,9 +35,10 @@
 #                  `prune`, `dedupe`, `rebuild`, `clean`, `purge`, ...): runs
 #                  where typed, arguments unchanged, under the lane lock, so
 #                  it never overlaps another caller's install. A package
-#                  script named `clean`, `purge`, `rebuild`, `setup` or
-#                  `deploy` wins over the built-in for pnpm, so it does here
-#                  (project), unless `pnpm pm <name>` forced the built-in.
+#                  script named `clean`, `purge`, `rebuild` (`rb`), `setup`
+#                  or `deploy` in the manifest of the directory pnpm acts on
+#                  wins over the built-in for pnpm, so it does here (project),
+#                  unless `pnpm pm <name>` forced the built-in.
 #        project — `run`, `exec`, `test`, a bare script or bin name, anything
 #                  else: first makes sure the lane is in sync, then runs.
 #      In sync is pnpm's own word, never this wrapper's: before a project
@@ -212,6 +213,7 @@ classify() {
     want_value=""
     command_seen=0
     pm_forced=0
+    override_name=""
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
@@ -221,7 +223,7 @@ classify() {
             continue
         fi
         case "$a" in
-            --) return 0 ;;
+            --) break ;;
             -C|--dir|--prefix) want_value=dir; continue ;;
             -C=*) TARGET="$(resolve_dir "${a#-C=}")"; continue ;;
             --dir=*) TARGET="$(resolve_dir "${a#--dir=}")"; continue ;;
@@ -246,12 +248,10 @@ classify() {
         esac
         command_seen=1
         case "$a" in
-            clean|purge|rebuild|setup|deploy)
-                # a package script of the same name wins over the built-in unless `pm` forced it
-                if [ "$pm_forced" -eq 0 ] && script_defined "$a"; then
-                    KIND=project
-                    return 0
-                fi ;;
+            clean|purge|rebuild|rb|setup|deploy)
+                # a package script of the same name wins over the built-in unless `pm`
+                # forced it; decided below, once the target directory is final
+                [ "$pm_forced" -eq 1 ] || override_name="$a" ;;
         esac
         case "$a" in
             install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un| \
@@ -274,6 +274,9 @@ classify() {
                 return 0 ;;
         esac
     done
+    if [ -n "$override_name" ] && script_defined "$override_name"; then
+        KIND=project
+    fi
 }
 
 # lane_of DIR: nearest ancestor of DIR (DIR included) holding pnpm-lock.yaml;
