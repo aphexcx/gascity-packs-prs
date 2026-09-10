@@ -416,7 +416,9 @@ closed at once naming the refusal; `GC_TOOLCHAIN_LANE_DEPS=off` runs there
 when the lane is this caller's alone. A project command inside a running
 project command runs as is (its ancestor's token stands for it); a mutate
 inside one takes the lock like any other and waits for every reader but
-that ancestor. A failed install fails the
+that ancestor, which it marks as upgrading meanwhile so other mutates pass
+it over (it is blocked in this child and reads nothing; two scripts each
+running a nested mutate would otherwise wait for each other for ever). A failed install fails the
 command (the requested check never runs against a half-installed tree);
 pnpm fails the frozen install closed when a manifest is ahead of the
 lockfile, and the worker's own `pnpm install` (a mutate) resolves that.
