@@ -645,3 +645,44 @@ class PnpmShimGateRound1Tests(unittest.TestCase):
         lock = proj / "node_modules" / ".gc-lane-deps.lock"
         self.assertTrue(lock.exists())
         self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
+
+
+class PnpmShimGateRound2Tests(unittest.TestCase):
+    """Round 2 of the codex gate: an option value is not a subcommand."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_option_values_are_skipped_when_classifying_the_subcommand(self) -> None:
+        proj = self.fx.project()
+        (proj / "package.json").write_text('{"name":"p","private":true,"dependencies":{"new":"1"}}\n', encoding="utf-8")
+        # package management behind option values passes through: no frozen install first
+        for argv in (
+            ["--filter", "app", "install"],
+            ["-F", "app", "add", "x"],
+            ["-C", str(proj), "install"],
+            ["--filter=app", "install"],
+            ["--loglevel", "warn", "--reporter", "silent", "install", "--frozen-lockfile"],
+            ["-r", "--filter", "app", "outdated"],
+        ):
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
+            self.assertNotIn("installing lane dependencies", r.stderr)
+        # a project command behind the same options still gets the lane install
+        for argv in (["--filter", "app", "run", "test"], ["-C", str(proj), "exec", "vitest"], ["--loglevel", "warn", "vitest", "run"]):
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_INSTALLING="")
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            calls = [c.split("|", 2)[2] for c in self.fx.calls()]
+            self.assertEqual(calls[-1], " ".join(argv), argv)
+        (proj / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\nnew: 1\n", encoding="utf-8")
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "--filter", "app", "run", "test", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["install --frozen-lockfile", "--filter app run test"])
