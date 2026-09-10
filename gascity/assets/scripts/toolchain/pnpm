@@ -105,18 +105,18 @@
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
 #      that resolves the same lane runs as info, never asking pnpm or
-#      waiting on its parent's lock. A command inside a running project
-#      command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) coordinates like any
-#      other, its own token for a project command, the lock for a mutate,
-#      except that the chain of commands it runs inside
-#      (GC_TOOLCHAIN_LANE_DEPS_READER=<their pids>) is never waited for and
-#      is marked as upgrading (one mark per waiting descendant, named by
-#      its pid, dropped before the lock is released on every way out) while
-#      it waits for and holds the lock, so
-#      other mutates pass those over (blocked in this child, they read
-#      nothing; two scripts each running a nested mutate would otherwise
-#      wait for each other for ever); a sibling (`pnpm run lint & pnpm
-#      rebuild`) holds its own token and is waited for. A lane whose
+#      waiting on its parent's lock. Inside a running project command
+#      (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) another project command runs
+#      as is: that command's token holds every mutate off and its
+#      readiness is settled. A mutate there is refused, closed, naming the
+#      command (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>): it would change
+#      node_modules under the command that runs it and under whatever else
+#      that command reads, in the background too (`node check.js & pnpm
+#      rebuild`), and no exemption of the running command is sound (eight
+#      gate rounds found a hole around each one: a sibling reader, a
+#      deadlock between two scripts, a shared mark, a mark dropped after
+#      the lock, an asynchronous reader). Run such a mutate on its own, or
+#      with GC_TOOLCHAIN_LANE_DEPS=off when the lane is yours alone. A lane whose
 #      node_modules refuses the lock for this caller (a sandbox) cannot be
 #      coordinated from here, another caller could change it under the
 #      command, so the command fails closed naming the refusal;
@@ -703,34 +703,7 @@ drop_token() {
         TOKEN=""
     fi
 }
-# A command inside a running project command marks every token of the
-# chain it runs inside as upgrading (<token>.upgrading.<this pid>, one
-# mark per waiting descendant, so two children of one command never touch
-# each other's) for as long as it waits for and holds the lane lock: those
-# ancestors are blocked in this child and read nothing, so a mutate
-# waiting for readers passes them over while any live mark stands.
-# Without the mark two scripts each running a nested mutate wait for each
-# other's parent for ever (the first child holds the lock and waits for
-# the second parent, whose child waits for the lock). A mark whose pid is
-# dead is a crashed child's and is dropped.
-UPGRADE_MARKS=""
-mark_upgrading() {
-    UPGRADE_MARKS=""
-    for anc in $ANCESTOR_TOKENS; do
-        m="$READERS/$anc.upgrading.$$"
-        : > "$m" 2>/dev/null && UPGRADE_MARKS="$UPGRADE_MARKS $m"
-    done
-}
-drop_upgrading() {
-    for m in $UPGRADE_MARKS; do
-        rm -f "$m" 2>/dev/null || true
-    done
-    UPGRADE_MARKS=""
-}
-# marks go before the lock on every way out: once the lock is free another
-# mutate may take it, and it must see this command's ancestors as readers
-# again by then (they resume the moment this child ends)
-cleanup() { drop_upgrading; release_lock; drop_token; }
+cleanup() { release_lock; drop_token; }
 trap 'cleanup' EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
@@ -755,23 +728,10 @@ wait_for_readers() {
             [ -e "$t" ] || continue
             rp="${t##*/}"
             case "$rp" in ''|*[!0-9]*) continue ;; esac
-            case " $ANCESTOR_TOKENS " in *" $rp "*) continue ;; esac     # a command this one runs inside
             if owner_is_dead "$rp"; then
                 rm -f "$t" 2>/dev/null || true
                 continue
             fi
-            upgrading=0
-            for m in "$t".upgrading.*; do
-                [ -e "$m" ] || continue
-                up="${m##*.}"
-                case "$up" in ''|*[!0-9]*) continue ;; esac
-                if owner_is_dead "$up"; then
-                    rm -f "$m" 2>/dev/null || true      # a crashed child's mark
-                else
-                    upgrading=1
-                fi
-            done
-            [ "$upgrading" -eq 0 ] || continue      # blocked in a nested command of its own: reading nothing
             live="$live $rp"
         done
         [ -n "$live" ] || return 0
@@ -884,12 +844,16 @@ fi
 if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
-ANCESTOR_TOKENS=""
 if [ "${GC_TOOLCHAIN_LANE_DEPS_READING:-}" = "$LANE" ]; then
-    # a descendant of a running project command coordinates like any other
-    # (its own token, its own wait), except that the chain of commands it
-    # runs inside is never waited for: those are blocked in it
-    ANCESTOR_TOKENS="${GC_TOOLCHAIN_LANE_DEPS_READER:-}"
+    # inside a running project command: its token holds every mutate off
+    # and its readiness is settled, so another project command runs as is;
+    # a mutate here would change node_modules under the command that runs
+    # it (and under whatever else that command reads, in the background
+    # too), and there is no safe handoff for that, so it is refused
+    case "$KIND" in
+        project) exec_pnpm "$@" ;;
+        mutate) die "refused: a mutate inside a running lane command (pid ${GC_TOOLCHAIN_LANE_DEPS_READER:-unknown}) would change $LANE/node_modules under it; run it on its own, or with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run" ;;
+    esac
 fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
@@ -897,12 +861,10 @@ READERS="$NM/.gc-lane-deps.readers"
 
 case "$KIND" in
     mutate)
-        mark_upgrading
         take_lane_lock || die "cannot create $LOCK ($LOCK_REFUSED); this command did not run"
         wait_for_readers
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
-        drop_upgrading
         release_lock
         exit "$status"
         ;;
@@ -911,7 +873,6 @@ case "$KIND" in
         # waited for first; a rebuild half done still reads as in sync to
         # pnpm), the command then runs holding a reader token, so no mutate
         # starts under it
-        mark_upgrading
         take_lane_lock \
             || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, another caller could change node_modules under this command; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
         if [ "$(deps_status)" = stale ]; then
@@ -922,10 +883,9 @@ case "$KIND" in
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
         take_token
-        drop_upgrading
         release_lock
         status=0
-        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="${ANCESTOR_TOKENS:+$ANCESTOR_TOKENS }$$" run_pnpm "$@" || status=$?
+        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="$$" run_pnpm "$@" || status=$?
         drop_token
         exit "$status"
         ;;

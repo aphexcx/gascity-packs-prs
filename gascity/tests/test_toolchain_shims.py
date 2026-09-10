@@ -1201,133 +1201,51 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         finally:
             holder.kill()
             holder.wait()
-        # a project command inside a running project command takes its own token (asked
-        # under the lock like any other; a sibling mutate waits for it)
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)     # prepared again after the stale step above
+        # a project command inside a running project command runs as is: the running command's
+        # token holds every mutate off and its readiness is settled (asked nothing, no token)
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
         self.fx.reset()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()), GC_TOOLCHAIN_LANE_DEPS_READER="1")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.argv(), ["exec vitest"])
-        self.assertEqual(len(self.fx.checks()), 1)
-        # `pnpm run lint & pnpm rebuild; wait` inside a script: the rebuild waits for the
-        # lint (its sibling's token), never for the script that runs both
-        hook = self.fx.root / "lint-and-rebuild.sh"
-        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_RUN_SLEEP=4 "{self.fx.shims / "pnpm"}" exec lint & lp=$!\nsleep 1.5\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nwait "$lp"\n')
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
+        self.assertEqual(sorted(readers.iterdir()), [])
+        # a mutate inside a running project command is refused, closed, at once, naming the
+        # command: `pnpm rebuild` from a script (the fake runs the wrapper from inside the
+        # command), also `node check.js & pnpm rebuild` and two scripts each rebuilding
+        hook = self.fx.root / "rebuild-inside.sh"
+        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nsleep 1 & bg=$!\n"{self.fx.shims / "pnpm"}" rebuild || {{ wait "$bg"; exit 9; }}\nwait "$bg"\n')
         self.fx.reset()
         started = time.monotonic()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
-        elapsed = time.monotonic() - started
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("waiting for running lane command(s)", r.stderr)
-        self.assertGreaterEqual(elapsed, 3)
-        self.assertLess(elapsed, 20)
-        self.assertEqual(self.fx.argv(), ["exec vitest", "exec lint", "rebuild"])
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+        self.assertEqual(r.returncode, 9, r.stderr)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertIn("refused: a mutate inside a running lane command (pid ", r.stderr)
+        self.assertIn("GC_TOOLCHAIN_LANE_DEPS=off", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])      # the rebuild never ran
+        self.assertTrue(in_sync(proj))
         self.assertEqual(sorted(readers.iterdir()), [])
-        # two nested rebuilds under one script at once, and a top-level rebuild meanwhile: each
-        # child carries its own mark, so the first to finish never unmarks the script while
-        # the other still waits, and the top-level rebuild never waits for that blocked script
-        hook2 = self.fx.root / "two-rebuilds.sh"
-        write_exec(hook2, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_SLEEP=2 "{self.fx.shims / "pnpm"}" rebuild & a=$!\nFAKE_PNPM_SLEEP=2 "{self.fx.shims / "pnpm"}" rebuild & b=$!\nwait "$a" && wait "$b"\n')
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.fx.reset()
-        trio: dict[str, subprocess.CompletedProcess[str]] = {}
-
-        def script2() -> None:
-            trio["script"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook2), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-
-        def top_level() -> None:
-            time.sleep(1)
-            trio["top"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-
-        started = time.monotonic()
-        threads = [threading.Thread(target=script2), threading.Thread(target=top_level)]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=90)
-        elapsed = time.monotonic() - started
-        self.assertEqual(trio["script"].returncode, 0, trio["script"].stderr)
-        self.assertEqual(trio["top"].returncode, 0, trio["top"].stderr)
-        self.assertLess(elapsed, 25)
-        self.assertEqual(sorted(self.fx.argv()), ["exec vitest", "rebuild", "rebuild", "rebuild"])
-        self.assertEqual(sorted(readers.iterdir()), [])
-        # `pnpm rebuild && node check.js` inside a script while another mutate waits: the
-        # script's mark goes before the lock is released, so the other mutate, taking the
-        # lock next, waits for the script (reading again) and runs only after it
-        hook3 = self.fx.root / "rebuild-then-check.sh"
-        write_exec(hook3, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nsleep 3\n')
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.fx.reset()
-        duo: dict[str, subprocess.CompletedProcess[str]] = {}
-        ends: dict[str, float] = {}
-
-        def script3() -> None:
-            duo["script"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook3), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-            ends["script"] = time.monotonic()
-
-        def other() -> None:
-            time.sleep(0.7)
-            duo["other"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-            ends["other"] = time.monotonic()
-
-        threads = [threading.Thread(target=script3), threading.Thread(target=other)]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=90)
-        self.assertEqual(duo["script"].returncode, 0, duo["script"].stderr)
-        self.assertEqual(duo["other"].returncode, 0, duo["other"].stderr)
-        self.assertGreaterEqual(ends["other"], ends["script"])     # the other rebuild ran after the script's check
-        self.assertIn("waiting for running lane command(s)", duo["other"].stderr)
-        # a mutate inside a running project command (a test script that rebuilds) takes the
-        # lock and waits for every reader but its ancestor: it runs inside the command...
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.fx.reset()
-        started = time.monotonic()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="8")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertLess(time.monotonic() - started, 8)
-        self.assertNotIn("still running", r.stderr)
-        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
-        self.assertEqual(sorted(readers.iterdir()), [])
-        # ...and waits for a foreign reader, failing closed after LANE_DEPS_WAIT
-        holder = subprocess.Popen(["sleep", "60"])
-        try:
-            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-            (readers / str(holder.pid)).write_text("", encoding="utf-8")
-            self.fx.reset()
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
-            self.assertNotEqual(r.returncode, 0)
-            self.assertIn(f"still running (pid {holder.pid})", r.stderr)
-            self.assertEqual(self.fx.argv(), ["exec vitest"])      # the nested rebuild never ran
-        finally:
-            holder.kill()
-            holder.wait()
-            (readers / str(holder.pid)).unlink(missing_ok=True)
-        # two scripts each running a nested rebuild at once: neither waits for the other's
-        # parent (the parent is blocked in its child, marked upgrading), both finish
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.fx.reset()
-        pair: dict[str, subprocess.CompletedProcess[str]] = {}
+        pair2: dict[str, subprocess.CompletedProcess[str]] = {}
 
         def script(name: str) -> None:
-            pair[name] = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_RUN_HOOK=f"{self.fx.shims / 'pnpm'} rebuild", GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+            pair2[name] = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
 
         started = time.monotonic()
         threads = [threading.Thread(target=script, args=(n,)) for n in ("vitest", "eslint")]
         for th in threads:
             th.start()
         for th in threads:
-            th.join(timeout=90)
-        elapsed = time.monotonic() - started
+            th.join(timeout=60)
+        self.assertLess(time.monotonic() - started, 15)     # refused, never a wait on each other
         for name in ("vitest", "eslint"):
-            self.assertEqual(pair[name].returncode, 0, (name, pair[name].stderr))
-        self.assertLess(elapsed, 25)
-        # (the first nested rebuild leaves the fake's tree stale, so the second script's
-        # readiness check may install once before it runs)
-        self.assertEqual(sorted(a for a in self.fx.argv() if a != "install --frozen-lockfile"), ["exec eslint", "exec vitest", "rebuild", "rebuild"])
-        self.assertEqual(sorted(readers.iterdir()), [])     # tokens and marks dropped
+            self.assertEqual(pair2[name].returncode, 9, (name, pair2[name].stderr))
+            self.assertIn("refused", pair2[name].stderr)
+        # the documented way through: LANE_DEPS=off on the nested command runs it as is
+        hook_off = self.fx.root / "rebuild-inside-off.sh"
+        write_exec(hook_off, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nGC_TOOLCHAIN_LANE_DEPS=off "{self.fx.shims / "pnpm"}" rebuild || exit 9\n')
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook_off))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
         # a lane whose node_modules refuses the lock for this caller cannot be coordinated from
         # here: the command fails closed at once whatever pnpm would say; LANE_DEPS=off runs it
         ro = self.fx.project("ro")
