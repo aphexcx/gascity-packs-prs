@@ -73,7 +73,13 @@ setup only. Do not edit source files in the launcher checkout.
      --show-current` prints nothing.
    Do NOT persist `work_dir` in the lane case: step 6 is skipped. A directory
    is per agent and is never handed to another agent; the next role works in
-   its own lane on the recorded branch.
+   its own lane on the recorded branch. The source anchor then has no
+   `work_dir` and records `gc.work_branch`, and every later step that reads
+   `work_dir` (implement, close-source-anchor, the review setup and its review
+   and fix lanes) resolves that case in its OWN lane: it switches its lane onto
+   the branch with `git switch --no-overwrite-ignore "<gc.work_branch>"` to
+   work, or reads the branch's commit with `git log -1` / `git show` to
+   inspect, and never enters another agent's lane.
    Otherwise (the session started in the rig root; the role has no lane),
    continue with step 5.
 5. Create or reuse a deterministic git worktree at

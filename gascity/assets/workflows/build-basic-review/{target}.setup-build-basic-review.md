@@ -23,14 +23,28 @@ list, and read `metadata.work_dir`. Verify every `work_dir` is an absolute
 existing git worktree and is different from the launcher root. If metadata is
 missing but `<launcher-root>/worktrees/<source-anchor-id>` exists and is a git
 worktree, record that recovered worktree and include a setup warning in the
-context. If no implementation worktree can be resolved, close this setup bead
-with `gc.outcome=fail` and record the missing source-anchor/worktree evidence.
+context. If no implementation worktree can be resolved and the lane case in
+the next paragraph does not apply, close this setup bead with
+`gc.outcome=fail` and record the missing source-anchor/worktree evidence.
+
+When the source anchor has no `work_dir` and records `gc.work_branch`
+(`prepare-worktree` ran in a lane and handed the item over by branch; a
+directory is per agent and is never handed to another agent), record the
+BRANCH (`gc.work_branch`) and the COMMIT id (`git -C "$GC_DIR" rev-parse
+"<gc.work_branch>"`, read from your own lane: every worktree of the rig shares
+its refs) in the context in place of a directory; the review and fix lanes
+resolve those in their own lanes. Never enter another agent's lane, and never
+record one as the workspace: a persisted `work_dir` that names an agent lane
+(`.worktrees/<rig>/lane-*`) is invalid, and so is a recorded branch that is
+missing from the repository; close this setup bead with `gc.outcome=fail` and
+say which, instead of pointing the review at a directory it must not enter.
 
 The context body must include an `## Implementation Worktrees` section before
 the artifact excerpts. For each source anchor include:
 
 - source anchor id
-- absolute implementation worktree path
+- absolute implementation worktree path, or, in the lane case, the recorded
+  branch (`gc.work_branch`) and commit id in place of a path
 - launcher root path for contrast
 - changed files and proof commands from the item or aggregate implementation
   summary

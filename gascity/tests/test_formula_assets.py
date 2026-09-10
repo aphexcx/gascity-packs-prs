@@ -2256,8 +2256,8 @@ class FormulaAssetTests(unittest.TestCase):
                 '`git -C "$GC_DIR" rev-parse --git-common-dir` is the rig root\'s `.git`',
                 "fail this step before editing and never run `switch` there",
                 "switching a subdirectory of the rig checkout would switch the human checkout's branch",
-                'switch your own lane onto the recorded branch with `git -C "$GC_DIR" switch "<gc.work_branch>"`',
-                "if git refuses, or the branch is missing from the repository, fail this step before editing",
+                'switch your own lane onto the recorded branch with `git -C "$GC_DIR" switch --no-overwrite-ignore "<gc.work_branch>"`',
+                "If git refuses, for that or any other reason, or the branch is missing from the repository, fail this step before editing",
                 "Never enter another agent's lane",
                 "never treat a persisted `work_dir` that points into `.worktrees/<rig>/lane-*` of another agent as yours",
                 "Otherwise the steps below apply unchanged",
@@ -2309,10 +2309,183 @@ class FormulaAssetTests(unittest.TestCase):
                 "Otherwise the steps below apply unchanged"
             )
         ]
-        switch_at = lane.index('switch "<gc.work_branch>"')
+        switch_at = lane.index('switch --no-overwrite-ignore "<gc.work_branch>"')
         for probe in ("rev-parse --show-toplevel", "nor inside the rig root", "rev-parse --git-common-dir"):
             with self.subTest(implement_probe=probe):
                 self.assertLess(lane.index(probe), switch_at)
+
+    # Round 5 (gate r4). The lane case is ONE contract carried by EVERY step
+    # that reads the source anchor's work_dir, not by the two steps a gate
+    # happened to name: rounds 3 and 4 each fixed the readers the gate found
+    # and the next gate found the next reader (implement.md line 45 and the
+    # review setup still required a directory). These rows are grep-driven so
+    # a consumer added later without the clause fails here.
+    WORK_DIR_READERS_WITH_LANE_CLAUSE = (
+        "do-work/prepare-worktree.md",
+        "do-work/implement.md",
+        "do-work/close-source-anchor.md",
+        "do-work-item/implement-item.md",
+        "implementation-base/implement.md",
+        "implementation-item-base/implement-item.md",
+        "build-basic-review/{target}.setup-build-basic-review.md",
+        "build-basic-review/{target}.acceptance-review.md",
+        "build-basic-review/{target}.simplicity-review.md",
+        "build-basic-review/{target}.test-evidence-review.md",
+        "build-basic-review/{target}.apply-review-findings.md",
+    )
+
+    @staticmethod
+    def _work_dir_readers(workflows: pathlib.Path) -> dict[str, str]:
+        """Every workflow step whose text reads the source anchor's `work_dir`.
+        `gc.work_dir` is the launcher rig root (a different key) and is excluded;
+        `metadata.work_dir` and `work_dir=` are the same key and count."""
+        readers = {}
+        for path in sorted(workflows.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"(?<!gc\.)\bwork_dir\b", text):
+                readers[path.relative_to(workflows).as_posix()] = " ".join(text.split())
+        return readers
+
+    def test_every_work_dir_reader_carries_the_lane_clause(self) -> None:
+        """Gate r4 finding 1: prepare-worktree in a lane records `gc.work_branch`
+        and persists no `work_dir`, so every reader of `work_dir` must resolve
+        that case in its OWN lane (switch its lane onto the branch to work, or
+        read the branch's commit to inspect) and must fail closed on a
+        `work_dir` naming an agent lane. The marker is the pair `gc.work_branch`
+        + "no `work_dir`"; the reader list below is the floor, found by grep,
+        not a ceiling."""
+        workflows = pathlib.Path(__file__).resolve().parents[1] / "assets" / "workflows"
+        readers = self._work_dir_readers(workflows)
+        missing = set(self.WORK_DIR_READERS_WITH_LANE_CLAUSE) - set(readers)
+        self.assertEqual(missing, set(), f"expected work_dir readers vanished: {sorted(missing)}")
+        for relative_path, flat in readers.items():
+            with self.subTest(reader=relative_path):
+                self.assertIn("`gc.work_branch`", flat)
+                self.assertIn("no `work_dir`", flat)
+                self.assertRegex(flat, r"(?i)never enters? another agent's (lane|directory)")
+                self.assertRegex(flat, r"lane-\*|own lane|OWN lane")
+        # The four `gc.work_dir`-only steps read the launcher rig root for the
+        # artifact validator and are NOT source-anchor work_dir readers.
+        for relative_path in (
+            "build-base/summarize-implementation.md",
+            "implement/summarize.md",
+        ):
+            with self.subTest(launcher_root_only=relative_path):
+                self.assertNotIn(relative_path, readers)
+                self.assertIn("`gc.work_dir`", (workflows / relative_path).read_text(encoding="utf-8"))
+
+    def test_every_lane_switch_refuses_to_overwrite_ignored_files(self) -> None:
+        """Gate r4 finding 2: a plain `git switch` onto the recorded branch
+        silently overwrites an ignored file in the lane that the branch tracks.
+        Every switch onto `<gc.work_branch>` in every workflow step carries
+        `--no-overwrite-ignore` and the step fails on the refusal (never
+        `--force`, never a stash, never removing the file), as
+        `worker-worktree.sh` already does in switch_worktree."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflows = root / "assets" / "workflows"
+        spans_by_file: dict[str, list[str]] = {}
+        for path in sorted(workflows.rglob("*.md")):
+            flat = " ".join(path.read_text(encoding="utf-8").split())
+            spans = [s for s in re.findall(r"`[^`]*`", flat) if "switch" in s and "<gc.work_branch>" in s]
+            if spans:
+                spans_by_file[path.relative_to(workflows).as_posix()] = spans
+        for relative_path, spans in spans_by_file.items():
+            for span in spans:
+                with self.subTest(asset=relative_path, span=span):
+                    self.assertIn("--no-overwrite-ignore", span)
+                    self.assertNotIn("--force", span)
+        for relative_path in (
+            "do-work/prepare-worktree.md",
+            "do-work/implement.md",
+            "do-work-item/implement-item.md",
+            "implementation-base/implement.md",
+            "implementation-item-base/implement-item.md",
+            "build-basic-review/{target}.acceptance-review.md",
+            "build-basic-review/{target}.simplicity-review.md",
+            "build-basic-review/{target}.test-evidence-review.md",
+            "build-basic-review/{target}.apply-review-findings.md",
+        ):
+            with self.subTest(switching_step=relative_path):
+                self.assertIn(relative_path, spans_by_file)
+        # The steps that EDIT in the lane say what the flag protects and how
+        # the refusal is handled; the boundary test comes before the switch.
+        for relative_path in (
+            "do-work/implement.md",
+            "do-work-item/implement-item.md",
+            "implementation-base/implement.md",
+            "implementation-item-base/implement-item.md",
+            "build-basic-review/{target}.apply-review-findings.md",
+        ):
+            flat = " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
+            with self.subTest(editing_step=relative_path):
+                self.assertRegex(flat, r"ignored file in your lane .*collid")
+                self.assertIn("never `--force`", flat)
+                self.assertIn("never a stash", flat)
+                self.assertRegex(flat, r"never remove the colliding file")
+                switch_at = flat.index('switch --no-overwrite-ignore "<gc.work_branch>"')
+                for probe in ("rev-parse --show-toplevel", "rev-parse --git-common-dir"):
+                    self.assertLess(flat.index(probe), switch_at, probe)
+        script = (root / "assets" / "scripts" / "worker-worktree.sh").read_text(encoding="utf-8")
+        self.assertIn('git -C "$WORKDIR" switch --quiet --no-overwrite-ignore "$TARGET"', script)
+
+    def test_review_setup_records_branch_and_commit_when_work_dir_is_absent(self) -> None:
+        """Gate r4 finding 1, the review half: setup-build-basic-review wrote the
+        source anchor's `work_dir` into the review context, so the review and
+        fix lanes of the default separate-drain build had no workspace after a
+        lane handoff. It now records the BRANCH and the COMMIT id instead,
+        read from its own lane, and the lanes resolve those in their own
+        lanes; a `work_dir` naming an agent lane fails the setup bead."""
+        workflows = pathlib.Path(__file__).resolve().parents[1] / "assets" / "workflows"
+        setup = " ".join(
+            (workflows / "build-basic-review/{target}.setup-build-basic-review.md").read_text(encoding="utf-8").split()
+        )
+        for clause in (
+            "Include the source anchor id, its `work_dir`, changed files, commit id, and proof commands in the context",
+            "When the source anchor has no `work_dir` and records `gc.work_branch`",
+            "record the BRANCH (`gc.work_branch`) and the COMMIT id",
+            '`git -C "$GC_DIR" rev-parse "<gc.work_branch>"`, read from your own lane',
+            "in the context in place of a directory",
+            "the review and fix lanes resolve those in their own lanes",
+            "a persisted `work_dir` that names an agent lane (`.worktrees/<rig>/lane-*`) is invalid",
+            "a recorded branch that is missing from the repository",
+            "close this setup bead with `gc.outcome=fail`",
+        ):
+            with self.subTest(clause=clause):
+                self.assertIn(clause, setup)
+        # The consumers read the branch + commit, from their own lanes.
+        for relative_path, clauses in {
+            "build-basic-review/{target}.acceptance-review.md": (
+                "as a branch and a commit id",
+                '`git -C "$GC_DIR" log -1 <commit>`',
+                '`git -C "$GC_DIR" show <commit>:<path>`',
+                "put your own lane on the recorded branch first exactly as `do-work/implement` does for the lane case",
+                "write an iterate finding against review setup instead of entering it",
+            ),
+            "build-basic-review/{target}.simplicity-review.md": (
+                "the recorded branch and commit read from your OWN lane",
+                '`git -C "$GC_DIR" show <commit>:<path>`',
+            ),
+            "build-basic-review/{target}.test-evidence-review.md": (
+                "the recorded branch and commit read from your OWN lane",
+                '`git -C "$GC_DIR" show <commit>:<path>`',
+            ),
+            "build-basic-review/{target}.apply-review-findings.md": (
+                "When the review context records a branch and a commit instead of a `work_dir`",
+                "the workspace for fixes is your OWN lane, `$GC_DIR`, put on that branch exactly as `do-work/implement` does for the lane case",
+                "commit the fix on that branch",
+            ),
+            "do-work/implement.md": (
+                "use only its `work_dir` metadata as `WORKTREE`, or, when it has no `work_dir` and records `gc.work_branch`, your own lane `$GC_DIR` on that branch",
+            ),
+            "do-work/prepare-worktree.md": (
+                "The source anchor then has no `work_dir` and records `gc.work_branch`, and every later step that reads `work_dir`",
+                "resolves that case in its OWN lane",
+            ),
+        }.items():
+            flat = " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
+            for clause in clauses:
+                with self.subTest(asset=relative_path, clause=clause):
+                    self.assertIn(clause, flat)
 
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]
