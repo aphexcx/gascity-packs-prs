@@ -34,7 +34,10 @@
 #                  (`install`, `ci`, `add`, `remove`, `update`, `link`,
 #                  `prune`, `dedupe`, `rebuild`, `clean`, `purge`, ...): runs
 #                  where typed, arguments unchanged, under the lane lock, so
-#                  it never overlaps another caller's install.
+#                  it never overlaps another caller's install. A package
+#                  script named `clean`, `purge`, `rebuild`, `setup` or
+#                  `deploy` wins over the built-in for pnpm, so it does here
+#                  (project), unless `pnpm pm <name>` forced the built-in.
 #        project — `run`, `exec`, `test`, a bare script or bin name, anything
 #                  else: first makes sure the lane is in sync, then runs.
 #      In sync is pnpm's own word, never this wrapper's: before a project
@@ -44,7 +47,10 @@
 #      nothing (`exec true`). pnpm's checkDepsStatus compares node_modules
 #      with the lockfile, every manifest, the workspace membership and the
 #      settings, and answers yes (exit 0) or no (a VERIFY_DEPS_BEFORE_RUN
-#      error, node_modules missing included). Yes: the command runs. No: one
+#      error, node_modules missing included); any other failure (a denied
+#      write to pnpm's workspace state file on a read-only lane, a broken
+#      manifest) is not a verdict: one WARN and the command runs as is,
+#      never an install. Yes: the command runs. No: one
 #      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
 #      is the nearest ancestor of TARGET holding pnpm-lock.yaml; a project
 #      command with no lockfile above it runs as is), asks pnpm again under
@@ -190,12 +196,22 @@ resolve_dir() {
     esac
 }
 
+# script_defined NAME: the package.json pnpm would read at TARGET defines
+# scripts.NAME (read with node, the toolchain's own when pinned; without node
+# the built-in reading stands).
+script_defined() {
+    [ -f "$TARGET/package.json" ] || return 1
+    command -v node >/dev/null 2>&1 || return 1
+    node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).scripts)||{};process.exit(Object.prototype.hasOwnProperty.call(s,process.argv[2])?0:1)' "$TARGET/package.json" "$1" 2>/dev/null
+}
+
 # classify ARGS: sets KIND (info, mutate or project) and TARGET (see header).
 classify() {
     KIND=info
     TARGET="$(pwd -P)"
     want_value=""
     command_seen=0
+    pm_forced=0
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
@@ -224,10 +240,19 @@ classify() {
         fi
         [ "$command_seen" -eq 0 ] || continue
         case "$a" in
-            recursive|multi|m|pm) continue ;;
+            recursive|multi|m) continue ;;
+            pm) pm_forced=1; continue ;;
             with) want_value=other; continue ;;
         esac
         command_seen=1
+        case "$a" in
+            clean|purge|rebuild|setup|deploy)
+                # a package script of the same name wins over the built-in unless `pm` forced it
+                if [ "$pm_forced" -eq 0 ] && script_defined "$a"; then
+                    KIND=project
+                    return 0
+                fi ;;
+        esac
         case "$a" in
             install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un| \
             update|up|upgrade|link|ln|unlink|dislink|import|prune|fetch|dedupe|rebuild|rb| \
@@ -266,12 +291,21 @@ lane_of() {
     done
 }
 
-# deps_in_sync: pnpm's own verdict on TARGET, read-only, running nothing.
-deps_in_sync() {
-    (
+# deps_status: pnpm's own verdict on TARGET, running nothing. Prints one of
+# insync (exit 0), stale (pnpm named ERR_PNPM_VERIFY_DEPS_BEFORE_RUN) or
+# unknown (any other failure: a denied write to pnpm's workspace state file
+# on a read-only lane, a broken manifest, ...); an unknown verdict is not a
+# reason to install, the command runs as pnpm would run it, after one WARN.
+deps_status() {
+    probe_err="$(
         unset pnpm_config_verify_deps_before_run
-        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true
-    ) >/dev/null 2>&1
+        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true 2>&1 >/dev/null
+    )" && { printf 'insync\n'; return 0; }
+    case "$probe_err" in
+        *VERIFY_DEPS_BEFORE_RUN*) printf 'stale\n' ;;
+        *) warn "pnpm could not judge the lane at $TARGET, running as is: $(printf '%s\n' "$probe_err" | sed -n '1p' | cut -c1-160)"
+           printf 'unknown\n' ;;
+    esac
 }
 
 # --- the lane lock -----------------------------------------------------------------
@@ -389,11 +423,11 @@ case "$KIND" in
         exit "$status"
         ;;
     project)
-        if deps_in_sync; then
+        if [ "$(deps_status)" != stale ]; then
             exec_pnpm "$@"
         fi
         take_lane_lock
-        if ! deps_in_sync; then
+        if [ "$(deps_status)" = stale ]; then
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
             (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm install --frozen-lockfile) >&2 || status=$?
