@@ -302,15 +302,18 @@ runs in its own process; the one city-side place a freshly minted value can
 enter the session environment is a provider `command` wrapper. This pack
 ships that wrapper as `assets/scripts/codex-infisical-shim.sh`: when
 `INFISICAL_TOKEN` is unset or empty it sources
-`$HOME/.config/infisical-agent/token.sh` fail-open, in a subshell with the
-helper's output discarded, and carries over exactly one value, the token the
-helper exported (a missing file is silent, a failing helper leaves the token
-unset and prints one WARN, an `exit` or a `set --` in the helper cannot reach
-the shim, the session starts either way); then it execs the real codex with
-argv intact. It never execs itself: it locates itself with shell builtins
-only and refuses to run when it cannot, every PATH entry that resolves to its
-own directory is removed first, and no codex left on PATH is an error (exit
-127), never a loop. Nothing the helper prints reaches the session output.
+`$HOME/.config/infisical-agent/token.sh` fail-open, in a subshell whose
+stdout and stderr are `/dev/null` for its whole lifetime, and carries over
+exactly one value, the token the helper exported (a missing file is silent, a
+failing helper leaves the token unset and prints one WARN, an `exit`, a
+`set --`, a trace or an EXIT trap in the helper cannot reach the shim or the
+session output, the session starts either way); then it execs the real codex
+with argv intact. It never execs itself: it locates itself with shell
+builtins only and refuses to run when it cannot, every PATH entry that
+resolves to its own directory is removed first (empty entries kept; when
+nothing survives, PATH becomes `/dev/null`, never the empty string bash reads
+as the current directory), and no codex left on PATH is an error (exit 127),
+never a loop.
 
 Install it as the city's shim, in its own directory (gc does not sync a
 pack's `assets/scripts` anywhere), with the per-city settings in a
@@ -357,22 +360,25 @@ INFISICAL_PROJECT_ID = "<project id>"
 The installed copy is city runtime state; the file here is its source of
 record. A city verifies at each wake that the installed shim is this file at
 the installed pin. Record the canonical md5 once, from the pack checkout at
-that pin, and compare the installed file to the literal, so a missing file or
-a missing md5 tool fails the check instead of matching an empty string
-(`md5sum` on Linux prints the same hash first):
+that pin (the extraction must succeed before anything is hashed, so a bad pin
+records nothing rather than the hash of empty input), and compare the
+installed file to the literal, so a missing file or a missing md5 tool fails
+the check instead of matching an empty string (`md5sum` on Linux prints the
+same hash first):
 
 ```sh
-git -C path/to/gascity-packs show <pin>:gascity/assets/scripts/codex-infisical-shim.sh | md5 -q
+canonical=$(mktemp) && git -C path/to/gascity-packs show <pin>:gascity/assets/scripts/codex-infisical-shim.sh > "$canonical" && md5 -q "$canonical"
 test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = <that md5>
 ```
 
 `gascity/tests/test_codex_infisical_shim.py` holds the contract: fail-open
-with the helper absent, present, failing, exiting, printing or rewriting
-argv; only the token crosses over; argv intact; PATH pruned through
-symlinked and relative aliases with empty entries kept; the self-exec
-refusals, with no utility on PATH; the settings file never evaluated; the
-install recipe above run from a fresh directory and the md5 check failing on
-a missing file.
+with the helper absent, present, failing, exiting, tracing, trapping,
+printing or rewriting argv; only the token crosses over; argv intact; PATH
+pruned through symlinked and relative aliases with empty entries kept and
+never emptied; the self-exec refusals, with no utility on PATH and under
+CDPATH; the settings file never evaluated; the install recipe above run from
+a fresh directory, the md5 recording refusing a bad pin and the check failing
+on a missing file.
 
 ## Build Methodology Contract
 
