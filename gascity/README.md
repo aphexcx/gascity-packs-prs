@@ -451,8 +451,12 @@ broken manifest) is no verdict: one WARN and the command runs as is, never
 an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
 (the workspace root above the target, the nearest `pnpm-workspace.yaml`,
 because a workspace install writes every member's tree whatever
-`sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; a project
-command with neither above it runs as is), asks pnpm again under the lock, runs `pnpm
+`sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; under
+`--ignore-workspace`, pnpm's "this directory is a standalone project", the
+lane is the target directory itself when it holds `pnpm-lock.yaml`, and the
+question and the install carry the flag, so a fixture project inside a
+workspace is prepared as itself, never its parent; a project command with
+no lane runs as is), asks pnpm again under the lock, runs `pnpm
 install --frozen-lockfile` in the lane when the answer is still no, and
 releases; concurrent callers wait for the lock and ask pnpm again, so a lane
 is installed once whatever runs in parallel. A failed install fails the
@@ -499,7 +503,10 @@ under the toolchain, else the newest matching release in
 `https://nodejs.org/dist` (`GC_TOOLCHAIN_NODE_DIST` overrides; `file://`
 works), checked against that release's `SHASUMS256.txt` before extraction,
 staged beside the target and renamed into place under a lock other callers
-wait for. When the pin cannot be installed (no network, the toolchain
+wait for (owner pid inside; an interrupted install's lock, its owner dead
+or absent for two minutes, is moved aside by rename under a second reclaim
+lock after a re-read, the same shape as the pnpm lane lock, so two waiters
+never clear it twice and one tree is installed). When the pin cannot be installed (no network, the toolchain
 directory not writable as under a sandbox, a checksum mismatch, installs
 off), the wrapper prints one WARN and falls through to the next `node` on
 PATH, so a toolchain error strands no session. pnpm's own bin resolves
