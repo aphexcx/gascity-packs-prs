@@ -222,7 +222,8 @@ class PnpmShimTests(unittest.TestCase):
         self.assertIn("exit 7", r.stderr)
         self.assertIn("this command did not run", r.stderr)
         self.assertEqual(len(self.fx.calls()), 1, self.fx.calls())
-        self.assertFalse((proj / "node_modules" / ".gc-lane-deps").exists())
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
         self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
         # the next caller retries the install rather than trusting a half tree
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
@@ -480,3 +481,167 @@ class NodeShimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PnpmShimGateRound1Tests(unittest.TestCase):
+    """Rows for the codex gate's round-1 findings: a lifecycle script that
+    re-enters the wrapper during the install, two waiters clearing one stale
+    lock, and a failed reinstall leaving an older lockfile's marker."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_lifecycle_script_that_reenters_the_wrapper_during_the_install_does_not_deadlock(self) -> None:
+        proj = self.fx.project()
+        # the fake install runs a postinstall-style `pnpm run build` through the wrapper
+        write_exec(
+            self.fx.fake_pnpm,
+            FAKE_PNPM.replace(
+                '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
+                '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
+                '    "$FAKE_WRAPPER" run build || exit 9\n',
+            ),
+        )
+        r = self.fx.run(
+            "pnpm", "exec", "vitest", cwd=proj,
+            FAKE_WRAPPER=str(self.fx.shims / "pnpm"), GC_TOOLCHAIN_LANE_DEPS_WAIT="8",
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("waiting for another caller", r.stderr)
+        argv = [c.split("|", 2)[2] for c in self.fx.calls()]
+        self.assertEqual(argv, ["install --frozen-lockfile", "run build", "exec vitest"])
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        # the bypass is scoped to that project: a sibling project still gets its own install
+        other = self.fx.project("other")
+        r = self.fx.run(
+            "pnpm", "exec", "vitest", cwd=other,
+            FAKE_WRAPPER=str(self.fx.shims / "pnpm"), GC_TOOLCHAIN_LANE_DEPS_INSTALLING=str(proj.resolve()),
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("installing lane dependencies once", r.stderr)
+
+    def test_two_waiters_seeing_one_dead_owner_clear_it_once_and_never_move_a_live_lock(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        results: list[subprocess.CompletedProcess[str]] = []
+        guard = threading.Lock()
+
+        def call(name: str) -> None:
+            # both observe the stale lock, then pause before reclaiming, so the
+            # second reclaim happens after the first has taken a fresh live lock
+            r = self.fx.run(
+                "pnpm", "exec", name, cwd=proj,
+                FAKE_PNPM_SLEEP="3", GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM="1",
+            )
+            with guard:
+                results.append(r)
+
+        threads = [threading.Thread(target=call, args=(n,)) for n in ("vitest", "eslint")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        self.assertEqual(len(results), 2)
+        for r in results:
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.installs()), 1, self.fx.calls())
+        aside = [p for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock.stale-")]
+        self.assertEqual(len(aside), 1, aside)
+        self.assertEqual((aside[0] / "pid").read_text(encoding="utf-8").strip(), str(dead.pid))
+        self.assertFalse(lock.exists())
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock.reclaim").exists())
+
+    def test_reclaim_reread_finds_the_lock_live_again_and_moves_nothing(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            # the wrapper sees the dead owner, takes the reclaim lock, pauses; meanwhile
+            # the lock is taken over by a live holder (as a faster waiter would do)
+            proc = subprocess.Popen(
+                [str(self.fx.shims / "pnpm"), "exec", "vitest"], cwd=str(proj),
+                env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="4"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            time.sleep(1)
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            out, err = proc.communicate(timeout=60)
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(proc.returncode, 1, err)
+        self.assertNotIn("moved aside", err)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held", err)
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
+
+    def test_stuck_reclaim_lock_fails_closed_when_old(self) -> None:
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        reclaim = proj / "node_modules" / ".gc-lane-deps.lock.reclaim"
+        reclaim.mkdir()
+        old = time.time() - 180
+        os.utime(reclaim, (old, old))
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("stale reclaim lock", r.stderr)
+        self.assertEqual(self.fx.calls(), [])
+        self.assertTrue(lock.exists())
+
+    def test_failed_reinstall_for_a_new_lockfile_leaves_no_trusted_marker(self) -> None:
+        proj = self.fx.project()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lock_a = (proj / "pnpm-lock.yaml").read_text(encoding="utf-8")
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        (proj / "pnpm-lock.yaml").write_text(lock_a + "b: true\n", encoding="utf-8")
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
+        self.assertEqual(r.returncode, 1)
+        self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+        # back on lockfile A: the tree may have been changed by the failed install, so it installs again
+        (proj / "pnpm-lock.yaml").write_text(lock_a, encoding="utf-8")
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(len(self.fx.installs()), 3, self.fx.calls())
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+
+    def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
+        proj = self.fx.project()
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            # the fake install replaces the lock's pid (as a waiter that reclaimed
+            # a lock it wrongly judged stale would); the installer must leave it
+            write_exec(
+                self.fx.fake_pnpm,
+                FAKE_PNPM.replace(
+                    '    mkdir -p node_modules && : > node_modules/.fake-installed\n',
+                    '    mkdir -p node_modules && : > node_modules/.fake-installed\n'
+                    f'    echo {holder.pid} > node_modules/.gc-lane-deps.lock/pid\n',
+                ),
+            )
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
