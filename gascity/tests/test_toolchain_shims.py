@@ -239,6 +239,40 @@ class PnpmShimVerdictTests(unittest.TestCase):
             self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
             self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists(), argv)
 
+    def test_audit_fix_and_workspace_root_are_resolved_before_the_lock_and_the_override(self) -> None:
+        ws = self.fx.root / "ws"
+        ws.mkdir()
+        (ws / "pnpm-workspace.yaml").write_text("packages:\n  - packages/*\n", encoding="utf-8")
+        (ws / "package.json").write_text('{"name":"ws","private":true}\n', encoding="utf-8")
+        (ws / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n", encoding="utf-8")
+        member = ws / "packages" / "a"
+        member.mkdir(parents=True)
+        (member / "package.json").write_text('{"name":"a","scripts":{"clean":"rimraf dist"}}\n', encoding="utf-8")
+        lock = ws / "node_modules" / ".gc-lane-deps.lock"
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            lock.mkdir(parents=True)
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            # `pnpm -w clean` from a member that defines clean: the ROOT has no such script,
+            # so it is the built-in workspace cleanup, under the workspace lock
+            r1 = self.fx.run("pnpm", "-w", "clean", cwd=member, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            r2 = self.fx.run("pnpm", "audit", "--fix", cwd=ws, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            r3 = self.fx.run("pnpm", "audit", cwd=ws, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        finally:
+            holder.kill()
+            holder.wait()
+        for r in (r1, r2):
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn(f"has held {lock.resolve()}", r.stderr)
+        self.assertEqual(r3.returncode, 0, r3.stderr)  # a plain audit is informational
+        self.assertEqual(self.fx.argv(), ["audit"])
+        # without -w, the member's own clean script is a project command
+        self.fx.reset()
+        r = self.fx.run("pnpm", "clean", cwd=member)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv()[-1], "clean")
+        self.assertGreaterEqual(len(self.fx.checks()), 1)
+
     def test_a_probe_error_that_is_not_a_verdict_runs_the_command_as_is(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_PROBE_ERROR="1", GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
@@ -962,6 +996,31 @@ class NodeShimTests(unittest.TestCase):
             r = self.fx.run(prog, "--v", GC_TOOLCHAIN_NODE_VERSION="1.2.3", GC_TOOLCHAIN_NODE_DIST="file:///nonexistent")
             self.assertEqual(r.stdout, f"downloaded {prog} 1.2.3 --v\n", r.stderr)
             self.assertEqual(r.stderr, "")
+
+    def test_an_interrupted_install_lock_is_moved_aside_and_the_install_proceeds(self) -> None:
+        dist = fake_dist(self.fx.root / "dist", "1.2.3")
+        lock = self.node_root / ".installing-v1.2.3"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        r = self.fx.run("node", "-v", GC_TOOLCHAIN_NODE_VERSION="1.2.3", GC_TOOLCHAIN_NODE_DIST=dist)
+        self.assertEqual(r.stdout, "downloaded node 1.2.3 -v\n", r.stderr)
+        self.assertIn("moved aside an interrupted node v1.2.3 install lock", r.stderr)
+        self.assertFalse(lock.exists())
+        aside = [p for p in self.node_root.iterdir() if p.name.startswith(".installing-v1.2.3.stale-")]
+        self.assertEqual(len(aside), 1)
+        # a live lock is waited for; the caller falls through after the wait when nothing appears
+        lock.mkdir()
+        holder = subprocess.Popen(["sleep", "30"])
+        try:
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            fake_node_tree(self.node_root, "9.9.9")  # unrelated version
+            r = self.fx.run("node", "-v", GC_TOOLCHAIN_NODE_VERSION="1.2.3", GC_TOOLCHAIN_NODE_DIST="file:///nonexistent")
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(r.stdout, "downloaded node 1.2.3 -v\n")  # already installed above: no wait needed
 
     def test_checksum_mismatch_installs_nothing_and_falls_through(self) -> None:
         dist = fake_dist(self.fx.root / "dist", "1.2.3", corrupt_sum=True)
