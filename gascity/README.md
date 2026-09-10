@@ -417,35 +417,50 @@ bin links (`ENOENT ... chmod .../node_modules/.bin/...`). Only the
 `pnpm_config_` prefix turns the setting off from the environment; the
 `npm_config_` prefix does not reach it.
 
-The wrapper is the one path: it exports
-`pnpm_config_verify_deps_before_run=false` for every command, and for a
-command that runs project code (anything but the package-management and
-informational subcommands, `install`, `add`, `store`, `config`, `--version`
-and the like, which pass straight through) it makes sure the nearest
-ancestor holding `pnpm-lock.yaml` is installed for that lockfile:
-`node_modules/.gc-lane-deps` holds the sha256 of the lockfile the current
-install was made from, and a match means no install. Otherwise one caller
-takes `node_modules/.gc-lane-deps.lock`, runs `pnpm install
---frozen-lockfile` in the project, writes the marker on success and
-releases; concurrent callers wait for the lock and re-read the marker, so a
-lane is installed once per lockfile whatever runs in parallel. The marker
-is invalidated before the install starts and rewritten only on success, so
-a failed install fails the command (the requested check never runs against
-a half-installed tree) and never leaves an older lockfile's marker trusted.
-A lock whose owner is dead is moved aside by rename (nothing deleted), but
-only under a second, atomic reclaim lock and after re-reading it, so two
-waiters cannot both clear it and a waiter's fresh live lock is never moved;
-a live lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and then the
-command fails closed naming the holder, and only the pid that took a lock
-releases it. A lifecycle script the install itself runs (a `postinstall`
-that calls `pnpm run build`) re-enters the wrapper with
+The wrapper exports `pnpm_config_verify_deps_before_run=false` for every
+command and sorts each command into one of three kinds by the first bare
+token after the global options (the value of an option that takes one,
+`--filter app`, `-C dir`, `--loglevel warn`, is skipped, so `pnpm --filter
+app install` is an install):
+
+- **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...)
+  runs as is and touches no marker or lock.
+- **mutate** (`install`, `add`, `remove`, `update`, `link`, `prune`,
+  `dedupe`, `rebuild`, `patch`, ...) is the one path that changes
+  `node_modules`: it runs under the lane lock, with the marker invalidated
+  first, and on success the marker records the sha256 of the lockfile the
+  tree now matches. A failed explicit install leaves the marker invalid, so
+  the next project command reinstalls instead of trusting a damaged tree.
+- **project** (`run`, `exec`, `test`, a bare script or bin name, anything
+  else) first makes sure the lane is installed for its lockfile:
+  `node_modules/.gc-lane-deps` holds the sha256 of the lockfile the current
+  install was made from, and a match means no install. Otherwise one caller
+  takes `node_modules/.gc-lane-deps.lock`, runs `pnpm install
+  --frozen-lockfile` in the project through the same mutate path, writes
+  the marker on success and releases; concurrent callers wait for the lock
+  and re-read the marker, so a lane is installed once per lockfile whatever
+  runs in parallel. The marker is invalidated before the install starts and
+  rewritten only on success, so a failed install fails the command (the
+  requested check never runs against a half-installed tree) and never
+  leaves an older lockfile's marker trusted.
+
+The lane is the nearest ancestor of the working directory holding
+`pnpm-lock.yaml` (for a first install with no lockfile yet, the working
+directory). A lock whose owner is dead is moved aside by rename (nothing
+deleted), but only under a second, atomic reclaim lock and after re-reading
+it, so two waiters cannot both clear it and a waiter's fresh live lock is
+never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and
+then the command fails closed naming the holder, and only the pid that took
+a lock releases it. A lifecycle script the mutation itself runs (a
+`postinstall` that calls `pnpm run build`) re-enters the wrapper with
 `GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<project root>` set by its parent and
-skips the lane install instead of waiting on its parent's lock. A worker
-that edits `package.json` runs `pnpm install` itself
-(a pass-through); the next check sees the new lockfile hash and makes one
-no-op frozen install. To take even that first install out of the worker's
-first check, a city can pre-warm the lane in `pre_start` after the worktree
-script, with `[session] setup_timeout` raised to cover a cold install:
+runs as info instead of waiting on its parent's lock. pnpm itself is
+installed once per version, under `<toolchain>/pnpm/v<version>/`, so a
+changed `PNPM_VERSION` is a fresh install, never a stale cache (an older
+unversioned `<toolchain>/pnpm/` from a previous wrapper is left alone). To
+take even the first lane install out of the worker's first check, a city can
+pre-warm the lane in `pre_start` after the worktree script, with
+`[session] setup_timeout` raised to cover a cold install:
 `"{{.CityRoot}}/.gc/shims/toolchain/pnpm exec true"`.
 
 ### node: a Node the repository accepts, without touching the machine's
