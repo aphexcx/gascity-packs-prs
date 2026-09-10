@@ -65,6 +65,22 @@ anchor boundary, run sandboxed verification from inside the worktree, and make a
 focused commit in the worktree. Leave the source anchor open for
 `close-source-anchor`; close only this implementation step when done.
 
+Release the branch when you hand off (the lane case). A lane HOLDS the item's
+branch only while it is writing to it: git allows one worktree per branch, so
+a branch left checked out in your lane blocks the review fix lane's switch
+(git: "already checked out at <your lane>", or "already used by worktree at
+<your lane>" in newer git) and forces every later writer to fail closed.
+After the final commit and BEFORE closing this step with `gc.outcome=pass`,
+release the branch from your lane: `git -C "$GC_DIR" switch --detach` (HEAD
+stays at your commit; untracked files stay), then verify
+`git -C "$GC_DIR" branch --show-current` prints nothing, and name the commit
+id in this step's close reason. Nothing is lost: `close-source-anchor` reads
+the commit by branch (`git log -1 <gc.work_branch>`), the review lanes inspect
+it detached at that commit, and the fix lane takes the branch, commits, and
+releases it the same way. This release is the lane case only; the per-item
+`work_dir` worktree of the rig-root path is already detached and is shared
+with no one.
+
 Write or update the task summary with these schema-required body sections,
 using the exact `##` headings below in this order:
 

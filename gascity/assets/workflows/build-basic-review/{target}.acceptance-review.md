@@ -30,11 +30,17 @@ The `## Implementation Worktrees` section names the workspace either as the sour
 `gc.work_branch`, as a branch and a commit id. In the branch case work from
 your OWN lane and never enter another agent's directory: read with `git -C
 "$GC_DIR" log -1 <commit>` and `git -C "$GC_DIR" show <commit>:<path>` (every
-worktree of the rig shares its refs); to run proof commands, put your own lane on the
-recorded branch first exactly as `do-work/implement` does for the lane case
-(the boundary test, then `git -C "$GC_DIR" switch --no-overwrite-ignore
-"<gc.work_branch>"`, and fail closed when git refuses: never `--force`, never
-a stash, never remove the colliding file). A `work_dir` naming an agent lane
+worktree of the rig shares its refs); to run proof commands, inspect the
+recorded commit DETACHED in your own lane: `git -C "$GC_DIR" switch --detach
+--no-overwrite-ignore <commit>` (the commit id the review setup recorded; if
+the context carries only the branch, resolve it first with `git -C "$GC_DIR"
+rev-parse "<gc.work_branch>"`), and fail closed when git refuses (an ignored
+file in your lane colliding with a tracked path, or a commit missing from the
+repository): never `--force`, never a stash, never remove the colliding file.
+A review lane never takes the branch itself: git allows one worktree per
+branch, only the writers (implement, then the fix lane) hold it, one at a
+time, and three reviewers detached at the same commit never contend and never
+block the fix lane. A `work_dir` naming an agent lane
 (`.worktrees/<rig>/lane-*`) is invalid: write an iterate finding against
 review setup instead of entering it.
 

@@ -26,6 +26,18 @@ the launcher rig root, not the implementation worktree. When reading beads
 with `gc bd show --json`, handle both an object and a one-element list before
 reading metadata.
 
+Release the branch when you hand off (the lane case): a lane HOLDS the item's
+branch only while it is writing to it, because git allows one worktree per
+branch and a branch left checked out in your lane blocks the next writer's
+switch (git: "already checked out at <your lane>", or "already used by
+worktree at <your lane>" in newer git). After the final commit and
+BEFORE closing this step with `gc.outcome=pass`, release the branch from your
+lane: `git -C "$GC_DIR" switch --detach` (HEAD stays at your commit; untracked
+files stay), then verify `git -C "$GC_DIR" branch --show-current` prints
+nothing, and name the commit id in this step's close reason. Readers inspect
+that commit detached (`git log -1 <gc.work_branch>`, `git show`), never on the
+branch, so the release loses nothing.
+
 Write the per-item implementation summary as a `gc.build.implementation-summary.v1`
 artifact and record its absolute path on the workflow root bead as
 `gc.implementation.summary_path` before closing.
