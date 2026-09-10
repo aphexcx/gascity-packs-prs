@@ -50,8 +50,10 @@
 #     `gp-abc10` — is reused. None: a new branch named <bead id> is created
 #     from --base. Several: fail closed and list them.
 #   * A bead branch already checked out in another worktree is not stolen: the
-#     work dir is left detached at that branch's tip and a WARN line says so.
-#     Create your own branch in this work dir before committing.
+#     work dir is left detached at that branch's tip and a WARN line names the
+#     holder. Do not create a second branch naming the bead (two candidates
+#     fail the next run closed); the role prompt fails closed (branch-held)
+#     until the holder releases the branch.
 #   * No bead: the work dir is detached at --base, whatever branch it was on
 #     (the branch itself is kept; nothing is deleted).
 #   * Idempotent for a clean work dir already on the requested branch (or
@@ -265,16 +267,22 @@ BASE_SHA="$(git_rig rev-parse --verify --quiet "$BASE^{commit}")" || die "base r
 
 # bead_branches: every branch name (local, and remote with the remote prefix
 # stripped) containing BEAD as a whole token, one per line, de-duplicated.
+# Full ref names with exactly one namespace prefix removed: `%(refname:short)`
+# abbreviates to `heads/x` when a tag `x` exists, and would mis-name the branch.
 bead_branches() {
     # Escape the id for an ERE, then require a non-alphanumeric boundary (or
     # the string edge) on both sides so gp-abc1 never matches gp-abc10.
     id_re="$(printf '%s' "$BEAD" | sed 's/[][\\.^$*+?(){}|/]/\\&/g')"
     {
-        git_rig for-each-ref --format='%(refname:short)' refs/heads
-        git_rig for-each-ref --format='%(refname:short)' "refs/remotes/$REMOTE" \
+        git_rig for-each-ref --format='%(refname)' refs/heads \
             | while IFS= read -r ref; do
-                [ "$ref" != "$REMOTE/HEAD" ] || continue
-                printf '%s\n' "${ref#"$REMOTE/"}"
+                printf '%s\n' "${ref#refs/heads/}"
+            done
+        git_rig for-each-ref --format='%(refname)' "refs/remotes/$REMOTE" \
+            | while IFS= read -r ref; do
+                ref="${ref#"refs/remotes/$REMOTE/"}"
+                [ "$ref" != "HEAD" ] || continue
+                printf '%s\n' "$ref"
             done
     } | grep -E -- "(^|[^A-Za-z0-9])${id_re}([^A-Za-z0-9]|\$)" | sort -u || true
 }
@@ -363,7 +371,7 @@ else
             if [ -n "$elsewhere" ]; then
                 MODE="detached"
                 DETACH_AT="$(git_rig rev-parse --verify "refs/heads/$TARGET^{commit}")"
-                warn "branch $TARGET is checked out at $elsewhere; leaving $WORKDIR detached at its tip. Create your own branch in this work dir before committing."
+                warn "branch $TARGET is checked out at $elsewhere; leaving $WORKDIR detached at its tip. Do not create a second branch naming the bead; fail closed (branch-held) until that holder releases it."
             else
                 MODE="local"
             fi
@@ -396,8 +404,19 @@ switch_worktree() {
     esac
 }
 
+# current_branch: the branch WORKDIR is on, by full symbolic ref with exactly
+# `refs/heads/` removed, or HEAD when detached. `rev-parse --abbrev-ref HEAD`
+# would print `heads/x` when a tag `x` exists and mis-report a good checkout.
+current_branch() {
+    if ref="$(git -C "$WORKDIR" symbolic-ref --quiet HEAD 2>/dev/null)"; then
+        printf '%s\n' "${ref#refs/heads/}"
+    else
+        echo HEAD
+    fi
+}
+
 if [ "$IS_WORKTREE" -eq 1 ]; then
-    current="$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+    current="$(current_branch)"
     need_switch=1
     case "$MODE" in
         local)    [ "$current" != "$TARGET" ] || need_switch=0 ;;
@@ -419,7 +438,7 @@ fi
 
 # --- verify before reporting ----------------------------------------------------------------
 is_our_worktree "$WORKDIR" || die "$WORKDIR is not a worktree of $RIG_ROOT after preparation"
-branch="$(git -C "$WORKDIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
+branch="$(current_branch)"
 case "$MODE" in
     local|remote|new) [ "$branch" = "$TARGET" ] || die "$WORKDIR is on $branch, expected $TARGET" ;;
     detached)         [ "$branch" = "HEAD" ] || die "$WORKDIR is on $branch, expected a detached HEAD"

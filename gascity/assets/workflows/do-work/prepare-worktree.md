@@ -53,16 +53,79 @@ setup only. Do not edit source files in the launcher checkout.
      HEAD), and continue with step 5 exactly as before (the per-item
      worktree under `$(pwd)/worktrees/<source-anchor-id>`, then step 6
      persists `work_dir`).
-   - Resolve the item's branch: `BRANCH="$(git -C "$GC_DIR" branch
-     --show-current)"` is the branch `pre_start` put this lane on. If it
-     prints nothing (the lane is detached), use `BRANCH=<source-anchor-id>`
-     and create it from HEAD with `git -C "$GC_DIR" branch "$BRANCH" HEAD`
-     (reuse the branch when it already exists in the repository).
+   - Resolve the item's branch by NAME, before recording anything: the
+     item's branch is the one branch whose name contains `<source-anchor-id>`
+     as a whole token (`<source-anchor-id>`, `fix/<source-anchor-id>-x`,
+     never `<source-anchor-id>0`), local or on `origin` (the remote
+     `pre_start` fetches), the rule `pre_start` (worker-worktree.sh, "Bead
+     branch") applies to a claimed bead. Nothing else identifies it. Not the
+     branch `pre_start` put THIS lane on: it is named for the trigger STEP
+     bead, so a re-launched item (a new do-work run after a crash, a stopped
+     run, or a review that sent it back) puts this lane on a fresh step
+     branch, cut from the base and knowing nothing of the item's committed
+     work; that branch is left where it is, unused and recorded nowhere. Not
+     the recorded `gc.work_branch` on its own: a claim-time stamp (older `gc`
+     builds, and any session started in the rig root, stamp the rig root's
+     branch on the bead they claim) overwrites it with a name no checkout
+     state can tell from an item branch, because a human checkout moves
+     between branches, and a stamp can even contain the id
+     (`human/<source-anchor-id>-notes`), so the record decides nothing on
+     its own. Read the record FIRST (`gc bd show <source-anchor-id> --json`,
+     metadata `gc.work_branch`; it is checked against the resolution below
+     and re-aligned when stale), then decide once, by name:
+     1. List every branch naming the item, the way `pre_start` does, by FULL
+        ref name with exactly one namespace prefix removed, so that neither a
+        tag of the same name (`%(refname:short)` would then print `heads/x`)
+        nor a local branch literally named `origin/x` can change a name:
+        `git -C "$GC_DIR" for-each-ref --format='%(refname)' refs/heads`,
+        with the leading `refs/heads/` removed; and `git -C "$GC_DIR"
+        for-each-ref --format='%(refname)' refs/remotes/origin`, with the
+        leading `refs/remotes/origin/` removed and `HEAD` dropped. Keep the
+        names matching `(^|[^A-Za-z0-9])<source-anchor-id>([^A-Za-z0-9]|$)`,
+        de-duplicate. Exactly one: `BRANCH=` that name, whether or not the
+        record agrees; a listed name that no longer resolves when taken below
+        fails this step closed (it vanished under you), never falls through
+        to a new branch. None: `BRANCH=<source-anchor-id>`, a new branch.
+        Several: fail this step closed listing them (as `pre_start` does),
+        even when one of them is the record; take nothing, record nothing.
+        The run operator reconciles them with each branch's owner before the
+        item is re-launched: every branch that is not the item's is renamed
+        to a name without the id, its commits preserved, on `origin` as well
+        as locally (a local rename leaves `origin/<old name>` behind and the
+        next fetch brings the candidate back); then a fetch and this listing
+        show exactly one candidate.
+     2. Take the branch in this lane, `--no-overwrite-ignore` always: a
+        local branch, `git -C "$GC_DIR" switch --no-overwrite-ignore
+        "$BRANCH"` (this lane already on it, a retry of this step after the
+        record and before the detach, is a no-op and counts as taken); a
+        branch only on `origin`, `git -C "$GC_DIR" switch
+        --no-overwrite-ignore -c "$BRANCH" --track "origin/$BRANCH"`; a new
+        branch, `git -C "$GC_DIR" switch --no-overwrite-ignore -c "$BRANCH"`
+        from HEAD (the base this lane's `pre_start` branch was cut from).
+        Any refusal fails this step closed, creates nothing and records
+        nothing: another worktree holds the branch (git: "already checked
+        out at <path>", or "already used by worktree at <path>" in newer
+        git; a writer crashed before releasing, or a human checkout took the
+        branch), so the holder's path from `git worktree list` goes in the
+        close reason and the run operator releases it from that checkout,
+        never this step and never `--force`; or an ignored file is in the
+        way (never removed; the close reason quotes git's refusal, and names
+        no holder because there is none). The committed work stays where it
+        is.
    - Record the branch on the source anchor with
-     `gc bd update <source-anchor-id> --set-metadata gc.work_branch=<branch>`.
-     This overwrites a claim-time stamp (older `gc` builds stamp the rig
-     root's branch). For synthetic drain-unit convoys, stamp the original
-     drain member/source anchor, never the synthetic drain-unit convoy.
+     `gc bd update <source-anchor-id> --set-metadata gc.work_branch=<branch>`
+     only when the record differs from `$BRANCH` (no record, a claim-time
+     stamp, a record of a gone or renamed branch); an equal record is left
+     as it is. This never records a fresh base branch over a recorded item
+     branch: a new branch is created only when no branch names the item. A
+     branch recorded before this rule under a name that does not contain
+     `<source-anchor-id>` is not found by it and would be left behind: before
+     rolling this rule out on a city, the operator audits open items'
+     `gc.work_branch` values and renames such branches to contain the id as a
+     whole token (this pack's own cities import the upstream pack, which has
+     no lane case, so none exist there). For synthetic drain-unit convoys,
+     stamp the original drain member/source anchor, never the synthetic
+     drain-unit convoy.
    - Detach this lane from the branch with `git -C "$GC_DIR" switch --detach`.
      git allows one worktree per branch, so detaching frees the branch for
      the next role's lane; HEAD stays at the same commit and untracked files

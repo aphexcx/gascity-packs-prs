@@ -2238,8 +2238,8 @@ class FormulaAssetTests(unittest.TestCase):
                 "When any part fails, this is NOT the lane case: record no branch, run no `switch` in `$GC_DIR`, detach nothing",
                 "continue with step 5 exactly as before",
                 "the item's BRANCH is the handoff",
-                'BRANCH="$(git -C "$GC_DIR" branch --show-current)"',
-                'create it from HEAD with `git -C "$GC_DIR" branch "$BRANCH" HEAD`',
+                "Resolve the item's branch by NAME, before recording anything",
+                '`git -C "$GC_DIR" switch --no-overwrite-ignore -c "$BRANCH"` from HEAD',
                 "gc bd update <source-anchor-id> --set-metadata gc.work_branch=<branch>",
                 'Detach this lane from the branch with `git -C "$GC_DIR" switch --detach`',
                 "Do NOT persist `work_dir` in the lane case: step 6 is skipped",
@@ -2313,6 +2313,151 @@ class FormulaAssetTests(unittest.TestCase):
         for probe in ("rev-parse --show-toplevel", "nor inside the rig root", "rev-parse --git-common-dir"):
             with self.subTest(implement_probe=probe):
                 self.assertLess(lane.index(probe), switch_at)
+
+    # Gate r9 on fork #32 (merged with this hole named; bead gp-d6gd): a
+    # re-launched item must keep its branch. The writers of `gc.work_branch`
+    # are found by grep, so a step added later that records the key without
+    # reading it first fails here.
+    WORK_BRANCH_WRITERS_READ_FIRST = {
+        "assets/workflows/do-work/prepare-worktree.md": "Read the record FIRST",
+        "template-fragments/gc-role-worker.template.md": "The bead's branch is the one whose name contains the claimed bead id",
+    }
+
+    def test_relaunched_item_reuses_the_recorded_branch_and_no_writer_records_over_it(self) -> None:
+        """Gate r9 MAJOR: `pre_start` names a lane's branch for the trigger STEP
+        bead, so re-launching do-work for an open source anchor put the
+        operator's lane on a fresh step branch, and step 4 recorded that fresh
+        branch over the anchor's existing `gc.work_branch`; implementation then
+        resumed from the base, the committed work abandoned. Codex r1 on this
+        bead: a claim-time stamp overwrites the record with a name that no
+        checkout state (the rig root's branch, a default branch) can tell from
+        an item branch, both directions. So the operand is the NAME: the item's
+        branch is the one branch naming `<source-anchor-id>` as a whole token,
+        `pre_start`'s own rule. Step 4 reads the record FIRST and checks it
+        against that rule (case 1), else finds the one branch naming the item
+        or starts a new `<source-anchor-id>`, several failing closed (case 2),
+        takes it in the lane with any refusal failing closed and the holder
+        named, the rig root included (case 3), and records only when the
+        record differs. Every writer of the key in the workflows tree and the
+        role fragment (grep-driven) reads the record before it writes and says
+        it never records a fresh base branch over a recorded item branch. The
+        real-git scenarios are in test_lane_lifecycle (rule 10)."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        prepare = " ".join((root / "assets/workflows/do-work/prepare-worktree.md").read_text(encoding="utf-8").split())
+        step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
+        for clause in (
+            "Resolve the item's branch by NAME, before recording anything",
+            "the one branch whose name contains `<source-anchor-id>` as a whole token",
+            "never `<source-anchor-id>0`",
+            "the rule `pre_start` (worker-worktree.sh, \"Bead branch\") applies to a claimed bead",
+            "Nothing else identifies it",
+            "Not the branch `pre_start` put THIS lane on: it is named for the trigger STEP bead",
+            "a re-launched item",
+            "puts this lane on a fresh step branch, cut from the base and knowing nothing of the item's committed work",
+            "left where it is, unused and recorded nowhere",
+            "Not the recorded `gc.work_branch` on its own: a claim-time stamp",
+            "a name no checkout state can tell from an item branch",
+            "a stamp can even contain the id (`human/<source-anchor-id>-notes`), so the record decides nothing on its own",
+            "Read the record FIRST (`gc bd show <source-anchor-id> --json`, metadata `gc.work_branch`; it is checked against the resolution below and re-aligned when stale), then decide once, by name",
+            "1. List every branch naming the item, the way `pre_start` does, by FULL ref name with exactly one namespace prefix removed",
+            "neither a tag of the same name (`%(refname:short)` would then print `heads/x`) nor a local branch literally named `origin/x` can change a name",
+            "`git -C \"$GC_DIR\" for-each-ref --format='%(refname)' refs/heads`, with the leading `refs/heads/` removed",
+            "`git -C \"$GC_DIR\" for-each-ref --format='%(refname)' refs/remotes/origin`, with the leading `refs/remotes/origin/` removed and `HEAD` dropped",
+            "`(^|[^A-Za-z0-9])<source-anchor-id>([^A-Za-z0-9]|$)`",
+            "Exactly one: `BRANCH=` that name, whether or not the record agrees",
+            "a listed name that no longer resolves when taken below fails this step closed (it vanished under you), never falls through to a new branch",
+            "None: `BRANCH=<source-anchor-id>`, a new branch",
+            "Several: fail this step closed listing them (as `pre_start` does), even when one of them is the record; take nothing, record nothing",
+            "The run operator reconciles them with each branch's owner before the item is re-launched",
+            "renamed to a name without the id, its commits preserved, on `origin` as well as locally",
+            "then a fetch and this listing show exactly one candidate",
+            "2. Take the branch in this lane, `--no-overwrite-ignore` always",
+            '`git -C "$GC_DIR" switch --no-overwrite-ignore "$BRANCH"`',
+            "a retry of this step after the record and before the detach, is a no-op and counts as taken",
+            '`git -C "$GC_DIR" switch --no-overwrite-ignore -c "$BRANCH" --track "origin/$BRANCH"`',
+            '`git -C "$GC_DIR" switch --no-overwrite-ignore -c "$BRANCH"` from HEAD',
+            "Any refusal fails this step closed, creates nothing and records nothing",
+            "a writer crashed before releasing, or a human checkout took the branch",
+            "the holder's path from `git worktree list` goes in the close reason",
+            "never this step and never `--force`",
+            "an ignored file is in the way (never removed; the close reason quotes git's refusal, and names no holder because there is none)",
+            "The committed work stays where it is",
+            "only when the record differs from `$BRANCH` (no record, a claim-time stamp, a record of a gone or renamed branch); an equal record is left as it is",
+            "This never records a fresh base branch over a recorded item branch: a new branch is created only when no branch names the item",
+            "A branch recorded before this rule under a name that does not contain `<source-anchor-id>` is not found by it",
+            "the operator audits open items' `gc.work_branch` values and renames such branches to contain the id as a whole token",
+        ):
+            with self.subTest(step4=clause):
+                self.assertIn(clause, step4)
+        # The rig root's branch, a default branch, and a record-first shortcut
+        # past the enumeration are not consulted anywhere in step 4.
+        for gone in (
+            "rig's default branch",
+            "refs/remotes/origin/HEAD",
+            "the branch the rig root holds",
+            "The record names the item (whole token) and that branch exists",
+            "refs/heads refs/remotes/origin`",
+            "for-each-ref --format='%(refname:short)'",
+        ):
+            with self.subTest(not_consulted=gone):
+                self.assertNotIn(gone, step4)
+        # Order: the boundary test, then the READ, then the enumeration by
+        # name, then the switch that takes the branch, then the record, then
+        # the detach.
+        read_at = step4.index("Read the record FIRST")
+        list_at = step4.index("1. List every branch naming the item")
+        take_at = step4.index('`git -C "$GC_DIR" switch --no-overwrite-ignore "$BRANCH"`')
+        record_at = step4.index("--set-metadata gc.work_branch=")
+        detach_at = step4.index('`git -C "$GC_DIR" switch --detach`')
+        self.assertLess(read_at, list_at)
+        self.assertLess(list_at, take_at)
+        self.assertLess(take_at, record_at)
+        self.assertLess(record_at, detach_at)
+        for probe in ("rev-parse --show-toplevel", "NOT inside the rig root", "rev-parse --git-common-dir"):
+            with self.subTest(probe_before_read=probe):
+                self.assertLess(step4.index(probe), read_at)
+        # The name rule in the text is the script's rule, character for
+        # character, and the script too strips the prefix from remote refs only.
+        script = (root / "assets" / "scripts" / "worker-worktree.sh").read_text(encoding="utf-8")
+        self.assertIn('grep -E -- "(^|[^A-Za-z0-9])${id_re}([^A-Za-z0-9]|\\$)"', script)
+        self.assertIn("git_rig for-each-ref --format='%(refname)' refs/heads", script)
+        self.assertIn("printf '%s\\n' \"${ref#refs/heads/}\"", script)
+        self.assertIn('ref="${ref#"refs/remotes/$REMOTE/"}"', script)
+        self.assertNotIn("%(refname:short)' refs/heads", script)
+        # The script's WARN no longer tells a worker to create a second candidate.
+        self.assertNotIn("Create your own branch in this work dir before committing", script)
+        self.assertIn("Do not create a second branch naming the bead; fail closed (branch-held) until that holder releases it.", script)
+
+        # Every writer of the key, by grep: reads first, never records over an item branch.
+        writers: dict[str, str] = {}
+        for path in sorted([*(root / "assets" / "workflows").rglob("*.md"), *(root / "template-fragments").glob("*.md")]):
+            text = path.read_text(encoding="utf-8")
+            if "gc.work_branch=" in text:
+                writers[path.relative_to(root).as_posix()] = " ".join(text.split())
+        self.assertEqual(sorted(writers), sorted(self.WORK_BRANCH_WRITERS_READ_FIRST))
+        for relative_path, flat in writers.items():
+            with self.subTest(writer=relative_path):
+                self.assertRegex(flat, r"[Nn]ever (records?|writes?) a fresh base branch over a recorded item branch")
+                read_first = self.WORK_BRANCH_WRITERS_READ_FIRST[relative_path]
+                self.assertLess(flat.index(read_first), flat.index("gc.work_branch="))
+
+        readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+        section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
+        for clause in (
+            "A re-launched item keeps its branch",
+            "reads the source anchor's recorded `gc.work_branch` first",
+            "resolves the item's branch by name",
+            "the one branch naming `<source-anchor-id>` as a whole token",
+            "never a fresh base branch over a recorded item branch",
+            "a human checkout included, fails the step closed with the holder named",
+            "no checkout state, not the rig root's branch nor a default branch, is consulted",
+            "exactly one such branch is the item's whether or not the record agrees",
+            "several fail closed for the operator to reconcile",
+            "closes `gc.failure_class=branch-held` naming the holder instead of creating a second candidate",
+            "a branch recorded before this rule under a name without the id is renamed by the operator",
+        ):
+            with self.subTest(readme=clause):
+                self.assertIn(clause, section)
 
     # Round 5 (gate r4). The lane case is ONE contract carried by EVERY step
     # that reads the source anchor's work_dir, not by the two steps a gate
