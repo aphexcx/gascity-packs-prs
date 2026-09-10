@@ -191,6 +191,8 @@ def test_bind_room_ambient_rejects_session_already_mention_only_here(
     }
     common.save_pack_config(cfg)
     monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel_id="": {
+        "C1": [{"session_id": "jg-mayor-1", "session_name": "mayor", "handle": "mayor"}]})
     monkeypatch.setattr(common, "gc_post", lambda *a, **k: pytest.fail("gc must not be called on a conflict"))
     with pytest.raises(SystemExit) as exc:
         bind.main(["C1", "mayor"])
@@ -204,6 +206,84 @@ def test_bind_room_ambient_rejects_session_already_mention_only_here(
     rec = common.load_pack_config()["bindings"]["room:C1"]
     assert rec["participants"] == [{"handle": "ops-session", "session_name": "ops-session"}]
     assert rec["mention_only_participants"][0]["session_id"] == "jg-mayor-1"
+
+
+def test_bind_room_ambient_rebind_keeps_earlier_participants_for_conflict_checks(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r2 P2: gc keeps every participant ever upserted; the pack record
+    must too, or a later --mentions-only for an earlier participant slips
+    through the conflict check."""
+    common, bind = _import("slack_chat_bind_room")
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "gc_post", lambda path, body: {"ID": "grp-1"} if path == "/extmsg/groups" else {"ID": "p-x"})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+    assert bind.main(["C1", "mayor"]) == 0
+    assert bind.main(["C1", "ops-session"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert [p["session_name"] for p in rec["participants"]] == ["mayor", "ops-session"]
+
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: pytest.fail("adapter must not be called on a conflict"))
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor", "--mentions-only"])
+    assert "AMBIENTLY" in str(exc.value)
+
+
+def test_bind_room_ambient_binding_owner_conflicts_with_mention_only(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room", "conversation": {"conversation_id": "C1"},
+        "delivery_mode": "mentions_only",
+        "mention_only_participants": [{"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"}],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel_id="": {
+        "C1": [{"session_id": "jg-mayor-1", "session_name": "mayor", "handle": "mayor"}]})
+    monkeypatch.setattr(common, "gc_post", lambda *a, **k: pytest.fail("gc must not be called on a conflict"))
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "ops-session", "--binding-owner", "mayor"])
+    assert "MENTION-ONLY" in str(exc.value)
+
+
+def test_bind_room_ambient_reconciles_removed_mention_only_record(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r2 P2: after DELETE /mention-only the pack record is stale; the
+    adapter's registry (empty for the room) wins and the ambient rebind
+    proceeds, pruning the stale record."""
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room", "conversation": {"conversation_id": "C1"},
+        "delivery_mode": "mentions_only",
+        "mention_only_participants": [{"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"}],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel_id="": {})
+    monkeypatch.setattr(common, "gc_post", lambda path, body: {"ID": "grp-1"} if path == "/extmsg/groups" else {"ID": "p-1"})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+    assert bind.main(["C1", "mayor"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert "mention_only_participants" not in rec
+    assert rec["participants"] == [{"handle": "mayor", "session_name": "mayor"}]
+
+    # Adapter unreachable → the local record stands (fail closed).
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C2"] = {
+        "kind": "room", "conversation": {"conversation_id": "C2"},
+        "mention_only_participants": [{"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"}],
+    }
+    common.save_pack_config(cfg)
+
+    def down(channel_id: str = ""):
+        raise common.AdapterError("adapter down")
+
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", down)
+    with pytest.raises(SystemExit):
+        bind.main(["C2", "mayor"])
 
 
 @pytest.mark.parametrize("flag", [

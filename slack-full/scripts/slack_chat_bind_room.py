@@ -346,7 +346,12 @@ def main(argv: list[str]) -> int:
     # be woken for every message AND injected on mentions).
     pre_cfg = common.load_pack_config()
     pre_key = f"{args.kind}:{args.conversation_id}"
-    mo_conflicts = mention_only_conflicts(pre_cfg, pre_key, [s for _, s in participants])
+    # The binding owner becomes an ambient recipient through /extmsg/bind
+    # even when it is not a positional participant (codex r2 P2).
+    ambient_candidates = [s for _, s in participants]
+    if binding_owner and binding_owner not in ambient_candidates:
+        ambient_candidates.append(binding_owner)
+    mo_conflicts = mention_only_conflicts(pre_cfg, pre_key, ambient_candidates, args.conversation_id)
     if mo_conflicts:
         raise SystemExit(
             f"{', '.join(mo_conflicts)}: already bound MENTION-ONLY to {args.conversation_id}. "
@@ -396,17 +401,27 @@ def main(argv: list[str]) -> int:
     # Other sessions' mention-only registrations for this room ride along
     # on the rewritten record (they live in the adapter's registry either
     # way; this keeps `gc slack status` truthful).
-    prior_mention_only = (cfg["bindings"].get(binding_key) or {}).get("mention_only_participants")
+    prior_rec = cfg["bindings"].get(binding_key) or {}
+    prior_mention_only = prior_rec.get("mention_only_participants")
+    # gc's /extmsg/participants UPSERTS into the group: participants from
+    # earlier invocations stay members, so the record keeps them too (by
+    # session_name; this invocation's handles win). gc offers no
+    # participant listing, so this record is what the mention-only
+    # conflict check reads (codex r2 P2).
+    merged_participants: dict[str, dict[str, str]] = {}
+    for p in prior_rec.get("participants") or []:
+        if isinstance(p, dict) and p.get("session_name"):
+            merged_participants[p["session_name"]] = {"handle": p.get("handle", ""), "session_name": p["session_name"]}
+    for h, sname in participants:
+        merged_participants[sname] = {"handle": h, "session_name": sname}
     cfg["bindings"][binding_key] = {
         "kind": args.kind,
         "conversation": conv,
         "group_id": group_id,
         "default_handle": default_handle,
         "fanout_policy": fanout_policy,
-        "participants": [
-            {"handle": h, "session_name": s} for h, s in participants
-        ],
-        "binding_owner": binding_owner or None,
+        "participants": list(merged_participants.values()),
+        "binding_owner": binding_owner or (prior_rec.get("binding_owner") or None),
         "binding_record": (binding_record or {}).get("ID", "") or None,
     }
     if prior_mention_only:
@@ -476,14 +491,49 @@ def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]
     return out
 
 
-def mention_only_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> list[str]:
-    """Sessions already recorded as MENTION-ONLY participants of this room
-    (the mirror check for an ambient bind)."""
+def mention_only_conflicts(
+    cfg: dict[str, Any], binding_key: str, sessions: list[str], conversation_id: str = ""
+) -> list[str]:
+    """Sessions still registered MENTION-ONLY in this room (the mirror check
+    for an ambient bind).
+
+    The pack config is the local record; the adapter's registry is what is
+    enforced. When the adapter answers, a session the adapter no longer
+    lists (removed via DELETE /mention-only) is reconciled out of the pack
+    record instead of blocking the rebind forever (codex r2 P2). When the
+    adapter is unreachable the local record stands.
+    """
     rec = (cfg.get("bindings") or {}).get(binding_key) or {}
+    entries = [p for p in rec.get("mention_only_participants") or [] if isinstance(p, dict)]
+    if not entries:
+        return []
+    if conversation_id:
+        try:
+            # A room absent from the answer means "no bindings there"; only
+            # a transport failure leaves the local record unverified.
+            live = common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or []
+        except (common.AdapterError, common.GCAPIError):
+            live = None
+        if live is not None:
+            live_ids = set()
+            for b in live:
+                if isinstance(b, dict):
+                    live_ids |= {b.get("session_id") or "", b.get("session_name") or ""}
+            live_ids.discard("")
+            kept = [p for p in entries
+                    if {p.get("session_name") or "", p.get("session_id") or ""} & live_ids]
+            if len(kept) != len(entries):
+                if kept:
+                    rec["mention_only_participants"] = kept
+                else:
+                    rec.pop("mention_only_participants", None)
+                    if rec.get("delivery_mode") == "mentions_only" and not rec.get("participants"):
+                        cfg["bindings"].pop(binding_key, None)
+                common.save_pack_config(cfg)
+            entries = kept
     mo: set[str] = set()
-    for p in rec.get("mention_only_participants") or []:
-        if isinstance(p, dict):
-            mo |= {p.get("session_name") or "", p.get("session_id") or ""}
+    for p in entries:
+        mo |= {p.get("session_name") or "", p.get("session_id") or ""}
     mo.discard("")
     if not mo:
         return []

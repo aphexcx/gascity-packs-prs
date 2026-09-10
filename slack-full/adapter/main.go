@@ -4043,6 +4043,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// silent for them. The channel copy and every ambient member are
 	// untouched by this block; see mention_only.go for the rules.
 	mentionOnlyFailed := false
+	var mentionOnlyTargets []mentionOnlyTarget
 	// concludeEvent is how the alias leg's goroutine settles the event id
 	// once it owns the verdict: commit, unless a mention-only injection
 	// for this event failed — then the id stays forgotten so a retry can
@@ -4092,7 +4093,15 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 			}
 		}
-		if targets := selectMentionOnlyTargets(moIn); len(targets) > 0 {
+		mentionOnlyTargets = selectMentionOnlyTargets(moIn)
+	}
+	// runMentionOnly performs the injections. Called from exactly one of
+	// two places: right before a buffered channel copy is enqueued, or —
+	// on the urgent path — AFTER the busy mark is registered, so a
+	// mention-only session that replies before the channel copy lands
+	// finds the mark to clear (codex r2 P2).
+	runMentionOnly := func() {
+		if targets := mentionOnlyTargets; len(targets) > 0 {
 			if _, failed := deliverMentionOnly(cfg, targets, inbound); failed > 0 {
 				// An addressed session's copy was not delivered (codex r1
 				// P1). The session-level claim is already released, but
@@ -4110,6 +4119,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 	}
 	if willBuffer {
+		// Buffered chatter takes no busy mark (untargeted, not a bot
+		// mention), so the lane runs ahead of the enqueue.
+		runMentionOnly()
 		// A ts the channel audience already received is the trailing
 		// half of a bot-mention pair (message + app_mention, same ts)
 		// whose urgent twin delivered first. Buffering it would hand
@@ -4166,6 +4178,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if busyEligible {
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
+	// Mention-only injections, now that the busy mark exists (codex r2
+	// P2): a session replying before the channel copy lands clears the
+	// mark instead of stranding the hourglass the add below would leave.
+	runMentionOnly()
 
 	if !skipChannelPost {
 		// The undecorated channel text, kept for the drain-time spool
@@ -4544,7 +4560,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						for _, d := range displaced {
 							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 						}
-						recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 						concludeEvent()
 						return
 					}
