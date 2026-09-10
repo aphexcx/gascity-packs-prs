@@ -77,7 +77,7 @@ def test_workers_never_choose_or_create_their_workspace() -> None:
     """gc chooses the workspace (agent work_dir + pre_start). The PRIMARY text
     of every role prompt never tells a worker to go and make its own worktree;
     the hunting phrases may appear only inside the one conditional fallback
-    paragraph (see test_workspace_fallback_is_conditional_and_mails_the_mayor)."""
+    paragraph (see test_workspace_fallback_covers_every_unconfigured_role)."""
     workspace = workspace_section()
     assert "You never pick, create, or hunt for\na workspace" in workspace
     prompts = [FRAGMENT, *sorted((REPO_ROOT / "gascity" / "roles" / "agents").glob("*/prompt.template.md"))]
@@ -93,25 +93,35 @@ def test_workers_never_choose_or_create_their_workspace() -> None:
                 )
 
 
-def test_workspace_fallback_is_conditional_and_mails_the_mayor() -> None:
-    """One fallback paragraph for a city that gave the role no work_dir: it is
-    conditional on $GC_DIR being the rig root, sits after the primary text, and
-    tells the worker to mail the mayor for a lane."""
+def test_workspace_fallback_covers_every_unconfigured_role() -> None:
+    """One fallback paragraph for a city that gave the role no work_dir. It is
+    conditional ONLY on $GC_DIR being the rig root: the pack ships every role
+    without work_dir/pre_start, so in a default installation a role starts in
+    the rig root, is told never to work there, and needs one permitted place
+    (gate r3 M2). Round 2 keyed the fallback on the rig's rules forbidding
+    root work, which left a rig without such a rule no workspace at all; that
+    condition is gone. The paragraph sits after the primary text and tells the
+    worker to mail the mayor for a lane."""
     workspace = workspace_section()
     fallbacks = [para for para in paragraphs(workspace) if para.startswith(FALLBACK_OPENER)]
     assert len(fallbacks) == 1, "exactly one conditional fallback paragraph"
     fallback = fallbacks[0]
     assert workspace.index("You never pick, create, or hunt for") < workspace.index(FALLBACK_OPENER)
+    # The primary text still describes the configured case.
+    assert "never work in the rig root" in workspace
     flat = " ".join(fallback.split())
     for clause in (
-        "If `$GC_DIR` is the rig root, this role has no `work_dir` in your city.",
-        "When the rig's rules forbid working there, create your worktree under",
+        "If `$GC_DIR` is the rig root, this role has no `work_dir` in your city: create your worktree under",
         "`<city>/.worktrees/<rig>/<bead>` from `origin/<default branch>`",
         "(check out the bead's branch if it already exists)",
         "work there, and mail the mayor that this role needs a lane",
         "(`work_dir` + `pre_start`, see README, Worker workspaces)",
     ):
         assert clause in flat, f"fallback paragraph lacks: {clause!r}"
+    # The only condition is the rig root; nothing in the Workspace section keys
+    # the fallback on the rig's rules.
+    for gone in ("When the rig's rules forbid", "rules forbid", "forbid working there"):
+        assert gone not in " ".join(workspace.split()), f"round-2 condition still present: {gone!r}"
     # The fallback never fires where lanes are configured: no other paragraph
     # of the Workspace section is conditional on the rig root.
     assert sum(para.startswith("If ") for para in paragraphs(workspace)) == 1
