@@ -30,6 +30,25 @@ stash, never remove the colliding file. Then `WORKTREE="$GC_DIR"`, `cd
 the fix on that branch. Never enter another agent's lane: a `work_dir` naming
 a lane other than `$GC_DIR` is invalid, fail closed.
 
+This lane is the second WRITER in the item's lifecycle: a lane HOLDS the
+item's branch only while it is writing to it, and git allows one worktree per
+branch. The branch is free when you arrive because the implementation lane
+released it on handoff, and the review lanes only ever inspected its commit
+detached. Take it only when there is a fix to commit (a no-op summary needs no
+switch). If the switch fails because another worktree still holds the branch
+(git says "already checked out at <path>", or "already used by worktree at
+<path>" in newer git; `git worktree list` names the holder: a writer that
+crashed before releasing), fail this step closed with the holder's path in
+the close reason and mail the mayor (`gc mail send mayor -s "branch held:
+<gc.work_branch>" -m "<holder path>"`); the run operator (a human or the
+mayor) releases it with `git -C <holder lane> switch --detach`.
+Never enter that lane, never `--force`, never remove its checkout, never
+release another agent's lane. After the final commit and BEFORE closing this
+step with `gc.outcome=pass`, release the branch from your lane: `git -C
+"$GC_DIR" switch --detach` (HEAD stays at your commit; untracked files stay),
+then verify `git -C "$GC_DIR" branch --show-current` prints nothing, and name
+the commit id in this step's close reason.
+
 Set `code_review.verdict=done` only when acceptance, test evidence, and
 simplicity all approve after this pass. Set `code_review.verdict=iterate` when
 required fixes remain.

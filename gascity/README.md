@@ -256,6 +256,15 @@ the companion core change), `gc hook --claim` then stamps a correct
 has the worker compare `gc.work_branch` with its branch after the claim and
 restamp it when they differ.
 
+Inside a formula the branch is also the handoff between lanes, under one
+lifecycle: a lane holds the item's branch only while it is writing to it and
+releases it (`git switch --detach`) when it hands off, because git allows one
+worktree per branch; every reader inspects the recorded commit detached in its
+own lane (`git switch --detach <commit>`, `git show <commit>:<path>`), so
+parallel reviewers never contend and the fix lane finds the branch free. A
+branch left held by a crashed writer is released by the operator from that
+lane, never by another agent's step.
+
 Two related core behaviors complete the picture:
 
 - A bead carrying `work_dir=<absolute path>` metadata, assigned and in

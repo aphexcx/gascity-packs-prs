@@ -2178,13 +2178,16 @@ class FormulaAssetTests(unittest.TestCase):
             "do-work-item/implement-item.md",
             "implementation-base/implement.md",
             "implementation-item-base/implement-item.md",
-            "build-basic-review/{target}.acceptance-review.md",
-            "build-basic-review/{target}.simplicity-review.md",
-            "build-basic-review/{target}.test-evidence-review.md",
             "build-basic-review/{target}.apply-review-findings.md",
         ):
             with self.subTest(switching_step=relative_path):
                 self.assertIn(relative_path, spans_by_file)
+        # Round 6 (gate r5): the review lanes are READERS and never switch onto
+        # the branch at all; their detach at the recorded commit is pinned in
+        # test_lane_handoff_lifecycle_holds_while_writing_and_releases_on_handoff.
+        for relative_path in self.LIFECYCLE_READERS:
+            with self.subTest(reader_never_switches_onto_branch=relative_path):
+                self.assertNotIn(relative_path, spans_by_file)
         # The steps that EDIT in the lane say what the flag protects and how
         # the refusal is handled; the boundary test comes before the switch.
         for relative_path in (
@@ -2236,7 +2239,7 @@ class FormulaAssetTests(unittest.TestCase):
                 "as a branch and a commit id",
                 '`git -C "$GC_DIR" log -1 <commit>`',
                 '`git -C "$GC_DIR" show <commit>:<path>`',
-                "put your own lane on the recorded branch first exactly as `do-work/implement` does for the lane case",
+                "inspect the recorded commit DETACHED in your own lane",
                 "write an iterate finding against review setup instead of entering it",
             ),
             "build-basic-review/{target}.simplicity-review.md": (
@@ -2264,6 +2267,148 @@ class FormulaAssetTests(unittest.TestCase):
             for clause in clauses:
                 with self.subTest(asset=relative_path, clause=clause):
                     self.assertIn(clause, flat)
+
+    # Round 6 (gate r5). Round 5 had every review lane put its OWN lane on
+    # `<gc.work_branch>` to run proof commands, but git allows one worktree
+    # per branch: the implementation lane still held it after implement, so
+    # the reviewer's switch failed ("already checked out at ..."), three
+    # parallel reviewers would have contended for it, and the fix lane was
+    # blocked the same way. The static rows could not see a worktree
+    # LIFECYCLE; these rows pin the sentences, and
+    # test_lane_lifecycle.py runs the same commands in real worktrees.
+    LIFECYCLE_WRITERS = (
+        "do-work/implement.md",
+        "do-work-item/implement-item.md",
+        "implementation-base/implement.md",
+        "implementation-item-base/implement-item.md",
+        "build-basic-review/{target}.apply-review-findings.md",
+    )
+    LIFECYCLE_READERS = (
+        "build-basic-review/{target}.acceptance-review.md",
+        "build-basic-review/{target}.simplicity-review.md",
+        "build-basic-review/{target}.test-evidence-review.md",
+    )
+
+    def test_lane_handoff_lifecycle_holds_while_writing_and_releases_on_handoff(self) -> None:
+        """One lifecycle, stated once in prepare-worktree's contract paragraph
+        and applied by every step: a lane HOLDS the item's branch only while
+        writing and RELEASES it (`switch --detach`) on handoff; every reader
+        INSPECTS the recorded commit detached; the fix lane takes then releases
+        the branch and fails closed naming a holder; recovery is the operator
+        releasing the holder's lane; close-source-anchor is unchanged."""
+        root = pathlib.Path(__file__).resolve().parents[1]
+        workflows = root / "assets" / "workflows"
+
+        def flat(relative_path: str) -> str:
+            return " ".join((workflows / relative_path).read_text(encoding="utf-8").split())
+
+        release_clause = (
+            "After the final commit and BEFORE closing this step with `gc.outcome=pass`, "
+            'release the branch from your lane: `git -C "$GC_DIR" switch --detach`'
+        )
+        verify_clause = '`git -C "$GC_DIR" branch --show-current` prints nothing'
+
+        # The contract, stated once.
+        prepare = flat("do-work/prepare-worktree.md")
+        step4 = prepare[prepare.index("4. Check the workspace") : prepare.index("5. Create or reuse")]
+        for clause in (
+            "under one lifecycle, because git allows one worktree per branch",
+            "a lane HOLDS the item's branch only while it is writing to it and RELEASES it when it hands off",
+            "every reader INSPECTS the recorded commit detached, never on the branch",
+            "every writer releases the branch the same way when it hands off",
+            "never takes the branch",
+            "`git switch --detach --no-overwrite-ignore <commit>`",
+            "Readers detached at one commit never contend",
+            "A writer that crashed before releasing leaves the branch held",
+            "already checked out at <path>",
+            "`git worktree list`",
+            "`git -C <holder lane> switch --detach`",
+            "already used by worktree at <path>",
+            "A step never enters another agent's lane and never releases it",
+        ):
+            with self.subTest(contract=clause):
+                self.assertIn(clause, step4)
+
+        # Rule 1: every WRITER releases after its commit and before its close.
+        for relative_path in self.LIFECYCLE_WRITERS:
+            text = flat(relative_path)
+            with self.subTest(writer=relative_path):
+                self.assertIn(release_clause, text)
+                self.assertIn(verify_clause, text)
+                self.assertIn("name the commit id in this step's close reason", text)
+                self.assertIn("HOLDS the item's branch only while it is writing to it", text)
+                self.assertIn("one worktree per branch", text)
+                take_at = text.index('switch --no-overwrite-ignore "<gc.work_branch>"')
+                release_at = text.index(release_clause)
+                self.assertLess(take_at, release_at, "the release comes after the take")
+                # The release is a detach of the OWN lane, never a force or a stash.
+                self.assertNotIn("switch --detach --force", text)
+                self.assertNotIn("git stash", text)
+
+        # Rule 2: every READER detaches at the recorded commit and never takes the branch.
+        for relative_path in self.LIFECYCLE_READERS:
+            text = flat(relative_path)
+            with self.subTest(reader=relative_path):
+                self.assertIn('`git -C "$GC_DIR" switch --detach --no-overwrite-ignore <commit>`', text)
+                self.assertIn('`git -C "$GC_DIR" rev-parse "<gc.work_branch>"`', text)
+                self.assertIn("fail closed when git refuses", text)
+                self.assertIn("A review lane never takes the branch itself", text)
+                self.assertIn("never contend", text)
+                self.assertNotIn('switch "<gc.work_branch>"', text)
+                self.assertNotIn('switch --no-overwrite-ignore "<gc.work_branch>"', text)
+                self.assertNotIn("put your own lane on the recorded branch", text)
+                self.assertNotIn("switch --detach`", text)  # a reader releases nothing: it held nothing
+
+        # Rule 3: the fix lane names the holder-of-the-branch failure.
+        fix = flat("build-basic-review/{target}.apply-review-findings.md")
+        for clause in (
+            "second WRITER in the item's lifecycle",
+            "The branch is free when you arrive because the implementation lane released it on handoff",
+            "Take it only when there is a fix to commit",
+            "If the switch fails because another worktree still holds the branch",
+            "already checked out at <path>",
+            "already used by worktree at <path>",
+            "`git worktree list` names the holder",
+            "fail this step closed with the holder's path in the close reason and mail the mayor",
+            "`git -C <holder lane> switch --detach`",
+            "Never enter that lane, never `--force`, never remove its checkout, never release another agent's lane",
+        ):
+            with self.subTest(fix_lane=clause):
+                self.assertIn(clause, fix)
+        boundary_at = fix.index("rev-parse --show-toplevel")
+        take_at = fix.index('switch --no-overwrite-ignore "<gc.work_branch>"')
+        holder_at = fix.index("If the switch fails because another worktree still holds the branch")
+        release_at = fix.index(release_clause)
+        self.assertLess(boundary_at, take_at)
+        self.assertLess(take_at, holder_at)
+        self.assertLess(holder_at, release_at)
+
+        # Rule 5: close-source-anchor still verifies by branch and takes nothing.
+        close = flat("do-work/close-source-anchor.md")
+        self.assertIn('`git -C "$GC_DIR" log -1 <gc.work_branch>`', close)
+        self.assertNotIn("switch", close)
+
+        # README: the lifecycle in the Worker workspaces section.
+        readme = " ".join((root / "README.md").read_text(encoding="utf-8").split())
+        section = readme[readme.index("## Worker workspaces") : readme.index("## Build Methodology Contract")]
+        for clause in (
+            "a lane holds the item's branch only while it is writing to it and releases it (`git switch --detach`) when it hands off",
+            "every reader inspects the recorded commit detached in its own lane",
+            "the fix lane finds the branch free",
+            "released by the operator from that lane, never by another agent's step",
+        ):
+            with self.subTest(readme=clause):
+                self.assertIn(clause, section)
+
+        # The real-git companion exists and covers both scenarios.
+        lifecycle = (root / "tests" / "test_lane_lifecycle.py").read_text(encoding="utf-8")
+        for name in (
+            "test_hold_while_writing_release_on_handoff_inspect_detached",
+            "test_writer_that_did_not_release_blocks_the_fix_lane_with_the_holder_named",
+            "test_detach_at_commit_refuses_to_overwrite_an_ignored_file",
+        ):
+            with self.subTest(lifecycle_test=name):
+                self.assertIn(f"def {name}(", lifecycle)
 
     def test_build_artifact_prompts_use_set_metadata_for_paths(self) -> None:
         root = pathlib.Path(__file__).resolve().parents[1]

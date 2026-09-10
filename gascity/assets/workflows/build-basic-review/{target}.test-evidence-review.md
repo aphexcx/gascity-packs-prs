@@ -14,9 +14,13 @@ anchor's `work_dir`, or, when the source anchor has no `work_dir` and records
 `gc.work_branch`, the recorded branch and commit read from your OWN lane
 (`git -C "$GC_DIR" show <commit>:<path>`; every worktree of the rig shares its
 refs). Never enter another agent's lane; to run a command in the branch case,
-put your own lane on the recorded branch as the acceptance lane does (the
-boundary test, then `git -C "$GC_DIR" switch --no-overwrite-ignore
-"<gc.work_branch>"`, fail closed when git refuses).
+inspect the recorded commit DETACHED in your own lane as the acceptance lane
+does (`git -C "$GC_DIR" switch --detach --no-overwrite-ignore <commit>`,
+resolving the branch first with `git -C "$GC_DIR" rev-parse
+"<gc.work_branch>"` when the context carries only the branch; fail closed when
+git refuses). A review lane never takes the branch itself: git allows one
+worktree per branch, only the writers hold it, and reviewers detached at one
+commit never contend.
 
 Close with `gc.outcome=pass`,
 `code_review.test_evidence_verdict=approve|iterate`, and

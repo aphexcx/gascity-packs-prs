@@ -73,10 +73,31 @@ setup only. Do not edit source files in the launcher checkout.
    its own lane on the recorded branch. The source anchor then has no
    `work_dir` and records `gc.work_branch`, and every later step that reads
    `work_dir` (implement, close-source-anchor, the review setup and its review
-   and fix lanes) resolves that case in its OWN lane: it switches its lane onto
-   the branch with `git switch --no-overwrite-ignore "<gc.work_branch>"` to
-   work, or reads the branch's commit with `git log -1` / `git show` to
-   inspect, and never enters another agent's lane.
+   and fix lanes) resolves that case in its OWN lane under one lifecycle,
+   because git allows one worktree per branch: a lane HOLDS the item's branch
+   only while it is writing to it and RELEASES it when it hands off; every
+   reader INSPECTS the recorded commit detached, never on the branch.
+   - A writer (implement, then the review fix lane) switches its own lane
+     onto the branch with `git switch --no-overwrite-ignore "<gc.work_branch>"`,
+     commits there, and releases the branch the same way this step does,
+     `git -C "$GC_DIR" switch --detach`, after its final commit and before it
+     closes its step; every writer releases the branch the same way when it
+     hands off. HEAD stays at the commit, so nothing is lost: the next step
+     reads the commit by branch name.
+   - A reader (close-source-anchor, the review setup, the acceptance,
+     simplicity and test-evidence lanes) never takes the branch: it reads the
+     branch's commit with `git log -1` / `git show`, or detaches its own lane
+     at that commit (`git switch --detach --no-overwrite-ignore <commit>`) to
+     run commands there. Readers detached at one commit never contend, however
+     many run in parallel, and never block the next writer.
+   - A writer that crashed before releasing leaves the branch held. The next
+     writer's switch then fails (git: "already checked out at <path>", or
+     "already used by worktree at <path>" in newer git); that step fails
+     closed with the holder's path (from `git worktree list`) in its close
+     reason, and the run operator (a human or the mayor) releases the branch
+     with `git -C <holder lane> switch --detach`. A step never enters another
+     agent's lane and never releases it, and no step `--force`s past a
+     holder.
    Otherwise (the session started in the rig root; the role has no lane),
    continue with step 5.
 5. Create or reuse a deterministic git worktree at
