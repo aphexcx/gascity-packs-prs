@@ -247,13 +247,16 @@ if [ "$FETCH" -eq 1 ]; then
     fi
 fi
 
+# A generated base is a FULL ref: git resolves a bare `origin/main` tag-first,
+# so a tag named `origin/main` would move every new branch's base. An explicit
+# --base REF is the operator's and is taken as given.
 if [ -z "$BASE" ]; then
-    if BASE="$(git_rig symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null)"; then
+    if BASE="$(git_rig symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)"; then
         :
     elif git_rig show-ref --verify --quiet "refs/remotes/$REMOTE/main"; then
-        BASE="$REMOTE/main"
+        BASE="refs/remotes/$REMOTE/main"
     elif git_rig show-ref --verify --quiet "refs/remotes/$REMOTE/master"; then
-        BASE="$REMOTE/master"
+        BASE="refs/remotes/$REMOTE/master"
     else
         BASE="HEAD"
         warn "no $REMOTE/HEAD, $REMOTE/main or $REMOTE/master; new branches start at the rig root's HEAD"
@@ -386,19 +389,23 @@ add_worktree() {
     [ -d "$WORKDIR" ] || mkdir -p "$WORKDIR"
     case "$MODE" in
         local)    git_rig worktree add --quiet "$WORKDIR" "$TARGET" ;;
-        remote)   git_rig worktree add --quiet --track -b "$TARGET" "$WORKDIR" "$REMOTE/$TARGET" ;;
+        remote)   git_rig worktree add --quiet --track -b "$TARGET" "$WORKDIR" "refs/remotes/$REMOTE/$TARGET" ;;
         new)      git_rig worktree add --quiet -b "$TARGET" "$WORKDIR" "$BASE_SHA" ;;
         detached) git_rig worktree add --quiet --detach "$WORKDIR" "$DETACH_AT" ;;
     esac
 }
 
+# A tracked start point (add_worktree and switch_worktree, mode remote) is the
+# FULL remote ref: a `--track` start point is a commit-ish, not a branch lookup,
+# and a tag named `<remote>/<branch>` makes the bare form fail "ambiguous
+# object name" instead of resuming the bead's branch.
 # switch_worktree: change what a clean worktree of ours has checked out. Never
 # overwrite an ignored file the target tracks; on any refusal the caller moves
 # the worktree aside and adds a fresh one.
 switch_worktree() {
     case "$MODE" in
         local)    git -C "$WORKDIR" switch --quiet --no-overwrite-ignore "$TARGET" ;;
-        remote)   git -C "$WORKDIR" switch --quiet --no-overwrite-ignore -c "$TARGET" --track "$REMOTE/$TARGET" ;;
+        remote)   git -C "$WORKDIR" switch --quiet --no-overwrite-ignore -c "$TARGET" --track "refs/remotes/$REMOTE/$TARGET" ;;
         new)      git -C "$WORKDIR" switch --quiet --no-overwrite-ignore -c "$TARGET" "$BASE_SHA" ;;
         detached) git -C "$WORKDIR" switch --quiet --no-overwrite-ignore --detach "$DETACH_AT" ;;
     esac

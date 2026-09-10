@@ -75,7 +75,8 @@ release the branch from your lane: `git -C "$GC_DIR" switch --detach` (HEAD
 stays at your commit; untracked files stay), then verify
 `git -C "$GC_DIR" branch --show-current` prints nothing, and name the commit
 id in this step's close reason. Nothing is lost: `close-source-anchor` reads
-the commit by branch (`git log -1 <gc.work_branch>`), the review lanes inspect
+the commit by the branch's full ref (`git log -1 "refs/heads/<gc.work_branch>"`;
+a bare name resolves tag-first), the review lanes inspect
 it detached at that commit, and the fix lane takes the branch, commits, and
 releases it the same way. This release is the lane case only; the per-item
 `work_dir` worktree of the rig-root path is already detached and is shared

@@ -36,7 +36,8 @@ BEFORE closing this step with `gc.outcome=pass`, release the branch from your
 lane: `git -C "$GC_DIR" switch --detach` (HEAD stays at your commit; untracked
 files stay), then verify `git -C "$GC_DIR" branch --show-current` prints
 nothing, and name the commit id in this step's close reason. Readers inspect
-that commit detached (`git log -1 <gc.work_branch>`, `git show`), never on the
+that commit detached (`git log -1 "refs/heads/<gc.work_branch>"`, the full
+ref, since a bare name resolves tag-first; `git show`), never on the
 branch, so the release loses nothing.
 
 Write or update the item summary with these schema-required body sections,
