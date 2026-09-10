@@ -482,7 +482,8 @@ closed at once naming the refusal; `GC_TOOLCHAIN_LANE_DEPS=off` runs there
 when the lane is this caller's alone. A command inside a running project
 command coordinates like any other (its own token, or the lock), except
 that the chain of commands it runs inside is never waited for and is
-marked as upgrading while it waits for and holds the lock, so other mutates
+marked as upgrading (one mark per waiting descendant) while it waits for
+and holds the lock, so other mutates
 pass those over (blocked in this child, they read nothing; two scripts each
 running a nested mutate would otherwise wait for each other for ever); a
 sibling (`pnpm run lint & pnpm rebuild`) holds its own token and is waited
