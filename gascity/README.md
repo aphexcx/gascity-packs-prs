@@ -434,7 +434,7 @@ reads them:
 
 - **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...,
   and any command carrying `-h`/`--help`/`-v`/`--version` in pnpm's option
-  scope) runs as is and touches no lock.
+  scope; `--no-help` and `--help=false` ask for none) runs as is and touches no lock.
 - **mutate** (`install`, `ci`, `add`, `remove`, `update`, `link`, `prune`,
   `dedupe`, `rebuild`, `clean`, `purge`, ... every pnpm 11.20 built-in that
   can change `node_modules`) runs where typed, arguments unchanged, under
@@ -457,7 +457,10 @@ read-only lane, which pnpm reports under the same error code with the file
 error as its reason, measured: `[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES:
 permission denied, open '…/.pnpm-workspace-state-v1.json.…'`, so a reason
 that is a system error code is no verdict either) is no verdict: one WARN
-and the command runs as is, never an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
+and the command runs as is, never an install. Yes, and no other caller
+holds the lane lock: the command runs (a live lock is a mutate or install
+in flight, and a `rebuild` half done still reads as yes to pnpm, so the
+lock is waited for and pnpm asked again after it). No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
 (the workspace root above the target, the nearest `pnpm-workspace.yaml`,
 because a workspace install writes every member's tree whatever
 `sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; under

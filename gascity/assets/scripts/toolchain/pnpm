@@ -70,8 +70,10 @@
 #      manifest, a denied write to pnpm's workspace state file on a
 #      read-only lane, which pnpm reports under the same VERIFY code with
 #      the file error as its reason, measured) is not a verdict: one WARN
-#      and the command runs as is, never an install. Yes: the command
-#      runs. No: one
+#      and the command runs as is, never an install. Yes, and no other
+#      caller holds the lane lock: the command runs (a live lock is a
+#      mutate or install in flight, a rebuild half done reads as yes to
+#      pnpm, so the lock is waited for and pnpm asked again after it). No: one
 #      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
 #      is the workspace root above TARGET, the nearest pnpm-workspace.yaml,
 #      since a workspace install writes every member's tree whatever
@@ -412,7 +414,7 @@ scan() {
                             fi
                             [ "$no" -eq 0 ] || val=$((1 - val))
                             case "$canon" in
-                                help|version|v) KIND=info; return 1 ;;   # a help or version request runs nothing
+                                help|version|v) [ "$val" -eq 0 ] || { KIND=info; return 1; } ;;   # a help or version request runs nothing (`--no-help`, `--help=false` ask for none)
                                 ignore-workspace) IGNORE_WORKSPACE="$val" ;;
                                 workspace-root) workspace_root="$val" ;;
                                 fix) fix_flag="$val" ;;
@@ -778,7 +780,10 @@ case "$KIND" in
         exit "$status"
         ;;
     project)
-        if [ "$(deps_status)" != stale ]; then
+        # a live lane lock is another caller's mutate or install in flight:
+        # a rebuild half done still reads as in sync to pnpm, so the lock is
+        # waited for before pnpm is asked; with no lock, pnpm's yes runs
+        if [ ! -d "$LOCK" ] && [ "$(deps_status)" != stale ]; then
             exec_pnpm "$@"
         fi
         take_lane_lock
