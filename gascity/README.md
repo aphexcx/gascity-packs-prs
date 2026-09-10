@@ -409,9 +409,14 @@ workspace is prepared as itself, never its parent; a project command with
 no lane runs as is), waits for running commands, runs `pnpm
 install --frozen-lockfile` in the lane, and releases; concurrent callers
 wait for the lock and ask pnpm again, so a lane is installed once whatever
-runs in parallel. A lane whose `node_modules` refuses the lock refuses every
-mutate too, so there pnpm's answer stands on its own: yes runs the command,
-no fails it at once with the refusal. A failed install fails the
+runs in parallel. A lane whose `node_modules` refuses the lock for this
+caller (a sandbox, a read-only checkout) cannot be coordinated from here,
+another caller could change it under the command, so the command fails
+closed at once naming the refusal; `GC_TOOLCHAIN_LANE_DEPS=off` runs there
+when the lane is this caller's alone. A project command inside a running
+project command runs as is (its ancestor's token stands for it); a mutate
+inside one takes the lock like any other and waits for every reader but
+that ancestor. A failed install fails the
 command (the requested check never runs against a half-installed tree);
 pnpm fails the frozen install closed when a manifest is ahead of the
 lockfile, and the worker's own `pnpm install` (a mutate) resolves that.
