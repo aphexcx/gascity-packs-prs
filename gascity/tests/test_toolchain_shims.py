@@ -871,3 +871,63 @@ class PnpmShimGateRound5Tests(unittest.TestCase):
         r = self.fx.run("pnpm", "-C", "frontend", "-C", "fresh", "install", cwd=parent)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((fresh / "node_modules" / ".gc-lane-deps").exists())
+
+
+class PnpmShimGateRound6Tests(unittest.TestCase):
+    """Round 6 of the codex gate: directory options anywhere in pnpm's option
+    scope, and the `pm` / `with <runtime>` prefixes."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name))
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_directory_options_after_the_command_select_the_lane_for_built_ins(self) -> None:
+        parent = self.fx.root / "parent"
+        parent.mkdir()
+        front = self.fx.project("parent/frontend")
+        marker = front / "node_modules" / ".gc-lane-deps"
+        self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(front / "pnpm-lock.yaml"))
+        for argv in (["add", "--dir", "frontend", "x"], ["install", "-C", "frontend"], ["add", "x", "--dir=frontend"], ["with", "current", "clean", "-C", "frontend"]):
+            self.fx.run("pnpm", "-C", "frontend", "test", cwd=parent)
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=parent)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.calls(), [f"{parent.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(front / "pnpm-lock.yaml"), argv)
+            # the wrapper's lane artifacts never land under the caller's directory
+            # (the fake pnpm ignores -C and writes its own node_modules in cwd; real pnpm would not)
+            self.assertFalse((parent / "node_modules" / ".gc-lane-deps").exists(), argv)
+            self.assertFalse((parent / "node_modules" / ".gc-lane-deps.lock").exists(), argv)
+
+    def test_a_project_command_keeps_its_scripts_own_dir_arguments(self) -> None:
+        proj = self.fx.project()
+        elsewhere = self.fx.project("elsewhere")
+        # `--dir` after the script or bin name belongs to it: the lane stays the working directory
+        for argv in (["run", "build", "--dir", "../elsewhere"], ["exec", "vitest", "-C", "../elsewhere"], ["vitest", "run", "--dir=../elsewhere"], ["test", "--", "-C", "../elsewhere"]):
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            calls = [c.split("|", 2)[2] for c in self.fx.calls()]
+            self.assertEqual(calls[-1], " ".join(argv), argv)
+            self.assertFalse((elsewhere / "node_modules").exists(), argv)
+        self.assertTrue((proj / "node_modules" / ".gc-lane-deps").exists())
+
+    def test_pm_and_with_prefixes_are_unwrapped_before_classification(self) -> None:
+        proj = self.fx.project()
+        marker = proj / "node_modules" / ".gc-lane-deps"
+        for argv in (["pm", "clean"], ["with", "current", "clean"], ["with", "current", "install"], ["pm", "purge"], ["with", "current", "-r", "ci"]):
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            self.assertEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"))
+            self.fx.log.unlink(missing_ok=True)
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], [" ".join(argv)], argv)
+            self.assertNotEqual(marker.read_text(encoding="utf-8").strip(), sha256(proj / "pnpm-lock.yaml"), argv)
+        # the same prefixes in front of a read-only built-in stay info
+        self.fx.log.unlink(missing_ok=True)
+        r = self.fx.run("pnpm", "with", "current", "list", cwd=proj)
+        self.assertEqual([c.split("|", 2)[2] for c in self.fx.calls()], ["with current list"])

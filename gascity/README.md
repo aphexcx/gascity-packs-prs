@@ -384,9 +384,12 @@ app install` is an install):
   leaves an older lockfile's marker trusted.
 
 The lane is the nearest ancestor holding `pnpm-lock.yaml` above the
-directory pnpm acts on, the last `-C`/`--dir` value resolved against the
-working directory or the working directory itself (for a first install
-with no lockfile yet, that directory). A lock whose owner is dead is moved aside by rename (nothing
+directory pnpm acts on: the last `-C`/`--dir` value in pnpm's own option
+scope (the whole line for a built-in, up to the script or bin name for a
+project command, whose own arguments are its own), resolved against the
+working directory, else the working directory itself (for a first install
+with no lockfile yet, that directory). pnpm's `recursive`/`m`, `pm` and
+`with <runtime>` prefixes are unwrapped before the command is classified. A lock whose owner is dead is moved aside by rename (nothing
 deleted), but only under a second, atomic reclaim lock and after re-reading
 it, so two waiters cannot both clear it and a waiter's fresh live lock is
 never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and
