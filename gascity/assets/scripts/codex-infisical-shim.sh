@@ -79,7 +79,8 @@
 #     an ordinary name is never overwritten. Inherited shell options are kept:
 #     xtrace is switched off before the token is touched and back on for the
 #     exec (so SHELLOPTS reaches the child as it came) with the shim's own
-#     trace lines discarded, so a PS4 that expands the token prints nothing;
+#     trace lines discarded on stdout and stderr alike (BASH_XTRACEFD=1 or 2
+#     included), so a PS4 that expands the token prints nothing;
 #     noglob and errexit are left as found (the lookups cannot trip errexit;
 #     the 127 diagnostics still print).
 #
@@ -91,11 +92,12 @@
 # and the self-exec guard are new; the WARN prefix names this script.
 
 # Inherited tracing (SHELLOPTS=xtrace) would print the token: off until the exec.
-# The group's stderr is /dev/null so the lines that switch it off trace nowhere.
+# The group's stdout and stderr are /dev/null so the lines that switch it off
+# trace nowhere, whichever of the two BASH_XTRACEFD names.
 {
   cis_xtrace=0
   case $- in *x*) cis_xtrace=1; set +x ;; esac
-} 2>/dev/null
+} >/dev/null 2>&1
 cis_noglob=0
 case $- in *f*) cis_noglob=1 ;; esac
 
@@ -216,7 +218,8 @@ unset cis_self cis_self_dir cis_self_file cis_sidecar cis_line cis_key cis_val c
 unset -f cis_die
 if [ "$1" = 1 ]; then
   # Tracing back on for the child; the shim's own two trace lines go to
-  # /dev/null while the child gets the real stderr back (saved on fd 3).
-  { set -x; exec -a "$3" "$2" "${@:4}" 2>&3 3>&-; } 3>&2 2>/dev/null
+  # /dev/null on stdout and stderr alike, while the child gets the real
+  # descriptors back (stderr saved on fd 3, stdout on fd 4).
+  { set -x; exec -a "$3" "$2" "${@:4}" >&4 2>&3 3>&- 4>&-; } 3>&2 4>&1 >/dev/null 2>&1
 fi
 exec -a "$3" "$2" "${@:4}"

@@ -175,7 +175,7 @@ class CodexInfisicalShimTests(unittest.TestCase):
         # by the one restore line just before the exec.
         body = text.split("\n\n", 1)[1]  # past the header comment
         self.assertEqual(text.count("set -x"), 1)
-        self.assertIn('{ set -x; exec -a "$3" "$2" "${@:4}" 2>&3 3>&-; } 3>&2 2>/dev/null', text)
+        self.assertIn('{ set -x; exec -a "$3" "$2" "${@:4}" >&4 2>&3 3>&- 4>&-; } 3>&2 4>&1 >/dev/null 2>&1', text)
         self.assertLess(body.index("set +x"), body.index("INFISICAL_TOKEN"))
 
     def test_readme_carries_the_install_recipe(self) -> None:
@@ -602,6 +602,30 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assertEqual([l for l in proc.stderr.splitlines() if l not in fake_own], [], proc.stderr)
         self.assertIn("xtrace", self.fx.recorded("shellopts"))
         self.assertEqual(self.fx.recorded("token"), "ps4-dummy-secret")
+
+    def test_trace_descriptor_on_stdout_prints_no_token_either(self) -> None:
+        # BASH_XTRACEFD (bash >= 4.1) moves traces off stderr; bash 3.2 ignores
+        # it. The shebang interpreter is bash 5 on Linux; on macOS a Homebrew
+        # bash, when installed, runs the row for real as well.
+        interpreters: list[list[str]] = [[]]
+        for candidate in ("/opt/homebrew/bin/bash", "/usr/local/bin/bash"):
+            if os.access(candidate, os.X_OK):
+                interpreters.append([candidate])
+        for fd in ("1", "2"):
+            for interp in interpreters:
+                self.fx.reset_out()
+                env = {
+                    "HOME": str(self.fx.home), "PATH": f"{self.fx.shim_dir}:{self.fx.bin}:{SYSTEM_PATH}",
+                    "SHIM_TEST_OUT": str(self.fx.out), "SHELLOPTS": "xtrace", "BASH_XTRACEFD": fd,
+                    "PS4": "${INFISICAL_TOKEN} ", "INFISICAL_TOKEN": "xtracefd-dummy-secret",
+                }
+                proc = subprocess.run([*interp, str(self.fx.shim), "-p", "city"], cwd=str(self.fx.root), env=env,
+                                      capture_output=True, text=True, timeout=20)
+                self.assert_exec_ok(proc, ["-p", "city"])
+                self.assertEqual(self.fx.recorded("token"), "xtracefd-dummy-secret")
+                fake_own = [l for l in (proc.stdout + proc.stderr).splitlines() if l.endswith("set +x") or "printf" in l]
+                others = [l for l in (proc.stdout + proc.stderr).splitlines() if l not in fake_own]
+                self.assertEqual(others, [], f"interp={interp} fd={fd}\nstdout={proc.stdout!r}\nstderr={proc.stderr!r}")
 
     def test_inherited_errexit_keeps_the_diagnostics_and_reaches_codex(self) -> None:
         proc = self.fx.run("-p", "city", path=f"{self.fx.shim_dir}:{SYSTEM_PATH}", env_extra={"SHELLOPTS": "errexit"})
