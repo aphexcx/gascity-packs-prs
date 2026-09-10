@@ -388,7 +388,7 @@ NODE_VERSION=24.21.0
 PNPM_VERSION=11.20.0
 EOT
 # outside any sandbox, once, so the first worker command is not the install:
-(cd "$CITY" && PATH="$CITY/.gc/shims/toolchain:$PATH" node --version && pnpm --version)
+(cd "$CITY" && export PATH="$CITY/.gc/shims/toolchain:$PATH" && node --version && pnpm --version)
 ```
 
 The installed copies are city runtime state; the files here are their

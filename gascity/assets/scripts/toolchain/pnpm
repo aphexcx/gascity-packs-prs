@@ -152,10 +152,26 @@ export pnpm_config_verify_deps_before_run
 # --- 3. lane dependencies, once per lockfile ---------------------------------------
 
 # lane_deps_passthrough ARGS: true when the command manages packages or only
-# reports (no project code runs), or when there is no subcommand at all.
+# reports (no project code runs), or when there is no subcommand at all. The
+# subcommand is the first bare token after the global options; an option that
+# takes a separate value (`--filter app`, `-C dir`, `--loglevel warn`) has
+# that value skipped too, so `pnpm --filter app install` is an install.
 lane_deps_passthrough() {
+    skip_next=0
     for a in "$@"; do
+        if [ "$skip_next" -eq 1 ]; then
+            skip_next=0
+            continue
+        fi
         case "$a" in
+            --) skip_next=0; continue ;;
+            -C|--dir|-F|--filter|--filter-prod|--changed-files-ignore-pattern|--test-pattern| \
+            --loglevel|--reporter|--workspace-concurrency|--lockfile-dir|--lockfile-directory| \
+            --store-dir|--virtual-store-dir|--modules-dir|--cache-dir|--state-dir|--registry| \
+            --network-concurrency|--fetch-retries|--fetch-retry-factor|--fetch-retry-mintimeout| \
+            --fetch-retry-maxtimeout|--fetch-timeout|--proxy|--https-proxy|--noproxy|--userconfig| \
+            --use-node-version|--node-version|--resolution-mode|--npm-path|--config-dir)
+                skip_next=1; continue ;;
             -*) continue ;;
         esac
         case "$a" in
