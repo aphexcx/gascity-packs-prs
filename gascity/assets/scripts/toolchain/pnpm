@@ -77,8 +77,9 @@
 #                                                caller's lock (default 600)
 #
 # The lane is resolved from the directory pnpm acts on: the last `-C <dir>`
-# or `--dir <dir>` (relative to the working directory), else the working
-# directory itself; the arguments reach pnpm unchanged.
+# or `--dir <dir>` in pnpm's own option scope (relative to the working
+# directory), else the working directory itself; the arguments reach pnpm
+# unchanged.
 
 set -eu
 
@@ -178,18 +179,23 @@ export pnpm_config_verify_deps_before_run
 # --- 3. classify ---------------------------------------------------------------------
 
 # classify ARGS: sets KIND (info, mutate or project) and TARGET_DIR (the
-# directory pnpm will act on: the last -C/--dir value, resolved against the
-# working directory, else the working directory). The kind is the first bare
-# token after the global options; `recursive`/`multi`/`m` are prefixes and
-# the next token decides. Every pnpm 11.20 built-in that can change
-# node_modules is mutate; the read-only built-ins are info; the script and
-# bin runners, and any bare name pnpm would treat as a script or bin, are
-# project. A built-in not listed here is a script name to pnpm too, so it
-# lands in project, the kind that installs before it runs.
+# directory pnpm will act on: the last -C/--dir value anywhere in pnpm's own
+# option scope, resolved against the working directory, else the working
+# directory). pnpm's option scope is the whole command line for a built-in
+# (`pnpm add x --dir frontend` is valid) and ends at `--`; for a project
+# command it ends at the script or bin name, whose own arguments may spell
+# `--dir` for themselves. The kind is the first bare token after the global
+# options and the prefixes pnpm accepts (`recursive`/`multi`/`m`, `pm`, and
+# `with <runtime>`). Every pnpm 11.20 built-in that can change node_modules
+# is mutate; the read-only built-ins are info; `run`/`exec`/`test`/`start`
+# and any bare name pnpm would treat as a script or bin are project. A
+# built-in not listed here is a script name to pnpm too, so it lands in
+# project, the kind that installs before it runs.
 classify() {
     KIND=info
     TARGET_DIR="$(pwd -P)"
     want_value=""
+    command_seen=0
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
@@ -199,7 +205,7 @@ classify() {
             continue
         fi
         case "$a" in
-            --) continue ;;
+            --) return 0 ;;
             -C|--dir) want_value=dir; continue ;;
             -C=*) TARGET_DIR="${a#-C=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
             --dir=*) TARGET_DIR="${a#--dir=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
@@ -211,8 +217,13 @@ classify() {
             --use-node-version|--node-version|--resolution-mode|--npm-path|--config-dir)
                 want_value=other; continue ;;
             -*) continue ;;
-            recursive|multi|m) continue ;;
         esac
+        [ "$command_seen" -eq 0 ] || continue
+        case "$a" in
+            recursive|multi|m|pm) continue ;;
+            with) want_value=other; continue ;;
+        esac
+        command_seen=1
         case "$a" in
             install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un| \
             update|up|upgrade|link|ln|unlink|dislink|import|prune|fetch|dedupe|rebuild|rb| \
@@ -225,9 +236,10 @@ classify() {
             set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami)
                 KIND=info ;;
             *)
-                KIND=project ;;
+                # a project command: what follows belongs to the script or bin
+                KIND=project
+                return 0 ;;
         esac
-        return 0
     done
 }
 
