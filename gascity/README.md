@@ -427,17 +427,21 @@ app install` is an install):
   runs as is and touches no marker or lock.
 - **mutate** (`install`, `add`, `remove`, `update`, `link`, `prune`,
   `dedupe`, `rebuild`, `patch`, ...) is the one path that changes
-  `node_modules`: it runs under the lane lock, with the marker invalidated
-  first, and on success the marker records the sha256 of the lockfile the
-  tree now matches. A failed explicit install leaves the marker invalid, so
-  the next project command reinstalls instead of trusting a damaged tree.
+  `node_modules`: it runs in the caller's own directory (a workspace
+  package stays that package, a relative `-C` resolves as typed) under the
+  lane lock, with the marker invalidated first, and leaves it invalid. An
+  explicit command certifies nothing: `install --lockfile-only` writes a
+  lockfile and installs nothing, and a failed one may have changed the
+  tree, so the next project command runs the frozen lane install (a no-op
+  of well under a second when the tree is in sync) instead of trusting it.
 - **project** (`run`, `exec`, `test`, a bare script or bin name, anything
   else) first makes sure the lane is installed for its lockfile:
   `node_modules/.gc-lane-deps` holds the sha256 of the lockfile the current
   install was made from, and a match means no install. Otherwise one caller
   takes `node_modules/.gc-lane-deps.lock`, runs `pnpm install
-  --frozen-lockfile` in the project through the same mutate path, writes
-  the marker on success and releases; concurrent callers wait for the lock
+  --frozen-lockfile` in the project root through the same mutate path,
+  writes the marker on success (the one command that certifies the whole
+  tree against the lockfile) and releases; concurrent callers wait for the lock
   and re-read the marker, so a lane is installed once per lockfile whatever
   runs in parallel. The marker is invalidated before the install starts and
   rewritten only on success, so a failed install fails the command (the
