@@ -235,6 +235,27 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual(git(operator, "rev-parse", "HEAD"), sha)
         self.assertEqual(self.asides(), [])
 
+    def test_tag_with_the_bead_branch_name_neither_hides_the_branch_nor_fails_the_start(self) -> None:
+        # gp-d6gd (codex r3/r4): a tag `gp-tag1` beside the branch `gp-tag1` makes
+        # `%(refname:short)` and `rev-parse --abbrev-ref HEAD` print `heads/gp-tag1`.
+        # The listing and the verification use full ref names, so the branch is
+        # found under its name, checked out, and the run reports it.
+        operator = self.fx.city / ".worktrees" / "rig" / "lane-operator"
+        self.fx.run(operator, "gp-tag1")
+        sha = commit(operator, "item.txt", "prepared\n", "item branch work")
+        git(operator, "switch", "--detach")
+        git(self.fx.rig, "tag", "gp-tag1", self.fx.main_sha)
+        self.assertEqual(git(self.fx.rig, "for-each-ref", "--format=%(refname:short)", "refs/heads/gp-tag1"), "heads/gp-tag1")
+        proc = self.fx.run(self.lane, "gp-tag1")
+        self.assertEqual(git(self.lane, "symbolic-ref", "HEAD"), "refs/heads/gp-tag1")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual(proc.stdout.split()[2], "gp-tag1")
+        self.assertNotIn("WARN", proc.stderr)
+        # Re-running on the lane already on the branch is the idempotent no-op.
+        proc = self.fx.run(self.lane, "gp-tag1")
+        self.assertEqual(proc.stdout.split()[2], "gp-tag1")
+        self.assertEqual(self.asides(), [])
+
     def test_rerun_under_a_path_with_spaces_keeps_its_own_branch(self) -> None:
         lane = self.fx.city / "lanes with spaces" / "lane worker"
         self.fx.run(lane, "gp-spc1")

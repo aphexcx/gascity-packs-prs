@@ -254,12 +254,17 @@ checkout of another repository is refused. Untracked files (materialized
 skills, hooks, `node_modules`) do not count as modifications. `sh
 worker-worktree.sh --help` prints the full contract.
 
-The lane is on the bead's branch when the worker claims. With a gascity that
+The lane is on the bead's branch when the worker claims (a pooled session
+with no trigger bead starts detached and takes the bead's branch itself after
+the claim, below). With a gascity that
 resolves the work branch from the session work dir (`hookClaimWorkBranchDir`,
 the companion core change), `gc hook --claim` then stamps a correct
 `gc.work_branch`; older builds read the rig root's branch, so the role prompt
 has the worker compare `gc.work_branch` with its branch after the claim and
-restamp it when they differ.
+restamp it when they differ: the bead's branch is the one whose name contains
+the bead id as a whole token (the `pre_start` rule), so a record naming
+anything else is a claim-time stamp, and the worker never writes a fresh base
+branch over a recorded item branch, which carries the bead's committed work.
 
 Inside a formula the branch is also the handoff between lanes, under one
 lifecycle: a lane holds the item's branch only while it is writing to it and
@@ -280,7 +285,27 @@ source anchor, never a workflow-wide key: separate drains put several items
 on independent branches, each reviewed at its own commit) before it releases
 the branch, so the next review attempt inspects the fixed code, not the
 commit the setup saw, and the other items' recorded commits stay as they
-were.
+were. A re-launched item keeps its branch: `pre_start` names a lane's branch
+for the trigger step bead, so a new run puts the operator's lane on a fresh
+step branch, and `do-work/prepare-worktree` reads the source anchor's
+recorded `gc.work_branch` first and resolves the item's branch by name, the
+one branch naming `<source-anchor-id>` as a whole token, local or on
+`origin` (exactly one such branch is the item's whether or not the record
+agrees; none means a new `<source-anchor-id>`; several fail closed for the
+operator to reconcile), takes it in the operator's lane and records it only
+when the record differs, never a fresh base branch over a recorded item
+branch. A branch held by another worktree, a human checkout included, fails
+the step closed with the holder named, and no checkout state, not the rig
+root's branch nor a default branch, is consulted: the record on its own
+decides nothing, because a claim-time stamp can name anything. The same
+name rule binds a directly claimed bead: its branch is the one naming the
+bead id, a worker whose `pre_start` had no trigger bead takes that branch
+itself after the claim by the same listing (full ref names, one namespace
+prefix removed), a worker whose `pre_start` found that branch held elsewhere
+closes `gc.failure_class=branch-held` naming the holder instead of creating a
+second candidate, and a branch recorded before this rule under a name
+without the id is renamed by the operator before the rule is rolled out on a
+city.
 
 Two related core behaviors complete the picture:
 
