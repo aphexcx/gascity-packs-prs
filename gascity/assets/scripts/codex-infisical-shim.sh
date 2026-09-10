@@ -62,18 +62,24 @@
 #   * A non-empty INFISICAL_TOKEN is kept as is; token.sh is not sourced.
 #   * argv reaches the real codex intact, in order, nothing added or dropped.
 #   * The shim never execs itself. It locates itself with shell builtins only
-#     and refuses to run (exit 127) when it cannot; every PATH entry that
-#     resolves to its own directory is removed before the lookup (the child's
-#     PATH is the pruned one, empty entries kept; when nothing survives PATH
-#     becomes /dev/null, never the empty string bash reads as the current
-#     directory), and an exec target that is the shim file itself is refused.
-#     No codex left on PATH is an error (exit 127), never a loop. No external
-#     utility is needed for any of this, and CDPATH has no effect on it.
+#     and refuses to run (exit 127) when it cannot; every PATH entry that is
+#     its own directory (same inode, so symlinked, relative or doubled-slash
+#     spellings count) is removed before the lookup (the child's PATH is the
+#     pruned one, empty entries kept; when nothing survives PATH becomes
+#     /dev/null, never the empty string bash reads as the current directory).
+#     The exec target is the executable FILE `type -P` finds (an exported
+#     function or alias of the same name is ignored), it is refused when it is
+#     the shim file itself, and that checked path is what runs, with argv[0]
+#     kept. No codex left on PATH is an error (exit 127), never a loop. No
+#     external utility is needed for any of this, and CDPATH has no effect.
 #   * Nothing else in the environment is changed: PATH (prepend + prune) and
 #     INFISICAL_TOKEN are the only writes; the shim's own variables carry the
 #     cis_ prefix, are initialized before use (an inherited cis_ export is not
 #     configuration) and are unset before the exec, so an inherited export of
-#     an ordinary name is never overwritten.
+#     an ordinary name is never overwritten. Inherited shell options are kept:
+#     xtrace is switched off before the token is touched and back on just
+#     before the exec (so SHELLOPTS reaches the child as it came), noglob is
+#     left as found.
 #
 # Relation to the copy this was extracted from (citadel, gp-e8r6, 2026-09-10):
 # same fail-open semantics and the same helper; the PATH prepend and the pinned
@@ -81,6 +87,12 @@
 # installs on any city; the helper now runs in a subshell and only its token
 # crosses over (the original sourced it in-process); the default exec target
 # and the self-exec guard are new; the WARN prefix names this script.
+
+# Inherited tracing (SHELLOPTS=xtrace) would print the token: off until the exec.
+cis_xtrace=0
+case $- in *x*) cis_xtrace=1; set +x ;; esac
+cis_noglob=0
+case $- in *f*) cis_noglob=1 ;; esac
 
 cis_die() {
   echo "codex-infisical-shim: ERROR $1" >&2
@@ -91,13 +103,13 @@ cis_die() {
 cis_self=$0
 case $cis_self in
   */*) ;;
-  *) cis_self=$(command -v -- "$cis_self" 2>/dev/null) ;;
+  *) cis_self=$(builtin type -P -- "$cis_self" 2>/dev/null) ;;
 esac
 [ -n "$cis_self" ] || cis_die "cannot locate the shim itself from \$0='$0'; refusing to exec"
 cis_self_dir=${cis_self%/*}
 [ "$cis_self_dir" != "$cis_self" ] || cis_self_dir=.
 [ -n "$cis_self_dir" ] || cis_self_dir=/
-cis_self_dir=$(unset CDPATH; cd -- "$cis_self_dir" >/dev/null 2>&1 && pwd -P) \
+cis_self_dir=$(unset CDPATH; cd -P -- "$cis_self_dir" >/dev/null 2>&1 && pwd -P) \
   || cis_die "cannot resolve the shim's directory from '$cis_self'; refusing to exec"
 cis_self_file="$cis_self_dir/${cis_self##*/}"
 [ -e "$cis_self_file" ] || cis_die "the shim does not exist at '$cis_self_file'; refusing to exec"
@@ -141,8 +153,7 @@ while :; do
     *:*) cis_entry=${cis_rest%%:*}; cis_rest=${cis_rest#*:}; cis_more=1 ;;
     *) cis_entry=$cis_rest; cis_more=0 ;;
   esac
-  cis_phys=$(unset CDPATH; cd -- "${cis_entry:-.}" >/dev/null 2>&1 && pwd -P) || cis_phys=
-  if [ "$cis_phys" != "$cis_self_dir" ]; then
+  if ! [ "${cis_entry:-.}" -ef "$cis_self_dir" ]; then
     if [ "$cis_first" = 1 ]; then
       cis_pruned=$cis_entry
       cis_first=0
@@ -180,19 +191,26 @@ fi
 set -f
 # shellcheck disable=SC2206
 cis_words=(${cis_exec:-})
-set +f
+[ "$cis_noglob" = 1 ] || set +f
 if [ "${#cis_words[@]}" -gt 0 ]; then
   set -- "${cis_words[@]}" "$@"
 else
   set -- codex "$@"
 fi
-cis_target=$(command -v -- "$1" 2>/dev/null)
+# The executable file, never a function, alias or builtin of that name.
+cis_target=$(builtin type -P -- "$1" 2>/dev/null)
 [ -n "$cis_target" ] \
   || cis_die "no '$1' on PATH after removing the shim's directory ($cis_self_dir); set CODEX_SHIM_EXEC or install codex"
 if [ "$cis_target" -ef "$cis_self_file" ]; then
   cis_die "'$1' resolves to the shim itself ($cis_self_file); refusing to exec"
 fi
+cis_argv0=$1
+shift
+set -- "$cis_target" "$@"
+cis_restore_xtrace=$cis_xtrace
 unset cis_self cis_self_dir cis_self_file cis_sidecar cis_line cis_key cis_val cis_prepend cis_exec \
-  cis_rest cis_pruned cis_first cis_entry cis_more cis_phys cis_token_sh cis_words cis_target
+  cis_rest cis_pruned cis_first cis_entry cis_more cis_token_sh cis_words cis_target cis_xtrace cis_noglob
 unset -f cis_die
-exec "$@"
+[ "$cis_restore_xtrace" = 1 ] && set -x
+unset cis_restore_xtrace
+exec -a "$cis_argv0" "$@"

@@ -309,11 +309,15 @@ failing helper leaves the token unset and prints one WARN, an `exit`, a
 `set --`, a trace or an EXIT trap in the helper cannot reach the shim or the
 session output, the session starts either way); then it execs the real codex
 with argv intact. It never execs itself: it locates itself with shell
-builtins only and refuses to run when it cannot, every PATH entry that
-resolves to its own directory is removed first (empty entries kept; when
-nothing survives, PATH becomes `/dev/null`, never the empty string bash reads
-as the current directory), and no codex left on PATH is an error (exit 127),
-never a loop.
+builtins only and refuses to run when it cannot, every PATH entry that is its
+own directory is removed first (by inode, so symlinked, relative and
+doubled-slash spellings count; empty entries kept; when nothing survives,
+PATH becomes `/dev/null`, never the empty string bash reads as the current
+directory), the target is the executable file `type -P` finds (an exported
+function or alias named `codex` is ignored) and that checked path is what
+runs, and no codex left on PATH is an error (exit 127), never a loop.
+Inherited shell options reach codex as they came: xtrace is off while the
+token is handled and back on for the exec, noglob is left as found.
 
 Install it as the city's shim, in its own directory (gc does not sync a
 pack's `assets/scripts` anywhere), with the per-city settings in a
@@ -374,9 +378,11 @@ test "$(md5 -q "$CITY/.gc/shims/codex-astra/codex")" = <that md5>
 `gascity/tests/test_codex_infisical_shim.py` holds the contract: fail-open
 with the helper absent, present, failing, exiting, tracing, trapping,
 printing or rewriting argv; only the token crosses over; argv intact; PATH
-pruned through symlinked and relative aliases with empty entries kept and
-never emptied; the self-exec refusals, with no utility on PATH and under
-CDPATH; the settings file never evaluated; the install recipe above run from
+pruned through symlinked, relative and doubled-slash aliases with empty
+entries kept and never emptied; the self-exec refusals, with no utility on
+PATH, under CDPATH and with an exported function named `codex`; inherited
+xtrace never printing the token and inherited xtrace and noglob reaching
+codex; the settings file never evaluated; the install recipe above run from
 a fresh directory, the md5 recording refusing a bad pin and the check failing
 on a missing file.
 

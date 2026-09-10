@@ -24,6 +24,8 @@ README = PACK / "README.md"
 SYSTEM_PATH = "/usr/bin:/bin"
 
 FAKE_CODEX = """#!/bin/sh
+printf '%s\\n' "${SHELLOPTS-<unset>}" > "$SHIM_TEST_OUT/shellopts"
+set +x
 out="$SHIM_TEST_OUT"
 printf '%s\\n' "$0" > "$out/argv0"
 : > "$out/argv"
@@ -98,6 +100,10 @@ class Fixture:
     def ran_fake(self) -> bool:
         return (self.out / "argv").exists()
 
+    def reset_out(self) -> None:
+        for f in self.out.iterdir():
+            f.unlink()
+
 
 def readme_section() -> str:
     text = README.read_text(encoding="utf-8")
@@ -160,8 +166,13 @@ class CodexInfisicalShimTests(unittest.TestCase):
             "= <that md5>",
         ):
             self.assertIn(needle, text)
-        self.assertNotIn("set -x", text)
         self.assertNotIn("eval ", text)
+        # Tracing is switched off first thing and only ever switched back on
+        # by the one restore line just before the exec.
+        body = text.split("\n\n", 1)[1]  # past the header comment
+        self.assertEqual(text.count("set -x"), 1)
+        self.assertIn('[ "$cis_restore_xtrace" = 1 ] && set -x', text)
+        self.assertLess(body.index("set +x"), body.index("INFISICAL_TOKEN"))
 
     def test_readme_carries_the_install_recipe(self) -> None:
         section = readme_section()
@@ -421,6 +432,38 @@ class CodexInfisicalShimTests(unittest.TestCase):
         proc = self.fx.run("-p", "city", path=f"{self.fx.shim_dir}:{link_dir}:{self.fx.bin}:{SYSTEM_PATH}")
         self.assert_refused(proc, "resolves to the shim itself")
 
+    def test_exported_function_named_codex_neither_runs_nor_bypasses_the_guard(self) -> None:
+        # bash imports `BASH_FUNC_codex%%` from the environment as a function
+        # named codex; `command -v` would report the function, `exec` would not
+        # run it. The executable file is what must be checked and run.
+        fn = {"BASH_FUNC_codex%%": '() { echo FUNCTION-RAN; exit 99; }'}
+        proc = self.fx.run("-p", "city", env_extra=fn)
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertNotIn("FUNCTION-RAN", proc.stdout)
+        self.assertEqual(pathlib.Path(self.fx.recorded("argv0")).resolve(), self.fx.fake.resolve())
+        # Two spellings of the shim on PATH (A holds it, B/codex links to it)
+        # restored by the prepend on every hop: a refusal, never a loop.
+        self.fx.reset_out()
+        b = self.fx.root / "B"
+        b.mkdir()
+        (b / "codex").symlink_to(self.fx.shim)
+        proc = self.fx.run("-p", "city", path=f"{self.fx.bin}:{SYSTEM_PATH}",
+                           env_extra={**fn, "CODEX_SHIM_PATH_PREPEND": f"{self.fx.shim_dir}:{b}"})
+        self.assert_refused(proc, "resolves to the shim itself")
+
+    def test_the_checked_executable_file_is_what_runs(self) -> None:
+        # A shell fake sees its script path as $0, so argv[0] itself is not
+        # observable here; the file that ran is.
+        proc = self.fx.run("-p", "city", env_extra={"CODEX_SHIM_EXEC": "codex --pinned"})
+        self.assert_exec_ok(proc, ["--pinned", "-p", "city"])
+        self.assertEqual(pathlib.Path(self.fx.recorded("argv0")).resolve(), self.fx.fake.resolve())
+
+    def test_doubled_slash_spelling_of_the_shim_directory_is_pruned(self) -> None:
+        doubled = "/" + str(self.fx.shim_dir)
+        proc = self.fx.run("-p", "city", path=f"{doubled}:{self.fx.bin}:{SYSTEM_PATH}")
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertEqual(self.fx.recorded("path"), f"{self.fx.bin}:{SYSTEM_PATH}")
+
     def test_exec_override_naming_the_shim_itself_is_refused(self) -> None:
         proc = self.fx.run("-p", "city", env_extra={"CODEX_SHIM_EXEC": str(self.fx.shim)})
         self.assert_refused(proc, "resolves to the shim itself")
@@ -530,6 +573,25 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assert_exec_ok(proc, ["--ok", "-p", "city"])
         self.assertEqual(self.fx.recorded("entry"), "keep-me")
         self.assertEqual(self.fx.recorded("line"), "keep-line")
+
+    def test_inherited_xtrace_never_prints_the_token_and_reaches_codex(self) -> None:
+        proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "xtrace", "INFISICAL_TOKEN": "review-dummy-secret"})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertNotIn("review-dummy-secret", proc.stdout + proc.stderr)
+        self.assertEqual(self.fx.recorded("token"), "review-dummy-secret")
+        self.assertIn("xtrace", self.fx.recorded("shellopts"))
+        self.assertIn("+ exec -a codex", proc.stderr, "tracing is back on for the exec")
+        self.fx.write_token_sh("export INFISICAL_TOKEN=minted-dummy-secret\n")
+        proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "xtrace"})
+        self.assert_exec_ok(proc, ["-p", "city"])
+        self.assertNotIn("minted-dummy-secret", proc.stdout + proc.stderr)
+        self.assertEqual(self.fx.recorded("token"), "minted-dummy-secret")
+
+    def test_inherited_noglob_reaches_codex_and_the_override_still_splits(self) -> None:
+        proc = self.fx.run("-p", "city", env_extra={"SHELLOPTS": "noglob", "CODEX_SHIM_EXEC": "codex --a --b"})
+        self.assert_exec_ok(proc, ["--a", "--b", "-p", "city"])
+        self.assertIn("noglob", self.fx.recorded("shellopts"))
+        self.assertEqual(self.fx.recorded("path"), f"{self.fx.bin}:{SYSTEM_PATH}")
 
     def test_inherited_cis_variables_are_not_configuration(self) -> None:
         proc = self.fx.run("-p", "city", env_extra={
