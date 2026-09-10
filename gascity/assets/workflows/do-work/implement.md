@@ -24,11 +24,17 @@ the rig checkout would switch the human checkout's branch. Then `git -C
 "$GC_DIR" rev-parse --verify "refs/heads/<gc.work_branch>"` must succeed, and
 `git -C "$GC_DIR" branch --show-current` must print that branch. If it prints
 another branch or nothing, switch your own lane onto the recorded branch with
-`git -C "$GC_DIR" switch "<gc.work_branch>"` (refs are shared by every
-worktree of the rig, and `prepare-worktree` detached its lane from the branch
-so it is free); if git refuses, or the branch is missing from the repository,
-fail this step before editing. Then set `WORKTREE="$GC_DIR"`; `cd
-"$WORKTREE"` and the `pwd -P` check below hold trivially. Never enter another
+`git -C "$GC_DIR" switch --no-overwrite-ignore "<gc.work_branch>"` (refs are
+shared by every worktree of the rig, and `prepare-worktree` detached its lane
+from the branch so it is free). `--no-overwrite-ignore` makes git refuse when
+an ignored file in your lane (a build output, say) collides with a path the
+branch tracks; a plain `switch` would overwrite that file silently, and the
+lane helper `worker-worktree.sh` protects the same case. If git refuses, for
+that or any other reason, or the branch is missing from the repository, fail
+this step before editing: never `--force`, never a stash (the stash stack is
+shared by every worktree of the rig), and never remove the colliding file.
+Then set `WORKTREE="$GC_DIR"`; `cd "$WORKTREE"` and the `pwd -P` check below
+hold trivially. Never enter another
 agent's lane, and never treat a persisted `work_dir` that points into
 `.worktrees/<rig>/lane-*` of another agent as yours: a `work_dir` naming a
 lane other than `$GC_DIR` is invalid, fail this step before editing.
@@ -42,7 +48,10 @@ metadata `gc.input_convoy_id`. Read that input convoy with `gc bd show
 first element before reading metadata. If the input convoy has
 `gc.synthetic_kind=drain-unit-convoy`, use its `gc.drain_member_id` as the
 source anchor. Otherwise use the input convoy id as the source anchor. Then
-read the source anchor and use only its `work_dir` metadata as `WORKTREE`.
+read the source anchor and use only its `work_dir` metadata as `WORKTREE`,
+or, when it has no `work_dir` and records `gc.work_branch`, your own lane
+`$GC_DIR` on that branch, resolved as the lane paragraph above says; never any
+other directory.
 
 `gc.work_dir` is the launcher rig root, not the implementation worktree. Use
 `gc.work_dir` only later to run `.gc/scripts/checks/build-artifact-valid.sh`.

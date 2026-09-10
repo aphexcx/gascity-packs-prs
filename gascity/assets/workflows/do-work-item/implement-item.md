@@ -7,10 +7,25 @@ the item, write an item summary, and close only the source anchor on success.
 Do not infer the source anchor from dependency ids. Read the reserved convoy and
 source anchor metadata directly; when `gc bd show --json` returns a one-element
 list, unwrap the first element before reading metadata. `gc.work_dir` is the
-launcher rig root, not the implementation location. Use the authoritative
-worktree recorded on the source anchor, run `cd "$WORKTREE"`, and verify
-`pwd -P` equals `$WORKTREE` before any source read, source edit, test, file
-hash, `git add`, or `git commit`.
+launcher rig root, not the implementation location. Read `work_dir` from the
+source anchor (the authoritative worktree recorded there), set `WORKTREE` to
+it, run `cd "$WORKTREE"`, and verify `pwd -P` equals `$WORKTREE` before any
+source read, source edit, test, file hash, `git add`, or `git commit`.
+
+When the source anchor has no `work_dir` and records `gc.work_branch`
+(`prepare-worktree` ran in a lane and handed the item over by branch; a
+directory is per agent and is never handed to another agent), the worktree is
+your OWN lane, `$GC_DIR`, on the recorded branch: prove the lane with the
+boundary test `do-work/prepare-worktree` step 4 applies (resolved `git -C
+"$GC_DIR" rev-parse --show-toplevel` equals `$GC_DIR`; neither the rig root
+nor inside it; `rev-parse --git-common-dir` is the rig root's `.git`), then,
+unless `git -C "$GC_DIR" branch --show-current` already prints that branch,
+`git -C "$GC_DIR" switch --no-overwrite-ignore "<gc.work_branch>"`; when any
+part fails or git refuses (an ignored file in your lane colliding with a path
+the branch tracks), fail this step before editing: never `--force`, never a
+stash, never remove the colliding file. Then `WORKTREE="$GC_DIR"`. Never enter
+another agent's lane: a persisted `work_dir` naming a lane other than
+`$GC_DIR` is invalid, fail closed.
 
 Write or update the item summary with these schema-required body sections,
 using the exact `##` headings below in this order:

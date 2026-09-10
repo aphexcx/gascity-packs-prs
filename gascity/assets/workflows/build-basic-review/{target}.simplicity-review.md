@@ -8,6 +8,15 @@ that a new factory user can understand and act on.
 Write findings under the build artifact root. Required findings must be tied to
 specific changed files or artifacts and must explain the smallest useful fix.
 
+Read the changed files where the review context puts them: the source
+anchor's `work_dir`, or, when the source anchor has no `work_dir` and records
+`gc.work_branch`, the recorded branch and commit read from your OWN lane
+(`git -C "$GC_DIR" show <commit>:<path>`; every worktree of the rig shares its
+refs). Never enter another agent's lane; to run a command in the branch case,
+put your own lane on the recorded branch as the acceptance lane does (the
+boundary test, then `git -C "$GC_DIR" switch --no-overwrite-ignore
+"<gc.work_branch>"`, fail closed when git refuses).
+
 Close with `gc.outcome=pass`,
 `code_review.simplicity_verdict=approve|iterate`, and
 `code_review.output_path=<simplicity review report path>`.

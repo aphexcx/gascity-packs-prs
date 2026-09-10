@@ -12,6 +12,19 @@ mark acceptance as `iterate` merely because the root checkout is unchanged when
 the recorded source anchor/worktree implements the requested behavior and its
 proof commands pass.
 
+The review context names the workspace either as the source anchor's
+`work_dir` or, when the source anchor has no `work_dir` and records
+`gc.work_branch`, as a branch and a commit id. In the branch case work from
+your OWN lane and never enter another agent's directory: read with `git -C
+"$GC_DIR" log -1 <commit>` and `git -C "$GC_DIR" show <commit>:<path>` (every
+worktree of the rig shares its refs); to run proof commands, put your own lane on the
+recorded branch first exactly as `do-work/implement` does for the lane case
+(the boundary test, then `git -C "$GC_DIR" switch --no-overwrite-ignore
+"<gc.work_branch>"`, and fail closed when git refuses: never `--force`, never
+a stash, never remove the colliding file). A `work_dir` naming an agent lane
+(`.worktrees/<rig>/lane-*`) is invalid: write an iterate finding against
+review setup instead of entering it.
+
 Write findings under the build artifact root. Required findings must include
 the relevant requirement or task reference plus the file, command, or artifact
 that proves the issue.

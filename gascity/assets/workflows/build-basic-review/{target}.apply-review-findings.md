@@ -13,6 +13,23 @@ anchor. If the only reported issue is "implementation exists in the worktree but
 not the root checkout" and the source anchor/worktree passes the requirements,
 record a no-op fix summary and set `code_review.verdict=done`.
 
+When the review context records a branch and a commit instead of a `work_dir`
+(the source anchor has no `work_dir` and records `gc.work_branch`: the item
+was handed over by branch, and a directory is per agent), the workspace for
+fixes is your OWN lane, `$GC_DIR`, put on that branch exactly as
+`do-work/implement` does for the lane case: prove the lane first with the
+boundary test `do-work/prepare-worktree` step 4 applies (resolved `git -C
+"$GC_DIR" rev-parse --show-toplevel` equals `$GC_DIR`; neither the rig root
+nor inside it; `rev-parse --git-common-dir` is the rig root's `.git`), then,
+unless `git -C "$GC_DIR" branch --show-current` already prints that branch,
+`git -C "$GC_DIR" switch --no-overwrite-ignore "<gc.work_branch>"`; when any
+part fails or git refuses (an ignored file in your lane colliding with a path
+the branch tracks), fail this step before editing: never `--force`, never a
+stash, never remove the colliding file. Then `WORKTREE="$GC_DIR"`, `cd
+"$WORKTREE"`, verify `pwd -P` equals it before changing anything, and commit
+the fix on that branch. Never enter another agent's lane: a `work_dir` naming
+a lane other than `$GC_DIR` is invalid, fail closed.
+
 Set `code_review.verdict=done` only when acceptance, test evidence, and
 simplicity all approve after this pass. Set `code_review.verdict=iterate` when
 required fixes remain.

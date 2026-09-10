@@ -7,6 +7,20 @@ the source anchor for the close step.
 Default fallback behavior must still enforce the worktree contract: resolve the
 source anchor from workflow metadata, read `work_dir` from that source anchor,
 and `cd "$WORKTREE"` before source reads, edits, tests, hashes, or commits.
+When the source anchor has no `work_dir` and records `gc.work_branch`
+(`prepare-worktree` ran in a lane and handed the item over by branch; a
+directory is per agent and is never handed to another agent), the worktree is
+your OWN lane, `$GC_DIR`, on the recorded branch: prove the lane with the
+boundary test `do-work/prepare-worktree` step 4 applies (resolved `git -C
+"$GC_DIR" rev-parse --show-toplevel` equals `$GC_DIR`; neither the rig root
+nor inside it; `rev-parse --git-common-dir` is the rig root's `.git`), then,
+unless `git -C "$GC_DIR" branch --show-current` already prints that branch,
+`git -C "$GC_DIR" switch --no-overwrite-ignore "<gc.work_branch>"`; when any
+part fails or git refuses (an ignored file in your lane colliding with a path
+the branch tracks), fail this step before editing: never `--force`, never a
+stash, never remove the colliding file. Then `WORKTREE="$GC_DIR"`. Never enter
+another agent's lane: a persisted `work_dir` naming a lane other than
+`$GC_DIR` is invalid, fail closed.
 `gc.work_dir` is the launcher rig root, not the implementation worktree. When
 reading beads with `gc bd show --json`, handle both an object and a one-element
 list before reading metadata.
