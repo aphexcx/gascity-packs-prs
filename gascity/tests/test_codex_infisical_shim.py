@@ -23,7 +23,9 @@ SCRIPT = PACK / "assets" / "scripts" / "codex-infisical-shim.sh"
 README = PACK / "README.md"
 SYSTEM_PATH = "/usr/bin:/bin"
 
-FAKE_CODEX = """#!/bin/sh
+# bash, not sh: Ubuntu's /bin/sh is dash, which ignores an inherited SHELLOPTS,
+# and the inherited-option rows read the fake's view of xtrace/noglob/errexit.
+FAKE_CODEX = """#!/bin/bash
 printf '%s\\n' "${SHELLOPTS-<unset>}" > "$SHIM_TEST_OUT/shellopts"
 set +x
 out="$SHIM_TEST_OUT"
@@ -588,7 +590,7 @@ class CodexInfisicalShimTests(unittest.TestCase):
         self.assertNotIn("minted-dummy-secret", proc.stdout + proc.stderr)
         self.assertEqual(self.fx.recorded("token"), "minted-dummy-secret")
         # A PS4 that expands the token: the shim's own trace lines never print.
-        # The fake, a shell script that inherits xtrace, PS4 and the token by
+        # The fake, a bash script that inherits xtrace, PS4 and the token by
         # design, traces exactly its first two lines before its own `set +x`;
         # every other stderr line would be the shim's.
         proc = self.fx.run("-p", "city", env_extra={
