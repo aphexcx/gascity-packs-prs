@@ -117,6 +117,7 @@ case "$first" in
         echo "fake pnpm: mutated"
         exit 0 ;;
 esac
+[ -z "${FAKE_PNPM_RUN_SLEEP-}" ] || sleep "$FAKE_PNPM_RUN_SLEEP"
 echo "fake pnpm ran: $*"
 """
 
@@ -305,7 +306,8 @@ class PnpmShimVerdictTests(unittest.TestCase):
         self.assertIn("could not judge the lane", r.stderr)
         self.assertIn("EACCES", r.stderr)
         self.assertEqual(self.fx.argv(), ["exec vitest"])
-        self.assertFalse((proj / "node_modules").exists())  # no lock taken, nothing installed
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())  # asked under the lock, released, nothing installed
+        self.assertFalse(in_sync(proj))
 
     def test_a_file_error_pnpm_reports_under_the_verify_code_is_no_verdict_either(self) -> None:
         """Round 18: pnpm wraps a file error met inside its check (the state
@@ -377,7 +379,7 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(last.split("|", 2)[1], "false")
         self.assertTrue(last.endswith("|exec vitest run --reporter=dot"), last)
         # the sync question is asked with the flag and without the environment value
-        self.assertEqual([c.split("|", 2)[1] for c in self.fx.checks()], ["unset", "unset"])
+        self.assertEqual([c.split("|", 2)[1] for c in self.fx.checks()], ["unset"])
 
     def test_info_commands_run_as_is_and_ask_nothing(self) -> None:
         proj = self.fx.project()
@@ -397,7 +399,7 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "exec eslint ."])
         self.assertEqual(self.fx.calls()[0], f"{proj.resolve()}|false|install --frozen-lockfile")
         # asked before the lock and again under it, then never during the command
-        self.assertEqual(len(self.fx.checks()), 2)
+        self.assertEqual(len(self.fx.checks()), 1)     # asked once, under the lane lock (round 20)
         self.assertTrue(in_sync(proj))
         self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
 
@@ -748,7 +750,7 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertNotIn("waiting for another caller", r.stderr)
         self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "run build", "exec vitest"])
         # the descendant asked pnpm nothing: the parent holds the lane
-        self.assertEqual(len(self.fx.checks()), 2)
+        self.assertEqual(len(self.fx.checks()), 1)     # asked once, under the lane lock (round 20)
         # the bypass is scoped to that lane: a sibling project still gets its own install
         other = self.fx.project("other")
         self.fx.reset()
@@ -847,7 +849,7 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         # every question and the one install carry the flag and run in the fixture
         self.assertEqual(
             self.fx.checks(),
-            [f"{fixture.resolve()}|unset|--ignore-workspace {CHECK}"] * 2,
+            [f"{fixture.resolve()}|unset|--ignore-workspace {CHECK}"],
         )
         self.assertEqual(self.fx.calls(), [
             f"{fixture.resolve()}|false|--ignore-workspace install --frozen-lockfile",
@@ -1131,6 +1133,111 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(results["exec"].returncode, 0, results["exec"].stderr)
         self.assertIn("waiting for another caller's lane install", results["exec"].stderr)
         self.assertEqual(self.fx.argv(), ["add left-pad", "exec vitest"])
+
+    def test_a_mutate_waits_for_running_project_commands_and_the_question_is_asked_under_the_lock(self) -> None:
+        """Round 20: a running check holds a reader token, so a rebuild (or
+        the wrapper's own install) starting under it waits; the question is
+        asked under the lane lock, never beside a mutate taking it."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        readers = proj / "node_modules" / ".gc-lane-deps.readers"
+        self.fx.reset()
+        results: dict[str, subprocess.CompletedProcess[str]] = {}
+        marks: dict[str, float] = {}
+
+        def check() -> None:
+            results["check"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="3")
+            marks["check_end"] = time.monotonic()
+
+        def rebuild() -> None:
+            time.sleep(1)
+            results["rebuild"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
+            marks["rebuild_end"] = time.monotonic()
+
+        threads = [threading.Thread(target=check), threading.Thread(target=rebuild)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=60)
+        self.assertEqual(results["check"].returncode, 0, results["check"].stderr)
+        self.assertEqual(results["rebuild"].returncode, 0, results["rebuild"].stderr)
+        self.assertIn("waiting for running lane command(s)", results["rebuild"].stderr)
+        self.assertGreaterEqual(marks["rebuild_end"], marks["check_end"])
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
+        self.assertEqual(sorted(readers.iterdir()), [])     # tokens dropped on exit
+        # a crashed run's token (dead pid) does not hold a mutate; a live one does, then fails closed
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        readers.mkdir(exist_ok=True)
+        (readers / str(dead.pid)).write_text("", encoding="utf-8")
+        holder = subprocess.Popen(["sleep", "60"])
+        try:
+            self.fx.reset()
+            r = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse((readers / str(dead.pid)).exists())
+            (readers / str(holder.pid)).write_text("", encoding="utf-8")
+            self.fx.reset()
+            r = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn(f"still running (pid {holder.pid})", r.stderr)
+            self.assertEqual(self.fx.all_calls(), [])
+            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())   # released on the way out
+            # the wrapper's own install waits for the reader too: a stale lane (the fake's
+            # rebuild above left it so) with a live reader
+            (proj / "node_modules" / ".fake-state").unlink(missing_ok=True)
+            self.fx.reset()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("still running", r.stderr)
+            self.assertEqual(self.fx.installs(), [])
+        finally:
+            holder.kill()
+            holder.wait()
+        # a descendant of a running project command runs as is, its parent's token standing for it
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
+        # a lane whose node_modules refuses the lock refuses every mutate too: pnpm's yes runs, its no fails at once
+        ro = self.fx.project("ro")
+        self.fx.run("pnpm", "exec", "vitest", cwd=ro)
+        (ro / "node_modules").chmod(0o555)
+        try:
+            self.fx.reset()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.fx.argv(), ["exec vitest"])
+            (ro / "node_modules").chmod(0o755)
+            (ro / "node_modules" / ".fake-state").unlink()
+            (ro / "node_modules").chmod(0o555)
+            self.fx.reset()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("cannot create", r.stderr)
+            self.assertIn("out of sync", r.stderr)
+            self.assertEqual(self.fx.argv(), [])
+        finally:
+            (ro / "node_modules").chmod(0o755)
+        # the new names: prefix/get/set/owners/peers/lane/change are informational, uni and runtime mutate
+        holder = subprocess.Popen(["sleep", "60"])
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        try:
+            lock.mkdir()
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            for argv in (["prefix"], ["get", "registry"], ["set", "registry", "x"], ["owners", "ls", "x"], ["peers", "check"], ["lane"], ["change", "status"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 0, (argv, r.stderr))
+                self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
+            for argv in (["uni", "x"], ["runtime", "set", "node", "22"], ["rt", "set", "node", "22"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 1, (argv, r.stderr))
+                self.assertIn("has held", r.stderr, argv)
+        finally:
+            holder.kill()
+            holder.wait()
 
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
