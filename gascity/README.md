@@ -297,7 +297,16 @@ worktree per branch; every reader inspects the recorded commit detached in its
 own lane (`git switch --detach <commit>`, `git show <commit>:<path>`), so
 parallel reviewers never contend and the fix lane finds the branch free. A
 branch left held by a crashed writer is released by the operator from that
-lane, never by another agent's step.
+lane, never by another agent's step. Every lane, writer or reader, proves it
+is a lane before it switches or detaches anything (the three-part boundary
+test in `do-work/prepare-worktree` step 4: the resolved top-level is `$GC_DIR`
+itself, not the rig root or inside it, and the git common dir is the rig's);
+a role with no `work_dir` starts in the rig root, and a reader there reads by
+`git show` only and never detaches the human checkout. After the fix lane
+commits it refreshes the recorded commit (the review context file and
+`gc.build.review_commit` on the workflow root) before it releases the branch,
+so the next review attempt inspects the fixed code, not the commit the setup
+saw.
 
 Two related core behaviors complete the picture:
 

@@ -3,7 +3,14 @@ Prepare the build-basic starter factory review.
 Gather the requirements artifact, implementation plan, decomposition artifact,
 implementation summary, changed-file summaries, task evidence, and verification
 commands into one review context file under the build artifact root. Record that
-path on the workflow root as `gc.build.code_review_context_path`.
+path on the workflow root as `gc.build.code_review_context_path`, and record the
+commit id the context carries on the workflow root as well:
+`gc bd update "<workflow-root-id>" --set-metadata 'gc.build.review_commit=<commit>'`.
+This setup runs ONCE, outside the review loop; the review lanes read
+`gc.build.review_commit` first and fall back to the context file's commit, and
+the fix lane refreshes both the context file and this key after every fix
+commit, so each attempt of the loop reviews the CURRENT commit, never the one
+this step saw.
 
 The implementation source of truth is the closed source anchor/worktree recorded
 by the implementation summary and task evidence. Include the source anchor id,
@@ -64,4 +71,4 @@ Do not invoke provider-native subagents. Gas City graph lanes are the
 delegation mechanism.
 
 Close this setup bead with `gc.outcome=pass` only after the review context path
-is recorded.
+and `gc.build.review_commit` are recorded.
