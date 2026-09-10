@@ -8,9 +8,11 @@ helpers actually consumed by ``slack_chat_bind`` and
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import pathlib
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -537,12 +539,41 @@ def _is_bot_transcript_entry(entry: dict[str, Any]) -> bool:
 
 
 def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
-    """Find the most recent extmsg.inbound event targeting session_id.
+    """Find the most recent inbound delivered to session_id.
 
-    ``target_session`` is matched against every identifier the session
-    is known by (id, GC_SESSION_NAME, gc-reported alias/session_name —
-    see session_identity_candidates): name-bound sessions produce
-    events carrying the NAME, not the id (hw-94w5k finding #2).
+    Two sources, newest wins:
+
+    1. gc's ``extmsg.inbound`` events — ``target_session`` is matched
+       against every identifier the session is known by (id,
+       GC_SESSION_NAME, gc-reported alias/session_name — see
+       session_identity_candidates): name-bound sessions produce events
+       carrying the NAME, not the id (hw-94w5k finding #2).
+    2. the adapter's mention-only delivery log (jg-vobf70) — a session
+       bound to a room with ``--mentions-only`` is not a gc member, so
+       gc emits no event for it; the adapter records the injections it
+       made and serves them on ``GET /mention-only/deliveries``. Those
+       are surfaced here as event-shaped dicts with
+       ``payload.mention_only == True`` (plus ``message_id`` /
+       ``thread_ts``, which gc events do not carry).
+
+    Returns the parsed (or synthesized) event dict, or None when neither
+    source has anything.
+    """
+    gc_event = _scan_gc_inbound_events(session_id)
+    mo_event = _latest_mention_only_event(session_id)
+    if gc_event is None:
+        return mo_event
+    if mo_event is None:
+        return gc_event
+    gc_time = _event_time(gc_event)
+    mo_time = _event_time(mo_event)
+    if gc_time is not None and mo_time is not None and mo_time > gc_time:
+        return mo_event
+    return gc_event
+
+
+def _scan_gc_inbound_events(session_id: str) -> dict[str, Any] | None:
+    """gc-events half of find_latest_inbound_for_session.
 
     Queries the gc events stream (HTTP, not SSE — single shot snapshot)
     over escalating `since` windows (see _INBOUND_SCAN_WINDOWS).
@@ -580,6 +611,262 @@ def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
         if matches:
             return matches[-1]  # events are in chronological order
     return None
+
+
+def _event_time(event: dict[str, Any]) -> datetime.datetime | None:
+    """Parse an event's timestamp (gc ``ts`` / adapter ``received_at``)."""
+    raw = event.get("ts") or event.get("emitted_at") or event.get("created_at") or ""
+    if not isinstance(raw, str) or not raw:
+        return None
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    # Go's RFC3339Nano may carry more than 6 fractional digits, which
+    # fromisoformat rejects; clip to microseconds.
+    m = re.match(r"^(.*T\d\d:\d\d:\d\d)\.(\d+)(.*)$", text)
+    if m and len(m.group(2)) > 6:
+        text = f"{m.group(1)}.{m.group(2)[:6]}{m.group(3)}"
+    try:
+        parsed = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+    return parsed
+
+
+# --- mention-only room bindings (jg-vobf70) ------------------------------------
+#
+# `gc slack bind-room C session --mentions-only` registers the session with
+# the adapter instead of gc: the adapter injects a reminder into the session
+# only when a message @mentions the bot user, addresses the session's
+# handle, or replies in a thread the session posted in. gc never sees the
+# session as a member, so the helpers below give the reply tooling
+# (reply-current --thread-current, react, upload --thread-current) a second
+# source for "the latest inbound this session received".
+
+
+def _adapter_endpoint(path: str) -> str:
+    """Absolute URL of an adapter endpoint next to /publish."""
+    base = adapter_publish_url()
+    root = base.rsplit("/", 1)[0] if base.endswith("/publish") else base.rstrip("/")
+    return root + path
+
+
+def _adapter_json(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call an adapter endpoint through the gc /svc proxy (CSRF header on).
+
+    Routed through :func:`_request` like :func:`publish_via_adapter`, so
+    transport failures surface as :class:`AdapterError`.
+    """
+    url = _adapter_endpoint(path)
+    try:
+        res = _request(method, url, body, csrf=True, timeout=10.0)
+    except GCAPIError as exc:
+        raise AdapterError(str(exc)) from exc
+    return res if isinstance(res, dict) else {}
+
+
+def register_mention_only_via_adapter(
+    *,
+    channel_id: str,
+    session_id: str,
+    session_name: str = "",
+    handle: str = "",
+) -> dict[str, Any]:
+    """Register (channel, session) as a mention-only binding: POST /mention-only."""
+    return _adapter_json("POST", "/mention-only", {
+        "channel_id": channel_id,
+        "session_id": session_id,
+        "session_name": session_name,
+        "handle": handle,
+    })
+
+
+def remove_mention_only_via_adapter(*, channel_id: str, session_id: str) -> dict[str, Any]:
+    """Remove a mention-only binding: DELETE /mention-only. Idempotent."""
+    qs = urllib.parse.urlencode({"channel_id": channel_id, "session_id": session_id})
+    return _adapter_json("DELETE", "/mention-only?" + qs)
+
+
+def list_mention_only_via_adapter(channel_id: str = "") -> dict[str, list[dict[str, Any]]]:
+    """Return the adapter's mention-only registry: {channel_id: [binding, ...]}."""
+    path = "/mention-only"
+    if channel_id:
+        path += "?" + urllib.parse.urlencode({"channel_id": channel_id})
+    res = _adapter_json("GET", path)
+    channels = res.get("channels") if isinstance(res, dict) else None
+    return channels if isinstance(channels, dict) else {}
+
+
+def session_is_mention_only_in(session_id: str, channel_id: str) -> bool:
+    """True when the adapter lists session_id (by id or name) as a
+    mention-only participant of channel_id. Best-effort: an unreachable
+    or pre-feature adapter reports False."""
+    if not session_id or not channel_id:
+        return False
+    try:
+        bindings = list_mention_only_via_adapter(channel_id).get(channel_id) or []
+    except (AdapterError, GCAPIError, OSError, ValueError):
+        return False
+    identities = {session_id}
+    try:
+        identities |= session_identity_candidates(session_id)
+    except GCAPIError:
+        pass
+    for b in bindings:
+        if not isinstance(b, dict):
+            continue
+        if b.get("session_id") in identities or b.get("session_name") in identities:
+            return True
+    return False
+
+
+def mention_only_deliveries_via_adapter(session_id: str) -> list[dict[str, Any]]:
+    """Recent mention-only injections for session_id, newest first.
+
+    Queried under every identifier the session is known by (id,
+    GC_SESSION_NAME, gc-reported alias/session_name — the same candidate
+    set the gc-event scan uses): a binding made before the session was
+    listed in ``/sessions`` is keyed by its NAME, while the running
+    session asks by id (codex r3 P2). Results are merged, de-duplicated
+    by (channel, ts), newest first.
+
+    Best-effort: any transport/shape problem yields [] — the caller's
+    gc-side lookup is unaffected. Records missing the fields the reply
+    tooling anchors on (channel_id, ts) are dropped.
+    """
+    if not session_id:
+        return []
+    identities = {session_id}
+    try:
+        identities |= session_identity_candidates(session_id)
+    except GCAPIError:
+        pass
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for ident in sorted(identities):
+        qs = urllib.parse.urlencode({"session_id": ident})
+        try:
+            res = _adapter_json("GET", "/mention-only/deliveries?" + qs)
+        except (AdapterError, GCAPIError, OSError, ValueError):
+            continue
+        items = res.get("items") if isinstance(res, dict) else None
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            if not isinstance(item.get("channel_id"), str) or not isinstance(item.get("ts"), str):
+                continue
+            if not item["channel_id"] or not item["ts"]:
+                continue
+            merged.setdefault((item["channel_id"], item["ts"]), item)
+    out = list(merged.values())
+    out.sort(key=lambda d: (_event_time({"ts": d.get("received_at") or ""}) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), d["ts"]), reverse=True)
+    return out
+
+
+def _mention_only_event(delivery: dict[str, Any], session_id: str) -> dict[str, Any]:
+    """Render an adapter delivery record as an extmsg.inbound-shaped event."""
+    return {
+        "type": "extmsg.inbound",
+        "ts": delivery.get("received_at") or "",
+        "subject": session_id,
+        "payload": {
+            "provider": "slack",
+            "conversation_id": delivery["channel_id"],
+            "target_session": session_id,
+            "actor": "",
+            "mention_only": True,
+            "message_id": delivery["ts"],
+            "thread_ts": delivery.get("thread_ts") or "",
+            "reason": delivery.get("reason") or "",
+        },
+    }
+
+
+def _latest_mention_only_event(session_id: str) -> dict[str, Any] | None:
+    deliveries = mention_only_deliveries_via_adapter(session_id)
+    if not deliveries:
+        return None
+    return _mention_only_event(deliveries[0], session_id)
+
+
+def _mention_only_conversation(conversation_id: str) -> dict[str, str]:
+    return {
+        "scope_id": gc_city_name(),
+        "provider": "slack",
+        "account_id": os.environ.get("SLACK_WORKSPACE_ID", "").strip(),
+        "conversation_id": conversation_id,
+        "kind": "room",
+        # Marker for callers: this conversation reached the session
+        # through the adapter's mention-only lane, so the session holds
+        # no gc binding for it and must publish via the adapter.
+        "mention_only": "1",
+    }
+
+
+def mention_only_delivery_for(session_id: str, conversation_id: str) -> dict[str, Any] | None:
+    """Latest mention-only delivery record for session_id in conversation_id."""
+    for d in mention_only_deliveries_via_adapter(session_id):
+        if d.get("channel_id") == conversation_id:
+            return d
+    return None
+
+
+def mention_only_delivery_by_ts(
+    session_id: str, conversation_id: str, ts: str
+) -> tuple[str, dict[str, str]] | None:
+    """Thread anchor of a specific mention-only delivery, by its Slack ts.
+
+    The mention-only counterpart of :func:`find_inbound_thread_by_ts`:
+    returns (thread_root, conversation_dict) — thread_root "" for a
+    top-level message — or None when the adapter has no such delivery
+    for the session.
+    """
+    ts = (ts or "").strip()
+    if not ts or not conversation_id:
+        return None
+    for d in mention_only_deliveries_via_adapter(session_id):
+        if d.get("channel_id") == conversation_id and d.get("ts") == ts:
+            return (d.get("thread_ts") or "").strip(), _mention_only_conversation(conversation_id)
+    return None
+
+
+def mention_only_registry_path() -> pathlib.Path | None:
+    """On-disk mention-only registry the adapter writes (read-only here).
+
+    Mirrors the adapter's default: ``SLACK_MENTION_ONLY_BINDINGS_FILE`` or
+    ``<GC_CITY_PATH>/.gc/slack/mention_only_bindings.json``. None when
+    neither can be derived.
+    """
+    override = os.environ.get("SLACK_MENTION_ONLY_BINDINGS_FILE", "").strip()
+    if override:
+        return pathlib.Path(override)
+    city_path = os.environ.get("GC_CITY_PATH", "").strip()
+    if not city_path:
+        return None
+    return pathlib.Path(city_path) / ".gc" / "slack" / "mention_only_bindings.json"
+
+
+def load_mention_only_registry_file() -> dict[str, list[dict[str, Any]]]:
+    """Parse the adapter's mention-only registry file: {channel: [binding]}.
+
+    Best-effort — a missing or unreadable file reads as empty.
+    """
+    path = mention_only_registry_path()
+    if path is None or not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    channels = data.get("channels") if isinstance(data, dict) else None
+    if not isinstance(channels, dict):
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for cid, entries in channels.items():
+        if isinstance(entries, list):
+            out[cid] = [e for e in entries if isinstance(e, dict)]
+    return out
 
 
 def find_latest_inbound_message_id_for_session(
@@ -635,6 +922,14 @@ def find_latest_inbound_thread_for_session(
     provider = (payload.get("provider") or "").strip()
     if not conv_id or not provider:
         return None
+    if payload.get("mention_only"):
+        # Mention-only deliveries have no gc transcript entry of their
+        # own (the session is not a gc member of the room); the adapter
+        # record carries the anchor directly (jg-vobf70).
+        mid = (payload.get("message_id") or "").strip()
+        if not mid:
+            return None
+        return mid, (payload.get("thread_ts") or "").strip(), _mention_only_conversation(conv_id)
     items = _transcript_items_desc(conv_id, provider)
     # items are newest-first (order=desc): the first inbound is the latest.
     # Bot-authored entries (peer-bot context, gp-kop) are skipped: a peer
@@ -723,6 +1018,10 @@ def find_inbound_thread_by_ts(
 
     Bot-authored entries are skipped (gp-kop: a peer-bot post must never
     become a reply anchor).
+
+    A mention-only delivery (jg-vobf70) has no transcript entry; callers
+    that know the session fall through to
+    :func:`mention_only_delivery_by_ts` on a miss.
     """
     ts = (ts or "").strip()
     conv_id = (conversation.get("conversation_id") or "").strip()

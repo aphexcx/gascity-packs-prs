@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mention-only room bindings** (jg-vobf70, Afik 2026-09-10 for the US
+  fleet channel): `gc slack bind-room <C…> <session> --mentions-only`
+  registers the session with the adapter (`POST /mention-only`) instead
+  of as a gc group participant. The adapter injects a `Slack
+  mention-only room delivery` reminder into the session only when a
+  message @mentions the bot user (or arrives as `app_mention`),
+  addresses the session's handle (`@handle:` prefix, User Group
+  mention, thread-sticky handle), or replies in a thread the session
+  posted in (new own-thread registry fed by `/publish` and
+  `/publish-file`, with a scan of the thread for the bot's own user as
+  the pre-registry fallback). Everything else in the room is dropped
+  for that session — no wake — while ambient participants, the channel
+  copy to gc and the `@handle:` alias dispatcher are unchanged (an
+  alias injection into the same session suppresses the mention-only
+  copy; Slack's message/app_mention twin pair collapses to one
+  injection under a per-(session, channel, ts) claim; a failed
+  injection releases its claim and marks the message ⚠️). New
+  endpoints: `POST`/`DELETE`/`GET /mention-only`,
+  `GET /mention-only/deliveries?session_id=`; new env
+  `SLACK_MENTION_ONLY_BINDINGS_FILE`, `SLACK_OWN_THREADS_FILE`.
+  The reminder prescribes the bindingless `publish-to-channel
+  --thread-ts` reply. Pack side: `reply-current --thread-current`/`--turn-ts`, `react`, and
+  `upload --thread-current` resolve mention-only deliveries through the
+  adapter's delivery log and publish via the adapter (the session has
+  no gc binding there); `gc slack status` lists mention-only bindings
+  from the pack config and the registry file; the bind sends a
+  mention-only variant of the reply-protocol nudge.
+
 ### Changed
 
 - Token-efficiency batch (gp-9e7, Afik-approved 1787421193 with items

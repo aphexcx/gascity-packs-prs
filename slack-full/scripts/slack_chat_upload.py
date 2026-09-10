@@ -161,6 +161,18 @@ def main(argv: list[str]) -> int:
         except common.GCAPIError as exc:
             raise SystemExit(str(exc)) from exc
 
+    # --thread-current resolves the latest inbound FIRST: when it reached
+    # this session through the adapter's mention-only lane (jg-vobf70) the
+    # session holds no gc binding for that room, so the upload must go
+    # bindingless through the adapter into THAT conversation — not into
+    # whatever binding the session happens to hold elsewhere.
+    thread_current_match: tuple[str, dict[str, str]] | None = None
+    mention_only_conv: dict[str, str] | None = None
+    if args.thread_current:
+        thread_current_match = common.find_latest_inbound_message_id_for_session(session_id)
+        if thread_current_match and (thread_current_match[1] or {}).get("mention_only"):
+            mention_only_conv = thread_current_match[1]
+
     if conversation_id:
         if not os.environ.get("SLACK_WORKSPACE_ID", "").strip():
             raise SystemExit(
@@ -173,12 +185,29 @@ def main(argv: list[str]) -> int:
             "conversation_id": conversation_id,
             "kind": args.kind or "room",
         }
+    elif mention_only_conv is not None:
+        conv = {
+            "scope_id": mention_only_conv.get("scope_id") or common.gc_city_name(),
+            "provider": mention_only_conv.get("provider") or "slack",
+            "account_id": mention_only_conv.get("account_id")
+            or os.environ.get("SLACK_WORKSPACE_ID", ""),
+            "conversation_id": mention_only_conv.get("conversation_id", ""),
+            "kind": mention_only_conv.get("kind") or "room",
+        }
+        if via == "gc":
+            via = "adapter"
+            print(
+                f"note: {conv['conversation_id']} is a mention-only room for this "
+                "session (no gc binding) — uploading via the adapter",
+                file=sys.stderr,
+            )
     else:
         conv = _resolve_conversation(session_id)
         if not conv.get("conversation_id"):
             raise SystemExit(
                 f"session {session_id!r} binding has no conversation_id "
                 "(corrupt binding record?)")
+    bindingless = bool(conversation_id) or mention_only_conv is not None
 
     initial_comment = args.initial_comment
     if initial_comment and not args.raw:
@@ -187,7 +216,7 @@ def main(argv: list[str]) -> int:
 
     thread_ts = args.thread_ts.strip()
     if args.thread_current:
-        match = common.find_latest_inbound_message_id_for_session(session_id)
+        match = thread_current_match
         if not match:
             raise SystemExit(
                 f"session {session_id!r} has no inbound to thread under; "
@@ -247,7 +276,7 @@ def main(argv: list[str]) -> int:
             thread_ts=thread_ts,
         ), indent=2))
 
-    if conversation_id:
+    if bindingless:
         # Bindingless mode mirrors publish-to-channel's receipt contract:
         # an HTTP 200 with delivered=false (auth, missing scope, archived
         # channel) must surface as a non-zero exit so the caller notices.
