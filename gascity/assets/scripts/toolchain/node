@@ -20,7 +20,10 @@
 # <dist>/v<version>/node-v<version>-<os>-<arch>.tar.gz, checked against that
 # release's SHASUMS256.txt before anything is extracted; the extraction is
 # staged beside the target and moved into place by rename, under an
-# .installing-v<version> lock (mkdir) that concurrent callers wait for. When
+# .installing-v<version> lock (mkdir, owner pid inside, released on exit and
+# on HUP/INT/TERM) that concurrent callers wait for; a lock whose owner is
+# dead, or that has had no owner for two minutes, is an interrupted install
+# and is moved aside by rename, never deleted, and retaken. When
 # the pinned version is not installed and cannot be (the lock directory is
 # not writable, as under a sandbox; no network; a checksum mismatch; no
 # release matches), the wrapper prints one WARN line and falls through to
@@ -222,20 +225,41 @@ install_node() {
     esac
     file="node-v$VERSION-$os-$arch.tar.gz"
     lock="$NODE_ROOT/.installing-v$VERSION"
-    if ! mkdir -p "$NODE_ROOT" 2>/dev/null || ! mkdir "$lock" 2>/dev/null; then
-        if [ -d "$lock" ]; then
-            waited=0
-            while [ -d "$lock" ] && [ "$waited" -lt 300 ]; do
-                [ "$waited" -gt 0 ] || log "waiting for another caller's node v$VERSION install"
-                sleep 1
-                waited=$((waited + 1))
-            done
-            [ -x "$TARGET/bin/node" ] && return 0
-            warn "node v$VERSION install by another caller did not complete"
+    mkdir -p "$NODE_ROOT" 2>/dev/null || { warn "cannot write $NODE_ROOT to install node v$VERSION (sandboxed or read-only?)"; return 1; }
+    waited=0
+    while ! mkdir "$lock" 2>/dev/null; do
+        if [ ! -d "$lock" ]; then
+            warn "cannot write $NODE_ROOT to install node v$VERSION (sandboxed or read-only?)"
             return 1
         fi
-        warn "cannot write $NODE_ROOT to install node v$VERSION (sandboxed or read-only?)"
-        return 1
+        # a lock whose owner is dead, or that has had no owner for two minutes,
+        # is an interrupted install: move it aside (nothing deleted) and retake
+        owner="$(cat "$lock/pid" 2>/dev/null || true)"
+        stale=0
+        if [ -n "$owner" ]; then
+            kill -0 "$owner" 2>/dev/null || stale=1
+        elif [ -n "$(find "$lock" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+            stale=1
+        fi
+        if [ "$stale" -eq 1 ] && mv "$lock" "$lock.stale-${owner:-nopid}-$$" 2>/dev/null; then
+            warn "moved aside an interrupted node v$VERSION install lock (owner pid ${owner:-none})"
+            continue
+        fi
+        [ -x "$TARGET/bin/node" ] && return 0
+        [ "$waited" -lt 300 ] || { warn "node v$VERSION install by another caller (pid ${owner:-unknown}) did not complete"; return 1; }
+        [ "$waited" -gt 0 ] || log "waiting for another caller's node v$VERSION install (pid ${owner:-unknown})"
+        sleep 1
+        waited=$((waited + 1))
+    done
+    printf '%s\n' "$$" > "$lock/pid"
+    NODE_LOCK="$lock"
+    trap 'release_node_lock' EXIT
+    trap 'release_node_lock; exit 129' HUP
+    trap 'release_node_lock; exit 130' INT
+    trap 'release_node_lock; exit 143' TERM
+    if [ -x "$TARGET/bin/node" ]; then
+        release_node_lock
+        return 0      # installed by the caller whose lock we just took over
     fi
     stage="$NODE_ROOT/.stage-v$VERSION-$$"
     ok=1
@@ -261,8 +285,16 @@ install_node() {
     else
         warn "node v$VERSION download from $NODE_DIST failed"
     fi
-    rmdir "$lock" 2>/dev/null || true
+    release_node_lock
     return "$ok"
+}
+
+NODE_LOCK=""
+release_node_lock() {
+    if [ -n "$NODE_LOCK" ]; then
+        [ "$(cat "$NODE_LOCK/pid" 2>/dev/null || true)" = "$$" ] && rm -f "$NODE_LOCK/pid" 2>/dev/null && rmdir "$NODE_LOCK" 2>/dev/null || true
+        NODE_LOCK=""
+    fi
 }
 
 if [ ! -x "$TARGET/bin/node" ]; then
