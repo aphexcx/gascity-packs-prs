@@ -68,7 +68,8 @@ case "$*" in
         if [ "${FAKE_PNPM_PROBE_ERROR-}" = 1 ]; then echo "EACCES: permission denied, open '.pnpm-workspace-state-v1.json'" >&2; exit 2; fi
         L="$(lane)"
         if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
-        echo "ERR_PNPM_VERIFY_DEPS_BEFORE_RUN fake" >&2
+        # pnpm 11.20 prints this on STDOUT
+        echo " ERR_PNPM_VERIFY_DEPS_BEFORE_RUN  Your node_modules are out of sync (fake)"
         exit 1 ;;
 esac
 first=""
