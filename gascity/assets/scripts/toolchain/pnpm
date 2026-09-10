@@ -70,11 +70,14 @@
 #      manifest, a denied write to pnpm's workspace state file on a
 #      read-only lane, which pnpm reports under the same VERIFY code with
 #      the file error as its reason, measured) is not a verdict: one WARN
-#      and the command runs as is, never an install. Yes, and no other
-#      caller holds the lane lock: the command runs (a live lock is a
-#      mutate or install in flight, a rebuild half done reads as yes to
-#      pnpm, so the lock is waited for and pnpm asked again after it). No: one
-#      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
+#      and the command runs as is, never an install. The question is asked
+#      under the lane lock, <lane>/node_modules/.gc-lane-deps.lock (mkdir;
+#      a mutate or install in flight holds it, and a rebuild half done
+#      reads as yes to pnpm, so it is waited for first), and the command
+#      then runs holding a reader token
+#      (<lane>/node_modules/.gc-lane-deps.readers/<pid>, dropped on exit)
+#      that every mutate and install waits for before touching the tree;
+#      checks still run side by side. Yes: the command runs. No: (the lane
 #      is the workspace root above TARGET, the nearest pnpm-workspace.yaml,
 #      since a workspace install writes every member's tree whatever
 #      sharedWorkspaceLockfile says, else the nearest pnpm-lock.yaml; under
@@ -102,7 +105,9 @@
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
 #      that resolves the same lane runs as info, never asking pnpm or
-#      waiting on its parent's lock.
+#      waiting on its parent's lock; likewise a descendant of a running
+#      project command (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) runs as is,
+#      its parent's token standing for it.
 #   4. The wrapper's own directory goes first on PATH, so the node pnpm runs
 #      on (and every script it runs) is the toolchain's node when the city
 #      pinned one (see the node wrapper beside this file).
@@ -474,15 +479,15 @@ scan() {
                 [ "$pm_forced" -eq 1 ] || override_name="$a" ;;
         esac
         case "$a" in
-            install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un| \
-            update|up|upgrade|link|ln|unlink|dislink|import|prune|fetch|dedupe|rebuild|rb| \
+            install|i|ci|install-clean|ic|clean-install|install-test|it|add|remove|rm|uninstall|un|uni| \
+            update|up|upgrade|link|ln|unlink|dislink|import|prune|fetch|dedupe|rebuild|rb|runtime|rt| \
             patch|patch-commit|patch-remove|approve-builds|deploy|setup|clean|purge)
                 KIND=mutate ;;
-            store|config|c|env|self-update|outdated|audit|list|ls|ll|la|why|pack|pack-app|publish| \
+            store|config|c|get|set|env|self-update|outdated|audit|list|ls|ll|la|why|peers|pack|pack-app|publish| \
             stage|licenses|cat-file|cat-index|find-hash|ignored-builds|init|create|dlx|doctor|help| \
-            root|bin|server|completion|cache|access|adduser|bugs|deprecate|undeprecate|dist-tag| \
-            dist-tags|docs|find|home|info|issues|login|logout|owner|ping|pkg|repo|s|sbom|se|search| \
-            set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami)
+            root|prefix|bin|server|completion|cache|access|adduser|bugs|deprecate|undeprecate|dist-tag| \
+            dist-tags|docs|find|home|info|issues|login|logout|owner|owners|ping|pkg|repo|s|sbom|se|search| \
+            set-script|show|ss|star|stars|team|unpublish|unstar|v|version|view|whoami|lane|change)
                 KIND=info ;;
             *)
                 # run, exec, test, a script or bin name
@@ -654,9 +659,18 @@ lane_install() {
     (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@")
 }
 
-# --- the lane lock -----------------------------------------------------------------
+# --- the lane lock and the reader tokens ---------------------------------------------
+# One discipline for the lane: a mutate or the wrapper's own install holds
+# <lane>/node_modules/.gc-lane-deps.lock (mkdir, owner pid inside) and runs
+# only once no project command is running; a project command decides its
+# readiness under that same lock, then runs holding a reader token
+# (<lane>/node_modules/.gc-lane-deps.readers/<pid>, removed on exit) that a
+# mutate waits for. So a check never runs against a tree a rebuild is
+# half-way through, in either order, and checks still run side by side.
 LOCK=""
 LOCKED=0
+READERS=""
+TOKEN=""
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
         LOCKED=0
@@ -665,10 +679,51 @@ release_lock() {
         rmdir "$LOCK" 2>/dev/null || true
     fi
 }
-trap 'release_lock' EXIT
-trap 'release_lock; exit 129' HUP
-trap 'release_lock; exit 130' INT
-trap 'release_lock; exit 143' TERM
+drop_token() {
+    if [ -n "$TOKEN" ]; then
+        rm -f "$TOKEN" 2>/dev/null || true
+        TOKEN=""
+    fi
+}
+cleanup() { release_lock; drop_token; }
+trap 'cleanup' EXIT
+trap 'cleanup; exit 129' HUP
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+
+# take_token: register this run as a reader of the lane (under the lane lock).
+take_token() {
+    mkdir -p "$READERS" 2>/dev/null || die "cannot create $READERS (read-only here?)"
+    TOKEN="$READERS/$$"
+    : > "$TOKEN" 2>/dev/null || die "cannot write $TOKEN (read-only here?)"
+}
+
+# wait_for_readers: with the lane lock held, wait until no project command
+# is running in the lane (a token whose pid is dead is a crashed run's and
+# is dropped). Fails closed after LANE_DEPS_WAIT seconds naming the pids.
+wait_for_readers() {
+    [ -d "$READERS" ] || return 0
+    rwaited=0
+    while :; do
+        live=""
+        for t in "$READERS"/*; do
+            [ -e "$t" ] || continue
+            rp="${t##*/}"
+            case "$rp" in ''|*[!0-9]*) continue ;; esac
+            if owner_is_dead "$rp"; then
+                rm -f "$t" 2>/dev/null || true
+            else
+                live="$live $rp"
+            fi
+        done
+        [ -n "$live" ] || return 0
+        [ "$rwaited" -lt "$LANE_DEPS_WAIT" ] \
+            || die "lane command(s) still running (pid$live) after ${LANE_DEPS_WAIT}s; this command did not run"
+        [ "$rwaited" -gt 0 ] || log "waiting for running lane command(s) (pid$live) before changing node_modules"
+        sleep 1
+        rwaited=$((rwaited + 1))
+    done
+}
 
 owner_is_dead() {
     ! kill -0 "$1" 2>/dev/null && return 0
@@ -717,10 +772,12 @@ reclaim_stale_lock() {
     return "$moved"
 }
 
-# take_lane_lock: hold $LOCK on return. Fails closed after LANE_DEPS_WAIT
-# seconds behind a live holder, and at once when the lock cannot be made
-# because node_modules refuses the write (a sandbox, a read-only lane):
-# with no lock there is nobody to wait for.
+# take_lane_lock: hold $LOCK on return (0). Fails closed after LANE_DEPS_WAIT
+# seconds behind a live holder; returns 1 with LOCK_REFUSED set when the
+# lock cannot be made because node_modules refuses the write (a sandbox, a
+# read-only lane): with no lock there is nobody to wait for, and no mutate
+# can take that lock either, so the caller decides without it.
+LOCK_REFUSED=""
 take_lane_lock() {
     mkdir -p "$NM" 2>/dev/null || die "cannot create $NM (read-only here?)"
     waited=0
@@ -737,7 +794,7 @@ take_lane_lock() {
                 printf '%s\n' "$$" > "$LOCK/pid"
                 return 0
             fi
-            [ -d "$LOCK" ] || die "cannot create $LOCK (${mkdir_err#mkdir: }); this command did not run"
+            [ -d "$LOCK" ] || { LOCK_REFUSED="${mkdir_err#mkdir: }"; return 1; }
         fi
         if lock_is_stale; then
             [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"
@@ -768,33 +825,46 @@ fi
 if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
+if [ "${GC_TOOLCHAIN_LANE_DEPS_READING:-}" = "$LANE" ]; then
+    exec_pnpm "$@"     # a descendant of a running project command; its parent holds a reader token
+fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
+READERS="$NM/.gc-lane-deps.readers"
 
 case "$KIND" in
     mutate)
-        take_lane_lock
+        take_lane_lock || die "cannot create $LOCK ($LOCK_REFUSED); this command did not run"
+        wait_for_readers
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
         release_lock
         exit "$status"
         ;;
     project)
-        # a live lane lock is another caller's mutate or install in flight:
-        # a rebuild half done still reads as in sync to pnpm, so the lock is
-        # waited for before pnpm is asked; with no lock, pnpm's yes runs
-        if [ ! -d "$LOCK" ] && [ "$(deps_status)" != stale ]; then
+        # readiness is decided under the lane lock (a mutate in flight is
+        # waited for first; a rebuild half done still reads as in sync to
+        # pnpm), the command then runs holding a reader token, so no mutate
+        # starts under it
+        if ! take_lane_lock; then
+            # the lane refuses the lock, so it refuses every mutate too: pnpm's
+            # answer stands on its own; a no cannot be installed here
+            [ "$(deps_status)" != stale ] \
+                || die "cannot create $LOCK ($LOCK_REFUSED) and pnpm says node_modules is out of sync; this command did not run"
             exec_pnpm "$@"
         fi
-        take_lane_lock
         if [ "$(deps_status)" = stale ]; then
+            wait_for_readers
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
             lane_install >&2 || status=$?
-            release_lock
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
+        take_token
         release_lock
-        exec_pnpm "$@"
+        status=0
+        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" run_pnpm "$@" || status=$?
+        drop_token
+        exit "$status"
         ;;
 esac

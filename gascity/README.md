@@ -457,10 +457,14 @@ read-only lane, which pnpm reports under the same error code with the file
 error as its reason, measured: `[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES:
 permission denied, open '…/.pnpm-workspace-state-v1.json.…'`, so a reason
 that is a system error code is no verdict either) is no verdict: one WARN
-and the command runs as is, never an install. Yes, and no other caller
-holds the lane lock: the command runs (a live lock is a mutate or install
-in flight, and a `rebuild` half done still reads as yes to pnpm, so the
-lock is waited for and pnpm asked again after it). No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
+and the command runs as is, never an install. The question is asked under
+the lane lock, `node_modules/.gc-lane-deps.lock` (a mutate or install in
+flight holds it, and a `rebuild` half done still reads as yes to pnpm, so
+it is waited for first), and the command then runs holding a reader token
+(`node_modules/.gc-lane-deps.readers/<pid>`, dropped on exit) that every
+mutate and install waits for before touching the tree, so a check never
+runs against a half-built tree in either order while checks still run side
+by side. Yes: the command runs. No: the caller, still under `node_modules/.gc-lane-deps.lock` in the lane
 (the workspace root above the target, the nearest `pnpm-workspace.yaml`,
 because a workspace install writes every member's tree whatever
 `sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; under
@@ -468,10 +472,12 @@ because a workspace install writes every member's tree whatever
 lane is the target directory itself when it holds `pnpm-lock.yaml`, and the
 question and the install carry the flag, so a fixture project inside a
 workspace is prepared as itself, never its parent; a project command with
-no lane runs as is), asks pnpm again under the lock, runs `pnpm
-install --frozen-lockfile` in the lane when the answer is still no, and
-releases; concurrent callers wait for the lock and ask pnpm again, so a lane
-is installed once whatever runs in parallel. A failed install fails the
+no lane runs as is), waits for running commands, runs `pnpm
+install --frozen-lockfile` in the lane, and releases; concurrent callers
+wait for the lock and ask pnpm again, so a lane is installed once whatever
+runs in parallel. A lane whose `node_modules` refuses the lock refuses every
+mutate too, so there pnpm's answer stands on its own: yes runs the command,
+no fails it at once with the refusal. A failed install fails the
 command (the requested check never runs against a half-installed tree);
 pnpm fails the frozen install closed when a manifest is ahead of the
 lockfile, and the worker's own `pnpm install` (a mutate) resolves that.
