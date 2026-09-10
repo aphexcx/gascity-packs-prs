@@ -65,6 +65,7 @@ fp() {
 }
 case "$*" in
     "--config.verify-deps-before-run=error exec true")
+        if [ "${FAKE_PNPM_PROBE_ERROR-}" = 1 ]; then echo "EACCES: permission denied, open '.pnpm-workspace-state-v1.json'" >&2; exit 2; fi
         L="$(lane)"
         if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
         echo "ERR_PNPM_VERIFY_DEPS_BEFORE_RUN fake" >&2
@@ -118,7 +119,7 @@ def write_exec(path: pathlib.Path, text: str) -> None:
 class Fixture:
     """A shim dir with the wrappers, a toolchain dir, and a PATH with fakes."""
 
-    def __init__(self, root: pathlib.Path) -> None:
+    def __init__(self, root: pathlib.Path, *, real_node: bool = False) -> None:
         self.root = root
         self.shims = root / "shims"
         self.toolchain = root / "toolchain"
@@ -132,6 +133,10 @@ class Fixture:
         (self.shims / "npx").symlink_to("node")
         for name in ("node", "npm", "npx"):
             write_exec(self.bin / name, f'#!/bin/sh\necho "machine {name} $*"\n')
+        if real_node:
+            # the pnpm wrapper reads a manifest with node: give it the machine's real one
+            machine_node = shutil.which("node") or "/usr/bin/false"
+            write_exec(self.bin / "node", f'#!/bin/sh\nexec {machine_node} "$@"\n')
         # fake pinned pnpm at the place the shim installs it
         self.fake_pnpm = self.toolchain / "pnpm" / "v11.20.0" / "node_modules" / ".bin" / "pnpm"
         write_exec(self.fake_pnpm, FAKE_PNPM)
@@ -189,10 +194,51 @@ def in_sync(proj: pathlib.Path) -> bool:
     return (proj / "node_modules" / ".fake-state").exists()
 
 
+class PnpmShimVerdictTests(unittest.TestCase):
+    """Round 10 of the codex gate: a probe failure that is not pnpm's verdict
+    is not a reason to install; a package script overrides five built-ins."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name), real_node=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_probe_error_that_is_not_a_verdict_runs_the_command_as_is(self) -> None:
+        proj = self.fx.project()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_PROBE_ERROR="1", GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("could not judge the lane", r.stderr)
+        self.assertIn("EACCES", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertFalse((proj / "node_modules").exists())  # no lock taken, nothing installed
+
+    def test_a_package_script_named_like_a_built_in_is_a_project_command_unless_pm_forces_the_built_in(self) -> None:
+        proj = self.fx.project()
+        (proj / "package.json").write_text('{"name":"p","private":true,"scripts":{"clean":"rimraf dist","deploy":"echo","setup":"echo"}}\n', encoding="utf-8")
+        for argv in (["clean"], ["deploy"], ["setup", "--flag"]):
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            # a fresh lane: the script's dependencies are installed first, then the script runs
+            self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
+            self.assertGreaterEqual(len(self.fx.checks()), 1, argv)
+        self.assertTrue(in_sync(proj))
+        # `purge` and `rebuild` are not scripts here: still built-ins
+        for argv in (["purge"], ["rebuild"], ["pm", "clean"]):
+            self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+            self.fx.reset()
+            r = self.fx.run("pnpm", *argv, cwd=proj)
+            self.assertEqual(r.returncode, 0, (argv, r.stderr))
+            self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
+            self.assertFalse(in_sync(proj), argv)
+
+
 class PnpmShimTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
+        self.fx = Fixture(pathlib.Path(self.tmp.name), real_node=True)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -439,7 +485,7 @@ class PnpmShimMutationTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
+        self.fx = Fixture(pathlib.Path(self.tmp.name), real_node=True)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -562,7 +608,7 @@ class PnpmShimGateRoundTests(unittest.TestCase):
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
-        self.fx = Fixture(pathlib.Path(self.tmp.name))
+        self.fx = Fixture(pathlib.Path(self.tmp.name), real_node=True)
 
     def tearDown(self) -> None:
         self.tmp.cleanup()

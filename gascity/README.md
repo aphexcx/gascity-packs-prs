@@ -431,7 +431,10 @@ install:
 - **mutate** (`install`, `ci`, `add`, `remove`, `update`, `link`, `prune`,
   `dedupe`, `rebuild`, `clean`, `purge`, ... every pnpm 11.20 built-in that
   can change `node_modules`) runs where typed, arguments unchanged, under
-  the lane lock, so it never overlaps another caller's install.
+  the lane lock, so it never overlaps another caller's install. A package
+  script named `clean`, `purge`, `rebuild`, `setup` or `deploy` wins over
+  the built-in for pnpm, so it is a project command here too, unless `pnpm
+  pm <name>` forces the built-in.
 - **project** (`run`, `exec`, `test`, a bare script or bin name, anything
   else) first makes sure the lane is in sync, then runs.
 
@@ -440,8 +443,10 @@ the wrapper asks pnpm read-only, in the directory pnpm will act on, with
 `--config.verify-deps-before-run=error` and a command that runs nothing
 (`pnpm exec true`). pnpm's `checkDepsStatus` compares `node_modules` with
 the lockfile, every manifest, the workspace membership and the settings, and
-answers yes or no (a missing `node_modules` included). Yes: the command
-runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
+answers yes or no (a missing `node_modules` included); any other failure
+(a denied write to pnpm's workspace state file on a read-only lane, a
+broken manifest) is no verdict: one WARN and the command runs as is, never
+an install. Yes: the command runs. No: one caller takes `node_modules/.gc-lane-deps.lock` in the lane
 (the nearest ancestor holding `pnpm-lock.yaml`; a project command with no
 lockfile above it runs as is), asks pnpm again under the lock, runs `pnpm
 install --frozen-lockfile` in the lane when the answer is still no, and
