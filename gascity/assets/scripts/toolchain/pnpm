@@ -297,9 +297,10 @@ lane_of() {
 # on a read-only lane, a broken manifest, ...); an unknown verdict is not a
 # reason to install, the command runs as pnpm would run it, after one WARN.
 deps_status() {
+    # pnpm prints the verdict on stdout, the rest on stderr: read both.
     probe_err="$(
         unset pnpm_config_verify_deps_before_run
-        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true 2>&1 >/dev/null
+        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true 2>&1
     )" && { printf 'insync\n'; return 0; }
     case "$probe_err" in
         *VERIFY_DEPS_BEFORE_RUN*) printf 'stale\n' ;;
