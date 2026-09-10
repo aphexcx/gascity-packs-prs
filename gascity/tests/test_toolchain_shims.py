@@ -71,6 +71,8 @@ case "$*" in
     "--config.verify-deps-before-run=error exec true"|"--ignore-workspace --config.verify-deps-before-run=error exec true")
         if [ "${FAKE_PNPM_PROBE_ERROR-}" = 1 ]; then echo "EACCES: permission denied, open '.pnpm-workspace-state-v1.json'" >&2; exit 2; fi
         L="$(lane)"
+        # pnpm 11.20 reports a file error met inside its check under the verify code, on stdout
+        if [ "${FAKE_PNPM_PROBE_WRAPPED_ERROR-}" = 1 ]; then echo "[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES: permission denied, open '$L/node_modules/.pnpm-workspace-state-v1.json.985617711'"; echo; echo 'Run "pnpm install"'; exit 1; fi
         if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
         # pnpm 11.20 prints this on STDOUT
         echo " ERR_PNPM_VERIFY_DEPS_BEFORE_RUN  Your node_modules are out of sync (fake)"
@@ -304,6 +306,28 @@ class PnpmShimVerdictTests(unittest.TestCase):
         self.assertIn("EACCES", r.stderr)
         self.assertEqual(self.fx.argv(), ["exec vitest"])
         self.assertFalse((proj / "node_modules").exists())  # no lock taken, nothing installed
+
+    def test_a_file_error_pnpm_reports_under_the_verify_code_is_no_verdict_either(self) -> None:
+        """Round 18: pnpm wraps a file error met inside its check (the state
+        refresh denied on a read-only lane) in ERR_PNPM_VERIFY_DEPS_BEFORE_RUN
+        with the error as the reason; the wrapper warns and runs as is."""
+        proj = self.fx.project()
+        (proj / "node_modules").mkdir()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_PROBE_WRAPPED_ERROR="1", GC_TOOLCHAIN_LANE_DEPS_WAIT="3")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("could not judge the lane", r.stderr)
+        self.assertIn("a file error inside its check", r.stderr)
+        self.assertIn("EACCES: permission denied", r.stderr)
+        self.assertNotIn("installing lane dependencies", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertEqual(len(self.fx.checks()), 1)
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+        self.assertFalse(in_sync(proj))
+        # pnpm's own reasons (never a system error code) stay a verdict: the next command installs
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["install --frozen-lockfile", "exec vitest"])
 
     def test_a_package_script_named_like_a_built_in_is_a_project_command_unless_pm_forces_the_built_in(self) -> None:
         proj = self.fx.project()
