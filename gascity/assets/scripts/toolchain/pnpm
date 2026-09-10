@@ -10,44 +10,51 @@
 #      stale cache. The first caller installs, concurrent callers wait for
 #      it; a caller that still finds no binary runs `npx -y pnpm@<version>`
 #      for this one command.
-#   2. pnpm's own dependency check is turned off for the command
-#      (pnpm_config_verify_deps_before_run=false). pnpm 11 defaults
-#      verify-deps-before-run to "install": every `pnpm run`, `pnpm exec`,
-#      `pnpm test` and bare `pnpm <script>` first re-runs `pnpm install` when
-#      node_modules is out of sync with the lockfile (missing after a fresh
-#      lane, stale after a branch switch), and parallel read-only checks then
-#      race on the same node_modules. The lane path below is the one path.
+#   2. pnpm's own in-command install is turned off for the command it runs
+#      (pnpm_config_verify_deps_before_run=false, the one value the
+#      environment prefix reaches). pnpm 11 defaults verify-deps-before-run
+#      to "install": every `pnpm run`, `pnpm exec`, `pnpm test` and bare
+#      `pnpm <script>` first re-runs `pnpm install` when node_modules is out
+#      of sync (missing after a fresh lane, stale after a branch switch), and
+#      parallel read-only checks then race on the same node_modules. The
+#      lane path below is the one path that installs.
 #   3. Every command is one of three kinds, decided by the first bare token
-#      after the global options (an option that takes a separate value, such
-#      as `--filter app` or `-C dir`, has that value skipped):
+#      after the global options and the prefixes pnpm accepts
+#      (`recursive`/`multi`/`m`, `pm`, `with <runtime>`); an option that
+#      takes a separate value (`--filter app`, `-C dir`) has that value
+#      skipped. The directory pnpm acts on, TARGET, is the last `-C`,
+#      `--dir` or `--prefix` value in pnpm's own option scope (the whole line
+#      for a built-in; for `run`/`exec` up to the script or bin name, whose
+#      own arguments are its own; a bare script name ends the scope), else
+#      the working directory.
 #        info    — reports or manages state outside node_modules (`store`,
 #                  `config`, `list`, `outdated`, `--version`, `help`, ...):
-#                  runs as is, touches no marker or lock.
-#        mutate  — changes node_modules (`install`, `ci`, `add`, `remove`,
-#                  `update`, `link`, `prune`, `dedupe`, `rebuild`, `clean`,
-#                  `purge`, ...; every pnpm 11.20 built-in that can):
-#                  runs in the caller's own directory (a workspace package
-#                  stays that package; a relative `-C` resolves as typed)
-#                  under the lane lock with the marker invalidated first,
-#                  and leaves it invalid: an explicit command certifies
-#                  nothing (`install --lockfile-only` writes a lockfile and
-#                  installs nothing; a failed one may have changed the tree),
-#                  so the next project command runs the frozen lane install,
-#                  a no-op of well under a second when the tree is in sync.
-#        project — runs project code (`run`, `exec`, `test`, `dlx`, a bare
-#                  script or bin name, anything else): first makes sure the
-#                  lane is installed for its lockfile, then runs.
-#      The lane is the nearest ancestor of the working directory holding
-#      pnpm-lock.yaml; node_modules/.gc-lane-deps is the marker; a marker
-#      equal to the lane fingerprint (one sha256 over pnpm-lock.yaml,
-#      pnpm-workspace.yaml, .npmrc, package.json and every importer's
-#      package.json the lockfile names) means installed. Otherwise one caller
-#      takes node_modules/.gc-lane-deps.lock (mkdir), invalidates the marker,
-#      runs `pnpm install --frozen-lockfile` in the project root, writes the
-#      marker on success (the one command that certifies the whole tree
-#      against the lockfile) and releases; every concurrent caller waits for the
-#      lock, then re-reads the marker. A failed install fails the command
-#      (exit status of pnpm install): the requested command does not run.
+#                  runs as is, touches no lock.
+#        mutate  — every pnpm 11.20 built-in that can change node_modules
+#                  (`install`, `ci`, `add`, `remove`, `update`, `link`,
+#                  `prune`, `dedupe`, `rebuild`, `clean`, `purge`, ...): runs
+#                  where typed, arguments unchanged, under the lane lock, so
+#                  it never overlaps another caller's install.
+#        project — `run`, `exec`, `test`, a bare script or bin name, anything
+#                  else: first makes sure the lane is in sync, then runs.
+#      In sync is pnpm's own word, never this wrapper's: before a project
+#      command the wrapper asks pnpm read-only, in TARGET, with
+#      `--config.verify-deps-before-run=error` (the flag; the environment
+#      prefix installs for any value but false) and a command that runs
+#      nothing (`exec true`). pnpm's checkDepsStatus compares node_modules
+#      with the lockfile, every manifest, the workspace membership and the
+#      settings, and answers yes (exit 0) or no (a VERIFY_DEPS_BEFORE_RUN
+#      error, node_modules missing included). Yes: the command runs. No: one
+#      caller takes <lane>/node_modules/.gc-lane-deps.lock (mkdir; the lane
+#      is the nearest ancestor of TARGET holding pnpm-lock.yaml; a project
+#      command with no lockfile above it runs as is), asks pnpm again under
+#      the lock (another caller may have installed meanwhile), runs `pnpm
+#      install --frozen-lockfile` in the lane when the answer is still no,
+#      and releases; every concurrent caller waits for the lock and asks
+#      pnpm again. A failed install fails the command (exit status of pnpm
+#      install): the requested command does not run. pnpm fails the frozen
+#      install closed when a manifest is ahead of the lockfile; the worker's
+#      own `pnpm install` (a mutate) resolves that.
 #      A lock whose owner pid is dead (or a zombie), or that has no owner
 #      after two minutes, is moved aside by rename (atomic; nothing is
 #      deleted) and retaken, but only under a second, atomic reclaim lock
@@ -59,9 +66,9 @@
 #      lock releases it. A lifecycle script that a mutate or install runs
 #      (a `postinstall` that calls `pnpm run build`) re-enters this wrapper
 #      with the lane already locked by its parent: the locking wrapper
-#      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<project root> and a
-#      descendant that resolves the same project runs as info, never waiting
-#      on its parent's lock.
+#      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
+#      that resolves the same lane runs as info, never asking pnpm or
+#      waiting on its parent's lock.
 #   4. The wrapper's own directory goes first on PATH, so the node pnpm runs
 #      on (and every script it runs) is the toolchain's node when the city
 #      pinned one (see the node wrapper beside this file).
@@ -77,11 +84,6 @@
 #   GC_TOOLCHAIN_LANE_DEPS / LANE_DEPS           "off": every command runs as info
 #   GC_TOOLCHAIN_LANE_DEPS_WAIT / LANE_DEPS_WAIT seconds to wait for another
 #                                                caller's lock (default 600)
-#
-# The lane is resolved from the directory pnpm acts on: the last `-C <dir>`
-# or `--dir <dir>` in pnpm's own option scope (relative to the working
-# directory), else the working directory itself; the arguments reach pnpm
-# unchanged.
 
 set -eu
 
@@ -174,43 +176,40 @@ exec_pnpm() {
     exec npx -y "pnpm@$PNPM_VERSION" "$@"
 }
 
-# --- 2. pnpm's per-command install is off; the lane path below is the path ---------
+# --- 2. pnpm's in-command install is off for the command it runs ---------------------
 pnpm_config_verify_deps_before_run=false
 export pnpm_config_verify_deps_before_run
 
 # --- 3. classify ---------------------------------------------------------------------
 
-# classify ARGS: sets KIND (info, mutate or project) and TARGET_DIR (the
-# directory pnpm will act on: the last -C/--dir value anywhere in pnpm's own
-# option scope, resolved against the working directory, else the working
-# directory). pnpm's option scope is the whole command line for a built-in
-# (`pnpm add x --dir frontend` is valid) and ends at `--`; for a project
-# command it ends at the script or bin name, whose own arguments may spell
-# `--dir` for themselves. The kind is the first bare token after the global
-# options and the prefixes pnpm accepts (`recursive`/`multi`/`m`, `pm`, and
-# `with <runtime>`). Every pnpm 11.20 built-in that can change node_modules
-# is mutate; the read-only built-ins are info; `run`/`exec`/`test`/`start`
-# and any bare name pnpm would treat as a script or bin are project. A
-# built-in not listed here is a script name to pnpm too, so it lands in
-# project, the kind that installs before it runs.
+# resolve_dir VALUE: absolute form of a directory option value.
+resolve_dir() {
+    case "$1" in
+        /*) printf '%s\n' "$1" ;;
+        *)  printf '%s/%s\n' "$(pwd -P)" "$1" ;;
+    esac
+}
+
+# classify ARGS: sets KIND (info, mutate or project) and TARGET (see header).
 classify() {
     KIND=info
-    TARGET_DIR="$(pwd -P)"
+    TARGET="$(pwd -P)"
     want_value=""
     command_seen=0
     for a in "$@"; do
         if [ -n "$want_value" ]; then
             case "$want_value" in
-                dir) case "$a" in /*) TARGET_DIR="$a" ;; *) TARGET_DIR="$(pwd -P)/$a" ;; esac ;;
+                dir) TARGET="$(resolve_dir "$a")" ;;
             esac
             want_value=""
             continue
         fi
         case "$a" in
             --) return 0 ;;
-            -C|--dir) want_value=dir; continue ;;
-            -C=*) TARGET_DIR="${a#-C=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
-            --dir=*) TARGET_DIR="${a#--dir=}"; case "$TARGET_DIR" in /*) ;; *) TARGET_DIR="$(pwd -P)/$TARGET_DIR" ;; esac; continue ;;
+            -C|--dir|--prefix) want_value=dir; continue ;;
+            -C=*) TARGET="$(resolve_dir "${a#-C=}")"; continue ;;
+            --dir=*) TARGET="$(resolve_dir "${a#--dir=}")"; continue ;;
+            --prefix=*) TARGET="$(resolve_dir "${a#--prefix=}")"; continue ;;
             -F|--filter|--filter-prod|--changed-files-ignore-pattern|--test-pattern| \
             --loglevel|--reporter|--workspace-concurrency|--lockfile-dir|--lockfile-directory| \
             --store-dir|--virtual-store-dir|--modules-dir|--cache-dir|--state-dir|--registry| \
@@ -252,9 +251,10 @@ classify() {
     done
 }
 
-# project_root: nearest ancestor of the working directory holding pnpm-lock.yaml.
-project_root() {
-    d="$(cd -P "$TARGET_DIR" 2>/dev/null && pwd -P)" || return 1
+# lane_of DIR: nearest ancestor of DIR (DIR included) holding pnpm-lock.yaml;
+# 1 when there is none.
+lane_of() {
+    d="$(cd -P "$1" 2>/dev/null && pwd -P)" || return 1
     while :; do
         if [ -f "$d/pnpm-lock.yaml" ]; then
             printf '%s\n' "$d"
@@ -266,51 +266,12 @@ project_root() {
     done
 }
 
-sha256_of() {
-    if command -v shasum >/dev/null 2>&1; then
-        shasum -a 256 -- "$1" | sed 's/ .*//'
-    elif command -v sha256sum >/dev/null 2>&1; then
-        sha256sum -- "$1" | sed 's/ .*//'
-    else
-        cksum -- "$1" | sed 's/ .*//'
-    fi
-}
-
-# lockfile_importers LOCKFILE: the importer paths the lockfile names (`.`,
-# `packages/app`, ...), one per line; quotes around a key are stripped.
-lockfile_importers() {
-    awk '
-        /^importers:/ { f = 1; next }
-        f && /^[^ ]/ { f = 0 }
-        f && /^  [^ ]/ {
-            s = $0; sub(/^  /, "", s); sub(/:[ \t]*$/, "", s)
-            gsub(/^["\047]|["\047]$/, "", s); print s
-        }' "$1" 2>/dev/null
-}
-
-# lane_fingerprint: one sha256 over the lockfile and every manifest that
-# decides what the tree must hold: pnpm-lock.yaml, pnpm-workspace.yaml,
-# .npmrc, package.json, and the package.json of each importer the lockfile
-# names. A dependency edited in a manifest without a lockfile update changes
-# the fingerprint, so the next project command runs the frozen install,
-# which pnpm fails closed (outdated lockfile) until `pnpm install` runs.
-lane_fingerprint() {
-    {
-        for f in pnpm-lock.yaml pnpm-workspace.yaml .npmrc package.json; do
-            if [ -f "$ROOT/$f" ]; then
-                printf '%s %s\n' "$f" "$(sha256_of "$ROOT/$f")"
-            fi
-        done
-        lockfile_importers "$ROOT/pnpm-lock.yaml" | while IFS= read -r d; do
-            [ "$d" != "." ] || continue
-            if [ -f "$ROOT/$d/package.json" ]; then
-                printf '%s/package.json %s\n' "$d" "$(sha256_of "$ROOT/$d/package.json")"
-            fi
-        done
-    } > "$NM/.gc-lane-deps.fp.$$" 2>/dev/null || true
-    fp="$(sha256_of "$NM/.gc-lane-deps.fp.$$")"
-    rm -f "$NM/.gc-lane-deps.fp.$$"
-    printf '%s\n' "$fp"
+# deps_in_sync: pnpm's own verdict on TARGET, read-only, running nothing.
+deps_in_sync() {
+    (
+        unset pnpm_config_verify_deps_before_run
+        cd "$TARGET" && run_pnpm --config.verify-deps-before-run=error exec true
+    ) >/dev/null 2>&1
 }
 
 # --- the lane lock -----------------------------------------------------------------
@@ -376,11 +337,8 @@ reclaim_stale_lock() {
     return "$moved"
 }
 
-marker_ok() { [ -f "$MARK" ] && [ -d "$NM" ] && [ "$(cat "$MARK" 2>/dev/null)" = "$(lane_fingerprint)" ]; }
-
-# take_lane_lock: hold $LOCK on return. Returns 1 without the lock when the
-# marker became valid while waiting (a project command then needs nothing).
-# Fails closed after LANE_DEPS_WAIT seconds behind a live holder.
+# take_lane_lock: hold $LOCK on return. Fails closed after LANE_DEPS_WAIT
+# seconds behind a live holder.
 take_lane_lock() {
     mkdir -p "$NM" 2>/dev/null || die "cannot create $NM (read-only here?)"
     waited=0
@@ -389,9 +347,6 @@ take_lane_lock() {
             LOCKED=1
             printf '%s\n' "$$" > "$LOCK/pid"
             return 0
-        fi
-        if [ "$1" = "unless-installed" ] && marker_ok; then
-            return 1
         fi
         if lock_is_stale; then
             [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"
@@ -407,60 +362,41 @@ take_lane_lock() {
     done
 }
 
-# --- the one path that changes node_modules ----------------------------------------
-# run_locked_mutation DIR ARGS: with the lane lock held, invalidate the
-# marker, then run pnpm ARGS in DIR with the lane bypass exported for its
-# lifecycle scripts. Returns pnpm's status. The marker stays invalid: only
-# certify_lane, after a successful frozen install of the whole project,
-# writes a valid one.
-run_locked_mutation() {
-    dir="$1"
-    shift
-    printf 'changing %s\n' "$$" > "$MARK"
-    (cd "$dir" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$ROOT" run_pnpm "$@")
-}
-
-certify_lane() {
-    printf '%s\n' "$(lane_fingerprint)" > "$MARK.tmp.$$" && mv "$MARK.tmp.$$" "$MARK"
-}
-
 classify "$@"
 if [ "$LANE_DEPS" = "off" ] || [ "$KIND" = "info" ]; then
     exec_pnpm "$@"
 fi
-if ROOT="$(project_root)"; then
+if LANE="$(lane_of "$TARGET")"; then
     :
 elif [ "$KIND" = "mutate" ]; then
-    # a first install creates the lockfile; the lane is the directory pnpm acts on
-    ROOT="$(cd -P "$TARGET_DIR" 2>/dev/null && pwd -P)" || exec_pnpm "$@"
+    # a first install creates the lockfile: the lane is the directory pnpm acts on
+    LANE="$(cd -P "$TARGET" 2>/dev/null && pwd -P)" || exec_pnpm "$@"
 else
     exec_pnpm "$@"     # no lockfile anywhere above: nothing to keep in sync
 fi
-if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$ROOT" ]; then
+if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
-NM="$ROOT/node_modules"
-MARK="$NM/.gc-lane-deps"
+NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
 
 case "$KIND" in
     mutate)
-        take_lane_lock always
+        take_lane_lock
         status=0
-        run_locked_mutation "$(pwd -P)" "$@" || status=$?
+        GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
         release_lock
         exit "$status"
         ;;
     project)
-        if marker_ok; then
+        if deps_in_sync; then
             exec_pnpm "$@"
         fi
-        if take_lane_lock unless-installed && ! marker_ok; then
-            short="$(lane_fingerprint | cut -c1-12)"
-            log "installing lane dependencies once for $ROOT (lockfile+manifests $short)"
+        take_lane_lock
+        if ! deps_in_sync; then
+            log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
-            run_locked_mutation "$ROOT" install --frozen-lockfile >&2 || status=$?
-            [ "$status" -ne 0 ] || certify_lane
+            (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm install --frozen-lockfile) >&2 || status=$?
             release_lock
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
