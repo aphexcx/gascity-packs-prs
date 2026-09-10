@@ -77,9 +77,11 @@
 #     cis_ prefix, are initialized before use (an inherited cis_ export is not
 #     configuration) and are unset before the exec, so an inherited export of
 #     an ordinary name is never overwritten. Inherited shell options are kept:
-#     xtrace is switched off before the token is touched and back on just
-#     before the exec (so SHELLOPTS reaches the child as it came), noglob is
-#     left as found.
+#     xtrace is switched off before the token is touched and back on for the
+#     exec (so SHELLOPTS reaches the child as it came) with the shim's own
+#     trace lines discarded, so a PS4 that expands the token prints nothing;
+#     noglob and errexit are left as found (the lookups cannot trip errexit;
+#     the 127 diagnostics still print).
 #
 # Relation to the copy this was extracted from (citadel, gp-e8r6, 2026-09-10):
 # same fail-open semantics and the same helper; the PATH prepend and the pinned
@@ -89,8 +91,11 @@
 # and the self-exec guard are new; the WARN prefix names this script.
 
 # Inherited tracing (SHELLOPTS=xtrace) would print the token: off until the exec.
-cis_xtrace=0
-case $- in *x*) cis_xtrace=1; set +x ;; esac
+# The group's stderr is /dev/null so the lines that switch it off trace nowhere.
+{
+  cis_xtrace=0
+  case $- in *x*) cis_xtrace=1; set +x ;; esac
+} 2>/dev/null
 cis_noglob=0
 case $- in *f*) cis_noglob=1 ;; esac
 
@@ -103,7 +108,7 @@ cis_die() {
 cis_self=$0
 case $cis_self in
   */*) ;;
-  *) cis_self=$(builtin type -P -- "$cis_self" 2>/dev/null) ;;
+  *) cis_self=$(builtin type -P -- "$cis_self" 2>/dev/null || :) ;;
 esac
 [ -n "$cis_self" ] || cis_die "cannot locate the shim itself from \$0='$0'; refusing to exec"
 cis_self_dir=${cis_self%/*}
@@ -198,19 +203,20 @@ else
   set -- codex "$@"
 fi
 # The executable file, never a function, alias or builtin of that name.
-cis_target=$(builtin type -P -- "$1" 2>/dev/null)
+cis_target=$(builtin type -P -- "$1" 2>/dev/null || :)
 [ -n "$cis_target" ] \
   || cis_die "no '$1' on PATH after removing the shim's directory ($cis_self_dir); set CODEX_SHIM_EXEC or install codex"
 if [ "$cis_target" -ef "$cis_self_file" ]; then
   cis_die "'$1' resolves to the shim itself ($cis_self_file); refusing to exec"
 fi
-cis_argv0=$1
-shift
-set -- "$cis_target" "$@"
-cis_restore_xtrace=$cis_xtrace
+# $1 = restore xtrace, $2 = the checked file, $3 = argv[0], the rest = codex's argv.
+set -- "$cis_xtrace" "$cis_target" "$@"
 unset cis_self cis_self_dir cis_self_file cis_sidecar cis_line cis_key cis_val cis_prepend cis_exec \
-  cis_rest cis_pruned cis_first cis_entry cis_more cis_token_sh cis_words cis_target cis_xtrace cis_noglob
+  cis_rest cis_pruned cis_first cis_entry cis_more cis_token_sh cis_token cis_words cis_target cis_xtrace cis_noglob
 unset -f cis_die
-[ "$cis_restore_xtrace" = 1 ] && set -x
-unset cis_restore_xtrace
-exec -a "$cis_argv0" "$@"
+if [ "$1" = 1 ]; then
+  # Tracing back on for the child; the shim's own two trace lines go to
+  # /dev/null while the child gets the real stderr back (saved on fd 3).
+  { set -x; exec -a "$3" "$2" "${@:4}" 2>&3 3>&-; } 3>&2 2>/dev/null
+fi
+exec -a "$3" "$2" "${@:4}"
