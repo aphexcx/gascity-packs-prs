@@ -1037,7 +1037,9 @@ class PnpmShimGateRoundTests(unittest.TestCase):
             ["--dir", "a", "--prefix", "b", "exec", "vitest"], ["--prefix", "b", "--dir", "a", "exec", "vitest"],
             ["-C", "a", "--prefix", "b", "run", "test"], ["--prefix", "b", "-C=a", "test"],
             ["--prefix", "b", "--dir", "b", "--dir", "a", "exec", "vitest"],
-        ):
+            ["--config.dir=a", "--prefix", "b", "exec", "vitest"], ["--dir", "b", "--config.dir=a", "exec", "vitest"],
+            ["--config.dir=b", "--dir", "a", "exec", "vitest"], ["--config.prefix=b", "--dir", "a", "exec", "vitest"],
+        ):   # (`--config.dir=` is `--dir` for pnpm, last wins among them; `--config.prefix=` is not read: measured)
             (a / "node_modules" / ".fake-state").unlink(missing_ok=True)
             self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=self.fx.root)
@@ -1057,11 +1059,14 @@ class PnpmShimGateRoundTests(unittest.TestCase):
             lock_a.mkdir(parents=True)
             (lock_a / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
             r = self.fx.run("pnpm", "--prefix", "b", "--dir", "a", "add", "x", cwd=self.fx.root, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            r2 = self.fx.run("pnpm", "--ignore-workspace", "--config.dir=a", "install", cwd=self.fx.root, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
         finally:
             holder.kill()
             holder.wait()
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertIn(f"has held {lock_a.resolve()}", r.stderr)
+        self.assertEqual(r2.returncode, 1, r2.stderr)
+        self.assertIn(f"has held {lock_a.resolve()}", r2.stderr)
         # node_modules that refuses the lock: the command fails at once, naming the refusal,
         # never waiting LANE_DEPS_WAIT for a holder that does not exist
         c = self.fx.project("c")
@@ -1195,12 +1200,29 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         finally:
             holder.kill()
             holder.wait()
-        # a project command inside a running project command runs as is, its ancestor's
-        # token standing for it
+        # a project command inside a running project command takes its own token (asked
+        # under the lock like any other; a sibling mutate waits for it)
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)     # prepared again after the stale step above
         self.fx.reset()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()), GC_TOOLCHAIN_LANE_DEPS_READER="1")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertEqual(len(self.fx.checks()), 1)
+        # `pnpm run lint & pnpm rebuild; wait` inside a script: the rebuild waits for the
+        # lint (its sibling's token), never for the script that runs both
+        hook = self.fx.root / "lint-and-rebuild.sh"
+        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nFAKE_PNPM_RUN_SLEEP=3 "{self.fx.shims / "pnpm"}" exec lint & lp=$!\nsleep 0.5\n"{self.fx.shims / "pnpm"}" rebuild || exit 9\nwait "$lp"\n')
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        started = time.monotonic()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
+        elapsed = time.monotonic() - started
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("waiting for running lane command(s)", r.stderr)
+        self.assertGreaterEqual(elapsed, 3)
+        self.assertLess(elapsed, 20)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "exec lint", "rebuild"])
+        self.assertEqual(sorted(readers.iterdir()), [])
         # a mutate inside a running project command (a test script that rebuilds) takes the
         # lock and waits for every reader but its ancestor: it runs inside the command...
         self.fx.run("pnpm", "exec", "vitest", cwd=proj)
