@@ -2806,3 +2806,117 @@ func TestFailedMergeSalvagesEntryCarriedDispositions(t *testing.T) {
 		t.Fatalf("the un-merged spool stays for the next startup: %v", err)
 	}
 }
+
+// --- codex r19 ---------------------------------------------------------------
+
+// When the newer spool cannot be merged AND cannot be read, the staged
+// replay is deferred (r19 finding 1): the staged entries may depend on
+// dispositions in the unread spool (a plain copy staged, its stripped
+// copy there), so nothing is admitted until both can be read.
+func TestUnreadableSalvageDefersTheStagedReplay(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	plainA := testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	strippedA := withholdAttachments(plainA, permanent422())
+	strippedA.isolate, strippedA.attempts = true, 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{plainA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	if !spool.spillBatch("C1", []pendingChannelInbound{strippedA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Chmod(spool.path, 0o000); err != nil { // the merge's read of the spool fails, and so does the salvage
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(spool.path, 0o600) })
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c); n != 0 {
+		t.Fatalf("nothing may be admitted while the spool that may hold its disposition is unreadable, admitted %d", n)
+	}
+	if !strings.Contains(read(), "DEFERRED") {
+		t.Fatalf("the deferral is logged: %q", read())
+	}
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("the staged plain copy must not enter delivery")
+	}
+	for _, path := range []string{spool.path, spool.replayingPath()} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("both files stay for the next startup: %v", err)
+		}
+	}
+}
+
+// An expired terminal record still applies to a copy of its message
+// staged beside it (r19 finding 2): a stripped retry dead-lettered
+// during a replay that crashed before its cleanup, restarted after the
+// retention window, was seeded as outstanding and posted again. The
+// record is renewed while its message is in the spool.
+func TestExpiredRecordStillAppliesToItsStagedEntry(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now().Add(-30 * time.Hour)}) {
+		t.Fatal("record must confirm")
+	}
+	stale := withholdAttachments(testPendingWithAttachment("C1", "1.0", "A", "/tmp/x/memo.m4a"), permanent422())
+	stale.isolate, stale.attempts = true, 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{stale, testPending("C1", "2.0", "an unrelated message")}) {
+		t.Fatal("spill must confirm")
+	}
+	spool.recordVerdict("C1", "9.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now().Add(-30 * time.Hour)}) // expired, no copy present: compacted away
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("the exhausted stripped retry must not be posted again: the expired record beside it still says dead-lettered")
+	}
+	if !c.pendingContains("C1", "2.0") {
+		t.Fatal("the unrelated message replays")
+	}
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("the renewed verdict stands")
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("the renewed record is written once, got %d", n)
+	}
+	if n := countVerdictLines(t, spool.path, "9.0"); n != 0 {
+		t.Fatalf("an expired record with no copy present is compacted away, got %d", n)
+	}
+}
+
+// A failed verdict-record write logs once per distinct failure and once
+// on recovery (r19 minor), not once per retry.
+func TestVerdictRecordWriteFailureLogsOncePerDistinctFailure(t *testing.T) {
+	dir := t.TempDir() + "/locked"
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spool := newInboundSpool(dir + "/spool.jsonl")
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	v := ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}
+	for i := 0; i < 3; i++ {
+		if spool.recordVerdict("C1", "1.0", v) {
+			t.Fatal("the write must fail in a read-only directory")
+		}
+	}
+	if n := strings.Count(read(), "verdict record write FAILED"); n != 1 {
+		t.Fatalf("one line per distinct failure, got %d: %q", n, read())
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if !spool.recordVerdict("C1", "1.0", v) {
+		t.Fatal("the write succeeds once the directory is writable")
+	}
+	if n := strings.Count(read(), "verdict record writes recovered"); n != 1 {
+		t.Fatalf("one recovery line, got %d: %q", n, read())
+	}
+}

@@ -153,6 +153,35 @@ type inboundSpool struct {
 	// file. No spool write can therefore race process exit and be torn
 	// by it; a post-seal straggler degrades to the loud LOSS log.
 	sealed bool
+	// lastWriteFailure remembers, per record key, the last failure text
+	// logged, so a retried write logs once per DISTINCT failure and once
+	// on recovery (codex r19 minor: one line per state change, not per
+	// attempt). Guarded by mu.
+	lastWriteFailure map[string]string
+}
+
+// noteWriteFailureLocked records a write failure for key and reports
+// whether it is a new state (a different failure, or the first).
+func (s *inboundSpool) noteWriteFailureLocked(key string, err error) bool {
+	if s.lastWriteFailure == nil {
+		s.lastWriteFailure = make(map[string]string)
+	}
+	text := err.Error()
+	if s.lastWriteFailure[key] == text {
+		return false
+	}
+	s.lastWriteFailure[key] = text
+	return true
+}
+
+// noteWriteOKLocked clears key's failure state and reports whether it
+// was failing (a recovery worth one line).
+func (s *inboundSpool) noteWriteOKLocked(key string) bool {
+	if _, failing := s.lastWriteFailure[key]; !failing {
+		return false
+	}
+	delete(s.lastWriteFailure, key)
+	return true
 }
 
 // newInboundSpool returns the spool for path, or nil when path is empty
@@ -233,8 +262,13 @@ func (s *inboundSpool) recordVerdict(channel, ts string, v ladderVerdict) bool {
 	}
 	entry := spooledInbound{Channel: channel, VerdictTS: ts, Verdict: truncateReason(rejectionReasonText(v.cause)), VerdictDelivered: v.delivered, VerdictAt: at.Unix()}
 	if err := s.appendLinesLocked([]spooledInbound{entry}); err != nil {
-		log.Printf("inbound spool: verdict record write FAILED chan=%s ts=%s: %v", channel, ts, err)
+		if s.noteWriteFailureLocked("verdict:"+channel, err) {
+			log.Printf("inbound spool: verdict record write FAILED chan=%s ts=%s (logged once per distinct failure; the coalescer retries it): %v", channel, ts, err)
+		}
 		return false
+	}
+	if s.noteWriteOKLocked("verdict:" + channel) {
+		log.Printf("inbound spool: verdict record writes recovered chan=%s ts=%s", channel, ts)
 	}
 	return true
 }
@@ -386,7 +420,17 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				// The spool file stays for the next startup's retry; only
 				// the already-staged entries replay this time.
 				log.Printf("inbound spool: merging %s into %s FAILED: %v — replaying the staged file only; the spool retries next startup", s.path, rp, err)
-				salvagedDeletions = readRecords(s.path) // deletions, verdicts AND entry-carried dispositions
+				// Deletions, verdicts AND entry-carried dispositions. An
+				// unreadable spool defers the whole replay (codex r19
+				// finding 1): the staged entries may depend on dispositions
+				// in it (a plain copy staged, its stripped copy here), so
+				// nothing is admitted until both can be read.
+				salvaged, serr := readSpoolLines(s.path, true)
+				if serr != nil {
+					log.Printf("inbound spool: %s cannot be read after the failed merge (%v) — the staged file's replay is DEFERRED to the next startup: its entries may depend on dispositions in the unread spool; both files are left in place", s.path, serr)
+					return nil, nil
+				}
+				salvagedDeletions = salvaged
 			} else if err := os.Remove(s.path); err != nil {
 				log.Printf("inbound spool: remove %s after merge: %v (next startup may replay duplicates; gc dedup keys bound the damage)", s.path, err)
 			}
@@ -680,6 +724,20 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	// those writes is confirmed durable (codex r13 finding 2).
 	now := time.Now()
 	type verdictKey struct{ channel, ts string }
+	// The messages this replay carries, by identity: an EXPIRED record
+	// still applies to a copy staged beside it (codex r19 finding 2 — a
+	// stripped retry dead-lettered during a replay that crashed before
+	// its cleanup, restarted after the retention window, was seeded as
+	// outstanding and posted again); such a record is renewed (its
+	// decision time now) and re-written, since its message is still in
+	// the spool. An expired record with no copy present is compacted
+	// away — retention is for Slack's external redeliveries only.
+	present := make(map[verdictKey]bool)
+	for _, e := range entries {
+		if e.VerdictTS == "" && e.DeletedTS == "" {
+			present[verdictKey{e.Channel, e.Inbound.ProviderMessageID}] = true
+		}
+	}
 	folded := make(map[verdictKey]ladderVerdict)
 	var order []verdictKey
 	for _, e := range entries {
@@ -687,10 +745,14 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 			continue
 		}
 		v := ladderVerdict{retired: true, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
-		if v.expired(now) {
-			continue
-		}
 		k := verdictKey{e.Channel, e.VerdictTS}
+		if v.expired(now) {
+			if !present[k] {
+				continue
+			}
+			log.Printf("inbound spool: chan=%s ts=%s an expired verdict record still has a copy of its message in the spool — renewed, the copy is a duplicate", e.Channel, e.VerdictTS)
+			v.at = now
+		}
 		if cur, ok := folded[k]; ok {
 			if !v.at.After(cur.at) {
 				continue
