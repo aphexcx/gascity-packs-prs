@@ -253,8 +253,15 @@ type inboundCoalescer struct {
 	// to spooled entries on replay whatever the write ordering was
 	// (codex round-4 finding 1). Nil-safe; called without mu held.
 	persistDeletion func(channel, ts string)
-	window          time.Duration
-	policy          *deliveryPolicyRegistry
+	// recordDeletion writes a deletion record UNCONDITIONALLY (wired in
+	// main() to inboundSpool.recordDeletion, no draining guard) for a
+	// deletion that affects a payload already spooled during uptime — a
+	// parked refusal (codex r21 finding 2): the spooled text is that
+	// message's durable home, and without the record a restart would
+	// dead-letter the deleted text. Bounded by deleted parked messages.
+	recordDeletion func(channel, ts string) bool
+	window         time.Duration
+	policy         *deliveryPolicyRegistry
 	// inflight counts batches taken out of the maps but not yet
 	// delivered (or restored by a failed delivery). Guarded by mu;
 	// settled broadcasts every decrement. flushAll's fixpoint drain
@@ -2127,13 +2134,25 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 		c.deadLetterWritten(channel, ts) // the loss is the disposition; a redelivery is still a duplicate
 		return
 	}
+	// The refusal's payload is spooled BEFORE the sink is invoked (codex
+	// r21 finding 1): a crash inside the write — after the refusal, before
+	// its confirmation — would otherwise leave only the staged stripped
+	// entry, and the restart would POST the refused bytes again. The
+	// Refused line is the payload's durable home until the record (written
+	// after the confirmed write) says the file has it; the replay then
+	// drops the line.
+	p.refused = truncateReason(rejectionReasonText(cause))
+	spilled := c.spill != nil && c.spill(channel, []pendingChannelInbound{p})
+	if !spilled {
+		log.Printf("coalesce: chan=%s ts=%s the refused message could not be spooled before its dead-letter write — a crash inside the write would lose it", channel, ts)
+	}
 	if !c.deadLetter(channel, []pendingChannelInbound{p}, cause) {
 		// The WRITE failed, not the delivery verdict: the entry leaves
 		// the delivery path for good and only the write retries
 		// (parkDeadLetter) — re-posting it to gc for another refusal
 		// was the one remaining way the same refused bytes went out
 		// again (codex r1 finding 1).
-		c.parkDeadLetter(channel, p, cause)
+		c.parkDeadLetter(channel, p, cause, spilled)
 		return
 	}
 	c.deadLetterWritten(channel, ts)
@@ -2510,7 +2529,24 @@ func (c *inboundCoalescer) markDeleted(channel, ts string) int {
 		}
 	}
 	persist := c.persistDeletion
+	// A parked refusal's spooled payload (codex r21 finding 2): the
+	// notice replaces its text in memory (the write retries carry it)
+	// and a deletion record is written now, draining or not, so the
+	// spool line replays as the notice too.
+	spooled := false
+	for i := range c.parkedDeadLetters[channel] {
+		if e := &c.parkedDeadLetters[channel][i]; e.p.inbound.ProviderMessageID == ts {
+			applyDeletion(&e.p)
+			spooled = spooled || e.spilled
+		}
+	}
+	record := c.recordDeletion
 	c.mu.Unlock()
+	if spooled && record != nil {
+		if !record(channel, ts) {
+			log.Printf("coalesce: chan=%s ts=%s deleted while parked for its dead-letter write, and the deletion record could not be written — a restart before the write would dead-letter the deleted text", channel, ts)
+		}
+	}
 	// Durable record last, outside mu (file I/O): a spool line written
 	// by any producer before OR after this point is rewritten on replay.
 	// Two accepted residuals: the dead-letter file — an operator-

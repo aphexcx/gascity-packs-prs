@@ -275,7 +275,7 @@ func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Durati
 // a post-close straggler the spool took). The replay keeps its staged
 // file on false (codex r14 finding 3, r20 finding 1): the staged line
 // was the payload's only durable copy.
-func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) bool {
+func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error, alreadySpilled bool) bool {
 	// The terminal disposition travels WITH the entry: any spill from
 	// here on (post-close straggler, the shutdown backstop) writes a
 	// spool line the replay parks straight back into the write retry.
@@ -316,10 +316,12 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// The payload's durable home while the write is owed is its Refused
 	// spool line, written NOW — not at shutdown: a crash before then
 	// would lose the only copy of an acknowledged message (codex r20
-	// finding 1). The next startup re-parks it (or drops it once the
-	// record says the write confirmed). Returns whether that copy is on
-	// disk — the replay keeps its staged file otherwise.
-	durable := spill != nil && spill(channel, []pendingChannelInbound{p})
+	// finding 1). charge() spools it before the sink (codex r21 finding
+	// 1) and says so; the replay's re-park spools it here. The next
+	// startup re-parks it (or drops it once the record says the write
+	// confirmed). Returns whether that copy is on disk — the replay
+	// keeps its staged file otherwise.
+	durable := alreadySpilled || (spill != nil && spill(channel, []pendingChannelInbound{p}))
 	if !durable {
 		log.Printf("coalesce: chan=%s ts=%s the refused message could not be spooled while its dead-letter write is owed — it lives in memory only until the write or the shutdown spill succeeds", channel, ts)
 	}

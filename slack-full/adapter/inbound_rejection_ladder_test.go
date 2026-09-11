@@ -1870,7 +1870,9 @@ func TestTerminalVerdictSurvivesRestartViaTheSpool(t *testing.T) {
 	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
 	c1.recordVerdict = spool.recordVerdict
 	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
-	waitFor(t, "the dead-letter", func() bool { return c1.onLadder("C1", "1.0") })
+	// The record follows the confirmed dead-letter write (r20), so the
+	// restart below must wait for the record, not for the in-memory verdict.
+	waitFor(t, "the dead-letter's record", func() bool { return countVerdictLines(t, spool.path, "1.0") == 1 })
 	for restart := 1; restart <= 2; restart++ {
 		deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
 		c := newInboundCoalescer(20*time.Millisecond, nil)
@@ -2986,4 +2988,109 @@ func TestRecordFollowsTheDeadLetterWrite(t *testing.T) {
 	fail = false
 	mu.Unlock()
 	waitFor(t, "the record once the dead-letter write confirmed", func() bool { return countVerdictLines(t, spool.path, "1.0") == 1 })
+}
+
+// --- codex r21 ---------------------------------------------------------------
+
+// The refusal's payload is spooled BEFORE the dead-letter sink is
+// invoked (r21 finding 1): a crash inside the write — after the
+// refusal, before its confirmation — otherwise left only the staged
+// stripped entry, and the restart POSTed the refused bytes again.
+func TestRefusalPayloadIsSpooledBeforeTheSink(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	var mu sync.Mutex
+	sawSpooled := false
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool {
+		data, _ := os.ReadFile(spool.path)
+		mu.Lock()
+		sawSpooled = bytes.Contains(data, []byte(`"refused":`)) && bytes.Contains(data, []byte(`"provider_message_id":"1.0"`))
+		mu.Unlock()
+		return true
+	}
+	c.charge("C1", testPending("C1", "1.0", "poison"), permanent422())
+	mu.Lock()
+	defer mu.Unlock()
+	if !sawSpooled {
+		t.Fatal("the refused payload must be on disk in the spool before the sink is invoked — a crash inside the write would otherwise leave nothing but the staged stripped entry")
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("the record follows the confirmed write, got %d", n)
+	}
+}
+
+// A deletion of a payload the spool already holds — a parked refusal
+// spooled during uptime — is recorded whenever it happens (r21 finding
+// 2): main's draining-only deletion hook skipped it, and a restart with
+// the sink still failing dead-lettered the deleted text.
+func TestDeletionOfASpooledParkedPayloadIsPersisted(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	c := newInboundCoalescer(time.Hour, nil) // the write retry is an hour out: the park outlives the deletion
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.recordDeletion = spool.recordDeletion
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	c.charge("C1", testPending("C1", "1.0", "secret text"), permanent422())
+	if n := c.markDeleted("C1", "1.0"); n != 0 {
+		t.Fatalf("nothing buffered, got %d", n)
+	}
+	// A restart with the sink recovered: the parked write must carry the notice.
+	var mu sync.Mutex
+	var written []string
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range batch {
+			written = append(written, p.inbound.Text)
+		}
+		return true
+	}
+	spool.replayInto(c2)
+	waitFor(t, "the parked write after the restart", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(written) > 0
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if written[0] != deletedBySenderNotice {
+		t.Fatalf("the dead-letter write after the restart must carry the deletion notice, got %q", written[0])
+	}
+}
+
+// The in-place compaction applies deletion records to the refusals it
+// retains and keeps the newest copy (r21 finding 3): it kept the first
+// copy and dropped the deletion, so a restart with the sink still
+// failing restored the deleted text.
+func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
+	dir := t.TempDir()
+	spool := newInboundSpool(filepath.Join(dir, strings.Repeat("s", 250))) // forces the in-place fallback
+	refused := testPending("C1", "1.0", "secret text")
+	refused.refused, refused.attempts = "422 Unprocessable Entity", 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
+		t.Fatal("spill must confirm")
+	}
+	if !spool.recordDeletion("C1", "1.0") {
+		t.Fatal("record must confirm")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	spool.replayInto(c) // parks the notice, re-spools it, compacts in place
+	data, err := os.ReadFile(spool.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("secret text")) {
+		t.Fatalf("the compacted spool must not carry the deleted text: %q", data)
+	}
+	if !bytes.Contains(data, []byte(deletedBySenderNotice)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
+		t.Fatalf("the retained refusal carries the notice and its deletion record is kept: %q", data)
+	}
 }

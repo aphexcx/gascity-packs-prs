@@ -493,14 +493,32 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	var order []key
 	// A Refused entry is a parked payload's durable home until its
 	// dead-letter write confirms (codex r20 finding 1): kept, once per
-	// (channel, id), beside the verdict records.
+	// (channel, id) — the LAST copy, which is the newest re-spool —
+	// beside the verdict records, with every deletion record that names
+	// it applied (the notice replaces the text) and kept (codex r21
+	// finding 3: the first copy was kept and the deletion dropped, so a
+	// restart with the sink still failing restored the deleted text).
+	deleted := make(map[key]bool)
+	for _, e := range records {
+		if e.DeletedTS != "" {
+			deleted[key{e.Channel, e.DeletedTS}] = true
+		}
+	}
+	refusedAt := make(map[key]int)
 	var refused []spooledInbound
-	seenRefused := make(map[key]bool)
 	for _, e := range records {
 		if e.Refused != "" && e.VerdictTS == "" {
 			k := key{e.Channel, e.Inbound.ProviderMessageID}
-			if !seenRefused[k] {
-				seenRefused[k] = true
+			if deleted[k] {
+				p := pendingChannelInbound{inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files}
+				applyDeletion(&p)
+				e.Inbound = p.inbound
+				e.ThreadAnchor, e.Preamble, e.Body, e.Files = "", "", "", ""
+			}
+			if i, seen := refusedAt[k]; seen {
+				refused[i] = e
+			} else {
+				refusedAt[k] = len(refused)
 				refused = append(refused, e)
 			}
 			continue
@@ -526,11 +544,16 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	}
 	tmpPath := tmp.Name()
 	w := bufio.NewWriter(tmp)
-	kept := make([]spooledInbound, 0, len(order)+len(refused))
+	kept := make([]spooledInbound, 0, len(order)+2*len(refused))
 	for _, k := range order {
 		kept = append(kept, newest[k])
 	}
 	kept = append(kept, refused...)
+	for _, e := range refused {
+		if k := (key{e.Channel, e.Inbound.ProviderMessageID}); deleted[k] {
+			kept = append(kept, spooledInbound{Channel: e.Channel, DeletedTS: e.Inbound.ProviderMessageID})
+		}
+	}
 	for _, e := range kept {
 		line, merr := json.Marshal(e)
 		if merr != nil {
@@ -871,7 +894,7 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			// re-spools the payload so the staged file may go.
 			p.attempts = e.Attempts
 			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — parked for its dead-letter write, not re-posted", e.Channel, e.Inbound.ProviderMessageID, e.Refused)
-			if !c.parkDeadLetter(e.Channel, p, errors.New(e.Refused)) {
+			if !c.parkDeadLetter(e.Channel, p, errors.New(e.Refused), false) {
 				durable = false
 			}
 			n++

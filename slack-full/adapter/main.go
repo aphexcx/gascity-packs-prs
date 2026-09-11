@@ -1754,6 +1754,10 @@ func main() {
 				cfg.inboundSpool.recordDeletion(channel, ts)
 			}
 		}
+		// A deletion of a payload the spool already holds (a parked
+		// refusal spooled during uptime) is recorded whenever it happens
+		// (codex r21 finding 2).
+		cfg.coalescer.recordDeletion = cfg.inboundSpool.recordDeletion
 	}
 	deliverCfg := cfg
 	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
