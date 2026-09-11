@@ -641,3 +641,64 @@ func TestReactionsOnlyTransientFailureSetsBackoffDeadline(t *testing.T) {
 		t.Fatal("the reaction must be back in its side lane")
 	}
 }
+
+// --- codex r3 on gp-sgu7 ------------------------------------------------------
+
+// A reactions-only transient failure must hold the deadline against
+// real messages too (codex r3 finding 1): one enqueued afterwards must
+// not arm a plain window under a five-minute deadline, and a plain
+// timer armed BEFORE the failure moves out to the deadline.
+func TestReactionsOnlyBackoffHoldsAgainstRealMessages(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	// A plain timer armed by a real message BEFORE the reaction failure.
+	c.enqueue("C1", testPending("C1", "1.0", "before"))
+	for i := 0; i < 10; i++ {
+		c.noteTransientFailure("C1") // a capped run
+	}
+	r := testPending("C1", "0.5", "reaction")
+	r.reaction = true
+	c.restore("C1", []pendingChannelInbound{r})
+	// A real message enqueued AFTER it.
+	c.enqueue("C1", testPending("C1", "2.0", "after"))
+	time.Sleep(150 * time.Millisecond)
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("no POST may happen under the backoff deadline: %v", got)
+	}
+	c.mu.Lock()
+	_, armed := c.timers["C1"]
+	pending := len(c.pending["C1"])
+	c.mu.Unlock()
+	if !armed || pending != 2 {
+		t.Fatalf("the backed-off timer must cover both buffered messages: armed=%v pending=%d", armed, pending)
+	}
+}
+
+// Delivery stays chronological across flagged and plain members (codex
+// r3 finding 2): an older plain message that arrived late (slow file
+// download) delivers before a newer message's stripped retry.
+func TestOlderPlainMessageDeliversBeforeNewerStrippedRetry(t *testing.T) {
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		for _, p := range batch {
+			if len(p.inbound.Attachments) > 0 {
+				return permanent422()
+			}
+		}
+		return nil
+	})
+	c := newInboundCoalescer(30*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPendingWithAttachment("C1", "2.0", "newer, refused with its file", "/tmp/b.m4a"))
+	waitForCalls(t, calls, []string{"2.0"}) // refused → stripped, flagged, restored
+	c.enqueue("C1", testPending("C1", "1.0", "older, its download finished late"))
+	waitForCalls(t, calls, []string{"2.0", "1.0", "2.0"})
+	if got := calls(); len(got) != 3 {
+		t.Fatalf("unexpected extra deliveries: %v", got)
+	}
+	for _, ts := range []string{"1.0", "2.0"} {
+		if c.pendingContains("C1", ts) {
+			t.Fatalf("%s still pending", ts)
+		}
+	}
+}

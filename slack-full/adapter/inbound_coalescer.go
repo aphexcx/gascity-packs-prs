@@ -491,6 +491,21 @@ func (c *inboundCoalescer) inBackoffLocked(channel string) bool {
 	return ok && time.Now().Before(nb)
 }
 
+// armDelayLocked is the delay for a NEW plain timer on the channel: its
+// window, or the remainder of a backoff deadline when that is later
+// (codex r3 finding 1: a real message enqueued during a reactions-only
+// backoff must not arm an 8 s timer under a five-minute deadline).
+// Caller holds c.mu.
+func (c *inboundCoalescer) armDelayLocked(channel string) time.Duration {
+	window := c.windowFor(channel)
+	if nb, ok := c.retryNotBefore[channel]; ok {
+		if until := time.Until(nb); until > window {
+			return until
+		}
+	}
+	return window
+}
+
 // noteTransientFailure records one more consecutive transient failure
 // for the channel. Called before restore() so the re-armed timer sees
 // the new count. Returns the count.
@@ -629,7 +644,7 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 		return
 	}
 	if _, ok := c.timers[channel]; !ok {
-		window := c.windowFor(channel)
+		window := c.armDelayLocked(channel)
 		g := c.gen[channel]
 		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
 		c.mu.Unlock()
@@ -916,66 +931,99 @@ func (c *inboundCoalescer) deliverBatch(channel string, batch []pendingChannelIn
 
 // post delivers one taken batch under the channel's held delivery
 // mutex — the ONE place a taken batch meets c.deliver (deliverBatch and
-// the urgent flushAheadOf both route here). Members flagged isolate —
-// entries of a batch gc already refused, restored when their probe
-// paused on a transient failure or stripped for their one retry — are
-// posted ALONE first, in order, never re-batched (gp-sgu7, codex r1
-// finding 3: re-batching them re-posts the identical refused payload).
-// The unflagged rest then posts as a normal batch; a reactions-only
-// rest returns to its side lane when a probe was refused (a reaction
-// never wakes solo behind a charged message) and posts behind the
-// delivered probes otherwise. Returns the rest's delivery error (nil
-// when it delivered, or when the probe paused and restored everything).
+// the urgent flushAheadOf both route here). The batch is walked in ts
+// order as SEGMENTS (codex r3 finding 2: an older message whose file
+// download finished late must still deliver before a newer one):
+// a member flagged isolate — an entry of a batch gc already refused,
+// restored when its probe paused on a transient failure or stripped
+// for its one retry — is posted ALONE, never re-batched (codex r1
+// finding 3); a run of unflagged messages posts as one batch, the
+// no-wake reactions riding with the LAST such run (or, with no plain
+// run, behind the delivered probes — back to their side lane instead
+// when a probe was refused, so a reaction never wakes solo behind a
+// charged message). A failed plain segment takes the usual failure
+// path and everything later waits for the next window (the take is
+// re-sorted then, so restore order is irrelevant). Returns the first
+// plain segment's delivery error, nil when everything delivered or a
+// probe paused and restored the remainder.
 func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) error {
-	var flagged, rest []pendingChannelInbound
-	for _, p := range batch {
-		if p.isolate && !p.reaction {
-			flagged = append(flagged, p)
+	sorted := append([]pendingChannelInbound(nil), batch...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].inbound.ProviderMessageID < sorted[j].inbound.ProviderMessageID
+	})
+	var reals, reactions []pendingChannelInbound
+	for _, p := range sorted {
+		if p.reaction {
+			reactions = append(reactions, p)
 		} else {
-			rest = append(rest, p)
+			reals = append(reals, p)
 		}
 	}
-	if len(flagged) > 0 {
-		// Chronological: successive restore() calls PREPEND, so two
-		// stripped batch-mates come back newest-first (codex r2 finding
-		// 3); singles bypass deliverCoalescedBatch's in-batch sort.
-		sort.SliceStable(flagged, func(i, j int) bool {
-			return flagged[i].inbound.ProviderMessageID < flagged[j].inbound.ProviderMessageID
-		})
-		c.mu.Lock()
-		_, worthy := backoffLogWorthy(c.windowFor(channel), c.transientFailures[channel])
-		c.mu.Unlock()
-		if worthy { // a resume inside a capped transient run is not a state change
-			log.Printf("coalesce: chan=%s resuming isolation of %d message(s) from a batch gc refused — each posted alone, never re-batched", channel, len(flagged))
-		}
-		paused, refused := c.isolate(channel, flagged, rest)
-		if paused {
-			return nil
-		}
-		if len(rest) == 0 {
-			return nil
-		}
-		if refused && reactionsOnly(rest) {
-			c.restore(channel, rest)
-			return nil
+	lastPlain := -1
+	for i, p := range reals {
+		if !p.isolate {
+			lastPlain = i
 		}
 	}
-	if err := c.deliver(channel, rest); err != nil {
-		c.failed(channel, rest, err)
+	refused, announced := false, false
+	for i := 0; i < len(reals); {
+		if reals[i].isolate {
+			if !announced {
+				announced = true
+				c.mu.Lock()
+				_, worthy := backoffLogWorthy(c.windowFor(channel), c.transientFailures[channel])
+				c.mu.Unlock()
+				if worthy { // a resume inside a capped transient run is not a state change
+					log.Printf("coalesce: chan=%s resuming isolation from a batch gc refused — flagged members post alone, in ts order, never re-batched", channel)
+				}
+			}
+			rest := append(append([]pendingChannelInbound{}, reals[i+1:]...), reactions...)
+			paused, r := c.isolate(channel, reals[i:i+1], rest)
+			if paused {
+				return nil
+			}
+			refused = refused || r
+			i++
+			continue
+		}
+		j := i
+		for j < len(reals) && !reals[j].isolate {
+			j++
+		}
+		seg := append([]pendingChannelInbound{}, reals[i:j]...)
+		if j-1 == lastPlain {
+			seg = append(seg, reactions...)
+			reactions = nil
+		}
+		err := c.deliver(channel, seg)
+		if err == nil {
+			c.deliveredOK(channel)
+			i = j
+			continue
+		}
+		remaining := append(append([]pendingChannelInbound{}, reals[j:]...), reactions...)
+		if chargeableDeliveryFailure(err) {
+			c.failed(channel, seg, err)
+			c.restore(channel, remaining)
+		} else {
+			c.noteTransientFailure(channel)
+			c.restore(channel, append(seg, remaining...))
+		}
+		return err
+	}
+	if len(reactions) == 0 {
+		return nil
+	}
+	if refused {
+		c.restore(channel, reactions)
+		return nil
+	}
+	if err := c.deliver(channel, reactions); err != nil {
+		c.failed(channel, reactions, err)
 		return err
 	}
 	c.deliveredOK(channel)
 	return nil
-}
-
-// reactionsOnly reports whether batch holds no real message.
-func reactionsOnly(batch []pendingChannelInbound) bool {
-	for _, p := range batch {
-		if !p.reaction {
-			return false
-		}
-	}
-	return true
 }
 
 // restore re-queues a batch whose delivery failed, ahead of anything
@@ -1024,11 +1072,21 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 	}
 	if len(msgs) == 0 {
 		if c.transientFailures[channel] > 0 {
-			// A reactions-only failure arms no timer (never a solo wake),
-			// but the channel IS in a transient run: set the deadline so
-			// the overflow flush honors the backoff instead of POSTing
-			// on every further reaction (codex r2 finding 2).
-			c.retryNotBefore[channel] = time.Now().Add(c.retryDelayLocked(channel))
+			// A reactions-only failure arms no timer of its own (never a
+			// solo wake), but the channel IS in a transient run: set the
+			// deadline so the overflow flush honors the backoff instead
+			// of POSTing on every further reaction (codex r2 finding 2),
+			// and move a timer real messages already armed out to it
+			// (codex r3 finding 1) — that timer would otherwise fire
+			// under the deadline.
+			delay := c.retryDelayLocked(channel)
+			c.retryNotBefore[channel] = time.Now().Add(delay)
+			if t, ok := c.timers[channel]; ok {
+				t.Stop()
+				c.gen[channel]++
+				g := c.gen[channel]
+				c.timers[channel] = time.AfterFunc(delay, func() { c.flushTimer(channel, g) })
+			}
 		}
 		return
 	}
@@ -1058,9 +1116,8 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		return
 	}
 	if _, ok := c.timers[channel]; !ok {
-		window := c.windowFor(channel)
 		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
+		c.timers[channel] = time.AfterFunc(c.armDelayLocked(channel), func() { c.flushTimer(channel, g) })
 	}
 }
 
@@ -1308,6 +1365,17 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 	c.mu.Lock()
 	if c.gen[channel] != g {
 		c.mu.Unlock()
+		return
+	}
+	if c.inBackoffLocked(channel) {
+		// Armed before the channel's backoff deadline moved past it (a
+		// reactions-only failure, a reconcile race): wait it out at the
+		// same generation rather than POST under the deadline (codex r3
+		// finding 1).
+		until := time.Until(c.retryNotBefore[channel])
+		c.timers[channel] = time.AfterFunc(until, func() { c.flushTimer(channel, g) })
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s timer fired under the backoff deadline — re-armed for %s", channel, until)
 		return
 	}
 	batch, mu, ok := c.takeLocked(channel)
