@@ -463,11 +463,8 @@ that is a system error code is no verdict either) is no verdict: one WARN
 and the command runs as is, never an install. The question is asked under
 the lane lock, `node_modules/.gc-lane-deps.lock` (a mutate or install in
 flight holds it, and a `rebuild` half done still reads as yes to pnpm, so
-it is waited for first), and the command then runs holding a reader token
-(`node_modules/.gc-lane-deps.readers/<pid>`, dropped on exit) that every
-mutate and install waits for before touching the tree, so a check never
-runs against a half-built tree in either order while checks still run side
-by side. Yes: the command runs. No: the caller, still under `node_modules/.gc-lane-deps.lock` in the lane
+it is waited for first). Yes: the lock is released and the command runs,
+holding nothing. No: the caller, still under the lock in the lane
 (the workspace root above the target, the nearest `pnpm-workspace.yaml`,
 because a workspace install writes every member's tree whatever
 `sharedWorkspaceLockfile` says; else the nearest `pnpm-lock.yaml`; under
@@ -475,22 +472,34 @@ because a workspace install writes every member's tree whatever
 lane is the target directory itself when it holds `pnpm-lock.yaml`, and the
 question and the install carry the flag, so a fixture project inside a
 workspace is prepared as itself, never its parent; a project command with
-no lane runs as is), waits for running commands, runs `pnpm
-install --frozen-lockfile` in the lane, and releases; concurrent callers
-wait for the lock and ask pnpm again, so a lane is installed once whatever
-runs in parallel. A lane whose `node_modules` refuses the lock for this
-caller (a sandbox, a read-only checkout) cannot be coordinated from here,
-another caller could change it under the command, so the command fails
-closed at once naming the refusal; `GC_TOOLCHAIN_LANE_DEPS=off` runs there
-when the lane is this caller's alone. Inside a running project command
-another project command runs as is (the running command's token holds
-every mutate off and its readiness is settled); a mutate there is refused,
-closed, naming the running command: it would change `node_modules` under
-that command and under whatever else it reads, in the background too
-(`node check.js & pnpm rebuild`), and no exemption of the running command
-is sound (eight gate rounds found a hole around each one). Run such a
-mutate on its own, or with `GC_TOOLCHAIN_LANE_DEPS=off` when the lane is
-yours alone. A failed install fails the
+no lane runs as is), runs `pnpm install --frozen-lockfile` in the lane,
+releases, and runs; concurrent callers wait for the lock and ask pnpm
+again, so a lane is installed once whatever runs in parallel. That is the
+wrapper's whole concurrency contract (shape A, the mayor's decision after
+gate rounds 19 to 29 each found a hole around a reader/writer model of
+running commands): it owns its own question and the one frozen install per
+lockfile, under the lane lock, and mutate-vs-mutate serialization, two
+callers that both change dependencies (`install`, `add`, `remove`,
+`update`, `dedupe`, `import`, `link`, `unlink`, `prune`, `patch`,
+`rebuild`, and the other mutating built-ins in pnpm's own command table)
+serializing on that same lock; a project command (`run`, `exec`, `test`, a
+script or bin name, `dlx`, any non-mutating command) runs after the
+question with no token of any kind, and nothing tracks running commands.
+**Non-goal:** A running command is not fenced from a dependency mutation
+another caller starts afterwards. This is bare pnpm's own position, and
+under the lane model one lane belongs to one agent (memory
+dispatch-worktree-constraint), so the two callers are the same agent. That
+names `pnpm run build` under `syncInjectedDepsAfterScripts` (pnpm writes
+injected dependencies and bin links after the script: a writer holding no
+lock, unfenced by design) as much as `node check.js & pnpm rebuild`. A
+command a running project command starts is any other caller: a project
+command asks pnpm again under the lock, a mutate takes the lock and runs,
+under the command that started it. A lane whose `node_modules` refuses the
+lock for this caller (a sandbox, a read-only checkout) cannot be
+coordinated from here, its question and install serialize on that lock, so
+the command fails closed at once naming the refusal;
+`GC_TOOLCHAIN_LANE_DEPS=off` runs there when the lane is this caller's
+alone. A failed install fails the
 command (the requested check never runs against a half-installed tree);
 pnpm fails the frozen install closed when a manifest is ahead of the
 lockfile, and the worker's own `pnpm install` (a mutate) resolves that.
@@ -516,7 +525,14 @@ lock is never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default
 600 s) and then the command fails closed naming the holder, a lock that
 cannot be made at all (`node_modules` refusing the write under a sandbox)
 fails the command at once with the refusal, and only the
-pid that took a lock releases it. A lifecycle script the mutation itself
+pid that took a lock releases it. The lock records the wrapper's pid, and
+the dead-wrapper window is accepted, not chased: a wrapper killed outright
+(SIGKILL) while its pnpm child still runs leaves a lock whose owner is dead,
+the next caller reclaims it and may run beside the orphaned child; a signal
+the wrapper traps (HUP, INT, TERM) releases the lock only after the child
+has ended, as `sh` runs a trap after the foreground command completes
+(measured). No child-pid tracking, no ancestor exemption. A lifecycle
+script the mutation itself
 runs (a `postinstall` that calls `pnpm run build`) re-enters the wrapper
 with `GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane>` set by its parent and runs
 as info instead of asking pnpm or waiting on its parent's lock. pnpm itself

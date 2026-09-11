@@ -77,27 +77,51 @@
 #      read-only lane, which pnpm reports under the same VERIFY code with
 #      the file error as its reason, measured) is not a verdict: one WARN
 #      and the command runs as is, never an install. The question is asked
-#      under the lane lock, <lane>/node_modules/.gc-lane-deps.lock (mkdir;
-#      a mutate or install in flight holds it, and a rebuild half done
-#      reads as yes to pnpm, so it is waited for first), and the command
-#      then runs holding a reader token
-#      (<lane>/node_modules/.gc-lane-deps.readers/<pid>, dropped on exit)
-#      that every mutate and install waits for before touching the tree;
-#      checks still run side by side. Yes: the command runs. No: (the lane
-#      is the workspace root above TARGET, the nearest pnpm-workspace.yaml,
-#      since a workspace install writes every member's tree whatever
-#      sharedWorkspaceLockfile says, else the nearest pnpm-lock.yaml; under
-#      `--ignore-workspace` it is TARGET when TARGET holds pnpm-lock.yaml,
-#      the only lockfile pnpm reads then; a project command with no lane
-#      runs as is), asks pnpm again under
-#      the lock (another caller may have installed meanwhile), runs `pnpm
-#      install --frozen-lockfile` (with `--ignore-workspace` when the
-#      command carried it) in the lane when the answer is still no,
-#      and releases; every concurrent caller waits for the lock and asks
-#      pnpm again. A failed install fails the command (exit status of pnpm
-#      install): the requested command does not run. pnpm fails the frozen
-#      install closed when a manifest is ahead of the lockfile; the worker's
-#      own `pnpm install` (a mutate) resolves that.
+#      under the lane lock, <lane>/node_modules/.gc-lane-deps.lock (mkdir,
+#      this wrapper's pid inside; a mutate or install in flight holds it,
+#      and a rebuild half done reads as yes to pnpm, so it is waited for
+#      first). Yes: the lock is released and the command runs, holding
+#      nothing. No: (the lane is the workspace root above TARGET, the
+#      nearest pnpm-workspace.yaml, since a workspace install writes every
+#      member's tree whatever sharedWorkspaceLockfile says, else the nearest
+#      pnpm-lock.yaml; under `--ignore-workspace` it is TARGET when TARGET
+#      holds pnpm-lock.yaml, the only lockfile pnpm reads then; a project
+#      command with no lane runs as is) `pnpm install --frozen-lockfile`
+#      (with `--ignore-workspace` when the command carried it) runs in the
+#      lane, still under the lock, then the lock is released and the
+#      command runs; every concurrent caller waits for the lock and asks
+#      pnpm again, so a lane is installed once whatever runs in parallel.
+#      A failed install fails the command (exit status of pnpm install):
+#      the requested command does not run. pnpm fails the frozen install
+#      closed when a manifest is ahead of the lockfile; the worker's own
+#      `pnpm install` (a mutate) resolves that.
+#      THE CONTRACT (shape A; the mayor's decision after gate rounds 19 to
+#      29 each found a hole around a reader/writer model of running
+#      commands): this wrapper owns exactly two things. (a) Its own
+#      question and the one frozen install per lockfile, under the lane
+#      lock. (b) Mutate-vs-mutate serialization: two callers that both
+#      change dependencies (install, add, remove, update, dedupe, import,
+#      link, unlink, prune, patch, rebuild, and the other mutating built-ins
+#      in pnpm's own command table) serialize on that same lock. A project
+#      command (run, exec, test, a script or bin name, dlx, any
+#      non-mutating command) runs after the question with no token of any
+#      kind; nothing tracks running commands. NON-GOAL: A running command
+#      is not fenced from a dependency mutation another caller starts
+#      afterwards. This is bare pnpm's own position, and under the lane
+#      model one lane belongs to one agent (memory
+#      dispatch-worktree-constraint), so the two callers are the same
+#      agent. That names `pnpm run build` under syncInjectedDepsAfterScripts
+#      (pnpm writes injected dependencies and bin links after the script:
+#      a writer holding no lock, unfenced by design) as much as
+#      `node check.js & pnpm rebuild`. Lock ownership is this wrapper's
+#      pid, and the dead-wrapper window is accepted, not chased: a wrapper
+#      killed outright (SIGKILL) while its pnpm child still runs leaves a
+#      lock whose owner is dead, the next caller reclaims it and may run
+#      beside the orphaned child. A signal this wrapper traps (HUP, INT,
+#      TERM) releases the lock only after the child has ended, since sh
+#      runs a trap after the foreground command completes (measured on
+#      /bin/sh: the trap ran three seconds later, when the child ended).
+#      No child-pid tracking, no ancestor exemption.
 #      A lock whose owner pid is dead (or a zombie), or that has no owner
 #      after two minutes, is moved aside by rename (atomic; nothing is
 #      deleted) and retaken, but only under a second, atomic reclaim lock
@@ -111,21 +135,13 @@
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
 #      that resolves the same lane runs as info, never asking pnpm or
-#      waiting on its parent's lock. Inside a running project command
-#      (GC_TOOLCHAIN_LANE_DEPS_READING=<lane>) another project command runs
-#      as is: that command's token holds every mutate off and its
-#      readiness is settled. A mutate there is refused, closed, naming the
-#      command (GC_TOOLCHAIN_LANE_DEPS_READER=<its pid>): it would change
-#      node_modules under the command that runs it and under whatever else
-#      that command reads, in the background too (`node check.js & pnpm
-#      rebuild`), and no exemption of the running command is sound (eight
-#      gate rounds found a hole around each one: a sibling reader, a
-#      deadlock between two scripts, a shared mark, a mark dropped after
-#      the lock, an asynchronous reader). Run such a mutate on its own, or
-#      with GC_TOOLCHAIN_LANE_DEPS=off when the lane is yours alone. A lane whose
-#      node_modules refuses the lock for this caller (a sandbox) cannot be
-#      coordinated from here, another caller could change it under the
-#      command, so the command fails closed naming the refusal;
+#      waiting on its parent's lock. A command a running project command
+#      starts is any other caller: a project command asks pnpm again under
+#      the lock, a mutate takes the lock and runs, under the command that
+#      started it (the non-goal above). A lane whose node_modules refuses
+#      the lock for this caller (a sandbox, a read-only lane) cannot be
+#      coordinated from here: its question and install serialize on that
+#      lock, so the command fails closed naming the refusal;
 #      GC_TOOLCHAIN_LANE_DEPS=off is the way to run there when the lane is
 #      this caller's alone.
 #   4. The wrapper's own directory goes first on PATH, so the node pnpm runs
@@ -690,18 +706,13 @@ lane_install() {
     (cd "$LANE" && GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@")
 }
 
-# --- the lane lock and the reader tokens ---------------------------------------------
-# One discipline for the lane: a mutate or the wrapper's own install holds
-# <lane>/node_modules/.gc-lane-deps.lock (mkdir, owner pid inside) and runs
-# only once no project command is running; a project command decides its
-# readiness under that same lock, then runs holding a reader token
-# (<lane>/node_modules/.gc-lane-deps.readers/<pid>, removed on exit) that a
-# mutate waits for. So a check never runs against a tree a rebuild is
-# half-way through, in either order, and checks still run side by side.
+# --- the lane lock ---------------------------------------------------------------------
+# One lock for the lane, <lane>/node_modules/.gc-lane-deps.lock (mkdir, this
+# wrapper's pid inside): a mutate holds it while it runs; a project command
+# holds it for the question and the one frozen install, then releases it and
+# runs holding nothing (the contract and the non-goal in the header).
 LOCK=""
 LOCKED=0
-READERS=""
-TOKEN=""
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
         LOCKED=0
@@ -710,51 +721,11 @@ release_lock() {
         rmdir "$LOCK" 2>/dev/null || true
     fi
 }
-drop_token() {
-    if [ -n "$TOKEN" ]; then
-        rm -f "$TOKEN" 2>/dev/null || true
-        TOKEN=""
-    fi
-}
-cleanup() { release_lock; drop_token; }
+cleanup() { release_lock; }
 trap 'cleanup' EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
 trap 'cleanup; exit 143' TERM
-
-# take_token: register this run as a reader of the lane (under the lane lock).
-take_token() {
-    mkdir -p "$READERS" 2>/dev/null || die "cannot create $READERS (read-only here?)"
-    TOKEN="$READERS/$$"
-    : > "$TOKEN" 2>/dev/null || die "cannot write $TOKEN (read-only here?)"
-}
-
-# wait_for_readers: with the lane lock held, wait until no project command
-# is running in the lane (a token whose pid is dead is a crashed run's and
-# is dropped). Fails closed after LANE_DEPS_WAIT seconds naming the pids.
-wait_for_readers() {
-    [ -d "$READERS" ] || return 0
-    rwaited=0
-    while :; do
-        live=""
-        for t in "$READERS"/*; do
-            [ -e "$t" ] || continue
-            rp="${t##*/}"
-            case "$rp" in ''|*[!0-9]*) continue ;; esac
-            if owner_is_dead "$rp"; then
-                rm -f "$t" 2>/dev/null || true
-                continue
-            fi
-            live="$live $rp"
-        done
-        [ -n "$live" ] || return 0
-        [ "$rwaited" -lt "$LANE_DEPS_WAIT" ] \
-            || die "lane command(s) still running (pid$live) after ${LANE_DEPS_WAIT}s; this command did not run"
-        [ "$rwaited" -gt 0 ] || log "waiting for running lane command(s) (pid$live) before changing node_modules"
-        sleep 1
-        rwaited=$((rwaited + 1))
-    done
-}
 
 owner_is_dead() {
     ! kill -0 "$1" 2>/dev/null && return 0
@@ -857,49 +828,34 @@ fi
 if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
     exec_pnpm "$@"     # a lifecycle script of the mutation in progress; its parent holds the lock
 fi
-if [ "${GC_TOOLCHAIN_LANE_DEPS_READING:-}" = "$LANE" ]; then
-    # inside a running project command: its token holds every mutate off
-    # and its readiness is settled, so another project command runs as is;
-    # a mutate here would change node_modules under the command that runs
-    # it (and under whatever else that command reads, in the background
-    # too), and there is no safe handoff for that, so it is refused
-    case "$KIND" in
-        project) exec_pnpm "$@" ;;
-        mutate) die "refused: a mutate inside a running lane command (pid ${GC_TOOLCHAIN_LANE_DEPS_READER:-unknown}) would change $LANE/node_modules under it; run it on its own, or with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run" ;;
-    esac
-fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
-READERS="$NM/.gc-lane-deps.readers"
 
 case "$KIND" in
     mutate)
+        # under the lane lock, so two callers changing dependencies never
+        # overlap; a command running beside it is not waited for (the
+        # non-goal in the header)
         take_lane_lock || die "cannot create $LOCK ($LOCK_REFUSED); this command did not run"
-        wait_for_readers
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
         release_lock
         exit "$status"
         ;;
     project)
-        # readiness is decided under the lane lock (a mutate in flight is
-        # waited for first; a rebuild half done still reads as in sync to
-        # pnpm), the command then runs holding a reader token, so no mutate
-        # starts under it
+        # the question and the one frozen install under the lane lock (a
+        # mutate in flight is waited for first; a rebuild half done still
+        # reads as in sync to pnpm); then the lock is released and the
+        # command runs holding nothing (the contract in the header)
         take_lane_lock \
-            || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, another caller could change node_modules under this command; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
+            || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, its question and install serialize on that lock; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
         if [ "$(deps_status)" = stale ]; then
-            wait_for_readers
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
             lane_install >&2 || status=$?
             [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
-        take_token
         release_lock
-        status=0
-        GC_TOOLCHAIN_LANE_DEPS_READING="$LANE" GC_TOOLCHAIN_LANE_DEPS_READER="$$" run_pnpm "$@" || status=$?
-        drop_token
-        exit "$status"
+        exec_pnpm "$@"
         ;;
 esac
