@@ -207,7 +207,7 @@ func (c *inboundCoalescer) deadLetterRetryBase() time.Duration {
 	if c.window > 0 {
 		return c.window
 	}
-	return time.Second
+	return disabledWindowRetryBase
 }
 
 // armDeadLetterRetryLocked arms the channel's write-retry timer if none

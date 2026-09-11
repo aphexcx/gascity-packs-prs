@@ -42,6 +42,9 @@ func TestNextRejectionStepTable(t *testing.T) {
 	unvouched1.attempts = 1
 	unvouchedAtCap := noAtt
 	unvouchedAtCap.attempts = maxCoalesceDeliveryAttempts - 1
+	unvouchedWithAtt := withAtt
+	unvouchedWithAttAtCap := withAtt
+	unvouchedWithAttAtCap.attempts = maxCoalesceDeliveryAttempts - 1
 	reaction := noAtt
 	reaction.reaction = true
 
@@ -61,6 +64,13 @@ func TestNextRejectionStepTable(t *testing.T) {
 		{"unvouched, first charge: bounded same-payload retry (gp-32q)", unvouched0, errDeliveryUnvouched, stepRetrySame},
 		{"unvouched, second charge: still under the cap", unvouched1, errDeliveryUnvouched, stepRetrySame},
 		{"unvouched at the cap: dead-letter", unvouchedAtCap, errDeliveryUnvouched, stepDeadLetter},
+		// The stripping operand is the REFUSAL, not the attachment: an
+		// accepted-but-unvouched payload keeps its attachments (codex r4
+		// finding 3 — moving the attachment check outside
+		// permanentDeliveryFailure would strip these and still pass the
+		// rows above).
+		{"unvouched with attachments, under the cap: same payload again, attachments kept", unvouchedWithAtt, errDeliveryUnvouched, stepRetrySame},
+		{"unvouched with attachments at the cap: dead-letter, never stripped", unvouchedWithAttAtCap, errDeliveryUnvouched, stepDeadLetter},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -267,8 +277,79 @@ func TestTransientRetryDelayTable(t *testing.T) {
 	if got := transientRetryDelay(2*time.Hour, 3); got != 2*time.Hour {
 		t.Fatalf("digest floor: got %s", got)
 	}
-	if got := transientRetryDelay(0, 5); got != 0 {
-		t.Fatalf("a zero window (coalescing disabled) stays zero, got %s", got)
+	// A zero window (coalescing disabled: spool replays and dead-letter
+	// write retries still run through here) backs off from a positive
+	// base, never at request-completion speed (codex r4 finding 2).
+	for _, tc := range []struct {
+		failures int
+		want     time.Duration
+	}{{0, 0}, {1, time.Second}, {2, 2 * time.Second}, {3, 4 * time.Second}, {20, maxTransientRetryDelay}} {
+		if got := transientRetryDelay(0, tc.failures); got != tc.want {
+			t.Fatalf("transientRetryDelay(0, %d) = %s, want %s", tc.failures, got, tc.want)
+		}
+	}
+}
+
+// --- codex r4 on gp-sgu7 ------------------------------------------------------
+
+// A refused batch whose probes come back UNVOUCHED (accepted, not
+// vouched for) must resume as single probes, never recombine into the
+// refused batch (codex r4 finding 1).
+func TestUnvouchedProbesNeverRecombineIntoTheRefusedBatch(t *testing.T) {
+	var mu sync.Mutex
+	unvouchedOnce := map[string]bool{"1.0": true, "2.0": true}
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) > 1 {
+			return permanent422()
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		ts := batch[0].inbound.ProviderMessageID
+		if unvouchedOnce[ts] {
+			unvouchedOnce[ts] = false
+			return errDeliveryUnvouched
+		}
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool {
+		t.Error("nothing may dead-letter here")
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "a"))
+	c.enqueue("C1", testPending("C1", "2.0", "b"))
+	// Batch refused → probes unvouched (charged, same payload again) →
+	// next window: single probes, accepted.
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0", "2.0", "1.0", "2.0"})
+	if got := calls(); len(got) != 5 {
+		t.Fatalf("unexpected extra deliveries: %v", got)
+	}
+	for _, call := range calls()[1:] {
+		if strings.Contains(call, ",") {
+			t.Fatalf("the refused batch was recombined and re-posted: %v", calls())
+		}
+	}
+}
+
+// A zero-window coalescer (coalescing disabled) still backs off a
+// transient failure on a replayed entry instead of retrying at
+// request-completion speed.
+func TestZeroWindowTransientFailureBacksOff(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(0, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "replayed"))
+	waitForCalls(t, calls, []string{"1.0"})
+	time.Sleep(300 * time.Millisecond)
+	if got := calls(); len(got) > 2 {
+		t.Fatalf("a zero-window transient failure must back off (≥1 s), got %d POSTs in 300 ms: %v", len(got), got)
+	}
+	c.mu.Lock()
+	inBackoff := c.inBackoffLocked("C1")
+	c.mu.Unlock()
+	if !inBackoff {
+		t.Fatal("channel must be in backoff after the transient failure")
 	}
 }
 

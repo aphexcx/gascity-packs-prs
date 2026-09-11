@@ -421,17 +421,29 @@ func (c *inboundCoalescer) windowFor(channel string) time.Duration {
 	return c.window
 }
 
+// disabledWindowRetryBase is the first retry delay on a channel whose
+// accumulation window is zero (coalescing disabled: the coalescer then
+// only ever carries spool replays and the dead-letter write retries).
+// Without it a transient failure there would retry at request-
+// completion speed forever (codex r4 finding 2).
+const disabledWindowRetryBase = time.Second
+
 // transientRetryDelay is the retry cadence after `failures` consecutive
 // TRANSIENT delivery failures on a channel whose accumulation window is
-// `window`: the window doubled failures-1 times, capped at
-// maxTransientRetryDelay and floored at the window itself (a digest
-// interval longer than the cap stays the operator's cadence). Zero
-// failures — and a zero window, coalescing disabled — pass through.
+// `window`: the base doubled failures-1 times, capped at
+// maxTransientRetryDelay and floored at the base itself (a digest
+// interval longer than the cap stays the operator's cadence). The base
+// is the window, or disabledWindowRetryBase when the window is zero.
+// Zero failures pass the window through unchanged.
 func transientRetryDelay(window time.Duration, failures int) time.Duration {
-	if window <= 0 || failures <= 1 {
+	if failures <= 0 {
 		return window
 	}
-	d := window
+	base := window
+	if base <= 0 {
+		base = disabledWindowRetryBase
+	}
+	d := base
 	for i := 1; i < failures; i++ {
 		d *= 2
 		if d >= maxTransientRetryDelay {
@@ -439,8 +451,8 @@ func transientRetryDelay(window time.Duration, failures int) time.Duration {
 			break
 		}
 	}
-	if d < window {
-		return window
+	if d < base {
+		return base
 	}
 	return d
 }
@@ -1287,6 +1299,11 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 			return true, refused
 		}
 		refused = true
+		// The member came out of a batch gc REFUSED: whatever the ladder
+		// does with it (a stripped retry, an unvouched same-payload
+		// retry), it comes back flagged so it posts alone — never inside
+		// the refused batch again (codex r4 finding 1).
+		p.isolate = true
 		c.charge(channel, p, err)
 	}
 	return false, refused
