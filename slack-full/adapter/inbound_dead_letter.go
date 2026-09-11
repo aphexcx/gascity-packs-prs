@@ -56,6 +56,34 @@ func permanentDeliveryFailure(err error) bool {
 	return false
 }
 
+// submittedDeliveryError is the coalesced-delivery error as
+// deliverCoalescedBatch reports it: the cause, plus the entries it
+// ACTUALLY POSTed. The hook drops same-ts duplicates and members an
+// urgent twin already delivered BEFORE posting, so the batch the
+// coalescer handed it and the payload gc refused can differ — and the
+// rejection ladder must judge the latter (codex r5 finding 1: a
+// two-entry segment collapsed to one refused single must be charged
+// as a single, never "isolated" by re-posting that single unchanged).
+// errors.Is / errors.As see through it to the cause.
+type submittedDeliveryError struct {
+	submitted []pendingChannelInbound
+	err       error
+}
+
+func (e *submittedDeliveryError) Error() string { return e.err.Error() }
+func (e *submittedDeliveryError) Unwrap() error { return e.err }
+
+// submittedOf returns the entries the delivery hook actually posted for
+// a failed segment: the hook's report when it made one, else the whole
+// segment (test hooks post what they are given).
+func submittedOf(seg []pendingChannelInbound, err error) []pendingChannelInbound {
+	var se *submittedDeliveryError
+	if errors.As(err, &se) {
+		return se.submitted
+	}
+	return seg
+}
+
 // --- the rejection ladder (gp-sgu7) -------------------------------------------
 //
 // ONE decision point for a message gc refused (permanentDeliveryFailure)

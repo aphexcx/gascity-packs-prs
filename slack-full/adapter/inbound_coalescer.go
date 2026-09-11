@@ -1015,7 +1015,15 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 		}
 		remaining := append(append([]pendingChannelInbound{}, reals[j:]...), reactions...)
 		if chargeableDeliveryFailure(err) {
-			c.failed(channel, seg, err)
+			// Only the entries gc actually saw enter the ladder; a member
+			// the hook dropped before posting (a same-ts duplicate, a twin
+			// an urgent delivery already carried) was never refused and is
+			// simply done (codex r5 finding 1).
+			submitted := submittedOf(seg, err)
+			if dropped := len(seg) - len(submitted); dropped > 0 {
+				log.Printf("coalesce: chan=%s %d member(s) of the refused segment were never posted (duplicates or already delivered) — not charged", channel, dropped)
+			}
+			c.failed(channel, submitted, err)
 			c.restore(channel, remaining)
 		} else {
 			c.noteTransientFailure(channel)
@@ -1031,6 +1039,9 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 		return nil
 	}
 	if err := c.deliver(channel, reactions); err != nil {
+		if chargeableDeliveryFailure(err) {
+			reactions = submittedOf(reactions, err)
+		}
 		c.failed(channel, reactions, err)
 		return err
 	}
@@ -1248,11 +1259,16 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	err := c.deliver(channel, reactions)
 	switch {
 	case err == nil:
+		c.deliveredOK(channel)
 	case chargeableDeliveryFailure(err):
-		for _, p := range reactions {
+		for _, p := range submittedOf(reactions, err) {
 			c.charge(channel, p, err)
 		}
 	default:
+		// A transient failure here is a failure like any other: the
+		// channel enters its backoff so the reaction overflow honors a
+		// deadline (codex r5 finding 2).
+		c.noteTransientFailure(channel)
 		c.restore(channel, reactions)
 	}
 }
@@ -2071,7 +2087,9 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		if firstHelp {
 			cfg.replyHelp.unmark(channel)
 		}
-		return err
+		// The ladder judges what was POSTed, not what was handed in
+		// (codex r5 finding 1): report the filtered batch with the cause.
+		return &submittedDeliveryError{submitted: batch, err: err}
 	}
 	for _, key := range ownedClaims {
 		cfg.channelClaims.commit(key)

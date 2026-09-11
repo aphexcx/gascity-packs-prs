@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -782,4 +784,85 @@ func TestOlderPlainMessageDeliversBeforeNewerStrippedRetry(t *testing.T) {
 			t.Fatalf("%s still pending", ts)
 		}
 	}
+}
+
+// --- codex r5 on gp-sgu7 ------------------------------------------------------
+
+// HTTP level: the delivery hook collapses same-ts duplicates before
+// posting, so a two-entry segment can reach gc as ONE payload. A 422 on
+// it must be charged as a single — exactly one POST, then dead-letter —
+// never "isolated" by re-posting that single unchanged (codex r5
+// finding 1).
+func TestRefusedCollapsedDuplicateIsChargedAsSubmitted(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"code":"validation-failed"}`))
+	}))
+	t.Cleanup(gc.Close)
+	cfg := coalescingTestConfig(gc.URL, 20*time.Millisecond)
+	dead := make(chan deadLetterCall, 4)
+	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		dead <- deadLetterCall{channel, batch, cause}
+		return true
+	}
+	dup := func() pendingChannelInbound {
+		return pendingChannelInbound{inbound: externalInboundMessage{ProviderMessageID: "100.000010", Text: "same message, two event ids",
+			Conversation: conversationRef{ConversationID: "C1", Kind: "room"}}}
+	}
+	cfg.coalescer.enqueue("C1", dup())
+	cfg.coalescer.enqueue("C1", dup())
+	select {
+	case call := <-dead:
+		if len(call.batch) != 1 || call.batch[0].inbound.ProviderMessageID != "100.000010" {
+			t.Fatalf("dead letter must be the one submitted entry: %+v", call.batch)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("refused single never dead-lettered")
+	}
+	time.Sleep(80 * time.Millisecond)
+	mu.Lock()
+	got := posts
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("gc must see the refused payload exactly once, got %d POSTs", got)
+	}
+}
+
+// After a batch refusal whose message probes all deliver, a TRANSIENT
+// failure on the reaction-group probe puts the channel in backoff
+// (codex r5 finding 2) instead of leaving the overflow flush free to
+// re-POST on the next reaction.
+func TestReactionGroupTransientFailureAfterIsolationSetsBackoff(t *testing.T) {
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		real := false
+		for _, p := range batch {
+			real = real || !p.reaction
+		}
+		switch {
+		case len(batch) > 1 && real:
+			return permanent422()
+		case !real:
+			return errors.New("dial tcp: connection refused")
+		}
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "a"))
+	c.enqueue("C1", testPending("C1", "2.0", "b"))
+	r := testPending("C1", "1.5", "reaction")
+	if !c.admitReaction("C1", r, true) {
+		t.Fatal("reaction must ride the armed window")
+	}
+	waitForCalls(t, calls, []string{"1.0,2.0,1.5(r)", "1.0", "2.0", "1.5(r)"}) // take order: pending, then the side lane
+	waitFor(t, "channel in backoff after the reaction probe failed transiently", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.inBackoffLocked("C1") && len(c.reactions["C1"]) == 1
+	})
 }
