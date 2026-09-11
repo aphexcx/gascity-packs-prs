@@ -328,6 +328,11 @@ type inboundCoalescer struct {
 	deadLetterTimers        map[string]*time.Timer
 	deadLetterWriteFailures map[string]int
 	deadLetterMu            sync.Mutex
+	// ownershipSpillFailures counts owned copies whose spool line could
+	// not be written when the ledger progressed (codex r25): while it is
+	// non-zero the replay keeps its staged file — some owned message may
+	// have no durable home but that file.
+	ownershipSpillFailures int
 	// closedForWrites flips on in the shutdown flush after the retry
 	// timers are stopped: no durable-write retry is armed past it (a
 	// timer firing after the final flush would race process exit).
@@ -1328,7 +1333,7 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	owed := c.ownLocked(channel, p, now)
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
-		c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
+		c.persistOwnership(channel, p, owed)
 		return
 	}
 	c.pending[channel] = append(c.pending[channel], p)
@@ -1351,13 +1356,13 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 			// dropped.
 			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
-			c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
+			c.persistOwnership(channel, p, owed)
 			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 			return
 		}
 		swept := c.takeSweepsLocked(channel)
 		c.mu.Unlock()
-		c.persistOwned(owed, channel, p.inbound.ProviderMessageID) // durable before the POST it shapes
+		c.persistOwnership(channel, p, owed) // durable before the POST it shapes
 		log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
 		// Mutexes are held from take time (gp-9e7 fix round 2c/round 3);
 		// launching the swept goroutines before the triggering channel's
@@ -1371,7 +1376,7 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	// joins the armed timer unchanged.
 	target, armed := c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
 	c.mu.Unlock()
-	c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
+	c.persistOwnership(channel, p, owed)
 	if armed {
 		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, time.Until(target).Round(time.Millisecond))
 		return
@@ -1379,12 +1384,70 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	log.Printf("coalesce: chan=%s buffered ts=%s (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
 }
 
-// persistOwned writes (channel, ts)'s owed record when an admission or
-// restore just progressed the ledger. Called with c.mu NOT held.
-func (c *inboundCoalescer) persistOwned(owed bool, channel, ts string) {
-	if owed {
-		c.persistVerdict(channel, ts)
+// persistOwnership makes a progression of the ledger durable: the
+// verdict's record AND the owned copy's own spool line, which carries
+// the disposition (isolate, stripped, attempts) and the payload. The
+// record alone is not ownership (codex r25 finding 2): a payload-less
+// record survived a crash while the buffered copy it owed died with
+// the process, and the restart owned a message it had no copy of — the
+// urgent twin, the only copy Slack would still send, was skipped on the
+// standing verdict. Called with c.mu NOT held, when `changed` reports
+// the ledger progressed (an unchanged ownership re-spools nothing, so
+// a charged copy restored every window costs no journal line).
+func (c *inboundCoalescer) persistOwnership(channel string, p pendingChannelInbound, changed bool) {
+	if !changed {
+		return
 	}
+	c.persistVerdict(channel, p.inbound.ProviderMessageID)
+	c.spillOwned(channel, []pendingChannelInbound{p})
+}
+
+// spillOwned writes owned copies' spool lines (one append for the
+// batch). A failed write is counted for the replay's cleanup decision
+// and logged: the copy lives in memory only until the shutdown flush
+// spools it, and a crash before then loses the retry the ledger owes —
+// a redelivered copy still adopts the recorded verdict.
+func (c *inboundCoalescer) spillOwned(channel string, batch []pendingChannelInbound) {
+	if c.spill == nil || len(batch) == 0 {
+		return
+	}
+	if c.spill(channel, batch) {
+		return
+	}
+	c.mu.Lock()
+	c.ownershipSpillFailures++
+	c.mu.Unlock()
+	log.Printf("coalesce: chan=%s %d owned cop%s could not be spooled with the ladder's decision — in memory only until the shutdown flush; a crash before then loses the owed retry (a redelivery still adopts the recorded verdict)", channel, len(batch), plural(len(batch), "y", "ies"))
+}
+
+// owesDurability reports whether anything the coalescer holds still
+// lacks a durable home outside the replay's staged file: a parked
+// refusal with no spool copy, a verdict record still owed, or an owned
+// copy whose spool line failed (codex r25 finding 3: a cap flush during
+// the replay refused entries whose refusal spill and dead-letter write
+// both failed, and the staged file — their only durable copy — went).
+func (c *inboundCoalescer) owesDurability() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ownershipSpillFailures > 0 {
+		return true
+	}
+	for _, parked := range c.parkedDeadLetters {
+		for _, e := range parked {
+			if !e.spilled {
+				return true
+			}
+		}
+	}
+	for channel := range c.verdicts {
+		if c.owedVerdictsLocked(channel) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // admitReaction buffers one reaction notification (gp-9e7 item 1).
@@ -1881,7 +1944,7 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 	// tombstones do not survive a restart (codex round-3 finding 3) —
 	// must carry the notice, not the deleted text.
 	now := time.Now()
-	var owed []string // ownership progressions recorded here owe their journal record (codex r23 finding 3)
+	var owed []pendingChannelInbound // ownership progressions recorded here owe their record and spool line (codex r23 finding 3, r25 finding 2)
 	live := msgs[:0]
 	for i := range msgs {
 		if c.isDeletedLocked(channel, msgs[i].inbound.ProviderMessageID, now) && msgs[i].inbound.Text != deletedBySenderNotice {
@@ -1902,7 +1965,7 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		// journal so a crash with a plain copy still staged cannot
 		// re-post the refused batch (codex r23 finding 3).
 		if c.ownLocked(channel, msgs[i], now) {
-			owed = append(owed, msgs[i].inbound.ProviderMessageID)
+			owed = append(owed, msgs[i])
 		}
 		live = append(live, msgs[i])
 	}
@@ -1933,9 +1996,10 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		c.scheduleLocked(channel, time.Time{})
 		c.mu.Unlock()
 	}
-	for _, ts := range owed {
-		c.persistVerdict(channel, ts)
+	for _, p := range owed {
+		c.persistVerdict(channel, p.inbound.ProviderMessageID)
 	}
+	c.spillOwned(channel, owed)
 }
 
 // failed handles one failed delivery. Called with the channel's
@@ -2039,6 +2103,26 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	}
 	log.Printf("coalesce: chan=%s batch of %d rejected by gc — isolating %d message(s) to find the poisoned one: %v",
 		channel, len(batch), len(msgs), cause)
+	// Every member is the ladder's from THIS moment — flagged isolate,
+	// its ownership recorded and its copy spooled — before the first
+	// probe posts (codex r25 finding 1): a crash during the first probe
+	// left the plain batch staged with no disposition, and the next
+	// startup posted the identical refused batch again. A member on a
+	// resume is already owned; nothing is re-written for it.
+	c.mu.Lock()
+	now := time.Now()
+	var owned []pendingChannelInbound
+	for i := range msgs {
+		msgs[i].isolate = true
+		if c.ownLocked(channel, msgs[i], now) {
+			owned = append(owned, msgs[i])
+		}
+	}
+	c.mu.Unlock()
+	for _, p := range owned {
+		c.persistVerdict(channel, p.inbound.ProviderMessageID)
+	}
+	c.spillOwned(channel, owned)
 	paused, msgRejected := c.isolate(channel, msgs, reactions)
 	if paused || len(reactions) == 0 {
 		return
@@ -2175,16 +2259,18 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 	c.mu.Unlock()
 	switch step {
 	case stepRetryWithoutAttachments:
-		// The decision's record is written when it is MADE (codex r22
-		// finding 1): the original attachment-bearing copy may be staged
-		// on disk from a replay in progress (its cap flush is what POSTed
-		// it), and a crash before this stripped copy lands would
-		// otherwise leave that staged copy with no durable disposition
-		// superseding it — the restart POSTed the refused bytes again.
-		// The record seeds the ledger's outstanding verdict at the next
-		// replay, so the staged plain copy adopts it; the landing's
-		// delivered record supersedes it at the replay after.
-		c.persistVerdict(channel, ts)
+		// The decision is durable when it is MADE (codex r22 finding 1):
+		// the original attachment-bearing copy may be staged on disk from
+		// a replay in progress (its cap flush is what POSTed it), and a
+		// crash before this stripped copy lands would otherwise leave
+		// that staged copy with no durable disposition superseding it —
+		// the restart POSTed the refused bytes again. The record seeds
+		// the ledger's outstanding verdict at the next replay, so the
+		// staged plain copy adopts it; the stripped copy's own spool
+		// line is the retry the restart admits (codex r25 finding 2);
+		// the landing's delivered record supersedes both at the replay
+		// after.
+		c.persistOwnership(channel, p, true)
 		c.restore(channel, []pendingChannelInbound{p})
 		log.Printf("coalesce: chan=%s ts=%s refused by gc with %d attachment(s) — retrying ONCE without them (the files stay on disk; the text names their paths)%s: %v",
 			channel, ts, n, duplicateCopiesSuffix(dropped), cause)

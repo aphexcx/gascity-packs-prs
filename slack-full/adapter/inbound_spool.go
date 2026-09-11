@@ -954,21 +954,33 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			}
 			continue
 		}
-		if e.Stripped != "" {
-			// The stripped retry, owed or in flight at shutdown: its
-			// disposition is the ledger's outstanding verdict for the
-			// message, seeded above before any copy was admitted so an
-			// earlier or later copy adopts it and the landing settles it
-			// (codex r12 finding 1, r17 finding 1).
+		if e.Stripped != "" || e.Isolate {
+			// An owned copy — the stripped retry, or a probe of a refused
+			// batch, owed or in flight at shutdown: its disposition is the
+			// ledger's outstanding verdict for the message, seeded above
+			// before any copy was admitted so an earlier or later copy
+			// adopts it and the landing settles it (codex r12 finding 1,
+			// r17 finding 1). Its line is re-written to the live spool
+			// before the staged file may go (codex r25 finding 2): the
+			// ledger must never own a message it has no copy of.
 			p.attempts = e.Attempts
+			if !s.spillBatch(e.Channel, []pendingChannelInbound{p}) {
+				durable = false
+			}
+		}
+		if e.Stripped != "" {
 			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — replayed as the stripped retry, its verdict restored", e.Channel, e.Inbound.ProviderMessageID, e.Stripped)
 		}
 		c.enqueue(e.Channel, p)
 		n++
 	}
 	if done != nil {
-		if !durable {
-			log.Printf("inbound spool: a verdict record or a re-parked refusal could not be written to the new spool (%d restored) — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage, a re-parked refusal is parked once)", len(order))
+		// The cleanup decision includes what ADMISSION did (codex r25
+		// finding 3): a cap flush during the replay can refuse entries
+		// whose refusal spill and dead-letter write both fail, leaving a
+		// parked payload whose only durable copy is the staged file.
+		if !durable || c.owesDurability() {
+			log.Printf("inbound spool: a verdict record, a re-parked refusal or an owned copy could not be written to the new spool (%d restored) — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage, a re-parked refusal is parked once)", len(order))
 			return n, nil
 		}
 		done()

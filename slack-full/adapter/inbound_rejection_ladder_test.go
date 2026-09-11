@@ -1816,10 +1816,11 @@ func TestSpoolReplayRestoresTheStrippedVerdict(t *testing.T) {
 	})
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
 	c2.deliver = deliver2
-	// The stripped decision is a RECORD (r22/r23); the shutdown flush
-	// spooled the one stripped copy, so the replay admits exactly it.
-	if n := spool.replayInto(c2); n != 1 {
-		t.Fatalf("replay admitted %d entries, want 1", n)
+	// The journal holds the stripped copy twice — spooled with the
+	// decision (r22, r25) and again by the shutdown flush; the replay
+	// admits both and the take collapses them to one POST.
+	if n := spool.replayInto(c2); n < 1 {
+		t.Fatalf("replay admitted %d entries, want the stripped retry", n)
 	}
 	waitForCalls(t, calls2, []string{"1.0"}) // the replayed stripped copy lands, once, without its attachments
 	if !c2.onLadder("C1", "1.0") {
@@ -3228,8 +3229,13 @@ func TestDeletionOfASpooledStrippedCopyIsRecorded(t *testing.T) {
 	c2.mu.Lock()
 	defer c2.mu.Unlock()
 	got := c2.pending["C1"]
-	if len(got) != 1 || got[0].inbound.Text != deletedBySenderNotice || len(got[0].inbound.Attachments) != 0 || !got[0].isolate {
-		t.Fatalf("the redelivered copy must enter as the notice, stripped and isolated, got %d copy(ies): %+v", len(got), got)
+	if len(got) == 0 {
+		t.Fatal("the stripped retry (replayed, and the redelivered copy adopting it) must be buffered")
+	}
+	for _, p := range got {
+		if p.inbound.Text != deletedBySenderNotice || len(p.inbound.Attachments) != 0 || !p.isolate {
+			t.Fatalf("every copy must be the notice, stripped and isolated, got %+v", p)
+		}
 	}
 }
 
@@ -3446,5 +3452,121 @@ func TestReplayKeepsTheStagingFileWhenAnEntryDispositionCannotBeRecorded(t *test
 				t.Fatalf("the staged file must be retained while the disposition's record is owed: %v", err)
 			}
 		})
+	}
+}
+
+// --- codex r25 ---------------------------------------------------------------
+//
+// Ownership is a record AND the owned copy's spool line (r25): a
+// payload-less outstanding record survived a crash while the buffered
+// copy it owed died with the process, and the urgent twin — the only
+// copy Slack would still send — was skipped on the standing verdict, so
+// the message was never delivered. Wherever the ledger progresses, the
+// copy that carries the disposition is spooled beside the record, and
+// the replay re-spools every owned copy it admits before the staged
+// file may go.
+
+// Every member of a refused batch is the ladder's — recorded and spooled
+// — BEFORE the first probe posts (r25 finding 1): a crash during the
+// first probe left the plain batch staged with no disposition, and the
+// next startup posted the identical refused batch again.
+func TestIsolationOwnershipIsDurableBeforeTheProbes(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	var mu sync.Mutex
+	durableAtFirstProbe := false
+	probes := 0
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deliver = func(_ string, batch []pendingChannelInbound) error {
+		if len(batch) > 1 {
+			return permanent422()
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		probes++
+		if probes == 1 {
+			data, _ := os.ReadFile(spool.path)
+			durableAtFirstProbe = countVerdictLines(t, spool.path, "1.0") == 1 && countVerdictLines(t, spool.path, "2.0") == 1 &&
+				bytes.Contains(data, []byte(`"provider_message_id":"1.0"`)) && bytes.Contains(data, []byte(`"provider_message_id":"2.0"`)) &&
+				bytes.Contains(data, []byte(`"isolate":true`))
+		}
+		return nil
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	c.enqueue("C1", testPending("C1", "2.0", "B"))
+	waitFor(t, "both probes", func() bool { mu.Lock(); defer mu.Unlock(); return probes == 2 })
+	mu.Lock()
+	defer mu.Unlock()
+	if !durableAtFirstProbe {
+		t.Fatal("every member's isolation must be recorded and its copy spooled before the first probe posts — a crash during the probe would otherwise re-post the refused batch")
+	}
+}
+
+// The owned copy survives a crash during uptime (r25 finding 2): the
+// stripped decision persisted only a verdict, the buffered retry died
+// with the process, and the restart owned a message it had no copy of —
+// a delayed urgent twin was then skipped for good. The copy is spooled
+// with the decision, so the restart admits the retry itself.
+func TestOwnedPayloadSurvivesACrashDuringUptime(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, calls1 := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422()
+		}
+		return errors.New("dial tcp: connection refused") // gc is down before the stripped retry lands
+	})
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver1
+	c1.spill = spool.spillBatch
+	c1.recordVerdict = spool.recordVerdict
+	c1.enqueue("C1", testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"))
+	waitForCalls(t, calls1, []string{"1.0", "1.0"})
+	// The process dies here: no flushAll, the buffer is gone.
+	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c2); n < 1 {
+		t.Fatalf("the stripped retry must be admitted from the spool after the crash (admitted %d) — the ledger owns a message it has no copy of", n)
+	}
+	waitForCalls(t, calls2, []string{"1.0"})
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the landing must leave the ladder's terminal verdict")
+	}
+}
+
+// The replay's cleanup asks the coalescer whether admission left
+// anything owing durability (r25 finding 3): a cap flush during the
+// replay refused entries whose refusal spill and dead-letter write both
+// failed — parked with no spool copy — and the staged file, their only
+// durable home, was removed.
+func TestReplayRetainsTheStagedFileWhenAdmissionLeavesAnUnspooledPark(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	staged := make([]pendingChannelInbound, 0, maxCoalescePerChannel)
+	for i := 0; i < maxCoalescePerChannel; i++ {
+		staged = append(staged, testPending("C1", fmt.Sprintf("%d.0", i+1), "text"))
+	}
+	if !spool.spillBatch("C1", staged) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = func(string, []pendingChannelInbound) bool { return false } // the disk refuses every payload spill
+	c.recordVerdict = spool.recordVerdict
+	c.deliver = func(string, []pendingChannelInbound) error { return permanent422() }
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	spool.replayInto(c) // the cap flush refuses the batch; every probe is refused, dead-lettered, parked unspooled
+	c.mu.Lock()
+	parked := len(c.parkedDeadLetters["C1"])
+	c.mu.Unlock()
+	if parked == 0 {
+		t.Fatal("the refused members must be parked for their dead-letter writes")
+	}
+	if _, err := os.Stat(spool.replayingPath()); err != nil {
+		t.Fatalf("the staged file must be retained while parked payloads have no spool copy: %v", err)
 	}
 }
