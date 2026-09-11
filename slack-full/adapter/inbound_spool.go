@@ -355,9 +355,13 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				log.Printf("inbound spool: remove %s after merge: %v (next startup may replay duplicates; gc dedup keys bound the damage)", s.path, err)
 			}
 		} else if err := os.Rename(s.path, rp); err != nil {
-			// Rename failed (permissions?): fall back to reading the spool
-			// in place. cleanup then removes the spool itself — still only
-			// after re-admission, which is the invariant that matters.
+			// Rename failed (permissions; a basename whose .replaying
+			// suffix exceeds NAME_MAX): fall back to reading the spool in
+			// place. The replay then appends its re-written verdict
+			// records to this SAME file, so cleanup must not remove it
+			// (codex r15 finding 3): it compacts the file to its live
+			// verdict records instead — still only after re-admission,
+			// which is the invariant that matters.
 			log.Printf("inbound spool: rename %s -> %s failed: %v — replaying in place", s.path, rp, err)
 			readPath = s.path
 		}
@@ -373,11 +377,75 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 	cleanup := func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if readPath == s.path {
+			s.compactToRecordsLocked()
+			return
+		}
 		if err := os.Remove(readPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Printf("inbound spool: remove %s after replay: %v (the next restart may replay duplicates; gc dedup keys bound the damage)", readPath, err)
 		}
 	}
 	return entries, cleanup
+}
+
+// compactToRecordsLocked rewrites the spool in place to its verdict
+// records only — one per (channel, ts), the newest decision — after an
+// in-place replay re-admitted its message entries (codex r15 finding
+// 3). The rewrite goes through a short-named temp file in the same
+// directory (the staging rename failed, possibly on the name's length)
+// and an atomic rename over the spool; on any failure the file is left
+// as it is — its messages replay again next startup, gc dedup keys
+// bound the damage, and its records are still there. Caller holds s.mu.
+func (s *inboundSpool) compactToRecordsLocked() {
+	records := readRecords(s.path)
+	type key struct{ channel, ts string }
+	newest := make(map[key]spooledInbound)
+	var order []key
+	for _, e := range records {
+		if e.VerdictTS == "" {
+			continue
+		}
+		k := key{e.Channel, e.VerdictTS}
+		if cur, ok := newest[k]; ok {
+			if e.VerdictAt <= cur.VerdictAt {
+				continue
+			}
+		} else {
+			order = append(order, k)
+		}
+		newest[k] = e
+	}
+	dir := filepath.Dir(s.path)
+	tmp, err := os.CreateTemp(dir, ".spool-compact-*")
+	if err != nil {
+		log.Printf("inbound spool: compacting %s in place FAILED (temp file: %v) — left as it is; its messages replay again next startup", s.path, err)
+		return
+	}
+	tmpPath := tmp.Name()
+	w := bufio.NewWriter(tmp)
+	for _, k := range order {
+		line, err := json.Marshal(newest[k])
+		if err != nil {
+			continue
+		}
+		w.Write(line)
+		w.WriteByte('\n')
+	}
+	if err := w.Flush(); err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmpPath, s.path)
+	}
+	if err != nil {
+		os.Remove(tmpPath)
+		log.Printf("inbound spool: compacting %s in place FAILED (%v) — left as it is; its messages replay again next startup", s.path, err)
+		return
+	}
+	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s)", s.path, len(order))
 }
 
 // appendFileTo appends src's bytes to the end of dst, fsyncing dst

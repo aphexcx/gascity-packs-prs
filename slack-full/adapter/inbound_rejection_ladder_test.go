@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -2335,5 +2336,206 @@ func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
 			got = append(got, e.Inbound.ProviderMessageID)
 		}
 		t.Fatalf("a line exactly at the cap replays and one byte more is dropped, got %v", got)
+	}
+}
+
+// --- codex r15 ---------------------------------------------------------------
+
+// The ladder's ownership of a message is a ledger fact, not a property
+// of where its copy sits (r15 finding 1): onLadder used to scan the
+// pending buffer for a charged or isolated copy, so a charged copy the
+// timer had just DETACHED — in flight, in neither the ledger nor the
+// buffer — was nobody's, and the urgent twin posted beside it. Every
+// owned copy entering or re-entering the buffer records an outstanding
+// verdict (ownLocked at enqueue and restore), and onLadder asks only
+// the ledger.
+func TestDetachedChargedCopyStaysTheLadders(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		mu.Lock()
+		defer mu.Unlock()
+		posts++
+		if posts == 1 {
+			return errDeliveryUnvouched
+		}
+		return nil
+	})
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	c.enqueue("C1", testPending("C1", "2.0", "B"))
+	c.flushAheadOf("C1", "") // unvouched: both come back charged
+	waitForCalls(t, calls, []string{"1.0,2.0"})
+	// The timer's take detaches the charged batch; its POST is in flight.
+	c.mu.Lock()
+	batch, chanMu, ok := c.takeLocked("C1")
+	c.mu.Unlock()
+	if !ok || len(batch) != 2 {
+		t.Fatalf("the charged batch must be taken (ok=%v, %d entries)", ok, len(batch))
+	}
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("a charged copy in flight is still the ladder's: the urgent twin arriving now must skip, or it posts beside the re-post")
+	}
+	// The in-flight delivery lands.
+	c.deliverBatch("C1", batch, chanMu)
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0,2.0"})
+	if !c.onLadder("C1", "1.0") || !c.onLadder("C1", "2.0") {
+		t.Fatal("the landing is terminal for both members")
+	}
+	if got := calls(); len(got) != 2 {
+		t.Fatalf("exactly two POSTs: %v", got)
+	}
+	// An isolation pause leaves the same fact: a probe flagged isolate
+	// but never charged is the ladder's while restored and while detached.
+	c2 := newInboundCoalescer(time.Hour, nil)
+	probe := testPending("C1", "3.0", "probe")
+	probe.isolate = true
+	c2.restore("C1", []pendingChannelInbound{probe})
+	c2.mu.Lock()
+	_, chanMu2, ok2 := c2.takeLocked("C1")
+	c2.mu.Unlock()
+	if !ok2 {
+		t.Fatal("take")
+	}
+	defer func() { chanMu2.Unlock(); c2.endDelivery() }()
+	if !c2.onLadder("C1", "3.0") {
+		t.Fatal("a detached isolated probe is still the ladder's")
+	}
+	// A fresh copy admitted meanwhile adopts the ladder's isolated copy.
+	c2.enqueue("C1", testPending("C1", "3.0", "probe, redelivered"))
+	c2.mu.Lock()
+	defer c2.mu.Unlock()
+	for _, p := range c2.pending["C1"] {
+		if p.inbound.ProviderMessageID == "3.0" && !p.isolate {
+			t.Fatal("a copy admitted under the ladder's outstanding verdict enters as its isolated copy, never as a plain member")
+		}
+	}
+}
+
+// A terminal verdict's record is owed until it lands (r15 finding 2):
+// charge() used to log a failed write and forget it, and the park that
+// followed saw an unchanged ledger and assumed durability. The ledger
+// now tracks the record's durability per verdict, persistVerdict writes
+// whatever is owed, the channel's durable-write retry timer (the parked
+// dead-letter timer) retries it, and the shutdown flush gives it a last
+// try.
+func TestOwedVerdictRecordsAreRetried(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	var mu sync.Mutex
+	failing := true
+	recordCalls := 0
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = func(string, []pendingChannelInbound) error { return permanent422() }
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c.recordVerdict = func(channel, ts string, v ladderVerdict) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		recordCalls++
+		if failing {
+			return false
+		}
+		return spool.recordVerdict(channel, ts, v)
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "poison"))
+	waitFor(t, "the first (failed) record write", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return recordCalls >= 1
+	})
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("dead-lettered in memory regardless")
+	}
+	waitFor(t, "a retry of the owed record", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return recordCalls >= 2
+	})
+	mu.Lock()
+	failing = false
+	mu.Unlock()
+	waitFor(t, "the owed record to land once the disk recovers", func() bool { return countVerdictLines(t, spool.path, "1.0") == 1 })
+	time.Sleep(60 * time.Millisecond) // the retries stop once nothing is owed
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("one record, written once it could be, got %d", n)
+	}
+	c.mu.Lock()
+	_, armed := c.deadLetterTimers["C1"]
+	c.mu.Unlock()
+	if armed {
+		t.Fatal("nothing owed, no retry armed")
+	}
+	// The shutdown flush is the last try for a record still owed.
+	spool2 := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	c2 := newInboundCoalescer(time.Hour, nil) // the retry would be an hour out
+	c2.deliver = func(string, []pendingChannelInbound) error { return permanent422() }
+	c2.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	failing2 := true
+	c2.recordVerdict = func(channel, ts string, v ladderVerdict) bool {
+		mu.Lock()
+		f := failing2
+		mu.Unlock()
+		if f {
+			return false
+		}
+		return spool2.recordVerdict(channel, ts, v)
+	}
+	c2.charge("C1", testPending("C1", "2.0", "poison"), permanent422())
+	if n := countVerdictLines(t, spool2.path, "2.0"); n != 0 {
+		t.Fatalf("the write failed, got %d records", n)
+	}
+	mu.Lock()
+	failing2 = false
+	mu.Unlock()
+	c2.flushAll()
+	if n := countVerdictLines(t, spool2.path, "2.0"); n != 1 {
+		t.Fatalf("the shutdown flush writes the owed record, got %d", n)
+	}
+}
+
+// An in-place replay (the staging rename failed — here on a basename
+// whose .replaying suffix exceeds NAME_MAX) appends its re-written
+// verdict records to the very file it is replaying, so removing that
+// file after re-admission deleted the records it had just reported
+// durable (r15 finding 3). The file is compacted to its live records
+// instead: the messages do not replay twice, the verdicts survive.
+func TestInPlaceReplayKeepsItsRecords(t *testing.T) {
+	dir := t.TempDir()
+	base := strings.Repeat("s", 250) // + ".replaying" = 260 > NAME_MAX (255)
+	spool := newInboundSpool(filepath.Join(dir, base))
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+		t.Fatal("record must confirm")
+	}
+	if !spool.spillBatch("C1", []pendingChannelInbound{testPending("C1", "2.0", "a message spooled beside it")}) {
+		t.Fatal("spill must confirm")
+	}
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver
+	c1.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c1); n != 1 {
+		t.Fatalf("the message replays, admitted %d", n)
+	}
+	if !strings.Contains(read(), "replaying in place") {
+		t.Fatalf("the test must exercise the in-place fallback: %q", read())
+	}
+	waitForCalls(t, calls, []string{"2.0"})
+	if !c1.onLadder("C1", "1.0") {
+		t.Fatal("the verdict is seeded")
+	}
+	// Next startup: the record is still there, the message is not.
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver
+	c2.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c2); n != 0 {
+		t.Fatalf("the replayed message must not replay twice, admitted %d", n)
+	}
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the in-place replay must keep the verdict record it re-wrote")
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("compacted to one record, got %d", n)
 	}
 }

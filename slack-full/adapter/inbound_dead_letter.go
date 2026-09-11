@@ -246,7 +246,7 @@ func (c *inboundCoalescer) deadLetterRetryBase() time.Duration {
 // least one). Caller holds c.mu. Returns the delay and whether the
 // timer was armed by this call.
 func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Duration, bool) {
-	if _, armed := c.deadLetterTimers[channel]; armed {
+	if _, armed := c.deadLetterTimers[channel]; armed || c.closedForWrites {
 		return 0, false
 	}
 	n := c.deadLetterWriteFailures[channel]
@@ -267,13 +267,14 @@ func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Durati
 // final snapshot.
 //
 // Returns whether the retirement's durable record is confirmed: true
-// when the ledger already held the verdict (charge() persisted it a
-// moment ago; a duplicate Refused line in one replay), false when a
-// record was owed and the write failed. The replay keeps its staged
-// file on false (codex r14 finding 3): a Refused entry's spool line was
-// its only durable state, and once the parked write succeeds and the
-// staged file is gone, nothing would remember the verdict across the
-// next restart — a delayed redelivery would be admitted as fresh bytes.
+// when the record already stands (charge() persisted it a moment ago; a
+// duplicate Refused line in one replay), false when one is owed and the
+// write failed (the durable-write retry timer then owns it, codex r15
+// finding 2). The replay keeps its staged file on false (codex r14
+// finding 3): a Refused entry's spool line was its only durable state,
+// and once the parked write succeeds and the staged file is gone,
+// nothing would remember the verdict across the next restart — a
+// delayed redelivery would be admitted as fresh bytes.
 func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) bool {
 	// The terminal disposition travels WITH the entry: any spill from
 	// here on (post-close straggler, the shutdown backstop) writes a
@@ -290,12 +291,9 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	verdict := ladderVerdict{retired: true, cause: cause}
 	ts := p.inbound.ProviderMessageID
 	c.mu.Lock()
-	_, changed := c.retireLocked(channel, ts, verdict, time.Now())
+	c.retireLocked(channel, ts, verdict, time.Now())
 	c.mu.Unlock()
-	durable := true
-	if changed {
-		durable = c.persistVerdict(channel, ts, verdict)
-	}
+	durable := c.persistVerdict(channel, ts)
 	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
@@ -357,6 +355,10 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 		}
 		kept = append(kept, e)
 	}
+	// The same timer retries the channel's owed verdict records (codex
+	// r15 finding 2): the timer entry still stands here, so a failure
+	// inside persistVerdict re-arms nothing — the tail below decides.
+	owed := c.persistOwedVerdicts(channel)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	// Entries parked while the hook ran were appended after the
@@ -366,20 +368,24 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 	remaining := append(kept, newer...)
 	delete(c.deadLetterTimers, channel)
 	written := len(snapshot) - len(kept)
-	if len(remaining) == 0 {
+	if len(remaining) == 0 && owed == 0 {
 		delete(c.parkedDeadLetters, channel)
 		n := c.deadLetterWriteFailures[channel]
 		delete(c.deadLetterWriteFailures, channel)
-		log.Printf("coalesce: chan=%s %d parked entr%s dead-lettered after %d failed write attempt(s)", channel, written, plural(written, "y", "ies"), n)
+		log.Printf("coalesce: chan=%s durable writes caught up after %d failed attempt(s): %d parked entr%s dead-lettered, every owed verdict record written", channel, n, written, plural(written, "y", "ies"))
 		return
 	}
-	c.parkedDeadLetters[channel] = remaining
+	if len(remaining) == 0 {
+		delete(c.parkedDeadLetters, channel)
+	} else {
+		c.parkedDeadLetters[channel] = remaining
+	}
 	c.deadLetterWriteFailures[channel]++
 	n := c.deadLetterWriteFailures[channel]
 	delay, _ := c.armDeadLetterRetryLocked(channel)
 	if _, worthy := backoffLogWorthy(c.deadLetterRetryBase(), n); worthy || written > 0 {
-		log.Printf("coalesce: chan=%s dead-letter write still failing (%d written, %d parked) after attempt #%d — next write retry in %s%s",
-			channel, written, len(remaining), n, delay, backoffCapSuffix(delay))
+		log.Printf("coalesce: chan=%s durable writes still failing (%d written, %d parked, %d verdict record(s) owed) after attempt #%d — next retry in %s%s",
+			channel, written, len(remaining), owed, n, delay, backoffCapSuffix(delay))
 	}
 }
 
@@ -396,6 +402,7 @@ func (c *inboundCoalescer) flushParkedDeadLetters() {
 		t.Stop()
 		delete(c.deadLetterTimers, channel)
 	}
+	c.closedForWrites = true
 	hook, spill := c.deadLetter, c.spill
 	c.mu.Unlock()
 	channels := make([]string, 0, len(parked))
@@ -423,6 +430,13 @@ func (c *inboundCoalescer) flushParkedDeadLetters() {
 		}
 		log.Printf("coalesce: shutdown chan=%s %d entr%s awaiting a dead-letter write spooled with their refusal — the startup replay parks them for the write, never re-posts them",
 			channel, len(failed), plural(len(failed), "y", "ies"))
+	}
+	// Owed verdict records get their last try too (codex r15 finding 2);
+	// what still fails is loss of the verdict, said so.
+	for _, channel := range c.channelsOwingVerdicts() {
+		if left := c.persistOwedVerdicts(channel); left > 0 {
+			log.Printf("coalesce: SHUTDOWN chan=%s %d terminal verdict record(s) could not be written — after the restart a delayed redelivery of each may be admitted once as fresh bytes (then refused and dead-lettered again)", channel, left)
+		}
 	}
 }
 
