@@ -430,6 +430,23 @@ func (v ladderVerdict) rank() int {
 	return 0
 }
 
+// progresses reports whether v is a later PROGRESSION of the same
+// message than cur: a higher rank, else a higher charged count (codex
+// r33 finding 2), else a newer decision. The one order every fold of
+// the ledger uses — recordVerdictLocked's never-regress rule, the
+// journal's record fold at replay (codex r34 finding 2: it compared
+// rank and time only, so a newer record with a lower count won) and in
+// compaction (supersedes).
+func (v ladderVerdict) progresses(cur ladderVerdict) bool {
+	if v.rank() != cur.rank() {
+		return v.rank() > cur.rank()
+	}
+	if v.attempts != cur.attempts {
+		return v.attempts > cur.attempts
+	}
+	return v.at.After(cur.at)
+}
+
 // disposition names the verdict for a log line.
 func (v ladderVerdict) disposition() string {
 	switch {

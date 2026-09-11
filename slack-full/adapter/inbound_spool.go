@@ -810,14 +810,7 @@ func verdictOf(e spooledInbound) ladderVerdict {
 // same message than b: a higher rank wins, then the higher charged
 // count (codex r33 finding 2), then the newer decision.
 func supersedes(a, b spooledInbound) bool {
-	va, vb := verdictOf(a), verdictOf(b)
-	if va.rank() != vb.rank() {
-		return va.rank() > vb.rank()
-	}
-	if va.attempts != vb.attempts {
-		return va.attempts > vb.attempts
-	}
-	return a.VerdictAt > b.VerdictAt
+	return verdictOf(a).progresses(verdictOf(b))
 }
 
 // standingOf reads a message entry's ladder standing — the charged
@@ -977,9 +970,12 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 		}
 		// Folded by PROGRESSION first (a terminal record is never
 		// overridden by a stale outstanding one that happens to be newer
-		// on disk), decision time second.
+		// on disk), the charged count second (codex r34 finding 2: a
+		// newer record with a lower count won, and the copy admitted
+		// first adopted a budget one step behind), decision time third —
+		// the same order as compaction (supersedes).
 		if cur, ok := folded[k]; ok {
-			if v.rank() < cur.rank() || (v.rank() == cur.rank() && !v.at.After(cur.at)) {
+			if !v.progresses(cur) {
 				continue
 			}
 		} else {
@@ -1025,7 +1021,11 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			// The entry's line may be the decision's only durable home:
 			// the staged file stays until the replacement record is
 			// confirmed (codex r24 finding 2).
-			if !c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)}) {
+			// The count travels with the disposition (codex r34 finding
+			// 2): seeded without it, an earlier plain copy adopted the
+			// records' lower count and a cap flush posted it before the
+			// replay reached this line — one retry past row 4's bound.
+			if !c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped), attempts: e.Attempts}) {
 				durable = false
 			}
 		case !e.Reaction && (e.Isolate || e.Attempts > 0):

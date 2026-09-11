@@ -4465,8 +4465,17 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			if cfg.eventWG != nil {
 				cfg.eventWG.Add(1)
 			}
+			// The same for the coalescer's shutdown barrier (codex r34
+			// finding 1): this leg can spool its failure during the
+			// drain, and the parent's registration ends when the
+			// hand-off goroutine returns — registered HERE, while the
+			// parent's registration is still held, the barrier never
+			// touches zero across the transfer, and drainPending cannot
+			// conclude under an alias POST that may still need the spool.
+			endAlias := cfg.coalescer.beginEvent()
 			dispatchInflightWG.Add(1)
 			go func(displaced []busyDisplaced) {
+				defer endAlias()
 				if cfg.eventWG != nil {
 					defer cfg.eventWG.Done()
 				}

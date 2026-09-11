@@ -531,3 +531,71 @@ func TestAcknowledgedEventsAreInsideTheShutdownBarrier(t *testing.T) {
 		t.Fatalf("POST attempts = %d, want 2 (one failure + one takeover success; the third copy skips the committed claim)", posts)
 	}
 }
+
+// --- codex r34 finding 1 ------------------------------------------------------
+
+// The alias-dispatch leg — the goroutine processSlackEvent hands its
+// slot to for a targeted inbound — is inside the coalescer's shutdown
+// barrier from before the hand-off to its return (codex r34 finding 1):
+// it can spool its failure during the drain, and with the parent's
+// registration ending at the parent's return, flushAll could observe
+// zero in-flight work and main seal the spool under its POST.
+func TestAliasDispatchIsInsideTheShutdownBarrier(t *testing.T) {
+	arrived := make(chan struct{})
+	answer := make(chan int)
+	stop := make(chan struct{})
+	var once sync.Once
+	gcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/extmsg/inbound"):
+			w.WriteHeader(http.StatusAccepted)
+		case strings.Contains(r.URL.Path, "/extmsg/bindings"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items": []}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			once.Do(func() { close(arrived) })
+			select {
+			case code := <-answer:
+				w.WriteHeader(code)
+			case <-stop:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(gcSrv.Close)
+	t.Cleanup(func() { close(stop) }) // runs before Close (LIFO)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "sess-mayor-1"); err != nil {
+		t.Fatalf("alias set: %v", err)
+	}
+	inflight := func() int {
+		cfg.coalescer.mu.Lock()
+		defer cfg.coalescer.mu.Unlock()
+		return cfg.coalescer.inflight
+	}
+	env := botMentionEnvelope(t, "message", "Ev1", "C1", "100.000050", "", "@mayor: please handle this", true)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {}) // returns once the slot is handed to the alias leg
+	<-arrived                                                            // the alias POST is under way
+	if got := inflight(); got != 1 {
+		t.Fatalf("the alias leg must be registered with the shutdown barrier before the hand-off: inflight %d, want 1", got)
+	}
+	done := make(chan struct{})
+	go func() { cfg.coalescer.flushAll(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("flushAll returned while the alias POST was under way — main would have sealed the spool under a delivery that can still fail and need it")
+	case <-time.After(100 * time.Millisecond):
+	}
+	answer <- http.StatusAccepted
+	dispatchInflightWG.Wait()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flushAll did not return once the alias leg finished")
+	}
+}
