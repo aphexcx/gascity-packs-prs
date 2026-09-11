@@ -106,6 +106,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     post the refused bytes again after the original is dead-lettered;
     a parked dead-letter write carries a deletion that landed while
     the write was owed (codex gate r9).
+  - **The ladder's verdict is about the message, not the copy** (codex
+    gate r10). `charge()` records its verdict per `(channel, ts)`: a
+    copy of a dead-lettered ts admitted later (or handed back by a
+    failed urgent post) is dropped, a copy admitted while the stripped
+    retry is owed enters AS that retry, buffered copies leave when the
+    verdict lands, and an urgent twin of a message already on the
+    ladder is not posted (`onLadder`; the stripped retry or the
+    dead-letter file is its delivery) — the bot-mention pair, a
+    redelivery, and a duplicate enqueued while the original's POST is
+    in flight can no longer re-post bytes gc refused.
   - Tests: `inbound_rejection_ladder_test.go` (the ladder table, the
     withholding notice, the incident end to end, dead-letter after the
     stripped retry with later messages delivering, immediate

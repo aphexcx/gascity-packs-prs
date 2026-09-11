@@ -4007,6 +4007,18 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inbound: a solo reaction wake. They drain via
 	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
+	if !skipChannelPost && cfg.coalescer.onLadder(msg.Channel, msg.TS) {
+		// A buffered copy of THIS message is on the rejection ladder:
+		// gc refused its bytes, and the ladder's retry without
+		// attachments — or the dead-letter file — is the message's
+		// delivery. This urgent copy was built from the fresh event,
+		// original attachments and all; posting it would re-post the
+		// refused bytes under another name (gp-sgu7, codex r10 finding
+		// 2). It defers exactly like a twin whose channel copy already
+		// committed.
+		log.Printf("inbound: chan=%s ts=%s a buffered copy of this message is on the rejection ladder (gc refused it) — urgent channel copy skipped; the ladder's stripped retry or the dead-letter file is its delivery", msg.Channel, msg.TS)
+		skipChannelPost = true
+	}
 
 	// A twin whose channel copy was skipped while the drain is running
 	// takes no busy mark (gp-32q, codex r3 P2 #3). The mark's whole

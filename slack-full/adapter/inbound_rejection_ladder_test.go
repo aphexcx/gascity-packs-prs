@@ -1421,3 +1421,173 @@ func TestParkedDeadLetterWriteCarriesADeletion(t *testing.T) {
 		t.Fatalf("the parked write must carry the deletion notice, got %q", written[0])
 	}
 }
+
+// --- codex r10 on gp-sgu7: the verdict travels with the message ---------------
+
+// A duplicate copy enqueued while the original's POST is in flight is
+// dropped when gc refuses the original and the ladder dead-letters it
+// (r10 finding 1): the refused bytes never go out under the copy's
+// name next window.
+func TestDuplicateEnqueuedDuringRefusedPostIsDroppedWithTheVerdict(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var once sync.Once
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		first := false
+		once.Do(func() { first = true })
+		if first {
+			entered <- struct{}{}
+			<-release
+			return permanent422()
+		}
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	var dead []string
+	var mu sync.Mutex
+	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range batch {
+			dead = append(dead, p.inbound.ProviderMessageID)
+		}
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	<-entered // A's POST is blocked in flight
+	c.enqueue("C1", testPending("C1", "1.0", "A again — a duplicate while the POST is in flight"))
+	c.enqueue("C1", testPending("C1", "2.0", "B, a later message"))
+	close(release) // gc refuses A: no attachments to strip → dead-letter at once
+	waitForCalls(t, calls, []string{"1.0", "2.0"})
+	time.Sleep(100 * time.Millisecond)
+	if got := calls(); len(got) != 2 {
+		t.Fatalf("the duplicate copy of A must never POST: %v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dead) != 1 || dead[0] != "1.0" {
+		t.Fatalf("exactly one dead-letter record for A, got %v", dead)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pending["C1"]) != 0 {
+		t.Fatalf("nothing may stay buffered, got %d", len(c.pending["C1"]))
+	}
+}
+
+// A copy admitted after the ladder dead-lettered its ts is dropped at
+// admission; a copy admitted while the stripped retry is owed enters AS
+// the stripped, isolated retry (r10 finding 1, the admission side).
+func TestAdmissionAdoptsTheLadderVerdict(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	// Retired: the ladder dead-lettered ts 1.0 (nothing to strip).
+	c.charge("C1", testPending("C1", "1.0", "plain, refused"), permanent422())
+	c.enqueue("C1", testPending("C1", "1.0", "a late duplicate of the dead-lettered message"))
+	// Stripped: ts 2.0 was refused with an attachment; its retry is owed.
+	c.charge("C1", testPendingWithAttachment("C1", "2.0", "with a file", "/tmp/x/memo.m4a"), permanent422())
+	c.enqueue("C1", testPendingWithAttachment("C1", "2.0", "with a file", "/tmp/x/memo.m4a"))
+	c.mu.Lock()
+	retiredBuffered := c.pendingContainsLocked("C1", "1.0")
+	copies := 0
+	var bad string
+	for _, p := range c.pending["C1"] {
+		if p.inbound.ProviderMessageID != "2.0" {
+			continue
+		}
+		copies++
+		if len(p.inbound.Attachments) != 0 || !p.isolate || p.attempts < 1 {
+			bad = fmt.Sprintf("attachments=%d isolate=%v attempts=%d", len(p.inbound.Attachments), p.isolate, p.attempts)
+		}
+	}
+	c.mu.Unlock()
+	if retiredBuffered {
+		t.Fatal("a copy of a dead-lettered ts must not enter the buffer")
+	}
+	if bad != "" {
+		t.Fatalf("every buffered copy of a stripped ts must be the stripped, isolated retry: %s", bad)
+	}
+	if copies != 2 {
+		t.Fatalf("both copies of 2.0 buffered as stripped retries (the take collapses them), got %d", copies)
+	}
+	if !c.onLadder("C1", "1.0") || !c.onLadder("C1", "2.0") || c.onLadder("C1", "3.0") {
+		t.Fatal("onLadder must report both verdicts and nothing else")
+	}
+}
+
+// A delayed urgent twin of a message whose buffered copy is already on
+// the ladder does not withhold that copy, and the urgent path is told
+// the ladder owns the message (r10 finding 2): the stripped retry — not
+// the fresh event's attachments — is what reaches gc.
+func TestUrgentTwinDefersToTheLadder(t *testing.T) {
+	var mu sync.Mutex
+	probesOfB := 0
+	var strippedPosts []int // attachment counts of every single-A POST after the refusal
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) == 2 {
+			return permanent422() // the batch A+B is refused
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch batch[0].inbound.ProviderMessageID {
+		case "1.0":
+			if len(batch[0].inbound.Attachments) > 0 {
+				return permanent422() // A with its attachment is refused
+			}
+			strippedPosts = append(strippedPosts, len(batch[0].inbound.Attachments))
+			return nil
+		case "2.0":
+			probesOfB++
+			if probesOfB == 1 {
+				return errors.New("dial tcp: connection refused") // B's probe pauses: A's stripped copy stays buffered in backoff
+			}
+		}
+		return nil
+	})
+	c := newInboundCoalescer(100*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"))
+	c.enqueue("C1", testPending("C1", "2.0", "B"))
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0", "2.0"}) // refused; A stripped; B paused → backoff
+	c.mu.Lock()
+	inBackoff := c.inBackoffLocked("C1")
+	c.mu.Unlock()
+	if !inBackoff {
+		t.Fatal("the channel must be in backoff with A's stripped copy buffered")
+	}
+	// The delayed app_mention twin of A arrives on the urgent path.
+	if withheld := c.flushAheadOf("C1", "1.0"); len(withheld) != 0 {
+		t.Fatalf("a copy on the ladder is never withheld for an urgent twin, got %d", len(withheld))
+	}
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("the urgent path must be told the ladder owns this message")
+	}
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0", "2.0", "1.0", "2.0"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(strippedPosts) != 1 || strippedPosts[0] != 0 {
+		t.Fatalf("exactly one stripped POST of A (no attachments), got %v", strippedPosts)
+	}
+	if c.onLadder("C1", "1.0") {
+		t.Fatal("a delivered message leaves the ladder")
+	}
+}
+
+// A withheld urgent twin handed back after the buffered copy's ts was
+// retired meanwhile is dropped, not re-queued.
+func TestReturnedTwinOfARetiredMessageIsDropped(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	twin := testPending("C1", "1.0", "the twin")
+	c.charge("C1", testPending("C1", "1.0", "plain, refused"), permanent422())
+	c.restore("C1", []pendingChannelInbound{twin})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pendingContainsLocked("C1", "1.0") {
+		t.Fatal("a handed-back copy of a dead-lettered ts must not re-enter the buffer")
+	}
+	if _, armed := c.timers["C1"]; armed {
+		t.Fatal("nothing buffered, nothing armed")
+	}
+}
