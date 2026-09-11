@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -50,6 +51,124 @@ func permanentDeliveryFailure(err error) bool {
 		return true
 	}
 	return false
+}
+
+// --- the rejection ladder (gp-sgu7) -------------------------------------------
+//
+// ONE decision point for a message gc refused (permanentDeliveryFailure)
+// or accepted without vouching for (errDeliveryUnvouched, gp-32q):
+// nextRejectionStep. Every consumer — charge() is the only one — acts on
+// its verdict; nothing else may decide whether an entry is retried.
+//
+// A 4xx payload refusal is deterministic: the same bytes get the same
+// answer, so the entry is NEVER re-posted as-is (the 2026-09-08 incident
+// re-posted one refused batch 34,000 times). The one retry allowed is a
+// DIFFERENT payload: the attachments stripped and their local paths
+// named in the text, because an attachment gc will not validate (a
+// missing mime_type, a URL shape, a size) must not cost the founder's
+// words; a second refusal, or a refusal with nothing left to strip,
+// dead-letters at once. The unvouched class keeps gp-32q's bounded
+// same-payload ladder (maxCoalesceDeliveryAttempts): the payload was
+// accepted, only the vouch was missing, so re-posting it can succeed.
+
+type rejectionStep int
+
+const (
+	// stepRetryWithoutAttachments: 4xx refusal, attachments present —
+	// withholdAttachments, then restore for the next window.
+	stepRetryWithoutAttachments rejectionStep = iota
+	// stepDeadLetter: hand the entry to the dead-letter hook now.
+	stepDeadLetter
+	// stepRetrySame: unvouched under the cap — restore unchanged.
+	stepRetrySame
+)
+
+func (s rejectionStep) String() string {
+	switch s {
+	case stepRetryWithoutAttachments:
+		return "retry-without-attachments"
+	case stepDeadLetter:
+		return "dead-letter"
+	case stepRetrySame:
+		return "retry-same"
+	}
+	return fmt.Sprintf("rejectionStep(%d)", int(s))
+}
+
+// nextRejectionStep is the ladder. p.attempts counts the charges the
+// entry has ALREADY taken (the caller increments after asking).
+func nextRejectionStep(p pendingChannelInbound, cause error) rejectionStep {
+	if permanentDeliveryFailure(cause) {
+		if len(p.inbound.Attachments) > 0 {
+			return stepRetryWithoutAttachments
+		}
+		return stepDeadLetter
+	}
+	if p.attempts+1 < maxCoalesceDeliveryAttempts {
+		return stepRetrySame
+	}
+	return stepDeadLetter
+}
+
+// rejectionStatusLine is the short, operator-readable cause carried into
+// the text: the HTTP status line for a gc refusal (its JSON body can be
+// hundreds of bytes and quotes the file path itself), a bounded prefix
+// of any other error.
+func rejectionStatusLine(cause error) string {
+	var pe *inboundPostError
+	if errors.As(cause, &pe) {
+		if pe.StatusText != "" {
+			return pe.StatusText
+		}
+		return fmt.Sprintf("HTTP %d", pe.Status)
+	}
+	if cause == nil {
+		return "refused"
+	}
+	s := cause.Error()
+	if len(s) > 120 {
+		s = s[:120] + "…"
+	}
+	return s
+}
+
+// withholdAttachments returns p with its attachments removed and a
+// notice naming their local paths and the refusal appended to the
+// message unit — into the files part (so the head-protected composer
+// keeps it: the files block is never shed) with Text re-folded, or
+// straight onto Text for a partless legacy/spool-replayed entry. The
+// files themselves stay where downloadSlackFiles put them. A p with
+// no attachments is returned unchanged, so a repeat call adds nothing.
+func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInbound {
+	if len(p.inbound.Attachments) == 0 {
+		return p
+	}
+	paths := make([]string, 0, len(p.inbound.Attachments))
+	for _, a := range p.inbound.Attachments {
+		paths = append(paths, neutralizeMarkupBoundaries(strings.TrimPrefix(a.URL, "file://")))
+	}
+	noun := "attachments"
+	if len(paths) == 1 {
+		noun = "attachment"
+	}
+	notice := fmt.Sprintf("[%d %s withheld — gc refused this message with them attached (%s); the files remain at %s]",
+		len(paths), noun, neutralizeMarkupBoundaries(rejectionStatusLine(cause)), strings.Join(paths, ", "))
+	p.inbound.Attachments = nil
+	if p.hasReminderParts() {
+		if p.files == "" {
+			p.files = notice
+		} else {
+			p.files += "\n" + notice
+		}
+		p.inbound.Text = p.foldedText()
+		return p
+	}
+	if strings.TrimSpace(p.inbound.Text) == "" {
+		p.inbound.Text = notice
+	} else {
+		p.inbound.Text = strings.TrimRight(p.inbound.Text, "\n") + "\n\n" + notice
+	}
+	return p
 }
 
 // inboundDeadLetterRecord is one JSONL line in a channel's dead-letter

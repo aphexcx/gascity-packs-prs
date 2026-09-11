@@ -46,6 +46,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A 4xx-refused inbound is never re-posted as-is; transient failures
+  back off** (gp-sgu7; citadel C0AP0KV9S9E 2026-09-08 00:14Z →
+  2026-09-11, C0BKF28CYUE 2026-08-26 → 08-27). The live adapter posted
+  one batch gc refused with 422 (`expected required property mime_type
+  to be present` on a Slack voice memo) every 8 s for three days —
+  34,000+ identical failures — while every later message in the channel
+  joined the stuck batch (`batch=1` → `batch=44`) and none reached the
+  session. That binary predated gp-xnc (#21: mime_type always sent,
+  three identical retries then dead-letter); this tightens the contract
+  gp-xnc left:
+  - **The rejection ladder is one function** (`nextRejectionStep`,
+    `inbound_dead_letter.go`; `charge` is its only consumer). A payload
+    refusal (400/413/415/422) with attachments is re-posted ONCE
+    *without* them — the text keeps the founder's words and names the
+    downloaded files' local paths, so an attachment gc will not
+    validate costs the attachment, never the message. A refusal with
+    nothing left to strip — the second one, a plain text, a reaction, a
+    deletion notice — dead-letters at the first refusal. The same bytes
+    are never posted twice (one deliberate exception: a dead-letter
+    write that fails keeps the entry for the next window rather than
+    losing an acked message). The unvouched ladder (gp-32q, bounded by
+    `maxCoalesceDeliveryAttempts`) is unchanged: that payload was
+    accepted, so a re-post can succeed.
+  - **Transient failures (network, 5xx, 429) back off per channel**:
+    the retry cadence starts at the channel's window and doubles per
+    consecutive failure to a 5-minute cap (`maxTransientRetryDelay`),
+    replacing any plain-window timer a mid-flight enqueue armed; a
+    channel waiting out its backoff is not swept into another
+    channel's flush; the run resets on the next successful delivery. A
+    digest interval longer than the cap stays the operator's cadence.
+    Retry-forever durability is unchanged — only the cadence.
+  - One log line per state change: `refused … retrying ONCE without
+    them`, `dead-lettered after N`, `restored after transient failure
+    #N — retry in D`.
+  - Tests: `inbound_rejection_ladder_test.go` (the ladder table, the
+    withholding notice, the incident end to end, dead-letter after the
+    stripped retry with later messages delivering, immediate
+    dead-letter with nothing to strip, the backoff table, real-timer
+    backoff + reset, sweep skip). Five gp-xnc tests that pinned "three
+    identical retries" were rewritten to the new ladder; one
+    (`…DeadLettersAfterMaxAttempts`) was removed as superseded.
+  - gascity half (separate PR): `extmsg.ExternalAttachment.mime_type`
+    becomes optional so one unknown file type can never refuse a
+    message again. This adapter already always sends it (gp-xnc).
+
 - **A same-ts twin can no longer skip a copy the session never got**
   (gp-32q, pc_2e2378b9918e; 2026-08-27 22:57 CT and 2026-08-28 04:08
   CT founder-inbound incidents, both on the PR #23 build). A

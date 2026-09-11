@@ -69,12 +69,17 @@ import (
 // documents, bounded here by the window. A normal shutdown drains
 // every buffer first (flushAll). A flush that fails TRANSIENTLY
 // (network, 5xx, 429) restores the batch and retries on the next timer,
-// forever. A flush gc REJECTS as payload (400/413/415/422 — the same
-// payload can never be accepted) goes through failed(): a multi-message batch is isolated
-// into singles so only the poisoned message accrues attempts, and a
-// message rejected maxCoalesceDeliveryAttempts times is dead-lettered
-// (deadLetter hook → JSONL file) instead of riding in every later
-// batch and blocking the channel forever (gp-xnc, 2026-08-26).
+// forever — on a per-channel doubling backoff capped at
+// maxTransientRetryDelay, never the fixed window forever (gp-sgu7). A
+// flush gc REJECTS as payload (400/413/415/422 — the same payload can
+// never be accepted) goes through failed(): a multi-message batch is
+// isolated into singles so only the poisoned message is charged, and a
+// charged message follows the rejection ladder (nextRejectionStep,
+// inbound_dead_letter.go): one retry WITHOUT its attachments when it
+// had any, then the dead-letter hook (JSONL file) — never a retry of
+// the same bytes, so a refused voice memo costs the channel two
+// windows, not forever (gp-xnc 2026-08-26; gp-sgu7 2026-09-08 incident
+// where the pre-gp-xnc binary posted one refused batch 34,000 times).
 
 // defaultCoalesceWindow is the debounce for burst coalescing; inside
 // the 5-15s band the Aug-17 plan named.
@@ -84,13 +89,19 @@ const defaultCoalesceWindow = 8 * time.Second
 // full delivers immediately rather than waiting out its window.
 const maxCoalescePerChannel = 50
 
-// maxCoalesceDeliveryAttempts is how many times a message may be
-// REJECTED by gc (permanentDeliveryFailure) before it is dead-lettered.
-// Small on purpose: a payload rejection is deterministic, so extra
-// attempts only buy
-// a window for an operator-side fix to land; transient failures never
-// count toward it (gp-xnc).
+// maxCoalesceDeliveryAttempts bounds the UNVOUCHED ladder (gp-32q): how
+// many times a message gc accepted but would not vouch for may be
+// re-posted before it is dead-lettered. A payload REJECTION no longer
+// counts toward it — that class is never re-posted as-is at all (see
+// nextRejectionStep); transient failures never count toward anything.
 const maxCoalesceDeliveryAttempts = 3
+
+// maxTransientRetryDelay caps the per-channel backoff for TRANSIENT
+// delivery failures (network error, 5xx, 429): the retry cadence starts
+// at the channel's window and doubles per consecutive failure up to
+// this, so a gc outage costs one POST per ~5 min per channel instead of
+// one per 8 s (gp-sgu7). Reset by the channel's next successful delivery.
+const maxTransientRetryDelay = 5 * time.Minute
 
 // maxBufferedReactionsPerChannel bounds the no-wake reaction
 // side-buffer (gp-9e7 item 1). Reactions must never drop, so overflow
@@ -247,27 +258,36 @@ type inboundCoalescer struct {
 	// class). Wired in main() to deliverCoalescedBatch with the final
 	// cfg; tests inject their own.
 	deliver func(channel string, batch []pendingChannelInbound) error
-	// deadLetter receives entries that exhausted
-	// maxCoalesceDeliveryAttempts (gp-xnc) and returns true ONLY on a
+	// deadLetter receives entries the rejection ladder retires
+	// (nextRejectionStep, gp-xnc/gp-sgu7) and returns true ONLY on a
 	// confirmed-durable write (the spill contract): on false the entry
 	// stays buffered and the write is retried next window. Nil-safe:
 	// without a hook the entry is dropped with a LOSS log (the storm
 	// still stops). Wired in main() to writeInboundDeadLetter. Called
 	// with the channel's delivery mutex held and c.mu NOT held (file I/O).
 	deadLetter func(channel string, batch []pendingChannelInbound, cause error) bool
+	// transientFailures counts consecutive TRANSIENT delivery failures per
+	// channel (gp-sgu7); retryNotBefore is when its backed-off retry is
+	// due. Both guarded by mu; bumped only in noteTransientFailure, read
+	// only through retryDelayLocked / takeSweepsLocked, cleared only by
+	// deliveredOK on a successful delivery.
+	transientFailures map[string]int
+	retryNotBefore    map[string]time.Time
 }
 
 func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *inboundCoalescer {
 	c := &inboundCoalescer{
-		pending:       make(map[string][]pendingChannelInbound),
-		reactions:     make(map[string][]pendingChannelInbound),
-		gen:           make(map[string]uint64),
-		timers:        make(map[string]*time.Timer),
-		flushMu:       make(map[string]*sync.Mutex),
-		urgentWaiting: make(map[string]int),
-		deleted:       make(map[string]map[string]time.Time),
-		window:        window,
-		policy:        policy,
+		pending:           make(map[string][]pendingChannelInbound),
+		reactions:         make(map[string][]pendingChannelInbound),
+		gen:               make(map[string]uint64),
+		timers:            make(map[string]*time.Timer),
+		flushMu:           make(map[string]*sync.Mutex),
+		urgentWaiting:     make(map[string]int),
+		deleted:           make(map[string]map[string]time.Time),
+		transientFailures: make(map[string]int),
+		retryNotBefore:    make(map[string]time.Time),
+		window:            window,
+		policy:            policy,
 	}
 	c.settled = sync.NewCond(&c.mu)
 	return c
@@ -369,6 +389,59 @@ func (c *inboundCoalescer) windowFor(channel string) time.Duration {
 		return d
 	}
 	return c.window
+}
+
+// transientRetryDelay is the retry cadence after `failures` consecutive
+// TRANSIENT delivery failures on a channel whose accumulation window is
+// `window`: the window doubled failures-1 times, capped at
+// maxTransientRetryDelay and floored at the window itself (a digest
+// interval longer than the cap stays the operator's cadence). Zero
+// failures — and a zero window, coalescing disabled — pass through.
+func transientRetryDelay(window time.Duration, failures int) time.Duration {
+	if window <= 0 || failures <= 1 {
+		return window
+	}
+	d := window
+	for i := 1; i < failures; i++ {
+		d *= 2
+		if d >= maxTransientRetryDelay {
+			d = maxTransientRetryDelay
+			break
+		}
+	}
+	if d < window {
+		return window
+	}
+	return d
+}
+
+// retryDelayLocked is the delay for the channel's next timer: its
+// window, backed off by its current run of transient failures. Caller
+// holds c.mu.
+func (c *inboundCoalescer) retryDelayLocked(channel string) time.Duration {
+	return transientRetryDelay(c.windowFor(channel), c.transientFailures[channel])
+}
+
+// noteTransientFailure records one more consecutive transient failure
+// for the channel. Called before restore() so the re-armed timer sees
+// the new count. Returns the count.
+func (c *inboundCoalescer) noteTransientFailure(channel string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.transientFailures[channel]++
+	return c.transientFailures[channel]
+}
+
+// deliveredOK ends the channel's transient-failure run: the next
+// failure, if any, starts again at the plain window.
+func (c *inboundCoalescer) deliveredOK(channel string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.transientFailures, channel)
+	delete(c.retryNotBefore, channel)
 }
 
 // flushMuFor returns the channel's delivery mutex, creating it under
@@ -706,6 +779,11 @@ func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
 		if _, digest := c.policy.digestInterval(ch); digest {
 			continue
 		}
+		if nb, ok := c.retryNotBefore[ch]; ok && time.Now().Before(nb) {
+			// Waiting out a transient-failure backoff (gp-sgu7): sweeping
+			// it now would be the fixed-cadence retry the backoff ends.
+			continue
+		}
 		channels = append(channels, ch)
 	}
 	sort.Strings(channels)
@@ -754,7 +832,9 @@ func (c *inboundCoalescer) deliverBatch(channel string, batch []pendingChannelIn
 	}
 	if err := c.deliver(channel, batch); err != nil {
 		c.failed(channel, batch, err)
+		return
 	}
+	c.deliveredOK(channel)
 }
 
 // restore re-queues a batch whose delivery failed, ahead of anything
@@ -805,6 +885,25 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		return
 	}
 	c.pending[channel] = append(msgs, c.pending[channel]...)
+	if n := c.transientFailures[channel]; n > 0 {
+		// A transient-failure run (gp-sgu7): the retry is due at the
+		// backed-off delay, REPLACING any timer already armed — a message
+		// enqueued while the failed POST was in flight armed a plain
+		// window, and honoring it would be the fixed-cadence retry the
+		// backoff exists to end. Bumping the generation makes that timer
+		// a no-op; the over-cap short retry is not exempt (an unreachable
+		// gc gains nothing from a 1 s poll).
+		if t, ok := c.timers[channel]; ok {
+			t.Stop()
+		}
+		c.gen[channel]++
+		delay := c.retryDelayLocked(channel)
+		c.retryNotBefore[channel] = time.Now().Add(delay)
+		g := c.gen[channel]
+		c.timers[channel] = time.AfterFunc(delay, func() { c.flushTimer(channel, g) })
+		log.Printf("coalesce: chan=%s %d message(s) restored after transient failure #%d — retry in %s", channel, len(msgs), n, delay)
+		return
+	}
 	if _, ok := c.timers[channel]; !ok {
 		window := c.windowFor(channel)
 		g := c.gen[channel]
@@ -817,15 +916,17 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 //
 // A TRANSIENT error (network, 5xx, 429, operational 4xx) restores the
 // whole batch for the next timer — the retry-forever durability the
-// coalescer always had, so a gc restart never loses buffered chatter.
+// coalescer always had, so a gc restart never loses buffered chatter —
+// on the channel's doubling backoff (noteTransientFailure → restore).
 //
 // A PAYLOAD rejection (permanentDeliveryFailure: 400/413/415/422 — the
 // same payload can never be accepted) means the batch holds a poisoned
 // entry, and which one is unknown. The real messages are ISOLATED —
 // each re-delivered alone, right now, under the same mutex — so an
 // innocent batch-mate delivers instead of waiting behind (or dying
-// with) the poison, and only a single gc still rejects is charged an
-// attempt (charge: restore below the cap, dead-letter at it). The
+// with) the poison, and only a single gc still rejects is charged
+// (charge: the rejection ladder — one retry without attachments, then
+// the dead-letter hook; never the same bytes again, gp-sgu7). The
 // probe stops at the first TRANSIENT single: gc is failing right now,
 // so every further single could cost a full client timeout under the
 // flush mutex; that single, every untested message, and the reactions
@@ -882,6 +983,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		return
 	}
 	if !permanentDeliveryFailure(cause) {
+		c.noteTransientFailure(channel)
 		c.restore(channel, batch)
 		return
 	}
@@ -925,6 +1027,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 			rest := append(append([]pendingChannelInbound{}, msgs[i:]...), reactions...)
 			log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure; %d entries restored uncharged for the next window: %v",
 				channel, i, len(msgs), len(rest), err)
+			c.noteTransientFailure(channel)
 			c.restore(channel, rest)
 			return
 		}
@@ -953,24 +1056,37 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	}
 }
 
-// charge records one rejection against a single entry: restored for
-// the next window while under maxCoalesceDeliveryAttempts, otherwise
-// handed to the deadLetter hook. The entry retires ONLY on the hook's
-// confirmed-durable verdict; an unconfirmed write (disk full, bad
-// override, planted symlink) keeps it buffered at the cap so the next
-// window's rejection retries the write — one more rejection line per
-// window beats losing an already-acked message (codex r1 finding 3).
-// With no hook wired (bare test configs) the entry is dropped, loudly.
+// charge records one rejection against a single entry and acts on the
+// rejection ladder's verdict (nextRejectionStep, the ONLY decision
+// point — gp-sgu7): a refused entry with attachments is restored ONCE
+// without them (withholdAttachments), an unvouched entry under the cap
+// is restored unchanged, everything else is handed to the deadLetter
+// hook. The entry retires ONLY on the hook's confirmed-durable verdict;
+// an unconfirmed write (disk full, bad override, planted symlink) keeps
+// it buffered so the next window's rejection retries the write — one
+// more rejection line per window beats losing an already-acked message
+// (codex r1 finding 3); that re-post is the one deliberate exception
+// to "never the same bytes again". With no hook wired (bare test
+// configs) the entry is dropped, loudly.
 func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause error) {
 	// The dead-letter file is durable and tombstones are not: a deleted
 	// entry must be written as its notice (codex round-3 finding 2).
 	single := []pendingChannelInbound{p}
 	c.applyDeletionTombstones(channel, single)
 	p = single[0]
+	step := nextRejectionStep(p, cause)
 	if p.attempts < maxCoalesceDeliveryAttempts {
-		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports the cap (codex r2 finding 3)
+		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports a bounded count (codex r2 finding 3)
 	}
-	if p.attempts < maxCoalesceDeliveryAttempts {
+	switch step {
+	case stepRetryWithoutAttachments:
+		n := len(p.inbound.Attachments)
+		p = withholdAttachments(p, cause)
+		c.restore(channel, []pendingChannelInbound{p})
+		log.Printf("coalesce: chan=%s ts=%s refused by gc with %d attachment(s) — retrying ONCE without them (the files stay on disk; the text names their paths): %v",
+			channel, p.inbound.ProviderMessageID, n, cause)
+		return
+	case stepRetrySame:
 		c.restore(channel, []pendingChannelInbound{p})
 		return
 	}
@@ -1149,7 +1265,9 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	if err := c.deliver(channel, batch); err != nil {
 		log.Printf("coalesce: chan=%s flush-ahead failed; batch restored for timer retry or isolated/dead-lettered if gc rejected it (urgent message proceeds out of order): %v", channel, err)
 		c.failed(channel, batch, err)
+		return withheld
 	}
+	c.deliveredOK(channel)
 	return withheld
 }
 
@@ -1272,7 +1390,7 @@ func (c *inboundCoalescer) reconcileTimers() {
 	for channel, t := range c.timers {
 		t.Stop()
 		c.gen[channel]++
-		window := c.windowFor(channel)
+		window := c.retryDelayLocked(channel)
 		if len(c.pending[channel]) >= maxCoalescePerChannel ||
 			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel {
 			window = c.capRetryDelay()
