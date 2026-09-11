@@ -146,6 +146,13 @@ type pendingChannelInbound struct {
 	// when it pauses and by charge() on a stripped retry; honored by
 	// post(); spooled, so a restart resumes the probes too.
 	isolate bool
+	// refused is the rejection that RETIRED the entry (the ladder's
+	// dead-letter verdict) while its dead-letter write is still owed:
+	// set by parkDeadLetter, spooled with the entry so a restart parks
+	// it straight back into the write retry instead of replaying it
+	// as an inbound and re-posting refused bytes (gp-sgu7, codex r2
+	// finding 1). Empty on every entry still in the delivery path.
+	refused string
 	// threadAnchor/preamble/body/files carry the message unit's parts
 	// alongside the folded inbound.Text so a single-entry delivery can
 	// re-compose under the head-protection contract exactly like the
@@ -929,7 +936,18 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 		}
 	}
 	if len(flagged) > 0 {
-		log.Printf("coalesce: chan=%s resuming isolation of %d message(s) from a batch gc refused — each posted alone, never re-batched", channel, len(flagged))
+		// Chronological: successive restore() calls PREPEND, so two
+		// stripped batch-mates come back newest-first (codex r2 finding
+		// 3); singles bypass deliverCoalescedBatch's in-batch sort.
+		sort.SliceStable(flagged, func(i, j int) bool {
+			return flagged[i].inbound.ProviderMessageID < flagged[j].inbound.ProviderMessageID
+		})
+		c.mu.Lock()
+		_, worthy := backoffLogWorthy(c.windowFor(channel), c.transientFailures[channel])
+		c.mu.Unlock()
+		if worthy { // a resume inside a capped transient run is not a state change
+			log.Printf("coalesce: chan=%s resuming isolation of %d message(s) from a batch gc refused — each posted alone, never re-batched", channel, len(flagged))
+		}
 		paused, refused := c.isolate(channel, flagged, rest)
 		if paused {
 			return nil
@@ -1005,6 +1023,13 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		c.reactions[channel] = append(reactions, c.reactions[channel]...)
 	}
 	if len(msgs) == 0 {
+		if c.transientFailures[channel] > 0 {
+			// A reactions-only failure arms no timer (never a solo wake),
+			// but the channel IS in a transient run: set the deadline so
+			// the overflow flush honors the backoff instead of POSTing
+			// on every further reaction (codex r2 finding 2).
+			c.retryNotBefore[channel] = time.Now().Add(c.retryDelayLocked(channel))
+		}
 		return
 	}
 	c.pending[channel] = append(msgs, c.pending[channel]...)
@@ -1184,6 +1209,10 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 		p := msgs[i]
 		err := c.deliver(channel, []pendingChannelInbound{p})
 		if err == nil {
+			// gc is reachable: the channel's transient run, if any, ends
+			// here — a later unrelated failure must start at the window,
+			// not inherit a capped count (codex r2 finding 4).
+			c.deliveredOK(channel)
 			continue
 		}
 		if !chargeableDeliveryFailure(err) {
@@ -1192,9 +1221,11 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 				untested[j].isolate = true
 			}
 			all := append(untested, rest...)
-			log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure; %d entries restored uncharged (the %d untested resume as single probes, never re-batched): %v",
-				channel, i, len(msgs), len(all), len(untested), err)
-			c.noteTransientFailure(channel)
+			n := c.noteTransientFailure(channel)
+			if _, worthy := backoffLogWorthy(c.windowFor(channel), n); worthy {
+				log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure #%d; %d entries restored uncharged (the %d untested resume as single probes, never re-batched): %v",
+					channel, i, len(msgs), n, len(all), len(untested), err)
+			}
 			c.restore(channel, all)
 			return true, refused
 		}

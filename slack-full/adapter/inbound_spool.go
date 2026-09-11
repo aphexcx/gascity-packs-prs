@@ -75,6 +75,12 @@ type spooledInbound struct {
 	// (gp-sgu7): a member of a batch gc refused resumes as a single
 	// probe on replay instead of re-posting the refused batch.
 	Isolate bool `json:"isolate,omitempty"`
+	// Refused (with Attempts) marks an entry the rejection ladder had
+	// RETIRED whose dead-letter write never confirmed before shutdown
+	// (gp-sgu7, codex r2 finding 1): the replay parks it straight into
+	// the write retry — it is never enqueued for delivery again.
+	Refused  string `json:"refused,omitempty"`
+	Attempts int    `json:"attempts,omitempty"`
 	// DeletedTS marks a DELETION record rather than a message: the
 	// sender deleted (Channel, DeletedTS). Persisted by recordDeletion
 	// so a deletion processed after a message was spooled — or in the
@@ -182,6 +188,9 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		}
 		if p.botQuotes {
 			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
+		}
+		if p.refused != "" {
+			entry.Refused, entry.Attempts = p.refused, p.attempts
 		}
 		if p.hasReminderParts() {
 			// The folded Text is derivable from the parts; storing both
@@ -421,6 +430,15 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
 			applyDeletion(&p)
 			log.Printf("inbound spool: chan=%s ts=%s deleted before restart — replayed as a deletion notice", e.Channel, e.Inbound.ProviderMessageID)
+		}
+		if e.Refused != "" {
+			// Retired before the restart; only its dead-letter write is
+			// owed. Parking keeps the refused bytes out of delivery.
+			p.attempts = e.Attempts
+			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — parked for its dead-letter write, not re-posted", e.Channel, e.Inbound.ProviderMessageID, e.Refused)
+			c.parkDeadLetter(e.Channel, p, errors.New(e.Refused))
+			n++
+			continue
 		}
 		if e.Reaction {
 			if c.admitReaction(e.Channel, p, false) {

@@ -1769,10 +1769,17 @@ func main() {
 	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
 		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
 		if err != nil {
-			log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
-				channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			// The write retries on a backoff (parkDeadLetter); log the
+			// error once per DISTINCT failure, not per attempt (gp-sgu7
+			// contract 3) — the coalescer's own parked/retry lines mark
+			// the state changes.
+			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
+				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
+					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			}
 			return false
 		}
+		deliverCfg.postFailures.clear("dead-letter:" + channel)
 		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
 			channel, len(batch), path)
 		return true

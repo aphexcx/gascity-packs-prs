@@ -543,3 +543,101 @@ func TestRepeatedFailureLogLogsOncePerDistinctFailure(t *testing.T) {
 		t.Fatal("a success clears the memory so the next failure logs")
 	}
 }
+
+// --- codex r2 on gp-sgu7 ------------------------------------------------------
+
+// A parked entry spooled at shutdown carries its refusal; the startup
+// replay parks it straight back for the dead-letter write and never
+// re-posts it (codex r2 finding 1).
+func TestSpoolReplayParksRefusedEntriesWithoutRepost(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, calls1 := recordingDeliver(func([]pendingChannelInbound) error { return permanent422() })
+	c1 := newInboundCoalescer(time.Hour, nil)
+	c1.deliver = deliver1
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // disk full until restart
+	c1.spill = spool.spillBatch
+	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
+	c1.flushAll()
+	waitForCalls(t, calls1, []string{"1.0"})
+
+	// Restart: a fresh coalescer, the disk writable again.
+	var mu sync.Mutex
+	var written []deadLetterCall
+	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { t.Error("refused entry re-posted after restart"); return nil })
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	c2.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		written = append(written, deadLetterCall{channel, batch, cause})
+		return true
+	}
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("replay admitted %d entries, want 1", n)
+	}
+	waitFor(t, "replayed entry dead-lettered by the write retry", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(written) == 1
+	})
+	mu.Lock()
+	w := written[0]
+	mu.Unlock()
+	if w.batch[0].inbound.ProviderMessageID != "1.0" || w.batch[0].attempts != 1 || !strings.Contains(w.cause.Error(), "422") {
+		t.Fatalf("record must carry the entry, its attempt count and the original refusal: ts=%s attempts=%d cause=%v",
+			w.batch[0].inbound.ProviderMessageID, w.batch[0].attempts, w.cause)
+	}
+	if got := calls2(); len(got) != 0 {
+		t.Fatalf("the replay must not deliver a refused entry: %v", got)
+	}
+	if c2.pendingContains("C1", "1.0") {
+		t.Fatal("a replayed refused entry must not enter the pending buffer")
+	}
+}
+
+// Two stripped batch-mates resume their probes oldest first (codex r2
+// finding 3): restore() prepends, so without a sort the second stripped
+// entry would probe before the first.
+func TestStrippedProbesResumeInChronologicalOrder(t *testing.T) {
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) > 1 {
+			return permanent422()
+		}
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422() // refused WITH the attachment, accepted without
+		}
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPendingWithAttachment("C1", "1.0", "first", "/tmp/a.m4a"))
+	c.enqueue("C1", testPendingWithAttachment("C1", "2.0", "second", "/tmp/b.m4a"))
+	// Batch refused → probes 1.0, 2.0 refused with attachments → both
+	// stripped → the next window probes them again, oldest first.
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0", "2.0", "1.0", "2.0"})
+	if got := calls(); len(got) != 5 {
+		t.Fatalf("unexpected extra deliveries: %v", got)
+	}
+}
+
+// A reactions-only transient failure sets the backoff deadline even
+// though it arms no timer (codex r2 finding 2), so the reaction
+// overflow flush honors it.
+func TestReactionsOnlyTransientFailureSetsBackoffDeadline(t *testing.T) {
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.noteTransientFailure("C1")
+	r := testPending("C1", "1.0", "reaction")
+	r.reaction = true
+	c.restore("C1", []pendingChannelInbound{r})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.inBackoffLocked("C1") {
+		t.Fatal("reactions-only failure must leave the channel in backoff")
+	}
+	if _, armed := c.timers["C1"]; armed {
+		t.Fatal("reactions must still arm no timer (never a solo wake)")
+	}
+	if len(c.reactions["C1"]) != 1 {
+		t.Fatal("the reaction must be back in its side lane")
+	}
+}

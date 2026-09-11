@@ -462,6 +462,14 @@ func TestCoalescerIsolationStopsAtFirstTransientError(t *testing.T) {
 			t.Fatalf("%s still pending after delivery", ts)
 		}
 	}
+	// A delivered probe ends the transient run (codex r2 finding 4): the
+	// next unrelated failure starts at the window, not at a stale count.
+	c.mu.Lock()
+	n, inBackoff := c.transientFailures["C1"], c.inBackoffLocked("C1")
+	c.mu.Unlock()
+	if n != 0 || inBackoff {
+		t.Fatalf("backoff state must reset after the probes delivered: failures=%d inBackoff=%v", n, inBackoff)
+	}
 }
 
 // Finding 2: reactions are charged ONLY when their own group was

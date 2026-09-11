@@ -189,9 +189,9 @@ func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInb
 // out of the pending maps — and only the WRITE retries, on the same
 // doubling backoff as transient deliveries. A restart loses parked
 // entries like any in-memory state, so the shutdown drain gives the
-// write one last try and spools what still fails; the replay after
-// restart re-posts such an entry once, is refused again, and parks it
-// again — one POST per restart, never one per window.
+// write one last try and spools what still fails WITH their refusal
+// (pendingChannelInbound.refused); the replay after restart parks such
+// an entry straight back for the write — it is never re-posted.
 
 // parkedDeadLetter is one entry awaiting its dead-letter write, with
 // the rejection that retired it (the record's reason).
@@ -234,6 +234,10 @@ func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Durati
 // entries (c.closed) a straggler goes straight to the spool — nothing
 // may sit in memory past the final snapshot.
 func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) {
+	// The terminal disposition travels WITH the entry: any spill from
+	// here on (post-close straggler, the shutdown backstop) writes a
+	// spool line the replay parks straight back into the write retry.
+	p.refused = truncateReason(rejectionReasonText(cause))
 	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
@@ -339,9 +343,18 @@ func (c *inboundCoalescer) flushParkedDeadLetters() {
 				channel, len(failed), plural(len(failed), "y", "ies"))
 			continue
 		}
-		log.Printf("coalesce: shutdown chan=%s %d entr%s awaiting a dead-letter write spooled for startup replay (re-posted once at startup, refused again, then dead-lettered)",
+		log.Printf("coalesce: shutdown chan=%s %d entr%s awaiting a dead-letter write spooled with their refusal — the startup replay parks them for the write, never re-posts them",
 			channel, len(failed), plural(len(failed), "y", "ies"))
 	}
+}
+
+// rejectionReasonText is the cause as the dead-letter record and the
+// spool carry it.
+func rejectionReasonText(cause error) string {
+	if cause == nil {
+		return "refused"
+	}
+	return cause.Error()
 }
 
 func plural(n int, one, many string) string {
