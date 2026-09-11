@@ -81,6 +81,25 @@ type spooledInbound struct {
 	// the write retry — it is never enqueued for delivery again.
 	Refused  string `json:"refused,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
+	// Stripped (with Attempts) marks the ladder's stripped retry — the
+	// entry's attachments withheld after a refusal, the retry owed or
+	// in flight at shutdown: the replay seeds the ledger's outstanding
+	// verdict for its ts before admitting it, so a later copy of the
+	// message inherits the decision (codex r12 finding 1).
+	Stripped string `json:"stripped,omitempty"`
+	// VerdictTS marks a VERDICT record rather than a message: the
+	// rejection ladder RETIRED (Channel, VerdictTS) — dead-lettered, or
+	// delivered without its attachments (VerdictDelivered) — for the
+	// reason Verdict, at VerdictAt (unix seconds). Persisted by
+	// recordVerdict so a delayed Slack redelivery of the refused
+	// message after a restart is still a duplicate, not fresh bytes
+	// (codex r12 finding 2). Replay seeds every record still inside
+	// ladderVerdictRetention, and the seeding writes it again for the
+	// next restart.
+	VerdictTS        string `json:"verdict_ts,omitempty"`
+	Verdict          string `json:"verdict,omitempty"`
+	VerdictDelivered bool   `json:"verdict_delivered,omitempty"`
+	VerdictAt        int64  `json:"verdict_at,omitempty"`
 	// DeletedTS marks a DELETION record rather than a message: the
 	// sender deleted (Channel, DeletedTS). Persisted by recordDeletion
 	// so a deletion processed after a message was spooled — or in the
@@ -165,6 +184,31 @@ func (s *inboundSpool) recordDeletion(channel, ts string) bool {
 	return true
 }
 
+// recordVerdict appends a terminal verdict record for (channel, ts).
+// Same seal and durability contract as recordDeletion. Nil-safe; the
+// coalescer's recordVerdict hook.
+func (s *inboundSpool) recordVerdict(channel, ts string, v ladderVerdict) bool {
+	if s == nil || channel == "" || ts == "" || !v.retired {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sealed {
+		log.Printf("inbound spool: SEALED — refusing late verdict record chan=%s ts=%s", channel, ts)
+		return false
+	}
+	at := v.at
+	if at.IsZero() {
+		at = time.Now()
+	}
+	entry := spooledInbound{Channel: channel, VerdictTS: ts, Verdict: truncateReason(rejectionReasonText(v.cause)), VerdictDelivered: v.delivered, VerdictAt: at.Unix()}
+	if err := s.appendLinesLocked([]spooledInbound{entry}); err != nil {
+		log.Printf("inbound spool: verdict record write FAILED chan=%s ts=%s: %v", channel, ts, err)
+		return false
+	}
+	return true
+}
+
 // seal joins any in-flight spool write (every write holds mu end to
 // end) and refuses all subsequent ones. Main calls it as the last step
 // of shutdown, after flushAll: from seal's return onward no spool write
@@ -184,12 +228,12 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		entry := spooledInbound{
 			Channel: channel, Reaction: p.reaction, Inbound: p.inbound,
 			ThreadAnchor: p.threadAnchor, Preamble: p.preamble, Body: p.body, Files: p.files,
-			Isolate: p.isolate,
+			Isolate: p.isolate, Stripped: p.stripped,
 		}
 		if p.botQuotes {
 			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
 		}
-		if p.refused != "" {
+		if p.refused != "" || p.stripped != "" {
 			entry.Refused, entry.Attempts = p.refused, p.attempts
 		}
 		if p.hasReminderParts() {
@@ -263,7 +307,7 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				// The spool file stays for the next startup's retry; only
 				// the already-staged entries replay this time.
 				log.Printf("inbound spool: merging %s into %s FAILED: %v — replaying the staged file only; the spool retries next startup", s.path, rp, err)
-				salvagedDeletions = readDeletionRecords(s.path)
+				salvagedDeletions = readRecords(s.path)
 			} else if err := os.Remove(s.path); err != nil {
 				log.Printf("inbound spool: remove %s after merge: %v (next startup may replay duplicates; gc dedup keys bound the damage)", s.path, err)
 			}
@@ -336,7 +380,11 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 // readDeletionRecords returns only the deletion records in the spool
 // file at path (read-only, best-effort; a missing or oversized file
 // yields none).
-func readDeletionRecords(path string) []spooledInbound {
+// readRecords salvages the deletion and verdict records of a spool file
+// whose message entries could not be merged: both apply to the staged
+// entries and to messages admitted after the restart, so they are
+// replayed even when the file itself is left for the next startup.
+func readRecords(path string) []spooledInbound {
 	data, err := os.ReadFile(path)
 	if err != nil || len(data) > maxInboundSpoolBytes {
 		return nil
@@ -346,10 +394,15 @@ func readDeletionRecords(path string) []spooledInbound {
 	sc.Buffer(make([]byte, 0, 64<<10), maxInboundSpoolBytes)
 	for sc.Scan() {
 		var e spooledInbound
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.Channel == "" || e.DeletedTS == "" {
+		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.Channel == "" {
 			continue
 		}
-		out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
+		switch {
+		case e.DeletedTS != "":
+			out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
+		case e.VerdictTS != "":
+			out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt})
+		}
 	}
 	return out
 }
@@ -417,15 +470,32 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 			c.mu.Unlock()
 		}
 	}
+	// Verdict records seed the ledger BEFORE any message entry is
+	// admitted: a copy of a retired message in the same file (a twin
+	// spooled beside its dead-lettered original) is then dropped at
+	// admission like any late duplicate, and the seeding writes each
+	// unexpired record again for the next restart.
+	now := time.Now()
+	for _, e := range entries {
+		if e.VerdictTS == "" || c == nil {
+			continue
+		}
+		v := ladderVerdict{retired: true, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
+		if v.expired(now) {
+			continue
+		}
+		log.Printf("inbound spool: chan=%s ts=%s verdict restored — the rejection ladder %s before the restart; every later copy is a duplicate", e.Channel, e.VerdictTS, v.disposition())
+		c.seedVerdict(e.Channel, e.VerdictTS, v)
+	}
 	n := 0
 	for _, e := range entries {
-		if e.DeletedTS != "" {
+		if e.DeletedTS != "" || e.VerdictTS != "" {
 			continue
 		}
 		p := pendingChannelInbound{
 			inbound: e.Inbound, reaction: e.Reaction,
 			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, preambleLean: e.PreambleLean, botQuotes: e.BotQuotes, body: e.Body, files: e.Files,
-			isolate: e.Isolate,
+			isolate: e.Isolate, stripped: e.Stripped,
 		}
 		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
 			applyDeletion(&p)
@@ -445,6 +515,16 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 				n++
 			}
 			continue
+		}
+		if e.Stripped != "" {
+			// The stripped retry, owed or in flight at shutdown: its
+			// disposition is the ledger's outstanding verdict for the
+			// message, seeded before the copy is admitted so a later
+			// copy adopts it and the landing settles it (codex r12
+			// finding 1).
+			p.attempts = e.Attempts
+			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — replayed as the stripped retry, its verdict restored", e.Channel, e.Inbound.ProviderMessageID, e.Stripped)
+			c.seedVerdict(e.Channel, e.Inbound.ProviderMessageID, ladderVerdict{cause: errors.New(e.Stripped)})
 		}
 		c.enqueue(e.Channel, p)
 		n++

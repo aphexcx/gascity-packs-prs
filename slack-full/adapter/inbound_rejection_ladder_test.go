@@ -1780,3 +1780,106 @@ func TestSpoolReplayRestoresTheRetiredVerdict(t *testing.T) {
 		t.Fatalf("the refused bytes must never go out after the restart: %v", got)
 	}
 }
+
+// --- codex r12 ---------------------------------------------------------------
+
+// A stripped retry spooled at shutdown carries its verdict across the
+// restart (r12 finding 1): the spool kept the isolate flag but not the
+// disposition, so after the replayed stripped copy landed, landVerdicts
+// found no verdict to settle, onLadder said no, and an urgent twin
+// posted the original attachments. The disposition now travels on the
+// entry (stripped) and the replay seeds the verdict before admission.
+func TestSpoolReplayRestoresTheStrippedVerdict(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, calls1 := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422()
+		}
+		return errors.New("dial tcp: connection refused") // gc is down before the stripped retry lands
+	})
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver1
+	c1.spill = spool.spillBatch
+	c1.enqueue("C1", testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"))
+	waitForCalls(t, calls1, []string{"1.0", "1.0"}) // refused with the file; the stripped retry fails transiently
+	c1.flushAll()                                   // the stripped retry is spooled, its disposition with it
+
+	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("replay admitted %d entries, want 1", n)
+	}
+	waitForCalls(t, calls2, []string{"1.0"}) // the replayed stripped copy lands
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("after the replayed stripped copy lands the ladder must still own the message — the urgent twin asks next, original attachments and all")
+	}
+	c2.enqueue("C1", testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"))
+	time.Sleep(60 * time.Millisecond)
+	if got := calls2(); len(got) != 1 {
+		t.Fatalf("the refused bytes must never go out after the restart: %v", got)
+	}
+}
+
+// Verdict retention (r12 finding 2): an outstanding stripped retry never
+// expires by time — the retry is the message's delivery, however long
+// the outage; a terminal verdict (dead-lettered, delivered without
+// attachments) is kept for Slack's whole redelivery window (delayed
+// events and retries for up to 24 hours), so a late redelivery of a
+// refused message is still a duplicate, not fresh bytes.
+func TestVerdictRetentionTable(t *testing.T) {
+	rows := []struct {
+		name string
+		v    ladderVerdict
+		age  time.Duration
+		want bool
+	}{
+		{"an outstanding stripped retry never expires by time", ladderVerdict{}, 30 * time.Hour, true},
+		{"a dead-letter inside Slack's 24 h redelivery window", ladderVerdict{retired: true}, 23 * time.Hour, true},
+		{"a stripped delivery inside the window", ladderVerdict{retired: true, delivered: true}, 23 * time.Hour, true},
+		{"a dead-letter past the window", ladderVerdict{retired: true}, 26 * time.Hour, false},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			c := newInboundCoalescer(time.Hour, nil)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			now := time.Now()
+			c.recordVerdictLocked("C1", "1.0", row.v, now.Add(-row.age))
+			if _, ok := c.verdictLocked("C1", "1.0", now); ok != row.want {
+				t.Fatalf("live=%v, want %v", ok, row.want)
+			}
+		})
+	}
+}
+
+// A terminal verdict is a durable spool record (r12 finding 2, across
+// the restart the ledger does not survive): dead-lettering a message
+// writes its verdict beside the deletion records, the replay seeds it
+// and writes it again for the next restart, and a delayed redelivery
+// after either restart is dropped as a duplicate.
+func TestTerminalVerdictSurvivesRestartViaTheSpool(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, _ := recordingDeliver(func([]pendingChannelInbound) error { return permanent422() })
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver1
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c1.recordVerdict = spool.recordVerdict
+	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
+	waitFor(t, "the dead-letter", func() bool { return c1.onLadder("C1", "1.0") })
+	for restart := 1; restart <= 2; restart++ {
+		deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+		c := newInboundCoalescer(20*time.Millisecond, nil)
+		c.deliver = deliver
+		c.recordVerdict = spool.recordVerdict
+		spool.replayInto(c)
+		if !c.onLadder("C1", "1.0") {
+			t.Fatalf("restart %d: the dead-letter verdict must survive the restart", restart)
+		}
+		c.enqueue("C1", testPending("C1", "1.0", "a delayed redelivery after the restart"))
+		time.Sleep(60 * time.Millisecond)
+		if got := calls(); len(got) != 0 {
+			t.Fatalf("restart %d: the refused bytes must never go out: %v", restart, got)
+		}
+	}
+}

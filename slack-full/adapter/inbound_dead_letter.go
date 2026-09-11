@@ -172,6 +172,9 @@ func rejectionStatusLine(cause error) string {
 // them. A p with no attachments is returned unchanged, so a repeat
 // call adds nothing.
 func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInbound {
+	// The disposition travels on the entry: this copy IS the stripped
+	// retry, whatever the ledger remembers after a restart.
+	p.stripped = truncateReason(rejectionReasonText(cause))
 	if len(p.inbound.Attachments) == 0 {
 		return p
 	}
@@ -266,14 +269,20 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// here on (post-close straggler, the shutdown backstop) writes a
 	// spool line the replay parks straight back into the write retry.
 	p.refused = truncateReason(rejectionReasonText(cause))
-	c.mu.Lock()
 	// The park IS the ladder's retirement of this message, whether
-	// charge() just decided it (the verdict is already recorded) or the
-	// spool replay is re-parking a retirement decided before a restart
-	// (codex r11 finding 4: the ledger is memory, and without the
-	// verdict a redelivery admitted after the restart entered delivery
-	// as a plain copy and posted the refused bytes).
-	c.recordVerdictLocked(channel, p.inbound.ProviderMessageID, ladderVerdict{retired: true, cause: cause}, time.Now())
+	// charge() just decided it (recorded and persisted there already —
+	// the second record is idempotent) or the spool replay is re-parking
+	// a retirement decided before a restart (codex r11 finding 4: the
+	// ledger is memory, and without the verdict a redelivery admitted
+	// after the restart entered delivery as a plain copy and posted the
+	// refused bytes). A park from the replay persists it too, so the
+	// verdict outlives the write's eventual success (codex r12).
+	verdict := ladderVerdict{retired: true, cause: cause}
+	c.mu.Lock()
+	c.retireLocked(channel, p.inbound.ProviderMessageID, verdict, time.Now())
+	c.mu.Unlock()
+	c.persistVerdict(channel, p.inbound.ProviderMessageID, verdict)
+	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
 		return

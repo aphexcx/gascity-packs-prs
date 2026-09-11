@@ -1740,6 +1740,7 @@ func main() {
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
+		cfg.coalescer.recordVerdict = cfg.inboundSpool.recordVerdict
 		// Deletions persist alongside spilled entries so a restart still
 		// replays a deleted message as its notice (gp-0qw) — but ONLY
 		// while draining: the spool exists solely across a
