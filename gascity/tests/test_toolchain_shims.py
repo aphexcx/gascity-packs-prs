@@ -253,7 +253,8 @@ class PnpmShimVerdictTests(unittest.TestCase):
 
     def test_help_and_version_requests_run_as_is(self) -> None:
         proj = self.fx.project()
-        for argv in (["run", "--help"], ["install", "--help"], ["-h", "exec", "vitest"], ["add", "x", "--help"], ["-v"], ["--version", "run", "build"]):
+        # the last value of the flag decides (round 28): `--no-help --help` asks
+        for argv in (["run", "--help"], ["install", "--help"], ["-h", "exec", "vitest"], ["add", "x", "--help"], ["-v"], ["--version", "run", "build"], ["install", "--no-help", "--help"], ["install", "--help=false", "--help"], ["--no-help", "install", "-h"]):
             self.fx.reset()
             r = self.fx.run("pnpm", *argv, cwd=proj)
             self.assertEqual(r.returncode, 0, (argv, r.stderr))
@@ -363,6 +364,22 @@ class PnpmShimVerdictTests(unittest.TestCase):
             self.assertEqual(r.returncode, 0, (argv, r.stderr))
             self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
             self.assertFalse(in_sync(proj), argv)
+        # an empty script is no script to pnpm (`"clean": ""` runs the built-in "Removing
+        # node_modules", measured on 11.20; a blank `"purge": "   "` is one and runs as a
+        # script): the built-in under the lock with no question asked; the blank one a
+        # project command (round 28)
+        (proj / "package.json").write_text('{"name":"p","private":true,"scripts":{"clean":"","purge":"   "}}\n', encoding="utf-8")
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        r = self.fx.run("pnpm", "clean", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|clean"])
+        self.assertFalse(in_sync(proj))
+        self.fx.reset()
+        r = self.fx.run("pnpm", "purge", cwd=proj)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertGreaterEqual(len(self.fx.checks()), 1)     # asked first: a project command
+        self.assertEqual(self.fx.argv()[-1], "purge")
 
 
 class PnpmShimTests(unittest.TestCase):
@@ -1104,8 +1121,9 @@ class PnpmShimGateRoundTests(unittest.TestCase):
             self.assertEqual(r.returncode, 1, r.stderr)
             self.assertIn(f"another lane install (pid {holder.pid}) has held", r.stderr)
             self.assertEqual(self.fx.all_calls(), [])     # not even asked: the holder comes first
-            # --no-help / --help=false / -h false are not help requests: installs, under the lock
-            for argv in (["--no-help", "install"], ["install", "--help=false"], ["-h", "false", "install"], ["--version=false", "add", "x"]):
+            # a help flag whose last value is off (--no-help, --help=false, -h false, and
+            # --help --no-help, round 28) is no help request: installs, under the lock
+            for argv in (["--no-help", "install"], ["install", "--help=false"], ["-h", "false", "install"], ["--version=false", "add", "x"], ["install", "--help", "--no-help"], ["--help", "--no-help", "install"], ["-h", "install", "--help=false"]):
                 self.fx.reset()
                 r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
                 self.assertEqual(r.returncode, 1, (argv, r.stderr))

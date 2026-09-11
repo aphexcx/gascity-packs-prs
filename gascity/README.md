@@ -367,8 +367,10 @@ the wrapper acts on are read again with the command's own table, as pnpm
 reads them:
 
 - **info** (`store`, `config`, `list`, `outdated`, `--version`, `help`, ...,
-  and any command carrying `-h`/`--help`/`-v`/`--version` in pnpm's option
-  scope; `--no-help` and `--help=false` ask for none) runs as is and touches no lock.
+  and any command whose last `-h`/`--help`/`-v`/`--version` in pnpm's option
+  scope is on; `--no-help`, `--help=false` and `--help --no-help` ask for
+  none, `--no-help --help` asks, as pnpm's parser keeps the last value) runs
+  as is and touches no lock.
 - **mutate** (`install`, `ci`, `add`, `remove`, `update`, `link`, `prune`,
   `dedupe`, `rebuild`, `clean`, `purge`, ... every pnpm 11.20 built-in that
   can change `node_modules`) runs where typed, arguments unchanged, under
@@ -376,7 +378,8 @@ reads them:
   script named `clean`, `purge`, `rebuild` (`rb`), `setup` or `deploy` in
   the manifest of the directory pnpm acts on wins over the built-in for
   pnpm, so it is a project command here too, unless `pnpm pm <name>` forces
-  the built-in.
+  the built-in; an empty script (`"clean": ""`) is no script to pnpm and
+  none here.
 - **project** (`run`, `exec`, `test`, a bare script or bin name, anything
   else) first makes sure the lane is in sync, then runs.
 
