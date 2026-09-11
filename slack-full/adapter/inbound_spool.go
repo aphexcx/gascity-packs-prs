@@ -71,6 +71,10 @@ type spooledInbound struct {
 	BotQuotes    bool   `json:"bot_quotes,omitempty"`
 	Body         string `json:"body,omitempty"`
 	Files        string `json:"files,omitempty"`
+	// Isolate carries pendingChannelInbound.isolate across a restart
+	// (gp-sgu7): a member of a batch gc refused resumes as a single
+	// probe on replay instead of re-posting the refused batch.
+	Isolate bool `json:"isolate,omitempty"`
 	// DeletedTS marks a DELETION record rather than a message: the
 	// sender deleted (Channel, DeletedTS). Persisted by recordDeletion
 	// so a deletion processed after a message was spooled — or in the
@@ -174,6 +178,7 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		entry := spooledInbound{
 			Channel: channel, Reaction: p.reaction, Inbound: p.inbound,
 			ThreadAnchor: p.threadAnchor, Preamble: p.preamble, Body: p.body, Files: p.files,
+			Isolate: p.isolate,
 		}
 		if p.botQuotes {
 			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
@@ -411,6 +416,7 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		p := pendingChannelInbound{
 			inbound: e.Inbound, reaction: e.Reaction,
 			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, preambleLean: e.PreambleLean, botQuotes: e.BotQuotes, body: e.Body, files: e.Files,
+			isolate: e.Isolate,
 		}
 		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
 			applyDeletion(&p)

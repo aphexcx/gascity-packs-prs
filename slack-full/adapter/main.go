@@ -741,6 +741,11 @@ type config struct {
 	// how-to this adapter lifetime (item 3 — the per-message reminder
 	// carries only the registered one-line template). Nil-safe.
 	replyHelp *oncePerChannel
+	// postFailures remembers, per channel, the last coalesced-POST
+	// failure text logged, so an outage logs one line per distinct
+	// failure instead of one per attempt (gp-sgu7). Nil-safe: nil logs
+	// every failure (bare test configs).
+	postFailures *repeatedFailureLog
 	// reminderTextBudget bounds one channel delivery's Text field
 	// (gp-0qw + gp-9gc): boilerplate attaches only inside the budget,
 	// and a body that alone overflows it is tail-trimmed behind a
@@ -1719,6 +1724,7 @@ func main() {
 	cfg.deliveredIDs = newDeliveredIDs()
 	cfg.channelNames = newChannelNameCache()
 	cfg.replyHelp = newOncePerChannel()
+	cfg.postFailures = newRepeatedFailureLog()
 	cfg.bindingCheck = newBindingCheckCache()
 	cfg.coalescer = newInboundCoalescer(cfg.coalesceWindow, deliveryPolicy)
 	// Shutdown must await in-flight event goroutines before draining the
@@ -1763,7 +1769,7 @@ func main() {
 	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
 		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
 		if err != nil {
-			log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) stay buffered and the write retries next window: %v",
+			log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
 				channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
 			return false
 		}

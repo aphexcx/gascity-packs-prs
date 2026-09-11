@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -134,11 +137,12 @@ func rejectionStatusLine(cause error) string {
 
 // withholdAttachments returns p with its attachments removed and a
 // notice naming their local paths and the refusal appended to the
-// message unit — into the files part (so the head-protected composer
-// keeps it: the files block is never shed) with Text re-folded, or
-// straight onto Text for a partless legacy/spool-replayed entry. The
-// files themselves stay where downloadSlackFiles put them. A p with
-// no attachments is returned unchanged, so a repeat call adds nothing.
+// message unit — always into the files part (so the head-protected
+// composer keeps it: the files block is never shed) with Text
+// re-folded; a partless legacy/spool-replayed entry is promoted to
+// parts first. The files themselves stay where downloadSlackFiles put
+// them. A p with no attachments is returned unchanged, so a repeat
+// call adds nothing.
 func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInbound {
 	if len(p.inbound.Attachments) == 0 {
 		return p
@@ -154,21 +158,236 @@ func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInb
 	notice := fmt.Sprintf("[%d %s withheld — gc refused this message with them attached (%s); the files remain at %s]",
 		len(paths), noun, neutralizeMarkupBoundaries(rejectionStatusLine(cause)), strings.Join(paths, ", "))
 	p.inbound.Attachments = nil
-	if p.hasReminderParts() {
-		if p.files == "" {
-			p.files = notice
-		} else {
-			p.files += "\n" + notice
+	if !p.hasReminderParts() {
+		// A partless legacy/spool-replayed entry is PROMOTED to parts
+		// here: its text becomes the body, and a thread anchor is
+		// synthesized exactly as the single-entry composer's legacy
+		// fallback would. Appending the notice to the flat Text instead
+		// would put it at the TAIL of the body, which the head-protected
+		// composer trims first on a long message — losing the paths
+		// (codex r1 finding 4). In the files part it is never shed.
+		if rt := p.inbound.ReplyToMessageID; !p.reaction && rt != "" && rt != p.inbound.ProviderMessageID {
+			p.threadAnchor = formatThreadReplyAnchor(rt, "", "")
 		}
-		p.inbound.Text = p.foldedText()
-		return p
+		p.body = strings.TrimRight(p.inbound.Text, "\n")
 	}
-	if strings.TrimSpace(p.inbound.Text) == "" {
-		p.inbound.Text = notice
+	if p.files == "" {
+		p.files = notice
 	} else {
-		p.inbound.Text = strings.TrimRight(p.inbound.Text, "\n") + "\n\n" + notice
+		p.files += "\n" + notice
 	}
+	p.inbound.Text = p.foldedText()
 	return p
+}
+
+// --- dead-letter writes that did not confirm (gp-sgu7, codex r1 finding 1) --
+//
+// The ladder's verdict (dead-letter) is final: once gc has refused the
+// entry's bytes the entry NEVER re-enters the delivery path. When the
+// dead-letter hook cannot confirm the write (disk full, a planted
+// symlink, a bad override), the entry is PARKED here — held in memory,
+// out of the pending maps — and only the WRITE retries, on the same
+// doubling backoff as transient deliveries. A restart loses parked
+// entries like any in-memory state, so the shutdown drain gives the
+// write one last try and spools what still fails; the replay after
+// restart re-posts such an entry once, is refused again, and parks it
+// again — one POST per restart, never one per window.
+
+// parkedDeadLetter is one entry awaiting its dead-letter write, with
+// the rejection that retired it (the record's reason).
+type parkedDeadLetter struct {
+	p     pendingChannelInbound
+	cause error
+}
+
+// deadLetterRetryBase is the first retry delay for a failed dead-letter
+// write on a channel: the coalesce window, or one second when
+// coalescing is disabled (the coalescer then only sees spool replays).
+func (c *inboundCoalescer) deadLetterRetryBase() time.Duration {
+	if c.window > 0 {
+		return c.window
+	}
+	return time.Second
+}
+
+// armDeadLetterRetryLocked arms the channel's write-retry timer if none
+// is armed, at the backoff for its current run of write failures (at
+// least one). Caller holds c.mu. Returns the delay and whether the
+// timer was armed by this call.
+func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Duration, bool) {
+	if _, armed := c.deadLetterTimers[channel]; armed {
+		return 0, false
+	}
+	n := c.deadLetterWriteFailures[channel]
+	if n < 1 {
+		n = 1
+	}
+	delay := transientRetryDelay(c.deadLetterRetryBase(), n)
+	c.deadLetterTimers[channel] = time.AfterFunc(delay, func() { c.retryParkedDeadLetters(channel) })
+	return delay, true
+}
+
+// parkDeadLetter takes an entry whose dead-letter write the hook did
+// not confirm OUT of the delivery path and schedules the write's
+// retry. Called by charge() with the channel's delivery mutex held and
+// c.mu NOT held. After the shutdown drain has flushed the parked
+// entries (c.closed) a straggler goes straight to the spool — nothing
+// may sit in memory past the final snapshot.
+func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) {
+	c.mu.Lock()
+	if c.closed {
+		c.spillLateLocked(channel, []pendingChannelInbound{p})
+		return
+	}
+	c.parkedDeadLetters[channel] = append(c.parkedDeadLetters[channel], parkedDeadLetter{p: p, cause: cause})
+	parked := len(c.parkedDeadLetters[channel])
+	if c.deadLetterWriteFailures[channel] < 1 {
+		c.deadLetterWriteFailures[channel] = 1
+	}
+	delay, armed := c.armDeadLetterRetryLocked(channel)
+	c.mu.Unlock()
+	if armed {
+		log.Printf("coalesce: chan=%s ts=%s dead-letter write NOT confirmed — parked out of the delivery path (%d parked; never re-posted to gc); the write retries in %s",
+			channel, p.inbound.ProviderMessageID, parked, delay)
+		return
+	}
+	log.Printf("coalesce: chan=%s ts=%s dead-letter write NOT confirmed — parked out of the delivery path (%d parked; never re-posted to gc); a write retry is already scheduled",
+		channel, p.inbound.ProviderMessageID, parked)
+}
+
+// retryParkedDeadLetters is the write-retry timer callback: every
+// parked entry of the channel is offered to the hook again; the ones
+// it confirms retire, the rest stay parked and the timer re-arms on
+// the next backoff step. Serialized by deadLetterMu against the
+// shutdown flush so an entry is written at most once.
+func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
+	c.deadLetterMu.Lock()
+	defer c.deadLetterMu.Unlock()
+	c.mu.Lock()
+	snapshot := append([]parkedDeadLetter(nil), c.parkedDeadLetters[channel]...)
+	hook := c.deadLetter
+	c.mu.Unlock()
+	if hook == nil {
+		return
+	}
+	var kept []parkedDeadLetter
+	for _, e := range snapshot {
+		if hook(channel, []pendingChannelInbound{e.p}, e.cause) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Entries parked while the hook ran were appended after the
+	// snapshot (appends happen only under c.mu, removals only here and
+	// in the shutdown flush, which deadLetterMu excludes).
+	newer := c.parkedDeadLetters[channel][len(snapshot):]
+	remaining := append(kept, newer...)
+	delete(c.deadLetterTimers, channel)
+	written := len(snapshot) - len(kept)
+	if len(remaining) == 0 {
+		delete(c.parkedDeadLetters, channel)
+		n := c.deadLetterWriteFailures[channel]
+		delete(c.deadLetterWriteFailures, channel)
+		log.Printf("coalesce: chan=%s %d parked entr%s dead-lettered after %d failed write attempt(s)", channel, written, plural(written, "y", "ies"), n)
+		return
+	}
+	c.parkedDeadLetters[channel] = remaining
+	c.deadLetterWriteFailures[channel]++
+	n := c.deadLetterWriteFailures[channel]
+	delay, _ := c.armDeadLetterRetryLocked(channel)
+	if _, worthy := backoffLogWorthy(c.deadLetterRetryBase(), n); worthy || written > 0 {
+		log.Printf("coalesce: chan=%s dead-letter write still failing (%d written, %d parked) after attempt #%d — next write retry in %s%s",
+			channel, written, len(remaining), n, delay, backoffCapSuffix(delay))
+	}
+}
+
+// flushParkedDeadLetters is the shutdown backstop, run by flushAll after
+// the pending drain: every parked entry gets one more write; what still
+// fails is spooled for startup replay (or logged LOST without a spool).
+func (c *inboundCoalescer) flushParkedDeadLetters() {
+	c.deadLetterMu.Lock()
+	defer c.deadLetterMu.Unlock()
+	c.mu.Lock()
+	parked := c.parkedDeadLetters
+	c.parkedDeadLetters = make(map[string][]parkedDeadLetter)
+	for channel, t := range c.deadLetterTimers {
+		t.Stop()
+		delete(c.deadLetterTimers, channel)
+	}
+	hook, spill := c.deadLetter, c.spill
+	c.mu.Unlock()
+	channels := make([]string, 0, len(parked))
+	for channel := range parked {
+		channels = append(channels, channel)
+	}
+	sort.Strings(channels)
+	for _, channel := range channels {
+		var failed []pendingChannelInbound
+		for _, e := range parked[channel] {
+			if hook != nil && hook(channel, []pendingChannelInbound{e.p}, e.cause) {
+				continue
+			}
+			failed = append(failed, e.p)
+		}
+		if len(failed) == 0 {
+			continue
+		}
+		if spill == nil || !spill(channel, failed) {
+			log.Printf("coalesce: SHUTDOWN LOSS chan=%s %d entr%s awaiting a dead-letter write could not be written or spooled — LOST (already acked to Slack)",
+				channel, len(failed), plural(len(failed), "y", "ies"))
+			continue
+		}
+		log.Printf("coalesce: shutdown chan=%s %d entr%s awaiting a dead-letter write spooled for startup replay (re-posted once at startup, refused again, then dead-lettered)",
+			channel, len(failed), plural(len(failed), "y", "ies"))
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// --- one log line per distinct failure (gp-sgu7 contract 3) ---------------
+
+// repeatedFailureLog remembers, per channel, the text of the last
+// delivery failure logged, so a standing condition (an outage, a
+// refusal) logs once and again only when the failure CHANGES; a
+// success clears the channel. Nil-safe: a nil receiver reports every
+// failure as changed.
+type repeatedFailureLog struct {
+	mu   sync.Mutex
+	last map[string]string
+}
+
+func newRepeatedFailureLog() *repeatedFailureLog {
+	return &repeatedFailureLog{last: make(map[string]string)}
+}
+
+// changed records text as the channel's latest failure and reports
+// whether it differs from the one recorded before (true on the first).
+func (r *repeatedFailureLog) changed(channel, text string) bool {
+	if r == nil {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev, seen := r.last[channel]
+	r.last[channel] = text
+	return !seen || prev != text
+}
+
+// clear forgets the channel's last failure (its next one logs again).
+func (r *repeatedFailureLog) clear(channel string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.last, channel)
 }
 
 // inboundDeadLetterRecord is one JSONL line in a channel's dead-letter

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -96,12 +97,16 @@ func TestWithholdAttachmentsNamesPathsInText(t *testing.T) {
 			t.Fatalf("the notice must carry the status line, not gc's JSON body:\n%s", got.inbound.Text)
 		}
 	})
-	t.Run("legacy entry (no parts) appends to Text", func(t *testing.T) {
+	t.Run("legacy entry (no parts) is promoted: text becomes the body, the notice the files part", func(t *testing.T) {
 		p := testPendingWithAttachment("C1", "1.0", "old spool line", "/tmp/store/C1/1.0-audio.m4a")
 		got := withholdAttachments(p, cause)
-		if len(got.inbound.Attachments) != 0 || got.hasReminderParts() {
-			t.Fatalf("legacy entry must stay partless and lose its attachments: %+v", got)
+		if len(got.inbound.Attachments) != 0 || !got.hasReminderParts() {
+			t.Fatalf("legacy entry must lose its attachments and gain parts (codex r1 finding 4): %+v", got)
 		}
+		if got.body != "old spool line" || !strings.Contains(got.files, "/tmp/store/C1/1.0-audio.m4a") {
+			t.Fatalf("body/files split wrong: body=%q files=%q", got.body, got.files)
+		}
+		// The folded Text reads exactly as the old flat form did.
 		if !strings.HasPrefix(got.inbound.Text, "old spool line\n\n[") || !strings.Contains(got.inbound.Text, "/tmp/store/C1/1.0-audio.m4a") {
 			t.Fatalf("unexpected text:\n%s", got.inbound.Text)
 		}
@@ -331,5 +336,210 @@ func TestSweepSkipsChannelInBackoff(t *testing.T) {
 	for _, s := range swept {
 		s.mu.Unlock()
 		c.endDelivery()
+	}
+}
+
+// --- codex r1 on gp-sgu7: the backoff deadline holds on every early-flush path
+
+// A channel waiting out a transient-failure backoff keeps an over-cap
+// buffer instead of POSTing it on every enqueue, and a SIGHUP reconcile
+// keeps the deadline instead of collapsing it to the one-second cap
+// cadence (codex r1 finding 2). State is set as restore() leaves it: a
+// failure run, a deadline, and the armed backoff timer.
+func TestOverCapEnqueueAndReconcileHonorBackoffDeadline(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10
+	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
+	c.gen["C1"]++
+	g := c.gen["C1"]
+	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
+	c.mu.Unlock()
+	for i := 0; i < maxCoalescePerChannel+5; i++ {
+		c.enqueue("C1", testPending("C1", fmt.Sprintf("%d.0", i+1), "burst during outage"))
+	}
+	c.reconcileTimers()
+	time.Sleep(120 * time.Millisecond)
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("an over-cap buffer in backoff must not POST early (enqueue or reconcile): %v", got)
+	}
+	c.mu.Lock()
+	pending := len(c.pending["C1"])
+	c.mu.Unlock()
+	if pending != maxCoalescePerChannel+5 {
+		t.Fatalf("buffer must keep every item through the backoff, got %d", pending)
+	}
+}
+
+// A reconcile on a channel whose backed-off retry is already DUE fires
+// it promptly (the cap cadence) rather than waiting a full backed-off
+// delay again.
+func TestReconcileFiresAnOverdueBackoffRetryPromptly(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "a"))
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10                        // a 5-minute backoff...
+	c.retryNotBefore["C1"] = time.Now().Add(-time.Second) // ...whose deadline has passed
+	c.mu.Unlock()
+	c.reconcileTimers()
+	waitForCalls(t, calls, []string{"1.0"})
+}
+
+// A member flagged for isolation survives the spool: a restart resumes
+// the single probes instead of re-posting the refused batch.
+func TestSpoolCarriesIsolateFlag(t *testing.T) {
+	dir := t.TempDir()
+	s := newInboundSpool(dir + "/spool.jsonl")
+	p := testPending("C1", "1.0", "refused member")
+	p.isolate = true
+	if !s.spillBatch("C1", []pendingChannelInbound{p, testPending("C1", "2.0", "plain")}) {
+		t.Fatal("spill must confirm")
+	}
+	entries, done := s.consume()
+	defer done()
+	if len(entries) != 2 {
+		t.Fatalf("want 2 spooled entries, got %d", len(entries))
+	}
+	if !entries[0].Isolate || entries[1].Isolate {
+		t.Fatalf("isolate flag must round-trip per entry: %+v / %+v", entries[0].Isolate, entries[1].Isolate)
+	}
+}
+
+// A stripped retry posts alone: a batch-mate never takes its blame and a
+// second refusal charges IT (the incident's second window, with a newer
+// message buffered beside it).
+func TestStrippedRetryPostsAloneBesideNewerMessages(t *testing.T) {
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		for _, p := range batch {
+			if p.inbound.ProviderMessageID == "1.0" {
+				return permanent422()
+			}
+		}
+		return nil
+	})
+	dead := make(chan deadLetterCall, 4)
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		dead <- deadLetterCall{channel, batch, cause}
+		return true
+	}
+	c.enqueue("C1", testPendingWithAttachment("C1", "1.0", "voice memo", "/tmp/x/memo.m4a"))
+	waitForCalls(t, calls, []string{"1.0"})
+	c.enqueue("C1", testPending("C1", "2.0", "newer"))
+	// The stripped 1.0 probes alone (refused → dead-letter), then 2.0
+	// posts as its own batch and delivers.
+	waitForCalls(t, calls, []string{"1.0", "1.0", "2.0"})
+	select {
+	case call := <-dead:
+		if len(call.batch) != 1 || call.batch[0].inbound.ProviderMessageID != "1.0" {
+			t.Fatalf("dead letter must be 1.0 alone: %+v", call.batch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stripped retry refused again must dead-letter")
+	}
+	if c.pendingContains("C1", "2.0") {
+		t.Fatal("the newer message must have delivered")
+	}
+}
+
+// --- codex r1 finding 4: a legacy entry keeps the withheld paths --------------
+
+// A partless legacy/spool-replayed entry is promoted to parts by the
+// withholding so the notice lives in the protected files part: a long
+// body is tail-trimmed by the head-protected composer, the notice is
+// not.
+func TestWithholdAttachmentsPromotesLegacyEntryAndSurvivesTrim(t *testing.T) {
+	long := strings.Repeat("founder words ", 300) // ~4200 chars
+	p := pendingChannelInbound{inbound: externalInboundMessage{
+		ProviderMessageID: "10.0",
+		ReplyToMessageID:  "9.0",
+		Text:              long + "\n",
+		Attachments:       []externalAttachment{{ProviderID: "F1", URL: "file:///tmp/x/memo.m4a", MIMEType: "audio/mp4"}},
+	}}
+	q := withholdAttachments(p, permanent422())
+	if !q.hasReminderParts() {
+		t.Fatal("legacy entry must be promoted to parts")
+	}
+	if q.body != long {
+		t.Fatalf("body must be the original text, got %d chars", len(q.body))
+	}
+	if !strings.Contains(q.files, "/tmp/x/memo.m4a") || q.threadAnchor == "" {
+		t.Fatalf("files part must name the path and the thread anchor must be synthesized: files=%q anchor=%q", q.files, q.threadAnchor)
+	}
+	if q.inbound.Text != q.foldedText() {
+		t.Fatal("Text must be the re-folded parts")
+	}
+	parts, ok := q.reminderParts("C1")
+	if !ok {
+		t.Fatal("promoted entry must expose parts to the composer")
+	}
+	composed, _, _, _, trimmed := composeChannelReminderText(parts, "", "", 1000)
+	if !trimmed {
+		t.Fatal("fixture must overflow the budget so the body is trimmed")
+	}
+	if !strings.Contains(composed, "/tmp/x/memo.m4a") {
+		t.Fatalf("the withheld-attachment notice must survive the trim; composed=%q", composed)
+	}
+	// Idempotent: a second call adds nothing.
+	if again := withholdAttachments(q, permanent422()); again.files != q.files || again.inbound.Text != q.inbound.Text {
+		t.Fatal("withholding must be idempotent")
+	}
+}
+
+// --- codex r1 finding 5: one log line per state change -----------------------
+
+func TestBackoffLogWorthyTable(t *testing.T) {
+	base := 8 * time.Second
+	rows := []struct {
+		n      int
+		delay  time.Duration
+		worthy bool
+	}{
+		{1, 8 * time.Second, true},    // first failure
+		{2, 16 * time.Second, true},   // doubled
+		{3, 32 * time.Second, true},   // doubled
+		{6, 256 * time.Second, true},  // doubled
+		{7, 5 * time.Minute, true},    // reached the cap: logged once...
+		{8, 5 * time.Minute, false},   // ...then silent at the cap
+		{100, 5 * time.Minute, false}, // still silent
+	}
+	for _, r := range rows {
+		delay, worthy := backoffLogWorthy(base, r.n)
+		if delay != r.delay || worthy != r.worthy {
+			t.Fatalf("n=%d: got (%s, %v), want (%s, %v)", r.n, delay, worthy, r.delay, r.worthy)
+		}
+	}
+	// A digest interval above the cap: one line, then silence.
+	if _, worthy := backoffLogWorthy(time.Hour, 2); worthy {
+		t.Fatal("a cadence that cannot change must not log again")
+	}
+}
+
+func TestRepeatedFailureLogLogsOncePerDistinctFailure(t *testing.T) {
+	var r *repeatedFailureLog
+	if !r.changed("C1", "x") {
+		t.Fatal("nil receiver must report every failure")
+	}
+	r = newRepeatedFailureLog()
+	if !r.changed("C1", "422 refused") {
+		t.Fatal("first failure logs")
+	}
+	if r.changed("C1", "422 refused") {
+		t.Fatal("the same failure again is silent")
+	}
+	if !r.changed("C1", "dial tcp: refused") {
+		t.Fatal("a different failure logs")
+	}
+	if !r.changed("C2", "dial tcp: refused") {
+		t.Fatal("channels are independent")
+	}
+	r.clear("C1")
+	if !r.changed("C1", "dial tcp: refused") {
+		t.Fatal("a success clears the memory so the next failure logs")
 	}
 }
