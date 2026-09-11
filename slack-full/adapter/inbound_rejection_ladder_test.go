@@ -433,13 +433,7 @@ func TestOverCapEnqueueAndReconcileHonorBackoffDeadline(t *testing.T) {
 	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
 	c := newInboundCoalescer(20*time.Millisecond, nil)
 	c.deliver = deliver
-	c.mu.Lock()
-	c.transientFailures["C1"] = 10
-	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
-	c.gen["C1"]++
-	g := c.gen["C1"]
-	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
-	c.mu.Unlock()
+	enterBackoff(c, "C1", 10)
 	for i := 0; i < maxCoalescePerChannel+5; i++ {
 		c.enqueue("C1", testPending("C1", fmt.Sprintf("%d.0", i+1), "burst during outage"))
 	}
@@ -708,7 +702,7 @@ func TestStrippedProbesResumeInChronologicalOrder(t *testing.T) {
 // overflow flush honors it.
 func TestReactionsOnlyTransientFailureSetsBackoffDeadline(t *testing.T) {
 	c := newInboundCoalescer(20*time.Millisecond, nil)
-	c.noteTransientFailure("C1")
+	c.noteTransientFailure("C1", errors.New("dial tcp: connection refused"), "test failure")
 	r := testPending("C1", "1.0", "reaction")
 	r.reaction = true
 	c.restore("C1", []pendingChannelInbound{r})
@@ -738,7 +732,7 @@ func TestReactionsOnlyBackoffHoldsAgainstRealMessages(t *testing.T) {
 	// A plain timer armed by a real message BEFORE the reaction failure.
 	c.enqueue("C1", testPending("C1", "1.0", "before"))
 	for i := 0; i < 10; i++ {
-		c.noteTransientFailure("C1") // a capped run
+		c.noteTransientFailure("C1", errors.New("dial tcp: connection refused"), "test failure") // a capped run
 	}
 	r := testPending("C1", "0.5", "reaction")
 	r.reaction = true
@@ -876,16 +870,10 @@ func TestUrgentFlushAheadHonorsBackoff(t *testing.T) {
 	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
 	c := newInboundCoalescer(20*time.Millisecond, nil)
 	c.deliver = deliver
+	enterBackoff(c, "C1", 10) // a capped run: the deadline is five minutes out
 	c.enqueue("C1", testPending("C1", "1.0", "buffered"))
 	c.mu.Lock()
-	c.transientFailures["C1"] = 10
-	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
-	if t0, ok := c.timers["C1"]; ok {
-		t0.Stop()
-	}
-	c.gen["C1"]++
 	g := c.gen["C1"]
-	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
 	c.mu.Unlock()
 	for i := 0; i < 5; i++ { // a mention stream
 		if withheld := c.flushAheadOf("C1", "9.0"); len(withheld) != 0 {
@@ -962,17 +950,11 @@ func TestDeferredFlushAheadStillWithholdsTheTwin(t *testing.T) {
 	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
 	c := newInboundCoalescer(20*time.Millisecond, nil)
 	c.deliver = deliver
+	enterBackoff(c, "C1", 10)
 	c.enqueue("C1", testPending("C1", "1.0", "older"))
 	c.enqueue("C1", testPending("C1", "9.0", "the urgent message's buffered twin"))
 	c.mu.Lock()
-	c.transientFailures["C1"] = 10
-	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
-	if t0, ok := c.timers["C1"]; ok {
-		t0.Stop()
-	}
-	c.gen["C1"]++
 	g := c.gen["C1"]
-	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
 	c.mu.Unlock()
 	withheld := c.flushAheadOf("C1", "9.0")
 	if len(withheld) != 1 || withheld[0].inbound.ProviderMessageID != "9.0" {
@@ -1000,10 +982,7 @@ func TestBufferedReactionDrainHonorsBackoff(t *testing.T) {
 	if !c.admitReaction("C1", r, false) {
 		t.Fatal("admit")
 	}
-	c.mu.Lock()
-	c.transientFailures["C1"] = 10
-	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
-	c.mu.Unlock()
+	enterBackoff(c, "C1", 10)
 	for i := 0; i < 3; i++ {
 		c.deliverBufferedReactions("C1")
 	}
@@ -1044,4 +1023,219 @@ func TestUrgentDeferLogWorthyKeyedByDelay(t *testing.T) {
 			t.Fatalf("failure #%d at the cap must not log again", n)
 		}
 	}
+}
+
+// --- codex r8 on gp-sgu7: one scheduler, one deadline writer -----------------
+//
+// Rounds 1–8 each found another path that armed a timer or moved the
+// deadline on its own. The shape changed (mayor's rule after repeated
+// gate failures on one predicate): scheduleLocked is the only place a
+// timer is armed, moved or disarmed, noteTransientFailure the only
+// writer of the deadline, and timerWorthyLocked the only judge of
+// whether a channel may POST on a timer at all. TestScheduleTable is
+// that contract's spec; the tests after it are the r8 findings through
+// the real event path.
+
+// enterBackoff puts the channel into a run of n transient failures
+// through the production path — noteTransientFailure sets the
+// deadline, scheduleLocked places whatever is buffered on it — so a
+// test never hand-arms a timer the scheduler does not know about.
+func enterBackoff(c *inboundCoalescer, channel string, n int) {
+	for i := 0; i < n; i++ {
+		c.noteTransientFailure(channel, errors.New("dial tcp: connection refused"), "test failure")
+	}
+	c.mu.Lock()
+	c.scheduleLocked(channel, time.Time{})
+	c.mu.Unlock()
+}
+
+func TestScheduleTable(t *testing.T) {
+	const window = time.Minute
+	real := testPending("C1", "1.0", "real")
+	riding := testPending("C1", "0.5", "reaction riding an armed window")
+	riding.reaction = true
+	rows := []struct {
+		name        string
+		pending     []pendingChannelInbound
+		reactions   int           // side-lane depth
+		armedIn     time.Duration // an existing timer's target from now; 0 = none
+		deadlineIn  time.Duration // retryNotBefore from now; 0 = none
+		wantIn      time.Duration // the caller's `at` from now; 0 = zero want
+		wantArmed   bool
+		wantTarget  time.Duration // the armed target from now (±1 s)
+		wantChanged bool
+	}{
+		{name: "empty buffer with a want: nothing to flush, no timer", wantIn: window},
+		{name: "reactions below the cap: no timer, ever", reactions: 5, wantIn: window},
+		{name: "real message, nothing armed, no deadline: the window", pending: []pendingChannelInbound{real}, wantIn: window, wantArmed: true, wantTarget: window, wantChanged: true},
+		{name: "real message, timer armed, a later want: unchanged (the window belongs to the first message)", pending: []pendingChannelInbound{real}, armedIn: 30 * time.Second, wantIn: window, wantArmed: true, wantTarget: 30 * time.Second},
+		{name: "real message, digest timer armed, a short want: pulled in (the poll behind an in-flight delivery)", pending: []pendingChannelInbound{real}, armedIn: 2 * time.Hour, wantIn: time.Second, wantArmed: true, wantTarget: time.Second, wantChanged: true},
+		{name: "real message, plain timer under a deadline, zero want: moved out to the deadline (r3 f1)", pending: []pendingChannelInbound{real}, armedIn: 8 * time.Second, deadlineIn: 5 * time.Minute, wantArmed: true, wantTarget: 5 * time.Minute, wantChanged: true},
+		{name: "real message, timer at the deadline, zero want: unchanged (a restore with no new failure keeps the deadline, r8 f1)", pending: []pendingChannelInbound{real}, armedIn: 5 * time.Minute, deadlineIn: 5 * time.Minute, wantArmed: true, wantTarget: 5 * time.Minute},
+		{name: "real message, timer at the deadline, a short want: still the deadline (a poll or reconcile cannot shorten it, r1 f2)", pending: []pendingChannelInbound{real}, armedIn: 5 * time.Minute, deadlineIn: 5 * time.Minute, wantIn: time.Second, wantArmed: true, wantTarget: 5 * time.Minute},
+		{name: "real message, nothing armed, a deadline: the deadline (enqueued during a reactions-only backoff, r3 f1)", pending: []pendingChannelInbound{real}, deadlineIn: 5 * time.Minute, wantIn: window, wantArmed: true, wantTarget: 5 * time.Minute, wantChanged: true},
+		{name: "overflowed reaction lane, a deadline, nothing armed: the deadline (r8 f2)", reactions: maxBufferedReactionsPerChannel, deadlineIn: 5 * time.Minute, wantArmed: true, wantTarget: 5 * time.Minute, wantChanged: true},
+		{name: "overflowed reaction lane, no deadline, zero want: the window", reactions: maxBufferedReactionsPerChannel, wantArmed: true, wantTarget: window, wantChanged: true},
+		{name: "only riding reactions left in pending under an armed timer: disarmed (r8 f3)", pending: []pendingChannelInbound{riding}, armedIn: 30 * time.Second, wantChanged: true},
+		{name: "a deadline already passed does not bind", pending: []pendingChannelInbound{real}, deadlineIn: -time.Minute, wantIn: window, wantArmed: true, wantTarget: window, wantChanged: true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			c := newInboundCoalescer(window, nil)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			now := time.Now()
+			c.pending["C1"] = append([]pendingChannelInbound(nil), row.pending...)
+			for i := 0; i < row.reactions; i++ {
+				c.reactions["C1"] = append(c.reactions["C1"], riding)
+			}
+			if row.armedIn != 0 {
+				c.due["C1"] = now.Add(row.armedIn)
+				c.timers["C1"] = time.AfterFunc(time.Hour, func() {})
+			}
+			if row.deadlineIn != 0 {
+				c.retryNotBefore["C1"] = now.Add(row.deadlineIn)
+			}
+			var at time.Time
+			if row.wantIn != 0 {
+				at = now.Add(row.wantIn)
+			}
+			target, changed := c.scheduleLocked("C1", at)
+			tm, armed := c.timers["C1"]
+			if armed {
+				defer tm.Stop()
+			}
+			if armed != row.wantArmed || changed != row.wantChanged {
+				t.Fatalf("armed=%v changed=%v, want armed=%v changed=%v", armed, changed, row.wantArmed, row.wantChanged)
+			}
+			if !armed {
+				if _, ok := c.due["C1"]; ok {
+					t.Fatal("no target may be recorded without a timer")
+				}
+				return
+			}
+			if got := target.Sub(now); got < row.wantTarget-time.Second || got > row.wantTarget+time.Second {
+				t.Fatalf("target in %s, want %s", got.Round(time.Millisecond), row.wantTarget)
+			}
+			if !c.due["C1"].Equal(target) {
+				t.Fatalf("recorded target %v differs from the returned one %v", c.due["C1"], target)
+			}
+		})
+	}
+}
+
+// A withheld twin handed back after its urgent copy failed keeps the
+// channel's deadline exactly where it was (r8 finding 1): a stream of
+// failed mentions can no longer postpone the buffered messages' retry.
+func TestReturnedTwinKeepsTheDeadline(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	enterBackoff(c, "C1", 10)
+	c.enqueue("C1", testPending("C1", "1.0", "older"))
+	c.mu.Lock()
+	deadline := c.retryNotBefore["C1"]
+	g := c.gen["C1"]
+	c.mu.Unlock()
+	for i := 0; i < 5; i++ { // a mention stream: each twin buffered, withheld, and handed back by a failed mention
+		ts := fmt.Sprintf("%d.0", i+2)
+		c.enqueue("C1", testPending("C1", ts, "twin"))
+		withheld := c.flushAheadOf("C1", ts)
+		if len(withheld) != 1 || withheld[0].inbound.ProviderMessageID != ts {
+			t.Fatalf("twin %s must be withheld and returned, got %+v", ts, withheld)
+		}
+		c.restore("C1", withheld) // the urgent copy failed: main hands the twin back
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("no POST under the deadline: %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.retryNotBefore["C1"].Equal(deadline) {
+		t.Fatalf("the deadline moved without a new failure: %v → %v", deadline, c.retryNotBefore["C1"])
+	}
+	if !c.due["C1"].Equal(deadline) || c.gen["C1"] != g {
+		t.Fatalf("the timer must still aim at the deadline unchanged: due=%v gen %d→%d", c.due["C1"], g, c.gen["C1"])
+	}
+	if n := len(c.pending["C1"]); n != 6 {
+		t.Fatalf("all six messages must be buffered for the retry, got %d", n)
+	}
+}
+
+// A reaction lane that overflows during a reactions-only backoff is
+// timer-worthy: the scheduler places its flush AT the deadline, and it
+// delivers with no further traffic (r8 finding 2).
+func TestReactionOverflowDuringBackoffDeliversAtDeadline(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(50*time.Millisecond, nil)
+	c.deliver = deliver
+	enterBackoff(c, "C1", 3) // deadline 200 ms out
+	c.mu.Lock()
+	deadline := c.retryNotBefore["C1"]
+	c.mu.Unlock()
+	for i := 0; i < maxBufferedReactionsPerChannel; i++ {
+		r := testPending("C1", fmt.Sprintf("%d.0", i+1), "reaction")
+		r.reaction = true
+		c.admitReaction("C1", r, false)
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("no POST under the deadline: %v", got)
+	}
+	c.mu.Lock()
+	due, armed := c.due["C1"]
+	c.mu.Unlock()
+	if !armed || !due.Equal(deadline) {
+		t.Fatalf("the overflow flush must be armed at the deadline: armed=%v due=%v deadline=%v", armed, due, deadline)
+	}
+	waitFor(t, "overflow delivered at the deadline", func() bool { return len(calls()) == 1 })
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.reactions["C1"]) != 0 || c.inBackoffLocked("C1") {
+		t.Fatalf("the lane must be drained and the run over: reactions=%d backoff=%v", len(c.reactions["C1"]), c.inBackoffLocked("C1"))
+	}
+}
+
+// Withholding the only real message leaves nothing timer-worthy: the
+// timer is disarmed, and a below-cap reaction never POSTs alone at the
+// old expiry (r8 finding 3). Handing the twin back re-arms it — at the
+// deadline — through the same scheduler.
+func TestWithholdingTheSoleTwinDisarmsTheTimer(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	enterBackoff(c, "C1", 3) // deadline 80 ms out
+	c.enqueue("C1", testPending("C1", "9.0", "the urgent message's buffered twin"))
+	r := testPending("C1", "1.0", "reaction")
+	r.reaction = true
+	c.admitReaction("C1", r, false)
+	withheld := c.flushAheadOf("C1", "9.0")
+	if len(withheld) != 1 {
+		t.Fatalf("the twin must be withheld, got %d", len(withheld))
+	}
+	c.mu.Lock()
+	_, armed := c.timers["C1"]
+	_, due := c.due["C1"]
+	c.mu.Unlock()
+	if armed || due {
+		t.Fatalf("nothing timer-worthy remains: armed=%v due=%v", armed, due)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("a below-cap reaction must never POST alone after the twin left the buffer, got %v", got)
+	}
+	c.restore("C1", withheld) // the urgent copy failed
+	waitFor(t, "twin and reaction delivered together at the deadline", func() bool { return len(calls()) == 1 })
+}
+
+// A successful delivery lifts the deadline AND pulls the buffered
+// retry in to the plain window: gc just proved itself reachable, so
+// the buffer does not wait out a five-minute deadline.
+func TestRecoveryPullsTheBufferedRetryIn(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	enterBackoff(c, "C1", 10)
+	c.enqueue("C1", testPending("C1", "1.0", "buffered during the outage"))
+	c.deliveredOK("C1") // an urgent mention on the channel just succeeded
+	waitForCalls(t, calls, []string{"1.0"})
 }

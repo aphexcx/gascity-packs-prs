@@ -220,7 +220,12 @@ type inboundCoalescer struct {
 	reactions map[string][]pendingChannelInbound
 	gen       map[string]uint64
 	timers    map[string]*time.Timer
-	flushMu   map[string]*sync.Mutex
+	// due is the moment the channel's armed timer aims at — the
+	// scheduler's own bookkeeping (scheduleLocked, the ONE place a
+	// timer is armed, moved or disarmed). Present exactly when a timer
+	// is armed. Guarded by mu.
+	due     map[string]time.Time
+	flushMu map[string]*sync.Mutex
 	// urgentWaiting counts flushAheadOf callers blocked waiting for the
 	// channel's delivery mutex (gp-9e7 round 5, 3c). Guarded by mu. A
 	// non-zero count is a RESERVATION: takeLocked (and the direct
@@ -282,10 +287,12 @@ type inboundCoalescer struct {
 	// with the channel's delivery mutex held and c.mu NOT held (file I/O).
 	deadLetter func(channel string, batch []pendingChannelInbound, cause error) bool
 	// transientFailures counts consecutive TRANSIENT delivery failures per
-	// channel (gp-sgu7); retryNotBefore is when its backed-off retry is
-	// due. Both guarded by mu; bumped only in noteTransientFailure, read
-	// only through retryDelayLocked / takeSweepsLocked, cleared only by
-	// deliveredOK on a successful delivery.
+	// channel (gp-sgu7); retryNotBefore is the deadline before which the
+	// channel POSTs nothing on a timer. Both guarded by mu; WRITTEN only
+	// by noteTransientFailure (a new failure) and cleared only by
+	// deliveredOK (a success) — never by a restore, a reconcile or an
+	// urgent path (codex r8 finding 1). Read by inBackoffLocked,
+	// scheduleLocked and takeSweepsLocked.
 	transientFailures map[string]int
 	retryNotBefore    map[string]time.Time
 	// urgentDeferredAt remembers, per channel, the failure count at
@@ -311,6 +318,7 @@ func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *
 		reactions:         make(map[string][]pendingChannelInbound),
 		gen:               make(map[string]uint64),
 		timers:            make(map[string]*time.Timer),
+		due:               make(map[string]time.Time),
 		flushMu:           make(map[string]*sync.Mutex),
 		urgentWaiting:     make(map[string]int),
 		deleted:           make(map[string]map[string]time.Time),
@@ -508,33 +516,37 @@ func (c *inboundCoalescer) inBackoffLocked(channel string) bool {
 	return ok && time.Now().Before(nb)
 }
 
-// armDelayLocked is the delay for a NEW plain timer on the channel: its
-// window, or the remainder of a backoff deadline when that is later
-// (codex r3 finding 1: a real message enqueued during a reactions-only
-// backoff must not arm an 8 s timer under a five-minute deadline).
-// Caller holds c.mu.
-func (c *inboundCoalescer) armDelayLocked(channel string) time.Duration {
-	window := c.windowFor(channel)
-	if nb, ok := c.retryNotBefore[channel]; ok {
-		if until := time.Until(nb); until > window {
-			return until
-		}
-	}
-	return window
-}
-
 // noteTransientFailure records one more consecutive transient failure
-// for the channel. Called before restore() so the re-armed timer sees
-// the new count. Returns the count.
-func (c *inboundCoalescer) noteTransientFailure(channel string) int {
+// for the channel and moves its retry deadline out to the backed-off
+// delay — the ONLY writer of both (gp-sgu7). Rounds 1–8 of the codex
+// gate each found a path that set or stretched the deadline on its
+// own (a restore with no new failure, a reactions-only restore, an
+// urgent twin returned after a failed mention — codex r8 finding 1:
+// every restore replaced the deadline with now+delay, so repeated
+// failed mentions postponed the buffer forever); now nothing else
+// touches it. Logs once per backoff STATE change (contract 3: the
+// first failure, each doubling, once more at the cap), naming the
+// caller's `what`. Called before restore(), whose scheduleLocked then
+// places the retry at the new deadline. Returns the count.
+func (c *inboundCoalescer) noteTransientFailure(channel string, cause error, what string) int {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.transientFailures[channel]++
-	return c.transientFailures[channel]
+	n := c.transientFailures[channel]
+	delay, worthy := backoffLogWorthy(c.windowFor(channel), n)
+	c.retryNotBefore[channel] = time.Now().Add(delay)
+	c.mu.Unlock()
+	if worthy {
+		log.Printf("coalesce: chan=%s %s — transient failure #%d, retry in %s%s: %v", channel, what, n, delay, backoffCapSuffix(delay), cause)
+	}
+	return n
 }
 
-// deliveredOK ends the channel's transient-failure run: the next
-// failure, if any, starts again at the plain window.
+// deliveredOK ends the channel's transient-failure run: the deadline
+// is lifted, and whatever real messages still sit in the buffer flush
+// at the plain window instead of waiting out a deadline gc has just
+// proven unnecessary (the scheduler pulls the timer in; a channel not
+// in a run is unchanged). The next failure, if any, starts again at
+// the window.
 func (c *inboundCoalescer) deliveredOK(channel string) {
 	if c == nil {
 		return
@@ -547,6 +559,105 @@ func (c *inboundCoalescer) deliveredOK(channel string) {
 	delete(c.transientFailures, channel)
 	delete(c.retryNotBefore, channel)
 	delete(c.urgentDeferredAt, channel)
+	c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
+}
+
+// hasRealPendingLocked reports whether the channel's pending buffer
+// holds at least one real message (not a reaction riding an armed
+// window). Caller holds c.mu.
+func (c *inboundCoalescer) hasRealPendingLocked(channel string) bool {
+	for _, p := range c.pending[channel] {
+		if !p.reaction {
+			return true
+		}
+	}
+	return false
+}
+
+// timerWorthyLocked is the ONE predicate for "may this channel POST on
+// a timer": a real message is buffered, or the no-wake reaction side
+// lane has overflowed (the one sanctioned solo reaction wake, gp-9e7
+// item 1). Reactions below the cap never earn a timer — not by
+// admission, not by a restore, not by a withheld twin emptying the
+// buffer beside them (codex r8 finding 3) — and an overflowed lane
+// always does, even during a backoff (codex r8 finding 2: the deadline
+// decides WHEN, never WHETHER). Both the arming side (scheduleLocked)
+// and the firing side (flushTimer) consult it. Caller holds c.mu.
+func (c *inboundCoalescer) timerWorthyLocked(channel string) bool {
+	return c.hasRealPendingLocked(channel) || len(c.reactions[channel]) >= maxBufferedReactionsPerChannel
+}
+
+// disarmLocked stops and forgets the channel's timer, bumping the
+// generation so an already-fired callback no-ops. Returns whether a
+// timer was armed. Caller holds c.mu.
+func (c *inboundCoalescer) disarmLocked(channel string) bool {
+	delete(c.due, channel)
+	t, ok := c.timers[channel]
+	if !ok {
+		return false
+	}
+	t.Stop()
+	delete(c.timers, channel)
+	c.gen[channel]++
+	return true
+}
+
+// scheduleLocked is the ONE place a channel's flush timer is armed,
+// moved or disarmed (gp-sgu7, codex r8). Eight gate rounds each found
+// another path that armed its own timer and checked the backoff
+// deadline for itself — enqueue, the over-cap short retry, restore
+// (twice), a firing timer under the deadline, the reconcile, the
+// urgent flush-ahead's twin withhold, the reaction overflow — and
+// each patch left the next path uncovered. Now every one of them
+// states only what it WANTS and this function derives the timer from
+// the channel's state:
+//
+//   - nothing timer-worthy is buffered (timerWorthyLocked) → NO timer,
+//     whatever the caller wanted: a take that would POST below-cap
+//     reactions alone can never be armed;
+//   - otherwise the timer fires at the EARLIER of its current target
+//     and `at` — the moment the caller wants (a fresh window on
+//     enqueue; a short poll behind an in-flight delivery; the plain
+//     window after a recovery; zero = no new want, keep the target) —
+//     and NEVER before the channel's transient-failure deadline
+//     (retryNotBefore). A restore after a failure therefore lands on
+//     the deadline noteTransientFailure just set; a restore WITHOUT a
+//     new failure (an urgent twin handed back, reactions returned to
+//     their lane) keeps the deadline exactly where it is.
+//
+// A target that already passed (the timer is about to fire, or a hand
+// of the clock) is not moved: the callback's own take is the delivery.
+// Re-arming bumps the generation so the replaced callback no-ops.
+// Returns the target and whether the timer changed. Caller holds c.mu.
+func (c *inboundCoalescer) scheduleLocked(channel string, at time.Time) (time.Time, bool) {
+	if !c.timerWorthyLocked(channel) {
+		return time.Time{}, c.disarmLocked(channel)
+	}
+	_, armed := c.timers[channel]
+	target := time.Time{}
+	if armed {
+		target = c.due[channel]
+	}
+	if !at.IsZero() && (target.IsZero() || at.Before(target)) {
+		target = at
+	}
+	if target.IsZero() {
+		target = time.Now().Add(c.windowFor(channel))
+	}
+	if nb, ok := c.retryNotBefore[channel]; ok && target.Before(nb) {
+		target = nb
+	}
+	if armed && target.Equal(c.due[channel]) {
+		return target, false
+	}
+	if armed {
+		c.timers[channel].Stop()
+	}
+	c.gen[channel]++
+	g := c.gen[channel]
+	c.due[channel] = target
+	c.timers[channel] = time.AfterFunc(time.Until(target), func() { c.flushTimer(channel, g) })
+	return target, true
 }
 
 // flushMuFor returns the channel's delivery mutex, creating it under
@@ -575,20 +686,16 @@ func (c *inboundCoalescer) capRetryDelay() time.Duration {
 	return overCapRetryCeiling
 }
 
-// armCapRetryLocked replaces the channel's armed timer — possibly a
-// digest-scale one — with a SHORT retry at the CURRENT generation
-// (no state changed, so the generation is still live), for flushes
-// deferred behind an in-flight delivery (gp-9e7 round 5, 3a/3b). Every
-// caller attempts the take FIRST and arms this only on a failed
-// TryLock, so repeated re-arms cannot starve the retry: each re-arm was
-// itself a fresh flush attempt, and the timer only needs to cover the
-// quiet tail after the last one. Called with c.mu held.
-func (c *inboundCoalescer) armCapRetryLocked(channel string) {
-	if t, ok := c.timers[channel]; ok {
-		t.Stop()
-	}
-	g := c.gen[channel]
-	c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
+// wantCapRetryLocked asks the scheduler for a SHORT retry — pulling a
+// digest-scale target in — for a flush deferred behind an in-flight
+// delivery (gp-9e7 round 5, 3a/3b). Every caller attempts the take
+// FIRST and asks for this only on a failed TryLock, so repeated asks
+// cannot starve the retry: each was itself a fresh flush attempt, and
+// the timer only needs to cover the quiet tail after the last one. The
+// deadline still binds (an unreachable gc gains nothing from a 1 s
+// poll). Called with c.mu held.
+func (c *inboundCoalescer) wantCapRetryLocked(channel string) {
+	c.scheduleLocked(channel, time.Now().Add(c.capRetryDelay()))
 }
 
 // spillLateLocked routes one post-close admission out of the process:
@@ -646,7 +753,7 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 			// in-flight delivery settles. The cap overshoots for at most
 			// one delivery's duration plus one retry delay; nothing is
 			// dropped.
-			c.armCapRetryLocked(channel)
+			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
 			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 			return
@@ -661,15 +768,15 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 		c.deliverBatch(channel, batch, mu)
 		return
 	}
-	if _, ok := c.timers[channel]; !ok {
-		window := c.armDelayLocked(channel)
-		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
-		c.mu.Unlock()
-		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, window)
+	// The scheduler decides: a first message arms the window (moved out
+	// to the deadline during a backoff — codex r3 finding 1); a later one
+	// joins the armed timer unchanged.
+	target, armed := c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
+	c.mu.Unlock()
+	if armed {
+		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, time.Until(target).Round(time.Millisecond))
 		return
 	}
-	c.mu.Unlock()
 	log.Printf("coalesce: chan=%s buffered ts=%s (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
 }
 
@@ -710,7 +817,7 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 				if !ok {
 					// Delivery in flight (round 3): a short retry timer
 					// flushes once it settles (round 5, 3a); see enqueue.
-					c.armCapRetryLocked(channel)
+					c.wantCapRetryLocked(channel)
 					c.mu.Unlock()
 					log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 					return true
@@ -730,10 +837,22 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	c.reactions[channel] = append(c.reactions[channel], p)
 	n := len(c.reactions[channel])
-	// A channel in transient-failure backoff keeps its overflow too
-	// (gp-sgu7): the overflow flush would POST at an unreachable gc, and
-	// the armed backoff timer's take merges the side-buffer anyway.
-	if n >= maxBufferedReactionsPerChannel && !c.inBackoffLocked(channel) {
+	if n >= maxBufferedReactionsPerChannel && c.inBackoffLocked(channel) {
+		// A channel in transient-failure backoff keeps its overflow too
+		// (gp-sgu7): the overflow flush would POST at an unreachable gc.
+		// But the overflow is now timer-worthy, and a reactions-only
+		// backoff arms no timer of its own — so ask the scheduler, which
+		// places the overflow flush AT the deadline (codex r8 finding 2:
+		// suppressed without a timer, a lane that overflowed during an
+		// outage never drained once traffic stopped). Logged once, when
+		// the timer is actually armed.
+		if _, armed := c.scheduleLocked(channel, time.Time{}); armed {
+			log.Printf("coalesce: chan=%s reaction buffer full (%d) during a transient-failure backoff — overflow flush scheduled at the backoff deadline", channel, n)
+		}
+		c.mu.Unlock()
+		return true
+	}
+	if n >= maxBufferedReactionsPerChannel {
 		// Overflow: deliver rather than evict — reactions never drop.
 		// The solo wake this costs takes a pathological reaction volume
 		// with zero real traffic; the cap bounds memory, not content.
@@ -750,7 +869,7 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 			// no-ops the timer via its stale generation. Overshoot is
 			// bounded: at most the reactions arriving during one in-flight
 			// delivery plus one retry delay past the cap.
-			c.armCapRetryLocked(channel)
+			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
 			log.Printf("coalesce: chan=%s reaction buffer full (%d) but delivery in flight — overflow flush deferred to a short retry", channel, n)
 			return true
@@ -823,6 +942,7 @@ func (c *inboundCoalescer) detachLocked(channel string) []pendingChannelInbound 
 		t.Stop()
 		delete(c.timers, channel)
 	}
+	delete(c.due, channel)
 	batch := c.pending[channel]
 	delete(c.pending, channel)
 	if rs := c.reactions[channel]; len(rs) > 0 {
@@ -886,8 +1006,8 @@ type sweptBatch struct {
 // the buffer order, untouched).
 func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
 	channels := make([]string, 0, len(c.pending))
-	for ch, pend := range c.pending {
-		if ch == except || len(pend) == 0 {
+	for ch := range c.pending {
+		if ch == except || !c.hasRealPendingLocked(ch) {
 			continue
 		}
 		if _, digest := c.policy.digestInterval(ch); digest {
@@ -1032,7 +1152,7 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 			c.failed(channel, submitted, err)
 			c.restore(channel, remaining)
 		} else {
-			c.noteTransientFailure(channel)
+			c.noteTransientFailure(channel, err, fmt.Sprintf("batch of %d failed, %d entries restored", len(seg), len(seg)+len(remaining)))
 			c.restore(channel, append(seg, remaining...))
 		}
 		return err
@@ -1055,14 +1175,27 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 	return nil
 }
 
-// restore re-queues a batch whose delivery failed, ahead of anything
-// buffered meanwhile, and re-arms the timer so the flush retries. The
-// re-queued batch may exceed the cap; the next enqueue then triggers an
-// early flush rather than anything being dropped. Reaction entries
-// split back into the no-wake side-buffer instead (gp-9e7 item 1): a
-// reactions-only failure must not arm a retry timer, or the retry
-// would be the solo reaction wake the buffer exists to prevent — they
-// wait for the channel's next real delivery like any buffered reaction.
+// restore re-queues a batch whose delivery failed (or was withheld),
+// ahead of anything buffered meanwhile, and hands the retry to the
+// scheduler. The re-queued batch may exceed the cap; the next enqueue
+// then triggers an early flush rather than anything being dropped.
+// Reaction entries split back into the no-wake side-buffer instead
+// (gp-9e7 item 1): reactions alone earn no timer (the retry would be
+// the solo reaction wake the buffer exists to prevent) unless the lane
+// has overflowed — they wait for the channel's next real delivery like
+// any buffered reaction.
+//
+// restore itself decides NOTHING about cadence (codex r8 finding 1):
+// it does not touch the deadline — only noteTransientFailure, called
+// by the failure paths BEFORE restore, moves it — and it arms no timer
+// of its own. scheduleLocked places the buffer's timer at the deadline
+// when there is one (so a plain window armed by a mid-flight enqueue
+// moves out, codex r3 finding 1; a reactions-only failure holds the
+// deadline against real messages, codex r2 finding 2) and leaves it
+// where it was when this restore carried no new failure — an urgent
+// message's withheld twin handed back after the mention failed, or
+// reactions returned to their lane, can no longer postpone the
+// channel's retry.
 func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound) {
 	if c == nil || len(batch) == 0 {
 		return
@@ -1099,55 +1232,10 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 	if len(reactions) > 0 {
 		c.reactions[channel] = append(reactions, c.reactions[channel]...)
 	}
-	if len(msgs) == 0 {
-		if c.transientFailures[channel] > 0 {
-			// A reactions-only failure arms no timer of its own (never a
-			// solo wake), but the channel IS in a transient run: set the
-			// deadline so the overflow flush honors the backoff instead
-			// of POSTing on every further reaction (codex r2 finding 2),
-			// and move a timer real messages already armed out to it
-			// (codex r3 finding 1) — that timer would otherwise fire
-			// under the deadline.
-			delay := c.retryDelayLocked(channel)
-			c.retryNotBefore[channel] = time.Now().Add(delay)
-			if t, ok := c.timers[channel]; ok {
-				t.Stop()
-				c.gen[channel]++
-				g := c.gen[channel]
-				c.timers[channel] = time.AfterFunc(delay, func() { c.flushTimer(channel, g) })
-			}
-		}
-		return
+	if len(msgs) > 0 {
+		c.pending[channel] = append(msgs, c.pending[channel]...)
 	}
-	c.pending[channel] = append(msgs, c.pending[channel]...)
-	if n := c.transientFailures[channel]; n > 0 {
-		// A transient-failure run (gp-sgu7): the retry is due at the
-		// backed-off delay, REPLACING any timer already armed — a message
-		// enqueued while the failed POST was in flight armed a plain
-		// window, and honoring it would be the fixed-cadence retry the
-		// backoff exists to end. Bumping the generation makes that timer
-		// a no-op; the over-cap short retry is not exempt (an unreachable
-		// gc gains nothing from a 1 s poll).
-		if t, ok := c.timers[channel]; ok {
-			t.Stop()
-		}
-		c.gen[channel]++
-		delay, worthy := backoffLogWorthy(c.windowFor(channel), n)
-		c.retryNotBefore[channel] = time.Now().Add(delay)
-		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(delay, func() { c.flushTimer(channel, g) })
-		// One line per STATE CHANGE — the first failure and each
-		// doubling, once more at the cap — never one per attempt
-		// (gp-sgu7 contract 3; the recovery line is deliveredOK's).
-		if worthy {
-			log.Printf("coalesce: chan=%s %d message(s) restored after transient failure #%d — retry in %s%s", channel, len(msgs), n, delay, backoffCapSuffix(delay))
-		}
-		return
-	}
-	if _, ok := c.timers[channel]; !ok {
-		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(c.armDelayLocked(channel), func() { c.flushTimer(channel, g) })
-	}
+	c.scheduleLocked(channel, time.Time{})
 }
 
 // failed handles one failed delivery. Called with the channel's
@@ -1222,7 +1310,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		return
 	}
 	if !permanentDeliveryFailure(cause) {
-		c.noteTransientFailure(channel)
+		c.noteTransientFailure(channel, cause, fmt.Sprintf("batch of %d failed, restored", len(batch)))
 		c.restore(channel, batch)
 		return
 	}
@@ -1274,7 +1362,7 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		// A transient failure here is a failure like any other: the
 		// channel enters its backoff so the reaction overflow honors a
 		// deadline (codex r5 finding 2).
-		c.noteTransientFailure(channel)
+		c.noteTransientFailure(channel, err, fmt.Sprintf("reaction group of %d failed behind the isolated singles, returned to the side lane", len(reactions)))
 		c.restore(channel, reactions)
 	}
 }
@@ -1312,11 +1400,8 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 				untested[j].isolate = true
 			}
 			all := append(untested, rest...)
-			n := c.noteTransientFailure(channel)
-			if _, worthy := backoffLogWorthy(c.windowFor(channel), n); worthy {
-				log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure #%d; %d entries restored uncharged (the %d untested resume as single probes, never re-batched): %v",
-					channel, i, len(msgs), n, len(all), len(untested), err)
-			}
+			c.noteTransientFailure(channel, err, fmt.Sprintf("isolation paused after %d/%d single(s); %d entries restored uncharged (the %d untested resume as single probes, never re-batched)",
+				i, len(msgs), len(all), len(untested)))
 			c.restore(channel, all)
 			return true, refused
 		}
@@ -1406,27 +1491,37 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 		c.mu.Unlock()
 		return
 	}
-	if c.inBackoffLocked(channel) {
-		// Armed before the channel's backoff deadline moved past it (a
-		// reactions-only failure, a reconcile race): wait it out at the
-		// same generation rather than POST under the deadline (codex r3
-		// finding 1).
-		until := time.Until(c.retryNotBefore[channel])
-		c.timers[channel] = time.AfterFunc(until, func() { c.flushTimer(channel, g) })
+	// This timer is consumed; whatever follows takes the buffer or asks
+	// the scheduler for a new one.
+	delete(c.timers, channel)
+	delete(c.due, channel)
+	if !c.timerWorthyLocked(channel) {
+		// Nothing that may wake the session on a timer is left — the
+		// buffer emptied under a still-armed timer (a withheld urgent
+		// twin, codex r8 finding 3). A take now would POST below-cap
+		// reactions alone; they ride the channel's next real moment.
 		c.mu.Unlock()
-		log.Printf("coalesce: chan=%s timer fired under the backoff deadline — re-armed for %s", channel, until)
+		return
+	}
+	if c.inBackoffLocked(channel) {
+		// Fired under the channel's backoff deadline (a reconcile race,
+		// clock jitter): wait it out rather than POST under it (codex r3
+		// finding 1).
+		nb := c.retryNotBefore[channel]
+		c.scheduleLocked(channel, nb)
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s timer fired under the backoff deadline — re-armed for %s", channel, time.Until(nb).Round(time.Millisecond))
 		return
 	}
 	batch, mu, ok := c.takeLocked(channel)
 	if !ok {
 		// A delivery for this channel is in flight (round 3) — the timer
 		// fired into the gap between another path's take and its POST
-		// settling. Re-arm at the SAME generation (no state changed) and
-		// on the SHORT retry cadence (round 5, 3a): the window already
-		// elapsed, so the only wait left is the in-flight POST — a full
-		// re-wait (hours, on a digest channel) would strand the batch. A
-		// failed delivery's restore re-arms/renews on its own.
-		c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
+		// settling. Ask for the SHORT retry cadence (round 5, 3a): the
+		// window already elapsed, so the only wait left is the in-flight
+		// POST — a full re-wait (hours, on a digest channel) would strand
+		// the batch. A failed delivery's restore reschedules on its own.
+		c.wantCapRetryLocked(channel)
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s timer flush deferred — delivery in flight; re-armed on a short retry", channel)
 		return
@@ -1566,7 +1661,7 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	}
 	if !real {
 		// Reactions-only take (gp-9e7 fix round 1b): never POST — return
-		// the entries to the side-buffer (restore arms no timer for
+		// the entries to the side-buffer (restore arms no timer for below-cap
 		// reactions) and let the caller piggyback them on its own
 		// delivery. The take already serialized on the flush mutex, so
 		// any in-flight coalesced POST completed before this point.
@@ -1609,9 +1704,15 @@ func (c *inboundCoalescer) urgentDeferLogWorthyLocked(channel string) bool {
 }
 
 // withholdTwinLocked removes and returns the buffered copies of ts (an
-// urgent message's twin) WITHOUT taking the buffer: the rest keeps its
-// timer, generation and deadline. Caller holds c.mu; the caller of
-// flushAheadOf owns the returned entries (restore on urgent failure).
+// urgent message's twin) WITHOUT taking the buffer, then lets the
+// scheduler judge what is left: real messages keep their timer and
+// deadline untouched; a buffer left with no real message loses its
+// timer (codex r8 finding 3: armed, it would take and POST below-cap
+// reactions alone at expiry, while the urgent POST was still
+// unresolved), and reactions that were riding the armed window go back
+// to the no-wake side lane so no sweep sees a reactions-only buffer.
+// Caller holds c.mu; the caller of flushAheadOf owns the returned
+// entries (restore on urgent failure).
 func (c *inboundCoalescer) withholdTwinLocked(channel, ts string) []pendingChannelInbound {
 	if ts == "" {
 		return nil
@@ -1633,6 +1734,11 @@ func (c *inboundCoalescer) withholdTwinLocked(channel, ts string) []pendingChann
 	} else {
 		c.pending[channel] = kept
 	}
+	if !c.hasRealPendingLocked(channel) && len(c.pending[channel]) > 0 {
+		c.reactions[channel] = append(c.pending[channel], c.reactions[channel]...)
+		delete(c.pending, channel)
+	}
+	c.scheduleLocked(channel, time.Time{})
 	log.Printf("coalesce: chan=%s buffered twin ts=%s withheld from a deferred flush-ahead (urgent copy delivers it)", channel, ts)
 	return withheld
 }
@@ -1645,7 +1751,7 @@ func (c *inboundCoalescer) withholdTwinLocked(channel, ts string) []pendingChann
 // session solo — and because the drain happens after the real POST
 // commits, a skipped or failed real delivery simply leaves the
 // side-buffer untouched. A failed reaction POST restores the entries
-// to the side-buffer (restore arms no retry timer for reactions).
+// to the side-buffer (the scheduler arms no timer for below-cap reactions).
 func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 	if c == nil {
 		return
@@ -1771,31 +1877,30 @@ func (c *inboundCoalescer) reconcileTimers() {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for channel, t := range c.timers {
-		t.Stop()
-		c.gen[channel]++
-		var window time.Duration
+	channels := make([]string, 0, len(c.timers))
+	for channel := range c.timers {
+		channels = append(channels, channel)
+	}
+	sort.Strings(channels)
+	now := time.Now()
+	for _, channel := range channels {
+		c.disarmLocked(channel)
+		at := now.Add(c.windowFor(channel))
 		nb, backingOff := c.retryNotBefore[channel]
 		switch {
-		case backingOff && time.Now().Before(nb):
-			// Waiting out a transient-failure backoff (gp-sgu7, codex r1
-			// finding 2): keep the deadline — an over-cap buffer does not
-			// shorten it, or a SIGHUP during an outage would turn a
-			// five-minute backoff into the one-second cap cadence.
-			window = time.Until(nb)
-		case backingOff:
+		case backingOff && !now.Before(nb):
 			// The backed-off retry is already due: fire it promptly rather
-			// than waiting a whole backed-off delay again.
-			window = c.capRetryDelay()
+			// than waiting a whole window again.
+			at = now.Add(c.capRetryDelay())
 		case len(c.pending[channel]) >= maxCoalescePerChannel ||
 			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel:
-			window = c.capRetryDelay()
-		default:
-			window = c.windowFor(channel)
+			at = now.Add(c.capRetryDelay())
 		}
-		g := c.gen[channel]
-		ch := channel
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(ch, g) })
+		// A deadline still ahead binds inside the scheduler (gp-sgu7,
+		// codex r1 finding 2): an over-cap buffer does not shorten it, or
+		// a SIGHUP during an outage would turn a five-minute backoff into
+		// the one-second cap cadence.
+		c.scheduleLocked(channel, at)
 	}
 }
 
@@ -1892,6 +1997,7 @@ func (c *inboundCoalescer) drainPending() {
 					t.Stop()
 					delete(c.timers, channel)
 				}
+				delete(c.due, channel)
 				batch := c.pending[channel]
 				delete(c.pending, channel)
 				if rs := c.reactions[channel]; len(rs) > 0 {

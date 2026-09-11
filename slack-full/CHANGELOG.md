@@ -78,8 +78,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     digest interval longer than the cap stays the operator's cadence.
     Retry-forever durability is unchanged — only the cadence.
   - One log line per state change: `refused … retrying ONCE without
-    them`, `dead-lettered after N`, `restored after transient failure
-    #N — retry in D`.
+    them`, `dead-lettered after N`, `… — transient failure #N, retry in
+    D`.
+  - **One scheduler, one deadline writer** (codex gate r8). Eight gate
+    rounds each found another path arming its own timer around the
+    backoff deadline (enqueue, the over-cap poll, restore, a timer
+    firing under the deadline, the reconcile, the urgent flush-ahead's
+    twin withhold, the reaction overflow). Now `scheduleLocked` is the
+    only place a channel's timer is armed, moved or disarmed — from
+    the channel's state alone: nothing timer-worthy (no real message,
+    no reaction overflow) means no timer; otherwise the earlier of the
+    current target and the caller's want, never before the deadline —
+    and `noteTransientFailure` the only writer of the deadline. A
+    restore re-queues and asks; it decides nothing about cadence, so a
+    withheld twin handed back after a failed mention keeps the deadline
+    where it was, an overflowed reaction lane during a backoff flushes
+    AT the deadline instead of never, and a buffer emptied under a
+    still-armed timer loses the timer instead of POSTing reactions
+    alone. A recovery pulls the buffered retry in to the window.
+    `TestScheduleTable` is the cadence contract.
   - Tests: `inbound_rejection_ladder_test.go` (the ladder table, the
     withholding notice, the incident end to end, dead-letter after the
     stripped retry with later messages delivering, immediate
