@@ -159,7 +159,10 @@ type pendingChannelInbound struct {
 	// the ledger's verdict before the copy is admitted (codex r12
 	// finding 1 — the isolate flag survived the restart, the verdict
 	// did not, and the urgent twin posted the original attachments once
-	// the replayed stripped copy landed). Empty on a plain entry.
+	// the replayed stripped copy landed) — and spooled by charge() the
+	// moment the decision is made, so a copy of the original staged
+	// from before the refusal can never be re-posted by a restart
+	// (codex r22 finding 1). Empty on a plain entry.
 	stripped string
 	// threadAnchor/preamble/body/files carry the message unit's parts
 	// alongside the folded inbound.Text so a single-entry delivery can
@@ -2106,6 +2109,18 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause}, time.Now())
 		dropped := c.dropBufferedCopiesLocked(channel, ts)
 		c.mu.Unlock()
+		// The decision is spooled when it is MADE (codex r22 finding 1):
+		// the original attachment-bearing copy may be staged on disk from
+		// a replay in progress (its cap flush is what POSTed it), and a
+		// crash before this stripped copy lands would otherwise leave
+		// that staged copy with no durable disposition superseding it —
+		// the restart POSTed the refused bytes again. The stripped line
+		// seeds the ledger's outstanding verdict at the next replay, so
+		// the staged plain copy adopts it (and lands as a duplicate); the
+		// landing's delivered record retires the line at the replay after.
+		if c.spill != nil && !c.spill(channel, []pendingChannelInbound{p}) {
+			log.Printf("coalesce: chan=%s ts=%s the stripped retry could not be spooled — until it lands, a crash would let a staged copy of the original re-post the refused bytes once", channel, ts)
+		}
 		c.restore(channel, []pendingChannelInbound{p})
 		log.Printf("coalesce: chan=%s ts=%s refused by gc with %d attachment(s) — retrying ONCE without them (the files stay on disk; the text names their paths)%s: %v",
 			channel, ts, n, duplicateCopiesSuffix(dropped), cause)
@@ -2529,22 +2544,31 @@ func (c *inboundCoalescer) markDeleted(channel, ts string) int {
 		}
 	}
 	persist := c.persistDeletion
-	// A parked refusal's spooled payload (codex r21 finding 2): the
-	// notice replaces its text in memory (the write retries carry it)
-	// and a deletion record is written now, draining or not, so the
-	// spool line replays as the notice too.
-	spooled := false
+	// A parked refusal's payload: the notice replaces its text in memory
+	// (the write retries carry it).
 	for i := range c.parkedDeadLetters[channel] {
 		if e := &c.parkedDeadLetters[channel][i]; e.p.inbound.ProviderMessageID == ts {
 			applyDeletion(&e.p)
-			spooled = spooled || e.spilled
 		}
 	}
+	// A message the ladder OWNS may have a copy in the spool during
+	// uptime — the stripped retry spooled when decided, the refusal
+	// spooled before its sink, a re-parked payload — so its deletion is
+	// recorded now, draining or not, and the spool line replays as the
+	// notice (codex r21 finding 2, r22 finding 2). The ledger is the
+	// test, not the parked list: a deletion that lands while the sink is
+	// still running finds nothing parked yet, but the refusal's payload
+	// is already on disk. Recorded once per deletion of a ladder-owned
+	// message — bounded by refusals, never one per ordinary deletion
+	// (codex round-5 finding 3). The ledger entry is consulted raw: an
+	// aged-out verdict whose write is still owed still names a spooled
+	// payload.
+	_, owned := c.verdicts[channel][ts]
 	record := c.recordDeletion
 	c.mu.Unlock()
-	if spooled && record != nil {
+	if owned && record != nil {
 		if !record(channel, ts) {
-			log.Printf("coalesce: chan=%s ts=%s deleted while parked for its dead-letter write, and the deletion record could not be written — a restart before the write would dead-letter the deleted text", channel, ts)
+			log.Printf("coalesce: chan=%s ts=%s deleted while the rejection ladder holds it, and the deletion record could not be written — a restart before its copy lands or is written would replay the deleted text", channel, ts)
 		}
 	}
 	// Durable record last, outside mu (file I/O): a spool line written

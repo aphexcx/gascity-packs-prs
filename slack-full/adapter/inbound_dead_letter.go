@@ -330,6 +330,17 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 		c.mu.Unlock()
 		return durable
 	}
+	// A deletion that landed since charge()'s tombstone check — while
+	// the sink ran (codex r22 finding 2) — is reconciled here, in the
+	// same critical section that parks the entry: markDeleted either
+	// finds the entry parked and rewrites it, or has already tombstoned
+	// it and this sees the tombstone. Its record was written by
+	// markDeleted (the ledger has owned this message since retireLocked
+	// above), so the spooled payload replays as the notice.
+	if !p.reaction && p.inbound.Text != deletedBySenderNotice && c.isDeletedLocked(channel, ts, time.Now()) {
+		applyDeletion(&p)
+		log.Printf("coalesce: chan=%s ts=%s deleted while its dead-letter write was running — parked as the notice", channel, ts)
+	}
 	c.parkedDeadLetters[channel] = append(c.parkedDeadLetters[channel], parkedDeadLetter{p: p, cause: cause, spilled: durable})
 	parked := len(c.parkedDeadLetters[channel])
 	if c.deadLetterWriteFailures[channel] < 1 {

@@ -1808,13 +1808,21 @@ func TestSpoolReplayRestoresTheStrippedVerdict(t *testing.T) {
 	waitForCalls(t, calls1, []string{"1.0", "1.0"}) // refused with the file; the stripped retry fails transiently
 	c1.flushAll()                                   // the stripped retry is spooled, its disposition with it
 
-	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	deliver2, calls2 := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422() // the original bytes again: the ladder would strip and re-post, a second call below
+		}
+		return nil
+	})
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
 	c2.deliver = deliver2
-	if n := spool.replayInto(c2); n != 1 {
-		t.Fatalf("replay admitted %d entries, want 1", n)
+	// The journal holds the stripped copy twice — spooled when the ladder
+	// decided on it (r22 finding 1) and again by the shutdown flush; the
+	// replay admits both and the take collapses them to one POST.
+	if n := spool.replayInto(c2); n < 1 {
+		t.Fatalf("replay admitted %d entries, want the stripped retry", n)
 	}
-	waitForCalls(t, calls2, []string{"1.0"}) // the replayed stripped copy lands
+	waitForCalls(t, calls2, []string{"1.0"}) // the replayed stripped copy lands, once, without its attachments
 	if !c2.onLadder("C1", "1.0") {
 		t.Fatal("after the replayed stripped copy lands the ladder must still own the message — the urgent twin asks next, original attachments and all")
 	}
@@ -3092,5 +3100,133 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte(deletedBySenderNotice)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
 		t.Fatalf("the retained refusal carries the notice and its deletion record is kept: %q", data)
+	}
+}
+
+// --- codex r22 ---------------------------------------------------------------
+
+// The stripped decision is durable when made (r22 finding 1): recorded
+// only in memory, a crash after the refusal — with the original
+// attachment-bearing copy still staged from before it — let the restart
+// POST the refused bytes again. The stripped copy's spool line seeds
+// the outstanding verdict, and the staged plain copy adopts it.
+func TestStrippedDispositionIsDurableWhenDecided(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	plainA := testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	// The staged file from a replay in progress holds plain A.
+	if !spool.spillBatch("C1", []pendingChannelInbound{plainA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	// Its cap flush POSTs A, gc refuses it, the ladder decides on the
+	// stripped retry — then the process dies.
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.charge("C1", plainA, permanent422())
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	c2.mu.Lock()
+	defer c2.mu.Unlock()
+	found := false
+	for _, p := range c2.pending["C1"] {
+		if p.inbound.ProviderMessageID != "1.0" {
+			continue
+		}
+		found = true
+		if len(p.inbound.Attachments) != 0 || !p.isolate {
+			t.Fatalf("the staged plain copy must adopt the stripped decision (attachments=%d isolate=%v) — the decision was not durable", len(p.inbound.Attachments), p.isolate)
+		}
+	}
+	if !found {
+		t.Fatal("the message is still owed its stripped retry")
+	}
+}
+
+// A deletion arriving while the dead-letter sink runs — after charge's
+// spill, before anything is parked — is recorded durably (r22 finding
+// 2): the ledger owns the message, so markDeleted records the deletion
+// whatever is parked, and the park reconciles the tombstone; a restart
+// before the retry writes the notice, not the deleted text.
+func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.recordDeletion = spool.recordDeletion
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool {
+		c.markDeleted("C1", "1.0") // the sender deletes while the write is running
+		return false               // and the write fails
+	}
+	c.charge("C1", testPending("C1", "1.0", "secret text"), permanent422())
+	c.mu.Lock()
+	parked := c.parkedDeadLetters["C1"]
+	c.mu.Unlock()
+	if len(parked) != 1 {
+		t.Fatalf("one parked entry, got %d", len(parked))
+	}
+	if parked[0].p.inbound.Text != deletedBySenderNotice {
+		t.Fatalf("the park must reconcile the tombstone, got %q", parked[0].p.inbound.Text)
+	}
+	// A restart before the retry.
+	var mu sync.Mutex
+	var written []string
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range batch {
+			written = append(written, p.inbound.Text)
+		}
+		return true
+	}
+	spool.replayInto(c2)
+	waitFor(t, "the parked write after the restart", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(written) > 0
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if written[0] != deletedBySenderNotice {
+		t.Fatalf("a deletion during the sink must reach the restart's write as the notice, got %q", written[0])
+	}
+}
+
+// The same rule covers the stripped copy the ladder now spools when it
+// decides on the retry: a deletion of that message during uptime is
+// recorded, so a restart replays the stripped retry as the notice, not
+// as the deleted text.
+func TestDeletionOfASpooledStrippedCopyIsRecorded(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.recordDeletion = spool.recordDeletion
+	c.charge("C1", testPendingWithAttachment("C1", "1.0", "secret text", "/tmp/x/memo.m4a"), permanent422())
+	if n := c.markDeleted("C1", "1.0"); n != 1 {
+		t.Fatalf("the stripped retry is buffered, got %d", n)
+	}
+	data, err := os.ReadFile(spool.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"stripped":`)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
+		t.Fatalf("the spool must hold the stripped copy and the deletion record: %q", data)
+	}
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	c2.mu.Lock()
+	defer c2.mu.Unlock()
+	if got := c2.pending["C1"]; len(got) != 1 || got[0].inbound.Text != deletedBySenderNotice {
+		t.Fatalf("the replayed stripped retry must be the notice, got %d copy(ies): %+v", len(got), got)
 	}
 }
