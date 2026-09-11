@@ -267,6 +267,13 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// spool line the replay parks straight back into the write retry.
 	p.refused = truncateReason(rejectionReasonText(cause))
 	c.mu.Lock()
+	// The park IS the ladder's retirement of this message, whether
+	// charge() just decided it (the verdict is already recorded) or the
+	// spool replay is re-parking a retirement decided before a restart
+	// (codex r11 finding 4: the ledger is memory, and without the
+	// verdict a redelivery admitted after the restart entered delivery
+	// as a plain copy and posted the refused bytes).
+	c.recordVerdictLocked(channel, p.inbound.ProviderMessageID, ladderVerdict{retired: true, cause: cause}, time.Now())
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
 		return

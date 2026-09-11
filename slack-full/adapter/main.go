@@ -4007,17 +4007,30 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inbound: a solo reaction wake. They drain via
 	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
+	ladderSkip := false
 	if !skipChannelPost && cfg.coalescer.onLadder(msg.Channel, msg.TS) {
-		// A buffered copy of THIS message is on the rejection ladder:
-		// gc refused its bytes, and the ladder's retry without
-		// attachments — or the dead-letter file — is the message's
+		// The rejection ladder owns THIS message: gc refused its bytes,
+		// and the ladder's retry without attachments — delivered
+		// already, or owed — or the dead-letter file is the message's
 		// delivery. This urgent copy was built from the fresh event,
 		// original attachments and all; posting it would re-post the
 		// refused bytes under another name (gp-sgu7, codex r10 finding
-		// 2). It defers exactly like a twin whose channel copy already
-		// committed.
-		log.Printf("inbound: chan=%s ts=%s a buffered copy of this message is on the rejection ladder (gc refused it) — urgent channel copy skipped; the ladder's stripped retry or the dead-letter file is its delivery", msg.Channel, msg.TS)
+		// 2; the verdict outlives the stripped delivery so this answer
+		// cannot flip after the flush-ahead, codex r11 finding 1). It
+		// defers like a twin whose channel copy already committed —
+		// except for the claim: this goroutine HOLDS the (channel, ts)
+		// claim it began above, and no delivery of its own will ever
+		// conclude it (codex r11 finding 2: left open, every later
+		// same-ts copy parked on it). RELEASED, not committed: nothing
+		// this copy did reached gc, so the claim vouches for nothing;
+		// the next same-ts copy asks the ladder itself and the standing
+		// verdict answers it the same way. No busy mark either: no
+		// reply is promised (the stripped retry may land later, the
+		// dead-letter file never answers), and nothing would clear it.
+		log.Printf("inbound: chan=%s ts=%s the rejection ladder owns this message (gc refused its bytes) — urgent channel copy skipped; the ladder's stripped retry or the dead-letter file is its delivery", msg.Channel, msg.TS)
 		skipChannelPost = true
+		ladderSkip = true
+		cfg.channelClaims.forget(claimKey)
 	}
 
 	// A twin whose channel copy was skipped while the drain is running
@@ -4028,7 +4041,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// leaves a permanent hourglass on a message the next startup will
 	// replay and answer normally.
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != "" &&
-		!(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
+		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
 	if busyEligible {

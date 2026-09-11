@@ -1064,6 +1064,7 @@ func TestScheduleTable(t *testing.T) {
 		wantArmed   bool
 		wantTarget  time.Duration // the armed target from now (±1 s)
 		wantChanged bool
+		wantLane    int // side-lane depth afterwards, when the row moves riders (0 = not checked)
 	}{
 		{name: "empty buffer with a want: nothing to flush, no timer", wantIn: window},
 		{name: "reactions below the cap: no timer, ever", reactions: 5, wantIn: window},
@@ -1076,7 +1077,9 @@ func TestScheduleTable(t *testing.T) {
 		{name: "real message, nothing armed, a deadline: the deadline (enqueued during a reactions-only backoff, r3 f1)", pending: []pendingChannelInbound{real}, deadlineIn: 5 * time.Minute, wantIn: window, wantArmed: true, wantTarget: 5 * time.Minute, wantChanged: true},
 		{name: "overflowed reaction lane, a deadline, nothing armed: the deadline (r8 f2)", reactions: maxBufferedReactionsPerChannel, deadlineIn: 5 * time.Minute, wantArmed: true, wantTarget: 5 * time.Minute, wantChanged: true},
 		{name: "overflowed reaction lane, no deadline, zero want: the window", reactions: maxBufferedReactionsPerChannel, wantArmed: true, wantTarget: window, wantChanged: true},
-		{name: "only riding reactions left in pending under an armed timer: disarmed (r8 f3)", pending: []pendingChannelInbound{riding}, armedIn: 30 * time.Second, wantChanged: true},
+		{name: "only riding reactions left in pending under an armed timer: disarmed, the riders back in the side lane (r8 f3, r11 f3)", pending: []pendingChannelInbound{riding}, armedIn: 30 * time.Second, wantChanged: true, wantLane: 1},
+		{name: "only riding reactions left in pending, nothing armed: no timer, the riders back in the side lane where the cap counts them (r11 f3)", pending: []pendingChannelInbound{riding}, wantLane: 1},
+		{name: "riding reactions left beside an overflowed lane: they join it, the overflow timer stands", pending: []pendingChannelInbound{riding}, reactions: maxBufferedReactionsPerChannel, wantArmed: true, wantTarget: window, wantChanged: true, wantLane: maxBufferedReactionsPerChannel + 1},
 		{name: "a deadline already passed does not bind", pending: []pendingChannelInbound{real}, deadlineIn: -time.Minute, wantIn: window, wantArmed: true, wantTarget: window, wantChanged: true},
 	}
 	for _, row := range rows {
@@ -1107,6 +1110,9 @@ func TestScheduleTable(t *testing.T) {
 			}
 			if armed != row.wantArmed || changed != row.wantChanged {
 				t.Fatalf("armed=%v changed=%v, want armed=%v changed=%v", armed, changed, row.wantArmed, row.wantChanged)
+			}
+			if row.wantLane > 0 && (len(c.pending["C1"]) != 0 || len(c.reactions["C1"]) != row.wantLane) {
+				t.Fatalf("pending=%d lane=%d, want pending=0 lane=%d (a buffer with no real message holds no riders)", len(c.pending["C1"]), len(c.reactions["C1"]), row.wantLane)
 			}
 			if !armed {
 				if _, ok := c.due["C1"]; ok {
@@ -1569,8 +1575,8 @@ func TestUrgentTwinDefersToTheLadder(t *testing.T) {
 	if len(strippedPosts) != 1 || strippedPosts[0] != 0 {
 		t.Fatalf("exactly one stripped POST of A (no attachments), got %v", strippedPosts)
 	}
-	if c.onLadder("C1", "1.0") {
-		t.Fatal("a delivered message leaves the ladder")
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("a message delivered without its attachments stays the ladder's (r11 finding 1): its urgent copy carries the refused bytes and must still skip")
 	}
 }
 
@@ -1589,5 +1595,188 @@ func TestReturnedTwinOfARetiredMessageIsDropped(t *testing.T) {
 	}
 	if _, armed := c.timers["C1"]; armed {
 		t.Fatal("nothing buffered, nothing armed")
+	}
+}
+
+// --- codex r11 ---------------------------------------------------------------
+
+// A message the ladder delivered WITHOUT its attachments stays the
+// ladder's (r11 finding 1): clearing the verdict on that success let
+// an urgent twin, built from the fresh event with the original
+// attachments, post the refused bytes right after the flush-ahead
+// delivered the stripped copy — onLadder said no, so main.go posted.
+// The verdict now lands as "delivered without attachments": onLadder
+// stays true, and a fresh copy admitted or handed back is dropped as a
+// duplicate of a delivered message, never posted.
+func TestStrippedDeliveryKeepsTheLadderVerdict(t *testing.T) {
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422()
+		}
+		return nil
+	})
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	fresh := func() pendingChannelInbound {
+		return testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	}
+	// The ladder's shape after the refusal: the stripped retry is owed and buffered.
+	c.charge("C1", fresh(), permanent422())
+	// The delayed app_mention twin's flush-ahead delivers the stripped copy.
+	if withheld := c.flushAheadOf("C1", "1.0"); len(withheld) != 0 {
+		t.Fatalf("a copy on the ladder is never withheld, got %d", len(withheld))
+	}
+	waitForCalls(t, calls, []string{"1.0"})
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("after the stripped delivery the ladder must still own the message — the urgent copy asks next and carries the refused bytes")
+	}
+	// Every later copy of the message — a redelivery admitted, an urgent
+	// twin handed back — is a duplicate of a delivered message.
+	c.enqueue("C1", fresh())
+	c.restore("C1", []pendingChannelInbound{fresh()})
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("a copy of a message delivered without its attachments must not re-enter the buffer")
+	}
+	if got := calls(); len(got) != 1 {
+		t.Fatalf("the refused bytes must never go out again: %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, armed := c.timers["C1"]; armed {
+		t.Fatal("nothing buffered, nothing armed")
+	}
+}
+
+// The urgent path's ladder skip RELEASES the (channel, ts) claim it
+// holds (r11 finding 2): begin() had granted this goroutine the claim
+// before flushAheadOf, and skipping the POST without concluding it
+// left it open — a later same-ts copy parked on it until the bounded
+// wait gave up. Released, not committed: nothing this copy did reached
+// gc, so the claim vouches for nothing; the next same-ts copy asks the
+// ladder itself and gets the same answer. No busy mark is taken (no
+// reply is promised: the stripped retry may land later, the
+// dead-letter file never answers), and gc sees nothing from this copy.
+func TestUrgentLadderSkipReleasesTheClaim(t *testing.T) {
+	stub := &flakyInboundStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	cfg.coalescer.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	// The ladder retired the message (a plain refusal: dead-lettered at once).
+	cfg.coalescer.charge("C1", testPending("C1", "100.000300", "refused"), permanent422())
+
+	aliasReg := newTestHandleAliasRegistry(t)
+	env := botMentionEnvelope(t, "app_mention", "Ev1", "C1", "100.000300", "",
+		"<@"+testBotUserID+"> the delayed twin", true)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+
+	if got := stub.snapshot(); len(got) != 0 {
+		t.Fatalf("the urgent copy of a message the ladder owns must not POST, gc saw %d", len(got))
+	}
+	proceed, wait := cfg.channelClaims.begin(channelDeliveryClaimKey("C1", "100.000300"))
+	if !proceed {
+		t.Fatalf("the claim must be RELEASED by the ladder skip (the next copy asks the ladder itself), got proceed=%v open=%v", proceed, wait != nil)
+	}
+	if cfg.deliveredIDs.seen("", "C1", "100.000300") {
+		t.Error("a skipped copy vouches for nothing — the ts must not be recorded as delivered")
+	}
+}
+
+// Retiring the last real message of a buffer returns the reactions
+// that were riding its armed window to the no-wake side lane (r11
+// finding 3): left in pending, the scheduler — which counts only the
+// side lane toward the overflow cap — neither timed them nor counted
+// them, so they sat until the channel's next real message. Shape: a
+// duplicate of A admitted while A's POST is in flight arms a window; a
+// founder ack rides it; A is refused and retired, the duplicate leaves
+// with the verdict; the ack must be back in the lane and count.
+func TestRetiringTheLastRealMessageReturnsRidingReactionsToTheLane(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	var once sync.Once
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		first := false
+		once.Do(func() { first = true })
+		if first {
+			entered <- struct{}{}
+			<-release
+			return permanent422()
+		}
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	<-entered // A's POST is blocked in flight
+	c.enqueue("C1", testPending("C1", "1.0", "A again — a duplicate while the POST is in flight; arms a window"))
+	if !c.admitReaction("C1", testPending("C1", "1.5", "a founder ack"), true) {
+		t.Fatal("admission refused")
+	}
+	c.mu.Lock()
+	riding := len(c.pending["C1"]) == 2
+	c.mu.Unlock()
+	if !riding {
+		t.Fatal("the ack must be riding the duplicate's armed window")
+	}
+	close(release) // gc refuses A: nothing to strip → retired; the duplicate leaves with the verdict
+	waitForCalls(t, calls, []string{"1.0"})
+	waitFor(t, "the rider back in the side lane", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.pending["C1"]) == 0 && len(c.reactions["C1"]) == 1
+	})
+	c.mu.Lock()
+	_, armed := c.timers["C1"]
+	c.mu.Unlock()
+	if armed {
+		t.Fatal("a below-cap lane arms no timer")
+	}
+	// It counts: the lane overflows at the cap, and the flush carries it.
+	for i := 1; i < maxBufferedReactionsPerChannel; i++ {
+		c.admitReaction("C1", testPending("C1", fmt.Sprintf("2.%03d", i), "r"), false)
+	}
+	waitFor(t, "the overflow flush", func() bool { return len(calls()) == 2 })
+	if got := calls()[1]; !strings.HasPrefix(got, "1.5(r),") || strings.Count(got, "(r)") != maxBufferedReactionsPerChannel {
+		t.Fatalf("the overflow flush must carry the returned rider with the lane: %s", got)
+	}
+}
+
+// The spool replay's re-park restores the retired verdict (r11 finding
+// 4): the ledger is memory, the park is the ladder's retirement decided
+// before the restart, and without the verdict a redelivery of the
+// refused message admitted after the restart entered delivery as a
+// plain copy and posted the refused bytes.
+func TestSpoolReplayRestoresTheRetiredVerdict(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, calls1 := recordingDeliver(func([]pendingChannelInbound) error { return permanent422() })
+	c1 := newInboundCoalescer(time.Hour, nil)
+	c1.deliver = deliver1
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // disk full until restart
+	c1.spill = spool.spillBatch
+	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
+	c1.flushAll()
+	waitForCalls(t, calls1, []string{"1.0"})
+
+	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.deliver = deliver2
+	c2.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("replay admitted %d entries, want 1", n)
+	}
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the re-parked entry's retirement must be the ledger's verdict after the restart")
+	}
+	c2.enqueue("C1", testPending("C1", "1.0", "a redelivery after the restart"))
+	c2.restore("C1", []pendingChannelInbound{testPending("C1", "1.0", "a twin handed back after the restart")})
+	if c2.pendingContains("C1", "1.0") {
+		t.Fatal("a copy of a message retired before the restart must not enter the buffer")
+	}
+	if got := calls2(); len(got) != 0 {
+		t.Fatalf("the refused bytes must never go out after the restart: %v", got)
 	}
 }
