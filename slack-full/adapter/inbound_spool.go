@@ -122,6 +122,14 @@ type spooledInbound struct {
 	Verdict          string `json:"verdict,omitempty"`
 	VerdictDelivered bool   `json:"verdict_delivered,omitempty"`
 	VerdictAt        int64  `json:"verdict_at,omitempty"`
+	// dispositionOnly marks a salvaged DISPOSITION of an entry whose
+	// message stays in a spool that could not be merged (codex r18
+	// finding 2): its Refused/Stripped/Isolate seed the ledger in the
+	// replay's pre-pass so a staged plain copy of the same message
+	// adopts the ladder's decision, and the entry itself is never
+	// admitted — its message replays when the spool merges next
+	// startup. Never written to disk.
+	dispositionOnly bool `json:"-"`
 	// DeletedTS marks a DELETION record rather than a message: the
 	// sender deleted (Channel, DeletedTS). Persisted by recordDeletion
 	// so a deletion processed after a message was spooled — or in the
@@ -378,7 +386,7 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				// The spool file stays for the next startup's retry; only
 				// the already-staged entries replay this time.
 				log.Printf("inbound spool: merging %s into %s FAILED: %v — replaying the staged file only; the spool retries next startup", s.path, rp, err)
-				salvagedDeletions = readRecords(s.path)
+				salvagedDeletions = readRecords(s.path) // deletions, verdicts AND entry-carried dispositions
 			} else if err := os.Remove(s.path); err != nil {
 				log.Printf("inbound spool: remove %s after merge: %v (next startup may replay duplicates; gc dedup keys bound the damage)", s.path, err)
 			}
@@ -562,6 +570,15 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 				out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
 			case recordsOnly && e.VerdictTS != "":
 				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt})
+			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate):
+				// The salvage keeps what an ENTRY decided too (codex r18
+				// finding 2), without its message.
+				out = append(out, spooledInbound{
+					Channel: e.Channel, Reaction: e.Reaction,
+					Inbound: externalInboundMessage{ProviderMessageID: e.Inbound.ProviderMessageID},
+					Refused: e.Refused, Stripped: e.Stripped, Isolate: e.Isolate, Attempts: e.Attempts,
+					dispositionOnly: true,
+				})
 			case recordsOnly:
 			default:
 				if e.Inbound.Text == "" {
@@ -704,9 +721,13 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	// its own admission; the disposition lines below then find their
 	// verdict standing.
 	for _, e := range entries {
-		if e.DeletedTS != "" || e.VerdictTS != "" || e.Reaction || c == nil {
+		if e.DeletedTS != "" || e.VerdictTS != "" || c == nil {
 			continue
 		}
+		// A reaction entry carries at most a refusal (its own event ts is
+		// its id): seeded like a message's, or an earlier plain copy in
+		// the side lane rides an overflow POST before the park retires
+		// it (codex r18 finding 1).
 		ts := e.Inbound.ProviderMessageID
 		switch {
 		case e.Refused != "":
@@ -721,7 +742,7 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	}
 	n := 0
 	for _, e := range entries {
-		if e.DeletedTS != "" || e.VerdictTS != "" {
+		if e.DeletedTS != "" || e.VerdictTS != "" || e.dispositionOnly {
 			continue
 		}
 		p := pendingChannelInbound{

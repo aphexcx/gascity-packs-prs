@@ -2708,3 +2708,101 @@ func TestCompactionAbortsOnAReadError(t *testing.T) {
 		t.Fatalf("the journal must be untouched after a read error, got %d record(s)", n)
 	}
 }
+
+// --- codex r18 ---------------------------------------------------------------
+
+// A refused REACTION's verdict is seeded before any admission too (r18
+// finding 1): the pre-pass skipped reaction entries, so a plain copy of
+// the reaction earlier in the file entered the side lane, and with 99
+// other reactions ahead of the refused entry the 100th admission's
+// overflow POST carried the refused bytes before the park retired them.
+func TestReplaySeedsARefusedReactionBeforeAdmitting(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	reaction := func(id, text string) pendingChannelInbound {
+		p := testPending("C1", id, text)
+		p.reaction = true
+		return p
+	}
+	batch := []pendingChannelInbound{reaction("1.5", "thumbsup, a plain copy of the refused reaction")}
+	for i := 0; i < maxBufferedReactionsPerChannel-1; i++ {
+		batch = append(batch, reaction(fmt.Sprintf("2.%03d", i), "another reaction"))
+	}
+	refused := reaction("1.5", "thumbsup")
+	refused.refused, refused.attempts = "422 Unprocessable Entity", 1
+	batch = append(batch, refused)
+	if !spool.spillBatch("C1", batch) {
+		t.Fatal("spill must confirm")
+	}
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	time.Sleep(60 * time.Millisecond)
+	for _, call := range calls() {
+		if strings.Contains(","+call+",", ",1.5(r),") { // recordingDeliver renders a reaction as "ts(r)"
+			t.Fatalf("the refused reaction's plain copy rode a POST (%q) — its verdict must be seeded before any copy is admitted", call)
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.reactions["C1"] {
+		if p.inbound.ProviderMessageID == "1.5" {
+			t.Fatal("the plain copy of a refused reaction must not sit in the side lane")
+		}
+	}
+}
+
+// When the newer spool cannot be merged behind a retained staged file,
+// the salvage must carry the dispositions its ENTRIES hold, not only
+// its explicit records (r18 finding 2): with plain A staged and stripped
+// A in the un-merged spool, the pre-pass never saw A's stripped
+// disposition and the staged copy entered delivery with its original
+// attachments.
+func TestFailedMergeSalvagesEntryCarriedDispositions(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	plainA := testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	strippedA := withholdAttachments(plainA, permanent422())
+	strippedA.isolate, strippedA.attempts = true, 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{plainA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	if !spool.spillBatch("C1", []pendingChannelInbound{strippedA}) {
+		t.Fatal("spill must confirm")
+	}
+	// The merge appends the spool behind the staged file: a read-only
+	// staged file makes it fail, and the staged entries replay alone.
+	if err := os.Chmod(spool.replayingPath(), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	if !strings.Contains(read(), "merging") || !strings.Contains(read(), "FAILED") {
+		t.Fatalf("the test must exercise the failed merge: %q", read())
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	found := false
+	for _, p := range c.pending["C1"] {
+		if p.inbound.ProviderMessageID != "1.0" {
+			continue
+		}
+		found = true
+		if len(p.inbound.Attachments) != 0 || !p.isolate {
+			t.Fatalf("the staged plain copy of A entered delivery with %d attachment(s), isolate=%v — the un-merged spool's stripped disposition was not salvaged", len(p.inbound.Attachments), p.isolate)
+		}
+	}
+	if !found {
+		t.Fatal("the staged copy of A is still owed its delivery")
+	}
+	if _, err := os.Stat(spool.path); err != nil {
+		t.Fatalf("the un-merged spool stays for the next startup: %v", err)
+	}
+}
