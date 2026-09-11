@@ -943,6 +943,34 @@ func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 	return ok
 }
 
+// holdDelivery blocks until the channel's delivery mutex is held and
+// returns its release. The ladder progresses only inside deliveries
+// made under that mutex (failed → charge, the isolation probes), so a
+// caller that asks onLadder and POSTs under one hold has serialized
+// the decision with its submission (codex r29 finding 1: the urgent
+// path asked, paused in the busy-mark clock, a trailing buffered twin
+// posted and was refused, and the urgent copy then posted the original
+// attachments after the refusal). The wait is a reservation exactly as
+// flushAheadOf's (urgentWaiting): competing takes refuse while a holder
+// is queued, and retry on the short cadence once it releases. Lock
+// order as flushAheadOf: block on the delivery mutex OUTSIDE c.mu.
+// Nil-safe. The release must run before anything that takes the
+// channel (deliverBufferedReactions, a flush-ahead).
+func (c *inboundCoalescer) holdDelivery(channel string) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	mu := c.flushMuFor(channel)
+	c.urgentWaiting[channel]++
+	c.mu.Unlock()
+	mu.Lock()
+	c.mu.Lock()
+	c.urgentWaiting[channel]--
+	c.mu.Unlock()
+	return mu.Unlock
+}
+
 // isDeletedLocked reports whether (channel, ts) carries a live
 // tombstone. Caller holds c.mu.
 func (c *inboundCoalescer) isDeletedLocked(channel, ts string, now time.Time) bool {

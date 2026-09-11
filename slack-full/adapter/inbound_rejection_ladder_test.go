@@ -3785,3 +3785,36 @@ func TestInPlaceCompactionKeepsLinesReadable(t *testing.T) {
 		t.Fatal("the compacted refusal must read back whole — the compaction wrote a line over the cap, or lost the payload")
 	}
 }
+
+// --- codex r29 ---------------------------------------------------------------
+
+// A held channel delivers nothing until released (r29 finding 1): the
+// urgent path asks the ladder and POSTs under one hold of the channel's
+// delivery mutex, so no coalesced delivery — the only path that
+// progresses the ladder — can refuse a trailing twin between the
+// answer and the submission. Competing takes wait on the reservation
+// and resume after the release.
+func TestHeldChannelSerializesDeliveries(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	release := c.holdDelivery("C1")
+	c.enqueue("C1", testPending("C1", "1.0", "a trailing twin"))
+	time.Sleep(80 * time.Millisecond)
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("nothing delivers for a held channel: %v", got)
+	}
+	c.mu.Lock()
+	reserved := c.urgentWaiting["C1"]
+	c.mu.Unlock()
+	if reserved != 0 {
+		t.Fatalf("the reservation is lifted once the hold is acquired, got %d", reserved)
+	}
+	release()
+	waitForCalls(t, calls, []string{"1.0"}) // the timer's take resumes on the short retry cadence
+	// Another channel is untouched by the hold.
+	release2 := c.holdDelivery("C1")
+	c.enqueue("C2", testPending("C2", "2.0", "elsewhere"))
+	waitForCalls(t, calls, []string{"1.0", "2.0"})
+	release2()
+}

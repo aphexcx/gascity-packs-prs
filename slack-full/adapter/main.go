@@ -4019,6 +4019,20 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inbound: a solo reaction wake. They drain via
 	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
+	// The ladder's answer and this copy's submission are ONE step under
+	// the channel's delivery mutex (codex r29 finding 1): asked and then
+	// released, the answer could go stale in the busy-mark clock below —
+	// a trailing buffered twin posted under the timer, gc refused it,
+	// and this copy then posted the original attachments AFTER the
+	// refusal. Held until the POST below concludes, no coalesced
+	// delivery for this channel — the only path that progresses the
+	// ladder — can interleave; it waits on the reservation and retries
+	// after. Released on every path before anything that takes the
+	// channel (deliverBufferedReactions below).
+	releaseChannel := func() {}
+	if !skipChannelPost {
+		releaseChannel = cfg.coalescer.holdDelivery(msg.Channel)
+	}
 	ladderSkip := false
 	if !skipChannelPost && cfg.coalescer.onLadder(msg.Channel, msg.TS) {
 		// The rejection ladder owns THIS message: gc refused its bytes,
@@ -4052,6 +4066,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			cfg.threadContextCache.rollbackDelivered(target, msg.Channel, msg.ThreadTS, msg.TS, threadCtxPrevTS)
 			threadCtxAdvanced = false
 		}
+	}
+	if skipChannelPost {
+		releaseChannel()
+		releaseChannel = func() {}
 	}
 
 	// A twin whose channel copy was skipped while the drain is running
@@ -4150,6 +4168,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			receipt, postErr = postInboundWithReceipt(cfg, inboundForChannel)
 			verdict = receipt.verdict(cfg.deliveryReceiptGate)
 		}
+		releaseChannel() // the submission is concluded; coalesced deliveries for the channel may resume
 		if postErr == nil && verdict == receiptHeld {
 			// gc took the payload and is still waiting for the session
 			// to reach an idle boundary (mayor ruling, 2026-08-28). The
