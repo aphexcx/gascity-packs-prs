@@ -67,6 +67,11 @@ import (
 // what a corrupt file can make the reader hold in memory at once.
 const maxInboundSpoolLineBytes = 64 << 20
 
+// syncFile is the fsync the compaction's temp file goes through; a
+// variable so a test can make it fail (an fsync failure means the bytes
+// are not on disk, whatever the write returned).
+var syncFile = func(f *os.File) error { return f.Sync() }
+
 // spooledInbound is one spooled item: the channel it was buffered for,
 // whether it was a no-wake reaction entry, and the ready-to-post
 // envelope (final per-message text, attachments, dedup key).
@@ -424,15 +429,20 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	tmpPath := tmp.Name()
 	w := bufio.NewWriter(tmp)
 	for _, k := range order {
-		line, err := json.Marshal(newest[k])
-		if err != nil {
+		line, merr := json.Marshal(newest[k])
+		if merr != nil {
 			continue
 		}
 		w.Write(line)
 		w.WriteByte('\n')
 	}
-	if err := w.Flush(); err == nil {
-		err = tmp.Sync()
+	// Every step feeds ONE error: a failed flush or fsync must reach the
+	// rename guard, or an incomplete temp file replaces the journal and
+	// its verdicts are lost (codex r16 finding 1: a shadowed err let the
+	// rename proceed).
+	err = w.Flush()
+	if err == nil {
+		err = syncFile(tmp)
 	}
 	if cerr := tmp.Close(); err == nil {
 		err = cerr

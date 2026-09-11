@@ -574,8 +574,15 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 	c.mu.Lock()
 	v, ok := c.verdicts[channel][ts]
 	hook := c.recordVerdict
+	if ok && v.retired && !v.durable && hook == nil {
+		// No hook wired (bare configs): nothing was promised, nothing is
+		// owed — marked durable so the retry tail's recount (codex r16
+		// finding 2) never keeps a timer armed for it.
+		v.durable = true
+		c.verdicts[channel][ts] = v
+	}
 	c.mu.Unlock()
-	if !ok || !v.retired || v.durable || hook == nil {
+	if !ok || !v.retired || v.durable {
 		return true
 	}
 	if hook(channel, ts, v) {
@@ -599,9 +606,22 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 	return false
 }
 
+// owedVerdictsLocked counts the channel's terminal verdicts whose
+// record is still owed. Caller holds c.mu.
+func (c *inboundCoalescer) owedVerdictsLocked(channel string) int {
+	n := 0
+	for _, v := range c.verdicts[channel] {
+		if v.retired && !v.durable {
+			n++
+		}
+	}
+	return n
+}
+
 // persistOwedVerdicts writes every terminal verdict of the channel whose
-// record is still owed. Returns how many remain owed. Called with c.mu
-// NOT held.
+// record is still owed. Returns how many of THOSE remain owed (the
+// retry tail recounts under the lock instead of trusting this, codex
+// r16 finding 2). Called with c.mu NOT held.
 func (c *inboundCoalescer) persistOwedVerdicts(channel string) int {
 	c.mu.Lock()
 	var owed []string

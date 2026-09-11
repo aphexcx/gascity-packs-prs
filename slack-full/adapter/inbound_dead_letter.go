@@ -361,9 +361,14 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 	// The same timer retries the channel's owed verdict records (codex
 	// r15 finding 2): the timer entry still stands here, so a failure
 	// inside persistVerdict re-arms nothing — the tail below decides.
-	owed := c.persistOwedVerdicts(channel)
+	c.persistOwedVerdicts(channel)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Recounted UNDER the lock, not the pass's own tally (codex r16
+	// finding 2): a message retired while the pass ran, whose record
+	// write failed, saw this timer armed and armed nothing — the tail
+	// must see it or the record waits for the next failure or shutdown.
+	owed := c.owedVerdictsLocked(channel)
 	// Entries parked while the hook ran were appended after the
 	// snapshot (appends happen only under c.mu, removals only here and
 	// in the shutdown flush, which deadLetterMu excludes).

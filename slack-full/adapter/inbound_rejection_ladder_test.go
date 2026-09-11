@@ -2539,3 +2539,54 @@ func TestInPlaceReplayKeepsItsRecords(t *testing.T) {
 		t.Fatalf("compacted to one record, got %d", n)
 	}
 }
+
+// --- codex r16 ---------------------------------------------------------------
+
+// A message retired WHILE the durable-write retry pass runs, whose
+// record write fails, sees the timer armed and arms nothing; the pass's
+// tail must recount the owed records under the lock (r16 finding 2) —
+// trusting its own tally, it removed the timer and exited with nothing
+// parked, and the new record waited for the next failure or shutdown.
+func TestOwedRecordRetiredDuringTheRetryPassIsNotStranded(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	var mu sync.Mutex
+	calls := 0
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c.recordVerdict = func(channel, ts string, v ladderVerdict) bool {
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		switch n {
+		case 1:
+			return false // 1.0's first write fails: the retry timer is armed
+		case 2:
+			// The retry pass is writing 1.0. Meanwhile 2.0 is retired and its
+			// write (call 3) fails: the timer is armed, so it arms nothing.
+			c.charge("C1", testPending("C1", "2.0", "poison too"), permanent422())
+			return spool.recordVerdict(channel, ts, v)
+		case 3:
+			return false
+		}
+		return spool.recordVerdict(channel, ts, v)
+	}
+	c.charge("C1", testPending("C1", "1.0", "poison"), permanent422())
+	waitFor(t, "1.0's record on the retry", func() bool { return countVerdictLines(t, spool.path, "1.0") == 1 })
+	waitFor(t, "2.0's record — the pass's tail must see the record owed by the message retired during it", func() bool {
+		return countVerdictLines(t, spool.path, "2.0") == 1
+	})
+	time.Sleep(60 * time.Millisecond)
+	c.mu.Lock()
+	_, armed := c.deadLetterTimers["C1"]
+	owed := 0
+	for _, v := range c.verdicts["C1"] {
+		if v.retired && !v.durable {
+			owed++
+		}
+	}
+	c.mu.Unlock()
+	if armed || owed != 0 {
+		t.Fatalf("caught up: nothing owed (%d), no retry armed (%v)", owed, armed)
+	}
+}
