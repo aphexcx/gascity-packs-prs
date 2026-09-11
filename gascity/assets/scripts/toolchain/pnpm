@@ -124,13 +124,20 @@
 #      No child-pid tracking, no ancestor exemption.
 #      A lock whose owner pid is dead (or a zombie), or that has no owner
 #      after two minutes, is moved aside by rename (atomic; nothing is
-#      deleted) and retaken, but only under a second, atomic reclaim lock
-#      and only after re-checking it is still the same stale lock, so two
-#      waiters cannot both clear it and a live lock (a waiter's fresh one)
-#      is never moved; a reclaim lock stuck for two minutes fails the command
-#      closed. A live lock is waited for up to <wait> seconds, then this
-#      command fails closed naming the holder. Only the pid that took the
-#      lock releases it. A lifecycle script that a mutate or install runs
+#      deleted) and retaken. Every change of hands of the lock goes through
+#      one gate, <lock>.reclaim (mkdir, held for an instant): making the
+#      lock (the mkdir and the pid inside as one step, with HUP, INT and
+#      TERM held for it) and judging a stale lock and moving it aside. So a
+#      waiter cannot make a fresh lock while another judges the old one,
+#      two waiters cannot both clear it, and a lock that under the gate
+#      names another owner than the one judged dead is never moved. A pid
+#      that cannot be written leaves no lock standing and fails the command
+#      closed naming the file. A gate left standing for two minutes (a
+#      wrapper killed outright inside it) fails the command closed, for a
+#      human to remove after checking no lane install is alive. A live lock
+#      is waited for up to <wait> seconds, then this command fails closed
+#      naming the holder. Only the pid that took the lock releases it, and
+#      a trapped signal releases the lock and the gate this wrapper holds. A lifecycle script that a mutate or install runs
 #      (a `postinstall` that calls `pnpm run build`) re-enters this wrapper
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
@@ -165,6 +172,7 @@ set -eu
 log() { printf 'gc-toolchain pnpm: %s\n' "$*" >&2; }
 warn() { printf 'gc-toolchain pnpm: WARN %s\n' "$*" >&2; }
 die() { printf 'gc-toolchain pnpm: ERROR %s\n' "$*" >&2; exit 1; }
+die_with() { st="$1"; shift; printf 'gc-toolchain pnpm: ERROR %s\n' "$*" >&2; exit "$st"; }
 
 # --- locate self with parameter expansion only ------------------------------------
 case "$0" in
@@ -711,8 +719,22 @@ lane_install() {
 # wrapper's pid inside): a mutate holds it while it runs; a project command
 # holds it for the question and the one frozen install, then releases it and
 # runs holding nothing (the contract and the non-goal in the header).
+# Every change of hands goes through one gate, $LOCK.reclaim (mkdir, held for
+# the instant of the change): making the lock (the mkdir and the pid write as
+# one step under the gate, so nobody judging the lock sees it without its
+# owner), and judging a stale lock and moving it aside. Release is the
+# owner's alone and takes no gate: a judge that read an owner who then
+# released finds, under the gate, the directory gone or another owner's, and
+# moves nothing. The mkdirs and the pid write run with HUP, INT and TERM
+# held: sh runs a trap between two commands (measured on /bin/sh: a trap
+# fired during `sleep 2 && G=1` saw G=0), so a trap between `mkdir` and the
+# mark that says "mine" would leak what was just made; a signal sent in that
+# instant is lost, not deferred (measured: the trap set back afterwards did
+# not fire), and the traps come back right after.
 LOCK=""
 LOCKED=0
+GATE=""
+GATED=0
 release_lock() {
     if [ "$LOCKED" -eq 1 ]; then
         LOCKED=0
@@ -721,11 +743,21 @@ release_lock() {
         rmdir "$LOCK" 2>/dev/null || true
     fi
 }
-cleanup() { release_lock; }
+release_gate() {
+    if [ "$GATED" -eq 1 ]; then
+        GATED=0
+        rmdir "$GATE" 2>/dev/null || true
+    fi
+}
+cleanup() { release_lock; release_gate; }
+heed_signals() {
+    trap 'cleanup; exit 129' HUP
+    trap 'cleanup; exit 130' INT
+    trap 'cleanup; exit 143' TERM
+}
+hold_signals() { trap '' HUP INT TERM; }
 trap 'cleanup' EXIT
-trap 'cleanup; exit 129' HUP
-trap 'cleanup; exit 130' INT
-trap 'cleanup; exit 143' TERM
+heed_signals
 
 owner_is_dead() {
     ! kill -0 "$1" 2>/dev/null && return 0
@@ -736,11 +768,12 @@ owner_is_dead() {
 }
 
 # lock_is_stale: $LOCK exists and its owner is dead or a zombie, or it has had
-# no owner for over two minutes (a run died between mkdir and the pid write;
-# a live run publishes within milliseconds). Sets `owner`.
+# no owner for over two minutes (a run killed outright between mkdir and the
+# pid write; a live run publishes within milliseconds). Sets `owner`.
 lock_is_stale() {
     [ -d "$LOCK" ] || return 1
     owner="$(cat "$LOCK/pid" 2>/dev/null || true)"
+    [ -z "${GC_TOOLCHAIN_TEST_PAUSE_AFTER_OWNER_READ:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_AFTER_OWNER_READ"
     if [ -n "$owner" ]; then
         owner_is_dead "$owner"
     else
@@ -748,57 +781,110 @@ lock_is_stale() {
     fi
 }
 
-# reclaim_stale_lock: move $LOCK aside if, under the reclaim lock, it is still
-# stale. 0 when something was moved, 1 otherwise (lost the reclaim race, the
-# lock turned out live or gone). A reclaim lock older than two minutes is a
-# crash residue and fails the command closed rather than being removed here
-# (two contenders removing it would race exactly like the primary lock).
-reclaim_stale_lock() {
-    reclaim="$LOCK.reclaim"
-    if ! mkdir "$reclaim" 2>/dev/null; then
-        if [ -n "$(find "$reclaim" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
-            die "stale reclaim lock $reclaim is older than two minutes; remove it by hand after checking no lane install is alive"
+# claim_dir DIR MARK: mkdir DIR and set MARK=1. 0 made; 1 DIR stands (held by
+# another caller); 2 refused: the mkdir failed and no directory stands, once
+# more to tell a refusal (node_modules refuses the write for this caller: a
+# sandbox, a read-only lane) from a holder that just left; LOCK_REFUSED names
+# the refusal. The caller holds the signals around this.
+LOCK_REFUSED=""
+claim_dir() {
+    err=""
+    if mkdir "$1" 2>/dev/null; then eval "$2=1"; return 0; fi
+    if [ ! -d "$1" ] && err="$(mkdir "$1" 2>&1)"; then eval "$2=1"; return 0; fi
+    if [ -d "$1" ] || [ -z "$err" ]; then return 1; fi
+    LOCK_REFUSED="cannot create $1 (${err#mkdir: })"
+    return 2
+}
+
+# take_gate: hold $GATE on return (0). Another caller holds it for an instant
+# and is waited for; a gate older than two minutes was left by a wrapper
+# killed outright inside it and fails the command closed rather than being
+# removed here (two contenders removing it would race exactly like the lock;
+# a human removes it after checking no lane install is alive). Returns 1 with
+# LOCK_REFUSED set when node_modules refuses the mkdir for this caller.
+take_gate() {
+    gate_waited=0
+    while :; do
+        hold_signals
+        rc=0
+        claim_dir "$GATE" GATED || rc=$?
+        heed_signals
+        [ "$rc" -ne 0 ] || return 0
+        [ "$rc" -eq 1 ] || return 1
+        if [ -n "$(find "$GATE" -maxdepth 0 -mmin +2 2>/dev/null)" ]; then
+            die "stale reclaim lock $GATE is older than two minutes; remove it by hand after checking no lane install is alive"
         fi
-        return 1
+        [ "$gate_waited" -lt "$LANE_DEPS_WAIT" ] \
+            || die "the lane lock's gate $GATE has been held for ${LANE_DEPS_WAIT}s (a wrapper killed outright inside it leaves it; remove it by hand after checking no lane install is alive); this command did not run"
+        sleep 1
+        gate_waited=$((gate_waited + 1))
+    done
+}
+
+# make_lock: under the gate, mkdir $LOCK and publish this pid inside, as one
+# step with the signals held. 0 holding it; 1 otherwise: held by another
+# caller (LOCK_REFUSED empty: wait and look again), or refused with
+# LOCK_REFUSED set when the gate, the lock or the pid file cannot be made by
+# this caller. A pid that cannot be written takes the directory just made
+# with it: a lock standing without its owner would be judged ownerless and
+# moved from under the mutation it was guarding.
+make_lock() {
+    take_gate || return 1
+    hold_signals
+    rc=0
+    claim_dir "$LOCK" LOCKED || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        if pid_err="$( { printf '%s\n' "$$" > "$LOCK/pid"; } 2>&1 )"; then
+            heed_signals
+            release_gate
+            return 0
+        fi
+        LOCKED=0
+        rmdir "$LOCK" 2>/dev/null || true
+        LOCK_REFUSED="cannot write $LOCK/pid (${pid_err##*: })"
     fi
+    heed_signals
+    release_gate
+    return 1
+}
+
+# reclaim_stale_lock: under the gate, judge $LOCK again and move it aside
+# only when it is still the stale lock that was seen: the owner it names,
+# re-read right before the move, is the one judged dead (or none, judged by
+# age). The gate keeps every wrapper from making a lock while this runs; the
+# re-read covers a hand that changed outside this wrapper's rules. 0 when
+# something was moved, 1 otherwise (the lock turned out live or gone).
+reclaim_stale_lock() {
+    take_gate || die "$LOCK_REFUSED; this command did not run"
     [ -z "${GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM"
     moved=1
     if lock_is_stale; then
-        aside="$LOCK.stale-${owner:-nopid}-$$"
-        if mv "$LOCK" "$aside" 2>/dev/null; then
-            warn "moved aside a stale lane install lock (owner pid ${owner:-none}) -> $aside"
-            moved=0
+        judged="$owner"
+        if [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$judged" ]; then
+            aside="$LOCK.stale-${judged:-nopid}-$$"
+            if mv "$LOCK" "$aside" 2>/dev/null; then
+                warn "moved aside a stale lane install lock (owner pid ${judged:-none}) -> $aside"
+                moved=0
+            fi
         fi
     fi
-    rmdir "$reclaim" 2>/dev/null || true
+    release_gate
     return "$moved"
 }
 
 # take_lane_lock: hold $LOCK on return (0). Fails closed after LANE_DEPS_WAIT
 # seconds behind a live holder; returns 1 with LOCK_REFUSED set when the
-# lock cannot be made because node_modules refuses the write for this
-# caller (a sandbox, a read-only lane): with no lock there is nobody to
-# wait for, and nothing this caller could hold against another that can
-# write, so every caller fails closed on it.
-LOCK_REFUSED=""
+# lock cannot be made for this caller (see make_lock): with no lock there is
+# nobody to wait for, and nothing this caller could hold against another
+# that can write, so every caller fails closed on it.
 take_lane_lock() {
     mkdir -p "$NM" 2>/dev/null || die "cannot create $NM (read-only here?)"
     waited=0
     while :; do
-        if mkdir "$LOCK" 2>/dev/null; then
-            LOCKED=1
-            printf '%s\n' "$$" > "$LOCK/pid"
+        if make_lock; then
             return 0
         fi
-        if [ ! -d "$LOCK" ]; then
-            # refused, and no lock to wait for: the holder may have just left, so once more
-            if mkdir_err="$(mkdir "$LOCK" 2>&1)"; then
-                LOCKED=1
-                printf '%s\n' "$$" > "$LOCK/pid"
-                return 0
-            fi
-            [ -d "$LOCK" ] || { LOCK_REFUSED="${mkdir_err#mkdir: }"; return 1; }
-        fi
+        [ -z "$LOCK_REFUSED" ] || return 1
         if lock_is_stale; then
             [ -z "${GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_BEFORE_RECLAIM"
             if reclaim_stale_lock; then
@@ -830,13 +916,14 @@ if [ "${GC_TOOLCHAIN_LANE_DEPS_INSTALLING:-}" = "$LANE" ]; then
 fi
 NM="$LANE/node_modules"
 LOCK="$NM/.gc-lane-deps.lock"
+GATE="$LOCK.reclaim"
 
 case "$KIND" in
     mutate)
         # under the lane lock, so two callers changing dependencies never
         # overlap; a command running beside it is not waited for (the
         # non-goal in the header)
-        take_lane_lock || die "cannot create $LOCK ($LOCK_REFUSED); this command did not run"
+        take_lane_lock || die "$LOCK_REFUSED; this command did not run"
         status=0
         GC_TOOLCHAIN_LANE_DEPS_INSTALLING="$LANE" run_pnpm "$@" || status=$?
         release_lock
@@ -848,12 +935,12 @@ case "$KIND" in
         # reads as in sync to pnpm); then the lock is released and the
         # command runs holding nothing (the contract in the header)
         take_lane_lock \
-            || die "cannot create $LOCK ($LOCK_REFUSED): this lane cannot be coordinated from here, its question and install serialize on that lock; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
+            || die "$LOCK_REFUSED: this lane cannot be coordinated from here, its question and install serialize on that lock; run with GC_TOOLCHAIN_LANE_DEPS=off if the lane is yours alone; this command did not run"
         if [ "$(deps_status)" = stale ]; then
             log "installing lane dependencies once for $LANE (pnpm says node_modules is out of sync)"
             status=0
             lane_install >&2 || status=$?
-            [ "$status" -eq 0 ] || die "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
+            [ "$status" -eq 0 ] || die_with "$status" "lane install failed (pnpm install --frozen-lockfile exit $status); this command did not run"
         fi
         release_lock
         exec_pnpm "$@"
