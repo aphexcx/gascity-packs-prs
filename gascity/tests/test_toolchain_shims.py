@@ -9,6 +9,38 @@ its own installs write over the lockfile, every manifest and the workspace
 membership; `--lockfile-only` and the cleanup built-ins leave it out of
 sync), fake node trees, and a fake nodejs.org served over file://. Nothing
 touches the network or the machine's toolchain.
+
+Round 3 ledger (bead gp-sgbj, 2026-09-11: the shape-A concurrency contract,
+the mayor's decision after gate rounds 19 to 29 each found a hole around a
+reader/writer model of running commands). The wrapper owns its own question
+and the one frozen install per lockfile under the lane lock, and
+mutate-vs-mutate serialization on that same lock; a project command runs
+after the question holding nothing; nothing tracks running commands; a
+running command is not fenced from a dependency mutation another caller
+starts afterwards (the documented non-goal). Every row that pinned the
+reader/writer model is listed here, not silently dropped:
+- (r20) a rebuild started under a running check waits until the check ends:
+  removed with the shape-A contract; the reverse is pinned as behaviour in
+  test_a_mutate_does_not_wait_for_a_running_project_command.
+- (r20) a reader token whose pid is dead holds nothing; a live token fails a
+  mutate closed naming its pid: removed with the shape-A contract (there are
+  no tokens).
+- (r20) the wrapper's own frozen install waits for a live reader: removed
+  with the shape-A contract.
+- (r20/r21) tokens are dropped on exit and the readers directory is left
+  empty: removed with the shape-A contract; no such directory is ever made
+  (test_a_project_command_runs_holding_no_lock_and_no_token).
+- (r26) a project command inside a running project command asks nothing and
+  takes no token: removed with the shape-A contract; it asks pnpm under the
+  lock like any other caller
+  (test_a_command_started_by_a_running_command_is_any_other_caller).
+- (r26) a mutate inside a running project command is refused, closed, naming
+  the command, and two scripts each rebuilding are both refused with no wait
+  on each other: removed with the shape-A contract; both run, serialized on
+  the lock, under the commands that started them (the same test).
+Kept from that test as rows of their own: a lane whose node_modules refuses
+the lock fails closed and runs under LANE_DEPS=off (r17/r21); LANE_DEPS=off
+on a nested command runs it as is; the command names of round 20.
 """
 
 from __future__ import annotations
@@ -1159,150 +1191,6 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertIn("waiting for another caller's lane install", results["exec"].stderr)
         self.assertEqual(self.fx.argv(), ["add left-pad", "exec vitest"])
 
-    def test_a_mutate_waits_for_running_project_commands_and_the_question_is_asked_under_the_lock(self) -> None:
-        """Round 20: a running check holds a reader token, so a rebuild (or
-        the wrapper's own install) starting under it waits; the question is
-        asked under the lane lock, never beside a mutate taking it."""
-        proj = self.fx.project()
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        readers = proj / "node_modules" / ".gc-lane-deps.readers"
-        self.fx.reset()
-        results: dict[str, subprocess.CompletedProcess[str]] = {}
-        marks: dict[str, float] = {}
-
-        def check() -> None:
-            results["check"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="3")
-            marks["check_end"] = time.monotonic()
-
-        def rebuild() -> None:
-            time.sleep(1)
-            results["rebuild"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
-            marks["rebuild_end"] = time.monotonic()
-
-        threads = [threading.Thread(target=check), threading.Thread(target=rebuild)]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=60)
-        self.assertEqual(results["check"].returncode, 0, results["check"].stderr)
-        self.assertEqual(results["rebuild"].returncode, 0, results["rebuild"].stderr)
-        self.assertIn("waiting for running lane command(s)", results["rebuild"].stderr)
-        self.assertGreaterEqual(marks["rebuild_end"], marks["check_end"])
-        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
-        self.assertEqual(sorted(readers.iterdir()), [])     # tokens dropped on exit
-        # a crashed run's token (dead pid) does not hold a mutate; a live one does, then fails closed
-        dead = subprocess.Popen(["true"])
-        dead.wait()
-        readers.mkdir(exist_ok=True)
-        (readers / str(dead.pid)).write_text("", encoding="utf-8")
-        holder = subprocess.Popen(["sleep", "60"])
-        try:
-            self.fx.reset()
-            r = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertFalse((readers / str(dead.pid)).exists())
-            (readers / str(holder.pid)).write_text("", encoding="utf-8")
-            self.fx.reset()
-            r = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
-            self.assertEqual(r.returncode, 1, r.stderr)
-            self.assertIn(f"still running (pid {holder.pid})", r.stderr)
-            self.assertEqual(self.fx.all_calls(), [])
-            self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())   # released on the way out
-            # the wrapper's own install waits for the reader too: a stale lane (the fake's
-            # rebuild above left it so) with a live reader
-            (proj / "node_modules" / ".fake-state").unlink(missing_ok=True)
-            self.fx.reset()
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
-            self.assertEqual(r.returncode, 1, r.stderr)
-            self.assertIn("still running", r.stderr)
-            self.assertEqual(self.fx.installs(), [])
-        finally:
-            holder.kill()
-            holder.wait()
-        # a project command inside a running project command runs as is: the running command's
-        # token holds every mutate off and its readiness is settled (asked nothing, no token)
-        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
-        self.fx.reset()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_READING=str(proj.resolve()), GC_TOOLCHAIN_LANE_DEPS_READER="1")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|exec vitest"])
-        self.assertEqual(sorted(readers.iterdir()), [])
-        # a mutate inside a running project command is refused, closed, at once, naming the
-        # command: `pnpm rebuild` from a script (the fake runs the wrapper from inside the
-        # command), also `node check.js & pnpm rebuild` and two scripts each rebuilding
-        hook = self.fx.root / "rebuild-inside.sh"
-        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nsleep 1 & bg=$!\n"{self.fx.shims / "pnpm"}" rebuild || {{ wait "$bg"; exit 9; }}\nwait "$bg"\n')
-        self.fx.reset()
-        started = time.monotonic()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-        self.assertEqual(r.returncode, 9, r.stderr)
-        self.assertLess(time.monotonic() - started, 10)
-        self.assertIn("refused: a mutate inside a running lane command (pid ", r.stderr)
-        self.assertIn("GC_TOOLCHAIN_LANE_DEPS=off", r.stderr)
-        self.assertEqual(self.fx.argv(), ["exec vitest"])      # the rebuild never ran
-        self.assertTrue(in_sync(proj))
-        self.assertEqual(sorted(readers.iterdir()), [])
-        pair2: dict[str, subprocess.CompletedProcess[str]] = {}
-
-        def script(name: str) -> None:
-            pair2[name] = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
-
-        started = time.monotonic()
-        threads = [threading.Thread(target=script, args=(n,)) for n in ("vitest", "eslint")]
-        for th in threads:
-            th.start()
-        for th in threads:
-            th.join(timeout=60)
-        self.assertLess(time.monotonic() - started, 15)     # refused, never a wait on each other
-        for name in ("vitest", "eslint"):
-            self.assertEqual(pair2[name].returncode, 9, (name, pair2[name].stderr))
-            self.assertIn("refused", pair2[name].stderr)
-        # the documented way through: LANE_DEPS=off on the nested command runs it as is
-        hook_off = self.fx.root / "rebuild-inside-off.sh"
-        write_exec(hook_off, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nGC_TOOLCHAIN_LANE_DEPS=off "{self.fx.shims / "pnpm"}" rebuild || exit 9\n')
-        self.fx.reset()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook_off))
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
-        # a lane whose node_modules refuses the lock for this caller cannot be coordinated from
-        # here: the command fails closed at once whatever pnpm would say; LANE_DEPS=off runs it
-        ro = self.fx.project("ro")
-        self.fx.run("pnpm", "exec", "vitest", cwd=ro)
-        (ro / "node_modules").chmod(0o555)
-        try:
-            self.fx.reset()
-            started = time.monotonic()
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
-            self.assertEqual(r.returncode, 1, r.stderr)
-            self.assertLess(time.monotonic() - started, 20)
-            self.assertIn("cannot create", r.stderr)
-            self.assertIn("cannot be coordinated from here", r.stderr)
-            self.assertEqual(self.fx.all_calls(), [])
-            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro, GC_TOOLCHAIN_LANE_DEPS="off")
-            self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(self.fx.all_calls(), [f"{ro.resolve()}|false|exec vitest"])
-        finally:
-            (ro / "node_modules").chmod(0o755)
-        # the new names: prefix/get/set/owners/peers/lane/change are informational, uni and runtime mutate
-        holder = subprocess.Popen(["sleep", "60"])
-        lock = proj / "node_modules" / ".gc-lane-deps.lock"
-        try:
-            lock.mkdir()
-            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
-            for argv in (["prefix"], ["get", "registry"], ["set", "registry", "x"], ["owners", "ls", "x"], ["peers", "check"], ["lane"], ["change", "status"]):
-                self.fx.reset()
-                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
-                self.assertEqual(r.returncode, 0, (argv, r.stderr))
-                self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
-            for argv in (["uni", "x"], ["runtime", "set", "node", "22"], ["rt", "set", "node", "22"]):
-                self.fx.reset()
-                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
-                self.assertEqual(r.returncode, 1, (argv, r.stderr))
-                self.assertIn("has held", r.stderr, argv)
-        finally:
-            holder.kill()
-            holder.wait()
-
     def test_a_lock_taken_over_by_another_pid_is_not_released_by_the_first(self) -> None:
         proj = self.fx.project()
         holder = subprocess.Popen(["sleep", "30"])
@@ -1387,6 +1275,253 @@ class PnpmShimGateRoundTests(unittest.TestCase):
             self.assertEqual(self.fx.argv()[-1], " ".join(argv), argv)
             self.assertEqual(self.fx.checks()[0].split("|", 1)[0], str(proj.resolve()), argv)
             self.assertFalse((elsewhere / "node_modules").exists(), argv)
+
+
+class PnpmShimShapeATests(unittest.TestCase):
+    """Round 3 (bead gp-sgbj): the concurrency contract, shape A. The wrapper
+    owns its own question and the one frozen install per lockfile under the
+    lane lock, and mutate-vs-mutate serialization on that same lock. A project
+    command runs after the question holding nothing; nothing tracks running
+    commands; a running command is not fenced from a dependency mutation
+    another caller starts afterwards (the documented non-goal, pinned here as
+    behaviour, pnpm:898 and pnpm:759 of round 29 included by name)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.fx = Fixture(pathlib.Path(self.tmp.name), real_node=True)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_a_project_command_runs_holding_no_lock_and_no_token(self) -> None:
+        """(i) measured while the command runs: the lock is gone, no token
+        directory exists, nothing of the wrapper's is in node_modules."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)     # prepared: pnpm says yes from here on
+        nm = proj / "node_modules"
+        self.fx.reset()
+        result: dict[str, subprocess.CompletedProcess[str]] = {}
+
+        def check() -> None:
+            result["r"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="3")
+
+        th = threading.Thread(target=check)
+        th.start()
+        time.sleep(1.5)
+        self.assertFalse((nm / ".gc-lane-deps.lock").exists())
+        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
+        th.join(timeout=60)
+        self.assertEqual(result["r"].returncode, 0, result["r"].stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest"])
+        self.assertEqual(len(self.fx.checks()), 1)      # asked once, under the lock, before the command
+        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
+
+    def test_two_mutating_calls_serialize_on_the_lane_lock(self) -> None:
+        """(ii) the second waits for the first's lock; measured order and time."""
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        results: dict[str, subprocess.CompletedProcess[str]] = {}
+        ends: dict[str, float] = {}
+
+        def mutate(name: str, delay: float) -> None:
+            time.sleep(delay)
+            results[name] = self.fx.run("pnpm", "add", name, cwd=proj, FAKE_PNPM_SLEEP="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
+            ends[name] = time.monotonic()
+
+        started = time.monotonic()
+        threads = [threading.Thread(target=mutate, args=("left-pad", 0.0)), threading.Thread(target=mutate, args=("right-pad", 0.5))]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=60)
+        for name in ("left-pad", "right-pad"):
+            self.assertEqual(results[name].returncode, 0, (name, results[name].stderr))
+        self.assertNotIn("waiting", results["left-pad"].stderr)
+        self.assertIn("waiting for another caller's lane install", results["right-pad"].stderr)
+        self.assertEqual(self.fx.argv(), ["add left-pad", "add right-pad"])       # the measured order
+        self.assertGreaterEqual(ends["right-pad"], ends["left-pad"])
+        self.assertGreaterEqual(ends["right-pad"] - started, 3.5)                # two seconds each, never side by side
+        self.assertFalse(lock.exists())
+
+    def test_a_mutate_does_not_wait_for_a_running_project_command(self) -> None:
+        """(iii) the non-goal pinned as behaviour: a rebuild started one second
+        into a four-second check takes the lock at once and ends before the
+        check does. Bare pnpm's own position; one lane, one agent."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        results: dict[str, subprocess.CompletedProcess[str]] = {}
+        marks: dict[str, float] = {}
+
+        def check() -> None:
+            results["check"] = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_SLEEP="4")
+            marks["check_end"] = time.monotonic()
+
+        def rebuild() -> None:
+            time.sleep(1)
+            results["rebuild"] = self.fx.run("pnpm", "rebuild", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="20")
+            marks["rebuild_end"] = time.monotonic()
+
+        threads = [threading.Thread(target=check), threading.Thread(target=rebuild)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=60)
+        self.assertEqual(results["check"].returncode, 0, results["check"].stderr)
+        self.assertEqual(results["rebuild"].returncode, 0, results["rebuild"].stderr)
+        self.assertNotIn("waiting", results["rebuild"].stderr)
+        self.assertLess(marks["rebuild_end"], marks["check_end"])       # ran under the check: unfenced by design
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock").exists())
+
+    def test_a_command_started_by_a_running_command_is_any_other_caller(self) -> None:
+        """Nothing marks a nested command: a project command a running command
+        starts asks pnpm under the lock and runs; a mutate there takes the lock
+        and runs under the command that started it (`pnpm rebuild` from a
+        script, `node check.js & pnpm rebuild`, two scripts each rebuilding);
+        LANE_DEPS=off on a nested command runs it as is."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        nm = proj / "node_modules"
+        inner = self.fx.root / "check-inside.sh"
+        write_exec(inner, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\n"{self.fx.shims / "pnpm"}" exec eslint || exit 9\n')
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(inner))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "exec eslint"])
+        self.assertEqual(len(self.fx.checks()), 2)      # each asked once, under the lock
+        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
+        hook = self.fx.root / "rebuild-inside.sh"
+        write_exec(hook, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nsleep 1 & bg=$!\n"{self.fx.shims / "pnpm"}" rebuild || {{ wait "$bg"; exit 9; }}\nwait "$bg"\n')
+        self.fx.reset()
+        started = time.monotonic()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertNotIn("refused", r.stderr)
+        self.assertNotIn("waiting", r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])     # the rebuild ran, under its command
+        self.assertFalse(in_sync(proj))                                   # (the fake's rebuild leaves the tree stale)
+        self.assertFalse((nm / ".gc-lane-deps.lock").exists())
+        # two scripts each rebuilding at once: both run, serialized on the lock, no wait on each other's command
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        pair: dict[str, subprocess.CompletedProcess[str]] = {}
+
+        def script(name: str) -> None:
+            pair[name] = self.fx.run("pnpm", "exec", name, cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook), GC_TOOLCHAIN_LANE_DEPS_WAIT="30")
+
+        self.fx.reset()
+        started = time.monotonic()
+        threads = [threading.Thread(target=script, args=(n,)) for n in ("vitest", "eslint")]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=60)
+        self.assertLess(time.monotonic() - started, 15)
+        for name in ("vitest", "eslint"):
+            self.assertEqual(pair[name].returncode, 0, (name, pair[name].stderr))
+            self.assertNotIn("refused", pair[name].stderr)
+        self.assertEqual([a for a in self.fx.argv() if a == "rebuild"], ["rebuild", "rebuild"])
+        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps")], [])
+        # LANE_DEPS=off on the nested command runs it as is, no lock
+        hook_off = self.fx.root / "rebuild-inside-off.sh"
+        write_exec(hook_off, f'#!/bin/sh\nunset FAKE_PNPM_RUN_HOOK\nGC_TOOLCHAIN_LANE_DEPS=off "{self.fx.shims / "pnpm"}" rebuild || exit 9\n')
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        self.fx.reset()
+        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_RUN_HOOK=str(hook_off))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.fx.argv(), ["exec vitest", "rebuild"])
+
+    def test_a_lane_that_refuses_the_lock_fails_closed_and_lane_deps_off_runs_there(self) -> None:
+        """Rounds 17 and 21, kept: with no lock the wrapper cannot serialize its
+        question and install, so the command fails closed at once naming the
+        refusal; LANE_DEPS=off is the way through when the lane is yours alone."""
+        ro = self.fx.project("ro")
+        self.fx.run("pnpm", "exec", "vitest", cwd=ro)
+        (ro / "node_modules").chmod(0o555)
+        try:
+            self.fx.reset()
+            started = time.monotonic()
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro)
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertLess(time.monotonic() - started, 20)
+            self.assertIn("cannot create", r.stderr)
+            self.assertIn("cannot be coordinated from here", r.stderr)
+            self.assertEqual(self.fx.all_calls(), [])
+            r = self.fx.run("pnpm", "exec", "vitest", cwd=ro, GC_TOOLCHAIN_LANE_DEPS="off")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(self.fx.all_calls(), [f"{ro.resolve()}|false|exec vitest"])
+        finally:
+            (ro / "node_modules").chmod(0o755)
+
+    def test_the_names_of_round_20_keep_their_kinds(self) -> None:
+        """prefix/get/set/owners/peers/lane/change are informational; uni and
+        runtime mutate (checked against the 115 names in the pinned pnpm.mjs)."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        holder = subprocess.Popen(["sleep", "60"])
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        try:
+            lock.mkdir()
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            for argv in (["prefix"], ["get", "registry"], ["set", "registry", "x"], ["owners", "ls", "x"], ["peers", "check"], ["lane"], ["change", "status"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 0, (argv, r.stderr))
+                self.assertEqual(self.fx.all_calls(), [f"{proj.resolve()}|false|{' '.join(argv)}"], argv)
+            for argv in (["uni", "x"], ["runtime", "set", "node", "22"], ["rt", "set", "node", "22"]):
+                self.fx.reset()
+                r = self.fx.run("pnpm", *argv, cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="1")
+                self.assertEqual(r.returncode, 1, (argv, r.stderr))
+                self.assertIn("has held", r.stderr, argv)
+        finally:
+            holder.kill()
+            holder.wait()
+
+
+README = TOOLCHAIN.parents[2] / "README.md"
+FRAGMENT = TOOLCHAIN.parents[2] / "template-fragments" / "gc-role-worker.template.md"
+NON_GOAL = "A running command is not fenced from a dependency mutation another caller starts afterwards."
+NON_GOAL_WHY = (
+    "This is bare pnpm's own position, and under the lane model one lane belongs to one agent "
+    "(memory dispatch-worktree-constraint), so the two callers are the same agent."
+)
+
+
+class ShapeAContractTextTests(unittest.TestCase):
+    """(iv) the wrapper header, the README recipe and the role-worker fragment
+    carry the non-goal sentence; the reader-token machinery and its words are
+    gone from the wrapper and the README."""
+
+    def test_header_readme_and_fragment_carry_the_non_goal(self) -> None:
+        header = " ".join(
+            line.lstrip("#").strip() for line in PNPM_SHIM.read_text(encoding="utf-8").splitlines() if line.startswith("#")
+        )
+        readme = " ".join(README.read_text(encoding="utf-8").split())
+        fragment = " ".join(FRAGMENT.read_text(encoding="utf-8").split())
+        for name, text in (("header", header), ("README", readme)):
+            self.assertIn(NON_GOAL, text, name)
+            self.assertIn(NON_GOAL_WHY, text, name)
+            self.assertIn("syncInjectedDepsAfterScripts", text, name)     # pnpm:898 by name: a writer, unfenced by design
+            self.assertIn("No child-pid tracking, no ancestor exemption.", text, name)
+            self.assertIn("orphaned", text, name)                         # pnpm:759, the accepted dead-wrapper window
+        self.assertIn(NON_GOAL[0].lower() + NON_GOAL[1:-1], fragment)    # the same words, mid-sentence in the lane paragraph
+        lane_para = [p for p in fragment.split("## ") if p.startswith("Workspace")]
+        self.assertEqual(len(lane_para), 1)
+        self.assertIn("The lane is yours alone", lane_para[0])
+        self.assertIn(NON_GOAL[0].lower() + NON_GOAL[1:-1], lane_para[0])
+
+    def test_the_reader_token_machinery_is_gone(self) -> None:
+        source = PNPM_SHIM.read_text(encoding="utf-8")
+        readme = README.read_text(encoding="utf-8")
+        for gone in (
+            ".gc-lane-deps.readers", "GC_TOOLCHAIN_LANE_DEPS_READING", "GC_TOOLCHAIN_LANE_DEPS_READER",
+            "take_token", "drop_token", "wait_for_readers", "reader token", "refused: a mutate inside",
+        ):
+            self.assertNotIn(gone, source, gone)
+            self.assertNotIn(gone, readme, gone)
+        self.assertEqual(source.count("owner_is_dead()"), 1)     # one use left: the lock's owner
+        self.assertIn("owner_is_dead \"$owner\"", source)
 
 
 def fake_node_tree(root: pathlib.Path, version: str) -> pathlib.Path:
