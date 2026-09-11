@@ -451,9 +451,13 @@ func ownershipOf(p pendingChannelInbound) ladderVerdict {
 const ladderVerdictRetention = 25 * time.Hour
 
 // expired reports whether a verdict has aged out of the ledger: only a
-// terminal one ever does.
+// terminal one ever does, and a dead-letter verdict whose write is
+// still owed is not finished (codex r28 finding 1: swept after a sink
+// outage longer than the retention, the parked message left the ledger
+// and a deletion found nothing to record — the restart re-parked the
+// deleted text). It expires from the moment its write confirms.
 func (v ladderVerdict) expired(now time.Time) bool {
-	return v.retired && now.Sub(v.at) > ladderVerdictRetention
+	return v.retired && !v.pendingWrite && now.Sub(v.at) > ladderVerdictRetention
 }
 
 func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *inboundCoalescer {

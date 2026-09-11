@@ -3732,3 +3732,56 @@ func TestOwesDurabilityWhileARefusalIsInsideItsSpill(t *testing.T) {
 		t.Fatal("parked with no spool copy: still owed")
 	}
 }
+
+// --- codex r28 ---------------------------------------------------------------
+
+// A dead-letter verdict whose write is still owed never expires (r28
+// finding 1): swept after 25 hours of sink outage, the parked message
+// left the ledger, a deletion then found nothing to record, and the
+// restart re-parked the deleted text from the Refused line.
+func TestUnfinishedDeadLetterVerdictNeverExpires(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.mu.Lock()
+	now := time.Now()
+	c.recordVerdictLocked("C1", "1.0", ladderVerdict{retired: true, pendingWrite: true, cause: errors.New("422")}, now.Add(-30*time.Hour))
+	c.recordVerdictLocked("C1", "2.0", ladderVerdict{retired: true, cause: errors.New("422")}, now) // another verdict's sweep
+	_, ok := c.verdictLocked("C1", "1.0", now)
+	c.mu.Unlock()
+	if !ok {
+		t.Fatal("a dead-letter verdict whose write is still owed must survive the retention sweep — markDeleted consults it for the parked payload's deletion record")
+	}
+}
+
+// The in-place compaction never writes a line the reader would drop
+// (r28 finding 2): the producer omits the folded text an entry's parts
+// derive, the reader rebuilds it, and re-serializing both doubled a
+// legal 34 MiB refusal past the 64 MiB cap — the next restart dropped
+// the acknowledged message's only payload as oversized.
+func TestInPlaceCompactionKeepsLinesReadable(t *testing.T) {
+	spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
+	refused := testPending("C1", "1.0", "")
+	refused.body = strings.Repeat("x", 34<<20)
+	refused.inbound.Text = refused.foldedText()
+	refused.refused, refused.attempts = "422 Unprocessable Entity", 2
+	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
+		t.Fatal("a legal entry spills")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // the sink is still failing
+	spool.replayInto(c)                                                               // parks, re-spools, compacts in place
+	entries, err := readSpoolLines(spool.path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Refused != "" && e.Inbound.ProviderMessageID == "1.0" && len(e.Inbound.Text) == 34<<20 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the compacted refusal must read back whole — the compaction wrote a line over the cap, or lost the payload")
+	}
+}

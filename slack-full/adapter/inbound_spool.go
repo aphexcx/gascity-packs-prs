@@ -584,10 +584,23 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		}
 	}
 	for _, e := range kept {
+		if e.VerdictTS == "" && e.DeletedTS == "" && (e.Preamble != "" || e.Body != "" || e.Files != "") {
+			// The producer's rule (appendLocked): the folded Text is
+			// derived from the parts and never stored beside them. The
+			// reader rebuilt it; serialized again it doubled a legal
+			// 34 MiB refusal past the cap the reader enforces, and the
+			// next restart dropped the only payload (codex r28 finding 2).
+			e.Inbound.Text = ""
+		}
 		line, merr := json.Marshal(e)
 		if merr != nil {
 			log.Printf("inbound spool: compacting %s: a record could not be encoded and is dropped: %v", s.path, merr)
 			continue
+		}
+		if len(line) > maxInboundSpoolLineBytes {
+			// Never rename a line the reader would drop over the journal.
+			err = fmt.Errorf("chan=%s ts=%s would compact to %d bytes, over the %d cap", e.Channel, e.Inbound.ProviderMessageID+e.VerdictTS+e.DeletedTS, len(line), maxInboundSpoolLineBytes)
+			break
 		}
 		w.Write(line)
 		w.WriteByte('\n')
@@ -596,7 +609,9 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	// rename guard, or an incomplete temp file replaces the journal and
 	// its verdicts are lost (codex r16 finding 1: a shadowed err let the
 	// rename proceed).
-	err = w.Flush()
+	if err == nil {
+		err = w.Flush()
+	}
 	if err == nil {
 		err = syncFile(tmp)
 	}
