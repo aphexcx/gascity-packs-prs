@@ -60,8 +60,20 @@ const (
 // ts/channelID feed the trim marker so a trimmed body always names
 // where the full text lives.
 type channelReminderParts struct {
-	anchor    string
-	preamble  string
+	anchor   string
+	preamble string
+	// preambleLean is the same thread-context preamble rendered WITHOUT
+	// peer-bot quotes — byte-identical to what the formatter produced
+	// before jg-ure5r8 — so the composer can shed the bot quotes before
+	// it sheds the preamble: human context never loses to bot context
+	// (codex r3 P2). Meaningful only when botQuotes is set.
+	preambleLean string
+	// botQuotes reports that preamble carries peer-bot quotes, i.e. that
+	// preambleLean is a real fallback — possibly EMPTY, when the whole
+	// delta was bot posts (codex r5 P2). Without it an empty lean is
+	// indistinguishable from "not supplied" (legacy callers, spool lines
+	// written before the field).
+	botQuotes bool
 	body      string
 	files     string
 	ts        string
@@ -94,13 +106,18 @@ func (p channelReminderParts) assemble(body string) string {
 // the anchor's --thread-ts.
 const preambleOmittedNotice = "[thread context omitted — delivery over budget]\n\n"
 
+// botQuotesOmittedNotice leads a preamble whose peer-bot quotes were
+// shed for budget (jg-ure5r8): the human lines below it are intact and
+// the peer replies stay reachable in the thread via the anchor.
+const botQuotesOmittedNotice = "[peer-bot quotes omitted — delivery over budget]\n"
+
 // composeChannelReminderText assembles one channel delivery's Text
 // under the head-protection contract above. It reports which optional
 // blocks were included so the caller can unwind the side effects of
 // the ones that were not (replyHelp.unmark, peerContext.restore) or
 // log the loss (usedPreamble=false), and whether the body was
-// tail-trimmed. Shedding order: help block, peer block, preamble,
-// body tail — the anchor, the first reminderBodyHeadRunes runes of
+// tail-trimmed. Shedding order: help block, peer block, the peer-bot
+// quotes inside the preamble, preamble, body tail — the anchor, the first reminderBodyHeadRunes runes of
 // body, and the files block (bounded by Slack's per-message file cap)
 // are never sacrificed; only a budget smaller than that protected
 // residue still overflows.
@@ -126,7 +143,28 @@ func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock str
 	if len(unit) <= budget {
 		return unit, false, false, true, false
 	}
-	// Preamble third: replaced by an explicit omission notice. Unlike
+	// Peer-bot quotes third (jg-ure5r8): fall back to the lean preamble
+	// — the pre-fix rendering, human lines intact, possibly empty when
+	// the delta was bot posts only — under a one-line notice, so the
+	// bot quotes this fix added can never be the reason human context
+	// is dropped or trimmed. The lean form is carried by the caller
+	// (and the spool), never re-derived here.
+	if p.botQuotes && p.preambleLean != p.preamble {
+		p.preamble = botQuotesOmittedNotice + p.preambleLean
+		unit = p.assemble(p.body)
+		if len(unit) <= budget {
+			return unit, false, false, true, false
+		}
+		// The notice itself yields before the human context does (codex
+		// r4 P2): a lean unit that fits the budget bare must deliver
+		// exactly as it did before bot quotes existed.
+		p.preamble = p.preambleLean
+		unit = p.assemble(p.body)
+		if len(unit) <= budget {
+			return unit, false, false, true, false
+		}
+	}
+	// Preamble fourth: replaced by an explicit omission notice. Unlike
 	// peer/help there is nothing to unwind — the delta was consumed at
 	// fetch time — so the notice (and the caller's log) is the record.
 	usedPreamble = true

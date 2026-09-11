@@ -20,7 +20,7 @@ func dedupReplies() []slackThreadMessage {
 func TestPreambleCollapsesDeliveredParent(t *testing.T) {
 	delivered := map[string]bool{"1.0": true}
 	got := formatThreadContextPreamble(dedupReplies(), "4.0", "", nil,
-		func(ts string) bool { return delivered[ts] })
+		func(ts string) bool { return delivered[ts] }, nil)
 
 	if !strings.Contains(got, "1 earlier message already delivered (newest ts 1.0) — not re-quoted.") {
 		t.Fatalf("missing collapse line:\n%s", got)
@@ -37,7 +37,7 @@ func TestPreambleCollapsesDeliveredParent(t *testing.T) {
 
 func TestPreambleAllDeliveredCollapsesToOneLine(t *testing.T) {
 	got := formatThreadContextPreamble(dedupReplies(), "4.0", "", nil,
-		func(string) bool { return true })
+		func(string) bool { return true }, nil)
 	if !strings.Contains(got, "3 earlier messages already delivered (newest ts 3.0) — not re-quoted.") {
 		t.Fatalf("missing collapse line:\n%s", got)
 	}
@@ -52,7 +52,7 @@ func TestPreambleAllDeliveredCollapsesToOneLine(t *testing.T) {
 }
 
 func TestPreambleNilFilterQuotesEverything(t *testing.T) {
-	got := formatThreadContextPreamble(dedupReplies(), "4.0", "", nil, nil)
+	got := formatThreadContextPreamble(dedupReplies(), "4.0", "", nil, nil, nil)
 	if !strings.Contains(got, "Thread context (3 earlier messages):") {
 		t.Fatalf("nil filter must keep pre-gp-729 shape:\n%s", got)
 	}
@@ -71,7 +71,7 @@ func TestPreambleNeverSeenAudienceQuotesInFull(t *testing.T) {
 	// alias audience) re-quotes everything rather than losing context.
 	d := newDeliveredIDs()
 	got := formatThreadContextPreamble(dedupReplies(), "4.0", "", nil,
-		func(ts string) bool { return d.seen("mayor", "C1", ts) })
+		func(ts string) bool { return d.seen("mayor", "C1", ts) }, nil)
 	if !strings.Contains(got, "Thread context (3 earlier messages):") {
 		t.Fatalf("never-seen audience must get the full window:\n%s", got)
 	}

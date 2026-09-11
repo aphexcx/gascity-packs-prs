@@ -62,6 +62,13 @@ type spooledInbound struct {
 	// then replay with the folded Inbound.Text as the body.
 	ThreadAnchor string `json:"thread_anchor,omitempty"`
 	Preamble     string `json:"preamble,omitempty"`
+	// PreambleLean / BotQuotes: the composer's shed-before-omit fallback
+	// (jg-ure5r8). Written only when the preamble carries bot quotes —
+	// for a human-only preamble the lean form would be a byte-for-byte
+	// duplicate of Preamble and could double a shutdown spool past its
+	// read cap (codex r5 P2).
+	PreambleLean string `json:"preamble_lean,omitempty"`
+	BotQuotes    bool   `json:"bot_quotes,omitempty"`
 	Body         string `json:"body,omitempty"`
 	Files        string `json:"files,omitempty"`
 	// DeletedTS marks a DELETION record rather than a message: the
@@ -167,6 +174,9 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		entry := spooledInbound{
 			Channel: channel, Reaction: p.reaction, Inbound: p.inbound,
 			ThreadAnchor: p.threadAnchor, Preamble: p.preamble, Body: p.body, Files: p.files,
+		}
+		if p.botQuotes {
+			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
 		}
 		if p.hasReminderParts() {
 			// The folded Text is derivable from the parts; storing both
@@ -400,7 +410,7 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		}
 		p := pendingChannelInbound{
 			inbound: e.Inbound, reaction: e.Reaction,
-			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files,
+			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, preambleLean: e.PreambleLean, botQuotes: e.BotQuotes, body: e.Body, files: e.Files,
 		}
 		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
 			applyDeletion(&p)

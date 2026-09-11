@@ -3756,6 +3756,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// truncated one.
 	isThreadReply := msg.ThreadTS != "" && msg.ThreadTS != msg.TS
 	preamble := ""
+	// preambleLean is preamble rendered without peer-bot quotes (the
+	// pre-jg-ure5r8 text): the composer's shed-before-omit fallback so
+	// bot quotes can never cost the human lines their place. Same
+	// inputs, nil classifier — no extra Slack call.
+	preambleLean := ""
 	parentAuthor, parentFirstLine := "", ""
 	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
@@ -3795,7 +3800,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 				return target == "" && cfg.coalescer.pendingContains(msg.Channel, ts)
 			}
-			preamble = formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered)
+			// Peer-bot replies (a sister city's mayor in the same
+			// thread) quote under their display name; our own posts
+			// still drop (jg-ure5r8). Self identity comes from the
+			// same sources the peer-bot path trusts.
+			botAuthor := newThreadBotClassifier(cfg, env).classify
+			preamble = formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor)
+			preambleLean = formatThreadContextPreamble(replies, msg.TS, sinceTS, resolveName, alreadyDelivered, nil)
 			threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}
@@ -3814,6 +3825,16 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	text = rewriteSlackUserMentions(cfg, text)
 	if preamble != "" {
 		preamble = rewriteSlackUserMentions(cfg, preamble)
+	}
+	if preambleLean != "" {
+		preambleLean = rewriteSlackUserMentions(cfg, preambleLean)
+	}
+	// botQuotes marks a preamble that differs from its lean rendering —
+	// the only case the composer's fallback applies. A human-only
+	// preamble carries no duplicate lean copy (in memory or the spool).
+	botQuotes := preamble != preambleLean
+	if !botQuotes {
+		preambleLean = ""
 	}
 	textWithPreamble := preamble + text
 	// Thread replies lead with a protected anchor naming the thread ts
@@ -3951,6 +3972,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			inbound:      inboundForChannel,
 			threadAnchor: anchor,
 			preamble:     preamble,
+			preambleLean: preambleLean,
+			botQuotes:    botQuotes,
 			body:         text,
 			files:        filesBlock,
 		})
@@ -4018,12 +4041,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// composer withheld unwind their side effects here so they ride
 		// a later delivery instead of being lost.
 		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(channelReminderParts{
-			anchor:    anchor,
-			preamble:  preamble,
-			body:      text,
-			files:     filesBlock,
-			ts:        msg.TS,
-			channelID: msg.Channel,
+			anchor:       anchor,
+			preamble:     preamble,
+			preambleLean: preambleLean,
+			botQuotes:    botQuotes,
+			body:         text,
+			files:        filesBlock,
+			ts:           msg.TS,
+			channelID:    msg.Channel,
 		}, peerBlock, helpBlock, cfg.reminderTextBudget)
 		textForChannel = composed
 		if firstHelp && !usedHelp {
@@ -4117,6 +4142,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					inbound:      spoolCopy,
 					threadAnchor: anchor,
 					preamble:     preamble,
+					preambleLean: preambleLean,
+					botQuotes:    botQuotes,
 					body:         text,
 					files:        filesBlock,
 				}}
@@ -4474,6 +4501,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						inbound:      inbound,
 						threadAnchor: anchor,
 						preamble:     preamble,
+						preambleLean: preambleLean,
+						botQuotes:    botQuotes,
 						body:         text,
 					}}
 					cfg.coalescer.applyDeletionTombstones(inbound.Conversation.ConversationID, spoolEntry)

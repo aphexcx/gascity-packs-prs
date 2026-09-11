@@ -928,7 +928,7 @@ func TestFormatThreadContextPreamble_FiltersAndFormats(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := formatThreadContextPreamble(tc.replies, tc.current, tc.since, nil, nil)
+			got := formatThreadContextPreamble(tc.replies, tc.current, tc.since, nil, nil, nil)
 			if tc.wantNoOp {
 				if got != "" {
 					t.Errorf("expected empty preamble, got %q", got)
