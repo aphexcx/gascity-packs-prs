@@ -46,8 +46,12 @@
 #      `pnpm audit --fix` is a mutate (pnpm runs its update handler).
 #        info    — reports or manages state outside node_modules (`store`,
 #                  `config`, `list`, `outdated`, `--version`, `help`, ...),
-#                  and any command carrying `-h`/`--help`/`-v`/`--version`
-#                  in pnpm's option scope: runs as is, touches no lock.
+#                  and any command whose last `-h`/`--help`/`-v`/`--version`
+#                  in pnpm's option scope is on (nopt keeps the last value:
+#                  `--no-help --help` asks, `--help --no-help` does not;
+#                  measured on 11.20, a final false prints no help and
+#                  installs nothing either, "Unknown option: 'help'"):
+#                  runs as is, touches no lock.
 #        mutate  — every pnpm 11.20 built-in that can change node_modules
 #                  (`install`, `ci`, `add`, `remove`, `update`, `link`,
 #                  `prune`, `dedupe`, `rebuild`, `clean`, `purge`, ...): runs
@@ -56,7 +60,9 @@
 #                  script named `clean`, `purge`, `rebuild` (`rb`), `setup`
 #                  or `deploy` in the manifest of the directory pnpm acts on
 #                  wins over the built-in for pnpm, so it does here (project),
-#                  unless `pnpm pm <name>` forced the built-in.
+#                  unless `pnpm pm <name>` forced the built-in; an empty
+#                  script is no script to pnpm (`"clean": ""` runs the
+#                  built-in, measured), so it is none here.
 #        project — `run`, `exec`, `test`, a bare script or bin name, anything
 #                  else: first makes sure the lane is in sync, then runs.
 #      In sync is pnpm's own word, never this wrapper's: before a project
@@ -244,12 +250,14 @@ resolve_dir() {
 }
 
 # script_defined NAME: the package.json pnpm would read at TARGET defines
-# scripts.NAME (read with node, the toolchain's own when pinned; without node
-# the built-in reading stands).
+# scripts.NAME with a value pnpm counts (pnpm's test is the value's truth,
+# measured on 11.20: `"clean": ""` is no script and the built-in runs,
+# `"purge": "   "` is one and runs as a script; read with node, the
+# toolchain's own when pinned; without node the built-in reading stands).
 script_defined() {
     [ -f "$TARGET/package.json" ] || return 1
     command -v node >/dev/null 2>&1 || return 1
-    node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).scripts)||{};process.exit(Object.prototype.hasOwnProperty.call(s,process.argv[2])?0:1)' "$TARGET/package.json" "$1" 2>/dev/null
+    node -e 'const s=(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).scripts)||{};process.exit(s[process.argv[2]]?0:1)' "$TARGET/package.json" "$1" 2>/dev/null
 }
 
 # --- pnpm's own option table ----------------------------------------------------------
@@ -401,6 +409,7 @@ short_resolve() {
 scan() {
     positional=0
     command_seen=0
+    info_request=0
     while [ $# -gt 0 ]; do
         a="$1"
         shift
@@ -433,7 +442,7 @@ scan() {
                             fi
                             [ "$no" -eq 0 ] || val=$((1 - val))
                             case "$canon" in
-                                help|version|v) [ "$val" -eq 0 ] || { KIND=info; return 1; } ;;   # a help or version request runs nothing (`--no-help`, `--help=false` ask for none)
+                                help|version|v) info_request="$val" ;;   # the last value stands, as nopt leaves it (`--help --no-help` asks for none, `--no-help --help` asks); decided after the scan
                                 ignore-workspace) IGNORE_WORKSPACE="$val" ;;
                                 workspace-root) workspace_root="$val" ;;
                                 fix) fix_flag="$val" ;;
@@ -566,6 +575,10 @@ classify() {
         *) PHASE=other ;;
     esac
     scan "$@" || return 0
+    if [ "$info_request" -eq 1 ]; then
+        KIND=info       # a help or version request runs nothing, wherever the flag stood
+        return 0
+    fi
     # pnpm acts in --dir (-C, `--config.dir=`) when given, whatever its place
     # beside --prefix (measured: `--prefix B --dir A` and `--dir A --prefix B`
     # both act in A; of two --dir the last wins, `--config.dir=` among them;
