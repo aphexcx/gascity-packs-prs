@@ -899,9 +899,16 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			// (codex r20 finding 1); this entry's own line is the payload.
 			c.seedRefused(e.Channel, ts, errors.New(e.Refused))
 		case e.Stripped != "":
-			c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)})
+			// The entry's line may be the decision's only durable home:
+			// the staged file stays until the replacement record is
+			// confirmed (codex r24 finding 2).
+			if !c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)}) {
+				durable = false
+			}
 		case e.Isolate:
-			c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: true, attempts: e.Attempts}))
+			if !c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: true, attempts: e.Attempts})) {
+				durable = false
+			}
 		}
 	}
 	n := 0
@@ -919,10 +926,14 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			log.Printf("inbound spool: chan=%s ts=%s deleted before restart — replayed as a deletion notice", e.Channel, e.Inbound.ProviderMessageID)
 		}
 		if e.Refused != "" {
-			if _, written := folded[verdictKey{e.Channel, e.Inbound.ProviderMessageID}]; written {
-				// A record stands only once the dead-letter write
+			if v, written := folded[verdictKey{e.Channel, e.Inbound.ProviderMessageID}]; written && v.retired {
+				// A TERMINAL record stands only once the dead-letter write
 				// confirmed (codex r20 finding 1): this line is the
-				// payload's spool copy from before that, now redundant.
+				// payload's spool copy from before that, now redundant. An
+				// OUTSTANDING record — the stripped retry this refusal
+				// followed — confirms nothing about the write (codex r24
+				// finding 1): the payload is parked below like any owed
+				// refusal.
 				log.Printf("inbound spool: chan=%s ts=%s was refused before restart and its dead-letter write confirmed (record present) — spool copy dropped", e.Channel, e.Inbound.ProviderMessageID)
 				continue
 			}

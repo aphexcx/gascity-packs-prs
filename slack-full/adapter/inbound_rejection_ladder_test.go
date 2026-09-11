@@ -3377,3 +3377,74 @@ func TestVerdictRecordsFoldByProgression(t *testing.T) {
 		t.Fatalf("3.0 re-written %d time(s)", n)
 	}
 }
+
+// --- codex r24 ---------------------------------------------------------------
+
+// An OUTSTANDING record never stands in for a confirmed dead-letter
+// write (r24 finding 1): the journal of a stripped retry that was then
+// refused holds the earlier stripped record and the Refused payload;
+// the replay took any folded record as "the write confirmed", dropped
+// the payload and let the staged file go — the acknowledged message
+// never reached the dead-letter file. Only a TERMINAL folded verdict
+// drops a refusal; otherwise the payload is parked for its write.
+func TestOutstandingRecordDoesNotConfirmADeadLetterWrite(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{stripped: true, cause: errors.New("422 with the file")}) {
+		t.Fatal("record must confirm")
+	}
+	refused := testPending("C1", "1.0", "the founder's text")
+	refused.refused, refused.attempts, refused.isolate = "422 without the file too", 2, true
+	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
+		t.Fatal("spill must confirm")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // the sink is still failing
+	spool.replayInto(c)
+	c.mu.Lock()
+	parked := c.parkedDeadLetters["C1"]
+	c.mu.Unlock()
+	if len(parked) != 1 || parked[0].p.inbound.Text != "the founder's text" {
+		t.Fatalf("the refused payload must be parked for its dead-letter write, not dropped on the strength of an outstanding record: parked=%d", len(parked))
+	}
+	data, err := os.ReadFile(spool.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"refused":`)) || !bytes.Contains(data, []byte("the founder's text")) {
+		t.Fatalf("the payload must still have a durable home in the spool: %q", data)
+	}
+}
+
+// A failed record write for an ENTRY-carried disposition keeps the
+// staged file (r24 finding 2): the pre-pass ignored seedVerdict's
+// verdict for Stripped and Isolate entries, so with the entry's line as
+// the decision's only durable home and the replacement record unwritten,
+// the staged file was removed and a second crash lost the decision.
+func TestReplayKeepsTheStagingFileWhenAnEntryDispositionCannotBeRecorded(t *testing.T) {
+	stripped := withholdAttachments(testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"), permanent422())
+	stripped.isolate, stripped.attempts = true, 1
+	isolated := testPending("C1", "2.0", "B")
+	isolated.isolate, isolated.attempts = true, 1
+	for _, row := range []struct {
+		name  string
+		entry pendingChannelInbound
+	}{{"stripped entry", stripped}, {"isolate entry", isolated}} {
+		t.Run(row.name, func(t *testing.T) {
+			spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+			if !spool.spillBatch("C1", []pendingChannelInbound{row.entry}) {
+				t.Fatal("spill must confirm")
+			}
+			c := newInboundCoalescer(time.Hour, nil)
+			c.spill = spool.spillBatch
+			c.recordVerdict = func(string, string, ladderVerdict) bool { return false } // the disk refuses the record
+			if n := spool.replayInto(c); n != 1 {
+				t.Fatalf("replay admitted %d, want 1", n)
+			}
+			if _, err := os.Stat(spool.replayingPath()); err != nil {
+				t.Fatalf("the staged file must be retained while the disposition's record is owed: %v", err)
+			}
+		})
+	}
+}
