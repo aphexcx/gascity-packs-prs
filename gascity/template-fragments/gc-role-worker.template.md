@@ -72,7 +72,12 @@ recorded commit detached in its own lane (`git show <commit>:<path>`). Two
 agents patching one lane leave edits neither can attribute. Pin the lane
 before your first write: `gc session list` shows your session as the only
 live session whose work dir is `$GC_DIR`; when another live session shares
-it, write nothing and mail the mayor naming both session ids.
+it, write nothing and mail the mayor naming both session ids. One rule
+follows for the toolchain's `pnpm` wrapper: a running command is not fenced
+from a dependency mutation another caller starts afterwards, bare pnpm's own
+position, and in one lane the other caller is you, so change dependencies
+(`pnpm install`, `add`, `rebuild`) only while nothing else of yours runs
+there.
 
 A session outside a gc-made lane has no lane: this role has no `work_dir` in
 your city. Prove the lane before you write, with the three-part boundary test
