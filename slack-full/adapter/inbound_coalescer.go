@@ -960,14 +960,12 @@ func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 // is queued, and retry on the short cadence once it releases. Lock
 // order as flushAheadOf: block on the delivery mutex OUTSIDE c.mu.
 // Nil-safe. The release must run before anything that takes the
-// channel (deliverBufferedReactions, a flush-ahead).
-//
-// A holder — queued or holding — is an in-flight delivery for the
-// shutdown barrier (codex r30 finding 1): urgent events serialized
-// behind a hold were invisible to drainPending's fixpoint, so flushAll
-// returned with empty buffers and main sealed the spool while
-// acknowledged events were still queued behind the hold. The window
-// opens here and closes in the release, like a take's.
+// channel (deliverBufferedReactions, a flush-ahead). The hold is the
+// mutex only: the shutdown barrier is beginUrgent's, which spans the
+// whole urgent path (codex r31 finding 1 — tied to the hold, the
+// registration ended when the mutex was released, before the failure
+// branch spooled its payload, and it began after flushAheadOf, leaving
+// callers queued in that wait uncovered).
 func (c *inboundCoalescer) holdDelivery(channel string) func() {
 	if c == nil {
 		return func() {}
@@ -975,16 +973,34 @@ func (c *inboundCoalescer) holdDelivery(channel string) func() {
 	c.mu.Lock()
 	mu := c.flushMuFor(channel)
 	c.urgentWaiting[channel]++
-	c.inflight++
 	c.mu.Unlock()
 	mu.Lock()
 	c.mu.Lock()
 	c.urgentWaiting[channel]--
 	c.mu.Unlock()
-	return func() {
-		mu.Unlock()
-		c.endDelivery()
+	return mu.Unlock
+}
+
+// beginUrgent registers an urgent delivery path with the shutdown
+// barrier and returns its end. The urgent path runs outside the
+// coalescer's takes — its flush-ahead wait, its hold, its POST, and
+// the failure branch that spools or restores its payload — and none of
+// that was an in-flight delivery to drainPending's fixpoint (codex r30
+// finding 1, r31 finding 1): with empty buffers flushAll returned and
+// main sealed the spool while acknowledged events were still queued or
+// still spooling. Registered before the first wait and ended after the
+// last durable step (the caller defers it), the path is inside the
+// barrier from end to end, independently of the channel mutex. The
+// holder needs nothing from the drain to finish, so the wait is
+// bounded by the path's own timeouts.
+func (c *inboundCoalescer) beginUrgent() func() {
+	if c == nil {
+		return func() {}
 	}
+	c.mu.Lock()
+	c.inflight++
+	c.mu.Unlock()
+	return c.endDelivery
 }
 
 // isDeletedLocked reports whether (channel, ts) carries a live

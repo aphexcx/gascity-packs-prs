@@ -4018,6 +4018,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// and a reaction batch posted ahead of it would then be the only
 	// inbound: a solo reaction wake. They drain via
 	// deliverBufferedReactions after the POST below commits.
+	// This urgent path is inside the coalescer's shutdown barrier from
+	// here to its return (codex r30 finding 1, r31 finding 1): its
+	// flush-ahead wait, its hold of the channel, its POST and the failure
+	// branch's spool or restore all run outside the coalescer's takes,
+	// and the drain must not conclude while any of them is under way.
+	endUrgent := cfg.coalescer.beginUrgent()
+	defer endUrgent()
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
 	// The ladder's answer and this copy's submission are ONE step under
 	// the channel's delivery mutex (codex r29 finding 1): asked and then

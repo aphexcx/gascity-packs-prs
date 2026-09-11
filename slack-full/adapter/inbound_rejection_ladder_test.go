@@ -3821,29 +3821,32 @@ func TestHeldChannelSerializesDeliveries(t *testing.T) {
 
 // --- codex r30 ---------------------------------------------------------------
 
-// The shutdown drain waits for a held channel (r30 finding 1): urgent
-// events serialized behind a hold were invisible to the in-flight
-// window, so flushAll returned with empty buffers and main sealed the
-// spool while acknowledged events were still queued behind the hold.
-func TestShutdownWaitsForAHeldChannel(t *testing.T) {
+// The shutdown drain waits for registered urgent work (r30 finding 1,
+// r31 finding 1): the urgent path runs outside the coalescer's takes —
+// its flush-ahead wait, its hold, its POST, the failure branch's spool
+// — and was invisible to the in-flight window, so flushAll returned
+// with empty buffers and main sealed the spool while acknowledged
+// events were still queued or spooling. The ordering asserted is
+// established explicitly: the flag is set before the registration ends,
+// and flushAll cannot return before that end.
+func TestShutdownWaitsForUrgentWork(t *testing.T) {
 	c := newInboundCoalescer(20*time.Millisecond, nil)
 	c.deliver = func(string, []pendingChannelInbound) error { return nil }
-	release := c.holdDelivery("C1")
-	released := make(chan struct{})
+	end := c.beginUrgent()
+	var mu sync.Mutex
+	ended := false
 	go func() {
 		time.Sleep(150 * time.Millisecond)
-		release()
-		close(released)
+		mu.Lock()
+		ended = true
+		mu.Unlock()
+		end()
 	}()
-	start := time.Now()
 	c.flushAll()
-	select {
-	case <-released:
-	default:
-		t.Fatal("flushAll returned while an urgent hold on C1 was still in place — the shutdown barrier must wait for held and queued urgent deliveries")
-	}
-	if time.Since(start) < 150*time.Millisecond {
-		t.Fatal("flushAll must not return before the hold releases")
+	mu.Lock()
+	defer mu.Unlock()
+	if !ended {
+		t.Fatal("flushAll returned while an urgent path was still registered — the shutdown barrier must wait for it to end")
 	}
 }
 
