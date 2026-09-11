@@ -564,11 +564,39 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	}
 	tmpPath := tmp.Name()
 	w := bufio.NewWriter(tmp)
-	kept := make([]spooledInbound, 0, len(order)+2*len(refused)+2*len(owned))
-	for _, k := range order {
-		kept = append(kept, newest[k])
+	// The replay's own filters apply here too (codex r30 minor 2), or
+	// repeated in-place restarts never reclaim anything: a terminal
+	// record past retention with no copy of its message present is
+	// gone; an outstanding record with no copy present is ownership of
+	// nothing and gone; a Refused payload whose message has a terminal
+	// record (its dead-letter write confirmed) is redundant and gone —
+	// exactly what the replay drops at admission.
+	present := make(map[key]bool)
+	for _, e := range records {
+		if e.VerdictTS == "" && e.DeletedTS == "" {
+			present[key{e.Channel, e.Inbound.ProviderMessageID}] = true
+		}
 	}
-	kept = append(kept, refused...)
+	now := time.Now()
+	kept := make([]spooledInbound, 0, len(order)+2*len(refused)+2*len(owned))
+	liveRecords := 0
+	for _, k := range order {
+		v := verdictOf(newest[k])
+		if !present[k] && (!v.retired || now.Sub(v.at) > ladderVerdictRetention) {
+			continue
+		}
+		kept = append(kept, newest[k])
+		liveRecords++
+	}
+	liveRefused := 0
+	for _, e := range refused {
+		k := key{e.Channel, e.Inbound.ProviderMessageID}
+		if rec, ok := newest[k]; ok && !rec.VerdictOutstanding {
+			continue // its dead-letter write confirmed: the record says so, the payload is redundant
+		}
+		kept = append(kept, e)
+		liveRefused++
+	}
 	liveOwned := 0
 	for _, e := range owned {
 		k := key{e.Channel, e.Inbound.ProviderMessageID}
@@ -578,7 +606,10 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		kept = append(kept, e)
 		liveOwned++
 	}
-	for _, e := range append(append([]spooledInbound{}, refused...), owned...) {
+	for _, e := range kept {
+		if e.VerdictTS != "" || e.DeletedTS != "" {
+			continue
+		}
 		if k := (key{e.Channel, e.Inbound.ProviderMessageID}); deleted[k] {
 			kept = append(kept, spooledInbound{Channel: e.Channel, DeletedTS: e.Inbound.ProviderMessageID})
 		}
@@ -626,7 +657,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		log.Printf("inbound spool: compacting %s in place FAILED (%v) — left as it is; its messages replay again next startup", s.path, err)
 		return
 	}
-	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s), %d parked refusal(s) and %d owned cop%s", s.path, len(order), len(refused), liveOwned, plural(liveOwned, "y", "ies"))
+	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s), %d parked refusal(s) and %d owned cop%s", s.path, liveRecords, liveRefused, liveOwned, plural(liveOwned, "y", "ies"))
 }
 
 // appendFileTo appends src's bytes to the end of dst, fsyncing dst

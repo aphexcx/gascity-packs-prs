@@ -680,6 +680,11 @@ func (c *inboundCoalescer) deadLetterWritten(channel, ts string) {
 	c.mu.Lock()
 	if v, ok := c.verdicts[channel][ts]; ok && v.pendingWrite {
 		v.pendingWrite = false
+		// Retention counts from the CONFIRMED write (codex r30 minor 1):
+		// a write that took longer than the window would otherwise
+		// expire the moment it confirmed, and a redelivery right after
+		// would be admitted as fresh bytes. The record carries this time.
+		v.at = time.Now()
 		c.verdicts[channel][ts] = v
 	}
 	c.mu.Unlock()
@@ -956,6 +961,13 @@ func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 // order as flushAheadOf: block on the delivery mutex OUTSIDE c.mu.
 // Nil-safe. The release must run before anything that takes the
 // channel (deliverBufferedReactions, a flush-ahead).
+//
+// A holder — queued or holding — is an in-flight delivery for the
+// shutdown barrier (codex r30 finding 1): urgent events serialized
+// behind a hold were invisible to drainPending's fixpoint, so flushAll
+// returned with empty buffers and main sealed the spool while
+// acknowledged events were still queued behind the hold. The window
+// opens here and closes in the release, like a take's.
 func (c *inboundCoalescer) holdDelivery(channel string) func() {
 	if c == nil {
 		return func() {}
@@ -963,12 +975,16 @@ func (c *inboundCoalescer) holdDelivery(channel string) func() {
 	c.mu.Lock()
 	mu := c.flushMuFor(channel)
 	c.urgentWaiting[channel]++
+	c.inflight++
 	c.mu.Unlock()
 	mu.Lock()
 	c.mu.Lock()
 	c.urgentWaiting[channel]--
 	c.mu.Unlock()
-	return mu.Unlock
+	return func() {
+		mu.Unlock()
+		c.endDelivery()
+	}
 }
 
 // isDeletedLocked reports whether (channel, ts) carries a live

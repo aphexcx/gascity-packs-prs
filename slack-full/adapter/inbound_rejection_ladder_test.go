@@ -3818,3 +3818,94 @@ func TestHeldChannelSerializesDeliveries(t *testing.T) {
 	waitForCalls(t, calls, []string{"1.0", "2.0"})
 	release2()
 }
+
+// --- codex r30 ---------------------------------------------------------------
+
+// The shutdown drain waits for a held channel (r30 finding 1): urgent
+// events serialized behind a hold were invisible to the in-flight
+// window, so flushAll returned with empty buffers and main sealed the
+// spool while acknowledged events were still queued behind the hold.
+func TestShutdownWaitsForAHeldChannel(t *testing.T) {
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = func(string, []pendingChannelInbound) error { return nil }
+	release := c.holdDelivery("C1")
+	released := make(chan struct{})
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		release()
+		close(released)
+	}()
+	start := time.Now()
+	c.flushAll()
+	select {
+	case <-released:
+	default:
+		t.Fatal("flushAll returned while an urgent hold on C1 was still in place — the shutdown barrier must wait for held and queued urgent deliveries")
+	}
+	if time.Since(start) < 150*time.Millisecond {
+		t.Fatal("flushAll must not return before the hold releases")
+	}
+}
+
+// Retention counts from the CONFIRMED write (r30 minor 1): a dead-letter
+// whose write took longer than the retention window expired the moment
+// it confirmed, so a redelivery right after was admitted as fresh bytes.
+func TestDeadLetterRetentionCountsFromTheConfirmedWrite(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	now := time.Now()
+	c.mu.Lock()
+	c.recordVerdictLocked("C1", "1.0", ladderVerdict{retired: true, pendingWrite: true, cause: errors.New("422")}, now.Add(-30*time.Hour))
+	c.mu.Unlock()
+	c.deadLetterWritten("C1", "1.0")
+	c.mu.Lock()
+	v, ok := c.verdictLocked("C1", "1.0", now)
+	c.mu.Unlock()
+	if !ok || v.pendingWrite {
+		t.Fatalf("the verdict must stand for the retention window after its write confirmed: ok=%v %+v", ok, v)
+	}
+}
+
+// The in-place compaction applies the replay's own filters (r30 minor
+// 2): a refused payload whose dead-letter write confirmed (a terminal
+// record stands), a terminal record past retention with no copy of its
+// message, and an outstanding record with no copy at all are all
+// compacted away — repeated in-place restarts reclaim them.
+func TestInPlaceCompactionAppliesRetentionAndConfirmedWrites(t *testing.T) {
+	spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
+	refused := testPending("C1", "1.0", "written already")
+	refused.refused, refused.attempts = "422", 2
+	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
+		t.Fatal("spill must confirm")
+	}
+	now := time.Now()
+	for ts, v := range map[string]ladderVerdict{
+		"1.0": {retired: true, cause: errors.New("422"), at: now},                      // its write confirmed: the payload is redundant
+		"2.0": {retired: true, cause: errors.New("422"), at: now.Add(-30 * time.Hour)}, // past retention, no copy
+		"3.0": {stripped: true, cause: errors.New("422"), at: now},                     // ownership of nothing
+		"4.0": {retired: true, delivered: true, cause: errors.New("422"), at: now},     // live: kept
+	} {
+		if !spool.recordVerdict("C1", ts, v) {
+			t.Fatalf("record %s must confirm", ts)
+		}
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	spool.replayInto(c) // in place: admits, re-records, compacts
+	data, err := os.ReadFile(spool.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(data, []byte("written already")) {
+		t.Fatalf("a refused payload whose write confirmed must be compacted away: %q", data)
+	}
+	for _, gone := range []string{"2.0", "3.0"} {
+		if n := countVerdictLines(t, spool.path, gone); n != 0 {
+			t.Fatalf("record %s must be compacted away, kept %d time(s): %q", gone, n, data)
+		}
+	}
+	if n := countVerdictLines(t, spool.path, "4.0"); n != 1 {
+		t.Fatalf("the live record is kept once, got %d", n)
+	}
+}
