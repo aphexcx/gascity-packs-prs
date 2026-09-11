@@ -866,3 +866,88 @@ func TestReactionGroupTransientFailureAfterIsolationSetsBackoff(t *testing.T) {
 		return c.inBackoffLocked("C1") && len(c.reactions["C1"]) == 1
 	})
 }
+
+// --- codex r6 on gp-sgu7 ------------------------------------------------------
+
+// An urgent (mention) arriving while the channel waits out a backoff
+// must not flush the buffered batch ahead of it: the urgent message
+// proceeds alone, the buffer keeps its deadline and timer.
+func TestUrgentFlushAheadHonorsBackoff(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "buffered"))
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10
+	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
+	if t0, ok := c.timers["C1"]; ok {
+		t0.Stop()
+	}
+	c.gen["C1"]++
+	g := c.gen["C1"]
+	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
+	c.mu.Unlock()
+	for i := 0; i < 5; i++ { // a mention stream
+		if withheld := c.flushAheadOf("C1", "9.0"); len(withheld) != 0 {
+			t.Fatalf("nothing withheld when nothing is taken, got %d", len(withheld))
+		}
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("the buffered batch must not be re-posted ahead of an urgent message during backoff: %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.pendingContainsLocked("C1", "1.0") || c.gen["C1"] != g || c.inflight != 0 {
+		t.Fatalf("buffer/timer must be untouched: pending=%v gen=%d inflight=%d", c.pendingContainsLocked("C1", "1.0"), c.gen["C1"], c.inflight)
+	}
+}
+
+// An urgent waiter queued behind an in-flight POST that then fails
+// transiently wakes into a channel in backoff and must not re-post the
+// restored batch either.
+func TestUrgentWaiterBehindFailingPostHonorsBackoff(t *testing.T) {
+	release := make(chan struct{})
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error {
+		<-release
+		return errors.New("dial tcp: connection refused")
+	})
+	c := newInboundCoalescer(10*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "buffered"))
+	waitFor(t, "timer flush in flight", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.inflight == 1
+	})
+	done := make(chan struct{})
+	go func() {
+		c.flushAheadOf("C1", "9.0") // blocks behind the in-flight delivery
+		close(done)
+	}()
+	waitFor(t, "urgent waiter reserved", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return c.urgentWaiting["C1"] == 1
+	})
+	// Put the channel deep into a run first, so the failure below backs
+	// off to the cap and no timer retry competes with the assertion.
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10
+	c.mu.Unlock()
+	close(release) // the in-flight POST fails → backoff → the waiter wakes
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("urgent waiter never returned")
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := calls(); len(got) != 1 {
+		t.Fatalf("only the in-flight POST may have happened, got %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.inBackoffLocked("C1") || !c.pendingContainsLocked("C1", "1.0") || c.urgentWaiting["C1"] != 0 {
+		t.Fatalf("channel must stay in backoff with the batch buffered and no waiter left: backoff=%v pending=%v waiting=%d",
+			c.inBackoffLocked("C1"), c.pendingContainsLocked("C1", "1.0"), c.urgentWaiting["C1"])
+	}
+}
