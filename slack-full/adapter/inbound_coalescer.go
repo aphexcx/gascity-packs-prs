@@ -136,6 +136,11 @@ type pendingChannelInbound struct {
 	// inbound.Text verbatim per member and ignore these.
 	threadAnchor string
 	preamble     string
+	// preambleLean is the preamble without peer-bot quotes, the
+	// composer's shed-before-omit fallback (jg-ure5r8; see
+	// channelReminderParts.preambleLean).
+	preambleLean string
+	botQuotes    bool
 	body         string
 	files        string
 }
@@ -165,12 +170,14 @@ func (p pendingChannelInbound) reminderParts(channel string) (channelReminderPar
 		return channelReminderParts{}, false
 	}
 	return channelReminderParts{
-		anchor:    p.threadAnchor,
-		preamble:  p.preamble,
-		body:      p.body,
-		files:     p.files,
-		ts:        p.inbound.ProviderMessageID,
-		channelID: channel,
+		anchor:       p.threadAnchor,
+		preamble:     p.preamble,
+		preambleLean: p.preambleLean,
+		botQuotes:    p.botQuotes,
+		body:         p.body,
+		files:        p.files,
+		ts:           p.inbound.ProviderMessageID,
+		channelID:    channel,
 	}, true
 }
 
@@ -345,7 +352,8 @@ func (c *inboundCoalescer) applyDeletionTombstones(channel string, batch []pendi
 func applyDeletion(p *pendingChannelInbound) {
 	p.inbound.Text = deletedBySenderNotice
 	p.inbound.Attachments = nil
-	p.threadAnchor, p.preamble, p.body, p.files = "", "", "", ""
+	p.threadAnchor, p.preamble, p.preambleLean, p.body, p.files = "", "", "", "", ""
+	p.botQuotes = false
 }
 
 // enabled reports whether buffering is active. A nil coalescer or a
