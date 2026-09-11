@@ -122,6 +122,15 @@ type spooledInbound struct {
 	Verdict          string `json:"verdict,omitempty"`
 	VerdictDelivered bool   `json:"verdict_delivered,omitempty"`
 	VerdictAt        int64  `json:"verdict_at,omitempty"`
+	// VerdictOutstanding marks the record of an OUTSTANDING verdict — the
+	// ladder owns the message and owes it a copy: the stripped retry
+	// (VerdictStripped) or the ladder's plain copy, charged or flagged
+	// isolate after a batch refusal (codex r22/r23: every progression of
+	// the ledger is journaled the moment it is made, so a crash with a
+	// plain copy of the message staged cannot re-post the refused bytes
+	// or the refused batch). Absent on a terminal record.
+	VerdictOutstanding bool `json:"verdict_outstanding,omitempty"`
+	VerdictStripped    bool `json:"verdict_stripped,omitempty"`
 	// dispositionOnly marks a salvaged DISPOSITION of an entry whose
 	// message stays in a spool that could not be merged (codex r18
 	// finding 2): its Refused/Stripped/Isolate seed the ledger in the
@@ -243,11 +252,11 @@ func (s *inboundSpool) recordDeletion(channel, ts string) bool {
 	return true
 }
 
-// recordVerdict appends a terminal verdict record for (channel, ts).
-// Same seal and durability contract as recordDeletion. Nil-safe; the
-// coalescer's recordVerdict hook.
+// recordVerdict appends a verdict record for (channel, ts) — terminal
+// or outstanding. Same seal and durability contract as recordDeletion.
+// Nil-safe; the coalescer's recordVerdict hook.
 func (s *inboundSpool) recordVerdict(channel, ts string, v ladderVerdict) bool {
-	if s == nil || channel == "" || ts == "" || !v.retired {
+	if s == nil || channel == "" || ts == "" {
 		return false
 	}
 	s.mu.Lock()
@@ -260,7 +269,8 @@ func (s *inboundSpool) recordVerdict(channel, ts string, v ladderVerdict) bool {
 	if at.IsZero() {
 		at = time.Now()
 	}
-	entry := spooledInbound{Channel: channel, VerdictTS: ts, Verdict: truncateReason(rejectionReasonText(v.cause)), VerdictDelivered: v.delivered, VerdictAt: at.Unix()}
+	entry := spooledInbound{Channel: channel, VerdictTS: ts, Verdict: truncateReason(rejectionReasonText(v.cause)), VerdictDelivered: v.delivered, VerdictAt: at.Unix(),
+		VerdictOutstanding: !v.retired, VerdictStripped: v.stripped}
 	if err := s.appendLinesLocked([]spooledInbound{entry}); err != nil {
 		if s.noteWriteFailureLocked("verdict:"+channel, err) {
 			log.Printf("inbound spool: verdict record write FAILED chan=%s ts=%s (logged once per distinct failure; the coalescer retries it): %v", channel, ts, err)
@@ -528,7 +538,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		}
 		k := key{e.Channel, e.VerdictTS}
 		if cur, ok := newest[k]; ok {
-			if e.VerdictAt <= cur.VerdictAt {
+			if !supersedes(e, cur) {
 				continue
 			}
 		} else {
@@ -656,7 +666,8 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 			case recordsOnly && e.DeletedTS != "":
 				out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
 			case recordsOnly && e.VerdictTS != "":
-				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt})
+				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt,
+					VerdictOutstanding: e.VerdictOutstanding, VerdictStripped: e.VerdictStripped})
 			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate):
 				// The salvage keeps what an ENTRY decided too (codex r18
 				// finding 2), without its message.
@@ -684,6 +695,21 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 		}
 	}
 	return out, nil
+}
+
+// verdictOf decodes a verdict record line into the ledger's verdict.
+func verdictOf(e spooledInbound) ladderVerdict {
+	return ladderVerdict{retired: !e.VerdictOutstanding, stripped: e.VerdictStripped, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
+}
+
+// supersedes reports whether record a is the later PROGRESSION of the
+// same message than b: a higher rank wins, then the newer decision.
+func supersedes(a, b spooledInbound) bool {
+	va, vb := verdictOf(a), verdictOf(b)
+	if va.rank() != vb.rank() {
+		return va.rank() > vb.rank()
+	}
+	return a.VerdictAt > b.VerdictAt
 }
 
 // readRecords salvages the deletion and verdict records of a spool file.
@@ -809,17 +835,28 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 		if e.VerdictTS == "" {
 			continue
 		}
-		v := ladderVerdict{retired: true, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
+		v := verdictOf(e)
 		k := verdictKey{e.Channel, e.VerdictTS}
-		if v.expired(now) {
+		// A record older than the retention window: a terminal one has
+		// aged out of the ledger; an outstanding one never expires by
+		// time in memory (the copy it owes is the delivery), but with NO
+		// copy of its message anywhere — not in this spool, and the
+		// buffer died with the process — only a Slack redelivery could
+		// bring one, and Slack's window is over: compacted away. With a
+		// copy present, either kind is renewed and applies to it (codex
+		// r19 finding 2).
+		if stale := now.Sub(v.at) > ladderVerdictRetention; stale {
 			if !present[k] {
 				continue
 			}
-			log.Printf("inbound spool: chan=%s ts=%s an expired verdict record still has a copy of its message in the spool — renewed, the copy is a duplicate", e.Channel, e.VerdictTS)
+			log.Printf("inbound spool: chan=%s ts=%s a verdict record past retention still has a copy of its message in the spool — renewed, the copy takes it", e.Channel, e.VerdictTS)
 			v.at = now
 		}
+		// Folded by PROGRESSION first (a terminal record is never
+		// overridden by a stale outstanding one that happens to be newer
+		// on disk), decision time second.
 		if cur, ok := folded[k]; ok {
-			if !v.at.After(cur.at) {
+			if v.rank() < cur.rank() || (v.rank() == cur.rank() && !v.at.After(cur.at)) {
 				continue
 			}
 		} else {
@@ -834,7 +871,7 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			break
 		}
 		v := folded[k]
-		log.Printf("inbound spool: chan=%s ts=%s verdict restored — the rejection ladder %s before the restart; every later copy is a duplicate", k.channel, k.ts, v.disposition())
+		log.Printf("inbound spool: chan=%s ts=%s verdict restored — the rejection ladder %s before the restart", k.channel, k.ts, v.disposition())
 		if !c.seedVerdict(k.channel, k.ts, v) {
 			durable = false
 		}

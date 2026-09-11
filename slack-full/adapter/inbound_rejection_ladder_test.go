@@ -1816,11 +1816,10 @@ func TestSpoolReplayRestoresTheStrippedVerdict(t *testing.T) {
 	})
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
 	c2.deliver = deliver2
-	// The journal holds the stripped copy twice — spooled when the ladder
-	// decided on it (r22 finding 1) and again by the shutdown flush; the
-	// replay admits both and the take collapses them to one POST.
-	if n := spool.replayInto(c2); n < 1 {
-		t.Fatalf("replay admitted %d entries, want the stripped retry", n)
+	// The stripped decision is a RECORD (r22/r23); the shutdown flush
+	// spooled the one stripped copy, so the replay admits exactly it.
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("replay admitted %d entries, want 1", n)
 	}
 	waitForCalls(t, calls2, []string{"1.0"}) // the replayed stripped copy lands, once, without its attachments
 	if !c2.onLadder("C1", "1.0") {
@@ -3199,10 +3198,11 @@ func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
 	}
 }
 
-// The same rule covers the stripped copy the ladder now spools when it
-// decides on the retry: a deletion of that message during uptime is
-// recorded, so a restart replays the stripped retry as the notice, not
-// as the deleted text.
+// The same rule covers a message whose stripped decision the ladder
+// just journaled: a deletion of that message during uptime is recorded,
+// so after a restart a redelivered copy — the original attachments and
+// all — enters as the notice and as the stripped, isolated retry, never
+// as the deleted text or the refused bytes.
 func TestDeletionOfASpooledStrippedCopyIsRecorded(t *testing.T) {
 	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
 	c := newInboundCoalescer(time.Hour, nil)
@@ -3217,16 +3217,163 @@ func TestDeletionOfASpooledStrippedCopyIsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(data, []byte(`"stripped":`)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
-		t.Fatalf("the spool must hold the stripped copy and the deletion record: %q", data)
+	if !bytes.Contains(data, []byte(`"verdict_ts":"1.0"`)) || !bytes.Contains(data, []byte(`"verdict_outstanding":true`)) || !bytes.Contains(data, []byte(`"verdict_stripped":true`)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
+		t.Fatalf("the spool must hold the stripped decision's record and the deletion record: %q", data)
 	}
 	c2 := newInboundCoalescer(time.Hour, nil)
 	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	spool.replayInto(c2)
+	c2.enqueue("C1", testPendingWithAttachment("C1", "1.0", "secret text", "/tmp/x/memo.m4a"))
 	c2.mu.Lock()
 	defer c2.mu.Unlock()
-	if got := c2.pending["C1"]; len(got) != 1 || got[0].inbound.Text != deletedBySenderNotice {
-		t.Fatalf("the replayed stripped retry must be the notice, got %d copy(ies): %+v", len(got), got)
+	got := c2.pending["C1"]
+	if len(got) != 1 || got[0].inbound.Text != deletedBySenderNotice || len(got[0].inbound.Attachments) != 0 || !got[0].isolate {
+		t.Fatalf("the redelivered copy must enter as the notice, stripped and isolated, got %d copy(ies): %+v", len(got), got)
+	}
+}
+
+// --- codex r23 ---------------------------------------------------------------
+//
+// Every ledger progression is a journal record on ONE path (r23): the
+// ladder's ownership of a message — a probe flagged isolate after a
+// batch refusal, the stripped retry, the terminal verdict — is owed a
+// durable record the moment recordVerdictLocked accepts it, written by
+// persistVerdict and retried by the durable-write timer like a terminal
+// one. Rounds 22 and 23 each found a site where a decision lived only
+// in memory beside a staged copy of the message; the site is no longer
+// the unit.
+
+// A stripped decision replayed from a Stripped entry survives a SECOND
+// crash (r23 finding 1): the replay re-admitted the entry, wrote no
+// record for its outstanding verdict, removed the staged file, and a
+// crash before the retry landed lost the disposition — a Slack
+// redelivery then posted the original attachments.
+func TestReplayedStrippedDecisionSurvivesASecondCrash(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	stripped := withholdAttachments(testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"), permanent422())
+	stripped.isolate, stripped.attempts = true, 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{stripped}) {
+		t.Fatal("spill must confirm")
+	}
+	// First restart: the retry is admitted but gc is down; the process
+	// dies again before it lands (the buffer is memory).
+	c1 := newInboundCoalescer(time.Hour, nil)
+	c1.spill = spool.spillBatch
+	c1.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c1); n != 1 {
+		t.Fatalf("replay admitted %d, want 1", n)
+	}
+	if _, err := os.Stat(spool.replayingPath()); err == nil {
+		t.Fatal("the staged file is removed after admission — the record must be what survives")
+	}
+	// Second restart: a Slack redelivery of the original arrives.
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch[0].inbound.Attachments) > 0 {
+			return permanent422()
+		}
+		return nil
+	})
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the stripped decision must survive a second crash — the replay owes its outstanding verdict a record")
+	}
+	c2.enqueue("C1", testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a"))
+	waitForCalls(t, calls, []string{"1.0"})
+	time.Sleep(60 * time.Millisecond)
+	if got := calls(); len(got) != 1 {
+		t.Fatalf("the redelivered original must post once, stripped: %v", got)
+	}
+}
+
+// A paused isolation is durable (r23 finding 3): a batch gc refused
+// whose first probe hit a transient failure flagged the rest isolate in
+// memory only; a crash with the plain copies still staged let the next
+// startup post the identical refused batch again. Every flagged copy's
+// ownership is now a record, so redelivered copies post alone.
+func TestPausedIsolationIsDurable(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	deliver1, calls1 := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) > 1 {
+			return permanent422() // the batch is refused
+		}
+		return errors.New("dial tcp: connection refused") // the first probe pauses
+	})
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver1
+	c1.spill = spool.spillBatch
+	c1.recordVerdict = spool.recordVerdict
+	c1.enqueue("C1", testPending("C1", "1.0", "A"))
+	c1.enqueue("C1", testPending("C1", "2.0", "B"))
+	waitForCalls(t, calls1, []string{"1.0,2.0", "1.0"})
+	waitFor(t, "both probes' ownership records", func() bool {
+		return countVerdictLines(t, spool.path, "1.0") == 1 && countVerdictLines(t, spool.path, "2.0") == 1
+	})
+	// The process dies (the buffer is memory); Slack redelivers both.
+	deliver2, calls2 := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) > 1 {
+			return permanent422()
+		}
+		return nil
+	})
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	c2.enqueue("C1", testPending("C1", "1.0", "A"))
+	c2.enqueue("C1", testPending("C1", "2.0", "B"))
+	waitForCalls(t, calls2, []string{"1.0", "2.0"})
+	time.Sleep(60 * time.Millisecond)
+	for _, call := range calls2() {
+		if strings.Contains(call, ",") {
+			t.Fatalf("the refused batch must never be re-posted after a restart: %v", calls2())
+		}
+	}
+}
+
+// The journal folds by PROGRESSION, not by time alone: an outstanding
+// record never overrides a terminal one for the same message, a
+// stripped one outranks a plain ownership, and a stale outstanding
+// record with no copy of its message anywhere is compacted away after
+// the retention window (Slack will not redeliver it).
+func TestVerdictRecordsFoldByProgression(t *testing.T) {
+	dir := t.TempDir()
+	spool := newInboundSpool(dir + "/spool.jsonl")
+	now := time.Now()
+	write := func(ts string, v ladderVerdict) {
+		t.Helper()
+		if !spool.recordVerdict("C1", ts, v) {
+			t.Fatal("record must confirm")
+		}
+	}
+	// 1.0: terminal (older) then a stale outstanding line (newer at): terminal wins.
+	write("1.0", ladderVerdict{retired: true, cause: errors.New("422"), at: now.Add(-2 * time.Hour)})
+	write("1.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-time.Hour)})
+	// 2.0: plain ownership then stripped: stripped wins.
+	write("2.0", ladderVerdict{cause: errors.New("isolated"), at: now.Add(-time.Hour)})
+	write("2.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-2 * time.Hour)})
+	// 3.0: an outstanding record past retention with no copy present: dropped.
+	write("3.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-30 * time.Hour)})
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if v, ok := c.verdictLocked("C1", "1.0", now); !ok || !v.retired {
+		t.Fatalf("1.0 must stay terminal: %+v ok=%v", v, ok)
+	}
+	if v, ok := c.verdictLocked("C1", "2.0", now); !ok || v.retired || !v.stripped {
+		t.Fatalf("2.0 must be the stripped retry: %+v ok=%v", v, ok)
+	}
+	if _, ok := c.verdictLocked("C1", "3.0", now); ok {
+		t.Fatal("3.0's stale outstanding record with no copy must be compacted away")
+	}
+	if n := countVerdictLines(t, spool.path, "3.0"); n != 0 {
+		t.Fatalf("3.0 re-written %d time(s)", n)
 	}
 }

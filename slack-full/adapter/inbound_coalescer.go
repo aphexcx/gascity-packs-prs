@@ -379,10 +379,15 @@ type ladderVerdict struct {
 	stripped bool
 	cause    error
 	at       time.Time
-	// durable is true once a TERMINAL verdict's record is confirmed
-	// written by the recordVerdict hook (codex r15 finding 2: a failed
-	// write was logged and forgotten; persistVerdict now writes whatever
-	// is owed, and the channel's durable-write retry timer retries it).
+	// durable is true once the verdict's record — for its CURRENT
+	// progression — is confirmed written by the recordVerdict hook
+	// (codex r15 finding 2: a failed write was logged and forgotten;
+	// persistVerdict now writes whatever is owed, and the channel's
+	// durable-write retry timer retries it). Every progression owes a
+	// record, outstanding ones included (codex r22/r23: a decision that
+	// lived only in memory beside a staged copy of its message was lost
+	// by a crash, and the restart posted the refused bytes again — the
+	// site of the decision is no longer the unit; the ledger is).
 	durable bool
 	// pendingWrite marks a dead-letter verdict whose PAYLOAD is not yet
 	// in the dead-letter file (codex r20 finding 1): the record must
@@ -393,6 +398,20 @@ type ladderVerdict struct {
 	// until then the parked entry's spool line is the payload's durable
 	// home. Never set on a delivered verdict.
 	pendingWrite bool
+}
+
+// rank orders a message's verdicts by PROGRESSION: the ladder's plain
+// copy (charged or isolated) is owed, then the stripped retry, then a
+// terminal verdict. A verdict never regresses (recordVerdictLocked),
+// and the journal folds records by this order first, time second.
+func (v ladderVerdict) rank() int {
+	switch {
+	case v.retired:
+		return 2
+	case v.stripped:
+		return 1
+	}
+	return 0
 }
 
 // disposition names the verdict for a log line.
@@ -533,11 +552,8 @@ func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdi
 		c.verdicts[channel] = m
 	}
 	if cur, ok := m[ts]; ok {
-		if cur.retired && !v.retired {
-			return false
-		}
-		if !cur.retired && !v.retired && cur.stripped && !v.stripped {
-			return false // the stripped retry is further along than the plain copy
+		if v.rank() < cur.rank() {
+			return false // a verdict never regresses: terminal over stripped over the plain copy
 		}
 		if cur.retired == v.retired && cur.delivered == v.delivered && cur.stripped == v.stripped {
 			return false
@@ -557,12 +573,14 @@ func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdi
 // verdict for its message, whatever path brought it here (charge's
 // restore, an isolation pause's restore, the spool replay's enqueue).
 // The ledger, not the buffer, is what onLadder consults (codex r15
-// finding 1). Caller holds c.mu.
-func (c *inboundCoalescer) ownLocked(channel string, p pendingChannelInbound, now time.Time) {
+// finding 1). Returns whether the ledger changed — the caller then owes
+// the new progression its record (persistVerdict, once unlocked).
+// Caller holds c.mu.
+func (c *inboundCoalescer) ownLocked(channel string, p pendingChannelInbound, now time.Time) bool {
 	if !onLadderEntry(p) {
-		return
+		return false
 	}
-	c.recordVerdictLocked(channel, p.inbound.ProviderMessageID, ownershipOf(p), now)
+	return c.recordVerdictLocked(channel, p.inbound.ProviderMessageID, ownershipOf(p), now)
 }
 
 // retireLocked records a TERMINAL verdict for (channel, ts) and removes
@@ -578,17 +596,18 @@ func (c *inboundCoalescer) retireLocked(channel, ts string, v ladderVerdict, now
 	return c.dropBufferedCopiesLocked(channel, ts), changed
 }
 
-// persistVerdict writes the durable record of (channel, ts)'s TERMINAL
-// verdict through the recordVerdict hook if one is owed: the ledger
-// holds a terminal verdict whose record is not yet confirmed. Called
-// with c.mu NOT held (the record is an fsync'd spool line). Returns
-// whether the record is durable — true when none is owed, or no hook is
-// wired (nothing was promised). A failed write is logged once per
-// distinct failure and the channel's durable-write retry timer is armed
-// (the same timer that retries parked dead-letter writes): the record
-// is written when the disk recovers, at the latest by the shutdown
-// flush (codex r15 finding 2 — a failed write was logged and forgotten,
-// so a delayed redelivery after the restart was fresh bytes).
+// persistVerdict writes the durable record of (channel, ts)'s verdict
+// through the recordVerdict hook if one is owed: the ledger holds a
+// verdict — outstanding or terminal — whose record for its current
+// progression is not yet confirmed. Called with c.mu NOT held (the
+// record is an fsync'd spool line). Returns whether the record is
+// durable — true when none is owed, or no hook is wired (nothing was
+// promised). A failed write is logged once per distinct failure and the
+// channel's durable-write retry timer is armed (the same timer that
+// retries parked dead-letter writes): the record is written when the
+// disk recovers, at the latest by the shutdown flush (codex r15 finding
+// 2 — a failed write was logged and forgotten, so a delayed redelivery
+// after the restart was fresh bytes).
 func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 	c.mu.Lock()
 	v, ok := c.verdicts[channel][ts]
@@ -600,7 +619,7 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 		c.mu.Unlock()
 		return false
 	}
-	if ok && v.retired && !v.durable && hook == nil {
+	if ok && !v.durable && hook == nil {
 		// No hook wired (bare configs): nothing was promised, nothing is
 		// owed — marked durable so the retry tail's recount (codex r16
 		// finding 2) never keeps a timer armed for it.
@@ -608,12 +627,15 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 		c.verdicts[channel][ts] = v
 	}
 	c.mu.Unlock()
-	if !ok || !v.retired || v.durable {
+	if !ok || v.durable {
 		return true
 	}
 	if hook(channel, ts, v) {
 		c.mu.Lock()
-		if cur, ok := c.verdicts[channel][ts]; ok && cur.retired {
+		// Confirmed for THIS progression only: a verdict that moved on
+		// while the write ran owes its own record (the hook's caller
+		// persists it, or the retry tail does).
+		if cur, ok := c.verdicts[channel][ts]; ok && cur.rank() == v.rank() && cur.delivered == v.delivered {
 			cur.durable = true
 			c.verdicts[channel][ts] = cur
 		}
@@ -632,12 +654,12 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 	return false
 }
 
-// owedVerdictsLocked counts the channel's terminal verdicts whose
-// record is still owed. Caller holds c.mu.
+// owedVerdictsLocked counts the channel's verdicts whose record is
+// still owed. Caller holds c.mu.
 func (c *inboundCoalescer) owedVerdictsLocked(channel string) int {
 	n := 0
 	for _, v := range c.verdicts[channel] {
-		if v.retired && !v.durable && !v.pendingWrite {
+		if !v.durable && !v.pendingWrite {
 			n++
 		}
 	}
@@ -672,15 +694,15 @@ func (c *inboundCoalescer) seedRefused(channel, ts string, cause error) {
 	c.mu.Unlock()
 }
 
-// persistOwedVerdicts writes every terminal verdict of the channel whose
-// record is still owed. Returns how many of THOSE remain owed (the
-// retry tail recounts under the lock instead of trusting this, codex
-// r16 finding 2). Called with c.mu NOT held.
+// persistOwedVerdicts writes every verdict of the channel whose record
+// is still owed. Returns how many of THOSE remain owed (the retry tail
+// recounts under the lock instead of trusting this, codex r16 finding
+// 2). Called with c.mu NOT held.
 func (c *inboundCoalescer) persistOwedVerdicts(channel string) int {
 	c.mu.Lock()
 	var owed []string
 	for ts, v := range c.verdicts[channel] {
-		if v.retired && !v.durable && !v.pendingWrite {
+		if !v.durable && !v.pendingWrite {
 			owed = append(owed, ts)
 		}
 	}
@@ -698,15 +720,15 @@ func (c *inboundCoalescer) persistOwedVerdicts(channel string) int {
 	return left
 }
 
-// channelsOwingVerdicts lists the channels holding a terminal verdict
-// whose record is still owed. Called with c.mu NOT held.
+// channelsOwingVerdicts lists the channels holding a verdict whose
+// record is still owed. Called with c.mu NOT held.
 func (c *inboundCoalescer) channelsOwingVerdicts() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []string
 	for channel, m := range c.verdicts {
 		for _, v := range m {
-			if v.retired && !v.durable && !v.pendingWrite {
+			if !v.durable && !v.pendingWrite {
 				out = append(out, channel)
 				break
 			}
@@ -717,13 +739,15 @@ func (c *inboundCoalescer) channelsOwingVerdicts() []string {
 }
 
 // seedVerdict is the spool replay's entry point: a verdict decided
-// before the restart — terminal (a record line) or outstanding (the
-// stripped entry's own disposition) — re-enters the ledger before any
-// copy of the message is admitted, and a terminal one is written again
-// for the next restart. A verdict already standing (a duplicate record,
-// a terminal one ahead of a stale stripped entry) changes nothing and
-// is not re-written. Returns whether the durable record, if one was
-// owed, is confirmed — the replay keeps its staged file otherwise.
+// before the restart — terminal or outstanding, from a record line or
+// an entry's own disposition — re-enters the ledger before any copy of
+// the message is admitted, and is written again for the next restart
+// (codex r23 finding 1: an outstanding verdict seeded from a Stripped
+// entry wrote nothing, the staged file went, and a second crash lost
+// the decision). A verdict already standing (a duplicate record, a
+// terminal one ahead of a stale stripped entry) changes nothing and is
+// not re-written. Returns whether the durable record, if one was owed,
+// is confirmed — the replay keeps its staged file otherwise.
 func (c *inboundCoalescer) seedVerdict(channel, ts string, v ladderVerdict) bool {
 	if c == nil || ts == "" {
 		return true
@@ -1301,9 +1325,10 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	// A copy the ladder owns (a replayed isolate entry, a copy adopted
 	// above) keeps the ladder's ownership in the ledger (codex r15
 	// finding 1).
-	c.ownLocked(channel, p, now)
+	owed := c.ownLocked(channel, p, now)
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
+		c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
 		return
 	}
 	c.pending[channel] = append(c.pending[channel], p)
@@ -1326,11 +1351,13 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 			// dropped.
 			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
+			c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
 			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 			return
 		}
 		swept := c.takeSweepsLocked(channel)
 		c.mu.Unlock()
+		c.persistOwned(owed, channel, p.inbound.ProviderMessageID) // durable before the POST it shapes
 		log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
 		// Mutexes are held from take time (gp-9e7 fix round 2c/round 3);
 		// launching the swept goroutines before the triggering channel's
@@ -1344,11 +1371,20 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	// joins the armed timer unchanged.
 	target, armed := c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
 	c.mu.Unlock()
+	c.persistOwned(owed, channel, p.inbound.ProviderMessageID)
 	if armed {
 		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, time.Until(target).Round(time.Millisecond))
 		return
 	}
 	log.Printf("coalesce: chan=%s buffered ts=%s (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
+}
+
+// persistOwned writes (channel, ts)'s owed record when an admission or
+// restore just progressed the ledger. Called with c.mu NOT held.
+func (c *inboundCoalescer) persistOwned(owed bool, channel, ts string) {
+	if owed {
+		c.persistVerdict(channel, ts)
+	}
 }
 
 // admitReaction buffers one reaction notification (gp-9e7 item 1).
@@ -1845,6 +1881,7 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 	// tombstones do not survive a restart (codex round-3 finding 3) —
 	// must carry the notice, not the deleted text.
 	now := time.Now()
+	var owed []string // ownership progressions recorded here owe their journal record (codex r23 finding 3)
 	live := msgs[:0]
 	for i := range msgs {
 		if c.isDeletedLocked(channel, msgs[i].inbound.ProviderMessageID, now) && msgs[i].inbound.Text != deletedBySenderNotice {
@@ -1861,8 +1898,12 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		// A charged or isolated copy coming back (the ladder's re-post
 		// restored, an isolation pause) is the ladder's: recorded here so
 		// the ledger, not the buffer, answers onLadder while it is
-		// detached again later (codex r15 finding 1).
-		c.ownLocked(channel, msgs[i], now)
+		// detached again later (codex r15 finding 1), and written to the
+		// journal so a crash with a plain copy still staged cannot
+		// re-post the refused batch (codex r23 finding 3).
+		if c.ownLocked(channel, msgs[i], now) {
+			owed = append(owed, msgs[i].inbound.ProviderMessageID)
+		}
 		live = append(live, msgs[i])
 	}
 	msgs = live
@@ -1882,16 +1923,19 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		// barrier, but a map entry here would sit past the final
 		// snapshot forever): spill instead of re-queueing.
 		c.spillLateLocked(channel, append(append([]pendingChannelInbound{}, msgs...), reactions...))
-		return
+	} else {
+		if len(reactions) > 0 {
+			c.reactions[channel] = append(reactions, c.reactions[channel]...)
+		}
+		if len(msgs) > 0 {
+			c.pending[channel] = append(msgs, c.pending[channel]...)
+		}
+		c.scheduleLocked(channel, time.Time{})
+		c.mu.Unlock()
 	}
-	defer c.mu.Unlock()
-	if len(reactions) > 0 {
-		c.reactions[channel] = append(reactions, c.reactions[channel]...)
+	for _, ts := range owed {
+		c.persistVerdict(channel, ts)
 	}
-	if len(msgs) > 0 {
-		c.pending[channel] = append(msgs, c.pending[channel]...)
-	}
-	c.scheduleLocked(channel, time.Time{})
 }
 
 // failed handles one failed delivery. Called with the channel's
@@ -2086,60 +2130,69 @@ func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelIn
 // to "never the same bytes again". With no hook wired (bare test
 // configs) the entry is dropped, loudly.
 func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause error) {
+	ts := p.inbound.ProviderMessageID
+	now := time.Now()
+	// ONE critical section reconciles the deletion tombstone and records
+	// the ladder's decision (codex r23 finding 2): a deletion landing
+	// between a separate tombstone check and the ledger's progression
+	// found no verdict, recorded nothing, and the spill that followed
+	// stored the deleted text for a restart to resurrect. From the moment
+	// the ledger owns the message, markDeleted records every deletion.
 	// The dead-letter file is durable and tombstones are not: a deleted
 	// entry must be written as its notice (codex round-3 finding 2).
-	single := []pendingChannelInbound{p}
-	c.applyDeletionTombstones(channel, single)
-	p = single[0]
+	c.mu.Lock()
+	if !p.reaction && p.inbound.Text != deletedBySenderNotice && c.isDeletedLocked(channel, ts, now) {
+		applyDeletion(&p)
+		log.Printf("coalesce: chan=%s ts=%s deleted while detached — re-handled as a deletion notice", channel, ts)
+	}
 	step := nextRejectionStep(p, cause)
 	if p.attempts < maxCoalesceDeliveryAttempts {
 		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports a bounded count (codex r2 finding 3)
 	}
-	ts := p.inbound.ProviderMessageID
+	var n, dropped int
 	switch step {
 	case stepRetryWithoutAttachments:
-		n := len(p.inbound.Attachments)
+		n = len(p.inbound.Attachments)
 		p = withholdAttachments(p, cause)
 		p.isolate = true // its one retry posts alone: a refusal then charges it, not a batch-mate
 		// The verdict is about the message: every other buffered copy of
 		// this ts leaves (this stripped copy is the retry), and a copy
 		// admitted from here on enters as the stripped retry itself
 		// (codex r10 finding 1). Reactions carry their own ids.
-		c.mu.Lock()
-		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause}, time.Now())
-		dropped := c.dropBufferedCopiesLocked(channel, ts)
-		c.mu.Unlock()
-		// The decision is spooled when it is MADE (codex r22 finding 1):
-		// the original attachment-bearing copy may be staged on disk from
-		// a replay in progress (its cap flush is what POSTed it), and a
-		// crash before this stripped copy lands would otherwise leave
-		// that staged copy with no durable disposition superseding it —
-		// the restart POSTed the refused bytes again. The stripped line
-		// seeds the ledger's outstanding verdict at the next replay, so
-		// the staged plain copy adopts it (and lands as a duplicate); the
-		// landing's delivered record retires the line at the replay after.
-		if c.spill != nil && !c.spill(channel, []pendingChannelInbound{p}) {
-			log.Printf("coalesce: chan=%s ts=%s the stripped retry could not be spooled — until it lands, a crash would let a staged copy of the original re-post the refused bytes once", channel, ts)
-		}
+		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause}, now)
+		dropped = c.dropBufferedCopiesLocked(channel, ts)
+	case stepRetrySame:
+	default:
+		// Retired: dead-lettered, parked for the write, or lost for want
+		// of a sink — in every case the message is out of the delivery
+		// path for good, and so is every other copy of it, now or later.
+		// Retired in memory first (every other copy leaves now), the
+		// durable record only AFTER the payload is in the dead-letter
+		// file (codex r20 finding 1): a record must never say
+		// "dead-lettered" about bytes no file holds.
+		dropped, _ = c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true}, now)
+	}
+	c.mu.Unlock()
+	switch step {
+	case stepRetryWithoutAttachments:
+		// The decision's record is written when it is MADE (codex r22
+		// finding 1): the original attachment-bearing copy may be staged
+		// on disk from a replay in progress (its cap flush is what POSTed
+		// it), and a crash before this stripped copy lands would
+		// otherwise leave that staged copy with no durable disposition
+		// superseding it — the restart POSTed the refused bytes again.
+		// The record seeds the ledger's outstanding verdict at the next
+		// replay, so the staged plain copy adopts it; the landing's
+		// delivered record supersedes it at the replay after.
+		c.persistVerdict(channel, ts)
 		c.restore(channel, []pendingChannelInbound{p})
 		log.Printf("coalesce: chan=%s ts=%s refused by gc with %d attachment(s) — retrying ONCE without them (the files stay on disk; the text names their paths)%s: %v",
 			channel, ts, n, duplicateCopiesSuffix(dropped), cause)
 		return
 	case stepRetrySame:
-		c.restore(channel, []pendingChannelInbound{p})
+		c.restore(channel, []pendingChannelInbound{p}) // restore records (and persists) the charged copy's ownership
 		return
 	}
-	// Retired: dead-lettered, parked for the write, or lost for want of a
-	// sink — in every case the message is out of the delivery path for
-	// good, and so is every other copy of it, now or later.
-	// Retired in memory first (every other copy leaves now), the
-	// durable record only AFTER the payload is in the dead-letter file
-	// (codex r20 finding 1): a record must never say "dead-lettered"
-	// about bytes no file holds.
-	verdict := ladderVerdict{retired: true, cause: cause, pendingWrite: true}
-	c.mu.Lock()
-	dropped, _ := c.retireLocked(channel, ts, verdict, time.Now())
-	c.mu.Unlock()
 	if dropped > 0 {
 		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
 	}
