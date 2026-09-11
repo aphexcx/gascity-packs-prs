@@ -514,10 +514,16 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			deleted[key{e.Channel, e.DeletedTS}] = true
 		}
 	}
-	refusedAt := make(map[key]int)
-	var refused []spooledInbound
+	// An OWNED copy — a Stripped or Isolate entry the replay re-spooled
+	// into this same file — is the payload its outstanding verdict owns
+	// (codex r26 finding 2: dropped here, ownership survived without a
+	// deliverable message): kept, once per (channel, id), the newest
+	// copy, deletions applied, unless the message's folded record is
+	// terminal (a retired message's copy is dead).
+	refusedAt, ownedAt := make(map[key]int), make(map[key]int)
+	var refused, owned []spooledInbound
 	for _, e := range records {
-		if e.Refused != "" && e.VerdictTS == "" {
+		if e.VerdictTS == "" && e.DeletedTS == "" && (e.Refused != "" || (!e.Reaction && (e.Stripped != "" || e.Isolate))) {
 			k := key{e.Channel, e.Inbound.ProviderMessageID}
 			if deleted[k] {
 				p := pendingChannelInbound{inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files}
@@ -525,11 +531,15 @@ func (s *inboundSpool) compactToRecordsLocked() {
 				e.Inbound = p.inbound
 				e.ThreadAnchor, e.Preamble, e.Body, e.Files = "", "", "", ""
 			}
-			if i, seen := refusedAt[k]; seen {
-				refused[i] = e
+			at, list := refusedAt, &refused
+			if e.Refused == "" {
+				at, list = ownedAt, &owned
+			}
+			if i, seen := at[k]; seen {
+				(*list)[i] = e
 			} else {
-				refusedAt[k] = len(refused)
-				refused = append(refused, e)
+				at[k] = len(*list)
+				*list = append(*list, e)
 			}
 			continue
 		}
@@ -554,12 +564,21 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	}
 	tmpPath := tmp.Name()
 	w := bufio.NewWriter(tmp)
-	kept := make([]spooledInbound, 0, len(order)+2*len(refused))
+	kept := make([]spooledInbound, 0, len(order)+2*len(refused)+2*len(owned))
 	for _, k := range order {
 		kept = append(kept, newest[k])
 	}
 	kept = append(kept, refused...)
-	for _, e := range refused {
+	liveOwned := 0
+	for _, e := range owned {
+		k := key{e.Channel, e.Inbound.ProviderMessageID}
+		if rec, ok := newest[k]; ok && !rec.VerdictOutstanding {
+			continue // the ledger retired this message: its copy is dead
+		}
+		kept = append(kept, e)
+		liveOwned++
+	}
+	for _, e := range append(append([]spooledInbound{}, refused...), owned...) {
 		if k := (key{e.Channel, e.Inbound.ProviderMessageID}); deleted[k] {
 			kept = append(kept, spooledInbound{Channel: e.Channel, DeletedTS: e.Inbound.ProviderMessageID})
 		}
@@ -592,7 +611,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		log.Printf("inbound spool: compacting %s in place FAILED (%v) — left as it is; its messages replay again next startup", s.path, err)
 		return
 	}
-	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s) and %d parked refusal(s)", s.path, len(order), len(refused))
+	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s), %d parked refusal(s) and %d owned cop%s", s.path, len(order), len(refused), liveOwned, plural(liveOwned, "y", "ies"))
 }
 
 // appendFileTo appends src's bytes to the end of dst, fsyncing dst
@@ -845,6 +864,15 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 		// bring one, and Slack's window is over: compacted away. With a
 		// copy present, either kind is renewed and applies to it (codex
 		// r19 finding 2).
+		// An OUTSTANDING record with no copy of its message in the
+		// replay is ownership of nothing (codex r26 finding 1): the copy
+		// died with the process before its line was written, and the
+		// only copy Slack may still send must be delivered, not skipped
+		// on a standing verdict. Dropped, whatever its age.
+		if !v.retired && !present[k] {
+			log.Printf("inbound spool: chan=%s ts=%s an outstanding verdict record has no copy of its message in the spool — dropped; a redelivery is fresh bytes", e.Channel, e.VerdictTS)
+			continue
+		}
 		if stale := now.Sub(v.at) > ladderVerdictRetention; stale {
 			if !present[k] {
 				continue
@@ -955,16 +983,27 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			continue
 		}
 		if e.Stripped != "" || e.Isolate {
-			// An owned copy — the stripped retry, or a probe of a refused
-			// batch, owed or in flight at shutdown: its disposition is the
-			// ledger's outstanding verdict for the message, seeded above
-			// before any copy was admitted so an earlier or later copy
-			// adopts it and the landing settles it (codex r12 finding 1,
-			// r17 finding 1). Its line is re-written to the live spool
-			// before the staged file may go (codex r25 finding 2): the
-			// ledger must never own a message it has no copy of.
 			p.attempts = e.Attempts
+		}
+		// The ledger's standing verdict is applied here, as enqueue will
+		// apply it: a retired message's copy is dropped WITHOUT being
+		// re-spooled (codex r26 minor: re-spooled first, it outlived every
+		// restart and kept renewing its expired record); an owned
+		// message's copy — the stripped retry, a probe of a refused
+		// batch, or a plain copy adopting the ledger's decision — is
+		// re-written to the live spool AS the ladder's copy, and only
+		// then is its outstanding record written (codex r25 finding 2,
+		// r26 finding 1): the ledger must never own a message it has no
+		// copy of, and no record may precede its payload.
+		p, live := c.adoptForReplay(e.Channel, p)
+		if !live {
+			log.Printf("inbound spool: chan=%s ts=%s is a copy of a message the rejection ladder retired — dropped, not re-spooled", e.Channel, e.Inbound.ProviderMessageID)
+			continue
+		}
+		if !e.Reaction && onLadderEntry(p) {
 			if !s.spillBatch(e.Channel, []pendingChannelInbound{p}) {
+				durable = false
+			} else if !c.persistVerdict(e.Channel, e.Inbound.ProviderMessageID) {
 				durable = false
 			}
 		}

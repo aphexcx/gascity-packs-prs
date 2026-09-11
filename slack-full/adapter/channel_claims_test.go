@@ -410,3 +410,38 @@ func TestChannelClaims_SkippingTwinLeavesThreadContextAlone(t *testing.T) {
 		t.Errorf("trailing twin fetched thread context (%d fetches, want 1) — a skipping twin must not touch the cache", n)
 	}
 }
+
+// A copy the rejection ladder OWNS is not dropped on a same-ts claim
+// that was concluded without a confirmed delivery (gp-sgu7, codex r26
+// finding 4): the drain spool commits a failed urgent twin's claim so no
+// takeover re-posts a copy the next startup replays — but a batch probe
+// that dropped its owned member on that claim returned nil, the ladder
+// recorded "delivered", and the replay discarded both recoverable
+// copies. Only deliveredIDs — recorded after gc vouched — drops an owned
+// copy; on a bare claim the ladder's copy posts and gc's dedup key
+// bounds the duplicate. An unowned member keeps the gp-ios contract
+// above (TestCoalescer_BatchSkipsClaimCommittedMember).
+func TestCoalescer_OwnedMemberPostsOnAnUnconfirmedClaim(t *testing.T) {
+	stub := &flakyInboundStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+
+	keyY := channelDeliveryClaimKey("C1", "100.000020")
+	if proceed, _ := cfg.channelClaims.begin(keyY); !proceed {
+		t.Fatal("setup: could not claim Y")
+	}
+	cfg.channelClaims.commit(keyY) // concluded — by the drain spool, not by a delivery: no deliveredIDs record
+
+	owned := pendingChannelInbound{inbound: externalInboundMessage{ProviderMessageID: "100.000020", Text: "the ladder's owned copy",
+		Conversation: conversationRef{ConversationID: "C1", Kind: "room"}}, isolate: true, attempts: 1}
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{owned}); err != nil {
+		t.Fatalf("batch delivery reported failure: %v", err)
+	}
+	got := stub.snapshot()
+	if len(got) != 1 || !strings.Contains(got[0].Text, "the ladder's owned copy") {
+		t.Fatalf("the owned copy must post on an unconfirmed claim (a false 'delivered' verdict would discard it): got %d inbound(s)", len(got))
+	}
+}

@@ -3360,10 +3360,15 @@ func TestVerdictRecordsFoldByProgression(t *testing.T) {
 	// 1.0: terminal (older) then a stale outstanding line (newer at): terminal wins.
 	write("1.0", ladderVerdict{retired: true, cause: errors.New("422"), at: now.Add(-2 * time.Hour)})
 	write("1.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-time.Hour)})
-	// 2.0: plain ownership then stripped: stripped wins.
+	// 2.0: plain ownership then stripped, its copy present: stripped wins.
 	write("2.0", ladderVerdict{cause: errors.New("isolated"), at: now.Add(-time.Hour)})
 	write("2.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-2 * time.Hour)})
-	// 3.0: an outstanding record past retention with no copy present: dropped.
+	copy2 := testPending("C1", "2.0", "B")
+	copy2.isolate = true
+	if !spool.spillBatch("C1", []pendingChannelInbound{copy2}) {
+		t.Fatal("spill must confirm")
+	}
+	// 3.0: an outstanding record with no copy present — ownership of nothing: dropped (r26).
 	write("3.0", ladderVerdict{stripped: true, cause: errors.New("422"), at: now.Add(-30 * time.Hour)})
 	c := newInboundCoalescer(time.Hour, nil)
 	c.recordVerdict = spool.recordVerdict
@@ -3377,7 +3382,7 @@ func TestVerdictRecordsFoldByProgression(t *testing.T) {
 		t.Fatalf("2.0 must be the stripped retry: %+v ok=%v", v, ok)
 	}
 	if _, ok := c.verdictLocked("C1", "3.0", now); ok {
-		t.Fatal("3.0's stale outstanding record with no copy must be compacted away")
+		t.Fatal("3.0's outstanding record with no copy must be compacted away")
 	}
 	if n := countVerdictLines(t, spool.path, "3.0"); n != 0 {
 		t.Fatalf("3.0 re-written %d time(s)", n)
@@ -3569,4 +3574,121 @@ func TestReplayRetainsTheStagedFileWhenAdmissionLeavesAnUnspooledPark(t *testing
 	if _, err := os.Stat(spool.replayingPath()); err != nil {
 		t.Fatalf("the staged file must be retained while parked payloads have no spool copy: %v", err)
 	}
+}
+
+// --- codex r26 ---------------------------------------------------------------
+//
+// The payload comes BEFORE its ownership record, always (r26): a record
+// written first — or seeded from a record with no copy of its message
+// anywhere, or left standing after an in-place compaction dropped the
+// copy — is ownership of nothing, and the urgent twin is skipped on it.
+
+// An outstanding record is written only after the owned copy's spool
+// line confirmed (r26 finding 1): with the spill refused, the ledger
+// owns the message in memory (the replay retains its staged file), but
+// no record says so on disk.
+func TestOwnershipRecordFollowsItsPayload(t *testing.T) {
+	t.Run("the stripped retry", func(t *testing.T) {
+		spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+		c := newInboundCoalescer(time.Hour, nil)
+		c.spill = func(string, []pendingChannelInbound) bool { return false }
+		c.recordVerdict = spool.recordVerdict
+		c.charge("C1", testPendingWithAttachment("C1", "1.0", "A", "/tmp/x/memo.m4a"), permanent422())
+		if n := countVerdictLines(t, spool.path, "1.0"); n != 0 {
+			t.Fatalf("no record without its payload, got %d", n)
+		}
+		if !c.onLadder("C1", "1.0") || !c.owesDurability() {
+			t.Fatal("the ledger owns the retry in memory and still owes it a durable home")
+		}
+	})
+	t.Run("the members of a refused batch", func(t *testing.T) {
+		spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+		c := newInboundCoalescer(20*time.Millisecond, nil)
+		c.spill = func(string, []pendingChannelInbound) bool { return false }
+		c.recordVerdict = spool.recordVerdict
+		deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+			if len(batch) > 1 {
+				return permanent422()
+			}
+			return errors.New("dial tcp: connection refused")
+		})
+		c.deliver = deliver
+		c.enqueue("C1", testPending("C1", "1.0", "A"))
+		c.enqueue("C1", testPending("C1", "2.0", "B"))
+		waitForCalls(t, calls, []string{"1.0,2.0", "1.0"})
+		if n := countVerdictLines(t, spool.path, "1.0") + countVerdictLines(t, spool.path, "2.0"); n != 0 {
+			t.Fatalf("no record without its payload, got %d", n)
+		}
+	})
+}
+
+// An outstanding record with NO copy of its message in the replay is
+// ownership of nothing (r26 finding 1's replay face): the copy died
+// with the process before its line was written, and Slack's redelivery
+// must be delivered, not skipped on a standing verdict. It is not
+// seeded and not re-written.
+func TestOutstandingRecordWithoutACopyIsNotSeeded(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{stripped: true, cause: errors.New("422")}) {
+		t.Fatal("record must confirm")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	if c.onLadder("C1", "1.0") {
+		t.Fatal("the ledger must not own a message it has no copy of")
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 0 {
+		t.Fatalf("the orphan record must not be re-written, got %d", n)
+	}
+}
+
+// The in-place compaction keeps the owned copies the replay re-spooled
+// (r26 finding 2) — with their deletions applied — and drops a copy
+// whose message the ledger retired (r26 minor: a retired owned copy was
+// re-spooled forever, renewing its expired record through `present`).
+func TestInPlaceCompactionKeepsOwnedPayloads(t *testing.T) {
+	stripped := withholdAttachments(testPendingWithAttachment("C1", "1.0", "the founder's text", "/tmp/x/memo.m4a"), permanent422())
+	stripped.isolate, stripped.attempts = true, 1
+	t.Run("an owed copy is kept", func(t *testing.T) {
+		spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
+		if !spool.spillBatch("C1", []pendingChannelInbound{stripped}) {
+			t.Fatal("spill must confirm")
+		}
+		c := newInboundCoalescer(time.Hour, nil)
+		c.spill = spool.spillBatch
+		c.recordVerdict = spool.recordVerdict
+		spool.replayInto(c)
+		data, err := os.ReadFile(spool.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(data, []byte("the founder's text")) || !bytes.Contains(data, []byte(`"stripped":`)) {
+			t.Fatalf("the compacted spool must keep the owed copy: %q", data)
+		}
+	})
+	t.Run("a retired copy is dropped", func(t *testing.T) {
+		spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250)))
+		if !spool.spillBatch("C1", []pendingChannelInbound{stripped}) {
+			t.Fatal("spill must confirm")
+		}
+		if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, delivered: true, cause: errors.New("422")}) {
+			t.Fatal("record must confirm")
+		}
+		c := newInboundCoalescer(time.Hour, nil)
+		c.spill = spool.spillBatch
+		c.recordVerdict = spool.recordVerdict
+		spool.replayInto(c)
+		data, err := os.ReadFile(spool.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte("the founder's text")) {
+			t.Fatalf("a retired message's copy must not be re-spooled or kept: %q", data)
+		}
+		if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+			t.Fatalf("the terminal record is kept once, got %d", n)
+		}
+	})
 }
