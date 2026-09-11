@@ -3832,7 +3832,7 @@ func TestHeldChannelSerializesDeliveries(t *testing.T) {
 func TestShutdownWaitsForUrgentWork(t *testing.T) {
 	c := newInboundCoalescer(20*time.Millisecond, nil)
 	c.deliver = func(string, []pendingChannelInbound) error { return nil }
-	end := c.beginUrgent()
+	end := c.beginEvent()
 	var mu sync.Mutex
 	ended := false
 	go func() {

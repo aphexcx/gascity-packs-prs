@@ -3211,48 +3211,67 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// own since ENTRY (round 3, 2b — before any state movement), so
 		// the group covers admission end to end and never touches zero
 		// between the handler's entry and the goroutine's Done.
-		if cfg.eventWG != nil {
-			cfg.eventWG.Add(1)
-		}
-		go func() {
-			if cfg.eventWG != nil {
-				defer cfg.eventWG.Done()
-			}
-			ownsSlot := release != nil
-			for !proceed {
-				for parked := true; parked; {
-					select {
-					case <-wait:
-						parked = false
-					case <-time.After(eventDedupParkLogInterval):
-						log.Printf("slack event dedup: redelivery of event_id=%s still parked behind an in-flight delivery (retry_num=%q)",
-							env.EventID, retryNum)
-					}
-				}
-				proceed, wait = cfg.eventDedup.begin(env.EventID)
-				if !proceed && wait == nil {
-					log.Printf("slack event dedup: dropping redelivery event_id=%s retry_num=%q team_id=%q",
-						env.EventID, retryNum, clipTeamIDForLog(env.TeamID))
-					return
-				}
-			}
-			if !ownsSlot {
-				// Taking over after a parked wait: the original slot
-				// went back to the pool, so contend for a fresh one —
-				// BLOCKING, unlike the handler's entry check. This
-				// delivery already got its 200 and may be the event's
-				// only remaining copy, so a queue-full drop here would
-				// lose it permanently (codex r5). The blocked
-				// goroutine holds no slot and every slot holder
-				// releases in bounded time, so this always makes
-				// progress; new deliveries still shed load at the
-				// handler's nonblocking check.
-				cfg.dispatchSem <- struct{}{}
-				release = func() { <-cfg.dispatchSem }
-			}
-			processSlackEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, release)
-		}()
+		dispatchAcknowledgedEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, retryNum, proceed, wait, release)
 	}
+}
+
+// dispatchAcknowledgedEvent hands an event the handler has ACCEPTED —
+// its event-id claim taken (owned, or parked behind the in-flight
+// copy) and its dispatch slot held or owed — to the goroutine that
+// lives its whole life: the event-id wait, the dispatch-slot wait and
+// processSlackEvent. That goroutine is inside the coalescer's shutdown
+// barrier from before its first wait to its return (codex r30 finding
+// 1, r31 finding 1, r32 finding 1, r33 finding 1: a redelivery parked
+// at the event-id wait was outside it, and when the owner's POST and
+// spill failed after the bounded event drain, the drain concluded and
+// main sealed the spool before the redelivery — the message's last
+// recovery path — acquired its slot). The registration is taken HERE,
+// synchronously, before the handler's 200 finishes, exactly like the
+// eventWG count, so nothing acknowledged is ever outside the barrier.
+func dispatchAcknowledgedEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *threadSessionRegistry, roomLaunchReg *roomLaunchMappingRegistry, subteamMap *subteamAliasMap, threadHandleSticky *threadHandleStickiness, env slackEventEnvelope, retryNum string, proceed bool, wait <-chan struct{}, release func()) {
+	end := cfg.coalescer.beginEvent()
+	if cfg.eventWG != nil {
+		cfg.eventWG.Add(1)
+	}
+	go func() {
+		defer end()
+		if cfg.eventWG != nil {
+			defer cfg.eventWG.Done()
+		}
+		ownsSlot := release != nil
+		for !proceed {
+			for parked := true; parked; {
+				select {
+				case <-wait:
+					parked = false
+				case <-time.After(eventDedupParkLogInterval):
+					log.Printf("slack event dedup: redelivery of event_id=%s still parked behind an in-flight delivery (retry_num=%q)",
+						env.EventID, retryNum)
+				}
+			}
+			proceed, wait = cfg.eventDedup.begin(env.EventID)
+			if !proceed && wait == nil {
+				log.Printf("slack event dedup: dropping redelivery event_id=%s retry_num=%q team_id=%q",
+					env.EventID, retryNum, clipTeamIDForLog(env.TeamID))
+				return
+			}
+		}
+		if !ownsSlot {
+			// Taking over after a parked wait: the original slot
+			// went back to the pool, so contend for a fresh one —
+			// BLOCKING, unlike the handler's entry check. This
+			// delivery already got its 200 and may be the event's
+			// only remaining copy, so a queue-full drop here would
+			// lose it permanently (codex r5). The blocked
+			// goroutine holds no slot and every slot holder
+			// releases in bounded time, so this always makes
+			// progress; new deliveries still shed load at the
+			// handler's nonblocking check.
+			cfg.dispatchSem <- struct{}{}
+			release = func() { <-cfg.dispatchSem }
+		}
+		processSlackEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, release)
+	}()
 }
 
 // parseTeamIDFromEventsBody extracts the JSON `team_id` field from a
@@ -3709,16 +3728,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// a losing twin never advances threadContextCache — pre-claim
 	// marking let a bare twin win the race while the decorated copy was
 	// skipped, silently dropping the thread context (codex r1 P2).
-	// This urgent path is inside the coalescer's shutdown barrier from
-	// here to its return (codex r30 finding 1, r31 finding 1, r32
-	// finding 1): the claim wait below (a twin parked behind its owner
-	// is the owner's last recovery path when the owner fails and
-	// releases), the flush-ahead wait, the hold of the channel, the
-	// POST and the failure branch's spool or restore all run outside
-	// the coalescer's takes, and the drain must not conclude while any
-	// of them is under way.
-	endUrgent := cfg.coalescer.beginUrgent()
-	defer endUrgent()
+	// This whole event is inside the coalescer's shutdown barrier, from
+	// the handler's hand-off (dispatchAcknowledgedEvent) to this
+	// function's return (codex r30–r33): the event-id wait, the claim
+	// wait below (a twin parked behind its owner is the owner's last
+	// recovery path when the owner fails and releases), the flush-ahead
+	// wait, the hold of the channel, the POST and the failure branch's
+	// spool or restore all run outside the coalescer's takes, and the
+	// drain must not conclude while any of them is under way.
 	skipChannelPost := false
 	var claimKey string
 	if !willBuffer {

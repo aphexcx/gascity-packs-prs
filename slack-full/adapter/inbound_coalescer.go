@@ -139,7 +139,10 @@ type pendingChannelInbound struct {
 	// restored (gp-xnc). Spooled with the entry once the ladder owns it
 	// (codex r32 finding 2): a charged copy's line is the payload its
 	// outstanding verdict owns, and it must read back as the ladder's
-	// copy — the retry budget survives a restart with it.
+	// copy — the retry budget survives a restart with it. A reaction is
+	// never the ladder's (onLadderEntry) and never spools its count
+	// (codex r33 finding 3): its bounded retries start over at a
+	// restart, as before.
 	attempts int
 	// isolate marks a member of a batch gc REFUSED (gp-sgu7, codex r1
 	// finding 3): it must only ever be POSTed alone — an isolation
@@ -401,6 +404,16 @@ type ladderVerdict struct {
 	// until then the parked entry's spool line is the payload's durable
 	// home. Never set on a delivered verdict.
 	pendingWrite bool
+	// attempts is the ladder's charged count for the message — how many
+	// deliveries gc rejected with a copy of it charged (codex r33
+	// findings 2 and 4): part of the ledger, not of whichever copy
+	// happens to carry it. A higher count at the same rank is a
+	// PROGRESSION (it owes its own record, and a crash restores the
+	// bounded ladder where it stood, not one step behind), the count
+	// never regresses, a copy adopting the ledger's standing takes the
+	// count with it, and the journal folds records and owned copies by
+	// it after rank.
+	attempts int
 }
 
 // rank orders a message's verdicts by PROGRESSION: the ladder's plain
@@ -436,12 +449,12 @@ func (v ladderVerdict) disposition() string {
 // withheld, else the ladder's copy as it stands.
 func ownershipOf(p pendingChannelInbound) ladderVerdict {
 	if p.stripped != "" {
-		return ladderVerdict{stripped: true, cause: errors.New(p.stripped)}
+		return ladderVerdict{stripped: true, cause: errors.New(p.stripped), attempts: p.attempts}
 	}
 	if p.isolate {
-		return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), isolated)", p.attempts)}
+		return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), isolated)", p.attempts), attempts: p.attempts}
 	}
-	return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), its bounded identical retry)", p.attempts)}
+	return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), its bounded identical retry)", p.attempts), attempts: p.attempts}
 }
 
 // ladderVerdictRetention bounds the memory of a TERMINAL verdict: Slack
@@ -565,7 +578,10 @@ func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdi
 		if v.rank() < cur.rank() {
 			return false // a verdict never regresses: terminal over stripped over the plain copy
 		}
-		if cur.retired == v.retired && cur.delivered == v.delivered && cur.stripped == v.stripped {
+		if v.attempts < cur.attempts {
+			v.attempts = cur.attempts // nor does the charged count (codex r33 finding 2)
+		}
+		if cur.retired == v.retired && cur.delivered == v.delivered && cur.stripped == v.stripped && cur.attempts == v.attempts {
 			return false
 		}
 	}
@@ -839,7 +855,7 @@ func (c *inboundCoalescer) landVerdicts(channel string, delivered []pendingChann
 		case !ok:
 			v = ownershipOf(p)
 		}
-		v = ladderVerdict{retired: true, delivered: true, cause: v.cause}
+		v = ladderVerdict{retired: true, delivered: true, cause: v.cause, attempts: v.attempts}
 		dropped, _ := c.retireLocked(channel, ts, v, now)
 		if dropped > 0 {
 			log.Printf("coalesce: chan=%s ts=%s the ladder's copy delivered — %d buffered duplicate copy(ies) dropped, never posted", channel, ts, dropped)
@@ -875,6 +891,9 @@ func (c *inboundCoalescer) adoptVerdictLocked(channel string, p pendingChannelIn
 		if p.attempts < 1 {
 			p.attempts = 1
 		}
+	}
+	if p.attempts < v.attempts {
+		p.attempts = v.attempts // the ledger's count is the copy's count (codex r33 finding 4)
 	}
 	p.isolate = true
 	return p, v, true
@@ -967,7 +986,7 @@ func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 // order as flushAheadOf: block on the delivery mutex OUTSIDE c.mu.
 // Nil-safe. The release must run before anything that takes the
 // channel (deliverBufferedReactions, a flush-ahead). The hold is the
-// mutex only: the shutdown barrier is beginUrgent's, which spans the
+// mutex only: the shutdown barrier is beginEvent's, which spans the
 // whole urgent path (codex r31 finding 1 — tied to the hold, the
 // registration ended when the mutex was released, before the failure
 // branch spooled its payload, and it began after flushAheadOf, leaving
@@ -987,19 +1006,21 @@ func (c *inboundCoalescer) holdDelivery(channel string) func() {
 	return mu.Unlock
 }
 
-// beginUrgent registers an urgent delivery path with the shutdown
-// barrier and returns its end. The urgent path runs outside the
-// coalescer's takes — its flush-ahead wait, its hold, its POST, and
-// the failure branch that spools or restores its payload — and none of
-// that was an in-flight delivery to drainPending's fixpoint (codex r30
-// finding 1, r31 finding 1): with empty buffers flushAll returned and
-// main sealed the spool while acknowledged events were still queued or
-// still spooling. Registered before the first wait and ended after the
-// last durable step (the caller defers it), the path is inside the
-// barrier from end to end, independently of the channel mutex. The
-// holder needs nothing from the drain to finish, so the wait is
-// bounded by the path's own timeouts.
-func (c *inboundCoalescer) beginUrgent() func() {
+// beginEvent registers one ACKNOWLEDGED Slack event with the shutdown
+// barrier and returns its end. The handler calls it when it hands the
+// event to the goroutine that lives its whole life (codex r30 finding 1,
+// r31 finding 1, r32 finding 1, r33 finding 1 — each round found one
+// more wait the event could park in ahead of the registration: the
+// channel hold, the flush-ahead wait, the same-ts claim wait, the
+// same-event-id wait): the event-id wait, the dispatch-slot wait, the
+// claim wait, the flush-ahead wait, the hold of the channel, the POST
+// and the failure branch's spool or restore all run outside the
+// coalescer's takes, and every one of them is the message's last
+// recovery path in some interleaving. Registered before the first of
+// them, ended when the goroutine returns, so drainPending's fixpoint
+// cannot conclude — and main cannot seal the spool — while an
+// acknowledged event is still on its way. Nil-safe.
+func (c *inboundCoalescer) beginEvent() func() {
 	if c == nil {
 		return func() {}
 	}
@@ -2366,7 +2387,7 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 		// this ts leaves (this stripped copy is the retry), and a copy
 		// admitted from here on enters as the stripped retry itself
 		// (codex r10 finding 1). Reactions carry their own ids.
-		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause}, now)
+		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause, attempts: p.attempts}, now)
 		dropped = c.dropBufferedCopiesLocked(channel, ts)
 	case stepRetrySame:
 	default:
@@ -2377,7 +2398,7 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 		// durable record only AFTER the payload is in the dead-letter
 		// file (codex r20 finding 1): a record must never say
 		// "dead-lettered" about bytes no file holds.
-		dropped, _ = c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true}, now)
+		dropped, _ = c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true, attempts: p.attempts}, now)
 	}
 	c.mu.Unlock()
 	switch step {

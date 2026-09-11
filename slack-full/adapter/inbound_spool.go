@@ -131,6 +131,11 @@ type spooledInbound struct {
 	// or the refused batch). Absent on a terminal record.
 	VerdictOutstanding bool `json:"verdict_outstanding,omitempty"`
 	VerdictStripped    bool `json:"verdict_stripped,omitempty"`
+	// VerdictAttempts is the ledger's charged count at this progression
+	// (codex r33 finding 2): every increment is its own record, so a
+	// crash restores the bounded ladder where it stood. Records of one
+	// message fold by rank, then by this count, then by time.
+	VerdictAttempts int `json:"verdict_attempts,omitempty"`
 	// dispositionOnly marks a salvaged DISPOSITION of an entry whose
 	// message stays in a spool that could not be merged (codex r18
 	// finding 2): its Refused/Stripped/Isolate seed the ledger in the
@@ -270,7 +275,7 @@ func (s *inboundSpool) recordVerdict(channel, ts string, v ladderVerdict) bool {
 		at = time.Now()
 	}
 	entry := spooledInbound{Channel: channel, VerdictTS: ts, Verdict: truncateReason(rejectionReasonText(v.cause)), VerdictDelivered: v.delivered, VerdictAt: at.Unix(),
-		VerdictOutstanding: !v.retired, VerdictStripped: v.stripped}
+		VerdictOutstanding: !v.retired, VerdictStripped: v.stripped, VerdictAttempts: v.attempts}
 	if err := s.appendLinesLocked([]spooledInbound{entry}); err != nil {
 		if s.noteWriteFailureLocked("verdict:"+channel, err) {
 			log.Printf("inbound spool: verdict record write FAILED chan=%s ts=%s (logged once per distinct failure; the coalescer retries it): %v", channel, ts, err)
@@ -307,11 +312,15 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		if p.botQuotes {
 			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
 		}
-		if p.refused != "" || p.stripped != "" || p.attempts > 0 {
+		if p.refused != "" || p.stripped != "" || (p.attempts > 0 && !p.reaction) {
 			// A refused, stripped or charged copy carries its ladder
 			// standing (codex r32 finding 2: a charged unvouched retry
 			// spooled as a plain line read back as nobody's, and the
-			// in-place compaction dropped it beside its record).
+			// in-place compaction dropped it beside its record). A
+			// charged REACTION does not: the ladder never owns a
+			// reaction (codex r33 finding 3: the count seeded an
+			// ownership nothing ever settled, and the staged file was
+			// retained forever), so its retries start over as before.
 			entry.Refused, entry.Attempts = p.refused, p.attempts
 		}
 		if p.hasReminderParts() {
@@ -537,9 +546,12 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	}
 	// An OWNED copy is the payload its outstanding verdict owns (codex
 	// r26 finding 2: dropped here, ownership survived without a
-	// deliverable message): kept, once per (channel, id), the newest
-	// copy, deletions applied, unless the message's folded record is
-	// terminal (a retired message's copy is dead). The ledger owns every
+	// deliverable message): kept, once per (channel, id) — the copy
+	// furthest along the ladder, the later line at equal standing
+	// (codex r33 finding 4: the newest line was kept, and a later, less
+	// charged duplicate reset the message's budget after a crash) —
+	// deletions applied, unless the message's folded record is terminal
+	// (a retired message's copy is dead). The ledger owns every
 	// message entry that carries a ladder standing of its own — refused,
 	// stripped, isolated or charged — and every entry whose message has
 	// an OUTSTANDING record in this file (codex r32 finding 2: a charged
@@ -574,6 +586,9 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			at, list = ownedAt, &owned
 		}
 		if i, seen := at[k]; seen {
+			if e.Refused == "" && moreProgressed(standingOf((*list)[i]), standingOf(e)) {
+				continue // a later, less charged copy never replaces the ladder's furthest copy
+			}
 			(*list)[i] = e
 		} else {
 			at[k] = len(*list)
@@ -756,8 +771,8 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 				out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
 			case recordsOnly && e.VerdictTS != "":
 				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt,
-					VerdictOutstanding: e.VerdictOutstanding, VerdictStripped: e.VerdictStripped})
-			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate || e.Attempts > 0):
+					VerdictOutstanding: e.VerdictOutstanding, VerdictStripped: e.VerdictStripped, VerdictAttempts: e.VerdictAttempts})
+			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate || (e.Attempts > 0 && !e.Reaction)):
 				// The salvage keeps what an ENTRY decided too (codex r18
 				// finding 2), without its message.
 				out = append(out, spooledInbound{
@@ -788,17 +803,27 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 
 // verdictOf decodes a verdict record line into the ledger's verdict.
 func verdictOf(e spooledInbound) ladderVerdict {
-	return ladderVerdict{retired: !e.VerdictOutstanding, stripped: e.VerdictStripped, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
+	return ladderVerdict{retired: !e.VerdictOutstanding, stripped: e.VerdictStripped, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0), attempts: e.VerdictAttempts}
 }
 
 // supersedes reports whether record a is the later PROGRESSION of the
-// same message than b: a higher rank wins, then the newer decision.
+// same message than b: a higher rank wins, then the higher charged
+// count (codex r33 finding 2), then the newer decision.
 func supersedes(a, b spooledInbound) bool {
 	va, vb := verdictOf(a), verdictOf(b)
 	if va.rank() != vb.rank() {
 		return va.rank() > vb.rank()
 	}
+	if va.attempts != vb.attempts {
+		return va.attempts > vb.attempts
+	}
 	return a.VerdictAt > b.VerdictAt
+}
+
+// standingOf reads a message entry's ladder standing — the charged
+// count and the isolate flag — as the progression comparator sees it.
+func standingOf(e spooledInbound) pendingChannelInbound {
+	return pendingChannelInbound{attempts: e.Attempts, isolate: e.Isolate}
 }
 
 // readRecords salvages the deletion and verdict records of a spool file.
@@ -1003,7 +1028,9 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			if !c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)}) {
 				durable = false
 			}
-		case e.Isolate || e.Attempts > 0:
+		case !e.Reaction && (e.Isolate || e.Attempts > 0):
+			// A charged REACTION line (written before codex r33 finding 3)
+			// seeds nothing: the ladder never owns a reaction.
 			if !c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: e.Isolate, attempts: e.Attempts})) {
 				durable = false
 			}

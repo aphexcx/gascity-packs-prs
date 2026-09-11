@@ -446,17 +446,16 @@ func TestCoalescer_OwnedMemberPostsOnAnUnconfirmedClaim(t *testing.T) {
 	}
 }
 
-// --- codex r32 finding 1 ---------------------------------------------------
+// --- codex r32 finding 1, r33 finding 1 -------------------------------------
 
-// A twin parked behind an in-flight same-ts owner is inside the
-// coalescer's shutdown barrier from BEFORE it parks (codex r32 finding
-// 1): the owner's failure hands the claim to the parked twin, whose
-// takeover POST is the message's last recovery path — and a drain that
-// saw the owner's registration end while the twin was still
-// unregistered concluded, and main sealed the spool under that POST.
-// The registration now begins before the claim wait, so the drain
-// waits for the takeover to finish.
-func TestChannelClaims_ParkedTwinIsInsideTheShutdownBarrier(t *testing.T) {
+// Every acknowledged event is inside the coalescer's shutdown barrier
+// from the handler's hand-off to its goroutine's return: the owner inside
+// its POST, the same-ts twin parked at the claim wait (r32 finding 1) and
+// the same-event-id redelivery parked at the event-id wait (r33 finding
+// 1) are all registered, so the drain cannot conclude — and main cannot
+// seal the spool — while the owner's failure hands the message to one of
+// them for its last recovery POST.
+func TestAcknowledgedEventsAreInsideTheShutdownBarrier(t *testing.T) {
 	arrived := []chan struct{}{make(chan struct{}), make(chan struct{})}
 	answer := []chan int{make(chan int), make(chan int)}
 	stop := make(chan struct{}) // a failed assertion must not leave a handler parked forever (the server's Close would wait on it)
@@ -484,6 +483,8 @@ func TestChannelClaims_ParkedTwinIsInsideTheShutdownBarrier(t *testing.T) {
 
 	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
 	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	cfg.eventDedup = newEventDedupCache(eventDedupTTL)
+	cfg.eventWG = &sync.WaitGroup{}
 	aliasReg := newTestHandleAliasRegistry(t)
 	text := "<@" + testBotUserID + "> takeover during the drain"
 	inflight := func() int {
@@ -491,40 +492,42 @@ func TestChannelClaims_ParkedTwinIsInsideTheShutdownBarrier(t *testing.T) {
 		defer cfg.coalescer.mu.Unlock()
 		return cfg.coalescer.inflight
 	}
-
-	var wg sync.WaitGroup
-	twin := func(eventType, eventID string) {
-		wg.Add(1)
+	// The handler's hand-off, as handleSlackEvents performs it: the
+	// event-id claim taken synchronously, then dispatchAcknowledgedEvent.
+	dispatch := func(eventType, eventID string) {
 		env := botMentionEnvelope(t, eventType, eventID, "C1", "100.000030", "", text, true)
-		go func() {
-			defer wg.Done()
-			processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
-		}()
+		proceed, wait := cfg.eventDedup.begin(eventID)
+		var release func()
+		if proceed {
+			release = func() {}
+		}
+		dispatchAcknowledgedEvent(cfg, aliasReg, nil, nil, nil, nil, env, "", proceed, wait, release)
 	}
-	twin("message", "Ev1")
-	<-arrived[0] // the owner holds the claim inside its POST
-	twin("app_mention", "Ev2")
-	waitFor(t, "the parked twin registered with the shutdown barrier (inflight 2: the owner in its POST and the twin at the claim wait)", func() bool { return inflight() == 2 })
+	dispatch("message", "Ev1")
+	<-arrived[0]                   // the owner holds the claim inside its POST
+	dispatch("app_mention", "Ev2") // the same-ts twin: parks at the claim wait
+	dispatch("message", "Ev1")     // the same-event-id redelivery: parks at the event-id wait
+	waitFor(t, "every acknowledged event registered with the shutdown barrier (inflight 3: the owner in its POST, the twin at the claim wait, the redelivery at the event-id wait)", func() bool { return inflight() == 3 })
 
 	done := make(chan struct{})
 	go func() { cfg.coalescer.flushAll(); close(done) }()
-	answer[0] <- http.StatusInternalServerError // the owner fails and releases the claim: the parked twin takes over
+	answer[0] <- http.StatusInternalServerError // the owner fails and releases: a parked copy takes over
 	<-arrived[1]                                // the takeover POST is under way
 	select {
 	case <-done:
-		t.Fatal("flushAll returned while the parked twin's takeover POST was under way — the drain concluded, and main would have sealed the spool under the message's last recovery path")
+		t.Fatal("flushAll returned while a parked copy's takeover POST was under way — the drain concluded, and main would have sealed the spool under the message's last recovery path")
 	case <-time.After(100 * time.Millisecond):
 	}
 	answer[1] <- http.StatusAccepted
-	wg.Wait()
+	cfg.eventWG.Wait()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("flushAll did not return once every twin had finished")
+		t.Fatal("flushAll did not return once every event had finished")
 	}
 	mu.Lock()
 	defer mu.Unlock()
 	if posts != 2 {
-		t.Fatalf("POST attempts = %d, want 2 (one failure + one takeover success)", posts)
+		t.Fatalf("POST attempts = %d, want 2 (one failure + one takeover success; the third copy skips the committed claim)", posts)
 	}
 }
