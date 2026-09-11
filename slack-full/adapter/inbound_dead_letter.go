@@ -338,11 +338,14 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 	snapshot := append([]parkedDeadLetter(nil), c.parkedDeadLetters[channel]...)
 	hook := c.deadLetter
 	c.mu.Unlock()
-	if hook == nil {
-		return
-	}
 	var kept []parkedDeadLetter
 	for _, e := range snapshot {
+		if hook == nil {
+			// No sink wired: the entry stays parked (never re-posted) and
+			// the owed verdict records below still get their retry.
+			kept = append(kept, e)
+			continue
+		}
 		// A deletion that landed while the write was owed must reach the
 		// record as its notice, not the deleted text (codex r9 finding
 		// 3) — the same tombstone check charge() made before the first
