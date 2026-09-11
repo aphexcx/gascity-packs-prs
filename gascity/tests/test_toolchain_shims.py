@@ -41,15 +41,33 @@ reader/writer model is listed here, not silently dropped:
 Kept from that test as rows of their own: a lane whose node_modules refuses
 the lock fails closed and runs under LANE_DEPS=off (r17/r21); LANE_DEPS=off
 on a nested command runs it as is; the command names of round 20.
+
+Gate round 30 (on the shape-A commit) found three holes in the lock's own
+mechanics and two misstatements, none in the contract; each is a row here:
+the reclaim re-check could move a lock that changed hands between its read
+and its rename (every change of hands now goes through the reclaim gate,
+and the lock is re-read under it right before the move:
+test_a_lock_that_changed_hands_between_the_read_and_the_check_is_never_moved);
+a pid write that failed still returned the lock as taken
+(test_a_pid_that_cannot_be_written_leaves_no_lock_and_fails_closed); a
+trapped signal inside the reclaim released the lane lock but not the reclaim
+gate (test_a_trapped_signal_releases_the_reclaim_lock_with_the_lane_lock); a
+row's name said "never touches the lock" while the question is asked under
+it (renamed and now measured during the question:
+test_a_caller_whose_lane_is_in_sync_holds_the_lock_for_the_question_only_and_never_waits);
+a failed frozen install exited 1 while the header promised pnpm's status
+(test_failed_install_leaves_the_lane_out_of_sync_and_the_command_does_not_run).
 """
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import os
 import pathlib
 import platform
 import shutil
+import signal
 import stat
 import subprocess
 import tarfile
@@ -103,6 +121,7 @@ case "$*" in
     "--config.verify-deps-before-run=error exec true"|"--ignore-workspace --config.verify-deps-before-run=error exec true")
         if [ "${FAKE_PNPM_PROBE_ERROR-}" = 1 ]; then echo "EACCES: permission denied, open '.pnpm-workspace-state-v1.json'" >&2; exit 2; fi
         L="$(lane)"
+        [ -z "${FAKE_PNPM_LOCK_PROBE-}" ] || { cat "$L/node_modules/.gc-lane-deps.lock/pid" 2>/dev/null || echo none; } > "$FAKE_PNPM_LOCK_PROBE"
         # pnpm 11.20 reports a file error met inside its check under the verify code, on stdout
         if [ "${FAKE_PNPM_PROBE_WRAPPED_ERROR-}" = 1 ]; then echo "[ERR_PNPM_VERIFY_DEPS_BEFORE_RUN] EACCES: permission denied, open '$L/node_modules/.pnpm-workspace-state-v1.json.985617711'"; echo; echo 'Run "pnpm install"'; exit 1; fi
         if [ -f "$L/node_modules/.fake-state" ] && [ "$(cat "$L/node_modules/.fake-state")" = "$(fp)" ]; then exit 0; fi
@@ -541,7 +560,7 @@ class PnpmShimTests(unittest.TestCase):
     def test_failed_install_leaves_the_lane_out_of_sync_and_the_command_does_not_run(self) -> None:
         proj = self.fx.project()
         r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, FAKE_PNPM_FAIL_INSTALL="1")
-        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.returncode, 7, r.stderr)      # pnpm install's own status, as the header says (round 30)
         self.assertIn("lane install failed", r.stderr)
         self.assertIn("exit 7", r.stderr)
         self.assertIn("this command did not run", r.stderr)
@@ -596,19 +615,30 @@ class PnpmShimTests(unittest.TestCase):
         self.assertEqual(self.fx.calls(), [])
         self.assertTrue(lock.exists())
 
-    def test_a_caller_whose_lane_is_in_sync_and_unlocked_never_touches_the_lock(self) -> None:
-        # (until round 19 this row ran the in-sync caller past a LIVE holder; a mutate in
-        # flight reads as in sync to pnpm, so a live lock is now waited for: see
-        # test_a_project_command_waits_behind_a_live_lock_even_when_pnpm_says_in_sync)
+    def test_a_caller_whose_lane_is_in_sync_holds_the_lock_for_the_question_only_and_never_waits(self) -> None:
+        """The question is asked under the lane lock (its pid file names this
+        wrapper while pnpm answers, recorded by the fake), the lock is released
+        before the command runs, and an in-sync lane with no holder costs no
+        wait. (Until round 19 this row ran the in-sync caller past a LIVE
+        holder; a mutate in flight reads as in sync to pnpm, so a live lock is
+        waited for: test_a_project_command_waits_behind_a_live_lock_even_when_pnpm_says_in_sync.
+        Renamed in round 30: it never said what it tested.)"""
         proj = self.fx.project()
         self.fx.run("pnpm", "test", cwd=proj)
         lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        probe = self.fx.root / "lock-owner-during-the-question"
         self.fx.reset()
-        r = self.fx.run("pnpm", "exec", "vitest", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="5")
-        self.assertEqual(r.returncode, 0, r.stderr)
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "exec", "vitest"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_LANE_DEPS_WAIT="5", FAKE_PNPM_LOCK_PROBE=str(probe)),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(probe.read_text(encoding="utf-8").strip(), str(proc.pid))     # held by this wrapper while pnpm answered
         self.assertEqual(self.fx.argv(), ["exec vitest"])
         self.assertEqual(len(self.fx.checks()), 1)
-        self.assertNotIn("waiting", r.stderr)
+        self.assertNotIn("waiting", err)
         self.assertFalse(lock.exists())
         self.assertFalse([p for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock")])
 
@@ -884,6 +914,100 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertIn("stale reclaim lock", r.stderr)
         self.assertEqual(self.fx.calls(), [])
         self.assertTrue(lock.exists())
+
+    def test_a_lock_that_changed_hands_between_the_read_and_the_check_is_never_moved(self) -> None:
+        """Round 30: the reclaim re-check read owner A, A was dead by the
+        liveness check, and the directory by then was C's fresh live lock (A
+        released and exited, C acquired): the rename moved C's lock and the
+        reclaimer ran beside C. The lock is re-read under the reclaim lock
+        right before the rename and moved only when it still names the owner
+        that was judged; here it names C, so nothing moves and the caller
+        waits for C and fails closed naming C."""
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        holder = subprocess.Popen(["sleep", "60"])
+        try:
+            proc = subprocess.Popen(
+                [str(self.fx.shims / "pnpm"), "add", "x"], cwd=str(proj),
+                env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_AFTER_OWNER_READ="2", GC_TOOLCHAIN_LANE_DEPS_WAIT="1"),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            time.sleep(3)       # inside the re-check: A read, not yet judged; the lock changes hands now
+            (lock / "pid").unlink()
+            lock.rmdir()
+            lock.mkdir()
+            (lock / "pid").write_text(f"{holder.pid}\n", encoding="utf-8")
+            out, err = proc.communicate(timeout=60)
+        finally:
+            holder.kill()
+            holder.wait()
+        self.assertEqual(proc.returncode, 1, err)
+        self.assertNotIn("moved aside", err)
+        self.assertIn(f"another lane install (pid {holder.pid}) has held", err)
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(holder.pid))
+        self.assertFalse((proj / "node_modules" / ".gc-lane-deps.lock.reclaim").exists())
+        self.assertEqual([p.name for p in (proj / "node_modules").iterdir() if p.name.startswith(".gc-lane-deps.lock.stale")], [])
+        self.assertEqual(self.fx.calls(), [])
+
+    @unittest.skipUnless(platform.system() == "Darwin", "an inherited deny-add_file ACL (chmod +a) is how the pid write fails while the lock mkdir succeeds")
+    def test_a_pid_that_cannot_be_written_leaves_no_lock_and_fails_closed(self) -> None:
+        """Round 30: the pid write's status was ignored, so a lock nobody owned
+        stood while the mutation ran, cleanup refused it and a reclaimer moved
+        it aside under the mutation. Now the directory just made goes and the
+        command fails closed naming the file."""
+        proj = self.fx.project()
+        self.fx.run("pnpm", "exec", "vitest", cwd=proj)
+        nm = proj / "node_modules"
+        ace = f"{getpass.getuser()} deny add_file,directory_inherit"
+        subprocess.run(["chmod", "+a", ace, str(nm)], check=True)
+        try:
+            self.fx.reset()
+            r = self.fx.run("pnpm", "add", "x", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+            self.assertEqual(r.returncode, 1, r.stderr)
+            self.assertIn("cannot write", r.stderr)
+            self.assertIn(".gc-lane-deps.lock/pid", r.stderr)
+            self.assertIn("this command did not run", r.stderr)
+            self.assertNotIn("waiting", r.stderr)
+            self.assertEqual(self.fx.all_calls(), [])
+            self.assertFalse((nm / ".gc-lane-deps.lock").exists())       # the directory it made is gone
+        finally:
+            subprocess.run(["chmod", "-a", ace, str(nm)], check=False)
+
+    def test_a_trapped_signal_releases_the_reclaim_lock_with_the_lane_lock(self) -> None:
+        """Round 30: HUP/INT/TERM after the reclaim directory was made and
+        before the rename ran a cleanup that released only the lane lock; the
+        stale lock and the abandoned reclaim directory then blocked every
+        caller. The trap releases this wrapper's reclaim lock too."""
+        proj = self.fx.project()
+        lock = proj / "node_modules" / ".gc-lane-deps.lock"
+        reclaim = proj / "node_modules" / ".gc-lane-deps.lock.reclaim"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "add", "x"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RECLAIM="3"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(1.5)     # inside the reclaim: its lock is held, nothing moved yet
+        self.assertTrue(reclaim.exists())
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 143, err)
+        self.assertFalse(reclaim.exists())          # released by the trap, after the pause ended
+        self.assertTrue(lock.exists())              # the stale lock was not moved: the trap came first
+        self.assertEqual(self.fx.calls(), [])
+        # the next caller reclaims the stale lock and runs
+        r = self.fx.run("pnpm", "add", "x", cwd=proj, GC_TOOLCHAIN_LANE_DEPS_WAIT="2")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("moved aside a stale lane install lock", r.stderr)
+        self.assertEqual(self.fx.argv(), ["add x"])
 
     def test_ignore_workspace_makes_the_standalone_project_the_lane_for_probe_lock_and_install(self) -> None:
         """Round 15: a standalone fixture project inside a workspace, run with

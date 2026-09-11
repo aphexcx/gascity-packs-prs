@@ -519,13 +519,20 @@ the script name, whose own arguments are its own; nothing after `exec`,
 looks like, measured: `pnpm exec -C x vitest` is 'Command "-C" not found';
 a bare script name ends it), resolved against the working directory, else
 the working directory itself. A lock whose owner is dead is moved aside by rename
-(nothing deleted), but only under a second, atomic reclaim lock and after
-re-reading it, so two waiters cannot both clear it and a waiter's fresh live
-lock is never moved; a live lock is waited for (`LANE_DEPS_WAIT`, default
-600 s) and then the command fails closed naming the holder, a lock that
-cannot be made at all (`node_modules` refusing the write under a sandbox)
-fails the command at once with the refusal, and only the
-pid that took a lock releases it. The lock records the wrapper's pid, and
+(nothing deleted). Every change of hands of the lock goes through one gate,
+`.gc-lane-deps.lock.reclaim` (mkdir, held for an instant): making the lock
+(the mkdir and the pid inside as one step, with HUP, INT and TERM held for
+it) and judging a stale lock and moving it aside, so a waiter cannot make a
+fresh lock while another judges the old one, two waiters cannot both clear
+it, and a lock that under the gate names another owner than the one judged
+dead is never moved; a gate left standing for two minutes (a wrapper killed
+outright inside it) fails the command closed for a human to remove. A live
+lock is waited for (`LANE_DEPS_WAIT`, default 600 s) and then the command
+fails closed naming the holder; a lock that cannot be made at all
+(`node_modules` refusing the write under a sandbox, or the pid file it
+records the owner in) fails the command at once with the refusal, leaving
+no lock standing; a failed frozen install fails the command with pnpm's own
+exit status; and only the pid that took a lock releases it. The lock records the wrapper's pid, and
 the dead-wrapper window is accepted, not chased: a wrapper killed outright
 (SIGKILL) while its pnpm child still runs leaves a lock whose owner is dead,
 the next caller reclaims it and may run beside the orphaned child; a signal
