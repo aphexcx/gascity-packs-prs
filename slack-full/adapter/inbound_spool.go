@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -47,14 +48,24 @@ import (
 // startup and retries it; the worst case is a duplicate replay, which
 // the per-entry gc dedup keys bound.
 
-// maxInboundSpoolLineBytes bounds ONE spool line: a message entry is a
-// Slack message plus its parts (well under a mebibyte), a record line
-// is a few hundred bytes. The replay streams the file line by line
-// (codex r13 finding 3: a whole-file cap let a day of verdict records
-// strand the acknowledged messages spooled beside them), so an
-// oversized line is dropped as loss on its own and everything around it
-// still replays.
-const maxInboundSpoolLineBytes = 4 << 20
+// maxInboundSpoolLineBytes bounds ONE spool line (the JSON, without its
+// newline) on BOTH sides of the file: the producer refuses to write a
+// longer entry (appendLinesLocked — the spill then reports it as loss
+// at the moment durability was promised, never as "spooled"), and the
+// replay drops a longer line as loss on its own while everything
+// around it still replays (readSpoolLines streams the file line by
+// line — codex r13 finding 3: a whole-file cap let a day of verdict
+// records strand the acknowledged messages spooled beside them). One
+// constant on both sides is what makes spillBatch's true mean
+// "replays": with a producer that wrote anything and a reader that
+// capped at 4 MiB, an acknowledged entry could confirm durable and then
+// be dropped at startup (codex r14 finding 4: twenty thread priors of
+// 2,000 mentions each, expanded to long display names, is a legal
+// 4.8 MB entry). The cap is far above any legal entry — a Slack
+// message is 40,000 characters, the thread context twenty of them,
+// the files block and attachment metadata a few KiB — and bounds only
+// what a corrupt file can make the reader hold in memory at once.
+const maxInboundSpoolLineBytes = 64 << 20
 
 // spooledInbound is one spooled item: the channel it was buffered for,
 // whether it was a no-wake reaction entry, and the ready-to-post
@@ -261,19 +272,45 @@ func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 		return fmt.Errorf("open %q: %w", s.path, err)
 	}
 	defer f.Close()
-	w := bufio.NewWriter(f)
+	// Every entry is encoded and measured BEFORE anything is written:
+	// an entry over the line cap would be dropped by the replay, so it
+	// is refused here, where the caller still owns it and logs the loss
+	// truthfully; the legal entries of the same batch are written and
+	// fsynced regardless (the refusal costs the oversized entry, not its
+	// batch-mates), and the returned error names what was refused so
+	// the spill reports false — nothing in the batch is claimed durable
+	// that will not replay.
+	var refused []string
+	lines := make([][]byte, 0, len(entries))
 	for _, entry := range entries {
 		line, err := json.Marshal(entry)
 		if err != nil {
 			return fmt.Errorf("encode spool entry chan=%s ts=%s: %w", entry.Channel, entry.Inbound.ProviderMessageID, err)
 		}
-		w.Write(line)
-		w.WriteByte('\n')
+		if len(line) > maxInboundSpoolLineBytes {
+			refused = append(refused, fmt.Sprintf("chan=%s ts=%s is %d bytes", entry.Channel, entry.Inbound.ProviderMessageID, len(line)))
+			continue
+		}
+		lines = append(lines, line)
 	}
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("write %q: %w", s.path, err)
+	if len(lines) > 0 {
+		w := bufio.NewWriter(f)
+		for _, line := range lines {
+			w.Write(line)
+			w.WriteByte('\n')
+		}
+		if err := w.Flush(); err != nil {
+			return fmt.Errorf("write %q: %w", s.path, err)
+		}
+		if err := f.Sync(); err != nil {
+			return err
+		}
 	}
-	return f.Sync()
+	if len(refused) > 0 {
+		return fmt.Errorf("%d of %d entr%s over the %d-byte spool line cap REFUSED — LOSS, the replay could not read %s (%s); the other %d %s durable",
+			len(refused), len(entries), plural(len(refused), "y", "ies"), maxInboundSpoolLineBytes, plural(len(refused), "it", "them"), strings.Join(refused, "; "), len(lines), plural(len(lines), "is", "are"))
+	}
+	return nil
 }
 
 // consume stages the spool for replay and returns its entries WITHOUT
@@ -379,8 +416,11 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 	for {
 		line, err := r.ReadSlice('\n')
 		if errors.Is(err, bufio.ErrBufferFull) {
-			// Longer than the reader's buffer: accumulate up to the line
-			// cap, then discard the rest of the line.
+			// Longer than the reader's buffer: accumulate while the line
+			// can still be legal (the cap plus its newline), then discard
+			// the rest of the line. The cap is measured on the line
+			// WITHOUT its newline — the producer's measure — so a line
+			// exactly at the cap replays (codex r14 finding 4).
 			buf := append([]byte(nil), line...)
 			for errors.Is(err, bufio.ErrBufferFull) {
 				line, err = r.ReadSlice('\n')
@@ -388,16 +428,19 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 					buf = append(buf, line...)
 				}
 			}
-			if len(buf) > maxInboundSpoolLineBytes {
-				log.Printf("inbound spool: OVERSIZED LINE (>%d bytes) DROPPED — LOSS: no spool line is this long; the rest of the file still replays", maxInboundSpoolLineBytes)
-				if err != nil {
-					break
-				}
-				continue
-			}
 			line = buf
 		}
 		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > maxInboundSpoolLineBytes {
+			log.Printf("inbound spool: OVERSIZED LINE (>%d bytes) DROPPED — LOSS: the producer refuses a line this long, so this is corruption; the rest of the file still replays", maxInboundSpoolLineBytes)
+			if err != nil {
+				if !errors.Is(err, io.EOF) {
+					return out, err
+				}
+				break
+			}
+			continue
+		}
 		if len(line) > 0 {
 			var e spooledInbound
 			switch perr := json.Unmarshal(line, &e); {
@@ -561,7 +604,12 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 			// owed. Parking keeps the refused bytes out of delivery.
 			p.attempts = e.Attempts
 			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — parked for its dead-letter write, not re-posted", e.Channel, e.Inbound.ProviderMessageID, e.Refused)
-			c.parkDeadLetter(e.Channel, p, errors.New(e.Refused))
+			// The Refused line was this retirement's only durable state:
+			// the park's record must confirm before the staged file may
+			// go (codex r14 finding 3).
+			if !c.parkDeadLetter(e.Channel, p, errors.New(e.Refused)) {
+				durable = false
+			}
 			n++
 			continue
 		}
@@ -586,7 +634,7 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	}
 	if done != nil {
 		if !durable {
-			log.Printf("inbound spool: %d verdict record(s) could not be written to the new spool — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage)", len(order))
+			log.Printf("inbound spool: a verdict record could not be written to the new spool (%d restored, plus any re-parked refusal) — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage, a re-parked refusal is parked once)", len(order))
 			return n
 		}
 		done()

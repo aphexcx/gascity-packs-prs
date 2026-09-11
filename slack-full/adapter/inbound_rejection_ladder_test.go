@@ -2088,3 +2088,252 @@ func TestVerdictRecordsAreCompactedAndReplayStreams(t *testing.T) {
 		t.Fatalf("the compacted spool is small again: %v %d", err, st.Size())
 	}
 }
+
+// --- codex r14 ---------------------------------------------------------------
+
+// A copy the ladder owns lands as a terminal verdict whatever put it on
+// the ladder (r14 finding 1). Only the STRIPPED copy's landing was
+// recorded: an unvouched A+B came back charged (attempts=1, unstripped),
+// A's delayed app_mention twin arrived, the flush-ahead posted the
+// charged copies (a copy on the ladder is never withheld) and gc vouched
+// this time — no verdict was recorded, onLadder said "no", and main.go
+// posted urgent A: the same message twice under two dedup keys.
+func TestUrgentTwinDefersToTheLadderAfterAChargedCopyLands(t *testing.T) {
+	var mu sync.Mutex
+	posts := 0
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		mu.Lock()
+		defer mu.Unlock()
+		posts++
+		if posts == 1 {
+			return errDeliveryUnvouched // gc accepted A+B but never vouched: both come back charged
+		}
+		return nil
+	})
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	c.enqueue("C1", testPending("C1", "2.0", "B"))
+	c.flushAheadOf("C1", "") // the window's flush: unvouched
+	waitForCalls(t, calls, []string{"1.0,2.0"})
+	c.mu.Lock()
+	charged := 0
+	for _, p := range c.pending["C1"] {
+		if p.attempts > 0 && !p.isolate && p.stripped == "" {
+			charged++
+		}
+	}
+	c.mu.Unlock()
+	if charged != 2 {
+		t.Fatalf("both members must be back in the buffer charged and unstripped, got %d", charged)
+	}
+	// The delayed app_mention twin of A arrives on the urgent path: the
+	// flush-ahead posts the charged copies, and gc vouches this time.
+	if withheld := c.flushAheadOf("C1", "1.0"); len(withheld) != 0 {
+		t.Fatalf("a copy on the ladder is never withheld for an urgent twin, got %d", len(withheld))
+	}
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0,2.0"})
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("the ladder's copy of A just delivered: the urgent path must be told the ladder owns the message, or urgent A posts the same message again under its own dedup key")
+	}
+	if !c.onLadder("C1", "2.0") {
+		t.Fatal("B landed as the ladder's copy too")
+	}
+	// Every later copy is a duplicate of a delivered message.
+	c.enqueue("C1", testPending("C1", "1.0", "A, redelivered"))
+	c.restore("C1", []pendingChannelInbound{testPending("C1", "1.0", "A, handed back")})
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("a copy of a message the ladder delivered must not re-enter the buffer")
+	}
+	if got := calls(); len(got) != 2 {
+		t.Fatalf("the message went out exactly twice (unvouched, then vouched), never a third time: %v", got)
+	}
+}
+
+// A reaction the ladder retired is a verdict about that reaction EVENT
+// (r14 finding 2): its copies — buffered in the side lane when the
+// verdict fell, redelivered by Slack, handed back by a failed delivery,
+// replayed from the spool after a restart — are duplicates of a
+// dead-lettered event and never ride another delivery. Reactions carry
+// their own event ts as their id (reaction_events.go), so the ledger
+// keys them the same way it keys messages.
+func TestReactionCopiesHonourTheLadderVerdict(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c.recordVerdict = spool.recordVerdict
+	reaction := func(id, text string) pendingChannelInbound {
+		p := testPending("C1", id, text)
+		p.reaction = true
+		return p
+	}
+	sideLane := func(c *inboundCoalescer) int {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.reactions["C1"])
+	}
+	// A copy waits in the side lane when the ladder retires the event.
+	c.admitReaction("C1", reaction("1.5", "thumbsup, buffered copy"), false)
+	c.charge("C1", reaction("1.5", "thumbsup"), permanent422()) // nothing to strip: dead-lettered
+	if n := sideLane(c); n != 0 {
+		t.Fatalf("the retired reaction's buffered copy must leave the side lane, got %d", n)
+	}
+	// A Slack redelivery, and a copy handed back from a failed delivery.
+	if !c.admitReaction("C1", reaction("1.5", "thumbsup, redelivered"), false) {
+		t.Fatal("admission stays final handling of the event")
+	}
+	c.restore("C1", []pendingChannelInbound{reaction("1.5", "thumbsup, handed back")})
+	if n := sideLane(c); n != 0 {
+		t.Fatalf("a copy of a dead-lettered reaction must never re-enter the side lane, got %d", n)
+	}
+	// After a restart the record restores the verdict before the spooled copy is admitted.
+	if !spool.spillBatch("C1", []pendingChannelInbound{reaction("1.5", "thumbsup, spooled copy")}) {
+		t.Fatal("spill must confirm")
+	}
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	c2.admitReaction("C1", reaction("1.5", "thumbsup, late redelivery"), false)
+	if n := sideLane(c2); n != 0 {
+		t.Fatalf("the replayed and redelivered copies of a dead-lettered reaction are dropped at admission, got %d", n)
+	}
+	// An unrelated reaction buffers as before.
+	c2.admitReaction("C1", reaction("2.5", "tada"), false)
+	if n := sideLane(c2); n != 1 {
+		t.Fatalf("an unrelated reaction still buffers, got %d", n)
+	}
+}
+
+// A Refused entry's spool line is its retirement's only durable state
+// (r14 finding 3): the replay re-parks it and writes the verdict record,
+// and when that record cannot be written the staged file must be
+// RETAINED — otherwise the parked write succeeds, the staged file is
+// gone, and the next restart has no verdict: a delayed redelivery of
+// the refused message is admitted as fresh bytes. A duplicate Refused
+// line in one replay parks the message once.
+func TestReplayKeepsTheStagingFileWhenAReparkedRefusalCannotBeRecorded(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	refused := testPending("C1", "1.0", "poison")
+	refused.refused, refused.attempts = "422 Unprocessable Entity", 2
+	if !spool.spillBatch("C1", []pendingChannelInbound{refused, refused}) {
+		t.Fatal("spill must confirm")
+	}
+	parked := func(c *inboundCoalescer) int {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.parkedDeadLetters["C1"])
+	}
+	// Startup 1: the dead-letter write succeeds, the verdict record cannot be written.
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c1.recordVerdict = func(string, string, ladderVerdict) bool { return false }
+	spool.replayInto(c1)
+	if n := parked(c1); n != 1 {
+		t.Fatalf("a duplicate Refused line parks the message once, got %d parked", n)
+	}
+	if _, err := os.Stat(spool.replayingPath()); err != nil {
+		t.Fatalf("the staged file must be retained while the re-parked refusal's record is not durable: %v", err)
+	}
+	waitFor(t, "the parked dead-letter write", func() bool { return parked(c1) == 0 })
+	// Startup 2: the disk writable again — the retained file re-parks
+	// the refusal, its record lands, and the staged file goes.
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the refusal is the ladder's verdict after the restart")
+	}
+	if _, err := os.Stat(spool.replayingPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the staged file is removed once the record is durable: %v", err)
+	}
+	waitFor(t, "the second startup's parked write", func() bool { return parked(c2) == 0 })
+	// Startup 3: only the record remains; a redelivery is a duplicate.
+	c3 := newInboundCoalescer(time.Hour, nil)
+	c3.recordVerdict = spool.recordVerdict
+	spool.replayInto(c3)
+	if !c3.onLadder("C1", "1.0") {
+		t.Fatal("the verdict must survive through the record in the new spool")
+	}
+	if n := parked(c3); n != 0 {
+		t.Fatalf("nothing is owed a write any more, got %d parked", n)
+	}
+	c3.enqueue("C1", testPending("C1", "1.0", "poison, redelivered"))
+	if c3.pendingContains("C1", "1.0") {
+		t.Fatal("a redelivery of the refused message is a duplicate of a dead-lettered message")
+	}
+}
+
+// The spool's line cap is the producer's bound too (r14 finding 4): what
+// spillBatch confirms, the replay reads. A legal entry above the old
+// 4 MiB reader cap round-trips; an entry over the cap is refused at the
+// spill (the caller logs the loss then, and its batch-mates are still
+// durable); the boundary is measured on the line without its newline
+// on both sides, so a line exactly at the cap replays.
+func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
+	dir := t.TempDir()
+	spool := newInboundSpool(dir + "/spool.jsonl")
+	bigText := strings.Repeat("あ", (5<<20)/3) // ~5 MiB of UTF-8, over the old 4 MiB cap
+	if !spool.spillBatch("C1", []pendingChannelInbound{testPending("C1", "1.0", bigText)}) {
+		t.Fatal("a legal entry spills")
+	}
+	var mu sync.Mutex
+	var gotText string
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		mu.Lock()
+		defer mu.Unlock()
+		gotText = batch[0].inbound.Text
+		return nil
+	})
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	if n := spool.replayInto(c); n != 1 {
+		t.Fatalf("what spillBatch confirmed must replay, admitted %d", n)
+	}
+	waitForCalls(t, calls, []string{"1.0"})
+	mu.Lock()
+	intact := gotText == bigText
+	mu.Unlock()
+	if !intact {
+		t.Fatal("the replayed entry must carry its text intact")
+	}
+	// Over the cap: refused where durability is promised, batch-mates kept.
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	huge := testPending("C1", "2.0", strings.Repeat("x", maxInboundSpoolLineBytes))
+	if spool.spillBatch("C1", []pendingChannelInbound{huge, testPending("C1", "3.0", "batch-mate")}) {
+		t.Fatal("spillBatch must not confirm a batch the replay cannot fully read")
+	}
+	if logged := read(); !strings.Contains(logged, "ts=2.0 is ") || !strings.Contains(logged, "REFUSED") {
+		t.Fatalf("the refusal names the entry and its size: %q", logged)
+	}
+	deliver2, calls2 := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("the batch-mate is durable and replays alone, admitted %d", n)
+	}
+	waitForCalls(t, calls2, []string{"3.0"})
+	// The boundary: exactly at the cap replays, one byte more is dropped.
+	line := func(ts string, extra int) []byte {
+		prefix := `{"channel":"C1","inbound":{"provider_message_id":"` + ts + `","text":"`
+		suffix := `"}}`
+		pad := maxInboundSpoolLineBytes - len(prefix) - len(suffix) + extra
+		return append(append(append([]byte(prefix), bytes.Repeat([]byte("p"), pad)...), suffix...), '\n')
+	}
+	edge := dir + "/edge.jsonl"
+	if err := os.WriteFile(edge, append(line("4.0", 0), line("5.0", 1)...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := readSpoolLines(edge, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Inbound.ProviderMessageID != "4.0" {
+		got := make([]string, 0, len(entries))
+		for _, e := range entries {
+			got = append(got, e.Inbound.ProviderMessageID)
+		}
+		t.Fatalf("a line exactly at the cap replays and one byte more is dropped, got %v", got)
+	}
+}

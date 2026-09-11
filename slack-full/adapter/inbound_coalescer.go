@@ -362,7 +362,7 @@ type ladderVerdict struct {
 func (v ladderVerdict) disposition() string {
 	switch {
 	case v.retired && v.delivered:
-		return "delivered this message without its attachments"
+		return "delivered this message through the rejection ladder"
 	case v.retired:
 		return "dead-lettered this message"
 	default:
@@ -564,17 +564,26 @@ func (c *inboundCoalescer) verdictLocked(channel, ts string, now time.Time) (lad
 }
 
 // landVerdicts settles the ladder's verdict for every real member of a
-// delivery gc just ACCEPTED. A member with no verdict was never refused:
-// nothing to record — a later copy is an ordinary duplicate for the
-// dedup key. A member the ladder had stripped is now delivered WITHOUT
-// its attachments, and that verdict stands (retired, delivered): every
-// other copy of the message — buffered beside it, admitted later,
-// handed back, the urgent twin built from the fresh event — still
-// carries the bytes gc refused, so it is dropped as a duplicate of a
-// delivered message, never posted. Clearing the verdict here instead
-// (codex r11 finding 1) let main.go's onLadder answer "no" between the
-// flush-ahead's stripped delivery and the urgent POST of the original
-// attachments.
+// delivery gc just ACCEPTED. A member the ladder never owned — no
+// verdict, never charged, never flagged — was never refused: nothing to
+// record, and a later copy is an ordinary duplicate for the dedup key.
+// A member the ladder OWNS lands as a terminal verdict (retired,
+// delivered): the stripped retry delivered without its attachments,
+// and equally a copy that was charged (an unvouched re-post that
+// finally vouched) or flagged isolate (a probe resumed after a pause).
+// The urgent path never withholds a copy the ladder owns from its
+// flush-ahead (onLadderEntry) — the ladder's copy is the message's
+// delivery — so the copy's landing MUST leave the ladder's answer
+// standing, or main.go's onLadder says "no" right after the flush-ahead
+// delivered it and the urgent twin posts the same message again under
+// its own dedup key (codex r14 finding 1: an unvouched A+B restored
+// charged, A's twin arrives, the flush-ahead delivers A+B vouched, no
+// verdict was recorded, urgent A posts). Every other copy of a landed
+// message — buffered beside it, admitted later, handed back, the
+// urgent twin built from the fresh event — is dropped as a duplicate of
+// a delivered message, never posted. Clearing the verdict on a stripped
+// landing instead (codex r11 finding 1) opened the same gap for the
+// stripped retry.
 //
 // The stripped copy names its own disposition (pendingChannelInbound.
 // stripped, codex r12 finding 1): a replayed stripped retry whose
@@ -597,15 +606,17 @@ func (c *inboundCoalescer) landVerdicts(channel string, delivered []pendingChann
 		switch {
 		case ok && v.retired:
 			continue
-		case !ok && p.stripped == "":
+		case !ok && p.stripped == "" && !onLadderEntry(p):
 			continue
-		case !ok:
+		case !ok && p.stripped != "":
 			v = ladderVerdict{cause: errors.New(p.stripped)}
+		case !ok:
+			v = ladderVerdict{cause: fmt.Errorf("delivered by the ladder's copy after %d charged re-post(s)", p.attempts)}
 		}
 		v = ladderVerdict{retired: true, delivered: true, cause: v.cause}
 		dropped, changed := c.retireLocked(channel, ts, v, now)
 		if dropped > 0 {
-			log.Printf("coalesce: chan=%s ts=%s delivered without its attachments — %d buffered duplicate copy(ies) still carrying the refused bytes dropped, never posted", channel, ts, dropped)
+			log.Printf("coalesce: chan=%s ts=%s the ladder's copy delivered — %d buffered duplicate copy(ies) dropped, never posted", channel, ts, dropped)
 		}
 		if changed {
 			terminal = append(terminal, landed{ts, v})
@@ -643,43 +654,67 @@ func (c *inboundCoalescer) adoptVerdictLocked(channel string, p pendingChannelIn
 	return p, v, true
 }
 
-// dropBufferedCopiesLocked removes every real buffered copy of ts from
-// the channel's pending buffer — the ladder just decided the message's
-// fate through another copy — and lets the scheduler re-judge the
-// buffer. Returns how many were dropped. Caller holds c.mu.
-func (c *inboundCoalescer) dropBufferedCopiesLocked(channel, ts string) int {
+// dropBufferedCopiesLocked removes every buffered copy of id from the
+// channel — the ladder just decided that entry's fate through another
+// copy — and lets the scheduler re-judge the buffer. A real message's
+// id is its ts; a reaction entry's id is its own event ts
+// (reaction_events.go), so a reaction the ladder retired drops its
+// copies from the pending buffer AND the no-wake side lane by that
+// identity (codex r14 finding 2: a dead-lettered reaction's copies
+// bypassed every verdict check). Returns how many were dropped. Caller
+// holds c.mu.
+func (c *inboundCoalescer) dropBufferedCopiesLocked(channel, id string) int {
+	dropped := 0
 	pend := c.pending[channel]
 	kept := pend[:0]
-	dropped := 0
 	for _, p := range pend {
-		if !p.reaction && p.inbound.ProviderMessageID == ts {
+		if p.inbound.ProviderMessageID == id {
 			dropped++
 			continue
 		}
 		kept = append(kept, p)
 	}
+	if len(kept) != len(pend) {
+		if len(kept) == 0 {
+			delete(c.pending, channel)
+		} else {
+			c.pending[channel] = kept
+		}
+	}
+	side := c.reactions[channel]
+	keptSide := side[:0]
+	for _, p := range side {
+		if p.inbound.ProviderMessageID == id {
+			dropped++
+			continue
+		}
+		keptSide = append(keptSide, p)
+	}
+	if len(keptSide) != len(side) {
+		if len(keptSide) == 0 {
+			delete(c.reactions, channel)
+		} else {
+			c.reactions[channel] = keptSide
+		}
+	}
 	if dropped == 0 {
 		return 0
-	}
-	if len(kept) == 0 {
-		delete(c.pending, channel)
-	} else {
-		c.pending[channel] = kept
 	}
 	c.scheduleLocked(channel, time.Time{})
 	return dropped
 }
 
 // onLadder reports whether the rejection ladder owns the message
-// (channel, ts): a standing verdict (stripped retry owed, delivered
-// without its attachments, or dead-lettered), or a buffered copy
-// already flagged for isolation. The urgent path consults it after
+// (channel, ts): a standing verdict (stripped retry owed, delivered by
+// the ladder's copy, or dead-lettered), or a buffered copy already
+// charged or flagged for isolation. The urgent path consults it after
 // flushAheadOf: an urgent copy of a message the ladder owns is NOT
-// posted — its bytes were refused, and the ladder's stripped retry
-// (delivered or owed) or the dead-letter file is the message's delivery
-// (codex r10 finding 2). The verdict outlives the stripped delivery
-// (codex r11 finding 1), so the answer cannot flip between the
-// flush-ahead and the urgent POST. Nil-safe.
+// posted — the ladder's own copy (the stripped retry, the charged
+// re-post: delivered or owed) or the dead-letter file is the message's
+// delivery (codex r10 finding 2). Every landing of a ladder-owned copy
+// leaves a terminal verdict (codex r11 finding 1, r14 finding 1), so
+// the answer cannot flip between the flush-ahead and the urgent POST.
+// Nil-safe.
 func (c *inboundCoalescer) onLadder(channel, ts string) bool {
 	if c == nil || ts == "" {
 		return false
@@ -1161,6 +1196,17 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	p.reaction = true
 	c.mu.Lock()
+	// A copy of a reaction the ladder RETIRED (dead-lettered, by its own
+	// event identity) is a duplicate of a handled event, exactly like a
+	// retired message's copy at enqueue (codex r14 finding 2): the
+	// refused bytes never ride another delivery, however the copy
+	// arrives — a Slack redelivery, the spool replay's re-admission.
+	// Admission is still final handling of the event.
+	if v, ok := c.verdictLocked(channel, p.inbound.ProviderMessageID, time.Now()); ok && v.retired {
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s reaction ts=%s is a copy of a reaction the rejection ladder %s — dropped, never re-posted", channel, p.inbound.ProviderMessageID, v.disposition())
+		return true
+	}
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
 		return true
@@ -1636,6 +1682,17 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 		live = append(live, msgs[i])
 	}
 	msgs = live
+	// A reaction copy handed back after the ladder retired its event
+	// (codex r14 finding 2) is dropped the same way.
+	liveReactions := reactions[:0]
+	for _, p := range reactions {
+		if v, ok := c.verdictLocked(channel, p.inbound.ProviderMessageID, now); ok && v.retired {
+			log.Printf("coalesce: chan=%s reaction ts=%s handed back after the rejection ladder %s — duplicate copy dropped", channel, p.inbound.ProviderMessageID, v.disposition())
+			continue
+		}
+		liveReactions = append(liveReactions, p)
+	}
+	reactions = liveReactions
 	if c.closed {
 		// Post-barrier restore (defensive — no take can follow the
 		// barrier, but a map entry here would sit past the final

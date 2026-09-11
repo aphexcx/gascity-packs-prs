@@ -261,10 +261,20 @@ func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Durati
 // parkDeadLetter takes an entry whose dead-letter write the hook did
 // not confirm OUT of the delivery path and schedules the write's
 // retry. Called by charge() with the channel's delivery mutex held and
-// c.mu NOT held. After the shutdown drain has flushed the parked
-// entries (c.closed) a straggler goes straight to the spool — nothing
-// may sit in memory past the final snapshot.
-func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) {
+// c.mu NOT held, and by the spool replay for a Refused entry. After the
+// shutdown drain has flushed the parked entries (c.closed) a straggler
+// goes straight to the spool — nothing may sit in memory past the
+// final snapshot.
+//
+// Returns whether the retirement's durable record is confirmed: true
+// when the ledger already held the verdict (charge() persisted it a
+// moment ago; a duplicate Refused line in one replay), false when a
+// record was owed and the write failed. The replay keeps its staged
+// file on false (codex r14 finding 3): a Refused entry's spool line was
+// its only durable state, and once the parked write succeeds and the
+// staged file is gone, nothing would remember the verdict across the
+// next restart — a delayed redelivery would be admitted as fresh bytes.
+func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) bool {
 	// The terminal disposition travels WITH the entry: any spill from
 	// here on (post-close straggler, the shutdown backstop) writes a
 	// spool line the replay parks straight back into the write retry.
@@ -278,16 +288,28 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// refused bytes). A park from the replay persists it too, so the
 	// verdict outlives the write's eventual success (codex r12).
 	verdict := ladderVerdict{retired: true, cause: cause}
+	ts := p.inbound.ProviderMessageID
 	c.mu.Lock()
-	_, changed := c.retireLocked(channel, p.inbound.ProviderMessageID, verdict, time.Now())
+	_, changed := c.retireLocked(channel, ts, verdict, time.Now())
 	c.mu.Unlock()
+	durable := true
 	if changed {
-		c.persistVerdict(channel, p.inbound.ProviderMessageID, verdict)
+		durable = c.persistVerdict(channel, ts, verdict)
 	}
 	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
-		return
+		return durable
+	}
+	for _, e := range c.parkedDeadLetters[channel] {
+		if e.p.inbound.ProviderMessageID == ts {
+			// Already parked for its write (a duplicate Refused line in
+			// one replay): one record per message in the dead-letter
+			// file, not one per copy.
+			c.mu.Unlock()
+			log.Printf("coalesce: chan=%s ts=%s already parked for its dead-letter write — duplicate copy dropped", channel, ts)
+			return durable
+		}
 	}
 	c.parkedDeadLetters[channel] = append(c.parkedDeadLetters[channel], parkedDeadLetter{p: p, cause: cause})
 	parked := len(c.parkedDeadLetters[channel])
@@ -298,11 +320,12 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	c.mu.Unlock()
 	if armed {
 		log.Printf("coalesce: chan=%s ts=%s dead-letter write NOT confirmed — parked out of the delivery path (%d parked; never re-posted to gc); the write retries in %s",
-			channel, p.inbound.ProviderMessageID, parked, delay)
-		return
+			channel, ts, parked, delay)
+		return durable
 	}
 	log.Printf("coalesce: chan=%s ts=%s dead-letter write NOT confirmed — parked out of the delivery path (%d parked; never re-posted to gc); a write retry is already scheduled",
-		channel, p.inbound.ProviderMessageID, parked)
+		channel, ts, parked)
+	return durable
 }
 
 // retryParkedDeadLetters is the write-retry timer callback: every
