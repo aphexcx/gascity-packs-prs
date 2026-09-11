@@ -466,7 +466,9 @@ fails closed naming the holder; a lock that cannot be made at all
 (`node_modules` refusing the write under a sandbox, or the pid file it
 records the owner in) fails the command at once with the refusal, leaving
 no lock standing; a failed frozen install fails the command with pnpm's own
-exit status; and only the pid that took a lock releases it. The lock records the wrapper's pid, and
+exit status; only the pid that took a lock releases it, and the making and
+the releasing of the lock and the gate each run with HUP, INT and TERM held
+(a signal in that instant is lost, never a lock left standing). The lock records the wrapper's pid, and
 the dead-wrapper window is accepted, not chased: a wrapper killed outright
 (SIGKILL) while its pnpm child still runs leaves a lock whose owner is dead,
 the next caller reclaims it and may run beside the orphaned child; a signal
