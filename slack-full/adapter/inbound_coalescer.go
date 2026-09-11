@@ -1444,16 +1444,31 @@ func (c *inboundCoalescer) owesDurability() bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, parked := range c.parkedDeadLetters {
+	type key struct{ channel, ts string }
+	spilled := make(map[key]bool)
+	for channel, parked := range c.parkedDeadLetters {
 		for _, e := range parked {
 			if !e.spilled {
 				return true
 			}
+			spilled[key{channel, e.p.inbound.ProviderMessageID}] = true
 		}
 	}
-	for _, m := range c.verdicts {
-		for _, v := range m {
-			if !v.durable && !v.pendingWrite {
+	for channel, m := range c.verdicts {
+		for ts, v := range m {
+			if v.pendingWrite {
+				// Retired, its dead-letter write not confirmed: durable
+				// only as a PARKED entry with its spool copy. Retired but
+				// not yet parked — the refusal's spool write or the sink
+				// still running on a timer (codex r27 finding 1) — it is
+				// owed: neither a parked entry nor a record says where
+				// the acknowledged bytes are.
+				if !spilled[key{channel, ts}] {
+					return true
+				}
+				continue
+			}
+			if !v.durable {
 				return true
 			}
 		}

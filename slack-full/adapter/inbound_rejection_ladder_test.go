@@ -3692,3 +3692,43 @@ func TestInPlaceCompactionKeepsOwnedPayloads(t *testing.T) {
 		}
 	})
 }
+
+// --- codex r27 ---------------------------------------------------------------
+
+// A refusal that is retired but not yet parked — its verdict pending
+// the write, the refusal's spool write still running — owes durability
+// (r27 finding 1): the replay's cleanup saw neither a parked entry nor
+// an owed record for it and removed the staged file, the acknowledged
+// message's only durable copy while both writes were failing.
+func TestOwesDurabilityWhileARefusalIsInsideItsSpill(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	inSpill, release := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	spills := 0
+	c.spill = func(string, []pendingChannelInbound) bool {
+		mu.Lock()
+		spills++
+		first := spills == 1
+		mu.Unlock()
+		if first {
+			close(inSpill)
+			<-release // the refusal's spool write blocks (a slow disk)
+		}
+		return false
+	}
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	go c.charge("C1", testPending("C1", "1.0", "poison"), permanent422())
+	<-inSpill
+	if !c.owesDurability() {
+		t.Fatal("a refusal retired but not yet parked — its write pending — owes durability: the staged file must not go")
+	}
+	close(release)
+	waitFor(t, "the park", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.parkedDeadLetters["C1"]) == 1
+	})
+	if !c.owesDurability() {
+		t.Fatal("parked with no spool copy: still owed")
+	}
+}

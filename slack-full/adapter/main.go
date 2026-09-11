@@ -4043,6 +4043,15 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		skipChannelPost = true
 		ladderSkip = true
 		cfg.channelClaims.forget(claimKey)
+		// The thread-context advance above assumed this copy would carry
+		// the preamble; no audience receives it now (codex r27 minor: a
+		// delayed threaded mention for a dead-lettered message advanced
+		// the cache and later replies omitted those priors). Rolled back
+		// exactly as a failed POST rolls it back.
+		if threadCtxAdvanced {
+			cfg.threadContextCache.rollbackDelivered(target, msg.Channel, msg.ThreadTS, msg.TS, threadCtxPrevTS)
+			threadCtxAdvanced = false
+		}
 	}
 
 	// A twin whose channel copy was skipped while the drain is running
