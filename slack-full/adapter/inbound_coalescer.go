@@ -620,10 +620,14 @@ func (c *inboundCoalescer) disarmLocked(channel string) bool {
 //     enqueue; a short poll behind an in-flight delivery; the plain
 //     window after a recovery; zero = no new want, keep the target) —
 //     and NEVER before the channel's transient-failure deadline
-//     (retryNotBefore). A restore after a failure therefore lands on
-//     the deadline noteTransientFailure just set; a restore WITHOUT a
-//     new failure (an urgent twin handed back, reactions returned to
-//     their lane) keeps the deadline exactly where it is.
+//     (retryNotBefore). With no timer and no want, the retry IS the
+//     deadline when one is ahead (codex r9 finding 2: an overflow or a
+//     restore arriving with the deadline less than a window away must
+//     not wait a whole window past it), else a window from now. A
+//     restore after a failure therefore lands on the deadline
+//     noteTransientFailure just set; a restore WITHOUT a new failure
+//     (an urgent twin handed back, reactions returned to their lane)
+//     keeps the deadline exactly where it is.
 //
 // A target that already passed (the timer is about to fire, or a hand
 // of the clock) is not moved: the callback's own take is the delivery.
@@ -641,10 +645,16 @@ func (c *inboundCoalescer) scheduleLocked(channel string, at time.Time) (time.Ti
 	if !at.IsZero() && (target.IsZero() || at.Before(target)) {
 		target = at
 	}
+	now := time.Now()
+	nb, backingOff := c.retryNotBefore[channel]
 	if target.IsZero() {
-		target = time.Now().Add(c.windowFor(channel))
+		if backingOff && nb.After(now) {
+			target = nb
+		} else {
+			target = now.Add(c.windowFor(channel))
+		}
 	}
-	if nb, ok := c.retryNotBefore[channel]; ok && target.Before(nb) {
+	if backingOff && target.Before(nb) {
 		target = nb
 	}
 	if armed && target.Equal(c.due[channel]) {
@@ -1089,6 +1099,7 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 	sort.SliceStable(sorted, func(i, j int) bool {
 		return sorted[i].inbound.ProviderMessageID < sorted[j].inbound.ProviderMessageID
 	})
+	sorted = collapseSameTS(channel, sorted)
 	var reals, reactions []pendingChannelInbound
 	for _, p := range sorted {
 		if p.reaction {
@@ -1173,6 +1184,52 @@ func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) e
 	}
 	c.deliveredOK(channel)
 	return nil
+}
+
+// collapseSameTS keeps ONE real entry per ts in a take — the copy whose
+// rejection state has progressed furthest (attempts, then the isolate
+// flag) — so a same-ts copy admitted while the original waited out a
+// backoff flagged for isolation can never post the refused bytes again
+// as its own plain segment after the original was dead-lettered
+// (codex r9 finding 1: the deliver hook's own same-ts dedup sees one
+// segment at a time). Same-ts copies are the same Slack message (the
+// bot-mention twin pair, a redelivery), already acked; the surviving
+// copy is its delivery, exactly as the hook's dedup and the urgent
+// path's twin withhold already treat it. Reactions carry their own
+// ids and are left alone. `sorted` is in ts order; positions are kept.
+func collapseSameTS(channel string, sorted []pendingChannelInbound) []pendingChannelInbound {
+	first := make(map[string]int, len(sorted)) // ts → index in out
+	out := make([]pendingChannelInbound, 0, len(sorted))
+	dropped := 0
+	for _, p := range sorted {
+		if p.reaction {
+			out = append(out, p)
+			continue
+		}
+		ts := p.inbound.ProviderMessageID
+		if i, seen := first[ts]; seen {
+			if moreProgressed(p, out[i]) {
+				out[i] = p
+			}
+			dropped++
+			continue
+		}
+		first[ts] = len(out)
+		out = append(out, p)
+	}
+	if dropped > 0 {
+		log.Printf("coalesce: chan=%s %d same-ts duplicate(s) collapsed before delivery — the copy furthest along the rejection ladder delivers", channel, dropped)
+	}
+	return out
+}
+
+// moreProgressed reports whether a's rejection state is further along
+// than b's: more charged attempts, else flagged for isolation.
+func moreProgressed(a, b pendingChannelInbound) bool {
+	if a.attempts != b.attempts {
+		return a.attempts > b.attempts
+	}
+	return a.isolate && !b.isolate
 }
 
 // restore re-queues a batch whose delivery failed (or was withheld),
@@ -1861,16 +1918,18 @@ func (c *inboundCoalescer) pendingContainsLocked(channel, ts string) bool {
 	return false
 }
 
-// reconcileTimers re-arms every armed timer against the current policy
-// (SIGHUP): a channel flipped digest→immediate must not keep waiting
-// out a stale two-hour window. Each affected channel restarts a full
-// new window from now — EXCEPT a channel sitting over either buffer
-// cap, whose armed timer is (or must now behave as) the short over-cap
-// retry (gp-9e7 round 5, 3a/3b): re-arming that at windowFor would
-// downgrade a ≤1s retry back to digest scale and leave an over-cap
-// buffer growing for hours (round-6 gate finding). Over-cap state is
-// read from the maps, so the clamp also self-heals a reconcile that
-// races the retry arming.
+// reconcileTimers re-judges every armed timer against the current
+// policy (SIGHUP): a channel flipped digest→immediate must not keep
+// waiting out a stale two-hour window. Each armed channel ASKS the
+// scheduler for the new policy's window from now — and keeps its
+// established target when that is nearer (codex r9 finding 2: a
+// reconcile a second before an eight-second retry must not push it to
+// fifteen, nor a digest channel another two hours). A channel sitting
+// over either buffer cap, or whose backed-off retry is already due,
+// asks for the short over-cap retry instead (gp-9e7 round 5, 3a/3b):
+// a window there would leave an over-cap buffer growing for hours
+// (round-6 gate finding). Over-cap state is read from the maps, so the
+// clamp also self-heals a reconcile that races the retry arming.
 func (c *inboundCoalescer) reconcileTimers() {
 	if c == nil {
 		return
@@ -1884,7 +1943,6 @@ func (c *inboundCoalescer) reconcileTimers() {
 	sort.Strings(channels)
 	now := time.Now()
 	for _, channel := range channels {
-		c.disarmLocked(channel)
 		at := now.Add(c.windowFor(channel))
 		nb, backingOff := c.retryNotBefore[channel]
 		switch {

@@ -95,8 +95,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     where it was, an overflowed reaction lane during a backoff flushes
     AT the deadline instead of never, and a buffer emptied under a
     still-armed timer loses the timer instead of POSTing reactions
-    alone. A recovery pulls the buffered retry in to the window.
-    `TestScheduleTable` is the cadence contract.
+    alone. A recovery pulls the buffered retry in to the window. With
+    no timer and no want the retry IS the deadline when one is ahead,
+    and a SIGHUP reconcile keeps an established target that is nearer
+    than the new policy's window (codex gate r9). `TestScheduleTable`
+    is the cadence contract.
+  - A take collapses same-ts copies to the one furthest along the
+    rejection ladder before segmenting, so a duplicate admitted while
+    the original waited out a backoff flagged for isolation cannot
+    post the refused bytes again after the original is dead-lettered;
+    a parked dead-letter write carries a deletion that landed while
+    the write was owed (codex gate r9).
   - Tests: `inbound_rejection_ladder_test.go` (the ladder table, the
     withholding notice, the incident end to end, dead-letter after the
     stripped retry with later messages delivering, immediate

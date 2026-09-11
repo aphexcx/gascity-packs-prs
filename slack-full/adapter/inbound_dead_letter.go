@@ -304,7 +304,14 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 	}
 	var kept []parkedDeadLetter
 	for _, e := range snapshot {
-		if hook(channel, []pendingChannelInbound{e.p}, e.cause) {
+		// A deletion that landed while the write was owed must reach the
+		// record as its notice, not the deleted text (codex r9 finding
+		// 3) — the same tombstone check charge() made before the first
+		// attempt.
+		single := []pendingChannelInbound{e.p}
+		c.applyDeletionTombstones(channel, single)
+		e.p = single[0]
+		if hook(channel, single, e.cause) {
 			continue
 		}
 		kept = append(kept, e)
@@ -358,10 +365,12 @@ func (c *inboundCoalescer) flushParkedDeadLetters() {
 	for _, channel := range channels {
 		var failed []pendingChannelInbound
 		for _, e := range parked[channel] {
-			if hook != nil && hook(channel, []pendingChannelInbound{e.p}, e.cause) {
+			single := []pendingChannelInbound{e.p}
+			c.applyDeletionTombstones(channel, single) // codex r9 finding 3; see retryParkedDeadLetters
+			if hook != nil && hook(channel, single, e.cause) {
 				continue
 			}
-			failed = append(failed, e.p)
+			failed = append(failed, single[0])
 		}
 		if len(failed) == 0 {
 			continue

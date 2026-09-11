@@ -1239,3 +1239,185 @@ func TestRecoveryPullsTheBufferedRetryIn(t *testing.T) {
 	c.deliveredOK("C1") // an urgent mention on the channel just succeeded
 	waitForCalls(t, calls, []string{"1.0"})
 }
+
+// --- codex r9 on gp-sgu7 ------------------------------------------------------
+
+// The scheduler's zero-want fallback is the deadline when one is ahead
+// (r9 finding 2): a restore or an overflow arriving with the deadline
+// less than a window away retries AT the deadline, not a window past
+// it; a fresh message still waits its own window. A reconcile keeps
+// the nearer of the established target and the new policy's window.
+func TestScheduleFallbackAndReconcileKeepTheNearerTarget(t *testing.T) {
+	const window = time.Minute
+	real := testPending("C1", "1.0", "real")
+	riding := testPending("C1", "0.5", "reaction")
+	riding.reaction = true
+	within := func(got time.Time, now time.Time, want time.Duration) bool {
+		d := got.Sub(now)
+		return d >= want-time.Second && d <= want+time.Second
+	}
+	t.Run("zero want under a near deadline lands on the deadline", func(t *testing.T) {
+		c := newInboundCoalescer(window, nil)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		now := time.Now()
+		c.pending["C1"] = []pendingChannelInbound{real}
+		c.retryNotBefore["C1"] = now.Add(30 * time.Second)
+		target, _ := c.scheduleLocked("C1", time.Time{})
+		defer c.timers["C1"].Stop()
+		if !within(target, now, 30*time.Second) {
+			t.Fatalf("target in %s, want the 30 s deadline", target.Sub(now).Round(time.Millisecond))
+		}
+	})
+	t.Run("an overflowed lane under a near deadline lands on the deadline", func(t *testing.T) {
+		c := newInboundCoalescer(window, nil)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		now := time.Now()
+		for i := 0; i < maxBufferedReactionsPerChannel; i++ {
+			c.reactions["C1"] = append(c.reactions["C1"], riding)
+		}
+		c.retryNotBefore["C1"] = now.Add(30 * time.Second)
+		target, _ := c.scheduleLocked("C1", time.Time{})
+		defer c.timers["C1"].Stop()
+		if !within(target, now, 30*time.Second) {
+			t.Fatalf("target in %s, want the 30 s deadline", target.Sub(now).Round(time.Millisecond))
+		}
+	})
+	t.Run("a fresh message under a near deadline still waits its window", func(t *testing.T) {
+		c := newInboundCoalescer(window, nil)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		now := time.Now()
+		c.pending["C1"] = []pendingChannelInbound{real}
+		c.retryNotBefore["C1"] = now.Add(30 * time.Second)
+		target, _ := c.scheduleLocked("C1", now.Add(window))
+		defer c.timers["C1"].Stop()
+		if !within(target, now, window) {
+			t.Fatalf("target in %s, want the window", target.Sub(now).Round(time.Millisecond))
+		}
+	})
+	t.Run("reconcile keeps a nearer established target", func(t *testing.T) {
+		c := newInboundCoalescer(window, nil)
+		c.mu.Lock()
+		now := time.Now()
+		c.pending["C1"] = []pendingChannelInbound{real}
+		c.due["C1"] = now.Add(8 * time.Second)
+		c.timers["C1"] = time.AfterFunc(time.Hour, func() {})
+		c.mu.Unlock()
+		c.reconcileTimers()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		defer c.timers["C1"].Stop()
+		if !within(c.due["C1"], now, 8*time.Second) {
+			t.Fatalf("reconcile moved an 8 s retry to %s", c.due["C1"].Sub(now).Round(time.Millisecond))
+		}
+	})
+	t.Run("reconcile pulls a stale digest target in to the new window", func(t *testing.T) {
+		c := newInboundCoalescer(window, nil)
+		c.mu.Lock()
+		now := time.Now()
+		c.pending["C1"] = []pendingChannelInbound{real}
+		c.due["C1"] = now.Add(2 * time.Hour)
+		c.timers["C1"] = time.AfterFunc(time.Hour, func() {})
+		c.mu.Unlock()
+		c.reconcileTimers()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		defer c.timers["C1"].Stop()
+		if !within(c.due["C1"], now, window) {
+			t.Fatalf("reconcile left a two-hour target at %s", c.due["C1"].Sub(now).Round(time.Millisecond))
+		}
+	})
+}
+
+// A same-ts duplicate admitted while the original waits out a backoff
+// flagged for isolation must not post the refused bytes again once the
+// original is dead-lettered (r9 finding 1): the take collapses same-ts
+// copies to the one whose rejection state has progressed furthest.
+func TestDuplicateAdmittedDuringBackoffNeverRepostsRefusedBytes(t *testing.T) {
+	var mu sync.Mutex
+	probesOfA := 0
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if len(batch) == 1 && batch[0].inbound.ProviderMessageID == "1.0" {
+			mu.Lock()
+			probesOfA++
+			n := probesOfA
+			mu.Unlock()
+			if n == 1 {
+				return errors.New("dial tcp: connection refused") // the first probe pauses isolation
+			}
+			return permanent422()
+		}
+		for _, p := range batch {
+			if p.inbound.ProviderMessageID == "1.0" {
+				return permanent422() // any batch carrying A is refused
+			}
+		}
+		return nil
+	})
+	c := newInboundCoalescer(150*time.Millisecond, nil)
+	c.deliver = deliver
+	var dead []string
+	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range batch {
+			dead = append(dead, p.inbound.ProviderMessageID)
+		}
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "A"))
+	c.enqueue("C1", testPending("C1", "2.0", "B"))
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0"}) // batch refused, A's probe paused transiently
+	c.enqueue("C1", testPending("C1", "1.0", "A again — a same-ts duplicate during the backoff"))
+	waitForCalls(t, calls, []string{"1.0,2.0", "1.0", "1.0", "2.0"})
+	time.Sleep(400 * time.Millisecond) // two more windows: nothing may follow
+	if got := calls(); len(got) != 4 {
+		t.Fatalf("the refused bytes of A were posted again after its dead-letter: %v", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dead) != 1 || dead[0] != "1.0" {
+		t.Fatalf("exactly one dead-letter record for A, got %v", dead)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.pending["C1"]) != 0 {
+		t.Fatalf("nothing may stay buffered, got %d", len(c.pending["C1"]))
+	}
+}
+
+// A parked dead-letter write carries a deletion that landed while the
+// write was owed (r9 finding 3): the retried record is the notice, not
+// the deleted text.
+func TestParkedDeadLetterWriteCarriesADeletion(t *testing.T) {
+	var mu sync.Mutex
+	var written []string
+	writes := 0
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		writes++
+		if writes == 1 {
+			return false // the first write is not confirmed: the entry parks
+		}
+		for _, p := range batch {
+			written = append(written, p.inbound.Text)
+		}
+		return true
+	}
+	c.charge("C1", testPending("C1", "1.0", "the founder's deleted words"), permanent422())
+	c.markDeleted("C1", "1.0") // deleted while the write is owed
+	waitFor(t, "parked write retried", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(written) == 1
+	})
+	mu.Lock()
+	defer mu.Unlock()
+	if written[0] != deletedBySenderNotice {
+		t.Fatalf("the parked write must carry the deletion notice, got %q", written[0])
+	}
+}
