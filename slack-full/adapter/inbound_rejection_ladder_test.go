@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -1881,5 +1883,208 @@ func TestTerminalVerdictSurvivesRestartViaTheSpool(t *testing.T) {
 		if got := calls(); len(got) != 0 {
 			t.Fatalf("restart %d: the refused bytes must never go out: %v", restart, got)
 		}
+	}
+}
+
+// --- codex r13 ---------------------------------------------------------------
+
+// A verdict only progresses (r13 finding 1): a terminal verdict is never
+// downgraded to an outstanding one, and recording the same verdict
+// again changes nothing — so no second durable record is written and a
+// re-seeded record keeps its original decision time.
+func TestVerdictOnlyProgresses(t *testing.T) {
+	c := newInboundCoalescer(time.Hour, nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if !c.recordVerdictLocked("C1", "1.0", ladderVerdict{cause: permanent422()}, now) {
+		t.Fatal("a first verdict is a change")
+	}
+	if !c.recordVerdictLocked("C1", "1.0", ladderVerdict{retired: true, cause: permanent422()}, now) {
+		t.Fatal("outstanding → terminal is a change")
+	}
+	if c.recordVerdictLocked("C1", "1.0", ladderVerdict{cause: permanent422()}, now) {
+		t.Fatal("terminal → outstanding must be refused")
+	}
+	if c.recordVerdictLocked("C1", "1.0", ladderVerdict{retired: true, cause: permanent422()}, now.Add(time.Hour)) {
+		t.Fatal("the same terminal verdict again is not a change")
+	}
+	v, ok := c.verdictLocked("C1", "1.0", now)
+	if !ok || !v.retired || !v.at.Equal(now) {
+		t.Fatalf("the terminal verdict must stand with its original time: live=%v retired=%v at=%v", ok, v.retired, v.at)
+	}
+	decided := now.Add(-2 * time.Hour)
+	if !c.recordVerdictLocked("C1", "2.0", ladderVerdict{retired: true, at: decided}, now) {
+		t.Fatal("a seeded record is a change")
+	}
+	if v, _ := c.verdictLocked("C1", "2.0", now); !v.at.Equal(decided) {
+		t.Fatalf("a seeded record keeps its decision time (retention counts from the decision): %v", v.at)
+	}
+}
+
+// A stale stripped entry staged beside its own terminal verdict (a
+// crash after the replayed retry was dead-lettered but before cleanup
+// — r13 finding 1) never reverses that verdict on the next replay,
+// whichever order the two lines have: the terminal verdict is seeded
+// first and wins, and the stale copy is dropped at admission.
+func TestReplayNeverDowngradesATerminalVerdict(t *testing.T) {
+	for _, order := range []string{"record then entry", "entry then record"} {
+		t.Run(order, func(t *testing.T) {
+			spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+			stale := testPending("C1", "1.0", "the stripped retry, dead-lettered after this line was staged")
+			stale.isolate, stale.attempts, stale.stripped = true, 1, "422 Unprocessable Entity"
+			record := func() {
+				if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+					t.Fatal("record must confirm")
+				}
+			}
+			entry := func() {
+				if !spool.spillBatch("C1", []pendingChannelInbound{stale}) {
+					t.Fatal("spill must confirm")
+				}
+			}
+			if order == "record then entry" {
+				record()
+				entry()
+			} else {
+				entry()
+				record()
+			}
+			deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+			c := newInboundCoalescer(20*time.Millisecond, nil)
+			c.deliver = deliver
+			c.recordVerdict = spool.recordVerdict
+			spool.replayInto(c)
+			time.Sleep(80 * time.Millisecond)
+			c.mu.Lock()
+			v, ok := c.verdictLocked("C1", "1.0", time.Now())
+			c.mu.Unlock()
+			if !ok || !v.retired {
+				t.Fatalf("the terminal verdict must win over the stale stripped entry: live=%v retired=%v", ok, v.retired)
+			}
+			if c.pendingContains("C1", "1.0") {
+				t.Fatal("the stale stripped copy must not enter the buffer")
+			}
+			if got := calls(); len(got) != 0 {
+				t.Fatalf("the stale stripped retry must never POST: %v", got)
+			}
+		})
+	}
+}
+
+// The staged spool is retained until every re-recorded verdict is
+// durable (r13 finding 2): with the replacement spool unwritable, the
+// replay must not remove the only durable copy of the records; the
+// next startup merges the retained file and re-records them.
+func TestReplayKeepsTheStagingFileUntilTheRecordsAreDurable(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+		t.Fatal("record must confirm")
+	}
+	c1 := newInboundCoalescer(time.Hour, nil)
+	c1.recordVerdict = func(string, string, ladderVerdict) bool { return false } // the replacement spool cannot be written
+	spool.replayInto(c1)
+	if !c1.onLadder("C1", "1.0") {
+		t.Fatal("the verdict is seeded in memory regardless")
+	}
+	if _, err := os.Stat(spool.replayingPath()); err != nil {
+		t.Fatalf("the staged file must be retained while its records are not durable elsewhere: %v", err)
+	}
+	// Next startup, the disk writable again.
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.recordVerdict = spool.recordVerdict
+	spool.replayInto(c2)
+	if !c2.onLadder("C1", "1.0") {
+		t.Fatal("the verdict must survive the failed re-record through the retained file")
+	}
+	if _, err := os.Stat(spool.replayingPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the staged file is removed once the records are durable again: %v", err)
+	}
+	c3 := newInboundCoalescer(time.Hour, nil)
+	c3.recordVerdict = spool.recordVerdict
+	spool.replayInto(c3)
+	if !c3.onLadder("C1", "1.0") {
+		t.Fatal("the re-recorded verdict must be in the new spool")
+	}
+}
+
+func countVerdictLines(t *testing.T, path, ts string) int {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return 0
+		}
+		t.Fatal(err)
+	}
+	return bytes.Count(data, []byte(`"verdict_ts":"`+ts+`"`))
+}
+
+// Verdict records are bounded (r13 finding 3): a message writes one
+// record per terminal decision (a retire followed by its park writes
+// one line, not two); a replay seeds each (channel, ts) once and drops
+// expired records, so every restart compacts the journal; and the
+// replay streams the file line by line, so an oversized line is
+// dropped as loss on its own while everything around it — and a file
+// larger than any whole-file cap — still replays.
+func TestVerdictRecordsAreCompactedAndReplayStreams(t *testing.T) {
+	dir := t.TempDir()
+	spool := newInboundSpool(dir + "/spool.jsonl")
+	deliver1, _ := recordingDeliver(func([]pendingChannelInbound) error { return permanent422() })
+	c1 := newInboundCoalescer(20*time.Millisecond, nil)
+	c1.deliver = deliver1
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // the write fails: retire, then park
+	c1.recordVerdict = spool.recordVerdict
+	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
+	waitFor(t, "the retirement's record", func() bool { return countVerdictLines(t, spool.path, "1.0") >= 1 })
+	time.Sleep(50 * time.Millisecond) // the park follows the retire; it must not write a second record
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("one record per terminal decision (retire + park), got %d", n)
+	}
+	// Duplicate and expired records accumulate between restarts...
+	for i := 0; i < 4; i++ {
+		spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()})
+	}
+	spool.recordVerdict("C1", "2.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now().Add(-30 * time.Hour)})
+	// ...beside an oversized line and enough bulk to pass any whole-file cap.
+	f, err := os.OpenFile(spool.path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	huge := bytes.Repeat([]byte("x"), maxInboundSpoolLineBytes+1)
+	f.Write(append(append([]byte(`{"channel":"C1","verdict_ts":"3.0","verdict":"`), huge...), []byte("\"}\n")...))
+	pad := append(append([]byte(fmt.Sprintf(`{"channel":"C1","verdict_ts":"4.0","verdict_at":%d,"verdict":"`, time.Now().Unix())), bytes.Repeat([]byte("y"), 256<<10)...), []byte("\"}\n")...)
+	for written := 0; written <= 17<<20; written += len(pad) {
+		f.Write(pad)
+	}
+	f.Close()
+	if !spool.spillBatch("C1", []pendingChannelInbound{testPending("C1", "5.0", "a message spooled beside the records")}) {
+		t.Fatal("spill must confirm")
+	}
+	deliver2, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	c2.deliver = deliver2
+	c2.recordVerdict = spool.recordVerdict
+	if n := spool.replayInto(c2); n != 1 {
+		t.Fatalf("the message beside the records must replay (streamed past the oversized line and the bulk), admitted %d", n)
+	}
+	waitForCalls(t, calls, []string{"5.0"})
+	if c2.onLadder("C1", "2.0") || c2.onLadder("C1", "3.0") {
+		t.Fatal("an expired record is not seeded; an oversized line is dropped")
+	}
+	if !c2.onLadder("C1", "1.0") || !c2.onLadder("C1", "4.0") {
+		t.Fatal("live records are seeded")
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("the replay compacts duplicates to one record, got %d", n)
+	}
+	if n := countVerdictLines(t, spool.path, "4.0"); n != 1 {
+		t.Fatalf("the bulk compacts to one record, got %d", n)
+	}
+	if n := countVerdictLines(t, spool.path, "2.0") + countVerdictLines(t, spool.path, "3.0"); n != 0 {
+		t.Fatalf("expired and dropped records are not re-written, got %d", n)
+	}
+	if st, err := os.Stat(spool.path); err != nil || st.Size() > 1<<20 {
+		t.Fatalf("the compacted spool is small again: %v %d", err, st.Size())
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -46,9 +47,14 @@ import (
 // startup and retries it; the worst case is a duplicate replay, which
 // the per-entry gc dedup keys bound.
 
-// maxInboundSpoolBytes bounds a spool read; a healthy spool holds at
-// most a few windows' worth of chatter, so anything near this is a bug.
-const maxInboundSpoolBytes = 16 << 20
+// maxInboundSpoolLineBytes bounds ONE spool line: a message entry is a
+// Slack message plus its parts (well under a mebibyte), a record line
+// is a few hundred bytes. The replay streams the file line by line
+// (codex r13 finding 3: a whole-file cap let a day of verdict records
+// strand the acknowledged messages spooled beside them), so an
+// oversized line is dropped as loss on its own and everything around it
+// still replays.
+const maxInboundSpoolLineBytes = 4 << 20
 
 // spooledInbound is one spooled item: the channel it was buffered for,
 // whether it was a no-wake reaction entry, and the ready-to-post
@@ -319,38 +325,12 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 			readPath = s.path
 		}
 	}
-	data, err := os.ReadFile(readPath)
+	entries, err := readSpoolLines(readPath, false)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			log.Printf("inbound spool: %s unreadable (%v) — nothing replayed", readPath, err)
 		}
 		return nil, nil
-	}
-	if len(data) > maxInboundSpoolBytes {
-		log.Printf("inbound spool: %s oversized (%d bytes) — refusing to replay; inspect and remove it manually", readPath, len(data))
-		return nil, nil
-	}
-	var entries []spooledInbound
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64<<10), maxInboundSpoolBytes)
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var e spooledInbound
-		if err := json.Unmarshal(line, &e); err != nil || e.Channel == "" {
-			log.Printf("inbound spool: CORRUPT LINE (%d bytes) DROPPED — LOSS: this can only be a crash mid-spill of that batch (parse err: %v)", len(line), err)
-			continue
-		}
-		// Lines written with parts omit the redundant folded Text;
-		// rebuild it here so every consumer sees a complete entry.
-		if e.Inbound.Text == "" {
-			if p := (pendingChannelInbound{preamble: e.Preamble, body: e.Body, files: e.Files}); p.hasReminderParts() {
-				e.Inbound.Text = p.foldedText()
-			}
-		}
-		entries = append(entries, e)
 	}
 	entries = append(entries, salvagedDeletions...)
 	cleanup := func() {
@@ -380,30 +360,78 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 // readDeletionRecords returns only the deletion records in the spool
 // file at path (read-only, best-effort; a missing or oversized file
 // yields none).
-// readRecords salvages the deletion and verdict records of a spool file
-// whose message entries could not be merged: both apply to the staged
-// entries and to messages admitted after the restart, so they are
-// replayed even when the file itself is left for the next startup.
-func readRecords(path string) []spooledInbound {
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) > maxInboundSpoolBytes {
-		return nil
+// readSpoolLines streams a spool file line by line. A line over
+// maxInboundSpoolLineBytes, or one that does not parse, is dropped
+// LOUDLY as loss and the read continues — the file as a whole is never
+// refused (codex r13 finding 3). recordsOnly keeps just the deletion
+// and verdict records (the salvage of a file whose message entries
+// could not be merged: both kinds apply to the staged entries and to
+// messages admitted after the restart, so they replay even when the
+// file itself is left for the next startup).
+func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
+	defer f.Close()
+	r := bufio.NewReaderSize(f, 64<<10)
 	var out []spooledInbound
-	sc := bufio.NewScanner(bytes.NewReader(data))
-	sc.Buffer(make([]byte, 0, 64<<10), maxInboundSpoolBytes)
-	for sc.Scan() {
-		var e spooledInbound
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil || e.Channel == "" {
-			continue
+	for {
+		line, err := r.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			// Longer than the reader's buffer: accumulate up to the line
+			// cap, then discard the rest of the line.
+			buf := append([]byte(nil), line...)
+			for errors.Is(err, bufio.ErrBufferFull) {
+				line, err = r.ReadSlice('\n')
+				if len(buf) <= maxInboundSpoolLineBytes {
+					buf = append(buf, line...)
+				}
+			}
+			if len(buf) > maxInboundSpoolLineBytes {
+				log.Printf("inbound spool: OVERSIZED LINE (>%d bytes) DROPPED — LOSS: no spool line is this long; the rest of the file still replays", maxInboundSpoolLineBytes)
+				if err != nil {
+					break
+				}
+				continue
+			}
+			line = buf
 		}
-		switch {
-		case e.DeletedTS != "":
-			out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
-		case e.VerdictTS != "":
-			out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt})
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			var e spooledInbound
+			switch perr := json.Unmarshal(line, &e); {
+			case perr != nil || e.Channel == "":
+				if !recordsOnly {
+					log.Printf("inbound spool: CORRUPT LINE (%d bytes) DROPPED — LOSS: this can only be a crash mid-spill of that batch (parse err: %v)", len(line), perr)
+				}
+			case recordsOnly && e.DeletedTS != "":
+				out = append(out, spooledInbound{Channel: e.Channel, DeletedTS: e.DeletedTS})
+			case recordsOnly && e.VerdictTS != "":
+				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt})
+			case recordsOnly:
+			default:
+				if e.Inbound.Text == "" {
+					if p := (pendingChannelInbound{preamble: e.Preamble, body: e.Body, files: e.Files}); p.hasReminderParts() {
+						e.Inbound.Text = p.foldedText()
+					}
+				}
+				out = append(out, e)
+			}
+		}
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				return out, err
+			}
+			break
 		}
 	}
+	return out, nil
+}
+
+// readRecords salvages the deletion and verdict records of a spool file.
+func readRecords(path string) []spooledInbound {
+	out, _ := readSpoolLines(path, true)
 	return out
 }
 
@@ -472,20 +500,47 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	}
 	// Verdict records seed the ledger BEFORE any message entry is
 	// admitted: a copy of a retired message in the same file (a twin
-	// spooled beside its dead-lettered original) is then dropped at
-	// admission like any late duplicate, and the seeding writes each
-	// unexpired record again for the next restart.
+	// spooled beside its dead-lettered original, a stale stripped retry
+	// staged before its own dead-letter — codex r13 finding 1) is then
+	// dropped at admission like any late duplicate. Records are folded
+	// to ONE verdict per (channel, ts) first (the newest decision wins)
+	// and expired ones skipped, so every replay COMPACTS the journal:
+	// each live verdict is written exactly once for the next restart
+	// (codex r13 finding 3). The staged file is kept until every one of
+	// those writes is confirmed durable (codex r13 finding 2).
 	now := time.Now()
+	type verdictKey struct{ channel, ts string }
+	folded := make(map[verdictKey]ladderVerdict)
+	var order []verdictKey
 	for _, e := range entries {
-		if e.VerdictTS == "" || c == nil {
+		if e.VerdictTS == "" {
 			continue
 		}
 		v := ladderVerdict{retired: true, delivered: e.VerdictDelivered, cause: errors.New(e.Verdict), at: time.Unix(e.VerdictAt, 0)}
 		if v.expired(now) {
 			continue
 		}
-		log.Printf("inbound spool: chan=%s ts=%s verdict restored — the rejection ladder %s before the restart; every later copy is a duplicate", e.Channel, e.VerdictTS, v.disposition())
-		c.seedVerdict(e.Channel, e.VerdictTS, v)
+		k := verdictKey{e.Channel, e.VerdictTS}
+		if cur, ok := folded[k]; ok {
+			if !v.at.After(cur.at) {
+				continue
+			}
+		} else {
+			order = append(order, k)
+		}
+		folded[k] = v
+	}
+	durable := true
+	for _, k := range order {
+		if c == nil {
+			durable = false
+			break
+		}
+		v := folded[k]
+		log.Printf("inbound spool: chan=%s ts=%s verdict restored — the rejection ladder %s before the restart; every later copy is a duplicate", k.channel, k.ts, v.disposition())
+		if !c.seedVerdict(k.channel, k.ts, v) {
+			durable = false
+		}
 	}
 	n := 0
 	for _, e := range entries {
@@ -530,6 +585,10 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		n++
 	}
 	if done != nil {
+		if !durable {
+			log.Printf("inbound spool: %d verdict record(s) could not be written to the new spool — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage)", len(order))
+			return n
+		}
 		done()
 	}
 	return n

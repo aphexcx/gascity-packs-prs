@@ -279,9 +279,11 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// verdict outlives the write's eventual success (codex r12).
 	verdict := ladderVerdict{retired: true, cause: cause}
 	c.mu.Lock()
-	c.retireLocked(channel, p.inbound.ProviderMessageID, verdict, time.Now())
+	_, changed := c.retireLocked(channel, p.inbound.ProviderMessageID, verdict, time.Now())
 	c.mu.Unlock()
-	c.persistVerdict(channel, p.inbound.ProviderMessageID, verdict)
+	if changed {
+		c.persistVerdict(channel, p.inbound.ProviderMessageID, verdict)
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})

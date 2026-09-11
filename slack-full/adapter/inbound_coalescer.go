@@ -456,8 +456,15 @@ func (c *inboundCoalescer) tombstoneLocked(channel, ts string, now time.Time) {
 
 // recordVerdictLocked remembers the ladder's decision about (channel,
 // ts) and prunes expired verdicts across all channels (the tombstone
-// discipline). Caller holds c.mu.
-func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdict, now time.Time) {
+// discipline). A verdict only PROGRESSES (codex r13 finding 1): a
+// terminal verdict is never downgraded to an outstanding one — a stale
+// stripped entry staged beside its own dead-letter record cannot
+// reverse it on replay — and recording the same verdict again changes
+// nothing, so the caller writes no second durable record. The decision
+// time is kept: a record re-seeded after a restart carries its original
+// `at`, and retention counts from the decision, not the replay. Returns
+// whether the ledger changed. Caller holds c.mu.
+func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdict, now time.Time) bool {
 	if c.verdicts == nil {
 		c.verdicts = make(map[string]map[string]ladderVerdict)
 	}
@@ -476,49 +483,74 @@ func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdi
 		m = make(map[string]ladderVerdict)
 		c.verdicts[channel] = m
 	}
-	v.at = now
+	if cur, ok := m[ts]; ok {
+		if cur.retired && !v.retired {
+			return false
+		}
+		if cur.retired == v.retired && cur.delivered == v.delivered {
+			return false
+		}
+	}
+	if v.at.IsZero() {
+		v.at = now
+	}
 	m[ts] = v
+	return true
 }
 
 // retireLocked records a TERMINAL verdict for (channel, ts) and removes
-// every buffered copy of the message; returns how many. Caller holds
-// c.mu and, once unlocked, calls persistVerdict for the durable record.
-func (c *inboundCoalescer) retireLocked(channel, ts string, v ladderVerdict, now time.Time) int {
+// every buffered copy of the message. Returns how many copies left and
+// whether the ledger changed — the caller, once unlocked, calls
+// persistVerdict for the durable record only on a change, so a retire
+// followed by its park writes ONE record (codex r13 finding 3). Caller
+// holds c.mu.
+func (c *inboundCoalescer) retireLocked(channel, ts string, v ladderVerdict, now time.Time) (dropped int, changed bool) {
 	v.retired = true
-	c.recordVerdictLocked(channel, ts, v, now)
-	return c.dropBufferedCopiesLocked(channel, ts)
+	changed = c.recordVerdictLocked(channel, ts, v, now)
+	return c.dropBufferedCopiesLocked(channel, ts), changed
 }
 
 // persistVerdict writes a terminal verdict's durable record through the
-// recordVerdict hook (nil-safe). Called with c.mu NOT held: the record
-// is an fsync'd spool line. A failed write is logged once here; the
-// message is still retired in memory for this process's lifetime.
-func (c *inboundCoalescer) persistVerdict(channel, ts string, v ladderVerdict) {
+// recordVerdict hook. Called with c.mu NOT held: the record is an
+// fsync'd spool line. Returns whether the record is durable (true with
+// no hook wired: nothing was promised). A failed write is logged once
+// here; the message is still retired in memory for this process's
+// lifetime.
+func (c *inboundCoalescer) persistVerdict(channel, ts string, v ladderVerdict) bool {
 	if c.recordVerdict == nil || !v.retired {
-		return
+		return true
 	}
 	if !c.recordVerdict(channel, ts, v) {
 		log.Printf("coalesce: chan=%s ts=%s verdict record write FAILED (%s) — after a restart a delayed redelivery of this message could be admitted once as fresh bytes", channel, ts, v.disposition())
+		return false
 	}
+	return true
 }
 
 // seedVerdict is the spool replay's entry point: a verdict decided
 // before the restart — terminal (a record line) or outstanding (the
 // stripped entry's own disposition) — re-enters the ledger before any
 // copy of the message is admitted, and a terminal one is written again
-// for the next restart.
-func (c *inboundCoalescer) seedVerdict(channel, ts string, v ladderVerdict) {
+// for the next restart. A verdict already standing (a duplicate record,
+// a terminal one ahead of a stale stripped entry) changes nothing and
+// is not re-written. Returns whether the durable record, if one was
+// owed, is confirmed — the replay keeps its staged file otherwise.
+func (c *inboundCoalescer) seedVerdict(channel, ts string, v ladderVerdict) bool {
 	if c == nil || ts == "" {
-		return
+		return true
 	}
 	c.mu.Lock()
+	var changed bool
 	if v.retired {
-		c.retireLocked(channel, ts, v, time.Now())
+		_, changed = c.retireLocked(channel, ts, v, time.Now())
 	} else {
-		c.recordVerdictLocked(channel, ts, v, time.Now())
+		changed = c.recordVerdictLocked(channel, ts, v, time.Now())
 	}
 	c.mu.Unlock()
-	c.persistVerdict(channel, ts, v)
+	if !changed {
+		return true
+	}
+	return c.persistVerdict(channel, ts, v)
 }
 
 // verdictLocked returns the live ladder verdict for (channel, ts), if
@@ -571,10 +603,13 @@ func (c *inboundCoalescer) landVerdicts(channel string, delivered []pendingChann
 			v = ladderVerdict{cause: errors.New(p.stripped)}
 		}
 		v = ladderVerdict{retired: true, delivered: true, cause: v.cause}
-		if dropped := c.retireLocked(channel, ts, v, now); dropped > 0 {
+		dropped, changed := c.retireLocked(channel, ts, v, now)
+		if dropped > 0 {
 			log.Printf("coalesce: chan=%s ts=%s delivered without its attachments — %d buffered duplicate copy(ies) still carrying the refused bytes dropped, never posted", channel, ts, dropped)
 		}
-		terminal = append(terminal, landed{ts, v})
+		if changed {
+			terminal = append(terminal, landed{ts, v})
+		}
 	}
 	c.mu.Unlock()
 	for _, l := range terminal {
@@ -1846,9 +1881,11 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 	// good, and so is every other copy of it, now or later.
 	verdict := ladderVerdict{retired: true, cause: cause}
 	c.mu.Lock()
-	dropped := c.retireLocked(channel, ts, verdict, time.Now())
+	dropped, changed := c.retireLocked(channel, ts, verdict, time.Now())
 	c.mu.Unlock()
-	c.persistVerdict(channel, ts, verdict)
+	if changed {
+		c.persistVerdict(channel, ts, verdict)
+	}
 	if dropped > 0 {
 		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
 	}
