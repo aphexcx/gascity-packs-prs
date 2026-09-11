@@ -52,3 +52,53 @@ func TestInPlaceCompactionKeepsTheJournalWhenTheTempFileCannotBeSynced(t *testin
 		t.Fatalf("the failed temp file is removed, found %v", entries)
 	}
 }
+
+// A recovery failure (a spool file the adapter wrote and now cannot
+// read) closes the coalescer to admissions and is returned to the
+// caller (r20 finding 2): returned as an empty replay, startup went on
+// with an empty ledger and a delayed Slack copy of a message whose
+// stripped disposition sat in the unreadable file entered delivery with
+// its original attachments. main() refuses to start on the error.
+func TestRecoveryFailureClosesAdmissions(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	plainA := testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	strippedA := withholdAttachments(plainA, permanent422())
+	strippedA.isolate, strippedA.attempts = true, 1
+	if !spool.spillBatch("C1", []pendingChannelInbound{plainA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	if !spool.spillBatch("C1", []pendingChannelInbound{strippedA}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Chmod(spool.path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(spool.path, 0o600) })
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return nil })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.recordVerdict = spool.recordVerdict
+	n, err := spool.replay(c)
+	if err == nil || n != 0 {
+		t.Fatalf("recovery must fail loudly (n=%d err=%v)", n, err)
+	}
+	// A delayed Slack copy of A arrives after the failed recovery.
+	c.enqueue("C1", plainA)
+	c.flushAheadOf("C1", "")
+	time.Sleep(60 * time.Millisecond)
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("nothing may enter delivery after a failed recovery — its disposition is in the unreadable spool")
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("nothing may POST after a failed recovery: %v", got)
+	}
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if !closed {
+		t.Fatal("the coalescer is closed to admissions")
+	}
+}

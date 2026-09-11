@@ -398,9 +398,9 @@ func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 // a process death mid-append truncates at most the final one — are
 // tolerated but logged LOUDLY as loss: a truncated line can only mean
 // crash-mid-spill of that batch (round 3, 1c).
-func (s *inboundSpool) consume() ([]spooledInbound, func()) {
+func (s *inboundSpool) consume() ([]spooledInbound, func(), error) {
 	if s == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -428,7 +428,7 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 				salvaged, serr := readSpoolLines(s.path, true)
 				if serr != nil {
 					log.Printf("inbound spool: %s cannot be read after the failed merge (%v) — the staged file's replay is DEFERRED to the next startup: its entries may depend on dispositions in the unread spool; both files are left in place", s.path, serr)
-					return nil, nil
+					return nil, nil, fmt.Errorf("spool %q unreadable after a failed merge into %q: %w", s.path, rp, serr)
 				}
 				salvagedDeletions = salvaged
 			} else if err := os.Remove(s.path); err != nil {
@@ -448,10 +448,11 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 	}
 	entries, err := readSpoolLines(readPath, false)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("inbound spool: %s unreadable (%v) — nothing replayed", readPath, err)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
 		}
-		return nil, nil
+		log.Printf("inbound spool: %s unreadable (%v) — nothing replayed; its dispositions cannot be rebuilt", readPath, err)
+		return nil, nil, fmt.Errorf("spool %q unreadable: %w", readPath, err)
 	}
 	entries = append(entries, salvagedDeletions...)
 	cleanup := func() {
@@ -465,7 +466,7 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 			log.Printf("inbound spool: remove %s after replay: %v (the next restart may replay duplicates; gc dedup keys bound the damage)", readPath, err)
 		}
 	}
-	return entries, cleanup
+	return entries, cleanup, nil
 }
 
 // compactToRecordsLocked rewrites the spool in place to its verdict
@@ -482,7 +483,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	// a partial or empty set, and an empty replacement was renamed over
 	// the journal). A corrupt or oversized LINE is still dropped as the
 	// loss it already was.
-	records, rerr := readSpoolLines(s.path, true)
+	records, rerr := readSpoolLines(s.path, false)
 	if rerr != nil {
 		log.Printf("inbound spool: compacting %s in place FAILED (read: %v) — left as it is; its messages replay again next startup", s.path, rerr)
 		return
@@ -490,7 +491,20 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	type key struct{ channel, ts string }
 	newest := make(map[key]spooledInbound)
 	var order []key
+	// A Refused entry is a parked payload's durable home until its
+	// dead-letter write confirms (codex r20 finding 1): kept, once per
+	// (channel, id), beside the verdict records.
+	var refused []spooledInbound
+	seenRefused := make(map[key]bool)
 	for _, e := range records {
+		if e.Refused != "" && e.VerdictTS == "" {
+			k := key{e.Channel, e.Inbound.ProviderMessageID}
+			if !seenRefused[k] {
+				seenRefused[k] = true
+				refused = append(refused, e)
+			}
+			continue
+		}
 		if e.VerdictTS == "" {
 			continue
 		}
@@ -512,9 +526,15 @@ func (s *inboundSpool) compactToRecordsLocked() {
 	}
 	tmpPath := tmp.Name()
 	w := bufio.NewWriter(tmp)
+	kept := make([]spooledInbound, 0, len(order)+len(refused))
 	for _, k := range order {
-		line, merr := json.Marshal(newest[k])
+		kept = append(kept, newest[k])
+	}
+	kept = append(kept, refused...)
+	for _, e := range kept {
+		line, merr := json.Marshal(e)
 		if merr != nil {
+			log.Printf("inbound spool: compacting %s: a record could not be encoded and is dropped: %v", s.path, merr)
 			continue
 		}
 		w.Write(line)
@@ -539,7 +559,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		log.Printf("inbound spool: compacting %s in place FAILED (%v) — left as it is; its messages replay again next startup", s.path, err)
 		return
 	}
-	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s)", s.path, len(order))
+	log.Printf("inbound spool: %s replayed in place and compacted to %d verdict record(s) and %d parked refusal(s)", s.path, len(order), len(refused))
 }
 
 // appendFileTo appends src's bytes to the end of dst, fsyncing dst
@@ -693,7 +713,29 @@ func appendFileTo(dst, src string) error {
 // the channel's next real delivery, so replay can never produce the
 // solo reaction wake the side lane exists to prevent.
 func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
-	entries, done := s.consume()
+	n, _ := s.replay(c)
+	return n
+}
+
+// replay is replayInto with its verdict: a recovery FAILURE (a spool
+// file the adapter wrote and now cannot read — the ledger of refused
+// messages cannot be rebuilt) is returned to the caller, and the
+// coalescer is CLOSED to admissions first (codex r20 finding 2): a
+// delayed Slack copy of a message whose stripped disposition sits in
+// the unreadable file would otherwise enter delivery with its original
+// attachments. main() refuses to start on it; the files stay for the
+// operator.
+func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
+	entries, done, cerr := s.consume()
+	if cerr != nil {
+		if c != nil {
+			c.mu.Lock()
+			c.closed = true
+			c.mu.Unlock()
+		}
+		log.Printf("inbound spool: RECOVERY FAILED (%v) — admissions are closed: nothing delivers until the spool files can be read; fix them and restart", cerr)
+		return 0, cerr
+	}
 	// Deletion records apply to every message entry in the file
 	// regardless of line order, and seed the in-memory tombstones so a
 	// Slack redelivery of the same message after replay is caught too.
@@ -793,9 +835,9 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		ts := e.Inbound.ProviderMessageID
 		switch {
 		case e.Refused != "":
-			if !c.seedVerdict(e.Channel, ts, ladderVerdict{retired: true, cause: errors.New(e.Refused)}) {
-				durable = false
-			}
+			// In memory only: the record follows the dead-letter write
+			// (codex r20 finding 1); this entry's own line is the payload.
+			c.seedRefused(e.Channel, ts, errors.New(e.Refused))
 		case e.Stripped != "":
 			c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)})
 		case e.Isolate:
@@ -817,13 +859,18 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 			log.Printf("inbound spool: chan=%s ts=%s deleted before restart — replayed as a deletion notice", e.Channel, e.Inbound.ProviderMessageID)
 		}
 		if e.Refused != "" {
+			if _, written := folded[verdictKey{e.Channel, e.Inbound.ProviderMessageID}]; written {
+				// A record stands only once the dead-letter write
+				// confirmed (codex r20 finding 1): this line is the
+				// payload's spool copy from before that, now redundant.
+				log.Printf("inbound spool: chan=%s ts=%s was refused before restart and its dead-letter write confirmed (record present) — spool copy dropped", e.Channel, e.Inbound.ProviderMessageID)
+				continue
+			}
 			// Retired before the restart; only its dead-letter write is
-			// owed. Parking keeps the refused bytes out of delivery.
+			// owed. Parking keeps the refused bytes out of delivery, and
+			// re-spools the payload so the staged file may go.
 			p.attempts = e.Attempts
 			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — parked for its dead-letter write, not re-posted", e.Channel, e.Inbound.ProviderMessageID, e.Refused)
-			// The Refused line was this retirement's only durable state:
-			// the park's record must confirm before the staged file may
-			// go (codex r14 finding 3).
 			if !c.parkDeadLetter(e.Channel, p, errors.New(e.Refused)) {
 				durable = false
 			}
@@ -850,10 +897,10 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 	}
 	if done != nil {
 		if !durable {
-			log.Printf("inbound spool: a verdict record could not be written to the new spool (%d restored, plus any re-parked refusal) — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage, a re-parked refusal is parked once)", len(order))
-			return n
+			log.Printf("inbound spool: a verdict record or a re-parked refusal could not be written to the new spool (%d restored) — the staged file is RETAINED for the next startup (its messages replay again then; gc dedup keys bound the damage, a re-parked refusal is parked once)", len(order))
+			return n, nil
 		}
 		done()
 	}
-	return n
+	return n, nil
 }

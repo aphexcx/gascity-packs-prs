@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -479,7 +480,7 @@ func TestSpoolCarriesIsolateFlag(t *testing.T) {
 	if !s.spillBatch("C1", []pendingChannelInbound{p, testPending("C1", "2.0", "plain")}) {
 		t.Fatal("spill must confirm")
 	}
-	entries, done := s.consume()
+	entries, done, _ := s.consume()
 	defer done()
 	if len(entries) != 2 {
 		t.Fatalf("want 2 spooled entries, got %d", len(entries))
@@ -2034,13 +2035,17 @@ func TestVerdictRecordsAreCompactedAndReplayStreams(t *testing.T) {
 	deliver1, _ := recordingDeliver(func([]pendingChannelInbound) error { return permanent422() })
 	c1 := newInboundCoalescer(20*time.Millisecond, nil)
 	c1.deliver = deliver1
-	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return false } // the write fails: retire, then park
+	var writes int32
+	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { // the first write fails: retire, park, then the retry confirms
+		return atomic.AddInt32(&writes, 1) > 1
+	}
+	c1.spill = spool.spillBatch
 	c1.recordVerdict = spool.recordVerdict
 	c1.enqueue("C1", testPending("C1", "1.0", "poison"))
-	waitFor(t, "the retirement's record", func() bool { return countVerdictLines(t, spool.path, "1.0") >= 1 })
-	time.Sleep(50 * time.Millisecond) // the park follows the retire; it must not write a second record
+	waitFor(t, "the retirement's record (written once the dead-letter write confirms)", func() bool { return countVerdictLines(t, spool.path, "1.0") >= 1 })
+	time.Sleep(50 * time.Millisecond) // the park preceded the confirmed write; it must not have written a second record
 	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
-		t.Fatalf("one record per terminal decision (retire + park), got %d", n)
+		t.Fatalf("one record per terminal decision (retire + park + confirmed write), got %d", n)
 	}
 	// Duplicate and expired records accumulate between restarts...
 	for i := 0; i < 4; i++ {
@@ -2224,22 +2229,31 @@ func TestReplayKeepsTheStagingFileWhenAReparkedRefusalCannotBeRecorded(t *testin
 		defer c.mu.Unlock()
 		return len(c.parkedDeadLetters["C1"])
 	}
-	// Startup 1: the dead-letter write succeeds, the verdict record cannot be written.
+	// Startup 1: the re-parked refusal cannot be re-spooled (its payload
+	// would live in memory only), so the staged file — its only durable
+	// copy — is retained; the dead-letter write then confirms and earns
+	// the record (codex r20 finding 1: the record follows the write).
 	c1 := newInboundCoalescer(20*time.Millisecond, nil)
 	c1.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
-	c1.recordVerdict = func(string, string, ladderVerdict) bool { return false }
+	c1.spill = func(string, []pendingChannelInbound) bool { return false }
+	c1.recordVerdict = spool.recordVerdict
 	spool.replayInto(c1)
 	if n := parked(c1); n != 1 {
 		t.Fatalf("a duplicate Refused line parks the message once, got %d parked", n)
 	}
 	if _, err := os.Stat(spool.replayingPath()); err != nil {
-		t.Fatalf("the staged file must be retained while the re-parked refusal's record is not durable: %v", err)
+		t.Fatalf("the staged file must be retained while the re-parked refusal's payload is not durable elsewhere: %v", err)
 	}
-	waitFor(t, "the parked dead-letter write", func() bool { return parked(c1) == 0 })
-	// Startup 2: the disk writable again — the retained file re-parks
-	// the refusal, its record lands, and the staged file goes.
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 0 {
+		t.Fatalf("no record before the dead-letter write confirms, got %d", n)
+	}
+	waitFor(t, "the parked dead-letter write and its record", func() bool { return parked(c1) == 0 && countVerdictLines(t, spool.path, "1.0") == 1 })
+	// Startup 2: the retained staged file merges behind the new spool's
+	// record — the refusal's write confirmed, so its spool copy is
+	// dropped, nothing is parked, and the staged file goes.
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
 	c2.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	spool.replayInto(c2)
 	if !c2.onLadder("C1", "1.0") {
@@ -2248,7 +2262,9 @@ func TestReplayKeepsTheStagingFileWhenAReparkedRefusalCannotBeRecorded(t *testin
 	if _, err := os.Stat(spool.replayingPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the staged file is removed once the record is durable: %v", err)
 	}
-	waitFor(t, "the second startup's parked write", func() bool { return parked(c2) == 0 })
+	if n := parked(c2); n != 0 {
+		t.Fatalf("a refusal whose write confirmed (record present) is not parked again, got %d", n)
+	}
 	// Startup 3: only the record remains; a redelivery is a duplicate.
 	c3 := newInboundCoalescer(time.Hour, nil)
 	c3.recordVerdict = spool.recordVerdict
@@ -2919,4 +2935,55 @@ func TestVerdictRecordWriteFailureLogsOncePerDistinctFailure(t *testing.T) {
 	if n := strings.Count(read(), "verdict record writes recovered"); n != 1 {
 		t.Fatalf("one recovery line, got %d: %q", n, read())
 	}
+}
+
+// --- codex r20 ---------------------------------------------------------------
+
+// The record of a dead-letter verdict FOLLOWS the dead-letter write
+// (r20 finding 1): written first, a crash between the two left a record
+// saying "dead-lettered" beside a staged copy the next startup dropped
+// as retired, while no file ever received the payload. While the write
+// is owed the parked entry's Refused spool line is the payload's
+// durable home, written at park time, not at shutdown.
+func TestRecordFollowsTheDeadLetterWrite(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	var mu sync.Mutex
+	fail := true
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return !fail
+	}
+	c.charge("C1", testPending("C1", "1.0", "poison"), permanent422())
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 0 {
+		t.Fatalf("no record before the payload is in the dead-letter file, got %d", n)
+	}
+	data, err := os.ReadFile(spool.path)
+	if err != nil || !bytes.Contains(data, []byte(`"refused":`)) {
+		t.Fatalf("the parked payload must be spooled at park time as its durable home (err=%v): %q", err, data)
+	}
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("retired in memory regardless")
+	}
+	// A crash here: the next startup re-parks the payload from its spool
+	// line instead of dropping it as retired.
+	c2 := newInboundCoalescer(time.Hour, nil)
+	c2.spill = spool.spillBatch
+	c2.recordVerdict = spool.recordVerdict
+	c2.deadLetter = func(string, []pendingChannelInbound, error) bool { return true }
+	spool.replayInto(c2)
+	c2.mu.Lock()
+	parked := len(c2.parkedDeadLetters["C1"])
+	c2.mu.Unlock()
+	if parked != 1 || !c2.onLadder("C1", "1.0") {
+		t.Fatalf("the refused payload must be parked again after a crash before its write (parked=%d)", parked)
+	}
+	// Back in the first process: the write confirms, and only then the record.
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	waitFor(t, "the record once the dead-letter write confirmed", func() bool { return countVerdictLines(t, spool.path, "1.0") == 1 })
 }

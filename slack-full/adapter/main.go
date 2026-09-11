@@ -1867,7 +1867,14 @@ func main() {
 	// their ADMISSION, so the startup watermark backfill can never
 	// re-fetch these; the spool is their only redelivery path. Runs
 	// before the listeners start, after gc registration.
-	if n := cfg.inboundSpool.replayInto(cfg.coalescer); n > 0 {
+	n, rerr := cfg.inboundSpool.replay(cfg.coalescer)
+	if rerr != nil {
+		// The ledger of refused messages could not be rebuilt (codex r20
+		// finding 2): running would let a delayed redelivery re-post
+		// refused bytes. The files are left for the operator.
+		log.Fatalf("inbound spool: recovery failed — refusing to start until the spool files under %q can be read: %v", cfg.coalesceSpoolPath, rerr)
+	}
+	if n > 0 {
 		log.Printf("inbound spool: re-buffered %d item(s) the previous shutdown could not deliver", n)
 	}
 

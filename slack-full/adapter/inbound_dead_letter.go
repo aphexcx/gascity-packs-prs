@@ -229,6 +229,10 @@ func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInb
 type parkedDeadLetter struct {
 	p     pendingChannelInbound
 	cause error
+	// spilled: the entry's Refused spool line is on disk — the payload's
+	// durable home until the dead-letter write confirms (codex r20
+	// finding 1); the shutdown flush spills only what is not.
+	spilled bool
 }
 
 // deadLetterRetryBase is the first retry delay for a failed dead-letter
@@ -266,15 +270,11 @@ func (c *inboundCoalescer) armDeadLetterRetryLocked(channel string) (time.Durati
 // goes straight to the spool — nothing may sit in memory past the
 // final snapshot.
 //
-// Returns whether the retirement's durable record is confirmed: true
-// when the record already stands (charge() persisted it a moment ago; a
-// duplicate Refused line in one replay), false when one is owed and the
-// write failed (the durable-write retry timer then owns it, codex r15
-// finding 2). The replay keeps its staged file on false (codex r14
-// finding 3): a Refused entry's spool line was its only durable state,
-// and once the parked write succeeds and the staged file is gone,
-// nothing would remember the verdict across the next restart — a
-// delayed redelivery would be admitted as fresh bytes.
+// Returns whether the parked payload is durable on disk (its Refused
+// spool line, written here; true for a duplicate already parked and for
+// a post-close straggler the spool took). The replay keeps its staged
+// file on false (codex r14 finding 3, r20 finding 1): the staged line
+// was the payload's only durable copy.
 func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInbound, cause error) bool {
 	// The terminal disposition travels WITH the entry: any spill from
 	// here on (post-close straggler, the shutdown backstop) writes a
@@ -288,16 +288,18 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 	// after the restart entered delivery as a plain copy and posted the
 	// refused bytes). A park from the replay persists it too, so the
 	// verdict outlives the write's eventual success (codex r12).
-	verdict := ladderVerdict{retired: true, cause: cause}
+	// No record yet (codex r20 finding 1): the verdict stands in memory
+	// with its write pending, and the record is written by
+	// deadLetterWritten once the payload is in the dead-letter file. A
+	// record already standing (the write confirmed before a restart) is
+	// left as it is.
+	verdict := ladderVerdict{retired: true, cause: cause, pendingWrite: true}
 	ts := p.inbound.ProviderMessageID
 	c.mu.Lock()
 	c.retireLocked(channel, ts, verdict, time.Now())
-	c.mu.Unlock()
-	durable := c.persistVerdict(channel, ts)
-	c.mu.Lock()
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
-		return durable
+		return true
 	}
 	for _, e := range c.parkedDeadLetters[channel] {
 		if e.p.inbound.ProviderMessageID == ts {
@@ -306,10 +308,27 @@ func (c *inboundCoalescer) parkDeadLetter(channel string, p pendingChannelInboun
 			// file, not one per copy.
 			c.mu.Unlock()
 			log.Printf("coalesce: chan=%s ts=%s already parked for its dead-letter write — duplicate copy dropped", channel, ts)
-			return durable
+			return true
 		}
 	}
-	c.parkedDeadLetters[channel] = append(c.parkedDeadLetters[channel], parkedDeadLetter{p: p, cause: cause})
+	spill := c.spill
+	c.mu.Unlock()
+	// The payload's durable home while the write is owed is its Refused
+	// spool line, written NOW — not at shutdown: a crash before then
+	// would lose the only copy of an acknowledged message (codex r20
+	// finding 1). The next startup re-parks it (or drops it once the
+	// record says the write confirmed). Returns whether that copy is on
+	// disk — the replay keeps its staged file otherwise.
+	durable := spill != nil && spill(channel, []pendingChannelInbound{p})
+	if !durable {
+		log.Printf("coalesce: chan=%s ts=%s the refused message could not be spooled while its dead-letter write is owed — it lives in memory only until the write or the shutdown spill succeeds", channel, ts)
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return durable
+	}
+	c.parkedDeadLetters[channel] = append(c.parkedDeadLetters[channel], parkedDeadLetter{p: p, cause: cause, spilled: durable})
 	parked := len(c.parkedDeadLetters[channel])
 	if c.deadLetterWriteFailures[channel] < 1 {
 		c.deadLetterWriteFailures[channel] = 1
@@ -354,6 +373,7 @@ func (c *inboundCoalescer) retryParkedDeadLetters(channel string) {
 		c.applyDeletionTombstones(channel, single)
 		e.p = single[0]
 		if hook(channel, single, e.cause) {
+			c.deadLetterWritten(channel, e.p.inbound.ProviderMessageID) // the payload is in the file: the record follows
 			continue
 		}
 		kept = append(kept, e)
@@ -424,7 +444,11 @@ func (c *inboundCoalescer) flushParkedDeadLetters() {
 			single := []pendingChannelInbound{e.p}
 			c.applyDeletionTombstones(channel, single) // codex r9 finding 3; see retryParkedDeadLetters
 			if hook != nil && hook(channel, single, e.cause) {
+				c.deadLetterWritten(channel, e.p.inbound.ProviderMessageID)
 				continue
+			}
+			if e.spilled {
+				continue // its Refused line is already on disk (parked with a spill, codex r20 finding 1)
 			}
 			failed = append(failed, single[0])
 		}

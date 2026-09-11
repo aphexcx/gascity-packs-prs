@@ -374,6 +374,15 @@ type ladderVerdict struct {
 	// write was logged and forgotten; persistVerdict now writes whatever
 	// is owed, and the channel's durable-write retry timer retries it).
 	durable bool
+	// pendingWrite marks a dead-letter verdict whose PAYLOAD is not yet
+	// in the dead-letter file (codex r20 finding 1): the record must
+	// not exist before the payload does — a crash between the two left
+	// a record saying "dead-lettered" beside a staged copy the next
+	// startup dropped as retired, and no file ever received it. The
+	// record is written when the write confirms (deadLetterWritten);
+	// until then the parked entry's spool line is the payload's durable
+	// home. Never set on a delivered verdict.
+	pendingWrite bool
 }
 
 // disposition names the verdict for a log line.
@@ -574,6 +583,13 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 	c.mu.Lock()
 	v, ok := c.verdicts[channel][ts]
 	hook := c.recordVerdict
+	if ok && v.pendingWrite {
+		// The payload is not in the dead-letter file yet: no record
+		// before it (codex r20 finding 1). The parked write's own retry
+		// timer owns this; deadLetterWritten lifts the mark.
+		c.mu.Unlock()
+		return false
+	}
 	if ok && v.retired && !v.durable && hook == nil {
 		// No hook wired (bare configs): nothing was promised, nothing is
 		// owed — marked durable so the retry tail's recount (codex r16
@@ -611,11 +627,39 @@ func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
 func (c *inboundCoalescer) owedVerdictsLocked(channel string) int {
 	n := 0
 	for _, v := range c.verdicts[channel] {
-		if v.retired && !v.durable {
+		if v.retired && !v.durable && !v.pendingWrite {
 			n++
 		}
 	}
 	return n
+}
+
+// deadLetterWritten lifts (channel, ts)'s pending-write mark — its
+// payload is now in the dead-letter file — and writes the record that
+// the payload's durability earned. Called with c.mu NOT held.
+func (c *inboundCoalescer) deadLetterWritten(channel, ts string) {
+	c.mu.Lock()
+	if v, ok := c.verdicts[channel][ts]; ok && v.pendingWrite {
+		v.pendingWrite = false
+		c.verdicts[channel][ts] = v
+	}
+	c.mu.Unlock()
+	c.persistVerdict(channel, ts)
+}
+
+// seedRefused seeds the replay's in-memory terminal verdict for a
+// Refused entry — dead-lettered before the restart, its write still
+// owed — WITHOUT a record: the entry's spool line is the payload's
+// durable home until the write confirms (codex r20 finding 1). A
+// record already standing (the write confirmed before the restart) is
+// left as it is.
+func (c *inboundCoalescer) seedRefused(channel, ts string, cause error) {
+	if c == nil || ts == "" {
+		return
+	}
+	c.mu.Lock()
+	c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true}, time.Now())
+	c.mu.Unlock()
 }
 
 // persistOwedVerdicts writes every terminal verdict of the channel whose
@@ -626,7 +670,7 @@ func (c *inboundCoalescer) persistOwedVerdicts(channel string) int {
 	c.mu.Lock()
 	var owed []string
 	for ts, v := range c.verdicts[channel] {
-		if v.retired && !v.durable {
+		if v.retired && !v.durable && !v.pendingWrite {
 			owed = append(owed, ts)
 		}
 	}
@@ -652,7 +696,7 @@ func (c *inboundCoalescer) channelsOwingVerdicts() []string {
 	var out []string
 	for channel, m := range c.verdicts {
 		for _, v := range m {
-			if v.retired && !v.durable {
+			if v.retired && !v.durable && !v.pendingWrite {
 				out = append(out, channel)
 				break
 			}
@@ -2066,17 +2110,21 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 	// Retired: dead-lettered, parked for the write, or lost for want of a
 	// sink — in every case the message is out of the delivery path for
 	// good, and so is every other copy of it, now or later.
-	verdict := ladderVerdict{retired: true, cause: cause}
+	// Retired in memory first (every other copy leaves now), the
+	// durable record only AFTER the payload is in the dead-letter file
+	// (codex r20 finding 1): a record must never say "dead-lettered"
+	// about bytes no file holds.
+	verdict := ladderVerdict{retired: true, cause: cause, pendingWrite: true}
 	c.mu.Lock()
 	dropped, _ := c.retireLocked(channel, ts, verdict, time.Now())
 	c.mu.Unlock()
-	c.persistVerdict(channel, ts)
 	if dropped > 0 {
 		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
 	}
 	if c.deadLetter == nil {
 		log.Printf("coalesce: LOSS chan=%s ts=%s rejected %d times and no dead-letter sink is wired — dropped: %v",
 			channel, ts, p.attempts, cause)
+		c.deadLetterWritten(channel, ts) // the loss is the disposition; a redelivery is still a duplicate
 		return
 	}
 	if !c.deadLetter(channel, []pendingChannelInbound{p}, cause) {
@@ -2088,6 +2136,7 @@ func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause
 		c.parkDeadLetter(channel, p, cause)
 		return
 	}
+	c.deadLetterWritten(channel, ts)
 	log.Printf("coalesce: chan=%s ts=%s dead-lettered after %d rejected deliveries — later messages in this channel no longer wait behind it: %v",
 		channel, p.inbound.ProviderMessageID, p.attempts, cause)
 }
