@@ -2590,3 +2590,121 @@ func TestOwedRecordRetiredDuringTheRetryPassIsNotStranded(t *testing.T) {
 		t.Fatalf("caught up: nothing owed (%d), no retry armed (%v)", owed, armed)
 	}
 }
+
+// --- codex r17 ---------------------------------------------------------------
+
+// Every disposition the spool carries is seeded before any entry is
+// admitted (r17 finding 1): a retained staged file can hold a PLAIN copy
+// of a message ahead of the newer spool's stripped or isolated copy, and
+// admitting the plain copy first let a cap flush post the refused bytes
+// before the disposition line was reached. Seeded first, the plain copy
+// adopts the ladder's copy at its own admission.
+func TestReplaySeedsEveryPersistedDispositionBeforeAdmitting(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	plainA := testPendingWithAttachment("C1", "1.0", "A with a voice memo", "/tmp/x/memo.m4a")
+	strippedA := withholdAttachments(plainA, permanent422())
+	strippedA.isolate, strippedA.attempts = true, 1
+	plainC := testPending("C1", "3.0", "C, a probe's twin")
+	isolatedC := plainC
+	isolatedC.isolate = true
+	// The older staged file (plain copies) replays ahead of the newer
+	// spool (the dispositions), oldest first.
+	if !spool.spillBatch("C1", []pendingChannelInbound{plainA, plainC}) {
+		t.Fatal("spill must confirm")
+	}
+	if err := os.Rename(spool.path, spool.replayingPath()); err != nil {
+		t.Fatal(err)
+	}
+	if !spool.spillBatch("C1", []pendingChannelInbound{strippedA, isolatedC}) {
+		t.Fatal("spill must confirm")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, p := range c.pending["C1"] {
+		switch p.inbound.ProviderMessageID {
+		case "1.0":
+			if len(p.inbound.Attachments) != 0 || !p.isolate {
+				t.Fatalf("a copy of A in the buffer still carries its attachments (%d) or is not isolated — the plain copy was admitted before A's stripped disposition was seeded", len(p.inbound.Attachments))
+			}
+		case "3.0":
+			if !p.isolate {
+				t.Fatal("a copy of C in the buffer is plain — admitted before C's isolated disposition was seeded")
+			}
+		}
+	}
+	if !c.pendingContainsLocked("C1", "1.0") || !c.pendingContainsLocked("C1", "3.0") {
+		t.Fatal("both messages are still owed their delivery")
+	}
+}
+
+// A write that died mid-line leaves an unterminated prefix; the next
+// append must start on a record boundary (r17 finding 2), or the retry
+// of a verdict record fuses with the prefix into one corrupt line —
+// confirmed durable, lost at startup, and the refused bytes admitted
+// again.
+func TestAppendSealsAPartialLineBeforeWriting(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+		t.Fatal("record must confirm")
+	}
+	f, err := os.OpenFile(spool.path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString(`{"channel":"C1","verdict_ts":"2.0","verd`) // ENOSPC mid-record
+	f.Close()
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	if !spool.recordVerdict("C1", "3.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+		t.Fatal("the retry must confirm")
+	}
+	if !strings.Contains(read(), "ends mid-line") {
+		t.Fatalf("the seal is logged: %q", read())
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.recordVerdict = spool.recordVerdict
+	spool.replayInto(c)
+	if !c.onLadder("C1", "1.0") {
+		t.Fatal("the record before the partial line replays")
+	}
+	if !c.onLadder("C1", "3.0") {
+		t.Fatal("the record appended after a partial line must replay — it was confirmed durable")
+	}
+	if c.onLadder("C1", "2.0") {
+		t.Fatal("the partial record is the loss, dropped as its own corrupt line")
+	}
+	if !strings.Contains(read(), "CORRUPT LINE") {
+		t.Fatalf("the partial line is dropped loudly: %q", read())
+	}
+}
+
+// A read error during the in-place compaction aborts it with the
+// journal untouched (r17 finding 3): the salvage reader swallowed the
+// error and returned nothing, and an empty replacement was renamed over
+// the journal.
+func TestCompactionAbortsOnAReadError(t *testing.T) {
+	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
+	if !spool.recordVerdict("C1", "1.0", ladderVerdict{retired: true, cause: permanent422(), at: time.Now()}) {
+		t.Fatal("record must confirm")
+	}
+	if err := os.Chmod(spool.path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	read, cleanup := captureLog(t)
+	defer cleanup()
+	spool.mu.Lock()
+	spool.compactToRecordsLocked()
+	spool.mu.Unlock()
+	if err := os.Chmod(spool.path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(read(), "FAILED (read:") {
+		t.Fatalf("the abort is logged: %q", read())
+	}
+	if n := countVerdictLines(t, spool.path, "1.0"); n != 1 {
+		t.Fatalf("the journal must be untouched after a read error, got %d record(s)", n)
+	}
+}

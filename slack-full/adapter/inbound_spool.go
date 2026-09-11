@@ -272,11 +272,34 @@ func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("mkdir %q: %w", filepath.Dir(s.path), err)
 	}
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open %q: %w", s.path, err)
 	}
 	defer f.Close()
+	// Record boundary (codex r17 finding 2): a write that died mid-line
+	// (ENOSPC, a crash) leaves an unterminated prefix, and appending the
+	// next record straight after it would fuse the two into one corrupt
+	// line — the retry of a verdict record would then be confirmed
+	// durable and lost at startup. A file that does not end on a newline
+	// gets one first: the partial tail becomes its own corrupt line
+	// (dropped loudly at replay, as it already was), and this write
+	// starts on a boundary. The check reads one byte (appendFileTo's
+	// seal, applied to every append).
+	if st, serr := f.Stat(); serr != nil {
+		return fmt.Errorf("stat %q: %w", s.path, serr)
+	} else if size := st.Size(); size > 0 {
+		tail := make([]byte, 1)
+		if _, rerr := f.ReadAt(tail, size-1); rerr != nil {
+			return fmt.Errorf("read tail of %q: %w", s.path, rerr)
+		}
+		if tail[0] != '\n' {
+			log.Printf("inbound spool: %s ends mid-line — an earlier write died inside a record; sealing the partial line before appending so this record cannot fuse with it (the partial line is dropped LOUDLY as loss at replay)", s.path)
+			if _, werr := f.Write([]byte{'\n'}); werr != nil {
+				return fmt.Errorf("seal partial tail of %q: %w", s.path, werr)
+			}
+		}
+	}
 	// Every entry is encoded and measured BEFORE anything is written:
 	// an entry over the line cap would be dropped by the replay, so it
 	// is refused here, where the caller still owns it and logs the loss
@@ -402,7 +425,16 @@ func (s *inboundSpool) consume() ([]spooledInbound, func()) {
 // as it is — its messages replay again next startup, gc dedup keys
 // bound the damage, and its records are still there. Caller holds s.mu.
 func (s *inboundSpool) compactToRecordsLocked() {
-	records := readRecords(s.path)
+	// A read error aborts the compaction with the journal untouched
+	// (codex r17 finding 3: the error-swallowing salvage reader returned
+	// a partial or empty set, and an empty replacement was renamed over
+	// the journal). A corrupt or oversized LINE is still dropped as the
+	// loss it already was.
+	records, rerr := readSpoolLines(s.path, true)
+	if rerr != nil {
+		log.Printf("inbound spool: compacting %s in place FAILED (read: %v) — left as it is; its messages replay again next startup", s.path, rerr)
+		return
+	}
 	type key struct{ channel, ts string }
 	newest := make(map[key]spooledInbound)
 	var order []key
@@ -663,6 +695,30 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 			durable = false
 		}
 	}
+	// Every disposition an ENTRY carries is seeded before any entry is
+	// admitted too (codex r17 finding 1): a retained staged file can hold
+	// a plain copy of A ahead of the newer spool's stripped (or refused,
+	// or isolated) copy, and admitting the plain copy first let a cap
+	// flush post the refused bytes before the disposition was reached.
+	// Seeded, the plain copy adopts the ladder's copy (or is dropped) at
+	// its own admission; the disposition lines below then find their
+	// verdict standing.
+	for _, e := range entries {
+		if e.DeletedTS != "" || e.VerdictTS != "" || e.Reaction || c == nil {
+			continue
+		}
+		ts := e.Inbound.ProviderMessageID
+		switch {
+		case e.Refused != "":
+			if !c.seedVerdict(e.Channel, ts, ladderVerdict{retired: true, cause: errors.New(e.Refused)}) {
+				durable = false
+			}
+		case e.Stripped != "":
+			c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)})
+		case e.Isolate:
+			c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: true, attempts: e.Attempts}))
+		}
+	}
 	n := 0
 	for _, e := range entries {
 		if e.DeletedTS != "" || e.VerdictTS != "" {
@@ -700,12 +756,11 @@ func (s *inboundSpool) replayInto(c *inboundCoalescer) int {
 		if e.Stripped != "" {
 			// The stripped retry, owed or in flight at shutdown: its
 			// disposition is the ledger's outstanding verdict for the
-			// message, seeded before the copy is admitted so a later
-			// copy adopts it and the landing settles it (codex r12
-			// finding 1).
+			// message, seeded above before any copy was admitted so an
+			// earlier or later copy adopts it and the landing settles it
+			// (codex r12 finding 1, r17 finding 1).
 			p.attempts = e.Attempts
 			log.Printf("inbound spool: chan=%s ts=%s was refused before restart (%s) — replayed as the stripped retry, its verdict restored", e.Channel, e.Inbound.ProviderMessageID, e.Stripped)
-			c.seedVerdict(e.Channel, e.Inbound.ProviderMessageID, ladderVerdict{cause: errors.New(e.Stripped)})
 		}
 		c.enqueue(e.Channel, p)
 		n++
