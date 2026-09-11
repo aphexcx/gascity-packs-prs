@@ -951,3 +951,97 @@ func TestUrgentWaiterBehindFailingPostHonorsBackoff(t *testing.T) {
 			c.inBackoffLocked("C1"), c.pendingContainsLocked("C1", "1.0"), c.urgentWaiting["C1"])
 	}
 }
+
+// --- codex r7 on gp-sgu7 ------------------------------------------------------
+
+// A deferred flush-ahead still withholds the urgent message's buffered
+// twin (finding 1): left buffered, a timer firing during the urgent
+// POST would deliver it beside the urgent copy. The rest of the buffer
+// keeps its timer generation and deadline.
+func TestDeferredFlushAheadStillWithholdsTheTwin(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	c.enqueue("C1", testPending("C1", "1.0", "older"))
+	c.enqueue("C1", testPending("C1", "9.0", "the urgent message's buffered twin"))
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10
+	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
+	if t0, ok := c.timers["C1"]; ok {
+		t0.Stop()
+	}
+	c.gen["C1"]++
+	g := c.gen["C1"]
+	c.timers["C1"] = time.AfterFunc(time.Hour, func() { c.flushTimer("C1", g) })
+	c.mu.Unlock()
+	withheld := c.flushAheadOf("C1", "9.0")
+	if len(withheld) != 1 || withheld[0].inbound.ProviderMessageID != "9.0" {
+		t.Fatalf("the twin must be withheld and returned to the caller, got %+v", withheld)
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("no POST under backoff: %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pendingContainsLocked("C1", "9.0") || !c.pendingContainsLocked("C1", "1.0") || c.gen["C1"] != g {
+		t.Fatalf("twin must leave the buffer, the rest stays with its timer: twin=%v older=%v gen=%d want %d",
+			c.pendingContainsLocked("C1", "9.0"), c.pendingContainsLocked("C1", "1.0"), c.gen["C1"], g)
+	}
+}
+
+// The post-urgent reaction drain honors the backoff deadline (finding
+// 2): a successful mention during an outage must not POST the side
+// lane at mention cadence.
+func TestBufferedReactionDrainHonorsBackoff(t *testing.T) {
+	deliver, calls := recordingDeliver(func([]pendingChannelInbound) error { return errors.New("dial tcp: connection refused") })
+	c := newInboundCoalescer(20*time.Millisecond, nil)
+	c.deliver = deliver
+	r := testPending("C1", "1.0", "reaction")
+	if !c.admitReaction("C1", r, false) {
+		t.Fatal("admit")
+	}
+	c.mu.Lock()
+	c.transientFailures["C1"] = 10
+	c.retryNotBefore["C1"] = time.Now().Add(time.Hour)
+	c.mu.Unlock()
+	for i := 0; i < 3; i++ {
+		c.deliverBufferedReactions("C1")
+	}
+	if got := calls(); len(got) != 0 {
+		t.Fatalf("the reaction drain must wait out the backoff: %v", got)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.reactions["C1"]) != 1 {
+		t.Fatalf("reaction must stay in its side lane, got %d", len(c.reactions["C1"]))
+	}
+}
+
+// Deferral logging is keyed by the effective backoff delay (finding 3):
+// consecutive capped failures with mentions between them log once.
+func TestUrgentDeferLogWorthyKeyedByDelay(t *testing.T) {
+	c := newInboundCoalescer(8*time.Second, nil)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.transientFailures["C1"] = 1
+	if !c.urgentDeferLogWorthyLocked("C1") {
+		t.Fatal("first deferral logs")
+	}
+	if c.urgentDeferLogWorthyLocked("C1") {
+		t.Fatal("same state again is silent")
+	}
+	c.transientFailures["C1"] = 2
+	if !c.urgentDeferLogWorthyLocked("C1") {
+		t.Fatal("a doubled delay is a new state")
+	}
+	c.transientFailures["C1"] = 10 // at the cap
+	if !c.urgentDeferLogWorthyLocked("C1") {
+		t.Fatal("reaching the cap is a new state")
+	}
+	for n := 11; n < 20; n++ {
+		c.transientFailures["C1"] = n
+		if c.urgentDeferLogWorthyLocked("C1") {
+			t.Fatalf("failure #%d at the cap must not log again", n)
+		}
+	}
+}

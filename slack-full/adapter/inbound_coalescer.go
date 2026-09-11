@@ -291,7 +291,7 @@ type inboundCoalescer struct {
 	// urgentDeferredAt remembers, per channel, the failure count at
 	// which the last "urgent flush-ahead deferred" line was logged, so
 	// a mention stream during an outage logs once per backoff step.
-	urgentDeferredAt map[string]int
+	urgentDeferredAt map[string]time.Duration
 	// parkedDeadLetters holds entries the rejection ladder retired whose
 	// dead-letter write the hook did NOT confirm (gp-sgu7, codex r1
 	// finding 1): they sit OUT of the delivery path — never re-posted to
@@ -316,7 +316,7 @@ func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *
 		deleted:           make(map[string]map[string]time.Time),
 		transientFailures: make(map[string]int),
 		retryNotBefore:    make(map[string]time.Time),
-		urgentDeferredAt:  make(map[string]int),
+		urgentDeferredAt:  make(map[string]time.Duration),
 		window:            window,
 		policy:            policy,
 
@@ -1512,12 +1512,15 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 		// re-post the failed batch at mention cadence under a five-minute
 		// deadline. The urgent message proceeds on its own (out of order,
 		// as after a failed flush-ahead); the buffer keeps its armed
-		// backoff timer, deadline untouched. A buffered twin of the
-		// urgent message stays too — the delivery-time twin filter drops
-		// it once the urgent copy has landed.
+		// backoff timer, deadline untouched. The urgent message's own
+		// buffered twin is still WITHHELD (codex r7 finding 1): left
+		// buffered, a timer firing while the urgent POST is in flight
+		// would deliver it beside the urgent copy under a different
+		// dedup key. The caller restores it if the urgent delivery fails.
 		c.deferUrgentFlushLocked(channel)
+		withheld := c.withholdTwinLocked(channel, excludeTS)
 		c.mu.Unlock()
-		return nil
+		return withheld
 	}
 	batch, mu, ok := c.takeLocked(channel)
 	if !ok {
@@ -1531,9 +1534,10 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 			// transiently and put the channel in backoff: same verdict as
 			// above, nothing detached (no in-flight window opened).
 			c.deferUrgentFlushLocked(channel)
+			withheld := c.withholdTwinLocked(channel, excludeTS)
 			c.mu.Unlock()
 			mu.Unlock()
-			return nil
+			return withheld
 		}
 		batch = c.detachLocked(channel)
 	}
@@ -1584,13 +1588,53 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 // urgent message — that an urgent flush-ahead left the buffer to its
 // backoff timer. Caller holds c.mu.
 func (c *inboundCoalescer) deferUrgentFlushLocked(channel string) {
-	n := c.transientFailures[channel]
-	if c.urgentDeferredAt[channel] == n {
+	if !c.urgentDeferLogWorthyLocked(channel) {
 		return
 	}
-	c.urgentDeferredAt[channel] = n
 	log.Printf("coalesce: chan=%s urgent flush-ahead deferred — channel in transient-failure backoff (#%d, retry at %s); %d buffered message(s) wait for it, the urgent message proceeds alone",
-		channel, n, c.retryNotBefore[channel].Format("15:04:05"), len(c.pending[channel]))
+		channel, c.transientFailures[channel], c.retryNotBefore[channel].Format("15:04:05"), len(c.pending[channel]))
+}
+
+// urgentDeferLogWorthyLocked reports whether the deferral is a new
+// backoff STATE for the channel — keyed by the effective retry delay,
+// so consecutive capped failures with mentions between them log once
+// (codex r7 finding 3) — and records it. Caller holds c.mu.
+func (c *inboundCoalescer) urgentDeferLogWorthyLocked(channel string) bool {
+	delay := c.retryDelayLocked(channel)
+	if last, ok := c.urgentDeferredAt[channel]; ok && last == delay {
+		return false
+	}
+	c.urgentDeferredAt[channel] = delay
+	return true
+}
+
+// withholdTwinLocked removes and returns the buffered copies of ts (an
+// urgent message's twin) WITHOUT taking the buffer: the rest keeps its
+// timer, generation and deadline. Caller holds c.mu; the caller of
+// flushAheadOf owns the returned entries (restore on urgent failure).
+func (c *inboundCoalescer) withholdTwinLocked(channel, ts string) []pendingChannelInbound {
+	if ts == "" {
+		return nil
+	}
+	var withheld []pendingChannelInbound
+	kept := make([]pendingChannelInbound, 0, len(c.pending[channel]))
+	for _, p := range c.pending[channel] {
+		if p.inbound.ProviderMessageID == ts {
+			withheld = append(withheld, p)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(withheld) == 0 {
+		return nil
+	}
+	if len(kept) == 0 {
+		delete(c.pending, channel)
+	} else {
+		c.pending[channel] = kept
+	}
+	log.Printf("coalesce: chan=%s buffered twin ts=%s withheld from a deferred flush-ahead (urgent copy delivers it)", channel, ts)
+	return withheld
 }
 
 // deliverBufferedReactions drains the channel's no-wake reaction
@@ -1610,6 +1654,19 @@ func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 	rs := c.reactions[channel]
 	if len(rs) == 0 {
 		c.mu.Unlock()
+		return
+	}
+	if c.inBackoffLocked(channel) {
+		// A mention that succeeded while the channel backs off must not
+		// turn its reaction drain into a retry at mention cadence, whose
+		// own failure would push the real messages' deadline out again
+		// (codex r7 finding 2). The side lane waits for the backoff
+		// timer's take like everything else on the channel.
+		worthy := c.urgentDeferLogWorthyLocked(channel)
+		c.mu.Unlock()
+		if worthy {
+			log.Printf("coalesce: chan=%s buffered reaction drain deferred — channel in transient-failure backoff; they ride the backoff retry", channel)
+		}
 		return
 	}
 	mu := c.flushMuFor(channel)
