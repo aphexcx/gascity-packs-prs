@@ -137,7 +137,9 @@
 #      human to remove after checking no lane install is alive. A live lock
 #      is waited for up to <wait> seconds, then this command fails closed
 #      naming the holder. Only the pid that took the lock releases it, and
-#      a trapped signal releases the lock and the gate this wrapper holds. A lifecycle script that a mutate or install runs
+#      a trapped signal releases the lock and the gate this wrapper holds;
+#      the release itself runs with the signals held, removal before the
+#      mark, so a signal there is lost, never a lock left standing. A lifecycle script that a mutate or install runs
 #      (a `postinstall` that calls `pnpm run build`) re-enters this wrapper
 #      with the lane already locked by its parent: the locking wrapper
 #      exports GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane> and a descendant
@@ -725,8 +727,8 @@ lane_install() {
 # owner), and judging a stale lock and moving it aside. Release is the
 # owner's alone and takes no gate: a judge that read an owner who then
 # released finds, under the gate, the directory gone or another owner's, and
-# moves nothing. The mkdirs and the pid write run with HUP, INT and TERM
-# held: sh runs a trap between two commands (measured on /bin/sh: a trap
+# moves nothing. The mkdirs, the pid write and the removals run with HUP,
+# INT and TERM held: sh runs a trap between two commands (measured on /bin/sh: a trap
 # fired during `sleep 2 && G=1` saw G=0), so a trap between `mkdir` and the
 # mark that says "mine" would leak what was just made; a signal sent in that
 # instant is lost, not deferred (measured: the trap set back afterwards did
@@ -735,19 +737,29 @@ LOCK=""
 LOCKED=0
 GATE=""
 GATED=0
+# release_lock / release_gate: the removal and the mark that says "no longer
+# mine" are one step with the signals held, the removal first: a trap
+# between the two would otherwise find the mark cleared and leave the
+# directory standing, and a second cleanup after the removal finds nothing
+# of this wrapper's to remove.
 release_lock() {
-    if [ "$LOCKED" -eq 1 ]; then
-        LOCKED=0
-        [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$$" ] || return 0
+    [ "$LOCKED" -eq 1 ] || return 0
+    hold_signals
+    [ -z "${GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE"
+    if [ "$(cat "$LOCK/pid" 2>/dev/null || true)" = "$$" ]; then
         rm -f "$LOCK/pid" 2>/dev/null || true
         rmdir "$LOCK" 2>/dev/null || true
     fi
+    LOCKED=0
+    heed_signals
 }
 release_gate() {
-    if [ "$GATED" -eq 1 ]; then
-        GATED=0
-        rmdir "$GATE" 2>/dev/null || true
-    fi
+    [ "$GATED" -eq 1 ] || return 0
+    hold_signals
+    [ -z "${GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE:-}" ] || sleep "$GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE"
+    rmdir "$GATE" 2>/dev/null || true
+    GATED=0
+    heed_signals
 }
 cleanup() { release_lock; release_gate; }
 heed_signals() {
@@ -839,8 +851,9 @@ make_lock() {
             release_gate
             return 0
         fi
-        LOCKED=0
+        rm -f "$LOCK/pid" 2>/dev/null || true       # opened but not written (ENOSPC) would hold the directory
         rmdir "$LOCK" 2>/dev/null || true
+        LOCKED=0
         LOCK_REFUSED="cannot write $LOCK/pid (${pid_err##*: })"
     fi
     heed_signals

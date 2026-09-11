@@ -57,6 +57,14 @@ it (renamed and now measured during the question:
 test_a_caller_whose_lane_is_in_sync_holds_the_lock_for_the_question_only_and_never_waits);
 a failed frozen install exited 1 while the header promised pnpm's status
 (test_failed_install_leaves_the_lane_out_of_sync_and_the_command_does_not_run).
+Gate round 31 found the release path: the mark that says "no longer mine"
+was cleared before the rmdir, so a trapped signal between the two left the
+gate or the lock standing for good; both removals now run with the signals
+held, removal before the mark
+(test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing);
+and a pid file opened but not written would have held the directory
+(removed before the rmdir; no row: no filesystem here fails a one-line
+write after a successful open).
 """
 
 from __future__ import annotations
@@ -1008,6 +1016,54 @@ class PnpmShimGateRoundTests(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("moved aside a stale lane install lock", r.stderr)
         self.assertEqual(self.fx.argv(), ["add x"])
+
+    def test_a_signal_during_the_release_is_lost_and_nothing_is_left_standing(self) -> None:
+        """Round 31: the mark that says "no longer mine" was cleared before
+        the rmdir, so a trapped signal between the two made cleanup skip the
+        removal and left the gate (or the lock) standing for every later
+        caller. The release runs with HUP/INT/TERM held: a TERM sent inside
+        it is lost, the command ends on its own status, nothing stands.
+        Twice: inside the gate's release after a reclaim, and inside the
+        lock's release after a mutate."""
+        proj = self.fx.project()
+        nm = proj / "node_modules"
+        lock = nm / ".gc-lane-deps.lock"
+        reclaim = nm / ".gc-lane-deps.lock.reclaim"
+        lock.mkdir(parents=True)
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        (lock / "pid").write_text(f"{dead.pid}\n", encoding="utf-8")
+        # the reclaim's gate release is the first pause (~0 s in), the lock's the last
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "add", "x"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE="2"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(1)
+        self.assertTrue(reclaim.exists())           # inside the gate's release, holding it
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)   # the signal was lost, the mutate ran to its end
+        self.assertIn("moved aside a stale lane install lock", err)
+        self.assertEqual(self.fx.argv(), ["add x"])
+        self.assertFalse(reclaim.exists())
+        self.assertFalse(lock.exists())
+        self.fx.reset()
+        proc = subprocess.Popen(
+            [str(self.fx.shims / "pnpm"), "add", "y"], cwd=str(proj),
+            env=self.fx.env(GC_TOOLCHAIN_TEST_PAUSE_IN_RELEASE="2", FAKE_PNPM_SLEEP="1"),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        time.sleep(4)       # gate release (2 s) + pnpm (1 s): inside the lock's release now
+        self.assertTrue(lock.exists())
+        self.assertEqual((lock / "pid").read_text(encoding="utf-8").strip(), str(proc.pid))
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(self.fx.argv(), ["add y"])
+        self.assertFalse(lock.exists())
+        self.assertFalse(reclaim.exists())
+        self.assertEqual([p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps.lock.")], [p.name for p in nm.iterdir() if p.name.startswith(".gc-lane-deps.lock.stale-")])
 
     def test_ignore_workspace_makes_the_standalone_project_the_lane_for_probe_lock_and_install(self) -> None:
         """Round 15: a standalone fixture project inside a workspace, run with
