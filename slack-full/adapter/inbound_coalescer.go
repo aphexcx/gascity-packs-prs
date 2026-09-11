@@ -136,7 +136,10 @@ type pendingChannelInbound struct {
 	// attempts counts deliveries gc REJECTED (permanentDeliveryFailure)
 	// with this entry charged as the suspect (see failed); at
 	// maxCoalesceDeliveryAttempts it is dead-lettered instead of
-	// restored (gp-xnc). Not spooled: a replayed entry starts over.
+	// restored (gp-xnc). Spooled with the entry once the ladder owns it
+	// (codex r32 finding 2): a charged copy's line is the payload its
+	// outstanding verdict owns, and it must read back as the ladder's
+	// copy — the retry budget survives a restart with it.
 	attempts int
 	// isolate marks a member of a batch gc REFUSED (gp-sgu7, codex r1
 	// finding 3): it must only ever be POSTed alone — an isolation
@@ -435,7 +438,10 @@ func ownershipOf(p pendingChannelInbound) ladderVerdict {
 	if p.stripped != "" {
 		return ladderVerdict{stripped: true, cause: errors.New(p.stripped)}
 	}
-	return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), isolated)", p.attempts)}
+	if p.isolate {
+		return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), isolated)", p.attempts)}
+	}
+	return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), its bounded identical retry)", p.attempts)}
 }
 
 // ladderVerdictRetention bounds the memory of a TERMINAL verdict: Slack

@@ -307,7 +307,11 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 		if p.botQuotes {
 			entry.PreambleLean, entry.BotQuotes = p.preambleLean, true
 		}
-		if p.refused != "" || p.stripped != "" {
+		if p.refused != "" || p.stripped != "" || p.attempts > 0 {
+			// A refused, stripped or charged copy carries its ladder
+			// standing (codex r32 finding 2: a charged unvouched retry
+			// spooled as a plain line read back as nobody's, and the
+			// in-place compaction dropped it beside its record).
 			entry.Refused, entry.Attempts = p.refused, p.attempts
 		}
 		if p.hasReminderParts() {
@@ -499,8 +503,25 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		return
 	}
 	type key struct{ channel, ts string }
+	// Records first, folded by progression — one per (channel, ts), the
+	// furthest decision, then the newest — because the payload pass
+	// below asks them which messages the ledger owns.
 	newest := make(map[key]spooledInbound)
 	var order []key
+	for _, e := range records {
+		if e.VerdictTS == "" {
+			continue
+		}
+		k := key{e.Channel, e.VerdictTS}
+		if cur, ok := newest[k]; ok {
+			if !supersedes(e, cur) {
+				continue
+			}
+		} else {
+			order = append(order, k)
+		}
+		newest[k] = e
+	}
 	// A Refused entry is a parked payload's durable home until its
 	// dead-letter write confirms (codex r20 finding 1): kept, once per
 	// (channel, id) — the LAST copy, which is the newest re-spool —
@@ -514,47 +535,50 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			deleted[key{e.Channel, e.DeletedTS}] = true
 		}
 	}
-	// An OWNED copy — a Stripped or Isolate entry the replay re-spooled
-	// into this same file — is the payload its outstanding verdict owns
-	// (codex r26 finding 2: dropped here, ownership survived without a
+	// An OWNED copy is the payload its outstanding verdict owns (codex
+	// r26 finding 2: dropped here, ownership survived without a
 	// deliverable message): kept, once per (channel, id), the newest
 	// copy, deletions applied, unless the message's folded record is
-	// terminal (a retired message's copy is dead).
+	// terminal (a retired message's copy is dead). The ledger owns every
+	// message entry that carries a ladder standing of its own — refused,
+	// stripped, isolated or charged — and every entry whose message has
+	// an OUTSTANDING record in this file (codex r32 finding 2: a charged
+	// unvouched retry, restored as the ladder's copy and re-spooled as a
+	// plain line, was dropped here beside its record, and a crash before
+	// the retry lost the acknowledged message).
+	ledgerOwns := func(e spooledInbound) bool {
+		if e.Reaction {
+			return false
+		}
+		if e.Stripped != "" || e.Isolate || e.Attempts > 0 {
+			return true
+		}
+		rec, ok := newest[key{e.Channel, e.Inbound.ProviderMessageID}]
+		return ok && rec.VerdictOutstanding
+	}
 	refusedAt, ownedAt := make(map[key]int), make(map[key]int)
 	var refused, owned []spooledInbound
 	for _, e := range records {
-		if e.VerdictTS == "" && e.DeletedTS == "" && (e.Refused != "" || (!e.Reaction && (e.Stripped != "" || e.Isolate))) {
-			k := key{e.Channel, e.Inbound.ProviderMessageID}
-			if deleted[k] {
-				p := pendingChannelInbound{inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files}
-				applyDeletion(&p)
-				e.Inbound = p.inbound
-				e.ThreadAnchor, e.Preamble, e.Body, e.Files = "", "", "", ""
-			}
-			at, list := refusedAt, &refused
-			if e.Refused == "" {
-				at, list = ownedAt, &owned
-			}
-			if i, seen := at[k]; seen {
-				(*list)[i] = e
-			} else {
-				at[k] = len(*list)
-				*list = append(*list, e)
-			}
+		if e.VerdictTS != "" || e.DeletedTS != "" || (e.Refused == "" && !ledgerOwns(e)) {
 			continue
 		}
-		if e.VerdictTS == "" {
-			continue
+		k := key{e.Channel, e.Inbound.ProviderMessageID}
+		if deleted[k] {
+			p := pendingChannelInbound{inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files}
+			applyDeletion(&p)
+			e.Inbound = p.inbound
+			e.ThreadAnchor, e.Preamble, e.Body, e.Files = "", "", "", ""
 		}
-		k := key{e.Channel, e.VerdictTS}
-		if cur, ok := newest[k]; ok {
-			if !supersedes(e, cur) {
-				continue
-			}
+		at, list := refusedAt, &refused
+		if e.Refused == "" {
+			at, list = ownedAt, &owned
+		}
+		if i, seen := at[k]; seen {
+			(*list)[i] = e
 		} else {
-			order = append(order, k)
+			at[k] = len(*list)
+			*list = append(*list, e)
 		}
-		newest[k] = e
 	}
 	dir := filepath.Dir(s.path)
 	tmp, err := os.CreateTemp(dir, ".spool-compact-*")
@@ -733,7 +757,7 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 			case recordsOnly && e.VerdictTS != "":
 				out = append(out, spooledInbound{Channel: e.Channel, VerdictTS: e.VerdictTS, Verdict: e.Verdict, VerdictDelivered: e.VerdictDelivered, VerdictAt: e.VerdictAt,
 					VerdictOutstanding: e.VerdictOutstanding, VerdictStripped: e.VerdictStripped})
-			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate):
+			case recordsOnly && (e.Refused != "" || e.Stripped != "" || e.Isolate || e.Attempts > 0):
 				// The salvage keeps what an ENTRY decided too (codex r18
 				// finding 2), without its message.
 				out = append(out, spooledInbound{
@@ -979,8 +1003,8 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			if !c.seedVerdict(e.Channel, ts, ladderVerdict{stripped: true, cause: errors.New(e.Stripped)}) {
 				durable = false
 			}
-		case e.Isolate:
-			if !c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: true, attempts: e.Attempts})) {
+		case e.Isolate || e.Attempts > 0:
+			if !c.seedVerdict(e.Channel, ts, ownershipOf(pendingChannelInbound{inbound: e.Inbound, isolate: e.Isolate, attempts: e.Attempts})) {
 				durable = false
 			}
 		}
@@ -1028,9 +1052,7 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			}
 			continue
 		}
-		if e.Stripped != "" || e.Isolate {
-			p.attempts = e.Attempts
-		}
+		p.attempts = e.Attempts // a charged copy keeps its ladder standing (codex r32 finding 2)
 		// The ledger's standing verdict is applied here, as enqueue will
 		// apply it: a retired message's copy is dropped WITHOUT being
 		// re-spooled (codex r26 minor: re-spooled first, it outlived every

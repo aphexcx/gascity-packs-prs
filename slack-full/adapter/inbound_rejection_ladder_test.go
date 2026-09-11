@@ -3912,3 +3912,41 @@ func TestInPlaceCompactionAppliesRetentionAndConfirmedWrites(t *testing.T) {
 		t.Fatalf("the live record is kept once, got %d", n)
 	}
 }
+
+// --- codex r32 ---------------------------------------------------------------
+
+// A charged copy's spool line carries its ladder standing, and the
+// in-place compaction keeps every payload the ledger owns (r32 finding
+// 2): a cap flush during an in-place replay came back unvouched, the
+// members were charged and restored as the ladder's copies, their
+// outstanding records written — and the compaction dropped their plain
+// lines beside those records, so a crash before the retry lost the
+// acknowledged messages.
+func TestInPlaceCompactionKeepsChargedCopies(t *testing.T) {
+	spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
+	staged := make([]pendingChannelInbound, 0, maxCoalescePerChannel)
+	for i := 0; i < maxCoalescePerChannel; i++ {
+		staged = append(staged, testPending("C1", fmt.Sprintf("%d.0", i+1), "unvouched text"))
+	}
+	if !spool.spillBatch("C1", staged) {
+		t.Fatal("spill must confirm")
+	}
+	c := newInboundCoalescer(time.Hour, nil)
+	c.spill = spool.spillBatch
+	c.recordVerdict = spool.recordVerdict
+	c.deliver = func(string, []pendingChannelInbound) error { return errDeliveryUnvouched }
+	spool.replayInto(c) // the cap flush is unvouched: every member is charged, restored as the ladder's, and re-spooled; then the in-place compaction
+	entries, err := readSpoolLines(spool.path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charged := 0
+	for _, e := range entries {
+		if e.VerdictTS == "" && e.DeletedTS == "" && e.Attempts > 0 && e.Inbound.Text == "unvouched text" {
+			charged++
+		}
+	}
+	if charged != maxCoalescePerChannel {
+		t.Fatalf("the compacted spool must keep every charged copy with its standing, kept %d of %d", charged, maxCoalescePerChannel)
+	}
+}

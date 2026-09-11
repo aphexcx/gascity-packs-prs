@@ -445,3 +445,86 @@ func TestCoalescer_OwnedMemberPostsOnAnUnconfirmedClaim(t *testing.T) {
 		t.Fatalf("the owned copy must post on an unconfirmed claim (a false 'delivered' verdict would discard it): got %d inbound(s)", len(got))
 	}
 }
+
+// --- codex r32 finding 1 ---------------------------------------------------
+
+// A twin parked behind an in-flight same-ts owner is inside the
+// coalescer's shutdown barrier from BEFORE it parks (codex r32 finding
+// 1): the owner's failure hands the claim to the parked twin, whose
+// takeover POST is the message's last recovery path — and a drain that
+// saw the owner's registration end while the twin was still
+// unregistered concluded, and main sealed the spool under that POST.
+// The registration now begins before the claim wait, so the drain
+// waits for the takeover to finish.
+func TestChannelClaims_ParkedTwinIsInsideTheShutdownBarrier(t *testing.T) {
+	arrived := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	answer := []chan int{make(chan int), make(chan int)}
+	stop := make(chan struct{}) // a failed assertion must not leave a handler parked forever (the server's Close would wait on it)
+	var mu sync.Mutex
+	posts := 0
+	gcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		i := posts
+		posts++
+		mu.Unlock()
+		if i > 1 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		close(arrived[i])
+		select {
+		case code := <-answer[i]:
+			w.WriteHeader(code)
+		case <-stop:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(gcSrv.Close)
+	t.Cleanup(func() { close(stop) }) // runs before Close (LIFO)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	aliasReg := newTestHandleAliasRegistry(t)
+	text := "<@" + testBotUserID + "> takeover during the drain"
+	inflight := func() int {
+		cfg.coalescer.mu.Lock()
+		defer cfg.coalescer.mu.Unlock()
+		return cfg.coalescer.inflight
+	}
+
+	var wg sync.WaitGroup
+	twin := func(eventType, eventID string) {
+		wg.Add(1)
+		env := botMentionEnvelope(t, eventType, eventID, "C1", "100.000030", "", text, true)
+		go func() {
+			defer wg.Done()
+			processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
+		}()
+	}
+	twin("message", "Ev1")
+	<-arrived[0] // the owner holds the claim inside its POST
+	twin("app_mention", "Ev2")
+	waitFor(t, "the parked twin registered with the shutdown barrier (inflight 2: the owner in its POST and the twin at the claim wait)", func() bool { return inflight() == 2 })
+
+	done := make(chan struct{})
+	go func() { cfg.coalescer.flushAll(); close(done) }()
+	answer[0] <- http.StatusInternalServerError // the owner fails and releases the claim: the parked twin takes over
+	<-arrived[1]                                // the takeover POST is under way
+	select {
+	case <-done:
+		t.Fatal("flushAll returned while the parked twin's takeover POST was under way — the drain concluded, and main would have sealed the spool under the message's last recovery path")
+	case <-time.After(100 * time.Millisecond):
+	}
+	answer[1] <- http.StatusAccepted
+	wg.Wait()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flushAll did not return once every twin had finished")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 2 {
+		t.Fatalf("POST attempts = %d, want 2 (one failure + one takeover success)", posts)
+	}
+}
