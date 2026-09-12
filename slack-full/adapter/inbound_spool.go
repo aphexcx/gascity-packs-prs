@@ -576,10 +576,17 @@ func (s *inboundSpool) compactToRecordsLocked() {
 		}
 		k := key{e.Channel, e.Inbound.ProviderMessageID}
 		if deleted[k] {
-			p := pendingChannelInbound{inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble, body: e.Body, files: e.Files}
+			// Every field applyDeletion clears is cleared here too — the
+			// lean preamble and its flag included (jg-ure5r8), or the
+			// re-spooled notice replays with thread context to shed to.
+			p := pendingChannelInbound{
+				inbound: e.Inbound, threadAnchor: e.ThreadAnchor, preamble: e.Preamble,
+				preambleLean: e.PreambleLean, botQuotes: e.BotQuotes, body: e.Body, files: e.Files,
+			}
 			applyDeletion(&p)
 			e.Inbound = p.inbound
-			e.ThreadAnchor, e.Preamble, e.Body, e.Files = "", "", "", ""
+			e.ThreadAnchor, e.Preamble, e.PreambleLean, e.Body, e.Files = p.threadAnchor, p.preamble, p.preambleLean, p.body, p.files
+			e.BotQuotes = p.botQuotes
 		}
 		at, list := refusedAt, &refused
 		if e.Refused == "" {

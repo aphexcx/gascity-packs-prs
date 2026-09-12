@@ -3080,6 +3080,10 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	spool := newInboundSpool(filepath.Join(dir, strings.Repeat("s", 250))) // forces the in-place fallback
 	refused := testPending("C1", "1.0", "secret text")
 	refused.refused, refused.attempts = "422 Unprocessable Entity", 1
+	// The thread context rides with it in both forms (jg-ure5r8): the
+	// deletion must clear the lean copy and its flag exactly as
+	// applyDeletion does, or the notice replays with context to shed to.
+	refused.preamble, refused.preambleLean, refused.botQuotes = "full context\n", "lean context\n", true
 	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
 		t.Fatal("spill must confirm")
 	}
@@ -3097,6 +3101,11 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	}
 	if bytes.Contains(data, []byte("secret text")) {
 		t.Fatalf("the compacted spool must not carry the deleted text: %q", data)
+	}
+	for _, leaked := range []string{"full context", "lean context", `"preamble_lean"`, `"bot_quotes"`} {
+		if bytes.Contains(data, []byte(leaked)) {
+			t.Fatalf("the compacted spool must not carry the deleted message's thread context (%s): %q", leaked, data)
+		}
 	}
 	if !bytes.Contains(data, []byte(deletedBySenderNotice)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
 		t.Fatalf("the retained refusal carries the notice and its deletion record is kept: %q", data)
