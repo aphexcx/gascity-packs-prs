@@ -5902,7 +5902,7 @@ func TestProcessSlackEventDrainFailureSpoolsUrgentInbound(t *testing.T) {
 	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {})
 
 	// The failed delivery landed in the spool with its channel and text.
-	entries, done := newInboundSpool(spoolPath).consume()
+	entries, done, _ := newInboundSpool(spoolPath).consume()
 	if len(entries) != 1 {
 		t.Fatalf("spool holds %d entries after a drain-time urgent failure, want 1", len(entries))
 	}
@@ -5926,7 +5926,7 @@ func TestProcessSlackEventDrainFailureSpoolsUrgentInbound(t *testing.T) {
 	})
 	env2 := slackEventEnvelope{Type: "event_callback", EventID: "EvDrainSpool2", Event: env2Msg}
 	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env2, func() {})
-	if entries, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
+	if entries, _, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
 		t.Fatalf("a non-drain failure spooled %d entries, want 0 (Slack redelivery owns the retry)", len(entries))
 	}
 }
@@ -6036,7 +6036,7 @@ func TestAliasDispatchDrainFailureSpoolsAddressedLeg(t *testing.T) {
 		t.Fatal("alias leg never settled (is it in the eventWG?)")
 	}
 
-	entries, done := newInboundSpool(spoolPath).consume()
+	entries, done, _ := newInboundSpool(spoolPath).consume()
 	if len(entries) != 1 {
 		t.Fatalf("spool holds %d entries after a drain-time alias-leg failure, want 1", len(entries))
 	}
@@ -6063,7 +6063,7 @@ func TestAliasDispatchDrainFailureSpoolsAddressedLeg(t *testing.T) {
 	if !awaitWaitGroup(cfg.eventWG, 2*time.Second) {
 		t.Fatal("second alias leg never settled")
 	}
-	if entries, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
+	if entries, _, _ := newInboundSpool(spoolPath).consume(); len(entries) != 0 {
 		t.Fatalf("a non-drain alias failure spooled %d entries, want 0 (redelivery owns the retry)", len(entries))
 	}
 }

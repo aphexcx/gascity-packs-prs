@@ -69,12 +69,17 @@ import (
 // documents, bounded here by the window. A normal shutdown drains
 // every buffer first (flushAll). A flush that fails TRANSIENTLY
 // (network, 5xx, 429) restores the batch and retries on the next timer,
-// forever. A flush gc REJECTS as payload (400/413/415/422 — the same
-// payload can never be accepted) goes through failed(): a multi-message batch is isolated
-// into singles so only the poisoned message accrues attempts, and a
-// message rejected maxCoalesceDeliveryAttempts times is dead-lettered
-// (deadLetter hook → JSONL file) instead of riding in every later
-// batch and blocking the channel forever (gp-xnc, 2026-08-26).
+// forever — on a per-channel doubling backoff capped at
+// maxTransientRetryDelay, never the fixed window forever (gp-sgu7). A
+// flush gc REJECTS as payload (400/413/415/422 — the same payload can
+// never be accepted) goes through failed(): a multi-message batch is
+// isolated into singles so only the poisoned message is charged, and a
+// charged message follows the rejection ladder (nextRejectionStep,
+// inbound_dead_letter.go): one retry WITHOUT its attachments when it
+// had any, then the dead-letter hook (JSONL file) — never a retry of
+// the same bytes, so a refused voice memo costs the channel two
+// windows, not forever (gp-xnc 2026-08-26; gp-sgu7 2026-09-08 incident
+// where the pre-gp-xnc binary posted one refused batch 34,000 times).
 
 // defaultCoalesceWindow is the debounce for burst coalescing; inside
 // the 5-15s band the Aug-17 plan named.
@@ -84,13 +89,19 @@ const defaultCoalesceWindow = 8 * time.Second
 // full delivers immediately rather than waiting out its window.
 const maxCoalescePerChannel = 50
 
-// maxCoalesceDeliveryAttempts is how many times a message may be
-// REJECTED by gc (permanentDeliveryFailure) before it is dead-lettered.
-// Small on purpose: a payload rejection is deterministic, so extra
-// attempts only buy
-// a window for an operator-side fix to land; transient failures never
-// count toward it (gp-xnc).
+// maxCoalesceDeliveryAttempts bounds the UNVOUCHED ladder (gp-32q): how
+// many times a message gc accepted but would not vouch for may be
+// re-posted before it is dead-lettered. A payload REJECTION no longer
+// counts toward it — that class is never re-posted as-is at all (see
+// nextRejectionStep); transient failures never count toward anything.
 const maxCoalesceDeliveryAttempts = 3
+
+// maxTransientRetryDelay caps the per-channel backoff for TRANSIENT
+// delivery failures (network error, 5xx, 429): the retry cadence starts
+// at the channel's window and doubles per consecutive failure up to
+// this, so a gc outage costs one POST per ~5 min per channel instead of
+// one per 8 s (gp-sgu7). Reset by the channel's next successful delivery.
+const maxTransientRetryDelay = 5 * time.Minute
 
 // maxBufferedReactionsPerChannel bounds the no-wake reaction
 // side-buffer (gp-9e7 item 1). Reactions must never drop, so overflow
@@ -125,8 +136,40 @@ type pendingChannelInbound struct {
 	// attempts counts deliveries gc REJECTED (permanentDeliveryFailure)
 	// with this entry charged as the suspect (see failed); at
 	// maxCoalesceDeliveryAttempts it is dead-lettered instead of
-	// restored (gp-xnc). Not spooled: a replayed entry starts over.
+	// restored (gp-xnc). Spooled with the entry once the ladder owns it
+	// (codex r32 finding 2): a charged copy's line is the payload its
+	// outstanding verdict owns, and it must read back as the ladder's
+	// copy — the retry budget survives a restart with it. A reaction is
+	// never the ladder's (onLadderEntry) and never spools its count
+	// (codex r33 finding 3): its bounded retries start over at a
+	// restart, as before.
 	attempts int
+	// isolate marks a member of a batch gc REFUSED (gp-sgu7, codex r1
+	// finding 3): it must only ever be POSTed alone — an isolation
+	// probe — never inside a batch again, or a transient failure that
+	// pauses the probe would restore the members and the next window
+	// would re-post the identical refused batch. Set by the probe
+	// when it pauses and by charge() on a stripped retry; honored by
+	// post(); spooled, so a restart resumes the probes too.
+	isolate bool
+	// refused is the rejection that RETIRED the entry (the ladder's
+	// dead-letter verdict) while its dead-letter write is still owed:
+	// set by parkDeadLetter, spooled with the entry so a restart parks
+	// it straight back into the write retry instead of replaying it
+	// as an inbound and re-posting refused bytes (gp-sgu7, codex r2
+	// finding 1). Empty on every entry still in the delivery path.
+	refused string
+	// stripped is the rejection the ladder answered by withholding this
+	// entry's attachments (the stripped retry, owed or in flight): set
+	// by withholdAttachments, spooled with the entry so a restart seeds
+	// the ledger's verdict before the copy is admitted (codex r12
+	// finding 1 — the isolate flag survived the restart, the verdict
+	// did not, and the urgent twin posted the original attachments once
+	// the replayed stripped copy landed) — and spooled by charge() the
+	// moment the decision is made, so a copy of the original staged
+	// from before the refusal can never be re-posted by a restart
+	// (codex r22 finding 1). Empty on a plain entry.
+	stripped string
 	// threadAnchor/preamble/body/files carry the message unit's parts
 	// alongside the folded inbound.Text so a single-entry delivery can
 	// re-compose under the head-protection contract exactly like the
@@ -194,7 +237,12 @@ type inboundCoalescer struct {
 	reactions map[string][]pendingChannelInbound
 	gen       map[string]uint64
 	timers    map[string]*time.Timer
-	flushMu   map[string]*sync.Mutex
+	// due is the moment the channel's armed timer aims at — the
+	// scheduler's own bookkeeping (scheduleLocked, the ONE place a
+	// timer is armed, moved or disarmed). Present exactly when a timer
+	// is armed. Guarded by mu.
+	due     map[string]time.Time
+	flushMu map[string]*sync.Mutex
 	// urgentWaiting counts flushAheadOf callers blocked waiting for the
 	// channel's delivery mutex (gp-9e7 round 5, 3c). Guarded by mu. A
 	// non-zero count is a RESERVATION: takeLocked (and the direct
@@ -214,8 +262,15 @@ type inboundCoalescer struct {
 	// to spooled entries on replay whatever the write ordering was
 	// (codex round-4 finding 1). Nil-safe; called without mu held.
 	persistDeletion func(channel, ts string)
-	window          time.Duration
-	policy          *deliveryPolicyRegistry
+	// recordDeletion writes a deletion record UNCONDITIONALLY (wired in
+	// main() to inboundSpool.recordDeletion, no draining guard) for a
+	// deletion that affects a payload already spooled during uptime — a
+	// parked refusal (codex r21 finding 2): the spooled text is that
+	// message's durable home, and without the record a restart would
+	// dead-letter the deleted text. Bounded by deleted parked messages.
+	recordDeletion func(channel, ts string) bool
+	window         time.Duration
+	policy         *deliveryPolicyRegistry
 	// inflight counts batches taken out of the maps but not yet
 	// delivered (or restored by a failed delivery). Guarded by mu;
 	// settled broadcasts every decrement. flushAll's fixpoint drain
@@ -247,27 +302,220 @@ type inboundCoalescer struct {
 	// class). Wired in main() to deliverCoalescedBatch with the final
 	// cfg; tests inject their own.
 	deliver func(channel string, batch []pendingChannelInbound) error
-	// deadLetter receives entries that exhausted
-	// maxCoalesceDeliveryAttempts (gp-xnc) and returns true ONLY on a
+	// deadLetter receives entries the rejection ladder retires
+	// (nextRejectionStep, gp-xnc/gp-sgu7) and returns true ONLY on a
 	// confirmed-durable write (the spill contract): on false the entry
 	// stays buffered and the write is retried next window. Nil-safe:
 	// without a hook the entry is dropped with a LOSS log (the storm
 	// still stops). Wired in main() to writeInboundDeadLetter. Called
 	// with the channel's delivery mutex held and c.mu NOT held (file I/O).
 	deadLetter func(channel string, batch []pendingChannelInbound, cause error) bool
+	// transientFailures counts consecutive TRANSIENT delivery failures per
+	// channel (gp-sgu7); retryNotBefore is the deadline before which the
+	// channel POSTs nothing on a timer. Both guarded by mu; WRITTEN only
+	// by noteTransientFailure (a new failure) and cleared only by
+	// deliveredOK (a success) — never by a restore, a reconcile or an
+	// urgent path (codex r8 finding 1). Read by inBackoffLocked,
+	// scheduleLocked and takeSweepsLocked.
+	transientFailures map[string]int
+	retryNotBefore    map[string]time.Time
+	// urgentDeferredAt remembers, per channel, the failure count at
+	// which the last "urgent flush-ahead deferred" line was logged, so
+	// a mention stream during an outage logs once per backoff step.
+	urgentDeferredAt map[string]time.Duration
+	// parkedDeadLetters holds entries the rejection ladder retired whose
+	// dead-letter write the hook did NOT confirm (gp-sgu7, codex r1
+	// finding 1): they sit OUT of the delivery path — never re-posted to
+	// gc — while the WRITE retries on its own backoff (deadLetterTimers,
+	// deadLetterWriteFailures, all guarded by mu). deadLetterMu
+	// serializes the retry callback against the shutdown flush so one
+	// entry is never written twice. See parkDeadLetter.
+	parkedDeadLetters       map[string][]parkedDeadLetter
+	deadLetterTimers        map[string]*time.Timer
+	deadLetterWriteFailures map[string]int
+	deadLetterMu            sync.Mutex
+	// closedForWrites flips on in the shutdown flush after the retry
+	// timers are stopped: no durable-write retry is armed past it (a
+	// timer firing after the final flush would race process exit).
+	closedForWrites bool
+	// verdicts is the rejection ladder's memory per (channel, ts): what
+	// charge() has decided about a MESSAGE so far, so every other copy
+	// of it — buffered beside it, admitted later, or arriving as the
+	// urgent twin — inherits the decision instead of re-posting the
+	// bytes gc refused (codex r10). Written by charge() (the decision),
+	// landVerdicts (the stripped retry gc accepted) and parkDeadLetter
+	// (a retirement decided before a restart, re-parked by the spool
+	// replay — codex r11 finding 4) and the replay's seeding; a
+	// terminal verdict is pruned after ladderVerdictRetention, an
+	// outstanding one never by time. Guarded by mu.
+	verdicts map[string]map[string]ladderVerdict
+	// recordVerdict is the durable-record hook for a TERMINAL verdict
+	// (the inbound spool's verdict line, beside its deletion records):
+	// the ledger is memory, and a delayed Slack redelivery of a refused
+	// message after a restart must still be a duplicate, not fresh
+	// bytes (codex r12 finding 2). The replay seeds every unexpired
+	// record and writes it again for the next restart. Nil in bare
+	// test configs (a verdict then lives as long as the process).
+	recordVerdict func(channel, ts string, v ladderVerdict) bool
+}
+
+// ladderVerdict is the ladder's standing decision about one (channel,
+// ts): retired means the message is out of the delivery path for good
+// — dead-lettered (or parked for the write), or DELIVERED without its
+// attachments (delivered) — and every further copy is dropped;
+// otherwise one retry without attachments is owed or in flight, and a
+// copy admitted meanwhile adopts that stripped state. A stripped
+// delivery retires the message rather than clearing it (codex r11
+// finding 1): every other copy still carries the bytes gc refused. The
+// same-ts copies of one Slack message (the bot-mention twin pair, a
+// redelivery, an urgent copy built from the fresh event) are the same
+// message: the ladder's verdict is about the message, not about
+// whichever copy happened to be posted.
+type ladderVerdict struct {
+	retired   bool
+	delivered bool
+	// stripped marks an OUTSTANDING verdict whose owed copy is the
+	// stripped retry (attachments withheld); an outstanding verdict
+	// without it owes the ladder's copy as it stands — a charged
+	// unvouched re-post, or a probe flagged isolate after a batch
+	// refusal (codex r15 finding 1: ownership is a ledger fact from the
+	// moment the ladder takes a copy, not a property of where that copy
+	// happens to sit — a charged copy detached by the timer was invisible
+	// to onLadder while in flight, and the urgent twin posted beside it).
+	stripped bool
+	cause    error
+	at       time.Time
+	// durable is true once the verdict's record — for its CURRENT
+	// progression — is confirmed written by the recordVerdict hook
+	// (codex r15 finding 2: a failed write was logged and forgotten;
+	// persistVerdict now writes whatever is owed, and the channel's
+	// durable-write retry timer retries it). Every progression owes a
+	// record, outstanding ones included (codex r22/r23: a decision that
+	// lived only in memory beside a staged copy of its message was lost
+	// by a crash, and the restart posted the refused bytes again — the
+	// site of the decision is no longer the unit; the ledger is).
+	durable bool
+	// pendingWrite marks a dead-letter verdict whose PAYLOAD is not yet
+	// in the dead-letter file (codex r20 finding 1): the record must
+	// not exist before the payload does — a crash between the two left
+	// a record saying "dead-lettered" beside a staged copy the next
+	// startup dropped as retired, and no file ever received it. The
+	// record is written when the write confirms (deadLetterWritten);
+	// until then the parked entry's spool line is the payload's durable
+	// home. Never set on a delivered verdict.
+	pendingWrite bool
+	// attempts is the ladder's charged count for the message — how many
+	// deliveries gc rejected with a copy of it charged (codex r33
+	// findings 2 and 4): part of the ledger, not of whichever copy
+	// happens to carry it. A higher count at the same rank is a
+	// PROGRESSION (it owes its own record, and a crash restores the
+	// bounded ladder where it stood, not one step behind), the count
+	// never regresses, a copy adopting the ledger's standing takes the
+	// count with it, and the journal folds records and owned copies by
+	// it after rank.
+	attempts int
+}
+
+// rank orders a message's verdicts by PROGRESSION: the ladder's plain
+// copy (charged or isolated) is owed, then the stripped retry, then a
+// terminal verdict. A verdict never regresses (recordVerdictLocked),
+// and the journal folds records by this order first, time second.
+func (v ladderVerdict) rank() int {
+	switch {
+	case v.retired:
+		return 2
+	case v.stripped:
+		return 1
+	}
+	return 0
+}
+
+// progresses reports whether v is a later PROGRESSION of the same
+// message than cur: a higher rank, else a higher charged count (codex
+// r33 finding 2), else a newer decision. The one order every fold of
+// the ledger uses — recordVerdictLocked's never-regress rule, the
+// journal's record fold at replay (codex r34 finding 2: it compared
+// rank and time only, so a newer record with a lower count won) and in
+// compaction (supersedes).
+func (v ladderVerdict) progresses(cur ladderVerdict) bool {
+	if v.rank() != cur.rank() {
+		return v.rank() > cur.rank()
+	}
+	if v.attempts != cur.attempts {
+		return v.attempts > cur.attempts
+	}
+	return v.at.After(cur.at)
+}
+
+// disposition names the verdict for a log line.
+func (v ladderVerdict) disposition() string {
+	switch {
+	case v.retired && v.delivered:
+		return "delivered this message through the rejection ladder"
+	case v.retired:
+		return "dead-lettered this message"
+	case v.stripped:
+		return "owes this message its retry without attachments"
+	default:
+		return "owes this message the ladder's own copy (charged or isolated, buffered or in flight)"
+	}
+}
+
+// ownershipOf is the outstanding verdict a copy the ladder owns implies
+// (onLadderEntry): the stripped retry when its attachments were
+// withheld, else the ladder's copy as it stands.
+func ownershipOf(p pendingChannelInbound) ladderVerdict {
+	if p.stripped != "" {
+		return ladderVerdict{stripped: true, cause: errors.New(p.stripped), attempts: p.attempts}
+	}
+	if p.isolate {
+		return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), isolated)", p.attempts), attempts: p.attempts}
+	}
+	return ladderVerdict{cause: fmt.Errorf("the ladder's copy is owed (charged %d time(s), its bounded identical retry)", p.attempts), attempts: p.attempts}
+}
+
+// ladderVerdictRetention bounds the memory of a TERMINAL verdict: Slack
+// redelivers an event for up to 24 hours (retries, and delayed events
+// after an outage), so a dead-lettered or stripped-delivered message
+// stays a duplicate for that whole window plus an hour of slack (codex
+// r12 finding 2: at one hour, a late redelivery of a dead-lettered
+// message was admitted as fresh bytes and refused — and dead-lettered —
+// again). An OUTSTANDING verdict (the stripped retry owed or in
+// flight) never expires by time: that retry is the message's delivery,
+// however long the outage, and it lands as a terminal verdict. Refused
+// messages are rare; the map stays tiny.
+const ladderVerdictRetention = 25 * time.Hour
+
+// expired reports whether a verdict has aged out of the ledger: only a
+// terminal one ever does, and a dead-letter verdict whose write is
+// still owed is not finished (codex r28 finding 1: swept after a sink
+// outage longer than the retention, the parked message left the ledger
+// and a deletion found nothing to record — the restart re-parked the
+// deleted text). It expires from the moment its write confirms.
+func (v ladderVerdict) expired(now time.Time) bool {
+	return v.retired && !v.pendingWrite && now.Sub(v.at) > ladderVerdictRetention
 }
 
 func newInboundCoalescer(window time.Duration, policy *deliveryPolicyRegistry) *inboundCoalescer {
 	c := &inboundCoalescer{
-		pending:       make(map[string][]pendingChannelInbound),
-		reactions:     make(map[string][]pendingChannelInbound),
-		gen:           make(map[string]uint64),
-		timers:        make(map[string]*time.Timer),
-		flushMu:       make(map[string]*sync.Mutex),
-		urgentWaiting: make(map[string]int),
-		deleted:       make(map[string]map[string]time.Time),
-		window:        window,
-		policy:        policy,
+		pending:           make(map[string][]pendingChannelInbound),
+		reactions:         make(map[string][]pendingChannelInbound),
+		gen:               make(map[string]uint64),
+		timers:            make(map[string]*time.Timer),
+		due:               make(map[string]time.Time),
+		flushMu:           make(map[string]*sync.Mutex),
+		urgentWaiting:     make(map[string]int),
+		deleted:           make(map[string]map[string]time.Time),
+		transientFailures: make(map[string]int),
+		retryNotBefore:    make(map[string]time.Time),
+		urgentDeferredAt:  make(map[string]time.Duration),
+		window:            window,
+		policy:            policy,
+
+		parkedDeadLetters:       make(map[string][]parkedDeadLetter),
+		deadLetterTimers:        make(map[string]*time.Timer),
+		deadLetterWriteFailures: make(map[string]int),
+		verdicts:                make(map[string]map[string]ladderVerdict),
 	}
 	c.settled = sync.NewCond(&c.mu)
 	return c
@@ -312,6 +560,491 @@ func (c *inboundCoalescer) tombstoneLocked(channel, ts string, now time.Time) {
 		c.deleted[channel] = m
 	}
 	m[ts] = now
+}
+
+// recordVerdictLocked remembers the ladder's decision about (channel,
+// ts) and prunes expired verdicts across all channels (the tombstone
+// discipline). A verdict only PROGRESSES (codex r13 finding 1): a
+// terminal verdict is never downgraded to an outstanding one — a stale
+// stripped entry staged beside its own dead-letter record cannot
+// reverse it on replay — and recording the same verdict again changes
+// nothing, so the caller writes no second durable record. The decision
+// time is kept: a record re-seeded after a restart carries its original
+// `at`, and retention counts from the decision, not the replay. Returns
+// whether the ledger changed. Caller holds c.mu.
+func (c *inboundCoalescer) recordVerdictLocked(channel, ts string, v ladderVerdict, now time.Time) bool {
+	if c.verdicts == nil {
+		c.verdicts = make(map[string]map[string]ladderVerdict)
+	}
+	for ch, m := range c.verdicts {
+		for k, v := range m {
+			if v.expired(now) {
+				delete(m, k)
+			}
+		}
+		if len(m) == 0 {
+			delete(c.verdicts, ch)
+		}
+	}
+	m := c.verdicts[channel]
+	if m == nil {
+		m = make(map[string]ladderVerdict)
+		c.verdicts[channel] = m
+	}
+	if cur, ok := m[ts]; ok {
+		if v.rank() < cur.rank() {
+			return false // a verdict never regresses: terminal over stripped over the plain copy
+		}
+		if v.attempts < cur.attempts {
+			v.attempts = cur.attempts // nor does the charged count (codex r33 finding 2)
+		}
+		if cur.retired == v.retired && cur.delivered == v.delivered && cur.stripped == v.stripped && cur.attempts == v.attempts {
+			return false
+		}
+	}
+	if v.at.IsZero() {
+		v.at = now
+	}
+	v.durable = false // a new decision owes its own record (persistVerdict)
+	m[ts] = v
+	return true
+}
+
+// ownLocked records the ladder's ownership of a copy entering (or
+// re-entering) the buffer: a copy the ladder owns (onLadderEntry —
+// charged, flagged isolate, or stripped) implies an outstanding
+// verdict for its message, whatever path brought it here (charge's
+// restore, an isolation pause's restore, the spool replay's enqueue).
+// The ledger, not the buffer, is what onLadder consults (codex r15
+// finding 1). Returns whether the ledger changed — the caller then owes
+// the new progression its record (persistVerdict, once unlocked).
+// Caller holds c.mu.
+func (c *inboundCoalescer) ownLocked(channel string, p pendingChannelInbound, now time.Time) bool {
+	if !onLadderEntry(p) {
+		return false
+	}
+	return c.recordVerdictLocked(channel, p.inbound.ProviderMessageID, ownershipOf(p), now)
+}
+
+// retireLocked records a TERMINAL verdict for (channel, ts) and removes
+// every buffered copy of the message. Returns how many copies left and
+// whether the ledger changed. The caller, once unlocked, calls
+// persistVerdict, which writes the record only while one is owed — so a
+// retire followed by its park writes ONE record (codex r13 finding 3),
+// and a record whose write failed is owed until it lands (codex r15
+// finding 2). Caller holds c.mu.
+func (c *inboundCoalescer) retireLocked(channel, ts string, v ladderVerdict, now time.Time) (dropped int, changed bool) {
+	v.retired = true
+	changed = c.recordVerdictLocked(channel, ts, v, now)
+	return c.dropBufferedCopiesLocked(channel, ts), changed
+}
+
+// persistVerdict writes the durable record of (channel, ts)'s verdict
+// through the recordVerdict hook if one is owed: the ledger holds a
+// verdict — outstanding or terminal — whose record for its current
+// progression is not yet confirmed. Called with c.mu NOT held (the
+// record is an fsync'd spool line). Returns whether the record is
+// durable — true when none is owed, or no hook is wired (nothing was
+// promised). A failed write is logged once per distinct failure and the
+// channel's durable-write retry timer is armed (the same timer that
+// retries parked dead-letter writes): the record is written when the
+// disk recovers, at the latest by the shutdown flush (codex r15 finding
+// 2 — a failed write was logged and forgotten, so a delayed redelivery
+// after the restart was fresh bytes).
+func (c *inboundCoalescer) persistVerdict(channel, ts string) bool {
+	c.mu.Lock()
+	v, ok := c.verdicts[channel][ts]
+	hook := c.recordVerdict
+	if ok && v.pendingWrite {
+		// The payload is not in the dead-letter file yet: no record
+		// before it (codex r20 finding 1). The parked write's own retry
+		// timer owns this; deadLetterWritten lifts the mark.
+		c.mu.Unlock()
+		return false
+	}
+	if ok && !v.durable && hook == nil {
+		// No hook wired (bare configs): nothing was promised, nothing is
+		// owed — marked durable so the retry tail's recount (codex r16
+		// finding 2) never keeps a timer armed for it.
+		v.durable = true
+		c.verdicts[channel][ts] = v
+	}
+	c.mu.Unlock()
+	if !ok || v.durable {
+		return true
+	}
+	if hook(channel, ts, v) {
+		c.mu.Lock()
+		// Confirmed for THIS progression only: a verdict that moved on
+		// while the write ran owes its own record (the hook's caller
+		// persists it, or the retry tail does).
+		if cur, ok := c.verdicts[channel][ts]; ok && cur.rank() == v.rank() && cur.delivered == v.delivered {
+			cur.durable = true
+			c.verdicts[channel][ts] = cur
+		}
+		c.mu.Unlock()
+		return true
+	}
+	c.mu.Lock()
+	if c.deadLetterWriteFailures[channel] < 1 {
+		c.deadLetterWriteFailures[channel] = 1
+	}
+	delay, armed := c.armDeadLetterRetryLocked(channel)
+	c.mu.Unlock()
+	if armed {
+		log.Printf("coalesce: chan=%s ts=%s verdict record write FAILED (%s) — the message stays retired in memory; the record retries in %s (until it lands, a restart could admit a delayed redelivery once as fresh bytes)", channel, ts, v.disposition(), delay)
+	}
+	return false
+}
+
+// owedVerdictsLocked counts the channel's TERMINAL verdicts whose
+// record is still owed. An outstanding verdict's record is written only
+// beside its payload (persistOwnership, the replay's admission) — never
+// by a retry that has no payload to write first (codex r26 finding 1).
+// Caller holds c.mu.
+func (c *inboundCoalescer) owedVerdictsLocked(channel string) int {
+	n := 0
+	for _, v := range c.verdicts[channel] {
+		if v.retired && !v.durable && !v.pendingWrite {
+			n++
+		}
+	}
+	return n
+}
+
+// deadLetterWritten lifts (channel, ts)'s pending-write mark — its
+// payload is now in the dead-letter file — and writes the record that
+// the payload's durability earned. Called with c.mu NOT held.
+func (c *inboundCoalescer) deadLetterWritten(channel, ts string) {
+	c.mu.Lock()
+	if v, ok := c.verdicts[channel][ts]; ok && v.pendingWrite {
+		v.pendingWrite = false
+		// Retention counts from the CONFIRMED write (codex r30 minor 1):
+		// a write that took longer than the window would otherwise
+		// expire the moment it confirmed, and a redelivery right after
+		// would be admitted as fresh bytes. The record carries this time.
+		v.at = time.Now()
+		c.verdicts[channel][ts] = v
+	}
+	c.mu.Unlock()
+	c.persistVerdict(channel, ts)
+}
+
+// seedRefused seeds the replay's in-memory terminal verdict for a
+// Refused entry — dead-lettered before the restart, its write still
+// owed — WITHOUT a record: the entry's spool line is the payload's
+// durable home until the write confirms (codex r20 finding 1). A
+// record already standing (the write confirmed before the restart) is
+// left as it is.
+func (c *inboundCoalescer) seedRefused(channel, ts string, cause error) {
+	if c == nil || ts == "" {
+		return
+	}
+	c.mu.Lock()
+	c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true}, time.Now())
+	c.mu.Unlock()
+}
+
+// persistOwedVerdicts writes every verdict of the channel whose record
+// is still owed. Returns how many of THOSE remain owed (the retry tail
+// recounts under the lock instead of trusting this, codex r16 finding
+// 2). Called with c.mu NOT held.
+func (c *inboundCoalescer) persistOwedVerdicts(channel string) int {
+	c.mu.Lock()
+	var owed []string
+	for ts, v := range c.verdicts[channel] {
+		if v.retired && !v.durable && !v.pendingWrite {
+			owed = append(owed, ts)
+		}
+	}
+	c.mu.Unlock()
+	if c.recordVerdict == nil {
+		return 0
+	}
+	sort.Strings(owed)
+	left := 0
+	for _, ts := range owed {
+		if !c.persistVerdict(channel, ts) {
+			left++
+		}
+	}
+	return left
+}
+
+// channelsOwingVerdicts lists the channels holding a verdict whose
+// record is still owed. Called with c.mu NOT held.
+func (c *inboundCoalescer) channelsOwingVerdicts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for channel, m := range c.verdicts {
+		for _, v := range m {
+			if v.retired && !v.durable && !v.pendingWrite {
+				out = append(out, channel)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// seedVerdict is the spool replay's entry point: a verdict decided
+// before the restart — terminal or outstanding, from a record line or
+// an entry's own disposition — re-enters the ledger before any copy of
+// the message is admitted, and is written again for the next restart
+// (codex r23 finding 1: an outstanding verdict seeded from a Stripped
+// entry wrote nothing, the staged file went, and a second crash lost
+// the decision). A verdict already standing (a duplicate record, a
+// terminal one ahead of a stale stripped entry) changes nothing and is
+// not re-written. Returns whether the durable record, if one was owed,
+// is confirmed — the replay keeps its staged file otherwise.
+func (c *inboundCoalescer) seedVerdict(channel, ts string, v ladderVerdict) bool {
+	if c == nil || ts == "" {
+		return true
+	}
+	c.mu.Lock()
+	if v.retired {
+		c.retireLocked(channel, ts, v, time.Now())
+	} else {
+		// In memory only: an outstanding verdict's record is written by
+		// the admission that re-spools its copy, AFTER that copy (codex
+		// r26 finding 1) — never before a payload exists on disk.
+		c.recordVerdictLocked(channel, ts, v, time.Now())
+		c.mu.Unlock()
+		return true
+	}
+	c.mu.Unlock()
+	return c.persistVerdict(channel, ts)
+}
+
+// verdictLocked returns the live ladder verdict for (channel, ts), if
+// any. Caller holds c.mu.
+func (c *inboundCoalescer) verdictLocked(channel, ts string, now time.Time) (ladderVerdict, bool) {
+	v, ok := c.verdicts[channel][ts]
+	if !ok || v.expired(now) {
+		return ladderVerdict{}, false
+	}
+	return v, true
+}
+
+// landVerdicts settles the ladder's verdict for every real member of a
+// delivery gc just ACCEPTED. A member the ladder never owned — no
+// verdict, never charged, never flagged — was never refused: nothing to
+// record, and a later copy is an ordinary duplicate for the dedup key.
+// A member the ladder OWNS lands as a terminal verdict (retired,
+// delivered): the stripped retry delivered without its attachments,
+// and equally a copy that was charged (an unvouched re-post that
+// finally vouched) or flagged isolate (a probe resumed after a pause).
+// The urgent path never withholds a copy the ladder owns from its
+// flush-ahead (onLadderEntry) — the ladder's copy is the message's
+// delivery — so the copy's landing MUST leave the ladder's answer
+// standing, or main.go's onLadder says "no" right after the flush-ahead
+// delivered it and the urgent twin posts the same message again under
+// its own dedup key (codex r14 finding 1: an unvouched A+B restored
+// charged, A's twin arrives, the flush-ahead delivers A+B vouched, no
+// verdict was recorded, urgent A posts). Every other copy of a landed
+// message — buffered beside it, admitted later, handed back, the
+// urgent twin built from the fresh event — is dropped as a duplicate of
+// a delivered message, never posted. Clearing the verdict on a stripped
+// landing instead (codex r11 finding 1) opened the same gap for the
+// stripped retry.
+//
+// The stripped copy names its own disposition (pendingChannelInbound.
+// stripped, codex r12 finding 1): a replayed stripped retry whose
+// ledger entry did not survive the restart still lands as a terminal
+// verdict, never as a plain delivery.
+func (c *inboundCoalescer) landVerdicts(channel string, delivered []pendingChannelInbound) {
+	var terminal []string
+	c.mu.Lock()
+	now := time.Now()
+	for _, p := range delivered {
+		if p.reaction {
+			continue
+		}
+		ts := p.inbound.ProviderMessageID
+		v, ok := c.verdictLocked(channel, ts, now)
+		switch {
+		case ok && v.retired:
+			continue
+		case !ok && p.stripped == "" && !onLadderEntry(p):
+			continue
+		case !ok:
+			v = ownershipOf(p)
+		}
+		v = ladderVerdict{retired: true, delivered: true, cause: v.cause, attempts: v.attempts}
+		dropped, _ := c.retireLocked(channel, ts, v, now)
+		if dropped > 0 {
+			log.Printf("coalesce: chan=%s ts=%s the ladder's copy delivered — %d buffered duplicate copy(ies) dropped, never posted", channel, ts, dropped)
+		}
+		terminal = append(terminal, ts)
+	}
+	c.mu.Unlock()
+	for _, ts := range terminal {
+		c.persistVerdict(channel, ts)
+	}
+}
+
+// adoptVerdictLocked applies the ladder's standing verdict for p's ts to
+// a copy entering the buffer: a retired ts is dropped (ok=false — the
+// dead-letter file, or the stripped copy gc accepted, is that message's
+// delivery); a stripped one makes the copy the stripped, isolated retry
+// itself, so the bytes gc refused never go out under a fresh copy's
+// name (codex r10 finding 1). The verdict is returned for the log line.
+// Caller holds c.mu.
+func (c *inboundCoalescer) adoptVerdictLocked(channel string, p pendingChannelInbound, now time.Time) (pendingChannelInbound, ladderVerdict, bool) {
+	if p.reaction {
+		return p, ladderVerdict{}, true
+	}
+	v, ok := c.verdictLocked(channel, p.inbound.ProviderMessageID, now)
+	if !ok {
+		return p, v, true
+	}
+	if v.retired {
+		return p, v, false
+	}
+	if v.stripped {
+		p = withholdAttachments(p, v.cause)
+		if p.attempts < 1 {
+			p.attempts = 1
+		}
+	}
+	if p.attempts < v.attempts {
+		p.attempts = v.attempts // the ledger's count is the copy's count (codex r33 finding 4)
+	}
+	p.isolate = true
+	return p, v, true
+}
+
+// dropBufferedCopiesLocked removes every buffered copy of id from the
+// channel — the ladder just decided that entry's fate through another
+// copy — and lets the scheduler re-judge the buffer. A real message's
+// id is its ts; a reaction entry's id is its own event ts
+// (reaction_events.go), so a reaction the ladder retired drops its
+// copies from the pending buffer AND the no-wake side lane by that
+// identity (codex r14 finding 2: a dead-lettered reaction's copies
+// bypassed every verdict check). Returns how many were dropped. Caller
+// holds c.mu.
+func (c *inboundCoalescer) dropBufferedCopiesLocked(channel, id string) int {
+	dropped := 0
+	pend := c.pending[channel]
+	kept := pend[:0]
+	for _, p := range pend {
+		if p.inbound.ProviderMessageID == id {
+			dropped++
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(kept) != len(pend) {
+		if len(kept) == 0 {
+			delete(c.pending, channel)
+		} else {
+			c.pending[channel] = kept
+		}
+	}
+	side := c.reactions[channel]
+	keptSide := side[:0]
+	for _, p := range side {
+		if p.inbound.ProviderMessageID == id {
+			dropped++
+			continue
+		}
+		keptSide = append(keptSide, p)
+	}
+	if len(keptSide) != len(side) {
+		if len(keptSide) == 0 {
+			delete(c.reactions, channel)
+		} else {
+			c.reactions[channel] = keptSide
+		}
+	}
+	if dropped == 0 {
+		return 0
+	}
+	c.scheduleLocked(channel, time.Time{})
+	return dropped
+}
+
+// onLadder reports whether the rejection ladder owns the message
+// (channel, ts): a standing verdict — the ladder's copy owed (stripped,
+// charged or isolated; buffered, detached or in flight), delivered by
+// the ladder's copy, or dead-lettered. The ledger is the ONE answer
+// (codex r15 finding 1): ownership is recorded when the ladder takes a
+// copy (charge) and whenever an owned copy enters or re-enters the
+// buffer (ownLocked at enqueue and restore), so a charged copy the
+// timer detached is still the ladder's while its POST is in flight. The
+// urgent path consults it after flushAheadOf: an urgent copy of a
+// message the ladder owns is NOT posted — the ladder's own copy or the
+// dead-letter file is the message's delivery (codex r10 finding 2).
+// Every landing of a ladder-owned copy leaves a terminal verdict (codex
+// r11 finding 1, r14 finding 1), so the answer cannot flip between the
+// flush-ahead and the urgent POST. Nil-safe.
+func (c *inboundCoalescer) onLadder(channel, ts string) bool {
+	if c == nil || ts == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.verdictLocked(channel, ts, time.Now())
+	return ok
+}
+
+// holdDelivery blocks until the channel's delivery mutex is held and
+// returns its release. The ladder progresses only inside deliveries
+// made under that mutex (failed → charge, the isolation probes), so a
+// caller that asks onLadder and POSTs under one hold has serialized
+// the decision with its submission (codex r29 finding 1: the urgent
+// path asked, paused in the busy-mark clock, a trailing buffered twin
+// posted and was refused, and the urgent copy then posted the original
+// attachments after the refusal). The wait is a reservation exactly as
+// flushAheadOf's (urgentWaiting): competing takes refuse while a holder
+// is queued, and retry on the short cadence once it releases. Lock
+// order as flushAheadOf: block on the delivery mutex OUTSIDE c.mu.
+// Nil-safe. The release must run before anything that takes the
+// channel (deliverBufferedReactions, a flush-ahead). The hold is the
+// mutex only: the shutdown barrier is beginEvent's, which spans the
+// whole urgent path (codex r31 finding 1 — tied to the hold, the
+// registration ended when the mutex was released, before the failure
+// branch spooled its payload, and it began after flushAheadOf, leaving
+// callers queued in that wait uncovered).
+func (c *inboundCoalescer) holdDelivery(channel string) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	mu := c.flushMuFor(channel)
+	c.urgentWaiting[channel]++
+	c.mu.Unlock()
+	mu.Lock()
+	c.mu.Lock()
+	c.urgentWaiting[channel]--
+	c.mu.Unlock()
+	return mu.Unlock
+}
+
+// beginEvent registers one ACKNOWLEDGED Slack event with the shutdown
+// barrier and returns its end. The handler calls it when it hands the
+// event to the goroutine that lives its whole life (codex r30 finding 1,
+// r31 finding 1, r32 finding 1, r33 finding 1 — each round found one
+// more wait the event could park in ahead of the registration: the
+// channel hold, the flush-ahead wait, the same-ts claim wait, the
+// same-event-id wait): the event-id wait, the dispatch-slot wait, the
+// claim wait, the flush-ahead wait, the hold of the channel, the POST
+// and the failure branch's spool or restore all run outside the
+// coalescer's takes, and every one of them is the message's last
+// recovery path in some interleaving. Registered before the first of
+// them, ended when the goroutine returns, so drainPending's fixpoint
+// cannot conclude — and main cannot seal the spool — while an
+// acknowledged event is still on its way. Nil-safe.
+func (c *inboundCoalescer) beginEvent() func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.inflight++
+	c.mu.Unlock()
+	return c.endDelivery
 }
 
 // isDeletedLocked reports whether (channel, ts) carries a live
@@ -371,6 +1104,253 @@ func (c *inboundCoalescer) windowFor(channel string) time.Duration {
 	return c.window
 }
 
+// disabledWindowRetryBase is the first retry delay on a channel whose
+// accumulation window is zero (coalescing disabled: the coalescer then
+// only ever carries spool replays and the dead-letter write retries).
+// Without it a transient failure there would retry at request-
+// completion speed forever (codex r4 finding 2).
+const disabledWindowRetryBase = time.Second
+
+// transientRetryDelay is the retry cadence after `failures` consecutive
+// TRANSIENT delivery failures on a channel whose accumulation window is
+// `window`: the base doubled failures-1 times, capped at
+// maxTransientRetryDelay and floored at the base itself (a digest
+// interval longer than the cap stays the operator's cadence). The base
+// is the window, or disabledWindowRetryBase when the window is zero.
+// Zero failures pass the window through unchanged.
+func transientRetryDelay(window time.Duration, failures int) time.Duration {
+	if failures <= 0 {
+		return window
+	}
+	base := window
+	if base <= 0 {
+		base = disabledWindowRetryBase
+	}
+	d := base
+	for i := 1; i < failures; i++ {
+		d *= 2
+		if d >= maxTransientRetryDelay {
+			d = maxTransientRetryDelay
+			break
+		}
+	}
+	if d < base {
+		return base
+	}
+	return d
+}
+
+// backoffLogWorthy reports whether the n-th consecutive failure on a
+// backoff with base `base` is a STATE CHANGE worth a log line (gp-sgu7
+// contract 3, codex r1 finding 5): the first failure, and every
+// failure whose delay differs from the previous one — so a channel
+// logs once per doubling and once more on reaching the cap, then
+// stays silent until it recovers. Returns the delay either way.
+func backoffLogWorthy(base time.Duration, n int) (time.Duration, bool) {
+	delay := transientRetryDelay(base, n)
+	if n <= 1 {
+		return delay, true
+	}
+	return delay, delay != transientRetryDelay(base, n-1)
+}
+
+// backoffCapSuffix is appended to the log line that announces a
+// backoff reaching its cap, so the following silence is explained.
+func backoffCapSuffix(delay time.Duration) string {
+	if delay >= maxTransientRetryDelay {
+		return " (at the cap; further failures at this cadence are not logged until the channel recovers)"
+	}
+	return ""
+}
+
+// retryDelayLocked is the delay for the channel's next timer: its
+// window, backed off by its current run of transient failures. Caller
+// holds c.mu.
+func (c *inboundCoalescer) retryDelayLocked(channel string) time.Duration {
+	return transientRetryDelay(c.windowFor(channel), c.transientFailures[channel])
+}
+
+// inBackoffLocked reports whether the channel is waiting out a
+// transient-failure backoff: its restore armed a retry due at
+// retryNotBefore and that moment has not come. Every take that would
+// POST the buffer EARLY — the over-cap flush in enqueue/admitReaction,
+// the reaction-overflow flush, a SIGHUP reconcile — must honor it
+// (codex r1 finding 2): during an outage an over-cap buffer would
+// otherwise cost one POST per enqueue and a reconcile would collapse a
+// five-minute backoff to the one-second cap cadence. The armed backoff
+// timer already covers the buffer. The urgent flush-ahead honors it
+// too (codex r6): the urgent message proceeds on its own, the buffered
+// batch waits for its retry. Caller holds c.mu.
+func (c *inboundCoalescer) inBackoffLocked(channel string) bool {
+	nb, ok := c.retryNotBefore[channel]
+	return ok && time.Now().Before(nb)
+}
+
+// noteTransientFailure records one more consecutive transient failure
+// for the channel and moves its retry deadline out to the backed-off
+// delay — the ONLY writer of both (gp-sgu7). Rounds 1–8 of the codex
+// gate each found a path that set or stretched the deadline on its
+// own (a restore with no new failure, a reactions-only restore, an
+// urgent twin returned after a failed mention — codex r8 finding 1:
+// every restore replaced the deadline with now+delay, so repeated
+// failed mentions postponed the buffer forever); now nothing else
+// touches it. Logs once per backoff STATE change (contract 3: the
+// first failure, each doubling, once more at the cap), naming the
+// caller's `what`. Called before restore(), whose scheduleLocked then
+// places the retry at the new deadline. Returns the count.
+func (c *inboundCoalescer) noteTransientFailure(channel string, cause error, what string) int {
+	c.mu.Lock()
+	c.transientFailures[channel]++
+	n := c.transientFailures[channel]
+	delay, worthy := backoffLogWorthy(c.windowFor(channel), n)
+	c.retryNotBefore[channel] = time.Now().Add(delay)
+	c.mu.Unlock()
+	if worthy {
+		log.Printf("coalesce: chan=%s %s — transient failure #%d, retry in %s%s: %v", channel, what, n, delay, backoffCapSuffix(delay), cause)
+	}
+	return n
+}
+
+// deliveredOK ends the channel's transient-failure run: the deadline
+// is lifted, and whatever real messages still sit in the buffer flush
+// at the plain window instead of waiting out a deadline gc has just
+// proven unnecessary (the scheduler pulls the timer in; a channel not
+// in a run is unchanged). The next failure, if any, starts again at
+// the window.
+func (c *inboundCoalescer) deliveredOK(channel string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n := c.transientFailures[channel]; n > 0 {
+		log.Printf("coalesce: chan=%s delivered after %d transient failure(s) — retry cadence back to the window", channel, n)
+	}
+	delete(c.transientFailures, channel)
+	delete(c.retryNotBefore, channel)
+	delete(c.urgentDeferredAt, channel)
+	c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
+}
+
+// hasRealPendingLocked reports whether the channel's pending buffer
+// holds at least one real message (not a reaction riding an armed
+// window). Caller holds c.mu.
+func (c *inboundCoalescer) hasRealPendingLocked(channel string) bool {
+	for _, p := range c.pending[channel] {
+		if !p.reaction {
+			return true
+		}
+	}
+	return false
+}
+
+// timerWorthyLocked is the ONE predicate for "may this channel POST on
+// a timer": a real message is buffered, or the no-wake reaction side
+// lane has overflowed (the one sanctioned solo reaction wake, gp-9e7
+// item 1). Reactions below the cap never earn a timer — not by
+// admission, not by a restore, not by a withheld twin emptying the
+// buffer beside them (codex r8 finding 3) — and an overflowed lane
+// always does, even during a backoff (codex r8 finding 2: the deadline
+// decides WHEN, never WHETHER). Both the arming side (scheduleLocked)
+// and the firing side (flushTimer) consult it. Caller holds c.mu.
+func (c *inboundCoalescer) timerWorthyLocked(channel string) bool {
+	return c.hasRealPendingLocked(channel) || len(c.reactions[channel]) >= maxBufferedReactionsPerChannel
+}
+
+// disarmLocked stops and forgets the channel's timer, bumping the
+// generation so an already-fired callback no-ops. Returns whether a
+// timer was armed. Caller holds c.mu.
+func (c *inboundCoalescer) disarmLocked(channel string) bool {
+	delete(c.due, channel)
+	t, ok := c.timers[channel]
+	if !ok {
+		return false
+	}
+	t.Stop()
+	delete(c.timers, channel)
+	c.gen[channel]++
+	return true
+}
+
+// scheduleLocked is the ONE place a channel's flush timer is armed,
+// moved or disarmed (gp-sgu7, codex r8). Eight gate rounds each found
+// another path that armed its own timer and checked the backoff
+// deadline for itself — enqueue, the over-cap short retry, restore
+// (twice), a firing timer under the deadline, the reconcile, the
+// urgent flush-ahead's twin withhold, the reaction overflow — and
+// each patch left the next path uncovered. Now every one of them
+// states only what it WANTS and this function derives the timer from
+// the channel's state:
+//
+//   - a buffer left with no real message holds no riders: reactions
+//     that were riding its armed window go back to the no-wake side
+//     lane FIRST, where the cap counts them (codex r11 finding 3: a
+//     retired duplicate left a hundred riders in pending, uncounted
+//     and untimed, until the channel's next real message) — whichever
+//     path emptied the buffer (a withheld twin, a landed verdict, a
+//     dropped copy);
+//   - nothing timer-worthy is buffered (timerWorthyLocked) → NO timer,
+//     whatever the caller wanted: a take that would POST below-cap
+//     reactions alone can never be armed;
+//   - otherwise the timer fires at the EARLIER of its current target
+//     and `at` — the moment the caller wants (a fresh window on
+//     enqueue; a short poll behind an in-flight delivery; the plain
+//     window after a recovery; zero = no new want, keep the target) —
+//     and NEVER before the channel's transient-failure deadline
+//     (retryNotBefore). With no timer and no want, the retry IS the
+//     deadline when one is ahead (codex r9 finding 2: an overflow or a
+//     restore arriving with the deadline less than a window away must
+//     not wait a whole window past it), else a window from now. A
+//     restore after a failure therefore lands on the deadline
+//     noteTransientFailure just set; a restore WITHOUT a new failure
+//     (an urgent twin handed back, reactions returned to their lane)
+//     keeps the deadline exactly where it is.
+//
+// A target that already passed (the timer is about to fire, or a hand
+// of the clock) is not moved: the callback's own take is the delivery.
+// Re-arming bumps the generation so the replaced callback no-ops.
+// Returns the target and whether the timer changed. Caller holds c.mu.
+func (c *inboundCoalescer) scheduleLocked(channel string, at time.Time) (time.Time, bool) {
+	if riders := c.pending[channel]; len(riders) > 0 && !c.hasRealPendingLocked(channel) {
+		c.reactions[channel] = append(append([]pendingChannelInbound(nil), riders...), c.reactions[channel]...)
+		delete(c.pending, channel)
+	}
+	if !c.timerWorthyLocked(channel) {
+		return time.Time{}, c.disarmLocked(channel)
+	}
+	_, armed := c.timers[channel]
+	target := time.Time{}
+	if armed {
+		target = c.due[channel]
+	}
+	if !at.IsZero() && (target.IsZero() || at.Before(target)) {
+		target = at
+	}
+	now := time.Now()
+	nb, backingOff := c.retryNotBefore[channel]
+	if target.IsZero() {
+		if backingOff && nb.After(now) {
+			target = nb
+		} else {
+			target = now.Add(c.windowFor(channel))
+		}
+	}
+	if backingOff && target.Before(nb) {
+		target = nb
+	}
+	if armed && target.Equal(c.due[channel]) {
+		return target, false
+	}
+	if armed {
+		c.timers[channel].Stop()
+	}
+	c.gen[channel]++
+	g := c.gen[channel]
+	c.due[channel] = target
+	c.timers[channel] = time.AfterFunc(time.Until(target), func() { c.flushTimer(channel, g) })
+	return target, true
+}
+
 // flushMuFor returns the channel's delivery mutex, creating it under
 // c.mu. Entries are never removed — the population is the set of
 // channels seen this adapter lifetime.
@@ -397,20 +1377,16 @@ func (c *inboundCoalescer) capRetryDelay() time.Duration {
 	return overCapRetryCeiling
 }
 
-// armCapRetryLocked replaces the channel's armed timer — possibly a
-// digest-scale one — with a SHORT retry at the CURRENT generation
-// (no state changed, so the generation is still live), for flushes
-// deferred behind an in-flight delivery (gp-9e7 round 5, 3a/3b). Every
-// caller attempts the take FIRST and arms this only on a failed
-// TryLock, so repeated re-arms cannot starve the retry: each re-arm was
-// itself a fresh flush attempt, and the timer only needs to cover the
-// quiet tail after the last one. Called with c.mu held.
-func (c *inboundCoalescer) armCapRetryLocked(channel string) {
-	if t, ok := c.timers[channel]; ok {
-		t.Stop()
-	}
-	g := c.gen[channel]
-	c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
+// wantCapRetryLocked asks the scheduler for a SHORT retry — pulling a
+// digest-scale target in — for a flush deferred behind an in-flight
+// delivery (gp-9e7 round 5, 3a/3b). Every caller attempts the take
+// FIRST and asks for this only on a failed TryLock, so repeated asks
+// cannot starve the retry: each was itself a fresh flush attempt, and
+// the timer only needs to cover the quiet tail after the last one. The
+// deadline still binds (an unreachable gc gains nothing from a 1 s
+// poll). Called with c.mu held.
+func (c *inboundCoalescer) wantCapRetryLocked(channel string) {
+	c.scheduleLocked(channel, time.Now().Add(c.capRetryDelay()))
 }
 
 // spillLateLocked routes one post-close admission out of the process:
@@ -442,17 +1418,44 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 	// spills to the durable spool, and tombstones are memory-only, so
 	// the spilled line must already carry the notice (codex round-2
 	// finding 3).
-	if c.isDeletedLocked(channel, p.inbound.ProviderMessageID, time.Now()) {
+	now := time.Now()
+	if c.isDeletedLocked(channel, p.inbound.ProviderMessageID, now) {
 		applyDeletion(&p)
 		log.Printf("coalesce: chan=%s ts=%s admitted after its deletion — buffered as a deletion notice", channel, p.inbound.ProviderMessageID)
 	}
+	// The ladder's verdict about this MESSAGE applies to every copy of
+	// it (codex r10 finding 1): a copy of a dead-lettered ts is dropped
+	// — before the admission barrier, so a post-close straggler is not
+	// spooled either — and a copy of a ts owed its stripped retry enters
+	// AS that retry.
+	adopted, verdict, ok := c.adoptVerdictLocked(channel, p, now)
+	if !ok {
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s ts=%s admitted after the rejection ladder %s — duplicate copy dropped, the same bytes are never re-posted", channel, p.inbound.ProviderMessageID, verdict.disposition())
+		return
+	}
+	if adopted.isolate && !p.isolate {
+		log.Printf("coalesce: chan=%s ts=%s admitted while its earlier copy is on the rejection ladder (%s) — this copy adopts the ladder's isolated copy", channel, p.inbound.ProviderMessageID, verdict.disposition())
+	}
+	p = adopted
+	// A copy the ladder owns (a replayed isolate entry, a copy adopted
+	// above) keeps the ladder's ownership in the ledger (codex r15
+	// finding 1).
+	owed := c.ownLocked(channel, p, now)
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
+		c.persistOwnership(channel, p, owed)
 		return
 	}
 	c.pending[channel] = append(c.pending[channel], p)
 	pendingLen := len(c.pending[channel])
-	if pendingLen >= maxCoalescePerChannel {
+	// An over-cap buffer on a channel waiting out a transient-failure
+	// backoff is NOT flushed early (gp-sgu7): its backoff timer is armed
+	// and covers the buffer; every enqueue POSTing the growing buffer at
+	// an unreachable gc would be the traffic-driven retry the backoff
+	// exists to end. The cap bounds nothing here but memory, and the
+	// buffer grows by at most the outage's traffic (codex r1 finding 2).
+	if pendingLen >= maxCoalescePerChannel && !c.inBackoffLocked(channel) {
 		batch, mu, ok := c.takeLocked(channel)
 		if !ok {
 			// A delivery for this channel is in flight (round 3): skip the
@@ -462,13 +1465,15 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 			// in-flight delivery settles. The cap overshoots for at most
 			// one delivery's duration plus one retry delay; nothing is
 			// dropped.
-			c.armCapRetryLocked(channel)
+			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
+			c.persistOwnership(channel, p, owed)
 			log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 			return
 		}
 		swept := c.takeSweepsLocked(channel)
 		c.mu.Unlock()
+		c.persistOwnership(channel, p, owed) // durable before the POST it shapes
 		log.Printf("coalesce: chan=%s buffer full (%d) — early flush", channel, pendingLen)
 		// Mutexes are held from take time (gp-9e7 fix round 2c/round 3);
 		// launching the swept goroutines before the triggering channel's
@@ -477,16 +1482,122 @@ func (c *inboundCoalescer) enqueue(channel string, p pendingChannelInbound) {
 		c.deliverBatch(channel, batch, mu)
 		return
 	}
-	if _, ok := c.timers[channel]; !ok {
-		window := c.windowFor(channel)
-		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
-		c.mu.Unlock()
-		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, window)
+	// The scheduler decides: a first message arms the window (moved out
+	// to the deadline during a backoff — codex r3 finding 1); a later one
+	// joins the armed timer unchanged.
+	target, armed := c.scheduleLocked(channel, time.Now().Add(c.windowFor(channel)))
+	c.mu.Unlock()
+	c.persistOwnership(channel, p, owed)
+	if armed {
+		log.Printf("coalesce: chan=%s buffered ts=%s (window %s armed)", channel, p.inbound.ProviderMessageID, time.Until(target).Round(time.Millisecond))
 		return
 	}
-	c.mu.Unlock()
 	log.Printf("coalesce: chan=%s buffered ts=%s (pending=%d)", channel, p.inbound.ProviderMessageID, pendingLen)
+}
+
+// persistOwnership makes a progression of the ledger durable: the
+// verdict's record AND the owned copy's own spool line, which carries
+// the disposition (isolate, stripped, attempts) and the payload. The
+// record alone is not ownership (codex r25 finding 2): a payload-less
+// record survived a crash while the buffered copy it owed died with
+// the process, and the restart owned a message it had no copy of — the
+// urgent twin, the only copy Slack would still send, was skipped on the
+// standing verdict. Called with c.mu NOT held, when `changed` reports
+// the ledger progressed (an unchanged ownership re-spools nothing, so
+// a charged copy restored every window costs no journal line).
+func (c *inboundCoalescer) persistOwnership(channel string, p pendingChannelInbound, changed bool) {
+	if !changed {
+		return
+	}
+	if c.spillOwned(channel, []pendingChannelInbound{p}) {
+		c.persistVerdict(channel, p.inbound.ProviderMessageID)
+	}
+}
+
+// spillOwned writes owned copies' spool lines (one append for the
+// batch) and reports whether they are on disk. The payload comes FIRST
+// (codex r26 finding 1): an outstanding record is written only once the
+// copy it owns is durable, so a crash between the two can never leave
+// ownership of nothing — the same order the dead-letter record keeps
+// behind its payload (codex r20). With no spool wired nothing was
+// promised, so the record may follow. A failed write is logged; the
+// verdict stays not durable in memory (owesDurability keeps the
+// replay's staged file), and the copy lives in memory until the
+// shutdown flush spools it — a crash before then loses the owed retry
+// like any buffered message, and a redelivery is fresh bytes.
+func (c *inboundCoalescer) spillOwned(channel string, batch []pendingChannelInbound) bool {
+	if len(batch) == 0 {
+		return false
+	}
+	if c.spill == nil {
+		return true
+	}
+	if c.spill(channel, batch) {
+		return true
+	}
+	log.Printf("coalesce: chan=%s %d owned cop%s could not be spooled with the ladder's decision — owned in memory only until the shutdown flush spools %s; no record is written without the payload", channel, len(batch), plural(len(batch), "y", "ies"), plural(len(batch), "it", "them"))
+	return false
+}
+
+// owesDurability reports whether anything the coalescer holds still
+// lacks a durable home outside the replay's staged file: a parked
+// refusal with no spool copy, a terminal record still owed, or an
+// outstanding verdict whose copy and record are not on disk (codex r25
+// finding 3: a cap flush during the replay refused entries whose
+// refusal spill and dead-letter write both failed, and the staged file
+// — their only durable copy — went).
+func (c *inboundCoalescer) owesDurability() bool {
+	if c == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	type key struct{ channel, ts string }
+	spilled := make(map[key]bool)
+	for channel, parked := range c.parkedDeadLetters {
+		for _, e := range parked {
+			if !e.spilled {
+				return true
+			}
+			spilled[key{channel, e.p.inbound.ProviderMessageID}] = true
+		}
+	}
+	for channel, m := range c.verdicts {
+		for ts, v := range m {
+			if v.pendingWrite {
+				// Retired, its dead-letter write not confirmed: durable
+				// only as a PARKED entry with its spool copy. Retired but
+				// not yet parked — the refusal's spool write or the sink
+				// still running on a timer (codex r27 finding 1) — it is
+				// owed: neither a parked entry nor a record says where
+				// the acknowledged bytes are.
+				if !spilled[key{channel, ts}] {
+					return true
+				}
+				continue
+			}
+			if !v.durable {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// adoptForReplay applies the ledger's standing verdict to a copy the
+// spool replay is about to admit, exactly as enqueue will: a retired
+// message's copy is reported dead (ok=false — nothing to re-spool, the
+// admission drops it); an owned message's copy comes back AS the
+// ladder's copy (stripped, isolated), so the line the replay re-writes
+// carries the disposition the ledger will own after the restart.
+func (c *inboundCoalescer) adoptForReplay(channel string, p pendingChannelInbound) (pendingChannelInbound, bool) {
+	if c == nil {
+		return p, true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	adopted, _, ok := c.adoptVerdictLocked(channel, p, time.Now())
+	return adopted, ok
 }
 
 // admitReaction buffers one reaction notification (gp-9e7 item 1).
@@ -513,6 +1624,17 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	p.reaction = true
 	c.mu.Lock()
+	// A copy of a reaction the ladder RETIRED (dead-lettered, by its own
+	// event identity) is a duplicate of a handled event, exactly like a
+	// retired message's copy at enqueue (codex r14 finding 2): the
+	// refused bytes never ride another delivery, however the copy
+	// arrives — a Slack redelivery, the spool replay's re-admission.
+	// Admission is still final handling of the event.
+	if v, ok := c.verdictLocked(channel, p.inbound.ProviderMessageID, time.Now()); ok && v.retired {
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s reaction ts=%s is a copy of a reaction the rejection ladder %s — dropped, never re-posted", channel, p.inbound.ProviderMessageID, v.disposition())
+		return true
+	}
 	if c.closed {
 		c.spillLateLocked(channel, []pendingChannelInbound{p})
 		return true
@@ -521,12 +1643,12 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 		if _, armed := c.timers[channel]; armed {
 			c.pending[channel] = append(c.pending[channel], p)
 			pendingLen := len(c.pending[channel])
-			if pendingLen >= maxCoalescePerChannel {
+			if pendingLen >= maxCoalescePerChannel && !c.inBackoffLocked(channel) {
 				batch, mu, ok := c.takeLocked(channel)
 				if !ok {
 					// Delivery in flight (round 3): a short retry timer
 					// flushes once it settles (round 5, 3a); see enqueue.
-					c.armCapRetryLocked(channel)
+					c.wantCapRetryLocked(channel)
 					c.mu.Unlock()
 					log.Printf("coalesce: chan=%s buffer full (%d) but delivery in flight — early flush deferred to a short retry", channel, pendingLen)
 					return true
@@ -546,6 +1668,21 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 	}
 	c.reactions[channel] = append(c.reactions[channel], p)
 	n := len(c.reactions[channel])
+	if n >= maxBufferedReactionsPerChannel && c.inBackoffLocked(channel) {
+		// A channel in transient-failure backoff keeps its overflow too
+		// (gp-sgu7): the overflow flush would POST at an unreachable gc.
+		// But the overflow is now timer-worthy, and a reactions-only
+		// backoff arms no timer of its own — so ask the scheduler, which
+		// places the overflow flush AT the deadline (codex r8 finding 2:
+		// suppressed without a timer, a lane that overflowed during an
+		// outage never drained once traffic stopped). Logged once, when
+		// the timer is actually armed.
+		if _, armed := c.scheduleLocked(channel, time.Time{}); armed {
+			log.Printf("coalesce: chan=%s reaction buffer full (%d) during a transient-failure backoff — overflow flush scheduled at the backoff deadline", channel, n)
+		}
+		c.mu.Unlock()
+		return true
+	}
 	if n >= maxBufferedReactionsPerChannel {
 		// Overflow: deliver rather than evict — reactions never drop.
 		// The solo wake this costs takes a pathological reaction volume
@@ -563,7 +1700,7 @@ func (c *inboundCoalescer) admitReaction(channel string, p pendingChannelInbound
 			// no-ops the timer via its stale generation. Overshoot is
 			// bounded: at most the reactions arriving during one in-flight
 			// delivery plus one retry delay past the cap.
-			c.armCapRetryLocked(channel)
+			c.wantCapRetryLocked(channel)
 			c.mu.Unlock()
 			log.Printf("coalesce: chan=%s reaction buffer full (%d) but delivery in flight — overflow flush deferred to a short retry", channel, n)
 			return true
@@ -636,6 +1773,7 @@ func (c *inboundCoalescer) detachLocked(channel string) []pendingChannelInbound 
 		t.Stop()
 		delete(c.timers, channel)
 	}
+	delete(c.due, channel)
 	batch := c.pending[channel]
 	delete(c.pending, channel)
 	if rs := c.reactions[channel]; len(rs) > 0 {
@@ -699,11 +1837,16 @@ type sweptBatch struct {
 // the buffer order, untouched).
 func (c *inboundCoalescer) takeSweepsLocked(except string) []sweptBatch {
 	channels := make([]string, 0, len(c.pending))
-	for ch, pend := range c.pending {
-		if ch == except || len(pend) == 0 {
+	for ch := range c.pending {
+		if ch == except || !c.hasRealPendingLocked(ch) {
 			continue
 		}
 		if _, digest := c.policy.digestInterval(ch); digest {
+			continue
+		}
+		if nb, ok := c.retryNotBefore[ch]; ok && time.Now().Before(nb) {
+			// Waiting out a transient-failure backoff (gp-sgu7): sweeping
+			// it now would be the fixed-cadence retry the backoff ends.
 			continue
 		}
 		channels = append(channels, ch)
@@ -752,19 +1895,186 @@ func (c *inboundCoalescer) deliverBatch(channel string, batch []pendingChannelIn
 	if len(batch) == 0 || c.deliver == nil {
 		return
 	}
-	if err := c.deliver(channel, batch); err != nil {
-		c.failed(channel, batch, err)
-	}
+	c.post(channel, batch)
 }
 
-// restore re-queues a batch whose delivery failed, ahead of anything
-// buffered meanwhile, and re-arms the timer so the flush retries. The
-// re-queued batch may exceed the cap; the next enqueue then triggers an
-// early flush rather than anything being dropped. Reaction entries
-// split back into the no-wake side-buffer instead (gp-9e7 item 1): a
-// reactions-only failure must not arm a retry timer, or the retry
-// would be the solo reaction wake the buffer exists to prevent — they
-// wait for the channel's next real delivery like any buffered reaction.
+// post delivers one taken batch under the channel's held delivery
+// mutex — the ONE place a taken batch meets c.deliver (deliverBatch and
+// the urgent flushAheadOf both route here). The batch is walked in ts
+// order as SEGMENTS (codex r3 finding 2: an older message whose file
+// download finished late must still deliver before a newer one):
+// a member flagged isolate — an entry of a batch gc already refused,
+// restored when its probe paused on a transient failure or stripped
+// for its one retry — is posted ALONE, never re-batched (codex r1
+// finding 3); a run of unflagged messages posts as one batch, the
+// no-wake reactions riding with the LAST such run (or, with no plain
+// run, behind the delivered probes — back to their side lane instead
+// when a probe was refused, so a reaction never wakes solo behind a
+// charged message). A failed plain segment takes the usual failure
+// path and everything later waits for the next window (the take is
+// re-sorted then, so restore order is irrelevant). Returns the first
+// plain segment's delivery error, nil when everything delivered or a
+// probe paused and restored the remainder.
+func (c *inboundCoalescer) post(channel string, batch []pendingChannelInbound) error {
+	sorted := append([]pendingChannelInbound(nil), batch...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return sorted[i].inbound.ProviderMessageID < sorted[j].inbound.ProviderMessageID
+	})
+	sorted = collapseSameTS(channel, sorted)
+	var reals, reactions []pendingChannelInbound
+	for _, p := range sorted {
+		if p.reaction {
+			reactions = append(reactions, p)
+		} else {
+			reals = append(reals, p)
+		}
+	}
+	lastPlain := -1
+	for i, p := range reals {
+		if !p.isolate {
+			lastPlain = i
+		}
+	}
+	refused, announced := false, false
+	for i := 0; i < len(reals); {
+		if reals[i].isolate {
+			if !announced {
+				announced = true
+				c.mu.Lock()
+				_, worthy := backoffLogWorthy(c.windowFor(channel), c.transientFailures[channel])
+				c.mu.Unlock()
+				if worthy { // a resume inside a capped transient run is not a state change
+					log.Printf("coalesce: chan=%s resuming isolation from a batch gc refused — flagged members post alone, in ts order, never re-batched", channel)
+				}
+			}
+			rest := append(append([]pendingChannelInbound{}, reals[i+1:]...), reactions...)
+			paused, r := c.isolate(channel, reals[i:i+1], rest)
+			if paused {
+				return nil
+			}
+			refused = refused || r
+			i++
+			continue
+		}
+		j := i
+		for j < len(reals) && !reals[j].isolate {
+			j++
+		}
+		seg := append([]pendingChannelInbound{}, reals[i:j]...)
+		if j-1 == lastPlain {
+			seg = append(seg, reactions...)
+			reactions = nil
+		}
+		err := c.deliver(channel, seg)
+		if err == nil {
+			c.landVerdicts(channel, seg)
+			c.deliveredOK(channel)
+			i = j
+			continue
+		}
+		remaining := append(append([]pendingChannelInbound{}, reals[j:]...), reactions...)
+		if chargeableDeliveryFailure(err) {
+			// Only the entries gc actually saw enter the ladder; a member
+			// the hook dropped before posting (a same-ts duplicate, a twin
+			// an urgent delivery already carried) was never refused and is
+			// simply done (codex r5 finding 1).
+			submitted := submittedOf(seg, err)
+			if dropped := len(seg) - len(submitted); dropped > 0 {
+				log.Printf("coalesce: chan=%s %d member(s) of the refused segment were never posted (duplicates or already delivered) — not charged", channel, dropped)
+			}
+			c.failed(channel, submitted, err)
+			c.restore(channel, remaining)
+		} else {
+			c.noteTransientFailure(channel, err, fmt.Sprintf("batch of %d failed, %d entries restored", len(seg), len(seg)+len(remaining)))
+			c.restore(channel, append(seg, remaining...))
+		}
+		return err
+	}
+	if len(reactions) == 0 {
+		return nil
+	}
+	if refused {
+		c.restore(channel, reactions)
+		return nil
+	}
+	if err := c.deliver(channel, reactions); err != nil {
+		if chargeableDeliveryFailure(err) {
+			reactions = submittedOf(reactions, err)
+		}
+		c.failed(channel, reactions, err)
+		return err
+	}
+	c.deliveredOK(channel)
+	return nil
+}
+
+// collapseSameTS keeps ONE real entry per ts in a take — the copy whose
+// rejection state has progressed furthest (attempts, then the isolate
+// flag) — so a same-ts copy admitted while the original waited out a
+// backoff flagged for isolation can never post the refused bytes again
+// as its own plain segment after the original was dead-lettered
+// (codex r9 finding 1: the deliver hook's own same-ts dedup sees one
+// segment at a time). Same-ts copies are the same Slack message (the
+// bot-mention twin pair, a redelivery), already acked; the surviving
+// copy is its delivery, exactly as the hook's dedup and the urgent
+// path's twin withhold already treat it. Reactions carry their own
+// ids and are left alone. `sorted` is in ts order; positions are kept.
+func collapseSameTS(channel string, sorted []pendingChannelInbound) []pendingChannelInbound {
+	first := make(map[string]int, len(sorted)) // ts → index in out
+	out := make([]pendingChannelInbound, 0, len(sorted))
+	dropped := 0
+	for _, p := range sorted {
+		if p.reaction {
+			out = append(out, p)
+			continue
+		}
+		ts := p.inbound.ProviderMessageID
+		if i, seen := first[ts]; seen {
+			if moreProgressed(p, out[i]) {
+				out[i] = p
+			}
+			dropped++
+			continue
+		}
+		first[ts] = len(out)
+		out = append(out, p)
+	}
+	if dropped > 0 {
+		log.Printf("coalesce: chan=%s %d same-ts duplicate(s) collapsed before delivery — the copy furthest along the rejection ladder delivers", channel, dropped)
+	}
+	return out
+}
+
+// moreProgressed reports whether a's rejection state is further along
+// than b's: more charged attempts, else flagged for isolation.
+func moreProgressed(a, b pendingChannelInbound) bool {
+	if a.attempts != b.attempts {
+		return a.attempts > b.attempts
+	}
+	return a.isolate && !b.isolate
+}
+
+// restore re-queues a batch whose delivery failed (or was withheld),
+// ahead of anything buffered meanwhile, and hands the retry to the
+// scheduler. The re-queued batch may exceed the cap; the next enqueue
+// then triggers an early flush rather than anything being dropped.
+// Reaction entries split back into the no-wake side-buffer instead
+// (gp-9e7 item 1): reactions alone earn no timer (the retry would be
+// the solo reaction wake the buffer exists to prevent) unless the lane
+// has overflowed — they wait for the channel's next real delivery like
+// any buffered reaction.
+//
+// restore itself decides NOTHING about cadence (codex r8 finding 1):
+// it does not touch the deadline — only noteTransientFailure, called
+// by the failure paths BEFORE restore, moves it — and it arms no timer
+// of its own. scheduleLocked places the buffer's timer at the deadline
+// when there is one (so a plain window armed by a mid-flight enqueue
+// moves out, codex r3 finding 1; a reactions-only failure holds the
+// deadline against real messages, codex r2 finding 2) and leaves it
+// where it was when this restore carried no new failure — an urgent
+// message's withheld twin handed back after the mention failed, or
+// reactions returned to their lane, can no longer postpone the
+// channel's retry.
 func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound) {
 	if c == nil || len(batch) == 0 {
 		return
@@ -784,31 +2094,62 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 	// tombstones do not survive a restart (codex round-3 finding 3) —
 	// must carry the notice, not the deleted text.
 	now := time.Now()
+	var owed []pendingChannelInbound // ownership progressions recorded here owe their record and spool line (codex r23 finding 3, r25 finding 2)
+	live := msgs[:0]
 	for i := range msgs {
 		if c.isDeletedLocked(channel, msgs[i].inbound.ProviderMessageID, now) && msgs[i].inbound.Text != deletedBySenderNotice {
 			applyDeletion(&msgs[i])
 			log.Printf("coalesce: chan=%s ts=%s deleted during an in-flight delivery — restored as a deletion notice", channel, msgs[i].inbound.ProviderMessageID)
 		}
+		// A copy of a ts the ladder retired while this one was detached
+		// (an urgent twin handed back after the buffered copy was
+		// dead-lettered) is a duplicate of a dead-lettered message.
+		if v, ok := c.verdictLocked(channel, msgs[i].inbound.ProviderMessageID, now); ok && v.retired {
+			log.Printf("coalesce: chan=%s ts=%s handed back after the rejection ladder %s — duplicate copy dropped", channel, msgs[i].inbound.ProviderMessageID, v.disposition())
+			continue
+		}
+		// A charged or isolated copy coming back (the ladder's re-post
+		// restored, an isolation pause) is the ladder's: recorded here so
+		// the ledger, not the buffer, answers onLadder while it is
+		// detached again later (codex r15 finding 1), and written to the
+		// journal so a crash with a plain copy still staged cannot
+		// re-post the refused batch (codex r23 finding 3).
+		if c.ownLocked(channel, msgs[i], now) {
+			owed = append(owed, msgs[i])
+		}
+		live = append(live, msgs[i])
 	}
+	msgs = live
+	// A reaction copy handed back after the ladder retired its event
+	// (codex r14 finding 2) is dropped the same way.
+	liveReactions := reactions[:0]
+	for _, p := range reactions {
+		if v, ok := c.verdictLocked(channel, p.inbound.ProviderMessageID, now); ok && v.retired {
+			log.Printf("coalesce: chan=%s reaction ts=%s handed back after the rejection ladder %s — duplicate copy dropped", channel, p.inbound.ProviderMessageID, v.disposition())
+			continue
+		}
+		liveReactions = append(liveReactions, p)
+	}
+	reactions = liveReactions
 	if c.closed {
 		// Post-barrier restore (defensive — no take can follow the
 		// barrier, but a map entry here would sit past the final
 		// snapshot forever): spill instead of re-queueing.
 		c.spillLateLocked(channel, append(append([]pendingChannelInbound{}, msgs...), reactions...))
-		return
+	} else {
+		if len(reactions) > 0 {
+			c.reactions[channel] = append(reactions, c.reactions[channel]...)
+		}
+		if len(msgs) > 0 {
+			c.pending[channel] = append(msgs, c.pending[channel]...)
+		}
+		c.scheduleLocked(channel, time.Time{})
+		c.mu.Unlock()
 	}
-	defer c.mu.Unlock()
-	if len(reactions) > 0 {
-		c.reactions[channel] = append(reactions, c.reactions[channel]...)
-	}
-	if len(msgs) == 0 {
-		return
-	}
-	c.pending[channel] = append(msgs, c.pending[channel]...)
-	if _, ok := c.timers[channel]; !ok {
-		window := c.windowFor(channel)
-		g := c.gen[channel]
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(channel, g) })
+	if c.spillOwned(channel, owed) {
+		for _, p := range owed {
+			c.persistVerdict(channel, p.inbound.ProviderMessageID)
+		}
 	}
 }
 
@@ -817,15 +2158,17 @@ func (c *inboundCoalescer) restore(channel string, batch []pendingChannelInbound
 //
 // A TRANSIENT error (network, 5xx, 429, operational 4xx) restores the
 // whole batch for the next timer — the retry-forever durability the
-// coalescer always had, so a gc restart never loses buffered chatter.
+// coalescer always had, so a gc restart never loses buffered chatter —
+// on the channel's doubling backoff (noteTransientFailure → restore).
 //
 // A PAYLOAD rejection (permanentDeliveryFailure: 400/413/415/422 — the
 // same payload can never be accepted) means the batch holds a poisoned
 // entry, and which one is unknown. The real messages are ISOLATED —
 // each re-delivered alone, right now, under the same mutex — so an
 // innocent batch-mate delivers instead of waiting behind (or dying
-// with) the poison, and only a single gc still rejects is charged an
-// attempt (charge: restore below the cap, dead-letter at it). The
+// with) the poison, and only a single gc still rejects is charged
+// (charge: the rejection ladder — one retry without attachments, then
+// the dead-letter hook; never the same bytes again, gp-sgu7). The
 // probe stops at the first TRANSIENT single: gc is failing right now,
 // so every further single could cost a full client timeout under the
 // flush mutex; that single, every untested message, and the reactions
@@ -882,13 +2225,18 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 		return
 	}
 	if !permanentDeliveryFailure(cause) {
+		c.noteTransientFailure(channel, cause, fmt.Sprintf("batch of %d failed, restored", len(batch)))
 		c.restore(channel, batch)
 		return
 	}
 	// Isolation re-posts and dead-letters entries WITHOUT passing back
 	// through the pending buffer, so a deletion that landed while this
-	// batch was detached must be applied here (codex round-2 finding 2).
-	c.applyDeletionTombstones(channel, batch)
+	// batch was detached is applied here (codex round-2 finding 2) — in
+	// the same critical section that records the members' ownership
+	// (below), as charge() does (codex r26 finding 3): a deletion between
+	// a separate tombstone pass and the ownership found no verdict,
+	// recorded nothing, and the members' spool lines carried the deleted
+	// text for a restart to resurrect.
 	var msgs, reactions []pendingChannelInbound
 	for _, p := range batch {
 		if p.reaction {
@@ -910,28 +2258,34 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	}
 	log.Printf("coalesce: chan=%s batch of %d rejected by gc — isolating %d message(s) to find the poisoned one: %v",
 		channel, len(batch), len(msgs), cause)
-	msgRejected := false
+	// Every member is the ladder's from THIS moment — flagged isolate,
+	// its ownership recorded and its copy spooled — before the first
+	// probe posts (codex r25 finding 1): a crash during the first probe
+	// left the plain batch staged with no disposition, and the next
+	// startup posted the identical refused batch again. A member on a
+	// resume is already owned; nothing is re-written for it.
+	c.mu.Lock()
+	now := time.Now()
+	var owned []pendingChannelInbound
 	for i := range msgs {
-		// A deletion can land between singles while an earlier POST
-		// blocks (codex round-3 finding 2); msgs[i] is rewritten in place
-		// so the transient-failure rest slice below carries it too.
-		c.applyDeletionTombstones(channel, msgs[i:i+1])
-		p := msgs[i]
-		err := c.deliver(channel, []pendingChannelInbound{p})
-		if err == nil {
-			continue
+		if msgs[i].inbound.Text != deletedBySenderNotice && c.isDeletedLocked(channel, msgs[i].inbound.ProviderMessageID, now) {
+			applyDeletion(&msgs[i])
+			log.Printf("coalesce: chan=%s ts=%s deleted while detached — re-handled as a deletion notice", channel, msgs[i].inbound.ProviderMessageID)
 		}
-		if !chargeableDeliveryFailure(err) {
-			rest := append(append([]pendingChannelInbound{}, msgs[i:]...), reactions...)
-			log.Printf("coalesce: chan=%s isolation paused after %d/%d single(s) — transient failure; %d entries restored uncharged for the next window: %v",
-				channel, i, len(msgs), len(rest), err)
-			c.restore(channel, rest)
-			return
+		msgs[i].isolate = true
+		if c.ownLocked(channel, msgs[i], now) {
+			owned = append(owned, msgs[i])
 		}
-		msgRejected = true
-		c.charge(channel, p, err)
 	}
-	if len(reactions) == 0 {
+	c.mu.Unlock()
+	// The members' copies first, their records after (codex r26 finding 1).
+	if c.spillOwned(channel, owned) {
+		for _, p := range owned {
+			c.persistVerdict(channel, p.inbound.ProviderMessageID)
+		}
+	}
+	paused, msgRejected := c.isolate(channel, msgs, reactions)
+	if paused || len(reactions) == 0 {
 		return
 	}
 	if msgRejected {
@@ -944,49 +2298,190 @@ func (c *inboundCoalescer) failed(channel string, batch []pendingChannelInbound,
 	err := c.deliver(channel, reactions)
 	switch {
 	case err == nil:
+		c.deliveredOK(channel)
 	case chargeableDeliveryFailure(err):
-		for _, p := range reactions {
+		for _, p := range submittedOf(reactions, err) {
 			c.charge(channel, p, err)
 		}
 	default:
+		// A transient failure here is a failure like any other: the
+		// channel enters its backoff so the reaction overflow honors a
+		// deadline (codex r5 finding 2).
+		c.noteTransientFailure(channel, err, fmt.Sprintf("reaction group of %d failed behind the isolated singles, returned to the side lane", len(reactions)))
 		c.restore(channel, reactions)
 	}
 }
 
-// charge records one rejection against a single entry: restored for
-// the next window while under maxCoalesceDeliveryAttempts, otherwise
-// handed to the deadLetter hook. The entry retires ONLY on the hook's
-// confirmed-durable verdict; an unconfirmed write (disk full, bad
-// override, planted symlink) keeps it buffered at the cap so the next
-// window's rejection retries the write — one more rejection line per
-// window beats losing an already-acked message (codex r1 finding 3).
-// With no hook wired (bare test configs) the entry is dropped, loudly.
+// isolate is the probe: each of msgs — members of a batch gc refused —
+// is POSTed alone, in order, under the channel's held delivery mutex.
+// A single gc accepts is delivered; one it refuses (or accepts without
+// vouching for) is charged to the rejection ladder. The probe PAUSES at
+// the first transient single (codex r1 finding 1 on gp-xnc: gc failing
+// right now would cost a client timeout per member): that single and
+// every untested one are restored uncharged — flagged isolate, so the
+// next window RESUMES the probes instead of re-posting the refused
+// batch (codex r1 finding 3 on gp-sgu7) — together with `rest`, the
+// entries riding along unchanged (the reactions after a batch refusal;
+// the unflagged newer messages on a resume). Returns paused, and
+// whether any single was refused and charged.
+func (c *inboundCoalescer) isolate(channel string, msgs, rest []pendingChannelInbound) (paused, refused bool) {
+	for i := range msgs {
+		// A deletion can land between singles while an earlier POST
+		// blocks (codex round-3 finding 2); msgs[i] is rewritten in place
+		// so the transient-failure rest slice below carries it too.
+		c.applyDeletionTombstones(channel, msgs[i:i+1])
+		p := msgs[i]
+		err := c.deliver(channel, []pendingChannelInbound{p})
+		if err == nil {
+			// gc is reachable: the channel's transient run, if any, ends
+			// here — a later unrelated failure must start at the window,
+			// not inherit a capped count (codex r2 finding 4).
+			c.landVerdicts(channel, []pendingChannelInbound{p})
+			c.deliveredOK(channel)
+			continue
+		}
+		if !chargeableDeliveryFailure(err) {
+			untested := append([]pendingChannelInbound{}, msgs[i:]...)
+			for j := range untested {
+				untested[j].isolate = true
+			}
+			all := append(untested, rest...)
+			c.noteTransientFailure(channel, err, fmt.Sprintf("isolation paused after %d/%d single(s); %d entries restored uncharged (the %d untested resume as single probes, never re-batched)",
+				i, len(msgs), len(all), len(untested)))
+			c.restore(channel, all)
+			return true, refused
+		}
+		refused = true
+		// The member came out of a batch gc REFUSED: whatever the ladder
+		// does with it (a stripped retry, an unvouched same-payload
+		// retry), it comes back flagged so it posts alone — never inside
+		// the refused batch again (codex r4 finding 1).
+		p.isolate = true
+		c.charge(channel, p, err)
+	}
+	return false, refused
+}
+
+// charge records one rejection against a single entry and acts on the
+// rejection ladder's verdict (nextRejectionStep, the ONLY decision
+// point — gp-sgu7): a refused entry with attachments is restored ONCE
+// without them (withholdAttachments), an unvouched entry under the cap
+// is restored unchanged, everything else is handed to the deadLetter
+// hook. The entry retires ONLY on the hook's confirmed-durable verdict;
+// an unconfirmed write (disk full, bad override, planted symlink) keeps
+// it buffered so the next window's rejection retries the write — one
+// more rejection line per window beats losing an already-acked message
+// (codex r1 finding 3); that re-post is the one deliberate exception
+// to "never the same bytes again". With no hook wired (bare test
+// configs) the entry is dropped, loudly.
 func (c *inboundCoalescer) charge(channel string, p pendingChannelInbound, cause error) {
+	ts := p.inbound.ProviderMessageID
+	now := time.Now()
+	// ONE critical section reconciles the deletion tombstone and records
+	// the ladder's decision (codex r23 finding 2): a deletion landing
+	// between a separate tombstone check and the ledger's progression
+	// found no verdict, recorded nothing, and the spill that followed
+	// stored the deleted text for a restart to resurrect. From the moment
+	// the ledger owns the message, markDeleted records every deletion.
 	// The dead-letter file is durable and tombstones are not: a deleted
 	// entry must be written as its notice (codex round-3 finding 2).
-	single := []pendingChannelInbound{p}
-	c.applyDeletionTombstones(channel, single)
-	p = single[0]
-	if p.attempts < maxCoalesceDeliveryAttempts {
-		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports the cap (codex r2 finding 3)
+	c.mu.Lock()
+	if !p.reaction && p.inbound.Text != deletedBySenderNotice && c.isDeletedLocked(channel, ts, now) {
+		applyDeletion(&p)
+		log.Printf("coalesce: chan=%s ts=%s deleted while detached — re-handled as a deletion notice", channel, ts)
 	}
+	step := nextRejectionStep(p, cause)
 	if p.attempts < maxCoalesceDeliveryAttempts {
+		p.attempts++ // saturates at the cap: a record written after a failed write recovers still reports a bounded count (codex r2 finding 3)
+	}
+	var n, dropped int
+	switch step {
+	case stepRetryWithoutAttachments:
+		n = len(p.inbound.Attachments)
+		p = withholdAttachments(p, cause)
+		p.isolate = true // its one retry posts alone: a refusal then charges it, not a batch-mate
+		// The verdict is about the message: every other buffered copy of
+		// this ts leaves (this stripped copy is the retry), and a copy
+		// admitted from here on enters as the stripped retry itself
+		// (codex r10 finding 1). Reactions carry their own ids.
+		c.recordVerdictLocked(channel, ts, ladderVerdict{stripped: true, cause: cause, attempts: p.attempts}, now)
+		dropped = c.dropBufferedCopiesLocked(channel, ts)
+	case stepRetrySame:
+	default:
+		// Retired: dead-lettered, parked for the write, or lost for want
+		// of a sink — in every case the message is out of the delivery
+		// path for good, and so is every other copy of it, now or later.
+		// Retired in memory first (every other copy leaves now), the
+		// durable record only AFTER the payload is in the dead-letter
+		// file (codex r20 finding 1): a record must never say
+		// "dead-lettered" about bytes no file holds.
+		dropped, _ = c.retireLocked(channel, ts, ladderVerdict{retired: true, cause: cause, pendingWrite: true, attempts: p.attempts}, now)
+	}
+	c.mu.Unlock()
+	switch step {
+	case stepRetryWithoutAttachments:
+		// The decision is durable when it is MADE (codex r22 finding 1):
+		// the original attachment-bearing copy may be staged on disk from
+		// a replay in progress (its cap flush is what POSTed it), and a
+		// crash before this stripped copy lands would otherwise leave
+		// that staged copy with no durable disposition superseding it —
+		// the restart POSTed the refused bytes again. The record seeds
+		// the ledger's outstanding verdict at the next replay, so the
+		// staged plain copy adopts it; the stripped copy's own spool
+		// line is the retry the restart admits (codex r25 finding 2);
+		// the landing's delivered record supersedes both at the replay
+		// after.
+		c.persistOwnership(channel, p, true)
 		c.restore(channel, []pendingChannelInbound{p})
+		log.Printf("coalesce: chan=%s ts=%s refused by gc with %d attachment(s) — retrying ONCE without them (the files stay on disk; the text names their paths)%s: %v",
+			channel, ts, n, duplicateCopiesSuffix(dropped), cause)
 		return
+	case stepRetrySame:
+		c.restore(channel, []pendingChannelInbound{p}) // restore records (and persists) the charged copy's ownership
+		return
+	}
+	if dropped > 0 {
+		log.Printf("coalesce: chan=%s ts=%s %d buffered duplicate copy(ies) of the retired message dropped — never re-posted", channel, ts, dropped)
 	}
 	if c.deadLetter == nil {
 		log.Printf("coalesce: LOSS chan=%s ts=%s rejected %d times and no dead-letter sink is wired — dropped: %v",
-			channel, p.inbound.ProviderMessageID, p.attempts, cause)
+			channel, ts, p.attempts, cause)
+		c.deadLetterWritten(channel, ts) // the loss is the disposition; a redelivery is still a duplicate
 		return
+	}
+	// The refusal's payload is spooled BEFORE the sink is invoked (codex
+	// r21 finding 1): a crash inside the write — after the refusal, before
+	// its confirmation — would otherwise leave only the staged stripped
+	// entry, and the restart would POST the refused bytes again. The
+	// Refused line is the payload's durable home until the record (written
+	// after the confirmed write) says the file has it; the replay then
+	// drops the line.
+	p.refused = truncateReason(rejectionReasonText(cause))
+	spilled := c.spill != nil && c.spill(channel, []pendingChannelInbound{p})
+	if !spilled {
+		log.Printf("coalesce: chan=%s ts=%s the refused message could not be spooled before its dead-letter write — a crash inside the write would lose it", channel, ts)
 	}
 	if !c.deadLetter(channel, []pendingChannelInbound{p}, cause) {
-		log.Printf("coalesce: chan=%s ts=%s dead-letter write NOT confirmed — entry kept buffered; the next rejection retries the write",
-			channel, p.inbound.ProviderMessageID)
-		c.restore(channel, []pendingChannelInbound{p})
+		// The WRITE failed, not the delivery verdict: the entry leaves
+		// the delivery path for good and only the write retries
+		// (parkDeadLetter) — re-posting it to gc for another refusal
+		// was the one remaining way the same refused bytes went out
+		// again (codex r1 finding 1).
+		c.parkDeadLetter(channel, p, cause, spilled)
 		return
 	}
+	c.deadLetterWritten(channel, ts)
 	log.Printf("coalesce: chan=%s ts=%s dead-lettered after %d rejected deliveries — later messages in this channel no longer wait behind it: %v",
 		channel, p.inbound.ProviderMessageID, p.attempts, cause)
+}
+
+// duplicateCopiesSuffix names the buffered same-ts copies a verdict
+// removed, for the verdict's own log line.
+func duplicateCopiesSuffix(dropped int) string {
+	if dropped == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d buffered duplicate copy(ies) dropped", dropped)
 }
 
 // flushTimer is the timer callback. The generation check makes a stale
@@ -1011,16 +2506,37 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 		c.mu.Unlock()
 		return
 	}
+	// This timer is consumed; whatever follows takes the buffer or asks
+	// the scheduler for a new one.
+	delete(c.timers, channel)
+	delete(c.due, channel)
+	if !c.timerWorthyLocked(channel) {
+		// Nothing that may wake the session on a timer is left — the
+		// buffer emptied under a still-armed timer (a withheld urgent
+		// twin, codex r8 finding 3). A take now would POST below-cap
+		// reactions alone; they ride the channel's next real moment.
+		c.mu.Unlock()
+		return
+	}
+	if c.inBackoffLocked(channel) {
+		// Fired under the channel's backoff deadline (a reconcile race,
+		// clock jitter): wait it out rather than POST under it (codex r3
+		// finding 1).
+		nb := c.retryNotBefore[channel]
+		c.scheduleLocked(channel, nb)
+		c.mu.Unlock()
+		log.Printf("coalesce: chan=%s timer fired under the backoff deadline — re-armed for %s", channel, time.Until(nb).Round(time.Millisecond))
+		return
+	}
 	batch, mu, ok := c.takeLocked(channel)
 	if !ok {
 		// A delivery for this channel is in flight (round 3) — the timer
 		// fired into the gap between another path's take and its POST
-		// settling. Re-arm at the SAME generation (no state changed) and
-		// on the SHORT retry cadence (round 5, 3a): the window already
-		// elapsed, so the only wait left is the in-flight POST — a full
-		// re-wait (hours, on a digest channel) would strand the batch. A
-		// failed delivery's restore re-arms/renews on its own.
-		c.timers[channel] = time.AfterFunc(c.capRetryDelay(), func() { c.flushTimer(channel, g) })
+		// settling. Ask for the SHORT retry cadence (round 5, 3a): the
+		// window already elapsed, so the only wait left is the in-flight
+		// POST — a full re-wait (hours, on a digest channel) would strand
+		// the batch. A failed delivery's restore reschedules on its own.
+		c.wantCapRetryLocked(channel)
 		c.mu.Unlock()
 		log.Printf("coalesce: chan=%s timer flush deferred — delivery in flight; re-armed on a short retry", channel)
 		return
@@ -1070,7 +2586,11 @@ func (c *inboundCoalescer) flushTimer(channel string, g uint64) {
 // delivery, but the twin was already acked to Slack when it entered the
 // buffer, so the caller must restore() the returned entries if the
 // urgent delivery then fails — dropping them outright would lose the
-// message with no redelivery guarantee.
+// message with no redelivery guarantee. A twin already ON the rejection
+// ladder (flagged isolate, or charged) is NOT withheld: gc refused that
+// message's bytes, its stripped retry is the delivery, and the urgent
+// copy — built from the fresh event, attachments and all — must defer
+// to it (the caller checks onLadder; codex r10 finding 2).
 func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChannelInbound {
 	if c == nil {
 		return nil
@@ -1100,6 +2620,22 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	// TryLock-only everywhere. detachLocked opens the in-flight window,
 	// balanced by the deferred endDelivery below.
 	c.mu.Lock()
+	if c.inBackoffLocked(channel) {
+		// The channel is waiting out a transient-failure backoff (codex
+		// r6): flushing the buffer ahead of every urgent message would
+		// re-post the failed batch at mention cadence under a five-minute
+		// deadline. The urgent message proceeds on its own (out of order,
+		// as after a failed flush-ahead); the buffer keeps its armed
+		// backoff timer, deadline untouched. The urgent message's own
+		// buffered twin is still WITHHELD (codex r7 finding 1): left
+		// buffered, a timer firing while the urgent POST is in flight
+		// would deliver it beside the urgent copy under a different
+		// dedup key. The caller restores it if the urgent delivery fails.
+		c.deferUrgentFlushLocked(channel)
+		withheld := c.withholdTwinLocked(channel, excludeTS)
+		c.mu.Unlock()
+		return withheld
+	}
 	batch, mu, ok := c.takeLocked(channel)
 	if !ok {
 		c.urgentWaiting[channel]++
@@ -1107,6 +2643,16 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 		mu.Lock()
 		c.mu.Lock()
 		c.urgentWaiting[channel]--
+		if c.inBackoffLocked(channel) {
+			// The in-flight delivery this waiter queued behind failed
+			// transiently and put the channel in backoff: same verdict as
+			// above, nothing detached (no in-flight window opened).
+			c.deferUrgentFlushLocked(channel)
+			withheld := c.withholdTwinLocked(channel, excludeTS)
+			c.mu.Unlock()
+			mu.Unlock()
+			return withheld
+		}
 		batch = c.detachLocked(channel)
 	}
 	c.mu.Unlock()
@@ -1116,7 +2662,7 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	if excludeTS != "" {
 		kept := batch[:0]
 		for _, p := range batch {
-			if p.inbound.ProviderMessageID == excludeTS {
+			if p.inbound.ProviderMessageID == excludeTS && !onLadderEntry(p) {
 				log.Printf("coalesce: chan=%s buffered twin ts=%s withheld (urgent copy delivers it)", channel, excludeTS)
 				withheld = append(withheld, p)
 				continue
@@ -1134,7 +2680,7 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	}
 	if !real {
 		// Reactions-only take (gp-9e7 fix round 1b): never POST — return
-		// the entries to the side-buffer (restore arms no timer for
+		// the entries to the side-buffer (restore arms no timer for below-cap
 		// reactions) and let the caller piggyback them on its own
 		// delivery. The take already serialized on the flush mutex, so
 		// any in-flight coalesced POST completed before this point.
@@ -1146,11 +2692,76 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 	if c.deliver == nil {
 		return withheld
 	}
-	if err := c.deliver(channel, batch); err != nil {
+	if err := c.post(channel, batch); err != nil {
 		log.Printf("coalesce: chan=%s flush-ahead failed; batch restored for timer retry or isolated/dead-lettered if gc rejected it (urgent message proceeds out of order): %v", channel, err)
-		c.failed(channel, batch, err)
 	}
 	return withheld
+}
+
+// deferUrgentFlushLocked logs — once per backoff state, never per
+// urgent message — that an urgent flush-ahead left the buffer to its
+// backoff timer. Caller holds c.mu.
+func (c *inboundCoalescer) deferUrgentFlushLocked(channel string) {
+	if !c.urgentDeferLogWorthyLocked(channel) {
+		return
+	}
+	log.Printf("coalesce: chan=%s urgent flush-ahead deferred — channel in transient-failure backoff (#%d, retry at %s); %d buffered message(s) wait for it, the urgent message proceeds alone",
+		channel, c.transientFailures[channel], c.retryNotBefore[channel].Format("15:04:05"), len(c.pending[channel]))
+}
+
+// urgentDeferLogWorthyLocked reports whether the deferral is a new
+// backoff STATE for the channel — keyed by the effective retry delay,
+// so consecutive capped failures with mentions between them log once
+// (codex r7 finding 3) — and records it. Caller holds c.mu.
+func (c *inboundCoalescer) urgentDeferLogWorthyLocked(channel string) bool {
+	delay := c.retryDelayLocked(channel)
+	if last, ok := c.urgentDeferredAt[channel]; ok && last == delay {
+		return false
+	}
+	c.urgentDeferredAt[channel] = delay
+	return true
+}
+
+// withholdTwinLocked removes and returns the buffered copies of ts (an
+// urgent message's twin) WITHOUT taking the buffer, then lets the
+// scheduler judge what is left: real messages keep their timer and
+// deadline untouched; a buffer left with no real message loses its
+// timer (codex r8 finding 3: armed, it would take and POST below-cap
+// reactions alone at expiry, while the urgent POST was still
+// unresolved), and the scheduler returns the reactions that were
+// riding the armed window to the no-wake side lane so no sweep sees a
+// reactions-only buffer. Caller holds c.mu; the caller of flushAheadOf
+// owns the returned entries (restore on urgent failure).
+func (c *inboundCoalescer) withholdTwinLocked(channel, ts string) []pendingChannelInbound {
+	if ts == "" {
+		return nil
+	}
+	var withheld []pendingChannelInbound
+	kept := make([]pendingChannelInbound, 0, len(c.pending[channel]))
+	for _, p := range c.pending[channel] {
+		if p.inbound.ProviderMessageID == ts && !onLadderEntry(p) {
+			withheld = append(withheld, p)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	if len(withheld) == 0 {
+		return nil
+	}
+	if len(kept) == 0 {
+		delete(c.pending, channel)
+	} else {
+		c.pending[channel] = kept
+	}
+	c.scheduleLocked(channel, time.Time{})
+	log.Printf("coalesce: chan=%s buffered twin ts=%s withheld from a deferred flush-ahead (urgent copy delivers it)", channel, ts)
+	return withheld
+}
+
+// onLadderEntry reports whether a buffered copy is already the
+// rejection ladder's: flagged to post alone as a probe, or charged.
+func onLadderEntry(p pendingChannelInbound) bool {
+	return !p.reaction && (p.isolate || p.attempts > 0)
 }
 
 // deliverBufferedReactions drains the channel's no-wake reaction
@@ -1161,7 +2772,7 @@ func (c *inboundCoalescer) flushAheadOf(channel, excludeTS string) []pendingChan
 // session solo — and because the drain happens after the real POST
 // commits, a skipped or failed real delivery simply leaves the
 // side-buffer untouched. A failed reaction POST restores the entries
-// to the side-buffer (restore arms no retry timer for reactions).
+// to the side-buffer (the scheduler arms no timer for below-cap reactions).
 func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 	if c == nil {
 		return
@@ -1170,6 +2781,19 @@ func (c *inboundCoalescer) deliverBufferedReactions(channel string) {
 	rs := c.reactions[channel]
 	if len(rs) == 0 {
 		c.mu.Unlock()
+		return
+	}
+	if c.inBackoffLocked(channel) {
+		// A mention that succeeded while the channel backs off must not
+		// turn its reaction drain into a retry at mention cadence, whose
+		// own failure would push the real messages' deadline out again
+		// (codex r7 finding 2). The side lane waits for the backoff
+		// timer's take like everything else on the channel.
+		worthy := c.urgentDeferLogWorthyLocked(channel)
+		c.mu.Unlock()
+		if worthy {
+			log.Printf("coalesce: chan=%s buffered reaction drain deferred — channel in transient-failure backoff; they ride the backoff retry", channel)
+		}
 		return
 	}
 	mu := c.flushMuFor(channel)
@@ -1220,7 +2844,33 @@ func (c *inboundCoalescer) markDeleted(channel, ts string) int {
 		}
 	}
 	persist := c.persistDeletion
+	// A parked refusal's payload: the notice replaces its text in memory
+	// (the write retries carry it).
+	for i := range c.parkedDeadLetters[channel] {
+		if e := &c.parkedDeadLetters[channel][i]; e.p.inbound.ProviderMessageID == ts {
+			applyDeletion(&e.p)
+		}
+	}
+	// A message the ladder OWNS may have a copy in the spool during
+	// uptime — the stripped retry spooled when decided, the refusal
+	// spooled before its sink, a re-parked payload — so its deletion is
+	// recorded now, draining or not, and the spool line replays as the
+	// notice (codex r21 finding 2, r22 finding 2). The ledger is the
+	// test, not the parked list: a deletion that lands while the sink is
+	// still running finds nothing parked yet, but the refusal's payload
+	// is already on disk. Recorded once per deletion of a ladder-owned
+	// message — bounded by refusals, never one per ordinary deletion
+	// (codex round-5 finding 3). The ledger entry is consulted raw: an
+	// aged-out verdict whose write is still owed still names a spooled
+	// payload.
+	_, owned := c.verdicts[channel][ts]
+	record := c.recordDeletion
 	c.mu.Unlock()
+	if owned && record != nil {
+		if !record(channel, ts) {
+			log.Printf("coalesce: chan=%s ts=%s deleted while the rejection ladder holds it, and the deletion record could not be written — a restart before its copy lands or is written would replay the deleted text", channel, ts)
+		}
+	}
 	// Durable record last, outside mu (file I/O): a spool line written
 	// by any producer before OR after this point is rewritten on replay.
 	// Two accepted residuals: the dead-letter file — an operator-
@@ -1245,6 +2895,11 @@ func (c *inboundCoalescer) pendingContains(channel, ts string) bool {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.pendingContainsLocked(channel, ts)
+}
+
+// pendingContainsLocked is pendingContains with c.mu already held.
+func (c *inboundCoalescer) pendingContainsLocked(channel, ts string) bool {
 	for _, p := range c.pending[channel] {
 		if p.inbound.ProviderMessageID == ts {
 			return true
@@ -1253,33 +2908,47 @@ func (c *inboundCoalescer) pendingContains(channel, ts string) bool {
 	return false
 }
 
-// reconcileTimers re-arms every armed timer against the current policy
-// (SIGHUP): a channel flipped digest→immediate must not keep waiting
-// out a stale two-hour window. Each affected channel restarts a full
-// new window from now — EXCEPT a channel sitting over either buffer
-// cap, whose armed timer is (or must now behave as) the short over-cap
-// retry (gp-9e7 round 5, 3a/3b): re-arming that at windowFor would
-// downgrade a ≤1s retry back to digest scale and leave an over-cap
-// buffer growing for hours (round-6 gate finding). Over-cap state is
-// read from the maps, so the clamp also self-heals a reconcile that
-// races the retry arming.
+// reconcileTimers re-judges every armed timer against the current
+// policy (SIGHUP): a channel flipped digest→immediate must not keep
+// waiting out a stale two-hour window. Each armed channel ASKS the
+// scheduler for the new policy's window from now — and keeps its
+// established target when that is nearer (codex r9 finding 2: a
+// reconcile a second before an eight-second retry must not push it to
+// fifteen, nor a digest channel another two hours). A channel sitting
+// over either buffer cap, or whose backed-off retry is already due,
+// asks for the short over-cap retry instead (gp-9e7 round 5, 3a/3b):
+// a window there would leave an over-cap buffer growing for hours
+// (round-6 gate finding). Over-cap state is read from the maps, so the
+// clamp also self-heals a reconcile that races the retry arming.
 func (c *inboundCoalescer) reconcileTimers() {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for channel, t := range c.timers {
-		t.Stop()
-		c.gen[channel]++
-		window := c.windowFor(channel)
-		if len(c.pending[channel]) >= maxCoalescePerChannel ||
-			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel {
-			window = c.capRetryDelay()
+	channels := make([]string, 0, len(c.timers))
+	for channel := range c.timers {
+		channels = append(channels, channel)
+	}
+	sort.Strings(channels)
+	now := time.Now()
+	for _, channel := range channels {
+		at := now.Add(c.windowFor(channel))
+		nb, backingOff := c.retryNotBefore[channel]
+		switch {
+		case backingOff && !now.Before(nb):
+			// The backed-off retry is already due: fire it promptly rather
+			// than waiting a whole window again.
+			at = now.Add(c.capRetryDelay())
+		case len(c.pending[channel]) >= maxCoalescePerChannel ||
+			len(c.reactions[channel]) >= maxBufferedReactionsPerChannel:
+			at = now.Add(c.capRetryDelay())
 		}
-		g := c.gen[channel]
-		ch := channel
-		c.timers[channel] = time.AfterFunc(window, func() { c.flushTimer(ch, g) })
+		// A deadline still ahead binds inside the scheduler (gp-sgu7,
+		// codex r1 finding 2): an over-cap buffer does not shorten it, or
+		// a SIGHUP during an outage would turn a five-minute backoff into
+		// the one-second cap cadence.
+		c.scheduleLocked(channel, at)
 	}
 }
 
@@ -1327,6 +2996,16 @@ func (c *inboundCoalescer) flushAll() {
 	if c == nil {
 		return
 	}
+	c.drainPending()
+	// Entries whose dead-letter write never confirmed sit outside the
+	// maps the drain above emptied; give the write one last try, else
+	// spool them (gp-sgu7, codex r1 finding 1).
+	c.flushParkedDeadLetters()
+}
+
+// drainPending is flushAll's fixpoint drain of the pending and reaction
+// maps; it closes admission (c.closed) on both of its exits.
+func (c *inboundCoalescer) drainPending() {
 	for pass := 1; ; pass++ {
 		c.mu.Lock()
 		for c.inflight > 0 {
@@ -1366,6 +3045,7 @@ func (c *inboundCoalescer) flushAll() {
 					t.Stop()
 					delete(c.timers, channel)
 				}
+				delete(c.due, channel)
 				batch := c.pending[channel]
 				delete(c.pending, channel)
 				if rs := c.reactions[channel]; len(rs) > 0 {
@@ -1521,8 +3201,21 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		if proceed {
 			ownedClaims = append(ownedClaims, key)
 		} else if wait == nil {
-			log.Printf("coalesce: chan=%s ts=%s delivered by same-ts twin — dropped from batch", channel, ts)
-			continue
+			// A concluded claim without a deliveredIDs record (checked
+			// above) is a claim the DRAIN SPOOL concluded — a failed urgent
+			// twin made durable, not a delivery (main.go's drainSpooled
+			// commit). A plain member still drops on it (gp-ios: the
+			// spooled copy replays next startup), but a copy the rejection
+			// ladder OWNS must not (codex r26 finding 4): dropped, the
+			// probe returned nil, the ladder recorded "delivered" for a
+			// message no copy of reached the session, and the replay then
+			// discarded both recoverable copies. The ladder's copy posts;
+			// gc's dedup key bounds the duplicate.
+			if !onLadderEntry(p) {
+				log.Printf("coalesce: chan=%s ts=%s delivered by same-ts twin — dropped from batch", channel, ts)
+				continue
+			}
+			log.Printf("coalesce: chan=%s ts=%s same-ts claim concluded without a confirmed delivery — the ladder's copy posts (gc's dedup key bounds a duplicate)", channel, ts)
 		}
 		unseen = append(unseen, p)
 	}
@@ -1647,7 +3340,13 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		err = errDeliveryUnvouched
 	}
 	if err != nil {
-		log.Printf("coalesced inbound POST failed: chan=%s batch=%d: %v", channel, len(batch), err)
+		// One line per DISTINCT failure per channel, not one per attempt
+		// (gp-sgu7 contract 3): the 2026-09-08 incident wrote this exact
+		// line 34,000 times. A failure whose text matches the channel's
+		// last logged one is silent; the next success clears the memory.
+		if cfg.postFailures.changed(channel, err.Error()) {
+			log.Printf("coalesced inbound POST failed: chan=%s batch=%d: %v", channel, len(batch), err)
+		}
 		// Release the member claims this batch owned so a parked
 		// same-ts urgent twin — or this batch's own timer retry — can
 		// take over the delivery (gp-ios).
@@ -1658,7 +3357,9 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		if firstHelp {
 			cfg.replyHelp.unmark(channel)
 		}
-		return err
+		// The ladder judges what was POSTed, not what was handed in
+		// (codex r5 finding 1): report the filtered batch with the cause.
+		return &submittedDeliveryError{submitted: batch, err: err}
 	}
 	for _, key := range ownedClaims {
 		cfg.channelClaims.commit(key)
@@ -1668,6 +3369,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		tss = append(tss, p.inbound.ProviderMessageID)
 	}
 	cfg.deliveredIDs.record("", channel, tss...)
+	cfg.postFailures.clear(channel)
 	log.Printf("inbound (coalesced): chan=%s batch=%d newest_ts=%s text=%dch %s",
 		channel, len(batch), env.ProviderMessageID, len(env.Text), receipt.logField(verdict))
 	return nil
