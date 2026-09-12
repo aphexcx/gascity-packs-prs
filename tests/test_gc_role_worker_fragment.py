@@ -238,3 +238,103 @@ def test_worker_worktree_script_is_shipped_and_executable() -> None:
     assert script.stat().st_mode & 0o111, "worker-worktree.sh must be executable"
     head = script.read_text(encoding="utf-8").splitlines()[0]
     assert head == "#!/bin/sh"
+
+
+def test_workspace_section_gives_the_lane_to_one_agent_and_pins_it() -> None:
+    """One lane, one agent (the per-agent work_dir model): the branch is the
+    handoff, a helper session reads the lane and never writes into it, and
+    the worker pins the lane with `gc session list` before its first write.
+    Stated once, in the Workspace section, after the primary text."""
+    workspace = workspace_section()
+    opener = "The lane is yours alone"
+    paras = [para for para in paragraphs(workspace) if para.startswith(opener)]
+    assert len(paras) == 1, "exactly one lane-ownership paragraph"
+    para = " ".join(paras[0].split())
+    assert workspace.index("You never pick, create, or hunt for") < workspace.index(opener)
+    assert workspace.index(opener) < workspace.index("A session outside a gc-made lane has no lane")
+    for clause in (
+        "one live session writes in a lane",
+        "the branch, never the directory, is how work moves between agents",
+        "reads this lane and writes nothing into it",
+        "runs read-only here",
+        "`git show <commit>:<path>`",
+        "`gc session list` shows your session as the only live session whose work dir is `$GC_DIR`",
+        "write nothing and mail the mayor naming both session ids",
+    ):
+        assert clause in para, f"lane-ownership paragraph lacks: {clause!r}"
+    # README, Worker workspaces: the same rule.
+    readme = " ".join(README.read_text(encoding="utf-8").split())
+    section = readme.split("## Worker workspaces", 1)[1].split("## Worker toolchain", 1)[0]
+    assert "A lane belongs to one live session at a time" in section
+    assert "never writes into another agent's lane" in section
+
+
+def test_readme_worker_toolchain_section_carries_the_recipe_and_the_decisions() -> None:
+    """The toolchain wrappers are city runtime state with a pack source of
+    record: the README installs both (node three times), keeps per-city
+    settings in toolchain.env, records an md5 per file, states the pnpm 11
+    measurement and the one-path lane install, says what the machine has and
+    what the wrapper selects, and records the codex sandbox decision: the
+    skip marker codex sets plus parent evidence, egress rejected."""
+    text = README.read_text(encoding="utf-8")
+    assert text.count("## Worker toolchain") == 1
+    section = text.split("## Worker toolchain", 1)[1].split("## Build Methodology Contract", 1)[0]
+    flat = " ".join(section.split())
+    for clause in (
+        'install -m 0755 path/to/gascity/assets/scripts/toolchain/pnpm "$CITY/.gc/shims/toolchain/pnpm"',
+        'install -m 0755 path/to/gascity/assets/scripts/toolchain/node "$CITY/.gc/shims/toolchain/node"',
+        'ln -sf node "$CITY/.gc/shims/toolchain/npm"',
+        'ln -sf node "$CITY/.gc/shims/toolchain/npx"',
+        "NODE_VERSION=24.21.0",
+        "PNPM_VERSION=11.20.0",
+        "show <pin>:gascity/assets/scripts/toolchain/pnpm > \"$canonical\" && md5 -q \"$canonical\"",
+        "show <pin>:gascity/assets/scripts/toolchain/node > \"$canonical\" && md5 -q \"$canonical\"",
+        'test "$(md5 -q "$CITY/.gc/shims/toolchain/pnpm")" = <that md5>',
+        'test "$(md5 -q "$CITY/.gc/shims/toolchain/node")" = <that md5>',
+        "`verify-deps-before-run` defaults to `install`",
+        "`pnpm_config_verify_deps_before_run=false`",
+        "`--config.verify-deps-before-run=error`",
+        "In sync is pnpm's own word, never the wrapper's",
+        "`node_modules/.gc-lane-deps.lock`",
+        "`pnpm install --frozen-lockfile`",
+        "concurrent callers wait for the lock and ask pnpm again",
+        "A failed install fails the command",
+        "Every change of hands of the lock goes through one gate, `.gc-lane-deps.lock.reclaim`",
+        "leaving no lock standing",
+        "a failed frozen install fails the command with pnpm's own exit status",
+        "only the pid that took a lock releases it",
+        "`GC_TOOLCHAIN_LANE_DEPS_INSTALLING=<lane>`",
+        "Homebrew `node` is v25.9.0",
+        "`toolchain.env` pins 24.21.0",
+        "`CODEX_SANDBOX_NETWORK_DISABLED=1`",
+        "`sandbox_workspace_write.network_access=true` is the egress switch, which a review must never gain",
+        "`network.allow_local_binding=true`",
+        "The alternative, network egress for the review, is rejected.",
+        "`make test` at the repository root",
+        "`make test-gascity`",
+    ):
+        assert clause in flat, f"README Worker toolchain lacks: {clause!r}"
+    # each wrapper the README installs exists, executable, at the path it names
+    for name in ("pnpm", "node"):
+        path = REPO_ROOT / "gascity" / "assets" / "scripts" / "toolchain" / name
+        assert path.is_file(), path
+        assert path.stat().st_mode & 0o111, f"{path} is not executable"
+
+
+def test_make_test_names_the_runner_a_worker_would_otherwise_rediscover() -> None:
+    """`make test` / `make test-gascity` run pytest with the interpreter's own
+    pytest or through `uv run --with pytest --with pyyaml --with jsonschema`,
+    and unset GC_TEMPLATE, which a gc worker session exports."""
+    import subprocess
+
+    for target, dirs in (("test", "tests contributing/tests gascity/tests"), ("test-gascity", "tests gascity/tests")):
+        out = subprocess.run(
+            ["make", "-n", target], cwd=REPO_ROOT, capture_output=True, text=True, check=True
+        ).stdout
+        assert "env -u GC_TEMPLATE" in out
+        assert "python3 -m pytest" in out
+        assert "uv run --with pytest --with pyyaml --with jsonschema" in out
+        assert dirs in out, out
+    root_readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    assert "make test            # every pytest suite CI runs" in root_readme
+    assert "make test-gascity" in root_readme
