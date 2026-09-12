@@ -243,16 +243,55 @@ and any ancestor of it are refused up front. Runs on one repository are
 serialized by a lock in its git dir, so concurrent sessions cannot race on a
 branch or a lane. With a trigger bead it reuses the one branch whose name
 contains the bead id as a whole token (local or on the remote) or creates
-`<bead id>` from a resolved base: `<remote>/HEAD`, else `<remote>/main`, else
+`<bead id>` from a resolved base. When several branches name the bead, a clean
+lane already on a candidate keeps that branch; otherwise the branch named
+exactly `<bead id>` wins (local or remote); otherwise the script fails closed
+and lists the candidates. The selected rule is logged. Thus a fresh lane with
+both `<bead id>` and `<bead id>-upstream` takes the former, while a clean lane
+already on the twin stays there. The resolved base is `<remote>/HEAD`, else `<remote>/main`, else
 `<remote>/master`, else the rig root's `HEAD` with a WARN (the remote is
 `origin` unless `--remote` names another; `--base` overrides); a branch
 checked out in another worktree is not stolen (the lane is left detached at
 its tip, with a WARN). Nothing is
 ever deleted: a lane with tracked modifications, or a non-empty directory
 that is not a git checkout, is moved to `<lane>.aside-<utc stamp>` first; a
-checkout of another repository is refused. Untracked files (materialized
+directory holding only the staged start files listed below is kept in place.
+A checkout of another repository is refused. Untracked files (materialized
 skills, hooks, `node_modules`) do not count as modifications. `sh
 worker-worktree.sh --help` prints the full contract.
+
+gc stages start files **before** running this `pre_start` script. The allowlist
+comes from gc commit `72aeaaffa`: `cmd/gc/template_resolve.go`
+(settings and scripts), `cmd/gc/cmd_start.go` (`stageHookFiles` and
+`claudeSettingsSource`), `cmd/gc/skill_integration.go` (`skillSnapshotFilePath`),
+and `internal/bootstrap/packs/core/overlay/per-provider/`:
+
+- `.gc/settings.json`, `.gc/scripts/` and its contents, and
+  `.gc/tmp/skill-catalog-<agent>.b64` (agent slashes become underscores).
+- The legacy Claude path `hooks/claude.json`.
+- `.gemini/settings.json`, `.codex/hooks.json`, `.agents/hooks.json`,
+  `.opencode/plugins/gascity.js`, `.mimocode/plugin/gascity.js`,
+  `.github/hooks/gascity.json`, `.github/copilot-instructions.md`,
+  `.cursor/hooks.json`, `.pi/extensions/gc-hooks.js`, `.omp/hooks/gc-hook.ts`,
+  `.kimi/config.toml`, `.kimi/hooks/gascity-session-start.py`,
+  `.kiro/agents/gascity.json`, and Kiro's `AGENTS.md`.
+
+Only regular files and their listed directory containers qualify; symlinks,
+unexpected empty directories, incomplete catalog `*.tmp` files, and arbitrary
+custom overlay paths retain the aside safety. Skill trees and MCP configuration
+are materialized by later `pre_start` commands and are not on this allowlist.
+
+Git refuses a nonempty destination even with `worktree add --no-checkout`.
+For a staged lane the script registers a temporary worktree without checkout,
+moves only its `.git` pointer into the existing lane, runs `git worktree repair`
+to update the registration, loads the index with `git read-tree HEAD`, and
+populates absent files with `git checkout-index --all` without force.
+This keeps the lane inode (the running command's cwd)
+and all staged bytes, permissions, and file locations intact, with no aside or
+temporary directory left after success. If the target tracks a staged path,
+checkout refuses to overwrite it (even if ignored) and the command fails with
+the seeds intact. `read-tree -m -u` is unsuitable because it can overwrite
+ignored files.
 
 The lane is on the bead's branch when the worker claims (a pooled session
 with no trigger bead starts detached and takes the bead's branch itself after
