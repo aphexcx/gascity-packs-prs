@@ -12,7 +12,8 @@ text fixes one lifecycle (gp-0mvp round 6, codex gate r5):
    the branch it fails closed with the holder named and forces nothing;
 4. a crashed writer's branch is released from that lane by the operator, never
    by another agent's step;
-5. close-source-anchor reads `git log -1 <branch>`.
+5. close-source-anchor reads `git log -1 refs/heads/<branch>` (the full ref
+   since rule 11).
 
 Round 7 (codex gate r6) adds two rules the loop's LATER attempts depend on:
 
@@ -39,6 +40,47 @@ gate r8) replaces round 8's lane-less workspace fallback and reshapes rule 6:
    each inspected at its own commit, and a fix on one item leaves the others'
    recorded commits as they were.
 
+Gate r9 on fork #32 (merged with this hole named; bead gp-d6gd) adds the rule
+a re-launch depends on:
+
+10. a re-launched item KEEPS its branch, found by NAME. `pre_start` names a
+    lane's branch for the trigger STEP bead, so every new do-work run puts the
+    operator's lane on a fresh step branch cut from the base, and a claim-time
+    stamp can overwrite the recorded `gc.work_branch` with a name no checkout
+    state can tell from an item branch (codex r1 on this bead: the rig root
+    moves between branches, both directions leak). The one operand is the
+    branch name: the item's branch is the one branch naming the source anchor
+    id as a whole token, the rule `pre_start` applies to a claimed bead.
+    prepare-worktree reads the record FIRST but lets it decide nothing (codex
+    r2: a stamp can contain the id too): the one branch naming the item, in
+    either namespace, is the branch; none means a new `<anchor>`; several
+    fail closed for the operator to reconcile, the record among them or not.
+    It takes the branch in its lane with git's one-worktree-per-branch
+    refusal naming any holder, the rig root included, and records only when
+    the record differs. A recorded item branch is never overwritten by a
+    fresh base branch, so the committed work is where the next writer's
+    switch lands.
+
+Round 2 of gp-d6gd (the mayor's codex gate r1 on fork #34) adds the rule the
+tag scenario of rule 10 stopped short of:
+
+11. every read that resolves the item's branch NAME to a commit names the FULL
+    ref, `refs/heads/<branch>`. git resolves a bare name tag-first
+    (`refs/tags/<name>` before `refs/heads/<name>`), so with a tag of the
+    branch's name at the base, `git log -1 <branch>` / `git rev-parse
+    <branch>` / `git show <branch>` answer the BASE while `git switch
+    <branch>` still takes the branch: close-source-anchor would have verified
+    the base, the review setup would have recorded it as the commit under
+    review, every review lane would have inspected it, and the fix lane's
+    refresh would have re-recorded it. Only the branch operand of `git
+    switch`, which resolves branches alone, stays bare (codex r5 on this
+    round): a `--track` START POINT is a commit-ish, so the tracked take
+    starts from `refs/remotes/origin/<branch>` (a tag named `origin/<branch>`
+    makes the bare form fail "ambiguous object name"), and the fix lane's
+    refresh reads `rev-parse --verify HEAD` of the worktree it committed in,
+    which in the `work_dir` case is a detached per-item worktree with no item
+    branch to read.
+
 Every step below runs the exact git commands the formula text names, in real
 worktrees under a temporary directory, with no network. The static rows in
 test_formula_assets pin the sentences; this file pins that the sentences work.
@@ -47,6 +89,7 @@ test_formula_assets pin the sentences; this file pins that the sentences work.
 from __future__ import annotations
 
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -101,12 +144,26 @@ class Rig:
             out(checkout, "status", "--porcelain"),
         )
 
-    def lane(self, role: str) -> pathlib.Path:
+    def lane(self, role: str, step: str | None = None, *, detached: bool = False) -> pathlib.Path:
         path = self.lanes_root / f"lane-gc.{role}"
         path.parent.mkdir(parents=True, exist_ok=True)
-        # pre_start puts the lane on the STEP bead's branch, cut from HEAD.
-        git(self.rig, "worktree", "add", "--quiet", "-b", f"step-{role}", str(path), "main")
+        if detached:
+            # pre_start with no trigger bead: detached at the base.
+            git(self.rig, "worktree", "add", "--quiet", "--detach", str(path), "main")
+        else:
+            # pre_start puts the lane on the STEP bead's branch, cut from HEAD.
+            git(self.rig, "worktree", "add", "--quiet", "-b", step or f"step-{role}", str(path), "main")
         return path
+
+    def pre_start(self, lane: pathlib.Path, step: str) -> None:
+        """worker-worktree.sh on an EXISTING lane for a new trigger step bead:
+        the script's `switch_worktree` in mode `new`, a fresh step branch cut
+        from the base, whatever the lane held before. A re-launched run gets
+        a new step id, so the same operator lane lands here on a branch that
+        knows nothing of the item's earlier commits."""
+        self.run(lane, "switch", "--quiet", "--no-overwrite-ignore", "-c", step, "main")
+        assert out(lane, "branch", "--show-current") == step
+        assert out(lane, "rev-parse", "HEAD") == self.main_sha
 
     def run(self, lane: pathlib.Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         proc = git(lane, *args, check=False)
@@ -150,6 +207,111 @@ class Rig:
         self.run(lane, "switch", "--detach")
         assert out(lane, "branch", "--show-current") == ""
 
+    def close_verifies(self, lane: pathlib.Path, branch: str = ITEM_BRANCH) -> str:
+        """close-source-anchor, from ITS OWN lane (rules 5 and 11): the
+        implementation commit is the branch's tip, read by FULL ref
+        (`git -C "$GC_DIR" log -1 "refs/heads/<gc.work_branch>"`); a bare
+        name would answer a tag of the same name first."""
+        return out(lane, "log", "-1", "--format=%H", f"refs/heads/{branch}")
+
+    # --- rule 10 (gate r9): a re-launched item keeps its branch, found by NAME ---
+
+    WORK_BRANCH_KEY = "gc.work_branch"
+
+    @staticmethod
+    def names_item(branch: str, anchor: str) -> bool:
+        """worker-worktree.sh's "Bead branch" rule: the id as a whole token
+        (`gp-abc1`, `fix/gp-abc1-x`, never `gp-abc10`)."""
+        return re.search(r"(^|[^A-Za-z0-9])" + re.escape(anchor) + r"([^A-Za-z0-9]|$)", branch) is not None
+
+    def item_branches(self, anchor: str) -> list[str]:
+        """Every branch, local or on origin, whose name contains the anchor id
+        as a whole token, one namespace at a time as the text and the script
+        do: local names as printed (a local branch literally named `origin/x`
+        keeps its name), remote names with exactly the leading `origin/`
+        removed and `origin/HEAD` dropped; de-duplicated."""
+        names: set[str] = set()
+        for ref in out(self.rig, "for-each-ref", "--format=%(refname)", "refs/heads").splitlines():
+            name = ref[len("refs/heads/"):]
+            if self.names_item(name, anchor):
+                names.add(name)
+        for ref in out(self.rig, "for-each-ref", "--format=%(refname)", "refs/remotes/origin").splitlines():
+            name = ref[len("refs/remotes/origin/"):]
+            if name == "HEAD":
+                continue
+            if self.names_item(name, anchor):
+                names.add(name)
+        return sorted(names)
+
+    def branch_exists(self, lane: pathlib.Path, branch: str) -> str:
+        """'local', 'remote' or '' for a branch name, the way step 4 probes it."""
+        if git(lane, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 0:
+            return "local"
+        if git(lane, "rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{branch}", check=False).returncode == 0:
+            return "remote"
+        return ""
+
+    def operator_resolves_branch(
+        self, lane: pathlib.Path, anchor_metadata: dict[str, str], anchor: str = ITEM_BRANCH, *, keep: bool = False
+    ) -> dict[str, object]:
+        """prepare-worktree step 4, lane case, after the boundary test, on the
+        lane `pre_start` left on a fresh STEP branch. The item's branch is
+        found by NAME (the one branch naming the anchor as a whole token);
+        the record is read first, decides nothing on its own (codex r2: a
+        stamp can contain the id), and is re-aligned when stale; no checkout
+        state (the rig root's branch, a default branch) is consulted.
+
+        1. exactly one branch names the item        -> BRANCH = that one
+           none                                     -> BRANCH = <anchor>, new
+           several (the record among them or not)   -> FAIL CLOSED, list them
+        2. take BRANCH in this lane (--no-overwrite-ignore; -c for a new or
+           origin-only branch); any refusal fails closed: a holder (ANY other
+           worktree, the rig root included) is named, an ignored-file
+           refusal names none and quotes git.
+        Record only when the record differs from BRANCH; then release.
+        """
+        recorded = anchor_metadata.get(self.WORK_BRANCH_KEY, "")
+        candidates = self.item_branches(anchor)
+        if len(candidates) > 1:
+            return {"gc.outcome": "fail", "failure": "several", "candidates": candidates}
+        branch, chosen_by = (candidates[0], "name") if candidates else (anchor, "new")
+        where = self.branch_exists(lane, branch)
+        if chosen_by == "name" and not where:
+            # Listed a moment ago, gone now: never fall through to `-c`.
+            return {"gc.outcome": "fail", "failure": "vanished", "branch": branch}
+        if where == "local":
+            took = self.run(lane, "switch", "--no-overwrite-ignore", branch, check=False)
+        elif where == "remote":
+            took = self.run(lane, "switch", "--no-overwrite-ignore", "-c", branch, "--track", f"refs/remotes/origin/{branch}", check=False)
+        else:
+            took = self.run(lane, "switch", "--no-overwrite-ignore", "-c", branch, check=False)
+        if took.returncode != 0:
+            holder = self.holder_of(branch)
+            if holder is not None:
+                reason = f"branch {branch} is held at {holder}; the run operator releases it from that checkout"
+            else:
+                reason = f"git refused to take {branch}: {took.stderr.strip()}"
+            return {
+                "gc.outcome": "fail",
+                "failure": "held" if holder is not None else "refused",
+                "branch": branch,
+                "holder": holder,
+                "git": took.stderr,
+                "reason": reason,
+            }
+        if recorded != branch:
+            anchor_metadata[self.WORK_BRANCH_KEY] = branch
+        assert anchor_metadata[self.WORK_BRANCH_KEY] == branch
+        assert out(lane, "rev-parse", "--verify", f"refs/heads/{branch}")
+        if keep:
+            # The role fragment's claim-time take: the claiming worker is the
+            # WRITER and stays on the branch until its own release.
+            assert out(lane, "branch", "--show-current") == branch
+        else:
+            self.run(lane, "switch", "--detach")
+            assert out(lane, "branch", "--show-current") == ""
+        return {"gc.outcome": "pass", "chosen_by": chosen_by, "branch": branch, "recorded": recorded != branch}
+
     # --- round 7: the recorded commit and the boundary test ------------------
 
     REVIEW_COMMIT_KEY = "gc.review_commit"
@@ -160,13 +322,15 @@ class Rig:
         branch's commit, the changed files), and `gc.review_commit` on EACH
         source anchor (the anchors' metadata modelled as a dict per anchor id:
         the bead store is not part of this test). Nothing is recorded on the
-        workflow root. The branch is named for the source anchor."""
+        workflow root. The branch is named for the source anchor, and its
+        commit is read by FULL ref (rule 11): a bare name would answer a tag
+        of the same name first."""
         context = self.root / "artifacts" / "code-review-context.md"
         context.parent.mkdir(parents=True, exist_ok=True)
         records = []
         anchor_metadata: dict[str, dict[str, str]] = {}
         for anchor in anchors:
-            commit_id = out(lane, "rev-parse", anchor)
+            commit_id = out(lane, "rev-parse", "--verify", f"refs/heads/{anchor}")
             changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", commit_id)
             records.append(f"anchor: {anchor}\nbranch: {anchor}\ncommit: {commit_id}\nchanged_files: {changed}\n")
             anchor_metadata[anchor] = {self.REVIEW_COMMIT_KEY: commit_id}
@@ -205,8 +369,15 @@ class Rig:
         """apply-review-findings, after its fix commit and BEFORE the release:
         rewrite the commit id and changed files in the record of the source
         anchor it committed on, then record the new commit on that anchor.
-        Every other anchor's record and key are left untouched."""
-        new_commit = out(lane, "rev-parse", "HEAD")
+        Every other anchor's record and key are left untouched. The new
+        commit is HEAD of the worktree the fix was committed in (rule 11,
+        codex r5): in the lane case that lane still holds the branch, so it
+        is the branch's tip by FULL ref; a per-item `work_dir` worktree is
+        detached and has no item branch to read."""
+        new_commit = out(lane, "rev-parse", "--verify", "HEAD")
+        held = out(lane, "branch", "--show-current")
+        if held:
+            assert new_commit == out(lane, "rev-parse", "--verify", f"refs/heads/{held}"), "the fix lane holds the branch it refreshes"
         changed = out(lane, "diff-tree", "--no-commit-id", "--name-only", "-r", new_commit)
         blocks = context.read_text(encoding="utf-8").split("\n\n")
         for index, block in enumerate(blocks):
@@ -337,9 +508,9 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(out(operator, "branch", "--show-current"), "")
 
         # close-source-anchor / review setup read the commit by branch (rule 5).
-        recorded = out(reviewer_a, "rev-parse", ITEM_BRANCH)
+        recorded = out(reviewer_a, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}")
         self.assertEqual(recorded, impl_commit)
-        self.assertEqual(out(reviewer_a, "log", "-1", "--format=%H", ITEM_BRANCH), impl_commit)
+        self.assertEqual(rig.close_verifies(reviewer_a), impl_commit)
 
         # TWO reviewers detach at the recorded commit at the same time (rule 2).
         procs = [rig.reader_detaches(reviewer_a, recorded), rig.reader_detaches(reviewer_b, recorded)]
@@ -363,7 +534,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertIsNone(rig.holder_of(ITEM_BRANCH))
 
         # The close reads the branch tip: the fix commit, on top of the implementation.
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
         self.assertEqual(out(operator, "rev-parse", f"{fix_commit}^"), impl_commit)
         # Reviewers still sit at the commit they inspected; nothing moved under them.
         for reviewer in (reviewer_a, reviewer_b):
@@ -417,7 +588,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(rig.holder_of(ITEM_BRANCH), str(fix))
         fix_commit = commit(fix, "feature.txt", "implemented\nfixed\n", "fix")
         rig.writer_releases(fix)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
         self.assert_rig_root_untouched()
 
     def test_detach_at_commit_refuses_to_overwrite_an_ignored_file(self) -> None:
@@ -503,7 +674,7 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertEqual(rig.context_commit(context, ITEM_BRANCH), commit_b)
         self.assertIn("changed_files: feature.txt feature_test.txt", " ".join(context_text.split()))
         self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], commit_b)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", ITEM_BRANCH), commit_b)
+        self.assertEqual(rig.close_verifies(operator), commit_b)
 
         # Attempt 2: a reader reads B, not A: from the anchor's key first ...
         current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
@@ -544,7 +715,7 @@ class LaneLifecycleTests(unittest.TestCase):
         rig.writer_takes(implement)
         commit_a = commit(implement, "feature.txt", "implemented\n", "implement")
         rig.writer_releases(implement)
-        recorded = out(implement, "rev-parse", ITEM_BRANCH)
+        recorded = out(implement, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}")
         self.assertEqual(recorded, commit_a)
 
         # Positive proof: a real lane passes all three parts.
@@ -689,8 +860,8 @@ class LaneLifecycleTests(unittest.TestCase):
         self.assertNotIn(a1, context_text)
         self.assertIn(a2, context_text)
         self.assertEqual(rig.context_records(context)[item_2]["changed_files"], "two.txt")
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_1), b1)
-        self.assertEqual(out(operator, "log", "-1", "--format=%H", item_2), a2)
+        self.assertEqual(rig.close_verifies(operator, item_1), b1)
+        self.assertEqual(rig.close_verifies(operator, item_2), a2)
 
         # Attempt 2: each reader reads ITS anchor's commit and inspects that revision.
         current_1 = rig.reader_reads_current_commit(context, anchors, item_1)
@@ -716,6 +887,483 @@ class LaneLifecycleTests(unittest.TestCase):
 
         self.assertIsNone(rig.holder_of(item_1))
         self.assertIsNone(rig.holder_of(item_2))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_relaunched_item_under_a_new_step_id_reuses_its_branch_and_keeps_its_commits(self) -> None:
+        """Rule 10 (gate r9 MAJOR). Run 1: the operator lane is on the step
+        branch `pre_start` cut for its step bead; no branch names the item, so
+        prepare-worktree creates `<anchor>` from the base and records it; the
+        step branch is left at the base, recorded nowhere. implement commits
+        on the item's branch and releases. Re-launch: a NEW run, a NEW step
+        id, so `pre_start` puts the SAME operator lane on a fresh step branch
+        with none of the work. While the implement lane still holds the
+        branch (a crash before its release) the re-launch fails closed naming
+        the holder and records nothing; the same when a HUMAN checks the item
+        branch out in the rig root (codex r1: checkout state must never turn
+        a held item branch into a fresh one). Once free, the record names the
+        item and exists: the lane switches onto it, records nothing, sits at
+        the committed work, and the next implement lane continues ON TOP of
+        the earlier commit. Round 9's shape recorded the fresh step branch
+        here, whose tip is the base without the file."""
+        rig = self.rig
+        anchor: dict[str, str] = {}  # the source anchor's metadata: no record yet
+        operator = rig.lane("run-operator", step="gp-step1")
+
+        first = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(first, {"gc.outcome": "pass", "chosen_by": "new", "branch": ITEM_BRANCH, "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(operator, "rev-parse", "gp-step1"), rig.main_sha)  # the step branch: unused, unrecorded
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+
+        # Re-launch while the writer still holds the branch: fail closed, nothing moves.
+        rig.pre_start(operator, "gp-step5")
+        refused = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual((refused["gc.outcome"], refused["failure"], refused["holder"]), ("fail", "held", str(implement)))
+        self.assertRegex(str(refused["git"]), r"already (checked out|used by worktree) at")
+        self.assertIn(implement.name, str(refused["reason"]))
+        rig.stderr_seen.remove(refused["git"])
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(operator, "branch", "--show-current"), "gp-step5")
+        self.assertEqual(rig.holder_of(ITEM_BRANCH), str(implement))
+        rig.writer_releases(implement)
+
+        # A human checks the item branch out in the rig root: the holder is the
+        # rig root; the step fails closed, records nothing, forces nothing.
+        git(rig.rig, "switch", "--quiet", ITEM_BRANCH)
+        rig.pre_start(operator, "gp-step6")
+        refused = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual((refused["gc.outcome"], refused["failure"], refused["holder"]), ("fail", "held", str(rig.rig)))
+        rig.stderr_seen.remove(refused["git"])
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(rig.rig, "branch", "--show-current"), ITEM_BRANCH)
+        self.assertEqual(out(rig.rig, "rev-parse", "HEAD"), impl_commit)
+        git(rig.rig, "switch", "--quiet", "main")  # the human releases it
+        self.assert_rig_root_untouched()
+
+        # Free again, under yet another step id: the record names the item and exists.
+        rig.pre_start(operator, "gp-step7")
+        self.assertFalse((operator / "feature.txt").exists())  # the fresh cut knows nothing of the work
+        second = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(second, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": False})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})  # unchanged
+        self.assertEqual(out(operator, "branch", "--show-current"), "")  # released again
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)  # at the committed work
+        self.assertEqual((operator / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+        self.assertEqual(out(operator, "rev-parse", "gp-step7"), rig.main_sha)  # left at the base, recorded nowhere
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+
+        # A retry of this step after the record, before the detach: the lane is
+        # on the branch already; taking it is a no-op, not a refusal.
+        rig.writer_takes(operator)
+        retried = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(retried, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": False})
+
+        # The re-launched implement lane (its own new step id) continues on top of the earlier commit.
+        implement_2 = rig.lane("implementation-worker-2", step="gp-step8")
+        rig.writer_takes(implement_2, anchor["gc.work_branch"])
+        self.assertEqual((implement_2 / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+        continued = commit(implement_2, "feature.txt", "implemented\nmore\n", "implement, continued")
+        rig.writer_releases(implement_2)
+        self.assertEqual(out(operator, "rev-parse", f"{continued}^"), impl_commit)
+        self.assertEqual(rig.close_verifies(operator, anchor["gc.work_branch"]), continued)
+        # Round 9 recorded the fresh step branch instead: its tip is the base, without the file.
+        self.assertNotEqual(git(rig.rig, "cat-file", "-e", "gp-step7:feature.txt", check=False).returncode, 0)
+
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_relaunched_item_with_a_stale_record_finds_its_branch_by_name_or_starts_anew(self) -> None:
+        """Rule 10, the record is not the operand. After run 1 the record can
+        be wrong three ways, and the NAME rule resolves each: (A) a claim-time
+        stamp overwrote the record with `main`: the one branch naming the item
+        is found and the record re-aligned, the work present; (B) a human
+        renamed the branch keeping the id (`wip/gp-item1-fix`): found by name,
+        recorded, the work present; (C) renamed without the id: nothing names
+        the item, so a new `<anchor>` starts from the base and is recorded,
+        the renamed branch and its commit untouched; (D) two branches name
+        the item: the step fails closed listing both and records nothing, as
+        `pre_start` does."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+
+        # (A) a claim-time stamp between runs.
+        anchor["gc.work_branch"] = "main"
+        rig.pre_start(operator, "gp-step7")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
+        self.assertEqual(out(rig.rig, "rev-parse", "main"), rig.main_sha)  # nothing landed on main
+
+        # (B) renamed, id kept.
+        rig.run(operator, "branch", "-m", ITEM_BRANCH, "wip/gp-item1-fix")
+        rig.pre_start(operator, "gp-step8")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": "wip/gp-item1-fix", "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": "wip/gp-item1-fix"})
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
+
+        # (B2, codex r2) a LOCAL branch literally named `origin/<id>`: listed
+        # per namespace, its name is kept, so it is found and taken as is
+        # rather than a fresh `<id>` being created beside it.
+        rig.run(operator, "branch", "-m", "wip/gp-item1-fix", "origin/gp-item1")
+        rig.pre_start(operator, "gp-step8b")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": "origin/gp-item1", "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": "origin/gp-item1"})
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
+        self.assertNotEqual(git(operator, "rev-parse", "--verify", "--quiet", "refs/heads/gp-item1", check=False).returncode, 0)
+        rig.run(operator, "branch", "-m", "origin/gp-item1", "wip/gp-item1-fix")
+
+        # (C) renamed, id dropped: the work is not the item's any more; start anew.
+        rig.run(operator, "branch", "-m", "wip/gp-item1-fix", "kept/other")
+        rig.pre_start(operator, "gp-step9")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "new", "branch": ITEM_BRANCH, "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(operator, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), rig.main_sha)
+        self.assertEqual(out(operator, "rev-parse", "kept/other"), impl_commit)  # untouched
+        implement_2 = rig.lane("implementation-worker-2", step="gp-step10")
+        rig.writer_takes(implement_2, anchor["gc.work_branch"])
+        self.assertFalse((implement_2 / "feature.txt").exists())
+        rig.writer_releases(implement_2)
+
+        # (D) several branches name the item: fail closed, list them, record nothing.
+        rig.run(operator, "branch", "gp-item1-alt", rig.main_sha)
+        anchor["gc.work_branch"] = "main"  # a stale record again, so the name rule must choose
+        rig.pre_start(operator, "gp-step11")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "fail", "failure": "several", "candidates": [ITEM_BRANCH, "gp-item1-alt"]})
+        self.assertEqual(anchor, {"gc.work_branch": "main"})
+        self.assertEqual(out(operator, "branch", "--show-current"), "gp-step11")
+
+        # (E, codex r2) several, and the record is one of them: a stamp of a
+        # human branch that happens to contain the id (`human/gp-item1-notes`)
+        # must not shortcut the enumeration onto the human's branch while the
+        # work sits on `gp-item1`. Still fail closed, still nothing recorded.
+        rig.run(operator, "branch", "-m", "gp-item1-alt", "human/gp-item1-notes")
+        anchor["gc.work_branch"] = "human/gp-item1-notes"
+        rig.pre_start(operator, "gp-step12")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "fail", "failure": "several", "candidates": [ITEM_BRANCH, "human/gp-item1-notes"]})
+        self.assertEqual(anchor, {"gc.work_branch": "human/gp-item1-notes"})
+        self.assertEqual(out(operator, "branch", "--show-current"), "gp-step12")
+        # The operator reconciles: the human's branch loses the id; the next run finds one.
+        rig.run(operator, "branch", "-m", "human/gp-item1-notes", "human/notes")
+        rig.pre_start(operator, "gp-step13")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_item_branch_only_on_origin_is_tracked_and_an_ignored_file_refusal_names_no_holder(self) -> None:
+        """Rule 10, the two takes codex r2 asked to see run. Remote-only: the
+        item's branch was pushed and the local name is gone; the enumeration
+        finds it under `origin/` (prefix stripped from the remote namespace
+        only), the lane takes it with `switch -c --track
+        refs/remotes/origin/<branch>` (codex r5: a tag named
+        `origin/<branch>` at the base makes the bare start point ambiguous
+        and git refuse; the full ref is the branch), the work is present and
+        the record is the unprefixed local name. An
+        ignored file in the operator lane that the branch tracks makes git
+        refuse; the step fails closed quoting git and naming NO holder (there
+        is none), records nothing, and the lane and the file are as they were."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "build.out", "tracked\n", "implement tracks a build output")
+        rig.writer_releases(implement)
+
+        origin = rig.root / "origin.git"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(origin)], check=True)
+        git(rig.rig, "remote", "add", "origin", str(origin))
+        git(rig.rig, "push", "--quiet", "origin", ITEM_BRANCH)
+        rig.run(operator, "branch", "-m", ITEM_BRANCH, "kept/other")  # the local name is gone; origin still has it
+        self.assertEqual(rig.branch_exists(operator, ITEM_BRANCH), "remote")
+        git(rig.rig, "tag", f"origin/{ITEM_BRANCH}", rig.main_sha)  # a tag named like the remote-tracking ref, at the base
+        # The hazard (codex r5): the bare start point is ambiguous, git refuses.
+        hazard = rig.lane("run-operator-3", step="gp-step9")
+        bare = git(hazard, "switch", "--no-overwrite-ignore", "-c", "hazard-take", "--track", f"origin/{ITEM_BRANCH}", check=False)
+        self.assertNotEqual(bare.returncode, 0)
+        self.assertIn("ambiguous", bare.stderr)
+        self.assertEqual(out(hazard, "branch", "--show-current"), "gp-step9")
+        self.assertEqual(git(hazard, "rev-parse", f"origin/{ITEM_BRANCH}").stdout.strip(), rig.main_sha)  # the tag
+
+        rig.pre_start(operator, "gp-step7")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": False})
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
+        self.assertEqual(out(operator, "rev-parse", "--symbolic-full-name", f"{ITEM_BRANCH}@{{upstream}}"), f"refs/remotes/origin/{ITEM_BRANCH}")
+        self.assertEqual((operator / "build.out").read_text(encoding="utf-8"), "tracked\n")
+
+        # The ignored-file refusal: a second operator lane has an ignored
+        # `build.out` the item's branch tracks.
+        operator_2 = rig.lane("run-operator-2", step="gp-step8")
+        (operator_2 / "build.out").write_text("ignored local\n", encoding="utf-8")
+        info_exclude = pathlib.Path(out(operator_2, "rev-parse", "--git-path", "info/exclude"))
+        info_exclude.parent.mkdir(parents=True, exist_ok=True)
+        info_exclude.write_text("build.out\n", encoding="utf-8")
+        self.assertEqual(out(operator_2, "status", "--porcelain"), "")
+        before = rig.snapshot(operator_2)
+        result = rig.operator_resolves_branch(operator_2, anchor)
+        self.assertEqual((result["gc.outcome"], result["failure"], result["holder"]), ("fail", "refused", None))
+        self.assertIn("build.out", str(result["git"]))
+        self.assertIn("build.out", str(result["reason"]))
+        self.assertNotIn("held at", str(result["reason"]))
+        self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+        self.assertEqual(rig.snapshot(operator_2), before)
+        self.assertEqual((operator_2 / "build.out").read_text(encoding="utf-8"), "ignored local\n")
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_rig_root_untouched()
+
+    def test_claim_time_stamp_never_names_the_item_and_is_never_reused(self) -> None:
+        """Rule 10, the stamp. Older gc builds, and any session started in the
+        rig root, stamp the rig root's branch on the bead they claim; the
+        human checkout then moves between branches, so no checkout state can
+        tell such a stamp from an item branch (codex r1, both directions).
+        The name rule needs none: `main` and `human-work` do not name the
+        item, whichever the rig root is on, so each stamp is passed over, the
+        item's own branch is used, and no commit ever lands on a human
+        branch. git itself refuses the branch the rig root holds; the step
+        never has to ask."""
+        rig = self.rig
+        operator = rig.lane("run-operator", step="gp-step1")
+
+        refused = rig.run(operator, "switch", "--no-overwrite-ignore", "main", check=False)
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertRegex(refused.stderr, r"already (checked out|used by worktree) at")
+        self.assertIn(rig.rig.name, refused.stderr)
+        rig.stderr_seen.remove(refused.stderr)
+
+        transitions = (
+            ("main", "main"),          # the stamp names the branch the rig root is on
+            ("human-work", "main"),    # the rig root moved on; the stamp is stale
+            ("human-work", "human-work"),
+            ("main", "human-work"),
+        )
+        git(rig.rig, "branch", "--quiet", "human-work", "main")
+        for index, (stamp, rig_root_on) in enumerate(transitions):
+            with self.subTest(stamp=stamp, rig_root_on=rig_root_on):
+                git(rig.rig, "switch", "--quiet", rig_root_on)
+                rig.pre_start(operator, f"gp-step{index + 2}")
+                anchor = {"gc.work_branch": stamp}
+                result = rig.operator_resolves_branch(operator, anchor)
+                self.assertEqual(result["gc.outcome"], "pass")
+                self.assertEqual(result["branch"], ITEM_BRANCH)
+                self.assertEqual(result["chosen_by"], "new" if index == 0 else "name")
+                self.assertEqual(anchor, {"gc.work_branch": ITEM_BRANCH})
+                self.assertEqual(out(rig.rig, "rev-parse", "--verify", f"refs/heads/{stamp}"), rig.main_sha)  # nothing landed on it
+                self.assertEqual(out(rig.rig, "branch", "--show-current"), rig_root_on)
+        git(rig.rig, "switch", "--quiet", "main")
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_a_tag_of_the_same_name_does_not_change_the_branch_name(self) -> None:
+        """Rule 10, codex r3: `%(refname:short)` prints `heads/gp-item1` once a
+        tag `gp-item1` exists, and a listing built on it would probe a branch
+        that does not exist and fall through to a fresh base branch. The
+        listing uses full ref names with one namespace prefix removed, so the
+        branch keeps its name, is found, and is taken with the work present."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+
+        git(rig.rig, "tag", ITEM_BRANCH, rig.main_sha)  # a tag with the branch's name
+        # The abbreviation git would print for the branch now carries a namespace.
+        self.assertEqual(out(rig.rig, "for-each-ref", "--format=%(refname:short)", f"refs/heads/{ITEM_BRANCH}"), f"heads/{ITEM_BRANCH}")
+        self.assertEqual(rig.item_branches(ITEM_BRANCH), [ITEM_BRANCH])
+
+        rig.pre_start(operator, "gp-step7")
+        result = rig.operator_resolves_branch(operator, anchor)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": ITEM_BRANCH, "recorded": False})
+        self.assertEqual(out(operator, "rev-parse", "HEAD"), impl_commit)
+        self.assertEqual((operator / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+        self.assertNotEqual(git(operator, "rev-parse", "--verify", "--quiet", f"refs/heads/heads/{ITEM_BRANCH}", check=False).returncode, 0)
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_a_tag_at_the_base_never_redirects_review_from_the_branch_tip(self) -> None:
+        """Rule 11 (round 2, the mayor's codex gate r1 on fork #34). Round 1's
+        listing keeps the branch's NAME beside a tag of the same name, but
+        the consumers of `gc.work_branch` then resolved that name bare, and
+        git resolves a bare name tag-first: with the tag at the base, the
+        review setup would have recorded the base as the commit under review,
+        every review lane would have inspected it, close-source-anchor would
+        have verified it, and the fix lane's refresh would have re-recorded
+        it. Every such read names `refs/heads/<branch>`; `git switch`
+        resolves branches only and keeps the bare name. The hazard is shown
+        first, on the same repository, then the lifecycle runs through
+        review-commit recording with the tag in place."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+
+        git(rig.rig, "tag", ITEM_BRANCH, rig.main_sha)  # a tag with the branch's name, at the base
+        self.assertEqual(rig.item_branches(ITEM_BRANCH), [ITEM_BRANCH])  # round 1: the name survives
+
+        # The hazard: a bare name is the TAG (git checks refs/tags before refs/heads) ...
+        for bare in (
+            ("rev-parse", ITEM_BRANCH),
+            ("log", "-1", "--format=%H", ITEM_BRANCH),
+            ("show", "-s", "--format=%H", ITEM_BRANCH),
+        ):
+            with self.subTest(bare=bare[0]):
+                read = git(operator, *bare)
+                self.assertEqual(read.stdout.strip(), rig.main_sha)
+                self.assertIn("ambiguous", read.stderr)
+        # ... the full ref is the branch, and `git switch` resolves branches only.
+        self.assertEqual(out(operator, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(operator, "log", "-1", "--format=%H", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(operator, "show", "-s", "--format=%H", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+
+        # close-source-anchor verifies the IMPLEMENTATION commit from its own lane.
+        self.assertEqual(rig.close_verifies(operator), impl_commit)
+
+        # setup-build-basic-review records the branch TIP as the commit under review.
+        setup = rig.lane("run-operator-2", step="gp-step3")
+        context, anchors = rig.setup_records(setup, [ITEM_BRANCH])
+        self.assertEqual(anchors, {ITEM_BRANCH: {"gc.review_commit": impl_commit}})
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), impl_commit)
+        self.assertNotIn(rig.main_sha, context.read_text(encoding="utf-8"))
+
+        # A review lane detaches at the recorded commit and sees the implementation.
+        reviewer = rig.lane("implementation-reviewer-1", step="gp-step4")
+        current = rig.reader_reads_current_commit(context, anchors, ITEM_BRANCH)
+        self.assertEqual(current, impl_commit)
+        proc = rig.reader_detaches(reviewer, current)
+        _, err = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(out(reviewer, "rev-parse", "HEAD"), impl_commit)
+        self.assertEqual((reviewer / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+
+        # apply-review-findings: the bare `switch <branch>` lands on the BRANCH at
+        # the implementation, the fix advances it, the refresh records the fixed tip.
+        fix = rig.lane("implementation-worker-2", step="gp-step5")
+        rig.writer_takes(fix)
+        self.assertEqual(out(fix, "branch", "--show-current"), ITEM_BRANCH)
+        self.assertEqual(out(fix, "rev-parse", "HEAD"), impl_commit)
+        fix_commit = commit(fix, "feature.txt", "implemented\nfixed\n", "fix")
+        refreshed = rig.fix_lane_refreshes(fix, context, anchors, ITEM_BRANCH)
+        rig.writer_releases(fix)
+        self.assertEqual(refreshed, fix_commit)
+        self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], fix_commit)
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), fix_commit)
+        self.assertEqual(rig.close_verifies(operator), fix_commit)
+        # The tag never moved, and a bare read would still answer the base.
+        self.assertEqual(out(operator, "rev-parse", f"refs/tags/{ITEM_BRANCH}"), rig.main_sha)
+        self.assertEqual(git(operator, "rev-parse", ITEM_BRANCH).stdout.strip(), rig.main_sha)
+        self.assertNotIn(rig.main_sha, context.read_text(encoding="utf-8"))
+
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_fix_in_a_per_item_worktree_refreshes_its_own_head_not_a_branch(self) -> None:
+        """Rule 11, codex r5 finding 1. The refresh applies in the `work_dir`
+        case too: the per-item worktree is detached at the fix commit and has
+        no item branch to read, so the new commit id is `rev-parse --verify
+        HEAD` of the worktree the fix was committed in. A branch named for
+        the anchor at another commit and a tag of that name at the base
+        change nothing, and there is no branch to release."""
+        rig = self.rig
+        anchor: dict[str, str] = {}
+        operator = rig.lane("run-operator", step="gp-step1")
+        rig.operator_resolves_branch(operator, anchor)
+        implement = rig.lane("implementation-worker-1", step="gp-step2")
+        rig.writer_takes(implement)
+        impl_commit = commit(implement, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(implement)
+        setup = rig.lane("run-operator-2", step="gp-step3")
+        context, anchors = rig.setup_records(setup, [ITEM_BRANCH])
+        git(rig.rig, "tag", ITEM_BRANCH, rig.main_sha)
+
+        # The work_dir case: a per-item worktree, detached at the recorded commit, shared with no one.
+        item_worktree = rig.root / "worktrees" / ITEM_BRANCH
+        git(rig.rig, "worktree", "add", "--quiet", "--detach", str(item_worktree), impl_commit)
+        self.assertEqual(out(item_worktree, "branch", "--show-current"), "")
+        fix_commit = commit(item_worktree, "feature.txt", "implemented\nfixed\n", "fix in the per-item worktree")
+        refreshed = rig.fix_lane_refreshes(item_worktree, context, anchors, ITEM_BRANCH)
+        self.assertEqual(refreshed, fix_commit)
+        self.assertEqual(anchors[ITEM_BRANCH]["gc.review_commit"], fix_commit)
+        self.assertEqual(rig.context_commit(context, ITEM_BRANCH), fix_commit)
+        # Neither the branch (still at the implementation) nor the tag (the base) was read.
+        self.assertEqual(out(rig.rig, "rev-parse", "--verify", f"refs/heads/{ITEM_BRANCH}"), impl_commit)
+        self.assertEqual(out(rig.rig, "rev-parse", f"refs/tags/{ITEM_BRANCH}"), rig.main_sha)
+        self.assertNotIn(impl_commit, context.read_text(encoding="utf-8"))
+        self.assertEqual(out(item_worktree, "branch", "--show-current"), "")  # nothing to release
+        self.assertIsNone(rig.holder_of(ITEM_BRANCH))
+        self.assert_no_contention()
+        self.assert_rig_root_untouched()
+
+    def test_claim_without_a_trigger_bead_takes_the_beads_existing_branch(self) -> None:
+        """Rule 10, codex r3, the role fragment's no-trigger case. A pooled
+        worker's `pre_start` had no trigger bead and left the lane detached at
+        the base; the worker then claims a bead whose committed work is on
+        `fix/<id>-x`. The fragment has it take that branch by the same name
+        rule (never create `<id>` beside it): the lane switches onto it, the
+        work is present, the record is re-aligned to that name, and exactly
+        one branch names the bead afterwards. With no branch naming the bead
+        it creates `<id>`."""
+        rig = self.rig
+        bead = "gp-item1"
+        pooled = rig.lane("implementation-worker-1", detached=True)
+        self.assertEqual(out(pooled, "branch", "--show-current"), "")
+        self.assertEqual(out(pooled, "rev-parse", "HEAD"), rig.main_sha)
+        # The bead's earlier work, on a branch a human named for it.
+        earlier = rig.lane("implementation-worker-0", step="fix/gp-item1-x")
+        work = commit(earlier, "feature.txt", "implemented\n", "implement")
+        rig.writer_releases(earlier)
+
+        anchor = {"gc.work_branch": "main"}  # the claim-time stamp
+        result = rig.operator_resolves_branch(pooled, anchor, anchor=bead, keep=True)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "name", "branch": "fix/gp-item1-x", "recorded": True})
+        self.assertEqual(anchor, {"gc.work_branch": "fix/gp-item1-x"})
+        # The claiming worker is the writer: it holds the branch, and its commit advances it.
+        self.assertEqual(out(pooled, "branch", "--show-current"), "fix/gp-item1-x")
+        self.assertEqual(rig.holder_of("fix/gp-item1-x"), str(pooled))
+        self.assertEqual(out(pooled, "rev-parse", "HEAD"), work)
+        self.assertEqual((pooled / "feature.txt").read_text(encoding="utf-8"), "implemented\n")
+        more = commit(pooled, "feature.txt", "implemented\nmore\n", "continue on the bead's branch")
+        self.assertEqual(out(rig.rig, "rev-parse", "--verify", "refs/heads/fix/gp-item1-x"), more)
+        self.assertEqual(out(rig.rig, "rev-parse", f"{more}^"), work)
+        self.assertEqual(rig.item_branches(bead), ["fix/gp-item1-x"])  # still exactly one
+        self.assertNotEqual(git(pooled, "rev-parse", "--verify", "--quiet", "refs/heads/gp-item1", check=False).returncode, 0)
+        rig.writer_releases(pooled)
+
+        # A bead with no branch at all, claimed by another pooled lane detached
+        # at the base: it creates `<id>` from the base and records it.
+        pooled_2 = rig.lane("implementation-worker-2", detached=True)
+        fresh = {"gc.work_branch": ""}
+        result = rig.operator_resolves_branch(pooled_2, fresh, anchor="gp-item2", keep=True)
+        self.assertEqual(result, {"gc.outcome": "pass", "chosen_by": "new", "branch": "gp-item2", "recorded": True})
+        self.assertEqual(fresh, {"gc.work_branch": "gp-item2"})
+        self.assertEqual(out(pooled_2, "branch", "--show-current"), "gp-item2")
+        self.assertEqual(out(pooled_2, "rev-parse", "HEAD"), rig.main_sha)
+        self.assertFalse((pooled_2 / "feature.txt").exists())
         self.assert_no_contention()
         self.assert_rig_root_untouched()
 

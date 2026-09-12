@@ -235,6 +235,77 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual(git(operator, "rev-parse", "HEAD"), sha)
         self.assertEqual(self.asides(), [])
 
+    def test_tag_with_the_bead_branch_name_neither_hides_the_branch_nor_fails_the_start(self) -> None:
+        # gp-d6gd (codex r3/r4): a tag `gp-tag1` beside the branch `gp-tag1` makes
+        # `%(refname:short)` and `rev-parse --abbrev-ref HEAD` print `heads/gp-tag1`.
+        # The listing and the verification use full ref names, so the branch is
+        # found under its name, checked out, and the run reports it.
+        operator = self.fx.city / ".worktrees" / "rig" / "lane-operator"
+        self.fx.run(operator, "gp-tag1")
+        sha = commit(operator, "item.txt", "prepared\n", "item branch work")
+        git(operator, "switch", "--detach")
+        git(self.fx.rig, "tag", "gp-tag1", self.fx.main_sha)
+        self.assertEqual(git(self.fx.rig, "for-each-ref", "--format=%(refname:short)", "refs/heads/gp-tag1"), "heads/gp-tag1")
+        proc = self.fx.run(self.lane, "gp-tag1")
+        self.assertEqual(git(self.lane, "symbolic-ref", "HEAD"), "refs/heads/gp-tag1")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual(proc.stdout.split()[2], "gp-tag1")
+        self.assertNotIn("WARN", proc.stderr)
+        # Re-running on the lane already on the branch is the idempotent no-op.
+        proc = self.fx.run(self.lane, "gp-tag1")
+        self.assertEqual(proc.stdout.split()[2], "gp-tag1")
+        self.assertEqual(self.asides(), [])
+
+    def test_tag_named_like_the_remote_branch_neither_redirects_nor_fails_the_tracked_start(self) -> None:
+        # gp-d6gd round 2 (codex r5): a `--track` start point is a commit-ish, so
+        # with a tag `origin/<branch>` at the base the bare start point is
+        # ambiguous and git refuses ("ambiguous object name"); the script starts
+        # from `refs/remotes/<remote>/<branch>`, which is the branch, on both the
+        # fresh-lane path (worktree add) and the existing-lane path (switch).
+        sha = self.fx.push_branch("fix/gp-def2-resume-me")
+        git(self.fx.rig, "tag", "origin/fix/gp-def2-resume-me", self.fx.main_sha)
+        proc = self.fx.run(self.lane, "gp-def2")
+        self.assertEqual(git(self.lane, "symbolic-ref", "HEAD"), "refs/heads/fix/gp-def2-resume-me")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual(git(self.lane, "rev-parse", "--symbolic-full-name", "@{upstream}"), "refs/remotes/origin/fix/gp-def2-resume-me")
+        self.assertTrue((self.lane / "feature.txt").is_file())
+        self.assertNotIn("WARN", proc.stderr)
+        # The existing-lane path: a lane on another bead moves onto the remote-only branch.
+        other = self.fx.city / ".worktrees" / "rig" / "lane-other"
+        self.fx.run(other, "gp-zzz9")
+        sha_3 = self.fx.push_branch("fix/gp-def3-resume-me", "third.txt")
+        git(self.fx.rig, "tag", "origin/fix/gp-def3-resume-me", self.fx.main_sha)
+        proc = self.fx.run(other, "gp-def3")
+        self.assertEqual(git(other, "symbolic-ref", "HEAD"), "refs/heads/fix/gp-def3-resume-me")
+        self.assertEqual(git(other, "rev-parse", "HEAD"), sha_3)
+        self.assertEqual(git(other, "rev-parse", "--symbolic-full-name", "@{upstream}"), "refs/remotes/origin/fix/gp-def3-resume-me")
+        self.assertNotIn("WARN", proc.stderr)
+        self.assertEqual(self.asides(other), [])
+        # The tags never moved and still answer the base by bare name.
+        self.assertEqual(git(self.fx.rig, "rev-parse", "refs/tags/origin/fix/gp-def2-resume-me"), self.fx.main_sha)
+
+    def test_tag_named_like_origin_main_does_not_move_the_base(self) -> None:
+        # gp-d6gd round 2 (codex r5): with no origin/HEAD the fallback base was the
+        # bare `origin/main`, which a tag `origin/main` at an older commit shadows;
+        # the generated base is a full ref on every path (symbolic ref, main, master).
+        newer = self.fx.push_branch("main-advance", "newer.txt")
+        scratch = self.fx.root / "scratch-main-advance"
+        git(scratch, "push", "--quiet", "origin", "main-advance:main")
+        git(self.fx.rig, "tag", "origin/main", self.fx.main_sha)
+        git(self.fx.rig, "remote", "set-head", "origin", "--delete")
+        self.fx.run(self.lane, "gp-abc1")
+        self.assertEqual(self.branch_of(self.lane), "gp-abc1")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), newer)
+        git(self.fx.rig, "remote", "set-head", "origin", "main")
+        other = self.fx.city / ".worktrees" / "rig" / "lane-other"
+        self.fx.run(other, "gp-abc2")
+        self.assertEqual(git(other, "rev-parse", "HEAD"), newer)
+        detached = self.fx.city / ".worktrees" / "rig" / "lane-detached"
+        self.fx.run(detached, None)
+        self.assertEqual(self.branch_of(detached), "HEAD")
+        self.assertEqual(git(detached, "rev-parse", "HEAD"), newer)
+        self.assertEqual(git(self.fx.rig, "rev-parse", "refs/tags/origin/main"), self.fx.main_sha)
+
     def test_rerun_under_a_path_with_spaces_keeps_its_own_branch(self) -> None:
         lane = self.fx.city / "lanes with spaces" / "lane worker"
         self.fx.run(lane, "gp-spc1")
