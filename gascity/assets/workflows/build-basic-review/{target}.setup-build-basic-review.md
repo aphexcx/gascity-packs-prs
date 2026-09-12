@@ -31,8 +31,12 @@ When the source anchor has no `work_dir` and records `gc.work_branch`
 (`prepare-worktree` ran in a lane and handed the item over by branch; a
 directory is per agent and is never handed to another agent), record the
 BRANCH (`gc.work_branch`) and the COMMIT id (`git -C "$GC_DIR" rev-parse
-"<gc.work_branch>"`, read from your own lane: every worktree of the rig shares
-its refs) in the context in place of a directory; the review and fix lanes
+--verify "refs/heads/<gc.work_branch>"`, read from your own lane: every
+worktree of the rig shares its refs; the FULL ref, never the bare name,
+because git resolves a bare name tag-first and a tag with the branch's name
+would make this the tag's commit, the base, so every review lane would
+inspect the base instead of the implementation) in the context in place of a
+directory; the review and fix lanes
 resolve those in their own lanes. Never enter another agent's lane, and never
 record one as the workspace: a persisted `work_dir` that names an agent lane
 (`.worktrees/<rig>/lane-*`) is invalid, and so is a recorded branch that is

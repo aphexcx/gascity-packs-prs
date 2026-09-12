@@ -46,7 +46,8 @@ this role", naming the fix: a `work_dir` for this role (README, Worker
 workspaces). Only when all three parts hold: `git -C "$GC_DIR" switch --detach
 --no-overwrite-ignore <commit>` (the current commit as read above; if
 the context carries only the branch, resolve it first with `git -C "$GC_DIR"
-rev-parse "<gc.work_branch>"`), and fail closed when git refuses (an ignored
+rev-parse --verify "refs/heads/<gc.work_branch>"`, the full ref, since a bare
+name resolves tag-first), and fail closed when git refuses (an ignored
 file in your lane colliding with a tracked path, or a commit missing from the
 repository): never `--force`, never a stash, never remove the colliding file.
 A review lane never takes the branch itself: git allows one worktree per

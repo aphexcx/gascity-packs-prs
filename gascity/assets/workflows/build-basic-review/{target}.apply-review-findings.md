@@ -50,11 +50,19 @@ branch. The review setup ran ONCE, outside the review loop, and the three
 review lanes inspect the commit it recorded; a context left at that commit
 makes every later attempt review the ORIGINAL code and repeat the findings you
 just resolved until the attempts run out. The record is PER SOURCE ANCHOR:
-rewrite the commit id (and the changed-file list, when the context carries
-one) in the record of the source anchor you committed on, in the review
-context file at `gc.build.code_review_context_path` on the workflow root, then
-record the new commit on that source anchor: `gc bd update
-"<source-anchor-id>" --set-metadata 'gc.review_commit=<sha>'` (the review
+read the new commit id from the worktree you committed in, `git -C
+"$WORKTREE" rev-parse --verify HEAD` (in the lane case `$WORKTREE` is
+`$GC_DIR` on the branch you still hold, so it equals `git -C "$GC_DIR"
+rev-parse --verify "refs/heads/<gc.work_branch>"`; in the `work_dir` case
+the per-item worktree is detached at your commit and has no item branch to
+read; never the bare branch name: git resolves a bare name tag-first, and a
+tag with the branch's name would record the tag's commit, the base, as the
+reviewed commit), rewrite the
+commit id (and the changed-file list, when the context carries one) in the
+record of the source anchor you committed on, in the review context file at
+`gc.build.code_review_context_path` on the workflow root, then record the new
+commit on that source anchor: `gc bd update "<source-anchor-id>"
+--set-metadata 'gc.review_commit=<sha>'` (the review
 lanes read that anchor's key first and fall back to that anchor's record in
 the context file). Touch no other source anchor's record or key: the other
 items sit on independent branches at their own commits, and there is no

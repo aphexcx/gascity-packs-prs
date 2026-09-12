@@ -62,7 +62,15 @@ checkout. When the `pre_start` was this pack's `worker-worktree.sh`, the
 directory is a git worktree of the rig on a branch named for the claimed
 bead, or detached (no trigger bead, or that branch is checked out in another
 worktree; WARN in the pre_start log): if `git branch --show-current` prints
-nothing, create your branch in this directory before committing.
+nothing, read that log first. With no trigger bead the lane is detached at
+the base: take the claimed bead's branch after the claim, by the rule below,
+before committing anything. When
+the WARN says the bead's branch is checked out in another worktree, do not
+create a second branch naming the bead (two would make the next `pre_start`
+fail closed): close with `gc.outcome=fail` and `gc.failure_class=branch-held`
+naming that holder from `git worktree list`, and mail the mayor, who releases
+it from that checkout; the next session's `pre_start` then reuses the branch
+and its commits.
 
 A session outside a gc-made lane has no lane: this role has no `work_dir` in
 your city. Prove the lane before you write, with the three-part boundary test
@@ -83,8 +91,30 @@ root) runs unchanged.
 
 After the claim, compare the bead's `gc.work_branch` with your branch and
 restamp it when they differ (older `gc` builds stamp the rig root's branch).
-Before closing a bead whose work continues elsewhere, stamp its workspace so
-the next session starts there:
+The bead's branch is the one whose name contains the claimed bead id as a
+whole token, the branch `pre_start` reused or created for it, so a record
+naming anything else is a claim-time stamp and your branch wins, and a record
+that names the bead is the branch you are on already (a held one closed
+above). A lane `pre_start` left detached because it had no trigger bead
+takes that branch itself, after the boundary test, the way `pre_start`
+would: list every branch naming `$CLAIMED_BEAD_ID` as a whole token by full
+ref name (`git -C "$GC_DIR" for-each-ref --format='%(refname)' refs/heads`
+with `refs/heads/` removed, and `refs/remotes/origin` with
+`refs/remotes/origin/` removed and `HEAD` dropped); exactly one: `git -C
+"$GC_DIR" switch --no-overwrite-ignore <branch>` (`-c <branch> --track
+refs/remotes/origin/<branch>` when it is only on `origin`: the start point by
+full ref, since a tag named `origin/<branch>` makes the bare form fail);
+none: `git -C "$GC_DIR"
+switch -c "$CLAIMED_BEAD_ID"`; several, or a refusal (another worktree holds
+it: `branch-held`, holder named from `git worktree list`): close the bead
+`gc.outcome=fail` and mail the mayor, never `--force`. Never write a fresh
+base branch over a recorded item branch, never stamp an empty value, and
+name any branch you create for the claimed bead (`$CLAIMED_BEAD_ID` as a
+whole token) so the next `pre_start` finds it; a branch of the bead recorded
+under a name without its id (from before this rule) is one for the mayor to
+rename, not for you to replace. Before closing a bead whose
+work continues elsewhere, stamp its workspace so the next session starts
+there:
 
 ```bash
 gc bd update "$CLAIMED_BEAD_ID" \
