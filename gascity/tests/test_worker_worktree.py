@@ -19,6 +19,32 @@ import unittest
 
 SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "assets" / "scripts" / "worker-worktree.sh"
 
+# gc 72aeaaffa: template_resolve.go (settings/scripts), cmd_start.go
+# (stageHookFiles), skill_integration.go (skillSnapshotFilePath), and
+# internal/bootstrap/packs/core/overlay/per-provider (including Kiro).
+STAGED_START_FILES = (
+    ".gc/settings.json",
+    ".gc/scripts/worker-worktree.sh",
+    ".gc/scripts/nested/.helper",
+    ".gc/tmp/skill-catalog-rig_worker.b64",
+    ".gc/tmp/skill-catalog-rig_worker-2.b64",
+    "hooks/claude.json",
+    ".gemini/settings.json",
+    ".codex/hooks.json",
+    ".agents/hooks.json",
+    ".opencode/plugins/gascity.js",
+    ".mimocode/plugin/gascity.js",
+    ".github/hooks/gascity.json",
+    ".github/copilot-instructions.md",
+    ".cursor/hooks.json",
+    ".pi/extensions/gc-hooks.js",
+    ".omp/hooks/gc-hook.ts",
+    ".kimi/config.toml",
+    ".kimi/hooks/gascity-session-start.py",
+    ".kiro/agents/gascity.json",
+    "AGENTS.md",
+)
+
 
 def git(cwd: pathlib.Path, *args: str) -> str:
     return subprocess.run(
@@ -126,6 +152,20 @@ class WorkerWorktreeTests(unittest.TestCase):
         lane = lane or self.lane
         return sorted(lane.parent.glob(f"{lane.name}.aside-*"))
 
+    def seed_start_files(self, lane: pathlib.Path) -> dict[str, tuple[bytes, int, int]]:
+        for name in STAGED_START_FILES:
+            path = lane / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(f"staged {name}\n".encode())
+            path.chmod(0o700 if "/scripts/" in name else 0o600)
+        return self.start_file_snapshot(lane)
+
+    def start_file_snapshot(self, lane: pathlib.Path) -> dict[str, tuple[bytes, int, int]]:
+        return {
+            name: ((lane / name).read_bytes(), (lane / name).stat().st_mode, (lane / name).stat().st_ino)
+            for name in STAGED_START_FILES
+        }
+
     # --- fresh work dir -----------------------------------------------------------
 
     def test_empty_workdir_new_bead_creates_branch_from_base(self) -> None:
@@ -135,6 +175,109 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertEqual(git(self.lane, "rev-parse", "HEAD"), self.fx.main_sha)
         self.assertTrue((self.lane / "README.md").is_file())
         self.assertEqual(proc.stdout.split(), ["WORKTREE", str(self.lane), "gp-abc1", self.fx.main_sha[:7]])
+
+    def test_staged_start_files_survive_fresh_worktree_in_place(self) -> None:
+        seeds = self.seed_start_files(self.lane)
+        inode = self.lane.stat().st_ino
+        self.fx.run(self.lane, "gp-abc1")
+        self.assert_is_worktree(self.lane)
+        self.assertEqual(self.branch_of(self.lane), "gp-abc1")
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual(self.lane.stat().st_ino, inode)
+        self.assertEqual((self.lane / "README.md").read_text(), "hello\n")
+        self.assertEqual(self.asides(), [])
+        self.assertEqual(list(self.lane.parent.iterdir()), [self.lane])
+        registration = git(self.fx.rig, "worktree", "list", "--porcelain")
+        self.assertIn(f"worktree {self.lane}\n", registration)
+        # Repair both directions: commands in the lane AND from the rig work.
+        git(self.fx.rig, "worktree", "lock", str(self.lane))
+        git(self.fx.rig, "worktree", "unlock", str(self.lane))
+
+    def test_staged_start_files_on_existing_worktree_are_left_alone(self) -> None:
+        self.fx.run(self.lane, "gp-abc1")
+        seeds = self.seed_start_files(self.lane)
+        metadata = (self.lane / ".git").read_bytes()
+        first = git(self.lane, "rev-parse", "HEAD")
+        self.fx.run(self.lane, "gp-abc1")
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual((self.lane / ".git").read_bytes(), metadata)
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), first)
+        self.assertEqual(self.asides(), [])
+
+    def test_staged_start_files_plus_stray_content_still_go_aside(self) -> None:
+        for index, stray in enumerate((
+            "stray.txt", ".hidden", ".gc/unknown", ".gc/tmp/other.b64",
+            ".gc/tmp/skill-catalog-worker.tmp", ".codex/config.toml",
+            ".agents/skills/custom/SKILL.md", ".github/hooks/other.json",
+            ".gc/tmp/skill-catalog-worker.b64/stray",
+        )):
+            with self.subTest(stray=stray):
+                lane = self.lane.with_name(f"lane-stray-{index}")
+                seeds = self.seed_start_files(lane)
+                path = lane / stray
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("keep stray\n")
+                self.fx.run(lane, f"gp-stray{index}")
+                asides = self.asides(lane)
+                self.assertEqual(len(asides), 1)
+                self.assertRegex(asides[0].name, rf"^{lane.name}\.aside-\d{{8}}T\d{{6}}Z(?:-\d+)?$")
+                self.assertEqual(self.start_file_snapshot(asides[0]), seeds)
+                self.assertEqual((asides[0] / stray).read_text(), "keep stray\n")
+                self.assert_is_worktree(lane)
+
+    def test_staged_start_file_symlink_is_not_treated_as_empty(self) -> None:
+        external = self.fx.root / "external"
+        external.write_text("keep external\n")
+        (self.lane / ".gc").mkdir(parents=True)
+        (self.lane / ".gc/settings.json").symlink_to(external)
+        self.fx.run(self.lane, "gp-link1")
+        self.assertEqual(len(self.asides()), 1)
+        self.assertTrue((self.asides()[0] / ".gc/settings.json").is_symlink())
+        self.assertEqual(external.read_text(), "keep external\n")
+
+    def test_staged_start_files_survive_detached_and_local_branch_creation(self) -> None:
+        for index, bead in enumerate((None, "gp-local1")):
+            with self.subTest(bead=bead):
+                lane = self.lane.with_name(f"lane-mode-{index}")
+                if bead:
+                    git(self.fx.rig, "branch", bead, "HEAD")
+                seeds = self.seed_start_files(lane)
+                self.fx.run(lane, bead)
+                self.assert_is_worktree(lane)
+                self.assertEqual(self.branch_of(lane), bead or "HEAD")
+                self.assertEqual(self.start_file_snapshot(lane), seeds)
+                self.assertEqual(self.asides(lane), [])
+
+    def test_staged_start_file_collision_fails_without_overwriting_ignored_seed(self) -> None:
+        self.fx.push_branch("gp-collision1")
+        scratch = self.fx.root / "scratch-gp-collision1"
+        (scratch / ".gc").mkdir()
+        commit(scratch, ".gc/settings.json", "tracked settings\n", "track settings")
+        git(scratch, "push", "--quiet", "origin", "gp-collision1")
+        # Shared excludes make the seed ignored, but it must still be protected.
+        (self.fx.rig / ".git/info/exclude").write_text(".gc/\n")
+        seeds = self.seed_start_files(self.lane)
+        proc = self.fx.run(self.lane, "gp-collision1", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("already exists", proc.stderr)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual(self.asides(), [])
+
+    def test_invalid_bead_does_not_move_seeds_or_leave_temporary_directory(self) -> None:
+        seeds = self.seed_start_files(self.lane)
+        proc = self.fx.run(self.lane, "invalid..branch", check=False)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertFalse((self.lane / ".git").exists())
+        self.assertEqual(list(self.lane.parent.iterdir()), [self.lane])
+
+    def test_unexpected_empty_directory_alongside_seeds_still_goes_aside(self) -> None:
+        seeds = self.seed_start_files(self.lane)
+        (self.lane / ".gc/not-staged").mkdir()
+        self.fx.run(self.lane, "gp-empty1")
+        self.assertEqual(len(self.asides()), 1)
+        self.assertEqual(self.start_file_snapshot(self.asides()[0]), seeds)
+        self.assertTrue((self.asides()[0] / ".gc/not-staged").is_dir())
 
     def test_workdir_that_does_not_exist_yet_is_created_when_its_parent_does(self) -> None:
         self.lane.parent.mkdir(parents=True)
@@ -202,6 +345,59 @@ class WorkerWorktreeTests(unittest.TestCase):
         self.assertIn("gp-amb1-first", proc.stderr)
         self.assertIn("gp-amb1-second", proc.stderr)
         self.assertFalse((self.lane / ".git").exists())
+
+    def test_fresh_lane_prefers_exact_bead_branch_over_upstream_twin(self) -> None:
+        git(self.fx.rig, "branch", "gp-twin1", "HEAD")
+        git(self.fx.rig, "branch", "gp-twin1-upstream", "HEAD")
+        seeds = self.seed_start_files(self.lane)
+        proc = self.fx.run(self.lane, "gp-twin1")
+        self.assertEqual(self.branch_of(self.lane), "gp-twin1")
+        self.assertIn("exact bead branch", proc.stderr)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual(self.asides(), [])
+
+    def test_fresh_lane_prefers_remote_exact_branch_over_local_twin(self) -> None:
+        sha = self.fx.push_branch("gp-twin2")
+        git(self.fx.rig, "branch", "gp-twin2-upstream", "HEAD")
+        self.seed_start_files(self.lane)
+        proc = self.fx.run(self.lane, "gp-twin2")
+        self.assertEqual(self.branch_of(self.lane), "gp-twin2")
+        self.assertEqual(git(self.lane, "rev-parse", "HEAD"), sha)
+        self.assertEqual(git(self.lane, "rev-parse", "--abbrev-ref", "@{upstream}"), "origin/gp-twin2")
+        self.assertIn("exact bead branch", proc.stderr)
+        self.assertEqual(self.asides(), [])
+
+    def test_clean_lane_on_upstream_twin_keeps_its_branch_even_with_exact_name(self) -> None:
+        git(self.fx.rig, "branch", "gp-twin3-upstream", "HEAD")
+        self.fx.run(self.lane, "gp-twin3")
+        git(self.fx.rig, "branch", "gp-twin3", "HEAD")
+        seeds = self.seed_start_files(self.lane)
+        metadata = (self.lane / ".git").read_bytes()
+        proc = self.fx.run(self.lane, "gp-twin3")
+        self.assertEqual(self.branch_of(self.lane), "gp-twin3-upstream")
+        self.assertIn("clean lane candidate", proc.stderr)
+        self.assertEqual(self.start_file_snapshot(self.lane), seeds)
+        self.assertEqual((self.lane / ".git").read_bytes(), metadata)
+        self.assertEqual(self.asides(), [])
+
+    def test_clean_lane_candidate_breaks_tie_without_exact_name(self) -> None:
+        git(self.fx.rig, "branch", "gp-twin4-a", "HEAD")
+        self.fx.run(self.lane, "gp-twin4")
+        git(self.fx.rig, "branch", "gp-twin4-b", "HEAD")
+        proc = self.fx.run(self.lane, "gp-twin4")
+        self.assertEqual(self.branch_of(self.lane), "gp-twin4-a")
+        self.assertIn("clean lane candidate", proc.stderr)
+        self.assertEqual(self.asides(), [])
+
+    def test_dirty_lane_candidate_is_moved_aside_before_exact_branch_selection(self) -> None:
+        git(self.fx.rig, "branch", "gp-twin5-upstream", "HEAD")
+        self.fx.run(self.lane, "gp-twin5")
+        git(self.fx.rig, "branch", "gp-twin5", "HEAD")
+        (self.lane / "README.md").write_text("keep dirty\n")
+        self.fx.run(self.lane, "gp-twin5")
+        self.assertEqual(self.branch_of(self.lane), "gp-twin5")
+        self.assertEqual(len(self.asides()), 1)
+        self.assertEqual((self.asides()[0] / "README.md").read_text(), "keep dirty\n")
 
     def test_bead_branch_checked_out_elsewhere_is_not_stolen(self) -> None:
         other = self.fx.root / "other worktree"  # a space: the porcelain parser must keep it

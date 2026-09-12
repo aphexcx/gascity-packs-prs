@@ -54,8 +54,8 @@ setup only. Do not edit source files in the launcher checkout.
      item's branch is the one branch whose name contains `<source-anchor-id>`
      as a whole token (`<source-anchor-id>`, `fix/<source-anchor-id>-x`,
      never `<source-anchor-id>0`), local or on `origin` (the remote
-     `pre_start` fetches), the rule `pre_start` (worker-worktree.sh, "Bead
-     branch") applies to a claimed bead. Nothing else identifies it. Not the
+     `pre_start` fetches), using the same whole-token matching as `pre_start`
+     (worker-worktree.sh, "Bead branch"). Nothing else identifies it. Not the
      branch `pre_start` put THIS lane on: it is named for the trigger STEP
      bead, so a re-launched item (a new do-work run after a crash, a stopped
      run, or a review that sent it back) puts this lane on a fresh step
@@ -83,7 +83,7 @@ setup only. Do not edit source files in the launcher checkout.
         record agrees; a listed name that no longer resolves when taken below
         fails this step closed (it vanished under you), never falls through
         to a new branch. None: `BRANCH=<source-anchor-id>`, a new branch.
-        Several: fail this step closed listing them (as `pre_start` does),
+        Several: fail this step closed listing them,
         even when one of them is the record; take nothing, record nothing.
         The run operator reconciles them with each branch's owner before the
         item is re-launched: every branch that is not the item's is renamed
