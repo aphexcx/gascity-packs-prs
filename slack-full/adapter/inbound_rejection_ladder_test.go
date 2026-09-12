@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -3084,6 +3085,11 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	// deletion must clear the lean copy and its flag exactly as
 	// applyDeletion does, or the notice replays with context to shed to.
 	refused.preamble, refused.preambleLean, refused.botQuotes = "full context\n", "lean context\n", true
+	// The deleted text travels as the body part: with reminder parts
+	// present the spool line stores the parts and clears the folded
+	// Text (codex round-2 r2 minor 2: with an empty body the text never
+	// reached the file and the assertion below was vacuous).
+	refused.body = "secret text"
 	// An older ledger-owned copy of the same message staged beside it
 	// (codex round-2 r1 minor): the replay does not re-spool it, so the
 	// compaction keeps ITS original line — the path where the pre-pass's
@@ -3091,11 +3097,23 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	older := testPending("C1", "1.0", "secret text")
 	older.isolate, older.attempts = true, 1
 	older.preamble, older.preambleLean, older.botQuotes = "full context\n", "lean context\n", true
+	older.body = "secret text"
 	if !spool.spillBatch("C1", []pendingChannelInbound{older, refused}) {
 		t.Fatal("spill must confirm")
 	}
 	if !spool.recordDeletion("C1", "1.0") {
 		t.Fatal("record must confirm")
+	}
+	// Positive proof of the operand: both staged lines carry the text
+	// and both context forms before the replay touches the file.
+	staged, err := os.ReadFile(spool.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"secret text", "full context", "lean context", `"bot_quotes":true`} {
+		if n := bytes.Count(staged, []byte(want)); n != 2 {
+			t.Fatalf("the staged spool must carry %s on both copies, got %d: %q", want, n, staged)
+		}
 	}
 	c := newInboundCoalescer(time.Hour, nil)
 	c.spill = spool.spillBatch
@@ -3114,8 +3132,42 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 			t.Fatalf("the compacted spool must not carry the deleted message's thread context (%s): %q", leaked, data)
 		}
 	}
-	if !bytes.Contains(data, []byte(deletedBySenderNotice)) || !bytes.Contains(data, []byte(`"deleted_ts":"1.0"`)) {
-		t.Fatalf("the retained refusal carries the notice and its deletion record is kept: %q", data)
+	// Per copy, not per file (codex round-2 r2 minor 1): a whole-file
+	// Contains would be satisfied by the older copy alone even if the
+	// compaction dropped the refused payload. Exactly one refused copy
+	// and one isolated copy survive, each the cleared deletion notice,
+	// beside the deletion record (the park re-records the tombstone it
+	// applied, r21, so the record may appear twice; both are kept).
+	var refusedCopies, isolatedCopies, deletionRecords int
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var e spooledInbound
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Fatalf("compacted line %q: %v", line, err)
+		}
+		switch {
+		case e.DeletedTS != "":
+			if e.Channel == "C1" && e.DeletedTS == "1.0" {
+				deletionRecords++
+			}
+			continue
+		case e.VerdictTS != "":
+			continue
+		case e.Refused != "":
+			refusedCopies++
+		case e.Isolate:
+			isolatedCopies++
+		default:
+			t.Fatalf("an unowned copy survived the compaction: %q", line)
+		}
+		if e.Inbound.ProviderMessageID != "1.0" || e.Inbound.Text != deletedBySenderNotice {
+			t.Fatalf("a retained copy must carry the deletion notice, got %q", line)
+		}
+		if e.ThreadAnchor != "" || e.Preamble != "" || e.PreambleLean != "" || e.BotQuotes || e.Body != "" || e.Files != "" || len(e.Inbound.Attachments) != 0 {
+			t.Fatalf("a retained copy must be cleared exactly as applyDeletion clears it: %q", line)
+		}
+	}
+	if refusedCopies != 1 || isolatedCopies != 1 || deletionRecords == 0 {
+		t.Fatalf("compacted spool must keep one refused copy, one isolated copy and the deletion record, got %d/%d/%d: %q", refusedCopies, isolatedCopies, deletionRecords, data)
 	}
 }
 
