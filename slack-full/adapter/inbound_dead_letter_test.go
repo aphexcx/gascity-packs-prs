@@ -23,11 +23,12 @@ import (
 // rode in every later batch — the whole channel was head-of-line
 // blocked and the log carried one 422 line per 8s. These tests pin the
 // contract that replaces that: a PERMANENT failure (HTTP 4xx other than
-// 408/429) counts against a small per-message attempt cap and the
-// message is dead-lettered once it is reached; a TRANSIENT failure
+// 408/429) is never re-posted as-is — the rejection ladder
+// (inbound_rejection_ladder_test.go, gp-sgu7) allows one retry WITHOUT
+// the entry's attachments and then dead-letters; a TRANSIENT failure
 // (network error, 5xx, 429) keeps the pre-existing retry-forever
-// durability; later innocent messages are never dropped with the
-// poison.
+// durability (on a backoff); later innocent messages are never dropped
+// with the poison.
 
 func TestPermanentDeliveryFailureClassification(t *testing.T) {
 	cases := []struct {
@@ -98,56 +99,6 @@ type deadLetterCall struct {
 
 func permanent422() error {
 	return &inboundPostError{Status: 422, StatusText: "422 Unprocessable Entity", Body: `{"code":"validation-failed"}`}
-}
-
-func TestCoalescerPermanentFailureDeadLettersAfterMaxAttempts(t *testing.T) {
-	attempts := make(chan []pendingChannelInbound, 16)
-	dead := make(chan deadLetterCall, 4)
-	c := newInboundCoalescer(20*time.Millisecond, nil)
-	c.deliver = func(channel string, batch []pendingChannelInbound) error {
-		attempts <- batch
-		return permanent422()
-	}
-	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
-		dead <- deadLetterCall{channel, batch, cause}
-		return true
-	}
-	c.enqueue("C1", testPending("C1", "1.0", "voice memo"))
-
-	var call deadLetterCall
-	select {
-	case call = <-dead:
-	case <-time.After(3 * time.Second):
-		t.Fatal("poison message was never dead-lettered")
-	}
-	if call.channel != "C1" || len(call.batch) != 1 || call.batch[0].inbound.ProviderMessageID != "1.0" {
-		t.Fatalf("unexpected dead-letter call: %+v", call)
-	}
-	if call.batch[0].attempts != maxCoalesceDeliveryAttempts {
-		t.Fatalf("dead-lettered after %d attempts, want %d", call.batch[0].attempts, maxCoalesceDeliveryAttempts)
-	}
-	var pe *inboundPostError
-	if !errors.As(call.cause, &pe) || pe.Status != 422 {
-		t.Fatalf("cause must be the final delivery error, got %v", call.cause)
-	}
-	if n := len(attempts); n != maxCoalesceDeliveryAttempts {
-		t.Fatalf("delivery attempted %d times, want exactly %d", n, maxCoalesceDeliveryAttempts)
-	}
-	for i := 0; i < maxCoalesceDeliveryAttempts; i++ {
-		if b := <-attempts; b[0].attempts != i {
-			t.Fatalf("attempt %d delivered with attempts=%d, want %d", i+1, b[0].attempts, i)
-		}
-	}
-	// No retry storm: nothing further fires and the message is no
-	// longer pending.
-	select {
-	case b := <-attempts:
-		t.Fatalf("delivery retried after dead-lettering: %+v", b)
-	case <-time.After(120 * time.Millisecond):
-	}
-	if c.pendingContains("C1", "1.0") {
-		t.Fatal("dead-lettered message must not remain pending")
-	}
 }
 
 func TestCoalescerDeadLetterSparesLaterMessages(t *testing.T) {
@@ -256,20 +207,18 @@ func TestCoalescerPermanentFailureWithoutHookStopsRetrying(t *testing.T) {
 		return permanent422()
 	}
 	c.enqueue("C1", testPending("C1", "1.0", "x"))
-	for i := 0; i < maxCoalesceDeliveryAttempts; i++ {
-		select {
-		case <-attempts:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("attempt %d did not fire", i+1)
-		}
+	select {
+	case <-attempts:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the one attempt did not fire")
 	}
 	select {
 	case <-attempts:
-		t.Fatal("retried past the cap with no dead-letter hook")
+		t.Fatal("a 4xx with nothing to strip was re-posted as-is with no dead-letter hook")
 	case <-time.After(100 * time.Millisecond):
 	}
 	if c.pendingContains("C1", "1.0") {
-		t.Fatal("message must be dropped from pending once the cap is hit")
+		t.Fatal("message must be dropped from pending once the ladder retires it")
 	}
 }
 
@@ -380,8 +329,8 @@ func TestCoalescerRejectedBatchIsolatesPoisonAndDeliversInnocents(t *testing.T) 
 		if len(call.batch) != 1 || call.batch[0].inbound.ProviderMessageID != "1.0" {
 			t.Fatalf("only the poison must be dead-lettered, got %+v", call.batch)
 		}
-		if call.batch[0].attempts != maxCoalesceDeliveryAttempts {
-			t.Fatalf("poison attempts = %d, want %d", call.batch[0].attempts, maxCoalesceDeliveryAttempts)
+		if call.batch[0].attempts != 1 {
+			t.Fatalf("poison attempts = %d, want 1 (no attachments to strip: dead-lettered at the first refusal)", call.batch[0].attempts)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("poison was never dead-lettered")
@@ -492,10 +441,16 @@ func TestCoalescerIsolationStopsAtFirstTransientError(t *testing.T) {
 	c.enqueue("C1", testPending("C1", "2.0", "b"))
 	c.enqueue("C1", testPending("C1", "3.0", "c"))
 	// Pass 1: batch rejected, first single hits a transient error → stop.
-	// Pass 2: batch rejected again (still >1), then every single delivers.
-	waitForCalls(t, calls, []string{"1.0,2.0,3.0", "1.0", "1.0,2.0,3.0", "1.0", "2.0", "3.0"})
-	if got := calls(); len(got) != 6 {
+	// Pass 2 (gp-sgu7, codex r1 finding 3): the probes RESUME as singles —
+	// the refused batch is never re-posted as-is.
+	waitForCalls(t, calls, []string{"1.0,2.0,3.0", "1.0", "1.0", "2.0", "3.0"})
+	if got := calls(); len(got) != 5 {
 		t.Fatalf("unexpected extra deliveries: %v", got)
+	}
+	for _, call := range calls()[1:] {
+		if strings.Contains(call, ",") {
+			t.Fatalf("a refused batch was re-posted as a batch after the probe paused: %v", calls())
+		}
 	}
 	select {
 	case call := <-dead:
@@ -506,6 +461,14 @@ func TestCoalescerIsolationStopsAtFirstTransientError(t *testing.T) {
 		if c.pendingContains("C1", ts) {
 			t.Fatalf("%s still pending after delivery", ts)
 		}
+	}
+	// A delivered probe ends the transient run (codex r2 finding 4): the
+	// next unrelated failure starts at the window, not at a stale count.
+	c.mu.Lock()
+	n, inBackoff := c.transientFailures["C1"], c.inBackoffLocked("C1")
+	c.mu.Unlock()
+	if n != 0 || inBackoff {
+		t.Fatalf("backoff state must reset after the probes delivered: failures=%d inBackoff=%v", n, inBackoff)
 	}
 }
 
@@ -536,16 +499,21 @@ func TestCoalescerReactionsChargedOnlyWhenTheirGroupIsRejected(t *testing.T) {
 	if got := calls(); len(got) != 3 {
 		t.Fatalf("unexpected extra deliveries: %v", got)
 	}
+	// gp-sgu7: a rejected reaction has nothing to strip, so its one charge
+	// retires it — never re-posted as-is, never left in the side lane.
+	select {
+	case call := <-dead:
+		if len(call.batch) != 1 || !call.batch[0].reaction || call.batch[0].inbound.ProviderMessageID != "2.0" || call.batch[0].attempts != 1 {
+			t.Fatalf("the rejected reaction alone must be dead-lettered with one charge, got %+v", call.batch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("rejected reaction group was never dead-lettered")
+	}
 	c.mu.Lock()
 	rs := append([]pendingChannelInbound(nil), c.reactions["C1"]...)
 	c.mu.Unlock()
-	if len(rs) != 1 || rs[0].inbound.ProviderMessageID != "2.0" || rs[0].attempts != 1 {
-		t.Fatalf("reaction must be back in the side-buffer with one charge, got %+v", rs)
-	}
-	select {
-	case call := <-dead:
-		t.Fatalf("premature dead-letter: %+v", call.batch)
-	default:
+	if len(rs) != 0 {
+		t.Fatalf("side-buffer must be empty after the dead-letter, got %+v", rs)
 	}
 }
 
@@ -586,13 +554,19 @@ func TestCoalescerBatchLevelRejectionChargesNothing(t *testing.T) {
 	}
 }
 
-// Finding 3: a dead-letter write that fails must not forget the entry.
-// It stays in the buffer at the cap and the next rejection retries the
-// write; only a confirmed write retires it.
-func TestCoalescerDeadLetterWriteFailureKeepsEntry(t *testing.T) {
+// A dead-letter write that does not confirm (disk full) keeps the entry
+// — but OUT of the delivery path (gp-sgu7, codex r1 finding 1): the
+// refused bytes are never POSTed again; only the WRITE retries, on a
+// backoff, while later messages in the channel keep flowing.
+func TestCoalescerDeadLetterWriteFailureParksEntryWithoutRepost(t *testing.T) {
 	var mu sync.Mutex
 	var hookAttempts []int
-	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error { return permanent422() })
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error {
+		if batch[0].inbound.ProviderMessageID == "1.0" {
+			return permanent422()
+		}
+		return nil
+	})
 	c := newInboundCoalescer(15*time.Millisecond, nil)
 	c.deliver = deliver
 	c.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
@@ -602,26 +576,79 @@ func TestCoalescerDeadLetterWriteFailureKeepsEntry(t *testing.T) {
 		return len(hookAttempts) > 2 // two writes "fail" (disk full), the third succeeds
 	}
 	c.enqueue("C1", testPending("C1", "1.0", "poison"))
-	waitForCalls(t, calls, []string{"1.0", "1.0", "1.0", "1.0", "1.0"})
+	waitForCalls(t, calls, []string{"1.0"})
+	waitFor(t, "entry parked", func() bool {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return len(c.parkedDeadLetters["C1"]) == 1
+	})
+	if c.pendingContains("C1", "1.0") {
+		t.Fatal("a parked entry must not sit in the pending buffer")
+	}
+	// A later message flows while the write is still failing.
+	c.enqueue("C1", testPending("C1", "2.0", "later"))
+	waitForCalls(t, calls, []string{"1.0", "2.0"})
+	waitFor(t, "dead-letter write retried to success", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(hookAttempts) == 3
+	})
 	time.Sleep(60 * time.Millisecond)
-	if got := calls(); len(got) != 5 {
-		t.Fatalf("want exactly 5 deliveries (3 to the cap, 2 more after the failed writes), got %v", got)
+	if got := calls(); len(got) != 2 {
+		t.Fatalf("the refused entry must never be re-posted (want exactly 2 deliveries), got %v", got)
 	}
 	mu.Lock()
 	got := append([]int(nil), hookAttempts...)
 	mu.Unlock()
-	if len(got) != 3 {
-		t.Fatalf("dead-letter hook called %d times, want 3", len(got))
-	}
-	// codex r2 finding 3: the counter saturates at the cap — a record
-	// written after storage recovers still says "3 attempts".
+	// The record counts the refusals the entry actually took: ONE — the
+	// write retries are not deliveries.
 	for i, a := range got {
-		if a != maxCoalesceDeliveryAttempts {
-			t.Fatalf("hook call %d saw attempts=%d, want %d (saturated)", i+1, a, maxCoalesceDeliveryAttempts)
+		if a != 1 {
+			t.Fatalf("hook call %d saw attempts=%d, want 1", i+1, a)
 		}
 	}
-	if c.pendingContains("C1", "1.0") {
-		t.Fatal("entry must retire once the write is confirmed")
+	c.mu.Lock()
+	parked, timers := len(c.parkedDeadLetters["C1"]), len(c.deadLetterTimers)
+	c.mu.Unlock()
+	if parked != 0 || timers != 0 {
+		t.Fatalf("entry must retire once the write is confirmed: parked=%d timers=%d", parked, timers)
+	}
+}
+
+// The shutdown drain gives a parked entry one last write and spools it
+// when that fails too — the process may not exit holding it in memory.
+func TestFlushAllSpoolsParkedDeadLettersWhenTheWriteKeepsFailing(t *testing.T) {
+	var mu sync.Mutex
+	var spilled []string
+	deliver, calls := recordingDeliver(func(batch []pendingChannelInbound) error { return permanent422() })
+	c := newInboundCoalescer(time.Hour, nil)
+	c.deliver = deliver
+	c.deadLetter = func(string, []pendingChannelInbound, error) bool { return false }
+	c.spill = func(channel string, batch []pendingChannelInbound) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, p := range batch {
+			spilled = append(spilled, channel+":"+p.inbound.ProviderMessageID)
+		}
+		return true
+	}
+	c.enqueue("C1", testPending("C1", "1.0", "poison"))
+	c.flushAll() // the drain refuses it, the write fails, it parks — then the backstop spools it
+	waitForCalls(t, calls, []string{"1.0"})
+	mu.Lock()
+	got := append([]string(nil), spilled...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != "C1:1.0" {
+		t.Fatalf("parked entry must be spooled at shutdown, spilled=%v", got)
+	}
+	if n := len(calls()); n != 1 {
+		t.Fatalf("the refused entry must not be re-posted by the drain: %v", calls())
+	}
+	c.mu.Lock()
+	parked := len(c.parkedDeadLetters)
+	c.mu.Unlock()
+	if parked != 0 {
+		t.Fatalf("parked map must be empty after the shutdown flush, got %d channel(s)", parked)
 	}
 }
 

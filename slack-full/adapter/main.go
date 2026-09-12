@@ -741,6 +741,11 @@ type config struct {
 	// how-to this adapter lifetime (item 3 — the per-message reminder
 	// carries only the registered one-line template). Nil-safe.
 	replyHelp *oncePerChannel
+	// postFailures remembers, per channel, the last coalesced-POST
+	// failure text logged, so an outage logs one line per distinct
+	// failure instead of one per attempt (gp-sgu7). Nil-safe: nil logs
+	// every failure (bare test configs).
+	postFailures *repeatedFailureLog
 	// reminderTextBudget bounds one channel delivery's Text field
 	// (gp-0qw + gp-9gc): boilerplate attaches only inside the budget,
 	// and a body that alone overflows it is tail-trimmed behind a
@@ -1719,6 +1724,7 @@ func main() {
 	cfg.deliveredIDs = newDeliveredIDs()
 	cfg.channelNames = newChannelNameCache()
 	cfg.replyHelp = newOncePerChannel()
+	cfg.postFailures = newRepeatedFailureLog()
 	cfg.bindingCheck = newBindingCheckCache()
 	cfg.coalescer = newInboundCoalescer(cfg.coalesceWindow, deliveryPolicy)
 	// Shutdown must await in-flight event goroutines before draining the
@@ -1734,6 +1740,7 @@ func main() {
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
+		cfg.coalescer.recordVerdict = cfg.inboundSpool.recordVerdict
 		// Deletions persist alongside spilled entries so a restart still
 		// replays a deleted message as its notice (gp-0qw) — but ONLY
 		// while draining: the spool exists solely across a
@@ -1747,6 +1754,10 @@ func main() {
 				cfg.inboundSpool.recordDeletion(channel, ts)
 			}
 		}
+		// A deletion of a payload the spool already holds (a parked
+		// refusal spooled during uptime) is recorded whenever it happens
+		// (codex r21 finding 2).
+		cfg.coalescer.recordDeletion = cfg.inboundSpool.recordDeletion
 	}
 	deliverCfg := cfg
 	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
@@ -1763,10 +1774,17 @@ func main() {
 	cfg.coalescer.deadLetter = func(channel string, batch []pendingChannelInbound, cause error) bool {
 		path, err := writeInboundDeadLetter(deliverCfg.inboundDeadLetterDir, channel, batch, cause)
 		if err != nil {
-			log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) stay buffered and the write retries next window: %v",
-				channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			// The write retries on a backoff (parkDeadLetter); log the
+			// error once per DISTINCT failure, not per attempt (gp-sgu7
+			// contract 3) — the coalescer's own parked/retry lines mark
+			// the state changes.
+			if deliverCfg.postFailures.changed("dead-letter:"+channel, err.Error()) {
+				log.Printf("coalesce: chan=%s dead-letter write FAILED (dir %q) — %d message(s) parked out of the delivery path; the write retries with backoff: %v",
+					channel, deliverCfg.inboundDeadLetterDir, len(batch), err)
+			}
 			return false
 		}
+		deliverCfg.postFailures.clear("dead-letter:" + channel)
 		log.Printf("coalesce: chan=%s %d message(s) written to dead-letter file %s — inspect and re-post by hand once the rejection cause is fixed",
 			channel, len(batch), path)
 		return true
@@ -1853,7 +1871,14 @@ func main() {
 	// their ADMISSION, so the startup watermark backfill can never
 	// re-fetch these; the spool is their only redelivery path. Runs
 	// before the listeners start, after gc registration.
-	if n := cfg.inboundSpool.replayInto(cfg.coalescer); n > 0 {
+	n, rerr := cfg.inboundSpool.replay(cfg.coalescer)
+	if rerr != nil {
+		// The ledger of refused messages could not be rebuilt (codex r20
+		// finding 2): running would let a delayed redelivery re-post
+		// refused bytes. The files are left for the operator.
+		log.Fatalf("inbound spool: recovery failed — refusing to start until the spool files under %q can be read: %v", cfg.coalesceSpoolPath, rerr)
+	}
+	if n > 0 {
 		log.Printf("inbound spool: re-buffered %d item(s) the previous shutdown could not deliver", n)
 	}
 
@@ -3186,48 +3211,67 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// own since ENTRY (round 3, 2b — before any state movement), so
 		// the group covers admission end to end and never touches zero
 		// between the handler's entry and the goroutine's Done.
-		if cfg.eventWG != nil {
-			cfg.eventWG.Add(1)
-		}
-		go func() {
-			if cfg.eventWG != nil {
-				defer cfg.eventWG.Done()
-			}
-			ownsSlot := release != nil
-			for !proceed {
-				for parked := true; parked; {
-					select {
-					case <-wait:
-						parked = false
-					case <-time.After(eventDedupParkLogInterval):
-						log.Printf("slack event dedup: redelivery of event_id=%s still parked behind an in-flight delivery (retry_num=%q)",
-							env.EventID, retryNum)
-					}
-				}
-				proceed, wait = cfg.eventDedup.begin(env.EventID)
-				if !proceed && wait == nil {
-					log.Printf("slack event dedup: dropping redelivery event_id=%s retry_num=%q team_id=%q",
-						env.EventID, retryNum, clipTeamIDForLog(env.TeamID))
-					return
-				}
-			}
-			if !ownsSlot {
-				// Taking over after a parked wait: the original slot
-				// went back to the pool, so contend for a fresh one —
-				// BLOCKING, unlike the handler's entry check. This
-				// delivery already got its 200 and may be the event's
-				// only remaining copy, so a queue-full drop here would
-				// lose it permanently (codex r5). The blocked
-				// goroutine holds no slot and every slot holder
-				// releases in bounded time, so this always makes
-				// progress; new deliveries still shed load at the
-				// handler's nonblocking check.
-				cfg.dispatchSem <- struct{}{}
-				release = func() { <-cfg.dispatchSem }
-			}
-			processSlackEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, release)
-		}()
+		dispatchAcknowledgedEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, retryNum, proceed, wait, release)
 	}
+}
+
+// dispatchAcknowledgedEvent hands an event the handler has ACCEPTED —
+// its event-id claim taken (owned, or parked behind the in-flight
+// copy) and its dispatch slot held or owed — to the goroutine that
+// lives its whole life: the event-id wait, the dispatch-slot wait and
+// processSlackEvent. That goroutine is inside the coalescer's shutdown
+// barrier from before its first wait to its return (codex r30 finding
+// 1, r31 finding 1, r32 finding 1, r33 finding 1: a redelivery parked
+// at the event-id wait was outside it, and when the owner's POST and
+// spill failed after the bounded event drain, the drain concluded and
+// main sealed the spool before the redelivery — the message's last
+// recovery path — acquired its slot). The registration is taken HERE,
+// synchronously, before the handler's 200 finishes, exactly like the
+// eventWG count, so nothing acknowledged is ever outside the barrier.
+func dispatchAcknowledgedEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *threadSessionRegistry, roomLaunchReg *roomLaunchMappingRegistry, subteamMap *subteamAliasMap, threadHandleSticky *threadHandleStickiness, env slackEventEnvelope, retryNum string, proceed bool, wait <-chan struct{}, release func()) {
+	end := cfg.coalescer.beginEvent()
+	if cfg.eventWG != nil {
+		cfg.eventWG.Add(1)
+	}
+	go func() {
+		defer end()
+		if cfg.eventWG != nil {
+			defer cfg.eventWG.Done()
+		}
+		ownsSlot := release != nil
+		for !proceed {
+			for parked := true; parked; {
+				select {
+				case <-wait:
+					parked = false
+				case <-time.After(eventDedupParkLogInterval):
+					log.Printf("slack event dedup: redelivery of event_id=%s still parked behind an in-flight delivery (retry_num=%q)",
+						env.EventID, retryNum)
+				}
+			}
+			proceed, wait = cfg.eventDedup.begin(env.EventID)
+			if !proceed && wait == nil {
+				log.Printf("slack event dedup: dropping redelivery event_id=%s retry_num=%q team_id=%q",
+					env.EventID, retryNum, clipTeamIDForLog(env.TeamID))
+				return
+			}
+		}
+		if !ownsSlot {
+			// Taking over after a parked wait: the original slot
+			// went back to the pool, so contend for a fresh one —
+			// BLOCKING, unlike the handler's entry check. This
+			// delivery already got its 200 and may be the event's
+			// only remaining copy, so a queue-full drop here would
+			// lose it permanently (codex r5). The blocked
+			// goroutine holds no slot and every slot holder
+			// releases in bounded time, so this always makes
+			// progress; new deliveries still shed load at the
+			// handler's nonblocking check.
+			cfg.dispatchSem <- struct{}{}
+			release = func() { <-cfg.dispatchSem }
+		}
+		processSlackEvent(cfg, aliasReg, threadReg, roomLaunchReg, subteamMap, threadHandleSticky, env, release)
+	}()
 }
 
 // parseTeamIDFromEventsBody extracts the JSON `team_id` field from a
@@ -3684,6 +3728,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// a losing twin never advances threadContextCache — pre-claim
 	// marking let a bare twin win the race while the decorated copy was
 	// skipped, silently dropping the thread context (codex r1 P2).
+	// This whole event is inside the coalescer's shutdown barrier, from
+	// the handler's hand-off (dispatchAcknowledgedEvent) to this
+	// function's return (codex r30–r33): the event-id wait, the claim
+	// wait below (a twin parked behind its owner is the owner's last
+	// recovery path when the owner fails and releases), the flush-ahead
+	// wait, the hold of the channel, the POST and the failure branch's
+	// spool or restore all run outside the coalescer's takes, and the
+	// drain must not conclude while any of them is under way.
 	skipChannelPost := false
 	var claimKey string
 	if !willBuffer {
@@ -3994,6 +4046,58 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inbound: a solo reaction wake. They drain via
 	// deliverBufferedReactions after the POST below commits.
 	withheldTwins := cfg.coalescer.flushAheadOf(msg.Channel, msg.TS)
+	// The ladder's answer and this copy's submission are ONE step under
+	// the channel's delivery mutex (codex r29 finding 1): asked and then
+	// released, the answer could go stale in the busy-mark clock below —
+	// a trailing buffered twin posted under the timer, gc refused it,
+	// and this copy then posted the original attachments AFTER the
+	// refusal. Held until the POST below concludes, no coalesced
+	// delivery for this channel — the only path that progresses the
+	// ladder — can interleave; it waits on the reservation and retries
+	// after. Released on every path before anything that takes the
+	// channel (deliverBufferedReactions below).
+	releaseChannel := func() {}
+	if !skipChannelPost {
+		releaseChannel = cfg.coalescer.holdDelivery(msg.Channel)
+	}
+	ladderSkip := false
+	if !skipChannelPost && cfg.coalescer.onLadder(msg.Channel, msg.TS) {
+		// The rejection ladder owns THIS message: gc refused its bytes,
+		// and the ladder's retry without attachments — delivered
+		// already, or owed — or the dead-letter file is the message's
+		// delivery. This urgent copy was built from the fresh event,
+		// original attachments and all; posting it would re-post the
+		// refused bytes under another name (gp-sgu7, codex r10 finding
+		// 2; the verdict outlives the stripped delivery so this answer
+		// cannot flip after the flush-ahead, codex r11 finding 1). It
+		// defers like a twin whose channel copy already committed —
+		// except for the claim: this goroutine HOLDS the (channel, ts)
+		// claim it began above, and no delivery of its own will ever
+		// conclude it (codex r11 finding 2: left open, every later
+		// same-ts copy parked on it). RELEASED, not committed: nothing
+		// this copy did reached gc, so the claim vouches for nothing;
+		// the next same-ts copy asks the ladder itself and the standing
+		// verdict answers it the same way. No busy mark either: no
+		// reply is promised (the stripped retry may land later, the
+		// dead-letter file never answers), and nothing would clear it.
+		log.Printf("inbound: chan=%s ts=%s the rejection ladder owns this message (gc refused its bytes) — urgent channel copy skipped; the ladder's stripped retry or the dead-letter file is its delivery", msg.Channel, msg.TS)
+		skipChannelPost = true
+		ladderSkip = true
+		cfg.channelClaims.forget(claimKey)
+		// The thread-context advance above assumed this copy would carry
+		// the preamble; no audience receives it now (codex r27 minor: a
+		// delayed threaded mention for a dead-lettered message advanced
+		// the cache and later replies omitted those priors). Rolled back
+		// exactly as a failed POST rolls it back.
+		if threadCtxAdvanced {
+			cfg.threadContextCache.rollbackDelivered(target, msg.Channel, msg.ThreadTS, msg.TS, threadCtxPrevTS)
+			threadCtxAdvanced = false
+		}
+	}
+	if skipChannelPost {
+		releaseChannel()
+		releaseChannel = func() {}
+	}
 
 	// A twin whose channel copy was skipped while the drain is running
 	// takes no busy mark (gp-32q, codex r3 P2 #3). The mark's whole
@@ -4003,7 +4107,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// leaves a permanent hourglass on a message the next startup will
 	// replay and answer normally.
 	busyEligible := (target != "" || botMentioned) && cfg.slackBotToken != "" && cfg.busyReaction != "" &&
-		!(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
+		!ladderSkip && !(skipChannelPost && cfg.draining != nil && cfg.draining.Load())
 	var busyAddDone chan struct{}
 	var busyDisplacedMarks []busyDisplaced
 	if busyEligible {
@@ -4091,6 +4195,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			receipt, postErr = postInboundWithReceipt(cfg, inboundForChannel)
 			verdict = receipt.verdict(cfg.deliveryReceiptGate)
 		}
+		releaseChannel() // the submission is concluded; coalesced deliveries for the channel may resume
 		if postErr == nil && verdict == receiptHeld {
 			// gc took the payload and is still waiting for the session
 			// to reach an idle boundary (mayor ruling, 2026-08-28). The
@@ -4360,8 +4465,17 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			if cfg.eventWG != nil {
 				cfg.eventWG.Add(1)
 			}
+			// The same for the coalescer's shutdown barrier (codex r34
+			// finding 1): this leg can spool its failure during the
+			// drain, and the parent's registration ends when the
+			// hand-off goroutine returns — registered HERE, while the
+			// parent's registration is still held, the barrier never
+			// touches zero across the transfer, and drainPending cannot
+			// conclude under an alias POST that may still need the spool.
+			endAlias := cfg.coalescer.beginEvent()
 			dispatchInflightWG.Add(1)
 			go func(displaced []busyDisplaced) {
+				defer endAlias()
 				if cfg.eventWG != nil {
 					defer cfg.eventWG.Done()
 				}

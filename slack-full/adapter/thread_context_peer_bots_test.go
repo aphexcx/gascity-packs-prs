@@ -596,7 +596,10 @@ func TestInboundSpoolRoundTripsLeanPreamble(t *testing.T) {
 	if strings.Count(string(raw), "preamble_lean") != 1 {
 		t.Fatalf("only the entry with bot quotes and a non-empty lean writes preamble_lean:\n%s", raw)
 	}
-	entries, done := s.consume()
+	entries, done, err := s.consume()
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer done()
 	if len(entries) != 3 {
 		t.Fatalf("consumed %d entries, want 3", len(entries))

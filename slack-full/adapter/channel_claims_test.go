@@ -410,3 +410,192 @@ func TestChannelClaims_SkippingTwinLeavesThreadContextAlone(t *testing.T) {
 		t.Errorf("trailing twin fetched thread context (%d fetches, want 1) — a skipping twin must not touch the cache", n)
 	}
 }
+
+// A copy the rejection ladder OWNS is not dropped on a same-ts claim
+// that was concluded without a confirmed delivery (gp-sgu7, codex r26
+// finding 4): the drain spool commits a failed urgent twin's claim so no
+// takeover re-posts a copy the next startup replays — but a batch probe
+// that dropped its owned member on that claim returned nil, the ladder
+// recorded "delivered", and the replay discarded both recoverable
+// copies. Only deliveredIDs — recorded after gc vouched — drops an owned
+// copy; on a bare claim the ladder's copy posts and gc's dedup key
+// bounds the duplicate. An unowned member keeps the gp-ios contract
+// above (TestCoalescer_BatchSkipsClaimCommittedMember).
+func TestCoalescer_OwnedMemberPostsOnAnUnconfirmedClaim(t *testing.T) {
+	stub := &flakyInboundStub{}
+	gcSrv := httptest.NewServer(stub.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+
+	keyY := channelDeliveryClaimKey("C1", "100.000020")
+	if proceed, _ := cfg.channelClaims.begin(keyY); !proceed {
+		t.Fatal("setup: could not claim Y")
+	}
+	cfg.channelClaims.commit(keyY) // concluded — by the drain spool, not by a delivery: no deliveredIDs record
+
+	owned := pendingChannelInbound{inbound: externalInboundMessage{ProviderMessageID: "100.000020", Text: "the ladder's owned copy",
+		Conversation: conversationRef{ConversationID: "C1", Kind: "room"}}, isolate: true, attempts: 1}
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{owned}); err != nil {
+		t.Fatalf("batch delivery reported failure: %v", err)
+	}
+	got := stub.snapshot()
+	if len(got) != 1 || !strings.Contains(got[0].Text, "the ladder's owned copy") {
+		t.Fatalf("the owned copy must post on an unconfirmed claim (a false 'delivered' verdict would discard it): got %d inbound(s)", len(got))
+	}
+}
+
+// --- codex r32 finding 1, r33 finding 1 -------------------------------------
+
+// Every acknowledged event is inside the coalescer's shutdown barrier
+// from the handler's hand-off to its goroutine's return: the owner inside
+// its POST, the same-ts twin parked at the claim wait (r32 finding 1) and
+// the same-event-id redelivery parked at the event-id wait (r33 finding
+// 1) are all registered, so the drain cannot conclude — and main cannot
+// seal the spool — while the owner's failure hands the message to one of
+// them for its last recovery POST.
+func TestAcknowledgedEventsAreInsideTheShutdownBarrier(t *testing.T) {
+	arrived := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	answer := []chan int{make(chan int), make(chan int)}
+	stop := make(chan struct{}) // a failed assertion must not leave a handler parked forever (the server's Close would wait on it)
+	var mu sync.Mutex
+	posts := 0
+	gcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		i := posts
+		posts++
+		mu.Unlock()
+		if i > 1 {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		close(arrived[i])
+		select {
+		case code := <-answer[i]:
+			w.WriteHeader(code)
+		case <-stop:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	t.Cleanup(gcSrv.Close)
+	t.Cleanup(func() { close(stop) }) // runs before Close (LIFO)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	cfg.eventDedup = newEventDedupCache(eventDedupTTL)
+	cfg.eventWG = &sync.WaitGroup{}
+	aliasReg := newTestHandleAliasRegistry(t)
+	text := "<@" + testBotUserID + "> takeover during the drain"
+	inflight := func() int {
+		cfg.coalescer.mu.Lock()
+		defer cfg.coalescer.mu.Unlock()
+		return cfg.coalescer.inflight
+	}
+	// The handler's hand-off, as handleSlackEvents performs it: the
+	// event-id claim taken synchronously, then dispatchAcknowledgedEvent.
+	dispatch := func(eventType, eventID string) {
+		env := botMentionEnvelope(t, eventType, eventID, "C1", "100.000030", "", text, true)
+		proceed, wait := cfg.eventDedup.begin(eventID)
+		var release func()
+		if proceed {
+			release = func() {}
+		}
+		dispatchAcknowledgedEvent(cfg, aliasReg, nil, nil, nil, nil, env, "", proceed, wait, release)
+	}
+	dispatch("message", "Ev1")
+	<-arrived[0]                   // the owner holds the claim inside its POST
+	dispatch("app_mention", "Ev2") // the same-ts twin: parks at the claim wait
+	dispatch("message", "Ev1")     // the same-event-id redelivery: parks at the event-id wait
+	waitFor(t, "every acknowledged event registered with the shutdown barrier (inflight 3: the owner in its POST, the twin at the claim wait, the redelivery at the event-id wait)", func() bool { return inflight() == 3 })
+
+	done := make(chan struct{})
+	go func() { cfg.coalescer.flushAll(); close(done) }()
+	answer[0] <- http.StatusInternalServerError // the owner fails and releases: a parked copy takes over
+	<-arrived[1]                                // the takeover POST is under way
+	select {
+	case <-done:
+		t.Fatal("flushAll returned while a parked copy's takeover POST was under way — the drain concluded, and main would have sealed the spool under the message's last recovery path")
+	case <-time.After(100 * time.Millisecond):
+	}
+	answer[1] <- http.StatusAccepted
+	cfg.eventWG.Wait()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flushAll did not return once every event had finished")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if posts != 2 {
+		t.Fatalf("POST attempts = %d, want 2 (one failure + one takeover success; the third copy skips the committed claim)", posts)
+	}
+}
+
+// --- codex r34 finding 1 ------------------------------------------------------
+
+// The alias-dispatch leg — the goroutine processSlackEvent hands its
+// slot to for a targeted inbound — is inside the coalescer's shutdown
+// barrier from before the hand-off to its return (codex r34 finding 1):
+// it can spool its failure during the drain, and with the parent's
+// registration ending at the parent's return, flushAll could observe
+// zero in-flight work and main seal the spool under its POST.
+func TestAliasDispatchIsInsideTheShutdownBarrier(t *testing.T) {
+	arrived := make(chan struct{})
+	answer := make(chan int)
+	stop := make(chan struct{})
+	var once sync.Once
+	gcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/extmsg/inbound"):
+			w.WriteHeader(http.StatusAccepted)
+		case strings.Contains(r.URL.Path, "/extmsg/bindings"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"items": []}`))
+		case strings.Contains(r.URL.Path, "/messages"):
+			once.Do(func() { close(arrived) })
+			select {
+			case code := <-answer:
+				w.WriteHeader(code)
+			case <-stop:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(gcSrv.Close)
+	t.Cleanup(func() { close(stop) }) // runs before Close (LIFO)
+
+	cfg := coalescingTestConfig(gcSrv.URL, time.Hour)
+	cfg.channelClaims = newEventDedupCache(eventDedupTTL)
+	aliasReg := newTestHandleAliasRegistry(t)
+	if err := aliasReg.Set("mayor", "sess-mayor-1"); err != nil {
+		t.Fatalf("alias set: %v", err)
+	}
+	inflight := func() int {
+		cfg.coalescer.mu.Lock()
+		defer cfg.coalescer.mu.Unlock()
+		return cfg.coalescer.inflight
+	}
+	env := botMentionEnvelope(t, "message", "Ev1", "C1", "100.000050", "", "@mayor: please handle this", true)
+	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil, env, func() {}) // returns once the slot is handed to the alias leg
+	<-arrived                                                            // the alias POST is under way
+	if got := inflight(); got != 1 {
+		t.Fatalf("the alias leg must be registered with the shutdown barrier before the hand-off: inflight %d, want 1", got)
+	}
+	done := make(chan struct{})
+	go func() { cfg.coalescer.flushAll(); close(done) }()
+	select {
+	case <-done:
+		t.Fatal("flushAll returned while the alias POST was under way — main would have sealed the spool under a delivery that can still fail and need it")
+	case <-time.After(100 * time.Millisecond):
+	}
+	answer <- http.StatusAccepted
+	dispatchInflightWG.Wait()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("flushAll did not return once the alias leg finished")
+	}
+}

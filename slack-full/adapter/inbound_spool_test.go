@@ -44,7 +44,7 @@ func TestInboundSpoolConsumeStagesForReplayAndFlagsCorruptTail(t *testing.T) {
 	}
 	_ = f.Close()
 
-	entries, done := s.consume()
+	entries, done, _ := s.consume()
 	if len(entries) != 3 {
 		t.Fatalf("consumed %d entries, want 3 (corrupt tail tolerated): %+v", len(entries), entries)
 	}
@@ -81,7 +81,7 @@ func TestInboundSpoolConsumeStagesForReplayAndFlagsCorruptTail(t *testing.T) {
 	if _, err := os.Stat(s.replayingPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("staging file still present after cleanup (err=%v) — a later restart would replay duplicates", err)
 	}
-	if again, _ := s.consume(); len(again) != 0 {
+	if again, _, _ := s.consume(); len(again) != 0 {
 		t.Fatalf("consume after cleanup returned %d entries, want 0", len(again))
 	}
 }
@@ -98,7 +98,7 @@ func TestInboundSpoolCrashMidReplayRetriesOnNextStartup(t *testing.T) {
 
 	// First restart: consume stages the file, then the process "crashes"
 	// before re-admitting anything (the cleanup is never invoked).
-	entries, _ := s1.consume()
+	entries, _, _ := s1.consume()
 	if len(entries) != 1 {
 		t.Fatalf("first consume returned %d entries, want 1", len(entries))
 	}
@@ -134,7 +134,7 @@ func TestInboundSpoolMergesReplayingLeftoverWithNewerSpool(t *testing.T) {
 	if !s1.spillBatch("C1", []pendingChannelInbound{testPending("C1", "1.0", "older, crashed mid-replay")}) {
 		t.Fatal("spillBatch failed")
 	}
-	if e, _ := s1.consume(); len(e) != 1 { // stages 1.0 into .replaying; "crash" here
+	if e, _, _ := s1.consume(); len(e) != 1 { // stages 1.0 into .replaying; "crash" here
 		t.Fatalf("staged %d entries, want 1", len(e))
 	}
 	s2 := newInboundSpool(path)
@@ -142,7 +142,7 @@ func TestInboundSpoolMergesReplayingLeftoverWithNewerSpool(t *testing.T) {
 		t.Fatal("spillBatch failed")
 	}
 
-	entries, done := s2.consume()
+	entries, done, _ := s2.consume()
 	if len(entries) != 2 {
 		t.Fatalf("merged consume returned %d entries, want 2: %+v", len(entries), entries)
 	}
@@ -157,7 +157,7 @@ func TestInboundSpoolMergesReplayingLeftoverWithNewerSpool(t *testing.T) {
 		t.Fatal("consume returned no cleanup after merge")
 	}
 	done()
-	if again, _ := newInboundSpool(path).consume(); len(again) != 0 {
+	if again, _, _ := newInboundSpool(path).consume(); len(again) != 0 {
 		t.Fatalf("consume after merged replay returned %d entries, want 0", len(again))
 	}
 }
@@ -259,7 +259,7 @@ func TestInboundSpoolNilAndEmptyPathSafe(t *testing.T) {
 		t.Fatal("nil spool reported a successful spill")
 	}
 	s.seal() // must not panic
-	if got, done := s.consume(); len(got) != 0 || done != nil {
+	if got, done, _ := s.consume(); len(got) != 0 || done != nil {
 		t.Fatalf("nil spool consumed %d entries (cleanup=%v)", len(got), done != nil)
 	}
 	if n := s.replayInto(newInboundCoalescer(time.Hour, nil)); n != 0 {
@@ -333,7 +333,7 @@ func TestInboundSpoolMergeSealsPartialTailNeverConsumesIntactEntry(t *testing.T)
 	if !s1.spillBatch("C1", []pendingChannelInbound{testPending("C1", "1.0", "intact staged entry")}) {
 		t.Fatal("spillBatch failed")
 	}
-	if e, _ := s1.consume(); len(e) != 1 { // stages into .replaying; "crash" here
+	if e, _, _ := s1.consume(); len(e) != 1 { // stages into .replaying; "crash" here
 		t.Fatalf("staged %d entries, want 1", len(e))
 	}
 	f, err := os.OpenFile(s1.replayingPath(), os.O_WRONLY|os.O_APPEND, 0o600)
@@ -351,7 +351,7 @@ func TestInboundSpoolMergeSealsPartialTailNeverConsumesIntactEntry(t *testing.T)
 		t.Fatal("spillBatch failed")
 	}
 
-	entries, done := s2.consume()
+	entries, done, _ := s2.consume()
 	byTS := map[string]spooledInbound{}
 	for _, e := range entries {
 		byTS[e.Inbound.ProviderMessageID] = e
