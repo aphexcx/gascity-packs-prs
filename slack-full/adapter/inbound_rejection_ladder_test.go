@@ -3084,7 +3084,14 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	// deletion must clear the lean copy and its flag exactly as
 	// applyDeletion does, or the notice replays with context to shed to.
 	refused.preamble, refused.preambleLean, refused.botQuotes = "full context\n", "lean context\n", true
-	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {
+	// An older ledger-owned copy of the same message staged beside it
+	// (codex round-2 r1 minor): the replay does not re-spool it, so the
+	// compaction keeps ITS original line — the path where the pre-pass's
+	// own clearing is the only one.
+	older := testPending("C1", "1.0", "secret text")
+	older.isolate, older.attempts = true, 1
+	older.preamble, older.preambleLean, older.botQuotes = "full context\n", "lean context\n", true
+	if !spool.spillBatch("C1", []pendingChannelInbound{older, refused}) {
 		t.Fatal("spill must confirm")
 	}
 	if !spool.recordDeletion("C1", "1.0") {
