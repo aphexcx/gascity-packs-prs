@@ -3136,8 +3136,9 @@ func TestInPlaceCompactionAppliesDeletionsToRetainedRefusals(t *testing.T) {
 	// Contains would be satisfied by the older copy alone even if the
 	// compaction dropped the refused payload. Exactly one refused copy
 	// and one isolated copy survive, each the cleared deletion notice,
-	// beside the deletion record (the park re-records the tombstone it
-	// applied, r21, so the record may appear twice; both are kept).
+	// beside the deletion record (the compaction writes one tombstone
+	// per retained payload of a deleted message, so it appears twice
+	// here; both are kept).
 	var refusedCopies, isolatedCopies, deletionRecords int
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
 		var e spooledInbound
