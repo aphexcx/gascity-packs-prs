@@ -139,6 +139,7 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert "--set-metadata 'gc.work_outcome=shipped'" in prompt
     assert 'gc.work_commit=$WORK_COMMIT' in prompt
     assert 'gc.work_branch=$WORK_BRANCH' in prompt
+    assert "Refusing to write an empty gc.work_branch." in prompt
     assert "An empty continuation group is a hard session boundary" in prompt
 
 

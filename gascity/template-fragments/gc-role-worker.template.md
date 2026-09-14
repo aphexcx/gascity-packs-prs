@@ -146,18 +146,29 @@ record unrecoverable failure as `gc.outcome=fail` plus concise
 `gc.failure_class` and reason.
 
 Set required metadata before closing same claimed bead. Repeat
-`--set-metadata` once per `key=value` assignment. For a shipped change, from
-the worktree containing the verified commit:
+`--set-metadata` once per `key=value` assignment. For a shipped change handed
+off from a lane, capture both values while the work branch is still checked
+out and run the update first, from the worktree containing the verified commit.
+Then release the branch with `git -C "$GC_DIR" switch --detach` under the
+Workspace rules above and the workflow formula, verify the release, and close
+with `--reason` last:
 
 ```bash
-WORK_COMMIT=$(git rev-parse HEAD)
-WORK_BRANCH=$(git branch --show-current)
+WORK_COMMIT=$(git rev-parse HEAD) || exit 1
+WORK_BRANCH=$(git branch --show-current) || exit 1
+[ -n "$WORK_BRANCH" ] || {
+  printf '%s\n' 'Refusing to write an empty gc.work_branch.' >&2
+  exit 1
+}
 gc bd update "$CLAIMED_BEAD_ID" \
   --set-metadata 'gc.outcome=pass' \
   --set-metadata 'gc.work_outcome=shipped' \
   --set-metadata "gc.work_commit=$WORK_COMMIT" \
-  --set-metadata "gc.work_branch=$WORK_BRANCH"
-gc bd close "$CLAIMED_BEAD_ID"
+  --set-metadata "gc.work_branch=$WORK_BRANCH" || exit 1
+git -C "$GC_DIR" switch --detach || exit 1
+RELEASED_BRANCH=$(git -C "$GC_DIR" branch --show-current) || exit 1
+[ -z "$RELEASED_BRANCH" ] || exit 1
+gc bd close "$CLAIMED_BEAD_ID" --reason "Shipped $WORK_COMMIT."
 ```
 
 For work that needed no change, use `--set-metadata 'gc.outcome=pass'` and
