@@ -222,6 +222,98 @@ def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str, session_id: str = "
     return thread_root
 
 
+# Company current-turn pointer readers by the source name
+# resolve_reply_pointer_source returns.
+_COMPANY_POINTER_READERS = {
+    "room": "read_current_turn",
+    "dm": "read_current_turn_dm",
+    "mpim": "read_current_turn_mpim",
+}
+
+
+def _mention_only_delivery_superseding_company(
+    args: argparse.Namespace, session_name: str, outbound: Any, source: str
+) -> dict[str, Any] | None:
+    """The mention-only delivery that must win over the company pointer, or None.
+
+    jg-vobf70 round 4 (citadel gate MAJOR on PR #35): a session can hold a
+    live company room/DM pointer AND receive newer injections through the
+    adapter's mention-only lane, which never touches the company pointers.
+    ``reply-current`` used to divert to the company dispatch on the mere
+    presence of a pointer, so ``--thread-current`` answered the OLD company
+    conversation instead of the mention-only message being replied to.
+
+    Resolution, before any company dispatch:
+
+    * ``--turn-ts <ts>`` naming a mention-only delivery for this session →
+      that delivery (the legacy path anchors on it via the adapter log).
+    * otherwise the newest mention-only delivery, when it is strictly newer
+      than the selected company pointer's ``delivered_at``.
+
+    Anything else (no deliveries, an older/equal delivery, unparseable
+    timestamps) returns None and the company dispatch runs unchanged. Ties
+    keep the company surface — never auto-route a private reply into a
+    public room when both are just as current. Best-effort: an unreachable
+    adapter yields no deliveries, hence no change in behaviour.
+    """
+    identities: list[str] = []
+    explicit = (getattr(args, "session", "") or "").strip()
+    if explicit:
+        identities.append(explicit)
+    else:
+        try:
+            identities.append(common.current_session_id())
+        except common.GCAPIError:
+            pass
+    if session_name and session_name not in identities:
+        # Fallback only: the id query already merges gc-reported identity
+        # candidates (incl. the name) when gc is reachable.
+        identities.append(session_name)
+    deliveries: dict[tuple[str, str], dict[str, Any]] = {}
+    for ident in identities:
+        for d in common.mention_only_deliveries_via_adapter(ident):
+            deliveries.setdefault((d["channel_id"], d["ts"]), d)
+        if deliveries:
+            break
+    if not deliveries:
+        return None
+    turn_ts = (getattr(args, "turn_ts", "") or "").strip()
+    if turn_ts:
+        for d in deliveries.values():
+            if d.get("ts") == turn_ts:
+                return d
+        return None
+    reader = getattr(outbound, _COMPANY_POINTER_READERS.get(source, ""), None)
+    turn = None
+    if reader is not None:
+        try:
+            turn = reader(session_name)
+        except outbound.OutboundError:
+            turn = None
+    pointer_time = common._event_time({"ts": (turn or {}).get("delivered_at") or ""})
+    if pointer_time is None:
+        return None
+    # The adapter stamps company pointers at whole-second RFC3339 while
+    # mention-only received_at keeps fractional seconds (codex r4 P1):
+    # compare at the shared precision so a delivery at 08:00:00.100 never
+    # outranks a DM turn recorded as 08:00:00Z that actually arrived later
+    # within that second. Same-second is a tie, and ties keep the company
+    # surface.
+    pointer_time = pointer_time.replace(microsecond=0)
+    newest: dict[str, Any] | None = None
+    newest_time = None
+    for d in deliveries.values():
+        t = common._event_time({"ts": d.get("received_at") or ""})
+        if t is None:
+            continue
+        t = t.replace(microsecond=0)
+        if newest_time is None or t > newest_time:
+            newest, newest_time = d, t
+    if newest is None or newest_time <= pointer_time:
+        return None
+    return newest
+
+
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     """Company-context path: post via the acting agent's own token.
 
@@ -262,6 +354,27 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             session_name, kind_override=kind_override, turn_ref=turn_ref)
         if source is None:
             return None  # no company pointer — fall through to the legacy path
+        if not (turn_ref or origin_ts or kind_override):
+            # An explicit company selector (--turn-ref / --origin-ts /
+            # --kind room|dm|mpim) pins the company turn. Otherwise a
+            # mention-only delivery newer than the pointer (or the one
+            # --turn-ts names) is the inbound being answered: resolve
+            # it BEFORE the company dispatch (jg-vobf70 round 4).
+            superseding = _mention_only_delivery_superseding_company(
+                args, session_name, outbound, source)
+            if superseding is not None:
+                print(
+                    f"note: mention-only delivery {superseding['channel_id']}/"
+                    f"{superseding['ts']} is newer than the company {source} "
+                    "turn — resolving it instead of the company dispatch",
+                    file=sys.stderr,
+                )
+                if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+                    # --turn-ts named THIS delivery: pin its conversation so
+                    # the legacy path cannot pick a newer delivery in another
+                    # room and then miss the ts there (codex r4 P2).
+                    args.conversation_id = superseding["channel_id"]
+                return None
         if (getattr(args, "turn_ts", "") or "").strip():
             # --turn-ts anchors a channel-binding inbound; on a session
             # with a live company turn the reply would divert to the

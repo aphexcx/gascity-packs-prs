@@ -38,7 +38,10 @@ delivered twice. The reminder prescribes the bindingless `gc slack publish-to-ch
 --thread-current`, `react`, and `upload --thread-current` also resolve
 mention-only deliveries on their own (via the adapter's delivery log)
 and publish through the adapter, since the session holds no gc binding
-for the room.
+for the room. A mention-only delivery newer than the session's
+company-room/DM current-turn pointer wins over the company dispatch in
+`reply-current`; `--turn-ref`, `--origin-ts` or `--kind room|dm|mpim`
+pin the company turn explicitly.
 
 `--mentions-only` cannot be combined with the peer-fanout flags,
 `--default-handle`, or `--binding-owner` — those configure gc group

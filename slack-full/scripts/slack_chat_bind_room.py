@@ -94,8 +94,9 @@ Reply protocol when you receive a `Slack mention-only room delivery` reminder:
        gc slack publish-to-channel --conversation-id {conversation_id} \
            --thread-ts <thread ts from the reminder> --body-file <tmpfile>
      (`gc slack reply-current --thread-current` also resolves this
-     delivery; you hold no channel binding here, so peers are not fanned
-     out either way)
+     delivery — a mention-only delivery newer than any company-room or DM
+     turn you hold takes precedence over the company dispatch; you hold
+     no channel binding here, so peers are not fanned out either way)
 
 The order is non-negotiable even when you have an instant answer. React
 first, every time.

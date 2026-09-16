@@ -888,8 +888,13 @@ def test_company_ambient_targeted_posts_root_reply(
         return 200, {}, {"ok": True, "ts": "1700000000.000800"}
     monkeypatch.setattr(outbound, "_slack_web_post", fake_post)
 
-    # Legacy path must NOT be reached (it would call common._request).
-    def boom_request(*_a, **_k):
+    # Legacy path must NOT be reached (it would POST via common._request).
+    # Read-only GETs are allowed: the mention-only delivery-log lookup
+    # (and its gc identity-candidate query) runs BEFORE the company
+    # dispatch (jg-vobf70 r4) and finds nothing here.
+    def boom_request(method, url, *_a, **_k):
+        if method == "GET":
+            return {}
         raise AssertionError("legacy resolution must not run for a company turn")
     monkeypatch.setattr(common, "_request", boom_request)
 
@@ -1615,3 +1620,162 @@ def test_guard_crash_fails_open_to_unguarded_body(
     assert captured["body"]["text"] == "approx ~$5k and ~$6k"
     err = capsys.readouterr().err
     assert "accidental-mrkdwn guard failed" in err
+
+
+# --------------------------------------------------------------------------
+# Mention-only deliveries vs company pointers (jg-vobf70 round 4 — citadel
+# gate MAJOR on PR #35): a company-room/DM pointer must not intercept
+# `reply-current --thread-current` when a NEWER mention-only delivery is the
+# inbound being answered. Modelled on the gate's mock: old company turn
+# present, newer mention-only delivery in the adapter's log.
+# --------------------------------------------------------------------------
+
+_MO_ADAPTER_BASE = "http://127.0.0.1:8372/v0/city/test-city/svc/slack"
+
+
+def _mention_only_delivery(channel: str, ts: str, thread_ts: str,
+                           received_at: str) -> dict[str, Any]:
+    return {
+        "session_id": "ollie-main", "channel_id": channel, "ts": ts,
+        "thread_ts": thread_ts, "reason": "bot_mention", "received_at": received_at,
+    }
+
+
+def _company_pointer_and_mention_only(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path, *,
+        pointer_delivered_at: str, delivery_received_at: str):
+    """Session ollie-main: live company room turn + one mention-only delivery."""
+    rc, common = _import_modules()
+    outbound = _import_outbound()
+    _setup_company(outbound, tmp_path)
+    _write_turn(outbound, session="ollie-main", kind="ambient", agent="ollie",
+                ts="1700000000.000500", delivered_at=pointer_delivered_at)
+    monkeypatch.setenv("GC_SESSION_NAME", "ollie-main")
+
+    company_posts: list[dict[str, Any]] = []
+
+    def fake_company_post(method, token, payload, *, api_base, timeout):
+        company_posts.append({"token": token, "payload": payload})
+        return 200, {}, {"ok": True, "ts": "1700000000.000800"}
+    monkeypatch.setattr(outbound, "_slack_web_post", fake_company_post)
+
+    legacy_posts: list[tuple[str, dict[str, Any]]] = []
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        if method == "POST":
+            legacy_posts.append((url, body or {}))
+            return {"delivered": True, "message_id": "9.000"}
+        return {}
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "_scan_gc_inbound_events", lambda _sid: None)
+    monkeypatch.setattr(
+        common, "mention_only_deliveries_via_adapter",
+        lambda _sid: [_mention_only_delivery("C0B2Y13DRMK", "2.000", "1.000",
+                                             delivery_received_at)])
+    monkeypatch.setattr(common, "look_up_binding",
+                        lambda _sid: pytest.fail("binding lookup must not run"))
+    return rc, company_posts, legacy_posts
+
+
+def test_thread_current_newer_mention_only_delivery_beats_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path,
+        capsys: pytest.CaptureFixture) -> None:
+    """Gate repro: the company pointer is OLDER than the mention-only
+    delivery → the reply must land in the mention-only thread via the
+    adapter, and the company dispatch must not run."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T07:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+
+    code = rc.main(["--session", "ollie-main", "--body", "on it", "--thread-current"])
+    assert code == 0
+    assert company_posts == [], "company dispatch intercepted a newer mention-only delivery"
+    assert len(legacy_posts) == 1
+    url, body = legacy_posts[0]
+    assert url == _MO_ADAPTER_BASE + "/publish"
+    assert body["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+    assert body["reply_to_message_id"] == "1.000"
+    assert "mention-only" in capsys.readouterr().err
+
+
+def test_thread_current_company_pointer_wins_when_newer_than_mention_only(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Unchanged behaviour: the company turn is the newest inbound → the
+    company dispatch answers into the room thread root."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+
+    code = rc.main(["--session", "ollie-main", "--body", "answering the room", "--thread-current"])
+    assert code == 0
+    assert legacy_posts == [], "legacy/mention-only path must not run for a newer company turn"
+    assert len(company_posts) == 1
+    assert company_posts[0]["token"] == "xoxb-ollie"
+    assert company_posts[0]["payload"]["thread_ts"] == "1700000000.000100"
+
+
+def test_turn_ts_naming_a_mention_only_delivery_bypasses_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """--turn-ts <mention-only ts> on a session with a live company turn
+    resolves the mention-only delivery instead of refusing (the refusal is
+    for channel-binding inbounds, which this is not)."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+
+    code = rc.main(["--session", "ollie-main", "--conversation-id", "C0B2Y13DRMK",
+                    "--turn-ts", "2.000", "--body", "on it"])
+    assert code == 0
+    assert company_posts == []
+    assert len(legacy_posts) == 1
+    url, body = legacy_posts[0]
+    assert url == _MO_ADAPTER_BASE + "/publish"
+    assert body["reply_to_message_id"] == "1.000"
+
+
+def test_same_second_mention_only_delivery_ties_to_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """codex r4 P1: the adapter writes company delivered_at at whole-second
+    RFC3339 while mention-only received_at keeps fractions. A delivery at
+    .100 within the pointer's second is a TIE, not newer — company wins."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T08:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00.100000Z")
+
+    code = rc.main(["--session", "ollie-main", "--body", "answering the room", "--thread-current"])
+    assert code == 0
+    assert legacy_posts == []
+    assert len(company_posts) == 1
+
+
+def test_turn_ts_pins_the_named_mention_only_room_over_a_newer_one(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """codex r4 P2: --turn-ts names a delivery in C1 while a newer delivery
+    sits in C2 and no --conversation-id is given → the reply must go to C1
+    (at its thread root), not to whatever room is newest."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]  # the instance rc imported
+    monkeypatch.setattr(
+        common, "mention_only_deliveries_via_adapter",
+        lambda _sid: [
+            _mention_only_delivery("C2NEWER", "5.000", "4.000", "2026-09-10T08:30:00Z"),
+            _mention_only_delivery("C1OLDER", "2.000", "1.000", "2026-09-10T08:00:00Z"),
+        ])
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: None)
+
+    code = rc.main(["--session", "ollie-main", "--turn-ts", "2.000", "--body", "on it"])
+    assert code == 0
+    assert company_posts == []
+    assert len(legacy_posts) == 1
+    url, body = legacy_posts[0]
+    assert url == _MO_ADAPTER_BASE + "/publish"
+    assert body["conversation"]["conversation_id"] == "C1OLDER"
+    assert body["reply_to_message_id"] == "1.000"

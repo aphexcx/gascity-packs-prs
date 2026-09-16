@@ -416,7 +416,12 @@ through the adapter's delivery log (`GET
 adapter, because the session holds no gc binding for the room; the
 reminder itself prescribes the bindingless
 `gc slack publish-to-channel --conversation-id C… --thread-ts <root>`
-form, which no company-room pointer can divert. Inspect bindings with `gc slack status`, the registry file
+form, which no company-room pointer can divert. `reply-current` consults
+the mention-only delivery log *before* its company-room/DM dispatch: a
+mention-only delivery newer than the session's company current-turn
+pointer (or the one `--turn-ts` names) is answered through the adapter;
+an explicit `--turn-ref`, `--origin-ts` or `--kind room|dm|mpim` still
+pins the company turn. Inspect bindings with `gc slack status`, the registry file
 (`SLACK_MENTION_ONLY_BINDINGS_FILE`), or `GET …/svc/slack/mention-only`;
 remove one with `DELETE …/svc/slack/mention-only?channel_id=&session_id=`.
 

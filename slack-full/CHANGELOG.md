@@ -36,7 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adapter's delivery log and publish via the adapter (the session has
   no gc binding there); `gc slack status` lists mention-only bindings
   from the pack config and the registry file; the bind sends a
-  mention-only variant of the reply-protocol nudge.
+  mention-only variant of the reply-protocol nudge. Round 4 (citadel
+  gate MAJOR): `reply-current` resolves mention-only deliveries BEFORE
+  the automatic company-room/DM dispatch — a delivery newer than the
+  session's company current-turn pointer (or the one `--turn-ts` names)
+  is answered via the adapter instead of being diverted into the older
+  company conversation; `--turn-ref` / `--origin-ts` / `--kind
+  room|dm|mpim` still pin the company turn.
 
 ### Changed
 
