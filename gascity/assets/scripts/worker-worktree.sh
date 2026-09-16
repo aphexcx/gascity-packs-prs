@@ -2,9 +2,9 @@
 # worker-worktree.sh — make a worker session's working directory a git
 # worktree of its rig, before the first turn.
 #
-# Built to run as a Gas City agent `pre_start` command. gc creates `work_dir`,
-# then runs pre_start with cwd = $GC_DIR and the session environment, then
-# stages skills/hooks into the same directory and starts the provider there.
+# Built to run as a Gas City agent `pre_start` command. gc creates `work_dir`
+# and stages start files BEFORE pre_start runs with cwd = $GC_DIR. Later
+# pre_start commands materialize skills/hooks before starting the provider.
 #
 #   # agents/<name>/agent.toml (or a [[patches.agent]] entry)
 #   work_dir  = ".worktrees/{{.Rig}}/lane-{{.AgentBase}}"
@@ -37,7 +37,8 @@
 #   * The rig root's working tree is never touched: the script only reads
 #     refs, fetches, and registers worktrees from it.
 #   * Nothing is deleted. A non-empty work dir that is not a git checkout is
-#     moved to <workdir>.aside-<utc stamp>; a worktree of this repository with
+#     moved to <workdir>.aside-<utc stamp>, unless it contains only gc's known
+#     staged start files (kept in place); a worktree of this repository with
 #     tracked modifications is moved aside the same way (through `git worktree
 #     move`, so registration follows; if git refuses, e.g. locked, the script
 #     fails in place); a branch switch that would overwrite an ignored file
@@ -48,7 +49,8 @@
 #   * Bead branch: exactly one branch (local or on the remote) whose name
 #     contains the bead id as a whole token — `gp-abc1`, `fix/gp-abc1-x`, never
 #     `gp-abc10` — is reused. None: a new branch named <bead id> is created
-#     from --base. Several: fail closed and list them.
+#     from --base. Several: keep a clean lane's current candidate, else use
+#     the exact bead name, else fail closed and list them. Log the chosen rule.
 #   * A bead branch already checked out in another worktree is not stolen: the
 #     work dir is left detached at that branch's tip and a WARN line names the
 #     holder. Do not create a second branch naming the bead (two candidates
@@ -88,7 +90,7 @@ while [ "$#" -gt 0 ]; do
         --remote) [ "$#" -ge 2 ] || die "--remote needs a value"; REMOTE="$2"; shift 2 ;;
         --remote=*) REMOTE="${1#--remote=}"; shift ;;
         --no-fetch) FETCH=0; shift ;;
-        -h|--help) sed -n '2,60p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) die "unknown argument: $1" ;;
     esac
 done
@@ -311,6 +313,17 @@ is_our_worktree() {
     [ "$c" = "$RIG_COMMON" ]
 }
 
+# current_branch: the branch WORKDIR is on, by full symbolic ref with exactly
+# `refs/heads/` removed, or HEAD when detached. `rev-parse --abbrev-ref HEAD`
+# would print `heads/x` when a tag `x` exists and mis-report a good checkout.
+current_branch() {
+    if ref="$(git -C "$WORKDIR" symbolic-ref --quiet HEAD 2>/dev/null)"; then
+        printf '%s\n' "${ref#refs/heads/}"
+    else
+        echo HEAD
+    fi
+}
+
 # move_aside DIR REASON: relocate DIR out of the way without deleting anything.
 # A worktree of this repository goes through `git worktree move` so its
 # registration follows it; if git refuses (locked, or otherwise), fail closed.
@@ -333,8 +346,49 @@ move_aside() {
     warn "moved aside $1 -> $aside ($2); nothing was deleted"
 }
 
+# only_staged_start_files: a narrow path AND type allowlist, not all dotfiles.
+# Enumerated from gc 72aeaaffa (the installed build): cmd/gc/template_resolve.go
+# (settings/scripts), cmd_start.go (stageHookFiles/claudeSettingsSource),
+# skill_integration.go (skillSnapshotFilePath), and the core pack's
+# overlay/per-provider files (including Kiro's AGENTS.md and agent JSON).
+# The catalog's *.tmp is an incomplete write, not a staged snapshot. Skills
+# and MCP config are materialized by LATER pre_start commands. Arbitrary
+# user/pack overlays are not identifiable here and retain the aside safety.
+# Do not follow symlinks or accept unexpected empty directories. Relative
+# find patterns keep glob characters in the lane's path literal.
+only_staged_start_files() {
+    unexpected="$(
+        cd "$WORKDIR" && find . -mindepth 1 ! \( \
+            -type d \( \
+                -path './.gc' -o -path './.gc/scripts' -o -path './.gc/scripts/*' -o \
+                -path './.gc/tmp' -o -path './hooks' -o \
+                -path './.gemini' -o -path './.codex' -o -path './.agents' -o \
+                -path './.opencode' -o -path './.opencode/plugins' -o \
+                -path './.mimocode' -o -path './.mimocode/plugin' -o \
+                -path './.github' -o -path './.github/hooks' -o -path './.cursor' -o \
+                -path './.pi' -o -path './.pi/extensions' -o \
+                -path './.omp' -o -path './.omp/hooks' -o \
+                -path './.kimi' -o -path './.kimi/hooks' -o \
+                -path './.kiro' -o -path './.kiro/agents' \
+            \) -o -type f \( \
+                -path './.gc/settings.json' -o -path './.gc/scripts/*' -o \
+                -path './.gc/tmp/skill-catalog-?*.b64' -o -path './hooks/claude.json' -o \
+                -path './.gemini/settings.json' -o -path './.codex/hooks.json' -o \
+                -path './.agents/hooks.json' -o -path './.opencode/plugins/gascity.js' -o \
+                -path './.mimocode/plugin/gascity.js' -o -path './.github/hooks/gascity.json' -o \
+                -path './.github/copilot-instructions.md' -o -path './.cursor/hooks.json' -o \
+                -path './.pi/extensions/gc-hooks.js' -o -path './.omp/hooks/gc-hook.ts' -o \
+                -path './.kimi/config.toml' -o -path './.kimi/hooks/gascity-session-start.py' -o \
+                -path './.kiro/agents/gascity.json' -o -path './AGENTS.md' \
+            \) \
+        \) -print
+    )" || die "cannot inspect staged start files in $WORKDIR"
+    [ -z "$unexpected" ]
+}
+
 # --- classify the work dir ------------------------------------------------------------------
 IS_WORKTREE=0
+HAS_START_FILES=0
 if [ -d "$WORKDIR" ]; then
     if is_our_worktree "$WORKDIR"; then
         IS_WORKTREE=1
@@ -343,7 +397,11 @@ if [ -d "$WORKDIR" ]; then
             IS_WORKTREE=0
         fi
     elif [ -n "$(ls -A "$WORKDIR" 2>/dev/null)" ]; then
-        move_aside "$WORKDIR" "not a worktree of $RIG_ROOT"
+        if only_staged_start_files; then
+            HAS_START_FILES=1
+        else
+            move_aside "$WORKDIR" "not a worktree of $RIG_ROOT"
+        fi
     fi
 fi
 
@@ -363,8 +421,19 @@ else
     candidates="$(bead_branches)"
     count="$(printf '%s\n' "$candidates" | grep -c . || true)"
     if [ "$count" -gt 1 ]; then
-        die "several branches name bead $BEAD; pass --bead with a unique id, or --base and no bead: $(printf '%s\n' "$candidates" | tr '\n' ' ')"
-    elif [ "$count" -eq 0 ]; then
+        current=""
+        [ "$IS_WORKTREE" -eq 0 ] || current="$(current_branch)"
+        if [ -n "$current" ] && printf '%s\n' "$candidates" | grep -q -x -F -- "$current"; then
+            candidates="$current"
+            log "selected $current: clean lane candidate"
+        elif printf '%s\n' "$candidates" | grep -q -x -F -- "$BEAD"; then
+            candidates="$BEAD"
+            log "selected $BEAD: exact bead branch"
+        else
+            die "several branches name bead $BEAD; pass --bead with a unique id, or --base and no bead: $(printf '%s\n' "$candidates" | tr '\n' ' ')"
+        fi
+    fi
+    if [ "$count" -eq 0 ]; then
         MODE="new"
         TARGET="$BEAD"
     else
@@ -387,12 +456,38 @@ fi
 # --- act --------------------------------------------------------------------------------------
 add_worktree() {
     [ -d "$WORKDIR" ] || mkdir -p "$WORKDIR"
+    add_dir="$WORKDIR"
+    set --
+    if [ "$HAS_START_FILES" -eq 1 ]; then
+        # Git refuses a nonempty destination even with --no-checkout. Register
+        # an empty temporary worktree, then move ONLY its .git pointer into the
+        # lane and repair the back-pointer with git's supported repair command.
+        # The lane inode (pre_start's cwd), seeds and their modes never move.
+        add_dir="$(mktemp -d "$WORKDIR.prepare-XXXXXX")" || return 1
+        set -- --no-checkout
+    fi
+    added=0
     case "$MODE" in
-        local)    git_rig worktree add --quiet "$WORKDIR" "$TARGET" ;;
-        remote)   git_rig worktree add --quiet --track -b "$TARGET" "$WORKDIR" "refs/remotes/$REMOTE/$TARGET" ;;
-        new)      git_rig worktree add --quiet -b "$TARGET" "$WORKDIR" "$BASE_SHA" ;;
-        detached) git_rig worktree add --quiet --detach "$WORKDIR" "$DETACH_AT" ;;
+        local)    git_rig worktree add --quiet "$@" "$add_dir" "$TARGET" && added=1 ;;
+        remote)   git_rig worktree add --quiet "$@" --track -b "$TARGET" "$add_dir" "refs/remotes/$REMOTE/$TARGET" && added=1 ;;
+        new)      git_rig worktree add --quiet "$@" -b "$TARGET" "$add_dir" "$BASE_SHA" && added=1 ;;
+        detached) git_rig worktree add --quiet "$@" --detach "$add_dir" "$DETACH_AT" && added=1 ;;
     esac
+    if [ "$added" -eq 0 ]; then
+        [ "$add_dir" = "$WORKDIR" ] || rmdir "$add_dir" 2>/dev/null || true
+        return 1
+    fi
+    if [ "$HAS_START_FILES" -eq 1 ]; then
+        mv "$add_dir/.git" "$WORKDIR/.git" || return 1
+        rmdir "$add_dir" || return 1
+        git_rig worktree repair "$WORKDIR" || return 1
+        # Load the index without touching files, then populate only absent
+        # paths. Unlike read-tree -m -u, checkout-index without --force refuses
+        # even IGNORED existing files. A collision fails in place with all
+        # seeds intact; never reset --hard or force checkout over the payload.
+        git -C "$WORKDIR" read-tree HEAD || return 1
+        git -C "$WORKDIR" checkout-index --all || return 1
+    fi
 }
 
 # A tracked start point (add_worktree and switch_worktree, mode remote) is the
@@ -409,17 +504,6 @@ switch_worktree() {
         new)      git -C "$WORKDIR" switch --quiet --no-overwrite-ignore -c "$TARGET" "$BASE_SHA" ;;
         detached) git -C "$WORKDIR" switch --quiet --no-overwrite-ignore --detach "$DETACH_AT" ;;
     esac
-}
-
-# current_branch: the branch WORKDIR is on, by full symbolic ref with exactly
-# `refs/heads/` removed, or HEAD when detached. `rev-parse --abbrev-ref HEAD`
-# would print `heads/x` when a tag `x` exists and mis-report a good checkout.
-current_branch() {
-    if ref="$(git -C "$WORKDIR" symbolic-ref --quiet HEAD 2>/dev/null)"; then
-        printf '%s\n' "${ref#refs/heads/}"
-    else
-        echo HEAD
-    fi
 }
 
 if [ "$IS_WORKTREE" -eq 1 ]; then
