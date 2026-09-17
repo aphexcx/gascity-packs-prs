@@ -538,6 +538,12 @@ type mentionOnlyDelivery struct {
 	ThreadTS   string    `json:"thread_ts,omitempty"`
 	Reason     string    `json:"reason"`
 	ReceivedAt time.Time `json:"received_at"`
+	// Provisional: logged ahead of the POST, gc has not concluded the
+	// injection yet (it does so at the session's next idle boundary). The
+	// pack scripts resolve an explicit ts against such a record but never
+	// pick it as the session's latest inbound — the session may still be
+	// answering something else (codex r7 P1).
+	Provisional bool `json:"provisional,omitempty"`
 }
 
 const mentionOnlyDeliveryLogPerSession = 50
@@ -565,6 +571,24 @@ func (l *mentionOnlyDeliveryLog) record(b mentionOnlyBinding, d mentionOnlyDeliv
 			list = list[:mentionOnlyDeliveryLogPerSession]
 		}
 		l.bySession[k] = list
+	}
+}
+
+// confirm clears the provisional mark of the (channel, ts) record once gc
+// concluded the injection delivered.
+func (l *mentionOnlyDeliveryLog) confirm(b mentionOnlyBinding, channel, ts string) {
+	if l == nil {
+		return
+	}
+	keys := b.logKeys()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, k := range keys {
+		for i := range l.bySession[k] {
+			if d := &l.bySession[k][i]; d.ChannelID == channel && d.TS == ts {
+				d.Provisional = false
+			}
+		}
 	}
 }
 
@@ -788,14 +812,32 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 	)
 }
 
+// mentionOnlyInbound is the lane's copy of the legacy dispatcher's inbound.
+// The reminder lists inbound.Attachments — the DOWNLOADED files only — so
+// when any download failed (or INBOUND_FILE_STORE is unset) the copy carries
+// the channel path's files block instead, which names every file; a
+// file-only follow-up must not arrive as a blank reminder (codex r7 P2).
+func mentionOnlyInbound(inbound externalInboundMessage, files []slackFile, filesBlock string) externalInboundMessage {
+	if filesBlock == "" || len(inbound.Attachments) == len(files) {
+		return inbound
+	}
+	inbound.Attachments = nil
+	if strings.TrimSpace(inbound.Text) == "" {
+		inbound.Text = filesBlock
+	} else {
+		inbound.Text += "\n\n" + filesBlock
+	}
+	return inbound
+}
+
 // postMentionOnlyReminder injects body into sessionID via gc's session-
 // message endpoint. Returns gc's delivery receipt (zero when gc emits
 // none) and whether gc ACCEPTED the injection — mirrors
 // dispatchToAliasedSession's transport contract. A 202 is gc's ASYNCHRONOUS
 // acceptance (status accepted + request_id + event_cursor): the injection
 // has not reached the session yet. With a confirm hook the terminal result
-// is awaited and a failed one reads as not accepted (codex r6 P1); without
-// one (the legacy lane) acceptance stands, as in the alias dispatcher.
+// is awaited and a failed one reads as not accepted (codex r6 P1). Both
+// lanes pass one (mentionOnlyConfirmFor); a nil hook lets acceptance stand.
 func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mentionOnlyAsyncConfirm) (deliveryReceipt, bool) {
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	target := fmt.Sprintf("%s/v0/city/%s/session/%s/messages",
@@ -845,6 +887,50 @@ func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mention
 // mentionOnlyAsyncConfirm awaits the terminal result of a 202-accepted
 // session.message request; ok only when gc reports it delivered.
 type mentionOnlyAsyncConfirm func(requestID, eventCursor string) (detail string, ok bool)
+
+// mentionOnlyConfirmFor returns the confirmation hook for cfg: the company
+// gateway's event-stream await (confirmMentionOnlyAsync), which needs only
+// gc's API base and the city name. The legacy (non-company) lane uses it
+// too — without it a 202 whose request then failed committed the delivery
+// claim, the Slack twin was skipped on it, and the session received nothing
+// (citadel gate r5). A cfg with no gateway wired (tests) gets a bare one.
+func mentionOnlyConfirmFor(cfg config) mentionOnlyAsyncConfirm {
+	g := cfg.companyGateway
+	if g == nil {
+		g = &companyGateway{cfg: cfg}
+	}
+	return g.confirmMentionOnlyAsync
+}
+
+// mentionOnlyConfirmHold bounds how long a legacy-lane event waits for the
+// lane's first attempt before its channel copy proceeds (processSlackEvent).
+// Covers a healthy POST + confirmation; package-level so tests can shorten it.
+var mentionOnlyConfirmHold = 10 * time.Second
+
+// retryMentionOnlyFailed re-posts failed injections in place on
+// companyMentionOnlyRetryBackoff until none is left, the ladder is exhausted or
+// shutdown begins. A failed injection released its claim, so a twin or
+// duplicate delivery arriving meanwhile takes it itself; this loop then
+// skips that target on its committed claim and counts it reached. lane
+// prefixes the log lines.
+func retryMentionOnlyFailed(cfg config, lane string, failed []mentionOnlyTarget, inbound externalInboundMessage, confirm mentionOnlyAsyncConfirm) (reached, stillFailed []mentionOnlyTarget) {
+	channel, ts := inbound.Conversation.ConversationID, inbound.ProviderMessageID
+	for attempt, wait := range companyMentionOnlyRetryBackoff {
+		if len(failed) == 0 {
+			break
+		}
+		if !sleepUnlessDraining(cfg, wait) {
+			log.Printf("%s chan=%s ts=%s %d injection(s) still failed at shutdown — retries stopped", lane, channel, ts, len(failed))
+			break
+		}
+		log.Printf("%s chan=%s ts=%s retrying %d failed injection(s) (attempt %d/%d)",
+			lane, channel, ts, len(failed), attempt+1, len(companyMentionOnlyRetryBackoff))
+		var d, st []mentionOnlyTarget
+		d, failed, st = deliverMentionOnlyOutcomes(cfg, failed, inbound, confirm)
+		reached = append(append(reached, d...), st...)
+	}
+	return reached, failed
+}
 
 // ownThreadScanLimit is the conversations.replies window the own-thread
 // fallback scan reads when the preamble's (context-limit-sized) fetch did
@@ -904,11 +990,15 @@ func forgetAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding
 // A failed injection releases its claim (a parked twin or Slack redelivery
 // retries it), logs, and marks the message with ⚠️ so the human sees the
 // session was not reached; the marker is removed when a later attempt
-// reaches every session it stood for (mentionOnlyFailureMarks). Returns the number of injections gc accepted
-// and the number that failed (skipped twins count as neither).
-func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage) (delivered, failed int) {
-	d, f, _ := deliverMentionOnlyOutcomes(cfg, targets, inbound, nil)
-	return len(d), len(f)
+// reaches every session it stood for (mentionOnlyFailureMarks). gc's
+// asynchronous 202 is awaited to its terminal result before the claim
+// commits, exactly as in the company lane (citadel gate r5). Returns the
+// number of injections gc delivered and the targets that failed (skipped
+// twins count as neither); the caller owns their retry
+// (retryMentionOnlyFailed).
+func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage) (delivered int, failed []mentionOnlyTarget) {
+	d, f, _ := deliverMentionOnlyOutcomes(cfg, targets, inbound, mentionOnlyConfirmFor(cfg))
+	return len(d), f
 }
 
 // deliverMentionOnlyOutcomes is deliverMentionOnly with per-target results:
@@ -916,7 +1006,37 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 // the ones it saw fail, and the ones skipped on a COMMITTED claim — another
 // copy of the origin in this process saw gc deliver them (a claim is
 // committed only then), so they are settled, not pending.
+//
+// Targets are independent sessions and run concurrently (bounded by the
+// room's mention-only bindings): gc concludes an injection at the session's
+// next idle boundary, and one busy session must not hold the others' copies
+// behind its confirmation (codex r7 P2). Results keep the target order.
 func deliverMentionOnlyOutcomes(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage, confirm mentionOnlyAsyncConfirm) (delivered, failed, settled []mentionOnlyTarget) {
+	if len(targets) <= 1 {
+		return deliverMentionOnlyEach(cfg, targets, inbound, confirm)
+	}
+	type outcome struct{ delivered, failed, settled []mentionOnlyTarget }
+	results := make([]outcome, len(targets))
+	var wg sync.WaitGroup
+	for i := range targets {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r := &results[i]
+			r.delivered, r.failed, r.settled = deliverMentionOnlyEach(cfg, targets[i:i+1], inbound, confirm)
+		}(i)
+	}
+	wg.Wait()
+	for _, r := range results {
+		delivered = append(delivered, r.delivered...)
+		failed = append(failed, r.failed...)
+		settled = append(settled, r.settled...)
+	}
+	return delivered, failed, settled
+}
+
+// deliverMentionOnlyEach runs the targets one after the other.
+func deliverMentionOnlyEach(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage, confirm mentionOnlyAsyncConfirm) (delivered, failed, settled []mentionOnlyTarget) {
 	channel := inbound.Conversation.ConversationID
 	ts := inbound.ProviderMessageID
 	for _, t := range targets {
@@ -949,6 +1069,8 @@ func deliverMentionOnlyOutcomes(cfg config, targets []mentionOnlyTarget, inbound
 			ThreadTS:   inbound.ReplyToMessageID,
 			Reason:     t.reason,
 			ReceivedAt: inbound.ReceivedAt,
+			// Until gc concludes it delivered (confirm below).
+			Provisional: true,
 		}
 		cfg.mentionOnlyDeliveries.record(t.binding, record)
 		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm)
@@ -976,6 +1098,7 @@ func deliverMentionOnlyOutcomes(cfg config, targets []mentionOnlyTarget, inbound
 			continue
 		}
 		cfg.channelClaims.commit(key)
+		cfg.mentionOnlyDeliveries.confirm(t.binding, channel, ts)
 		if mentionOnlyFailures.recovered(channel, ts, t.binding.SessionID) {
 			clearMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
 		}

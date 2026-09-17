@@ -70,6 +70,43 @@ def _resolve_conversation(session_id: str) -> dict[str, str]:
     }
 
 
+def _company_turn_not_older_than(session_id: str, conversation_id: str) -> str | None:
+    """Company surface (room/dm/mpim) whose current turn is at least as new
+    as the session's latest mention-only delivery in conversation_id.
+
+    Company deliveries move current-turn pointers, not the extmsg.inbound
+    events the latest-inbound scan reads — so a mention-only delivery can
+    look "latest" while the session is in fact answering a newer company DM,
+    and --thread-current would upload into the (public) mention-only room
+    (codex r7 P1). Same recency rule as reply-current: only a strictly newer
+    delivery wins; an unparseable timestamp keeps the company side. None
+    when the session has no company pointer (or no GC_SESSION_NAME).
+    """
+    session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+    if not session_name:
+        return None
+    try:
+        import slack_company_outbound as outbound  # type: ignore
+    except ImportError:
+        return None
+    readers = {"room": "read_current_turn", "dm": "read_current_turn_dm",
+               "mpim": "read_current_turn_mpim"}
+    try:
+        source = outbound.resolve_reply_pointer_source(session_name)
+        if source is None:
+            return None
+        turn = getattr(outbound, readers[source])(session_name)
+    except outbound.OutboundError:
+        return None
+    pointer_time = common._event_time({"ts": (turn or {}).get("delivered_at") or ""})
+    delivery = common.mention_only_delivery_for(session_id, conversation_id) or {}
+    delivery_time = common._event_time({"ts": delivery.get("received_at") or ""})
+    if (pointer_time is not None and delivery_time is not None
+            and delivery_time.replace(microsecond=0) > pointer_time.replace(microsecond=0)):
+        return None
+    return source
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Upload a file to a session's bound Slack channel "
@@ -169,9 +206,26 @@ def main(argv: list[str]) -> int:
     thread_current_match: tuple[str, dict[str, str]] | None = None
     mention_only_conv: dict[str, str] | None = None
     if args.thread_current:
-        thread_current_match = common.find_latest_inbound_message_id_for_session(session_id)
-        if thread_current_match and (thread_current_match[1] or {}).get("mention_only"):
-            mention_only_conv = thread_current_match[1]
+        latest = common.find_latest_inbound_thread_for_session(session_id)
+        if latest:
+            mid, thread_root, latest_conv = latest
+            thread_current_match = (mid, latest_conv)
+            if (latest_conv or {}).get("mention_only"):
+                mention_only_conv = latest_conv
+                # The adapter hands thread_ts to Slack as-is, and Slack
+                # threads hang off the parent: a mention-only delivery that
+                # was itself a thread reply anchors at its thread ROOT, not
+                # its own ts (citadel gate r5; same rule as reply-current).
+                thread_current_match = (thread_root or mid, latest_conv)
+                newer = _company_turn_not_older_than(
+                    session_id, latest_conv.get("conversation_id", ""))
+                if newer:
+                    raise SystemExit(
+                        f"--thread-current: this session's company {newer} turn is "
+                        "at least as new as its latest mention-only delivery "
+                        f"({latest_conv.get('conversation_id')}/{mid}); refusing to "
+                        "guess the destination — pass --conversation-id <id> "
+                        "--thread-ts <ts> explicitly")
 
     if conversation_id:
         if not os.environ.get("SLACK_WORKSPACE_ID", "").strip():

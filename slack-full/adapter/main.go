@@ -4115,8 +4115,47 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// mention-only session that replies before the channel copy lands
 	// finds the mark to clear (codex r2 P2).
 	runMentionOnly := func() {
-		if targets := mentionOnlyTargets; len(targets) > 0 {
-			if _, failed := deliverMentionOnly(cfg, targets, inbound); failed > 0 {
+		targets := mentionOnlyTargets
+		if len(targets) == 0 {
+			return
+		}
+		// The lane runs in its own goroutine and this event waits for its
+		// FIRST attempt only up to mentionOnlyConfirmHold (round 7): gc's
+		// 202 is now awaited to its terminal result, and gc concludes a
+		// session.message at the session's next idle boundary — minutes for
+		// a busy session — which must not hold the channel copy or this
+		// event's dispatch slot. Event-path work, so inside eventWG (the
+		// Add precedes this event goroutine's Done); slotless past the
+		// hold, like the company lane.
+		firstAttemptFailed := make(chan bool, 1)
+		if cfg.eventWG != nil {
+			cfg.eventWG.Add(1)
+		}
+		dispatchInflightWG.Add(1)
+		go func(inbound externalInboundMessage) {
+			if cfg.eventWG != nil {
+				defer cfg.eventWG.Done()
+			}
+			defer dispatchInflightWG.Done()
+			_, failed := deliverMentionOnly(cfg, targets, inbound)
+			firstAttemptFailed <- len(failed) > 0
+			if len(failed) == 0 {
+				return
+			}
+			// Slack got its 200 before the lane ran and owes no
+			// redelivery, and an own-thread follow-up has no app_mention
+			// twin — the forgotten event id alone lost the message on one
+			// transient gc failure (codex r6 post-cap). Retry in place on
+			// the company lane's bounded backoff; a twin arriving meanwhile
+			// takes the released claim and the retry skips on it.
+			if _, lost := retryMentionOnlyFailed(cfg, "mention-only:", failed, inbound, mentionOnlyConfirmFor(cfg)); len(lost) > 0 {
+				log.Printf("mention-only: UNDELIVERED chan=%s ts=%s %d injection(s) after %d in-place retries — message marked ⚠️; only an app_mention twin can still deliver them",
+					inbound.Conversation.ConversationID, inbound.ProviderMessageID, len(lost), len(companyMentionOnlyRetryBackoff))
+			}
+		}(mentionOnlyInbound(inbound, msg.Files, filesBlock))
+		select {
+		case failed := <-firstAttemptFailed:
+			if failed {
 				// An addressed session's copy was not delivered (codex r1
 				// P1). The session-level claim is already released, but
 				// handleSlackEvents refuses a redelivery of an event id
@@ -4130,6 +4169,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				commitDedup = false
 				cfg.eventDedup.forget(env.EventID)
 			}
+		case <-time.After(mentionOnlyConfirmHold):
+			log.Printf("mention-only: chan=%s ts=%s gc has not concluded the injection after %s — the lane finishes detached (it owns its retries); the channel copy proceeds",
+				inbound.Conversation.ConversationID, inbound.ProviderMessageID, mentionOnlyConfirmHold)
 		}
 	}
 	if willBuffer {

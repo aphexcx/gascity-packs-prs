@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,19 @@ type mentionOnlyGCStub struct {
 	inbound    []externalInboundMessage
 	injections []mentionOnlyInjection
 	failInject bool
+	// failFirst rejects (HTTP 404) that many injections, then recovers.
+	failFirst int
+	// asyncFailFirst makes that many ACCEPTED (202) injections conclude
+	// request.failed on the event stream; later ones conclude delivered.
+	asyncFailFirst int
+	posts          int
+	asyncFailed    map[int]bool
+	// streamGate, when set, holds every terminal result until closed —
+	// gc concluding at the session's next idle boundary. gateSession
+	// narrows the hold to that session's requests.
+	streamGate  chan struct{}
+	gateSession string
+	postSession map[int]string
 }
 
 type mentionOnlyInjection struct {
@@ -55,6 +69,10 @@ func (s *mentionOnlyGCStub) handler() http.HandlerFunc {
 		case strings.Contains(r.URL.Path, "/session/") && strings.HasSuffix(r.URL.Path, "/messages"):
 			s.mu.Lock()
 			fail := s.failInject
+			if s.failFirst > 0 {
+				s.failFirst--
+				fail = true
+			}
 			s.mu.Unlock()
 			if fail {
 				http.Error(w, "session not found", http.StatusNotFound)
@@ -71,8 +89,48 @@ func (s *mentionOnlyGCStub) handler() http.HandlerFunc {
 			_ = json.Unmarshal(body, &req)
 			s.mu.Lock()
 			s.injections = append(s.injections, mentionOnlyInjection{sessionID: sid, body: req.Message})
+			s.posts++
+			n := s.posts
+			if s.postSession == nil {
+				s.postSession = make(map[int]string)
+			}
+			s.postSession[n] = sid
+			if s.asyncFailFirst > 0 {
+				s.asyncFailFirst--
+				if s.asyncFailed == nil {
+					s.asyncFailed = make(map[int]bool)
+				}
+				s.asyncFailed[n] = true
+			}
 			s.mu.Unlock()
+			// gc's asynchronous acceptance: the terminal result follows on
+			// the event stream below.
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusAccepted)
+			_, _ = fmt.Fprintf(w, `{"status":"accepted","request_id":"mo-req-%d","event_cursor":"%d"}`, n, n)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/events/stream"):
+			n, _ := strconv.Atoi(r.URL.Query().Get("after_seq"))
+			s.mu.Lock()
+			failed := s.asyncFailed[n]
+			gate := s.streamGate
+			if s.gateSession != "" && s.postSession[n] != s.gateSession {
+				gate = nil
+			}
+			s.mu.Unlock()
+			if gate != nil {
+				select {
+				case <-gate:
+				case <-r.Context().Done():
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			if failed {
+				_, _ = fmt.Fprintf(w, "event: event\nid: %d\ndata: {\"type\":\"request.failed\",\"payload\":{\"request_id\":\"mo-req-%d\",\"operation\":\"session.message\",\"error_code\":\"message_failed\",\"error_message\":\"queued=false\"}}\n\n", n+1, n)
+				return
+			}
+			_, _ = fmt.Fprintf(w, "event: event\nid: %d\ndata: {\"type\":\"request.result.session.message\",\"payload\":{\"request_id\":\"mo-req-%d\"}}\n\n", n+1, n)
 		default:
 			w.WriteHeader(http.StatusAccepted)
 		}
@@ -421,6 +479,9 @@ func TestMentionOnly_TwinPairInjectsOnce(t *testing.T) {
 // (7) A failed injection releases its claim so a retry can take over,
 // and marks the message with ⚠️.
 func TestMentionOnly_FailedInjectionReleasesClaim(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = nil // the redelivery below is the retry under test
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
 	slackStub, reactions := newReactionRecordingSlackStub(t)
 	withSlackAPIStub(t, slackStub)
 	gc := &mentionOnlyGCStub{failInject: true}
@@ -463,6 +524,182 @@ func TestMentionOnly_FailedInjectionReleasesClaim(t *testing.T) {
 	// And a fully delivered event commits its id as before.
 	if proceed, wait := cfg.eventDedup.begin("EvF"); proceed || wait != nil {
 		t.Fatalf("event id after a successful retry: proceed=%v wait=%v, want committed", proceed, wait != nil)
+	}
+}
+
+// citadel gate r5 MAJOR (mention_only.go:910): gc answers the legacy lane's
+// injection with its ASYNCHRONOUS 202, and the request then fails. The 202
+// must not commit the delivery claim: the app_mention twin (same ts, its own
+// event id) has to find the claim open and deliver.
+func TestMentionOnly_Async202ThatFailsDoesNotCommitClaim(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = nil // isolate the claim: no in-place retry
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	slackStub, _ := newReactionRecordingSlackStub(t)
+	withSlackAPIStub(t, slackStub)
+	gc := &mentionOnlyGCStub{asyncFailFirst: 1}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	text := "<@" + testBotUserID + "> accepted, then failed"
+	const ts = "100.001300"
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		botMentionEnvelope(t, "message", "EvA1", "C1", ts, "", text, true), func() {})
+	dispatchInflightWG.Wait()
+
+	if proceed, _ := cfg.channelClaims.begin(mentionOnlyDeliveryClaimKey("mayor-session", "C1", ts)); !proceed {
+		t.Fatalf("delivery claim committed on a 202 whose request failed — the twin would be skipped and the session receives nothing")
+	} else {
+		cfg.channelClaims.forget(mentionOnlyDeliveryClaimKey("mayor-session", "C1", ts))
+	}
+	if n := len(cfg.mentionOnlyDeliveries.forSession("mayor-session")); n != 0 {
+		t.Fatalf("delivery log has %d record(s) for a failed async request, want 0", n)
+	}
+
+	// The Slack twin still delivers.
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		botMentionEnvelope(t, "app_mention", "EvA2", "C1", ts, "", text, true), func() {})
+	dispatchInflightWG.Wait()
+	_, injections := gc.snapshot()
+	if len(injections) != 2 {
+		t.Fatalf("session POSTs = %d, want 2 (the 202 that failed, then the twin's)", len(injections))
+	}
+	if n := len(cfg.mentionOnlyDeliveries.forSession("mayor-session")); n != 1 {
+		t.Fatalf("delivery log = %d record(s) after the twin delivered, want 1", n)
+	}
+}
+
+// main.go:4129 (codex r6 post-cap, same family): an own-thread follow-up has
+// no app_mention twin and Slack was already acked, so one transient gc
+// failure lost it. The legacy lane now retries in place on the same bounded
+// backoff as the company lane.
+func TestMentionOnly_FailedOwnThreadFollowUpRetriedInPlace(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{10 * time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	slackStub, _ := newReactionRecordingSlackStub(t)
+	withSlackAPIStub(t, slackStub)
+	gc := &mentionOnlyGCStub{failFirst: 1}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	cfg.ownThreads.record("C1", "100.000001", "mayor-session")
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvR1", "C1", "100.001400", "100.000001", "any update?"), func() {})
+	dispatchInflightWG.Wait()
+
+	_, injections := gc.snapshot()
+	if len(injections) != 1 || injections[0].sessionID != "mayor-session" {
+		t.Fatalf("injections = %+v, want the follow-up delivered by the in-place retry (no twin, no redelivery)", injections)
+	}
+	if n := len(cfg.mentionOnlyDeliveries.forSession("mayor-session")); n != 1 {
+		t.Fatalf("delivery log = %d record(s), want 1", n)
+	}
+}
+
+// Round 7: awaiting gc's terminal result must not hold the room's channel
+// copy — gc concludes a session.message at the session's next idle boundary.
+// Past mentionOnlyConfirmHold the event moves on and the lane finishes
+// detached.
+func TestMentionOnly_SlowConfirmationDoesNotHoldChannelCopy(t *testing.T) {
+	prevHold := mentionOnlyConfirmHold
+	mentionOnlyConfirmHold = 50 * time.Millisecond
+	t.Cleanup(func() { mentionOnlyConfirmHold = prevHold })
+	slackStub, _ := newReactionRecordingSlackStub(t)
+	withSlackAPIStub(t, slackStub)
+	gate := make(chan struct{})
+	gc := &mentionOnlyGCStub{streamGate: gate}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	cfg.eventDedup = newEventDedupCache(time.Minute)
+	if proceed, _ := cfg.eventDedup.begin("EvS1"); !proceed {
+		t.Fatalf("fresh event id must proceed")
+	}
+	const ts = "100.001500"
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		botMentionEnvelope(t, "message", "EvS1", "C1", ts, "", "<@"+testBotUserID+"> busy session", true), func() {})
+
+	// The event returned with the confirmation still outstanding: the
+	// channel copy went out, the claim is neither committed nor released.
+	inbound, _ := gc.snapshot()
+	if len(inbound) != 1 {
+		t.Fatalf("channel copies while gc is still concluding = %d, want 1", len(inbound))
+	}
+	if proceed, wait := cfg.channelClaims.begin(mentionOnlyDeliveryClaimKey("mayor-session", "C1", ts)); proceed || wait == nil {
+		t.Fatalf("claim while unconfirmed: proceed=%v parked=%v, want in flight (a twin parks behind it)", proceed, wait != nil)
+	}
+	if proceed, wait := cfg.eventDedup.begin("EvS1"); proceed || wait != nil {
+		t.Fatalf("event id: proceed=%v wait=%v, want committed on the channel copy's verdict", proceed, wait != nil)
+	}
+	// The anchor is on record for an explicit ts, marked provisional so the
+	// pack scripts never take it for the session's latest inbound (codex r7).
+	if got := cfg.mentionOnlyDeliveries.forSession("mayor-session"); len(got) != 1 || !got[0].Provisional {
+		t.Fatalf("delivery log while unconfirmed = %+v, want one PROVISIONAL record", got)
+	}
+	close(gate)
+	dispatchInflightWG.Wait()
+	if got := cfg.mentionOnlyDeliveries.forSession("mayor-session"); len(got) != 1 || got[0].Provisional {
+		t.Fatalf("delivery log once gc concluded = %+v, want one confirmed record", got)
+	}
+	if proceed, wait := cfg.channelClaims.begin(mentionOnlyDeliveryClaimKey("mayor-session", "C1", ts)); proceed || wait != nil {
+		t.Fatalf("claim after the terminal result: proceed=%v wait=%v, want committed", proceed, wait != nil)
+	}
+}
+
+// codex r7 P2: a file the adapter could not download must still be named in
+// the lane's reminder, as the channel copy names it.
+func TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded(t *testing.T) {
+	files := []slackFile{{ID: "F1", Name: "plan.pdf"}}
+	block := formatInboundFilesBlock(files, nil)
+	got := mentionOnlyInbound(externalInboundMessage{Text: ""}, files, block)
+	if got.Text != block || !strings.Contains(formatMentionOnlyReminder(config{}, got, mentionOnlyReasonOwnThread, "mayor"), "plan.pdf") {
+		t.Fatalf("file-only follow-up lost its file: text=%q", got.Text)
+	}
+	// Every file downloaded: the reminder's own attachments block covers it.
+	full := externalInboundMessage{Text: "see", Attachments: []externalAttachment{{URL: "file:///tmp/plan.pdf"}}}
+	if got := mentionOnlyInbound(full, files, block); got.Text != "see" || len(got.Attachments) != 1 {
+		t.Fatalf("fully downloaded inbound changed: %+v", got)
+	}
+}
+
+// codex r7 P2: one busy session must not hold another session's copy behind
+// its confirmation.
+func TestMentionOnly_BusyRecipientDoesNotDelayTheOthers(t *testing.T) {
+	gate := make(chan struct{})
+	gc := &mentionOnlyGCStub{streamGate: gate, gateSession: "busy-session"}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	targets := []mentionOnlyTarget{
+		{binding: mentionOnlyBinding{SessionID: "busy-session"}, reason: mentionOnlyReasonBotMention},
+		{binding: mentionOnlyBinding{SessionID: "idle-session"}, reason: mentionOnlyReasonBotMention},
+	}
+	inbound := externalInboundMessage{ProviderMessageID: "100.001600", Conversation: conversationRef{ConversationID: "C1"}, Text: "both of you"}
+	done := make(chan []mentionOnlyTarget, 1)
+	go func() {
+		delivered, _, _ := deliverMentionOnlyOutcomes(cfg, targets, inbound, mentionOnlyConfirmFor(cfg))
+		done <- delivered
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got := cfg.mentionOnlyDeliveries.forSession("idle-session"); len(got) == 1 && !got[0].Provisional {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("idle session not confirmed while the busy session's confirmation is outstanding")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(gate)
+	if delivered := <-done; len(delivered) != 2 || delivered[0].binding.SessionID != "busy-session" {
+		t.Fatalf("delivered = %+v, want both, in target order", delivered)
 	}
 }
 

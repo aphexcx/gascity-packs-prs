@@ -425,6 +425,36 @@ func TestCompanyRoomMentionOnlyRedeliveryAfterRestartNotDeliveredTwice(t *testin
 	}
 }
 
+// codex r7 P2: the durable marker is written under the identifier the
+// binding had at delivery time. A binding re-made under another identifier
+// (name -> gc id, the old one kept as an alias) must still find it.
+func TestCompanyRoomMentionOnlyDurableMarkerSurvivesRebindUnderAnotherIdentifier(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	reg := withMentionOnlyLane(t, h, outsiderBinding())
+
+	ev := humanMessage("1700000000.001450", "<@"+companyMOBotUserID+"> once only")
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	if got := len(gc.sessionCalls()); got == 0 {
+		t.Fatalf("first admission delivered nothing")
+	}
+	before := len(gc.sessionCalls())
+
+	if err := reg.Set(testChannelID, mentionOnlyBinding{SessionID: "jg-outsider-9", Handle: "outsider", Aliases: []string{"outsider-session"}}); err != nil {
+		t.Fatalf("rebind: %v", err)
+	}
+	h.gw.cfg.channelClaims = newEventDedupCache(time.Minute) // restart / claim TTL
+	admitCompanyRoomMessage(t, h, ev)                        // Slack redelivery
+	h.wait()
+	if after := len(gc.sessionCalls()); after != before {
+		t.Fatalf("session calls after rebind + redelivery = %d, want %d (the receipt already proves delivery)", after, before)
+	}
+}
+
 // (10) MINOR 3: the ⚠️ posted on the first failed attempt is removed when
 // the in-place retry reaches the session — it used to stay forever as a
 // false "session not reached" marker.

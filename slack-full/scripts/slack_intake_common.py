@@ -793,10 +793,14 @@ def _mention_only_event(delivery: dict[str, Any], session_id: str) -> dict[str, 
 
 
 def _latest_mention_only_event(session_id: str) -> dict[str, Any] | None:
-    deliveries = mention_only_deliveries_via_adapter(session_id)
-    if not deliveries:
-        return None
-    return _mention_only_event(deliveries[0], session_id)
+    # A provisional record is an injection gc has not concluded yet (it
+    # waits for the session's next idle boundary): the session may still be
+    # answering something else, so it is never the "latest inbound". An
+    # explicit ts still resolves it (mention_only_delivery_by_ts).
+    for d in mention_only_deliveries_via_adapter(session_id):
+        if not d.get("provisional"):
+            return _mention_only_event(d, session_id)
+    return None
 
 
 def _mention_only_conversation(conversation_id: str) -> dict[str, str]:

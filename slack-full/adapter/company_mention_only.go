@@ -131,13 +131,20 @@ func (g *companyGateway) mentionOnlyAlreadyReached(origin ReceiptOrigin, targets
 	if err != nil || r == nil || len(r.MentionOnlyDelivered) == 0 {
 		return targets
 	}
-	reached := make(map[string]bool, len(r.MentionOnlyDelivered))
-	for _, sid := range r.MentionOnlyDelivered {
-		reached[sid] = true
+	// Matched across the binding's identifiers: a binding re-made under
+	// another identifier (name -> id) must still find the marker written
+	// under the old one (codex r7 P2).
+	reached := func(b mentionOnlyBinding) bool {
+		for _, sid := range r.MentionOnlyDelivered {
+			if b.matchesSession(sid) {
+				return true
+			}
+		}
+		return false
 	}
 	out := targets[:0:0]
 	for _, t := range targets {
-		if reached[t.binding.SessionID] {
+		if reached(t.binding) {
 			log.Printf("company: mention-only lane session=%s chan=%s ts=%s already delivered per the durable receipt — skipped",
 				t.binding.SessionID, origin.ChannelID, origin.TS)
 			continue
@@ -350,8 +357,10 @@ func sleepUnlessDraining(cfg config, d time.Duration) bool {
 }
 
 // companyMentionOnlyRetryBackoff paces the in-place retries of a failed
-// company-room mention-only injection (codex r5 P1). Package-level so
-// tests can shorten it.
+// mention-only injection (codex r5 P1) — in both lanes since round 7: the
+// legacy lane's event is acked to Slack before it runs too, so nothing
+// upstream retries for it either (retryMentionOnlyFailed). Package-level
+// so tests can shorten it.
 var companyMentionOnlyRetryBackoff = []time.Duration{2 * time.Second, 10 * time.Second, 30 * time.Second}
 
 // companyMemberSessions returns every LOCAL-city session the bindings
@@ -486,19 +495,10 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 	// acked, so nothing upstream retries for us; a twin or duplicate
 	// delivery arriving meanwhile takes the released claim itself, this
 	// loop then skips on its committed claim and that copy records it.
-	for attempt, wait := range companyMentionOnlyRetryBackoff {
-		if len(failed) == 0 {
-			break
-		}
-		if !sleepUnlessDraining(cfg, wait) {
-			log.Printf("company: mention-only lane chan=%s ts=%s %d injection(s) still failed at shutdown — left pending on the receipt for the startup replay", ev.Channel, ev.TS, len(failed))
-			break
-		}
-		log.Printf("company: mention-only lane chan=%s ts=%s retrying %d failed injection(s) (attempt %d/%d)",
-			ev.Channel, ev.TS, len(failed), attempt+1, len(companyMentionOnlyRetryBackoff))
-		var d, st []mentionOnlyTarget
-		d, failed, st = deliverMentionOnlyOutcomes(cfg, failed, inbound, g.confirmMentionOnlyAsync)
-		reached = append(append(reached, d...), st...)
+	if len(failed) > 0 {
+		var d []mentionOnlyTarget
+		d, failed = retryMentionOnlyFailed(cfg, "company: mention-only lane", failed, inbound, g.confirmMentionOnlyAsync)
+		reached = append(reached, d...)
 	}
 	g.recordMentionOnlyOutcome(origin, reached, failed, true)
 	if len(failed) > 0 {

@@ -106,7 +106,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binding to a session (company-member exclusion, own-thread posts,
   upsert, delete, delivery log); the ambient participant merge folds
   handle case like gc does; `gc slack status` labels a pack-config row the
-  registry no longer holds as stale.
+  registry no longer holds as stale. Round 7 (citadel gate r5): the
+  legacy (non-company) lane awaits gc's asynchronous 202 to its terminal
+  result too, through the same hook as the company lane — a 202 whose
+  request then failed used to commit the delivery claim, the Slack twin
+  was skipped on it and the session received nothing; a failed legacy
+  injection is retried in place on the same bounded backoff (Slack was
+  already acked, and an own-thread follow-up has no `app_mention` twin;
+  this lane has no receipt, so retries cut short by shutdown are not
+  replayed); `upload --thread-current` on a mention-only delivery that
+  was a thread reply anchors at the thread root, not the reply's ts;
+  the legacy lane runs beside the channel copy and holds it at most
+  10 s (gc concludes an injection at the session's next idle boundary);
+  a delivery-log record stays `provisional` until gc concludes it
+  delivered, and the pack scripts never pick a provisional record as the
+  session's latest inbound or over a company pointer (an explicit
+  `--turn-ts` still resolves it); the receipt's delivered marker is
+  matched across a binding's identifiers; the legacy lane's reminder
+  names files the adapter could not download; a room's mention-only
+  recipients are injected concurrently, so one busy session does not
+  hold the others' copies; `upload --thread-current` refuses to pick a
+  mention-only room when the session's company current turn is at least
+  as new as that delivery (pass `--conversation-id` + `--thread-ts`).
 
 ### Changed
 

@@ -1700,6 +1700,56 @@ def test_thread_current_newer_mention_only_delivery_beats_company_pointer(
     assert "mention-only" in capsys.readouterr().err
 
 
+def test_thread_current_provisional_mention_only_delivery_never_beats_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """codex r7 P1: the adapter logs a delivery ahead of the POST and gc
+    concludes it at the session's next idle boundary. While it is still
+    provisional the session has not seen it — the company turn it IS
+    answering must not be diverted into the public room."""
+    rc, company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T07:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = rc.common
+    provisional = dict(_mention_only_delivery("C0B2Y13DRMK", "2.000", "1.000", "2026-09-10T08:00:00Z"),
+                       provisional=True)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: [provisional])
+
+    code = rc.main(["--session", "ollie-main", "--body", "answering the room", "--thread-current"])
+    assert code == 0
+    assert legacy_posts == [], "a provisional mention-only record diverted a company reply"
+    assert len(company_posts) == 1
+
+
+def test_upload_thread_current_refuses_mention_only_room_behind_a_newer_company_turn(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """codex r7 P1: company deliveries move pointers, not extmsg.inbound
+    events, so an OLDER mention-only delivery can look like the latest
+    inbound. upload --thread-current must not post the file into that
+    (public) room while the session is answering a newer company turn."""
+    rc, _company_posts, legacy_posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path,
+        pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    sys.modules.pop("slack_chat_upload", None)
+    import slack_chat_upload as upload  # type: ignore
+    assert upload.common is rc.common
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "ollie-main", "--thread-current"])
+    assert "company room turn" in str(exc.value)
+    assert legacy_posts == []
+
+    # A strictly newer mention-only delivery is the inbound being answered.
+    rc.common.mention_only_deliveries_via_adapter = (
+        lambda _sid: [_mention_only_delivery("C0B2Y13DRMK", "2.000", "1.000", "2026-09-10T10:00:00Z")])
+    assert upload.main(["--file", str(f), "--session", "ollie-main", "--thread-current"]) == 0
+    assert legacy_posts[0][0] == _MO_ADAPTER_BASE + "/publish-file"
+    assert legacy_posts[0][1]["reply_to_message_id"] == "1.000"
+
+
 def test_thread_current_company_pointer_wins_when_newer_than_mention_only(
         monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
     """Unchanged behaviour: the company turn is the newest inbound → the

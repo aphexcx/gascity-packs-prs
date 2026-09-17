@@ -203,12 +203,14 @@ def test_thread_current_unwraps_helper_tuple(
 ) -> None:
     """Regression for the gc-j8h live-smoke bug.
 
-    `find_latest_inbound_message_id_for_session` returns
-    `tuple[str, dict]`; the upload script must extract `match[0]`
-    rather than passing the whole tuple as `thread_ts`. Without
+    `find_latest_inbound_thread_for_session` returns
+    `tuple[str, str, dict]`; the upload script must extract the message
+    id rather than passing the whole tuple as `thread_ts`. Without
     the unpack, gc rejects the request with a 422 because
-    `reply_to_message_id` arrives on the wire as a 2-element list
-    instead of a string.
+    `reply_to_message_id` arrives on the wire as a list instead of a
+    string. On the gc path the anchor stays the inbound's own message id
+    (gc's reply_to_message_id contract) even when it carries a thread
+    root; only the bindingless mention-only path anchors at the root.
     """
     upload, common = _import_modules()
     captured: dict[str, Any] = {}
@@ -222,8 +224,8 @@ def test_thread_current_unwraps_helper_tuple(
     monkeypatch.setattr(common, "look_up_binding", lambda _sid: _fake_binding())
     monkeypatch.setattr(
         common,
-        "find_latest_inbound_message_id_for_session",
-        lambda _sid: ("1777779766.848799", _fake_binding()),
+        "find_latest_inbound_thread_for_session",
+        lambda _sid: ("1777779766.848799", "1777779000.000100", _fake_binding()),
     )
 
     file_path = _make_file(tmp_path)

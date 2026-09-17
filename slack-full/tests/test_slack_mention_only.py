@@ -515,6 +515,20 @@ def test_latest_inbound_prefers_newer_mention_only_delivery(
     assert conv["mention_only"] == "1"
 
 
+def test_latest_inbound_skips_provisional_mention_only_delivery(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r7 P1: a provisional record (gc has not concluded the injection)
+    is never the latest inbound; an explicit ts still resolves it."""
+    (common,) = _import()
+    gc_event = {"type": "extmsg.inbound", "ts": "2026-09-10T07:00:00+00:00",
+                "payload": {"provider": "slack", "conversation_id": "D1", "target_session": "jg-mayor-1"}}
+    monkeypatch.setattr(common, "_scan_gc_inbound_events", lambda sid: gc_event)
+    newer = dict(_delivery("C1", "2.000", "1.000", "2026-09-10T08:00:00Z"), provisional=True)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda sid: [newer])
+    assert common.find_latest_inbound_for_session("jg-mayor-1") is gc_event
+    assert common.mention_only_delivery_by_ts("jg-mayor-1", "C1", "2.000")[0] == "1.000"
+
+
 def test_latest_inbound_keeps_gc_event_when_newer(monkeypatch: pytest.MonkeyPatch) -> None:
     (common,) = _import()
     gc_event = {"type": "extmsg.inbound", "ts": "2026-09-10T09:00:00+08:00",  # 01:00Z
@@ -776,8 +790,8 @@ def test_upload_thread_current_on_mention_only_delivery_posts_bindingless(
     monkeypatch.setattr(common, "look_up_binding",
                         lambda _sid: pytest.fail("binding lookup must not run for a mention-only delivery"))
     mo_conv = common._mention_only_conversation("C0B2Y13DRMK")
-    monkeypatch.setattr(common, "find_latest_inbound_message_id_for_session",
-                        lambda _sid: ("2.000", mo_conv))
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                        lambda _sid: ("2.000", "", mo_conv))
     f = tmp_path / "shot.png"
     f.write_bytes(b"\x89PNG")
 
@@ -787,6 +801,35 @@ def test_upload_thread_current_on_mention_only_delivery_posts_bindingless(
     assert captured["body"]["conversation"]["kind"] == "room"
     assert captured["body"]["reply_to_message_id"] == "2.000"
     assert "mention-only room" in capsys.readouterr().err
+
+
+def test_upload_thread_current_on_mention_only_thread_reply_uses_thread_root(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """citadel gate r5 MAJOR (slack_chat_upload.py:172): the latest
+    mention-only delivery is reply 2.000 in thread 1.000 — the file must
+    hang off the thread ROOT. A thread_ts naming the child strands the
+    upload outside the conversation (same rule as reply-current)."""
+    common, upload = _import("slack_chat_upload")
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured.update(method=method, url=url, body=body)
+        return {"delivered": True, "file_id": "F1"}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "look_up_binding",
+                        lambda _sid: pytest.fail("binding lookup must not run for a mention-only delivery"))
+    mo_conv = common._mention_only_conversation("C0B2Y13DRMK")
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                        lambda _sid: ("2.000", "1.000", mo_conv))
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+
+    assert upload.main(["--file", str(f), "--session", "jg-mayor-1", "--thread-current"]) == 0
+    assert captured["url"] == ADAPTER_BASE + "/publish-file"
+    assert captured["body"]["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+    assert captured["body"]["reply_to_message_id"] == "1.000"
 
 
 # --- status --------------------------------------------------------------------------

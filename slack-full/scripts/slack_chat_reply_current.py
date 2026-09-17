@@ -303,6 +303,11 @@ def _mention_only_delivery_superseding_company(
     newest: dict[str, Any] | None = None
     newest_time = None
     for d in deliveries.values():
+        if d.get("provisional"):
+            # Not concluded by gc yet — the session has not seen it, so it
+            # cannot be the turn being answered (explicit --turn-ts above
+            # still resolves it).
+            continue
         t = common._event_time({"ts": d.get("received_at") or ""})
         if t is None:
             continue
