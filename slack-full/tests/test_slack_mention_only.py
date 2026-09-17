@@ -832,6 +832,105 @@ def test_upload_thread_current_on_mention_only_thread_reply_uses_thread_root(
     assert captured["body"]["reply_to_message_id"] == "1.000"
 
 
+def _fake_company_outbound(monkeypatch: pytest.MonkeyPatch, source: str | None, delivered_at: str):
+    """A stand-in slack_company_outbound holding one live pointer."""
+    import types
+    fake = types.ModuleType("slack_company_outbound")
+
+    class OutboundError(Exception):
+        pass
+
+    fake.OutboundError = OutboundError
+    fake.resolve_reply_pointer_source = lambda _name, **_kw: source
+    for reader in ("read_current_turn", "read_current_turn_dm", "read_current_turn_mpim"):
+        setattr(fake, reader, lambda _name: {"delivered_at": delivered_at})
+    monkeypatch.setitem(sys.modules, "slack_company_outbound", fake)
+    monkeypatch.setenv("GC_SESSION_NAME", "mayor")
+
+
+def _upload_capture(monkeypatch: pytest.MonkeyPatch, common) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        captured.update(method=method, url=url, body=body)
+        return {"delivered": True, "file_id": "F1"}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "_scan_gc_inbound_events", lambda _sid: None)
+    return captured
+
+
+def test_upload_thread_current_pending_room_delivery_does_not_unlock_the_old_thread(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """citadel gate r6 MAJOR (slack_chat_upload.py:102): an older CONFIRMED
+    public-room delivery, a newer company DM, and a still-PROVISIONAL room
+    delivery. The destination is the confirmed record (provisional ones are
+    never "latest"), so the company guard must compare the pointer against
+    THAT record — not the newest record in the room, which let the pending
+    one outvote the DM and sent the file into the old public thread."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    confirmed = _delivery("C0B2Y13DRMK", "1.000", received_at="2026-09-10T08:00:00Z")
+    pending = dict(_delivery("C0B2Y13DRMK", "3.000", received_at="2026-09-10T08:10:00Z"), provisional=True)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: [pending, confirmed])
+    _fake_company_outbound(monkeypatch, "dm", "2026-09-10T08:05:00Z")
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "jg-mayor-1", "--thread-current"])
+    assert "refusing to guess" in str(exc.value)
+    assert "C0B2Y13DRMK/1.000" in str(exc.value)
+    assert captured == {}, "the file went into the old public thread"
+
+
+def test_upload_thread_current_confirmed_delivery_newer_than_company_turn_uploads(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """The guard's other side: the selected confirmed delivery is strictly
+    newer than the company pointer, so it IS the turn being answered."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    older = _delivery("C0B2Y13DRMK", "1.000", received_at="2026-09-10T08:00:00Z")
+    newest = _delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:10:00Z")
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: [newest, older])
+    _fake_company_outbound(monkeypatch, "dm", "2026-09-10T08:05:00Z")
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+
+    assert upload.main(["--file", str(f), "--session", "jg-mayor-1", "--thread-current"]) == 0
+    assert captured["body"]["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+    assert captured["body"]["reply_to_message_id"] == "2.000"
+
+
+def test_provisional_record_resolves_only_when_it_is_the_sessions_sole_inbound(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """citadel read r3 MINOR 2: the provisional mark outlives gc's delivery
+    by the event-stream latency, so a session answering its FIRST mention-only
+    delivery inside that window found no inbound at all. The shared selection
+    accepts a provisional record when the session has no confirmed one — and
+    still ranks it below any gc inbound or company pointer."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    pending = dict(_delivery("C0B2Y13DRMK", "3.000", received_at="2026-09-10T08:10:00Z"), provisional=True)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: [pending])
+    assert common.select_mention_only_delivery([pending]) is pending
+    assert common.find_latest_inbound_thread_for_session("jg-mayor-1")[0] == "3.000"
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+    # Sole record, no company pointer: it is the turn being answered.
+    assert upload.main(["--file", str(f), "--session", "jg-mayor-1", "--thread-current"]) == 0
+    assert captured["body"]["reply_to_message_id"] == "3.000"
+    # Any company pointer — even an older one — outranks a provisional record.
+    _fake_company_outbound(monkeypatch, "dm", "2026-09-10T07:00:00Z")
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "jg-mayor-1", "--thread-current"])
+    assert "refusing to guess" in str(exc.value)
+    # A confirmed record, however old, is selected over it.
+    older = _delivery("C0B2Y13DRMK", "1.000", received_at="2026-09-10T08:00:00Z")
+    assert common.select_mention_only_delivery([pending, older]) is older
+
+
 # --- status --------------------------------------------------------------------------
 
 def test_status_lists_mention_only_bindings_from_config_and_registry_file(

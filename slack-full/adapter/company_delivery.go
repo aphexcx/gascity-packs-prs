@@ -167,6 +167,10 @@ type companyGateway struct {
 	// in commitReceipt, so a test can land a competing commit between the
 	// read and the write. Nil in production.
 	beforeReceiptUpdate func()
+	// mentionOnlyLaneStart runs first in every mention-only lane goroutine;
+	// returning false abandons that run — a test's stand-in for a process
+	// that exits right after the Slack ack. Nil in production.
+	mentionOnlyLaneStart func() bool
 	// reactHookTok / replyHookTok are the token-parameterized ack hooks used
 	// by DM receipts (the ack actor is the owner agent's token, not the
 	// switchboard). When set they take precedence over reactHook/replyHook, so
@@ -635,6 +639,9 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// root-keyed derivation survives a later body redaction/loss (C7).
 		ThreadRootTS: deriveHumanRootTS(decodeCompanyMessage(origin, env.Event)),
 		Event:        append(json.RawMessage(nil), env.Event...),
+		// The mention-only lane runs after the ack below; its replay intent
+		// is durable BEFORE it (citadel gate r7).
+		MentionOnlyLane: g.mentionOnlyAdmissionIntent(env, ev, room),
 	}
 	created, _, err := store.Admit(receipt)
 	if err != nil {

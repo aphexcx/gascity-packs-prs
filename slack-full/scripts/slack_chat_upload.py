@@ -70,17 +70,21 @@ def _resolve_conversation(session_id: str) -> dict[str, str]:
     }
 
 
-def _company_turn_not_older_than(session_id: str, conversation_id: str) -> str | None:
+def _company_turn_not_older_than(session_id: str, conversation_id: str, message_id: str) -> str | None:
     """Company surface (room/dm/mpim) whose current turn is at least as new
-    as the session's latest mention-only delivery in conversation_id.
+    as the mention-only delivery --thread-current selected
+    (conversation_id/message_id).
 
     Company deliveries move current-turn pointers, not the extmsg.inbound
     events the latest-inbound scan reads — so a mention-only delivery can
     look "latest" while the session is in fact answering a newer company DM,
     and --thread-current would upload into the (public) mention-only room
-    (codex r7 P1). Same recency rule as reply-current: only a strictly newer
-    delivery wins; an unparseable timestamp keeps the company side. None
-    when the session has no company pointer (or no GC_SESSION_NAME).
+    (codex r7 P1). The pointer is compared against the EXACT record the
+    destination came from, with reply-current's rule
+    (common.mention_only_delivery_supersedes): a newer record of the same
+    room that was not selected — a still-provisional one — must not outvote
+    the company turn (citadel gate r6 MAJOR). None when the session has no
+    company pointer (or no GC_SESSION_NAME).
     """
     session_name = os.environ.get("GC_SESSION_NAME", "").strip()
     if not session_name:
@@ -98,11 +102,11 @@ def _company_turn_not_older_than(session_id: str, conversation_id: str) -> str |
         turn = getattr(outbound, readers[source])(session_name)
     except outbound.OutboundError:
         return None
-    pointer_time = common._event_time({"ts": (turn or {}).get("delivered_at") or ""})
-    delivery = common.mention_only_delivery_for(session_id, conversation_id) or {}
-    delivery_time = common._event_time({"ts": delivery.get("received_at") or ""})
-    if (pointer_time is not None and delivery_time is not None
-            and delivery_time.replace(microsecond=0) > pointer_time.replace(microsecond=0)):
+    selected = next(
+        (d for d in common.mention_only_deliveries_via_adapter(session_id)
+         if d.get("channel_id") == conversation_id and d.get("ts") == message_id),
+        None)
+    if common.mention_only_delivery_supersedes(selected, (turn or {}).get("delivered_at") or ""):
         return None
     return source
 
@@ -218,7 +222,7 @@ def main(argv: list[str]) -> int:
                 # its own ts (citadel gate r5; same rule as reply-current).
                 thread_current_match = (thread_root or mid, latest_conv)
                 newer = _company_turn_not_older_than(
-                    session_id, latest_conv.get("conversation_id", ""))
+                    session_id, latest_conv.get("conversation_id", ""), mid)
                 if newer:
                     raise SystemExit(
                         f"--thread-current: this session's company {newer} turn is "

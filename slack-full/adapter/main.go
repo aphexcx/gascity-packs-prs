@@ -425,6 +425,13 @@ type config struct {
 	mentionOnly           *mentionOnlyRegistry
 	ownThreads            *ownThreadRegistry
 	mentionOnlyDeliveries *mentionOnlyDeliveryLog
+	// handleAliases / subteamAliases are the address registries the legacy
+	// dispatcher receives as parameters, also kept here so the company
+	// gateway's mention-only lane resolves a User Group mention with the
+	// same rules (resolveAddressTarget; citadel gate r6). Nil in bare test
+	// configs: only the `@handle:` prefix resolves then.
+	handleAliases  *handleAliasRegistry
+	subteamAliases *subteamAliasMap
 	// threadSessionsStorePath is the JSON file backing the thread →
 	// session registry used by Slack launcher mode (cby.5). When a
 	// `@@<handle>` post arrives in a thread, the adapter checks this
@@ -1679,6 +1686,9 @@ func main() {
 	}
 	log.Printf("subteam alias map: store=%s entries=%d (read-only; SIGHUP or restart to reload)",
 		cfg.subteamAliasStorePath, subteamAliases.Len())
+	// On cfg before the company gateway takes its copy (mention-only lane).
+	cfg.handleAliases = aliasReg
+	cfg.subteamAliases = subteamAliases
 
 	userAliases, err := newUserAliasMap(cfg.userAliasStorePath)
 	if err != nil {
@@ -3533,6 +3543,35 @@ func slackKindFromChannelType(channelType, channelID string) string {
 	return "dm"
 }
 
+// resolveAddressTarget parses the address a message opens with: a Slack
+// User Group mention (labeled — gated by aliasReg; unlabeled — gated by
+// subteamMap; see the policy note in processSlackEvent) or, on a miss, the
+// `@handle:` prefix. Returns the handle and the text after the address;
+// ("", "") when the message addresses nobody. The one resolution for the
+// legacy dispatcher AND the company gateway's mention-only lane, so the two
+// cannot disagree on who a message names (citadel gate r6).
+func resolveAddressTarget(cfg config, aliasReg *handleAliasRegistry, subteamMap *subteamAliasMap, text string) (target, rest string) {
+	if h, sid, remainder, ok := parseSubteamMentionPrefix(text); ok {
+		if h != "" {
+			// Labeled form: preserve gpk-2zi behavior — aliasReg gate.
+			if aliasReg != nil {
+				if _, aliased := aliasReg.Get(h); aliased {
+					return h, remainder
+				}
+			}
+		} else if mappedHandle, mapped := subteamMap.Get(sid); mapped {
+			// Unlabeled form: subteamAliasMap is the gate.
+			return mappedHandle, remainder
+		}
+	}
+	if cfg.handlePrefix != "" {
+		if h, remainder := parseHandlePrefix(text, cfg.handlePrefix); h != "" {
+			return h, remainder
+		}
+	}
+	return "", ""
+}
+
 // processSlackEvent runs the per-inbound-event work (signature parse,
 // postInbound to gc, optional alias dispatch). It owns the dispatch
 // slot supplied by handleSlackEvents: the slot is released either on
@@ -3684,28 +3723,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// to a handle with no registered session yields the channel-bound
 	// session seeing ExplicitTarget but no alias goroutine firing.
 	// That matches the existing `@handle:` text-prefix semantics.
-	if h, sid, rest, ok := parseSubteamMentionPrefix(msg.Text); ok {
-		if h != "" {
-			// Labeled form: preserve gpk-2zi behavior — aliasReg gate.
-			if aliasReg != nil {
-				if _, aliased := aliasReg.Get(h); aliased {
-					target = h
-					text = rest
-				}
-			}
-		} else {
-			// Unlabeled form: subteamAliasMap is the gate.
-			if mappedHandle, mapped := subteamMap.Get(sid); mapped {
-				target = mappedHandle
-				text = rest
-			}
-		}
-	}
-	if target == "" && cfg.handlePrefix != "" {
-		if h, rest := parseHandlePrefix(msg.Text, cfg.handlePrefix); h != "" {
-			target = h
-			text = rest
-		}
+	if h, rest := resolveAddressTarget(cfg, aliasReg, subteamMap, msg.Text); h != "" {
+		target = h
+		text = rest
 	}
 
 	// Thread-stickiness: if no explicit target was parsed AND this is a

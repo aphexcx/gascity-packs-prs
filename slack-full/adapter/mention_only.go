@@ -796,7 +796,7 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 			"    --thread-ts %s \\\n"+
 			"    --body-file <tmpfile>\n"+
 			"\n"+
-			"This posts directly through the slack adapter with your registered identity (you hold no channel binding here, and it is unaffected by any company-room pointer your session may carry). `gc slack react`, `reply-current --thread-current` and `upload --thread-current` also resolve this delivery on their own.\n"+
+			"This posts directly through the slack adapter with your registered identity (you hold no channel binding here, and it is unaffected by any company-room pointer your session may carry). `gc slack react`, `reply-current --thread-current` and `upload --thread-current` resolve this delivery on their own once gc has confirmed it (moments after it reaches you); the explicit --conversation-id/--thread-ts form above always works.\n"+
 			"</system-reminder>",
 		mentionOnlyReasonLine(reason, neutralizeMarkupBoundaries(handle)),
 		neutralizeMarkupBoundaries(channelDisplay(cfg, msg.Conversation.ConversationID)),
@@ -1088,12 +1088,17 @@ func deliverMentionOnlyEach(cfg config, targets []mentionOnlyTarget, inbound ext
 		}
 		if !ok {
 			cfg.mentionOnlyDeliveries.remove(t.binding, channel, ts)
-			cfg.channelClaims.forget(key)
-			log.Printf("mention-only: FAILED session=%s chan=%s ts=%s reason=%s — claim released for a twin/redelivery retry",
-				t.binding.SessionID, channel, ts, t.reason)
+			// The warning bookkeeping comes BEFORE the claim is released: a
+			// twin waiting on the claim can deliver the instant it is free,
+			// and its recovered() must find this miss (and its ⚠️ removal
+			// must follow the add), or the message keeps a false permanent
+			// warning (citadel gate r7 Minor).
 			if mentionOnlyFailures.failed(channel, ts, t.binding.SessionID) {
 				reactMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
 			}
+			cfg.channelClaims.forget(key)
+			log.Printf("mention-only: FAILED session=%s chan=%s ts=%s reason=%s — claim released for a twin/redelivery retry",
+				t.binding.SessionID, channel, ts, t.reason)
 			failed = append(failed, t)
 			continue
 		}

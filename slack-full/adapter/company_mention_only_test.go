@@ -855,7 +855,7 @@ func TestCompanyRoomMentionOnlyOutcomeSurvivesTwoStaleGenerations(t *testing.T) 
 	r := admitReceived(t, h, "1700000000.001900")
 	origin := r.Origin
 	target := mentionOnlyTarget{binding: outsiderBinding(), reason: mentionOnlyReasonBotMention}
-	h.gw.recordMentionOnlyOutcome(origin, nil, []mentionOnlyTarget{target}, false)
+	h.gw.recordMentionOnlyOutcome(origin, nil, []mentionOnlyTarget{target}, false, false)
 	if got, _ := h.gw.store().Get(origin); got == nil || len(got.MentionOnlyPending) != 1 {
 		t.Fatalf("seed: receipt=%+v, want the outsider pending before dispatch", got)
 	}
@@ -884,7 +884,7 @@ func TestCompanyRoomMentionOnlyOutcomeSurvivesTwoStaleGenerations(t *testing.T) 
 	}
 	t.Cleanup(func() { h.gw.beforeReceiptUpdate = nil })
 
-	h.gw.recordMentionOnlyOutcome(origin, []mentionOnlyTarget{target}, nil, true)
+	h.gw.recordMentionOnlyOutcome(origin, []mentionOnlyTarget{target}, nil, true, false)
 
 	if len(competing) != 0 {
 		t.Fatalf("competing commits left = %d, want both to have landed mid-write", len(competing))
@@ -932,5 +932,232 @@ func TestCommitReceiptStaleRetryIsBounded(t *testing.T) {
 	}
 	if want := 1 + commitReceiptStaleRetries; writes != want {
 		t.Errorf("write attempts = %d, want %d (one try + %d retries)", writes, want, commitReceiptStaleRetries)
+	}
+}
+
+// Round-8 repro for citadel gate r6's MAJOR (company_mention_only.go:412):
+// the company lane parsed only the literal `@handle:` prefix, so a
+// top-level mapped User Group mention — the form Slack's autocomplete
+// produces for an agent's group — selected no target, and the outsider
+// (outside company membership, so the gateway never delivers to it)
+// received nothing. Both Slack shapes must resolve exactly as in the
+// legacy dispatcher: unlabeled through subteam-aliases.json, labeled
+// through the handle-alias registry.
+func TestCompanyRoomMentionOnlyOutsiderReceivesMappedUserGroupMention(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"unlabeled", "<!subteam^S0OUTSIDER> can you look at this?"},
+		{"labeled", "<!subteam^S0UNMAPPED|@outsider> can you look at this?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gc := newFakeGC(t)
+			df := baseDirectoryFile()
+			bf := baseBindingsFile()
+			h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+			h.openBarrier()
+			withMentionOnlyLane(t, h, outsiderBinding())
+			subteams, err := newSubteamAliasMap(writeSubteamAliasFile(t, t.TempDir(), map[string]string{"S0OUTSIDER": "outsider"}))
+			if err != nil {
+				t.Fatalf("newSubteamAliasMap: %v", err)
+			}
+			aliases, err := newHandleAliasRegistry(filepath.Join(t.TempDir(), "handle_aliases.json"))
+			if err != nil {
+				t.Fatalf("newHandleAliasRegistry: %v", err)
+			}
+			if err := aliases.Set("outsider", "outsider-session"); err != nil {
+				t.Fatalf("alias Set: %v", err)
+			}
+			h.gw.cfg.subteamAliases = subteams
+			h.gw.cfg.handleAliases = aliases
+
+			admitCompanyRoomMessage(t, h, humanMessage("1700000000.000900", tc.text))
+			h.wait()
+
+			lane, _ := mentionOnlyInjections(gc.sessionCalls())
+			got := lane["outsider-session"]
+			if len(got) != 1 {
+				t.Fatalf("User Group mention injections to outsider = %d, want 1 (the company lane dropped a mapped subteam mention)", len(got))
+			}
+			if !strings.Contains(got[0], "@outsider addressed you") {
+				t.Errorf("reminder must carry the handle reason:\n%s", got[0])
+			}
+		})
+	}
+}
+
+// Round-8 repro for citadel gate r7's MAJOR (company_mention_only.go:487):
+// the lane's replay intent was first written AFTER the Slack ack and after
+// selection (which can wait on Slack lookups), so a process that exited in
+// between left an acked event with nothing for the startup replay to find —
+// the outsider's delivery was lost for good. The intent now rides the
+// receipt's admission write, before the ack.
+func TestCompanyRoomMentionOnlyExitBetweenAckAndPendingWriteIsReplayed(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+
+	// The process "exits" right after the ack: the lane goroutine never runs.
+	h.gw.mentionOnlyLaneStart = func() bool { return false }
+	ev := humanMessage("1700000000.002600", "<@"+companyMOBotUserID+"> are you there?")
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	if got := outsiderPostCount(gc); got != 0 {
+		t.Fatalf("outsider posts before the restart = %d, want 0 (the lane was cut off)", got)
+	}
+
+	// "Restart": fresh in-memory state; the receipt store stays.
+	h.gw.mentionOnlyLaneStart = nil
+	h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+	h.gw.cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+	h.gw.replayMentionOnlyPending()
+	h.wait()
+	if got := outsiderPostCount(gc); got != 1 {
+		t.Fatalf("after the startup replay: outsider posts = %d, want 1 (Slack was acked, nothing else redelivers)", got)
+	}
+	origin := ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS}
+	r, err := h.gw.store().Get(origin)
+	if err != nil || r == nil {
+		t.Fatalf("receipt: %v %v", r, err)
+	}
+	if r.MentionOnlyLane != nil || len(r.MentionOnlyPending) != 0 || len(r.MentionOnlyDelivered) != 1 {
+		t.Fatalf("after replay: lane=%+v pending=%+v delivered=%v, want the intent settled and the outsider delivered",
+			r.MentionOnlyLane, r.MentionOnlyPending, r.MentionOnlyDelivered)
+	}
+	// Once only: a second replay and Slack's redelivery find nothing to do.
+	h.gw.replayMentionOnlyPending()
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	if got := outsiderPostCount(gc); got != 1 {
+		t.Fatalf("replay must be once only: outsider posts = %d, want 1", got)
+	}
+}
+
+// The admission intent must not outlive a lane run that selected nobody:
+// plain chatter settles it, and a later replay wakes no one.
+func TestCompanyRoomMentionOnlyAdmissionIntentSettledWhenNobodyIsSelected(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+
+	ev := humanMessage("1700000000.002700", "lunch anyone?")
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	r, err := h.gw.store().Get(ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS})
+	if err != nil || r == nil {
+		t.Fatalf("receipt: %v %v", r, err)
+	}
+	if r.MentionOnlyLane != nil {
+		t.Fatalf("receipt.MentionOnlyLane = %+v, want nil once the lane selected nobody", r.MentionOnlyLane)
+	}
+	h.gw.replayMentionOnlyPending()
+	h.wait()
+	if got := outsiderPostCount(gc); got != 0 {
+		t.Fatalf("outsider posts = %d, want 0 (plain chatter never reaches a mention-only session)", got)
+	}
+}
+
+// citadel gate r7 Minor (company_mention_only.go:210): a pending entry
+// written under the session's NAME must leave the receipt when the binding
+// re-made under the gc id (name kept as an identifier) is the one reached —
+// the replay resolves it across identifiers, so completion must too.
+func TestCompanyRoomMentionOnlyPendingClearedAcrossIdentifiers(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+	h.gw.mentionOnlyLaneStart = func() bool { return false }
+	ev := humanMessage("1700000000.002800", "<@"+companyMOBotUserID+"> rebound")
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	origin := ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS}
+
+	byName := mentionOnlyTarget{binding: mentionOnlyBinding{SessionID: "outsider"}, reason: mentionOnlyReasonBotMention}
+	h.gw.recordMentionOnlyOutcome(origin, nil, []mentionOnlyTarget{byName}, false, false)
+	byID := mentionOnlyTarget{binding: outsiderBinding(), reason: mentionOnlyReasonBotMention}
+	h.gw.recordMentionOnlyOutcome(origin, []mentionOnlyTarget{byID}, nil, true, false)
+
+	r, err := h.gw.store().Get(origin)
+	if err != nil || r == nil {
+		t.Fatalf("receipt: %v %v", r, err)
+	}
+	if len(r.MentionOnlyPending) != 0 || len(r.MentionOnlyDelivered) != 1 {
+		t.Fatalf("pending=%+v delivered=%v, want the name-keyed pending entry cleared by the id-keyed delivery", r.MentionOnlyPending, r.MentionOnlyDelivered)
+	}
+}
+
+// codex r8 P2: a transient failure of the own-thread scan (rate limit,
+// timeout) is not evidence that the bot never posted in the thread. The
+// lane must leave the admission intent on the receipt so the next startup
+// runs the selection again — an own-thread follow-up has no app_mention
+// twin and Slack was already acked, so nothing else redelivers it.
+func TestCompanyRoomMentionOnlyFailedThreadScanKeepsAdmissionIntent(t *testing.T) {
+	var scans atomic.Int32
+	slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/conversations.replies") {
+			if scans.Add(1) == 1 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"ok":false,"error":"ratelimited"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"ts":"1700000000.002900","user":"` + companyMOBotUserID + `","text":"root by the bot"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(slack.Close)
+	prevBase := slackAPIBase
+	slackAPIBase = slack.URL
+	t.Cleanup(func() { slackAPIBase = prevBase })
+
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding(), mentionOnlyBinding{SessionID: "helper-session", Handle: "helper"})
+	h.gw.cfg.slackBotToken = "xoxb-test"
+
+	// The handle-addressed helper is selected regardless of the scan and
+	// must be delivered NOW; the outsider's own-thread selection is what
+	// the failed scan leaves unresolved (codex r8 P2, both halves).
+	ev := humanMessage("1700000000.002901", "@helper: one more question")
+	ev.ThreadTS = "1700000000.002900" // pre-registry thread: the scan decides
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	lane, _ := mentionOnlyInjections(gc.sessionCalls())
+	if got := outsiderPostCount(gc); got != 0 || len(lane["helper-session"]) != 1 {
+		t.Fatalf("after the failed scan: outsider posts = %d (want 0), helper posts = %d (want 1)", got, len(lane["helper-session"]))
+	}
+	origin := ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS}
+	r, err := h.gw.store().Get(origin)
+	if err != nil || r == nil {
+		t.Fatalf("receipt: %v %v", r, err)
+	}
+	if r.MentionOnlyLane == nil {
+		t.Fatalf("admission intent was settled on a failed own-thread scan — the follow-up is lost for good")
+	}
+
+	// Next startup: the scan succeeds, the follow-up reaches the outsider.
+	h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+	h.gw.replayMentionOnlyPending()
+	h.wait()
+	if got := outsiderPostCount(gc); got != 1 {
+		t.Fatalf("after replay: outsider posts = %d, want 1", got)
+	}
+	lane, _ = mentionOnlyInjections(gc.sessionCalls())
+	if len(lane["helper-session"]) != 1 {
+		t.Fatalf("replay re-delivered the helper: posts = %d, want still 1", len(lane["helper-session"]))
+	}
+	r, _ = h.gw.store().Get(origin)
+	if r.MentionOnlyLane != nil || len(r.MentionOnlyDelivered) != 2 {
+		t.Fatalf("after replay: lane=%+v delivered=%v, want settled and both delivered", r.MentionOnlyLane, r.MentionOnlyDelivered)
 	}
 }

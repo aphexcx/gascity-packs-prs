@@ -38,7 +38,28 @@ import (
 //     write can still deliver twice — at-least-once, never silently zero.
 //     Injections still failed when a run ends (ladder exhausted, or cut
 //     short by shutdown) are left on the receipt as MentionOnlyPending
-//     and replayed after the next startup recovery (codex r6 P1);
+//     and replayed after the next startup recovery (codex r6 P1). The
+//     lane's intent is durable even earlier: the admission write that
+//     creates the receipt — before the Slack ack — carries
+//     MentionOnlyLane whenever the room has outsider bindings, and a
+//     process that exits before the lane has recorded its selection has
+//     the whole lane re-run at the next startup (citadel gate r7);
+//   - KNOWN LIMIT — gc's four-minute cap on session.message: gc concludes
+//     an injection at the session's next idle boundary and, when the
+//     session stays busy past four minutes, emits request.failed with
+//     code "timeout" (gascity huma_handlers_sessions_command.go /
+//     client.go). The adapter reads that event as definitive (a failed
+//     injection), so a session busy longer than that looks undelivered:
+//     the ladder re-POSTs up to three more times over ~17 minutes and the
+//     message is marked ⚠️, while gc may still hold — and later process —
+//     one or more of the cancelled copies (duplicates), or may have
+//     dropped the line. Whether it queues or abandons them is not
+//     verified; the owner runs one busy-session test before a city whose
+//     sessions run long turns adopts this pack. The closing shape is to
+//     treat gc's timeout code as PENDING (re-confirm the same request
+//     rather than re-post it), or a gc-side terminal event that tells
+//     queued from failed — partly gc's home, so not changed here (citadel
+//     read r3 MINOR 1);
 //   - only for human-authored, admissible messages (bot posts are never
 //     an ask — the session's own replies through /publish must not wake
 //     it in its own thread);
@@ -66,31 +87,7 @@ import (
 // for an admitted company-room message and, if so, runs it in the
 // background. room is the directory entry the admission matched.
 func (g *companyGateway) mentionOnlyForCompanyRoom(env slackEventEnvelope, ev slackMessageEvent, room *CompanyRoom) {
-	if g == nil || room == nil || g.cfg.mentionOnly == nil {
-		return
-	}
-	bindings := g.cfg.mentionOnly.ForChannel(ev.Channel)
-	if len(bindings) == 0 {
-		return
-	}
-	// A bot post is never an ask (mirrors processSlackEvent's peer-bot
-	// branch): the session's own threaded replies land here as bot
-	// posts, and delivering them back would wake it on itself.
-	if ev.BotID != "" || ev.Subtype == "bot_message" || ev.User == "" {
-		return
-	}
-	// Company members are the gateway's own audience; a mention-only
-	// binding for one of them is redundant here, never a second copy.
-	members := g.companyMemberSessions(room)
-	outsiders := bindings[:0:0]
-	for _, b := range bindings {
-		if isCompanyMemberBinding(b, members) {
-			log.Printf("company: mention-only binding session=%s chan=%s is a company member of room %s — gateway delivery covers it, lane skipped",
-				b.SessionID, ev.Channel, room.Name)
-			continue
-		}
-		outsiders = append(outsiders, b)
-	}
+	outsiders := g.mentionOnlyOutsiders(ev, room, true)
 	if len(outsiders) == 0 {
 		return
 	}
@@ -99,8 +96,77 @@ func (g *companyGateway) mentionOnlyForCompanyRoom(env slackEventEnvelope, ev sl
 	go func() {
 		defer g.deliverWG.Done()
 		defer g.mentionOnlyWG.Done()
+		if g.mentionOnlyLaneStart != nil && !g.mentionOnlyLaneStart() {
+			return
+		}
 		g.deliverMentionOnlyForCompanyRoom(env, ev, outsiders)
 	}()
+}
+
+// mentionOnlyOutsiders returns the room's mention-only bindings the lane
+// serves for ev: none for a bot post, and never a binding whose session is
+// a company member of the room. Also asked at admission (verbose false),
+// to decide whether the receipt must carry the lane's replay intent.
+func (g *companyGateway) mentionOnlyOutsiders(ev slackMessageEvent, room *CompanyRoom, verbose bool) []mentionOnlyBinding {
+	if g == nil || room == nil || g.cfg.mentionOnly == nil {
+		return nil
+	}
+	bindings := g.cfg.mentionOnly.ForChannel(ev.Channel)
+	if len(bindings) == 0 {
+		return nil
+	}
+	// A bot post is never an ask (mirrors processSlackEvent's peer-bot
+	// branch): the session's own threaded replies land here as bot
+	// posts, and delivering them back would wake it on itself.
+	if ev.BotID != "" || ev.Subtype == "bot_message" || ev.User == "" {
+		return nil
+	}
+	// Company members are the gateway's own audience; a mention-only
+	// binding for one of them is redundant here, never a second copy.
+	members := g.companyMemberSessions(room)
+	outsiders := bindings[:0:0]
+	for _, b := range bindings {
+		if isCompanyMemberBinding(b, members) {
+			if verbose {
+				log.Printf("company: mention-only binding session=%s chan=%s is a company member of room %s — gateway delivery covers it, lane skipped",
+					b.SessionID, ev.Channel, room.Name)
+			}
+			continue
+		}
+		outsiders = append(outsiders, b)
+	}
+	return outsiders
+}
+
+// mentionOnlyAdmissionIntent is the replay intent the admission write puts
+// on a new receipt (nil when the lane has nothing to do for ev): the lane
+// itself runs only after the Slack ack, so this is what a process that
+// exits in between leaves for the startup replay (citadel gate r7).
+func (g *companyGateway) mentionOnlyAdmissionIntent(env slackEventEnvelope, ev slackMessageEvent, room *CompanyRoom) *MentionOnlyLaneIntent {
+	if len(g.mentionOnlyOutsiders(ev, room, false)) == 0 {
+		return nil
+	}
+	return &MentionOnlyLaneIntent{BotUserID: env.botUserID()}
+}
+
+// settleMentionOnlyIntent clears the admission intent of a lane run that
+// has nothing to record (nobody selected, or everyone already reached). A
+// run with targets clears it in the commit that writes them as pending
+// (recordMentionOnlyOutcome). No receipt (the app_mention twin outran the
+// message copy) or no intent: nothing to write.
+func (g *companyGateway) settleMentionOnlyIntent(origin ReceiptOrigin) {
+	store := g.store()
+	if store == nil {
+		return
+	}
+	r, err := store.Get(origin)
+	if err != nil || r == nil || r.MentionOnlyLane == nil {
+		return
+	}
+	if err := g.commitReceipt(r, func(cur *IngressReceipt) { cur.MentionOnlyLane = nil }); err != nil {
+		log.Printf("company: mention-only lane chan=%s ts=%s could not settle its admission intent (%v) — the next startup re-runs the selection",
+			origin.ChannelID, origin.TS, err)
+	}
 }
 
 // switchboardBot returns the bot user id an @mention must name to count
@@ -164,7 +230,7 @@ func (g *companyGateway) mentionOnlyAlreadyReached(origin ReceiptOrigin, targets
 // provisional (written before the POST) and is never read as proof (codex
 // r6 P2). Best-effort: a failed write leaves the in-memory claim as the
 // only guard, as before round 6.
-func (g *companyGateway) recordMentionOnlyOutcome(origin ReceiptOrigin, reached, failed []mentionOnlyTarget, waitForReceipt bool) {
+func (g *companyGateway) recordMentionOnlyOutcome(origin ReceiptOrigin, reached, failed []mentionOnlyTarget, waitForReceipt, keepIntent bool) {
 	store := g.store()
 	if store == nil || (len(reached) == 0 && len(failed) == 0) {
 		return
@@ -193,6 +259,12 @@ func (g *companyGateway) recordMentionOnlyOutcome(origin ReceiptOrigin, reached,
 		return
 	}
 	merge := func(cur *IngressReceipt) {
+		// The selection is on the receipt from here on: the admission
+		// intent has done its job — unless the selection is unfinished,
+		// when the next startup must run it again (keepIntent).
+		if !keepIntent {
+			cur.MentionOnlyLane = nil
+		}
 		done := make(map[string]bool, len(cur.MentionOnlyDelivered)+len(reached))
 		for _, sid := range cur.MentionOnlyDelivered {
 			done[sid] = true
@@ -204,10 +276,25 @@ func (g *companyGateway) recordMentionOnlyOutcome(origin ReceiptOrigin, reached,
 			}
 		}
 		sort.Strings(cur.MentionOnlyDelivered)
+		// A pending entry is matched across the binding's identifiers, like
+		// the replay that resolves it: written under the session's name, it
+		// must still leave when the binding re-made under the gc id is the
+		// one reached (citadel gate r7 Minor).
+		reachedAs := func(sid string) bool {
+			if done[sid] {
+				return true
+			}
+			for _, t := range reached {
+				if t.binding.matchesSession(sid) {
+					return true
+				}
+			}
+			return false
+		}
 		pending := cur.MentionOnlyPending[:0:0]
 		queued := make(map[string]bool)
 		for _, pt := range cur.MentionOnlyPending {
-			if !done[pt.SessionID] && !queued[pt.SessionID] {
+			if !reachedAs(pt.SessionID) && !queued[pt.SessionID] {
 				queued[pt.SessionID] = true
 				pending = append(pending, pt)
 			}
@@ -279,7 +366,7 @@ func (g *companyGateway) replayMentionOnlyPending() {
 		return
 	}
 	for _, r := range receipts {
-		if len(r.MentionOnlyPending) == 0 {
+		if len(r.MentionOnlyPending) == 0 && r.MentionOnlyLane == nil {
 			continue
 		}
 		if g.now().Sub(r.ReceivedAt) > companyMentionOnlyReplayMaxAge {
@@ -290,25 +377,36 @@ func (g *companyGateway) replayMentionOnlyPending() {
 			log.Printf("company: mention-only replay %s: event body unavailable — %d pending injection(s) left", r.ID, len(r.MentionOnlyPending))
 			continue
 		}
+		if r.MentionOnlyLane != nil {
+			// The previous run exited between the ack and the lane's first
+			// write (citadel gate r7): nothing was selected yet, so the WHOLE
+			// lane runs again — selection included — on an envelope rebuilt
+			// from the receipt. The pending write clears the intent, so a
+			// receipt never carries both.
+			g.replayMentionOnlyLane(r, ev)
+			continue
+		}
 		var members map[string]bool
 		if room, ok := g.dirStore.Snapshot().RoomByChannel(r.Origin.TeamID, ev.Channel); ok {
 			members = g.companyMemberSessions(room)
 		}
 		bindings := g.cfg.mentionOnly.ForChannel(ev.Channel)
 		var targets []mentionOnlyTarget
+		// keep holds the pending entries' OWN identifiers: an entry written
+		// under a session's old name and matched by its rebound binding must
+		// survive the prune below, or a restart before the replay's pending
+		// write loses it (codex r8 P2).
+		keep := make(map[string]bool, len(r.MentionOnlyPending))
 		for _, pt := range r.MentionOnlyPending {
 			for _, b := range bindings {
 				if b.matchesSession(pt.SessionID) && !isCompanyMemberBinding(b, members) {
 					targets = append(targets, mentionOnlyTarget{binding: b, reason: pt.Reason})
+					keep[pt.SessionID] = true
 					break
 				}
 			}
 		}
 		if dropped := len(r.MentionOnlyPending) - len(targets); dropped > 0 {
-			keep := make(map[string]bool, len(targets))
-			for _, t := range targets {
-				keep[t.binding.SessionID] = true
-			}
 			if err := g.commitReceipt(r, func(cur *IngressReceipt) {
 				kept := cur.MentionOnlyPending[:0:0]
 				for _, pt := range cur.MentionOnlyPending {
@@ -331,10 +429,28 @@ func (g *companyGateway) replayMentionOnlyPending() {
 		go func() {
 			defer g.deliverWG.Done()
 			defer g.mentionOnlyWG.Done()
-			explicit, _ := parseHandlePrefix(ev.Text, g.cfg.handlePrefix)
-			g.runMentionOnlyTargets(origin, ev, explicit, targets)
+			explicit, _ := resolveAddressTarget(g.cfg, g.cfg.handleAliases, g.cfg.subteamAliases, ev.Text)
+			g.runMentionOnlyTargets(origin, ev, explicit, targets, false)
 		}()
 	}
+}
+
+// replayMentionOnlyLane re-enters the live lane for a receipt whose
+// admission intent was never settled. The envelope carries what selection
+// reads: the team, the delivering app, and that app's bot user.
+func (g *companyGateway) replayMentionOnlyLane(r *IngressReceipt, ev slackMessageEvent) {
+	room, ok := g.dirStore.Snapshot().RoomByChannel(r.Origin.TeamID, ev.Channel)
+	if !ok || len(g.mentionOnlyOutsiders(ev, room, false)) == 0 {
+		// No longer a company room, or no outsider binding left to serve.
+		g.settleMentionOnlyIntent(r.Origin)
+		return
+	}
+	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID}
+	if r.MentionOnlyLane.BotUserID != "" {
+		env.Authorizations = []slackEventAuthorization{{UserID: r.MentionOnlyLane.BotUserID, IsBot: true}}
+	}
+	log.Printf("company: mention-only replay chan=%s ts=%s — the previous run exited before the lane recorded its selection; running it again", ev.Channel, ev.TS)
+	g.mentionOnlyForCompanyRoom(env, ev, room)
 }
 
 // sleepUnlessDraining waits d in short slices and gives up (false) as soon
@@ -405,11 +521,14 @@ func isCompanyMemberBinding(b mentionOnlyBinding, members map[string]bool) bool 
 func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope, ev slackMessageEvent, bindings []mentionOnlyBinding) {
 	cfg := g.cfg
 	isThreadReply := ev.ThreadTS != "" && ev.ThreadTS != ev.TS
-	// The `@handle:` prefix is the only address form resolved here: User
-	// Group mentions and thread-sticky handles need the alias registries
-	// the legacy dispatcher owns, and a company room's mention-only
-	// audience is reached by bot @mention or handle prefix in practice.
-	target, _ := parseHandlePrefix(ev.Text, cfg.handlePrefix)
+	// The legacy dispatcher's address resolution (`@handle:` prefix, labeled
+	// and mapped User Group mentions — resolveAddressTarget), so a session
+	// is addressed the same way in either kind of room. Thread-sticky
+	// handles stay legacy-only: they are written by the alias dispatcher,
+	// which never runs for a company room. No alias leg here either, so a
+	// binding matched through the alias registry is always this lane's to
+	// deliver (aliasLegDelivers stays false).
+	target, _ := resolveAddressTarget(cfg, cfg.handleAliases, cfg.subteamAliases, ev.Text)
 	botUID, fromSwitchboard := g.switchboardBot(env)
 	in := mentionOnlyInput{
 		bindings:      bindings,
@@ -417,6 +536,10 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 		target:        target,
 		isThreadReply: isThreadReply,
 	}
+	if target != "" && cfg.handleAliases != nil {
+		in.aliasedSessionID, _ = cfg.handleAliases.Get(target)
+	}
+	scanFailed := false
 	if isThreadReply {
 		in.threadPosters, in.threadKnown = cfg.ownThreads.posters(ev.Channel, ev.ThreadTS)
 		if !in.threadKnown {
@@ -428,6 +551,7 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 				cancel()
 				if err != nil {
 					log.Printf("company: mention-only own-thread scan fetch failed chan=%s thread=%s: %v", ev.Channel, ev.ThreadTS, err)
+					scanFailed = true
 				} else {
 					in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ev.TS)
 				}
@@ -435,17 +559,37 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 		}
 	}
 	origin := ReceiptOrigin{TeamID: env.TeamID, ChannelID: ev.Channel, TS: ev.TS}
-	g.runMentionOnlyTargets(origin, ev, target, selectMentionOnlyTargets(in))
+	targets := selectMentionOnlyTargets(in)
+	if scanFailed {
+		// A failed scan is not evidence that the bot never posted: the
+		// selection is unfinished, so the admission intent stays on the
+		// receipt — whatever WAS selected (a handle, a bot mention) is
+		// delivered now — and the next startup runs the lane, scan
+		// included, again instead of settling a follow-up nobody else will
+		// redeliver (codex r8 P2). Sessions reached now are skipped then.
+		log.Printf("company: mention-only lane chan=%s ts=%s thread=%s selection unfinished (own-thread scan failed) — admission intent left for the startup replay",
+			ev.Channel, ev.TS, ev.ThreadTS)
+		if len(targets) == 0 {
+			return
+		}
+	}
+	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed)
 }
 
 // runMentionOnlyTargets injects the selected targets (minus the ones the
 // receipt durably records as reached), retries failures in place, and
 // records the confirmed outcome on the receipt. Shared by the live lane and
 // the startup replay of pending injections.
-func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMessageEvent, explicitTarget string, targets []mentionOnlyTarget) {
+//
+// selectionUnfinished says the caller could not finish selecting (own-thread
+// scan failed): the outcome writes then leave the admission intent in place.
+func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMessageEvent, explicitTarget string, targets []mentionOnlyTarget, selectionUnfinished bool) {
 	cfg := g.cfg
 	targets = g.mentionOnlyAlreadyReached(origin, targets)
 	if len(targets) == 0 {
+		if !selectionUnfinished {
+			g.settleMentionOnlyIntent(origin)
+		}
 		return
 	}
 	text := rewriteSlackUserMentions(cfg, ev.Text)
@@ -484,7 +628,7 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 	// the startup replay finds it. The outcome write below clears what was
 	// reached. Costs a possible second delivery when the exit falls between
 	// gc's accept and that write: at-least-once, never silently zero.
-	g.recordMentionOnlyOutcome(origin, nil, targets, false)
+	g.recordMentionOnlyOutcome(origin, nil, targets, false, selectionUnfinished)
 	// settled = skipped on a committed claim: the app_mention twin (or a
 	// redelivery) delivered it. It is recorded as reached here too, because
 	// a twin that outran the message copy had no receipt to write to.
@@ -500,7 +644,7 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 		d, failed = retryMentionOnlyFailed(cfg, "company: mention-only lane", failed, inbound, g.confirmMentionOnlyAsync)
 		reached = append(reached, d...)
 	}
-	g.recordMentionOnlyOutcome(origin, reached, failed, true)
+	g.recordMentionOnlyOutcome(origin, reached, failed, true, selectionUnfinished)
 	if len(failed) > 0 {
 		log.Printf("company: mention-only lane chan=%s ts=%s UNDELIVERED %d injection(s) — message marked ⚠️, left pending on the receipt; the app_mention twin, a Slack redelivery or the next startup replay can still deliver them",
 			ev.Channel, ev.TS, len(failed))

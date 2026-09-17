@@ -290,31 +290,14 @@ def _mention_only_delivery_superseding_company(
             turn = reader(session_name)
         except outbound.OutboundError:
             turn = None
-    pointer_time = common._event_time({"ts": (turn or {}).get("delivered_at") or ""})
-    if pointer_time is None:
-        return None
-    # The adapter stamps company pointers at whole-second RFC3339 while
-    # mention-only received_at keeps fractional seconds (codex r4 P1):
-    # compare at the shared precision so a delivery at 08:00:00.100 never
-    # outranks a DM turn recorded as 08:00:00Z that actually arrived later
-    # within that second. Same-second is a tie, and ties keep the company
-    # surface.
-    pointer_time = pointer_time.replace(microsecond=0)
-    newest: dict[str, Any] | None = None
-    newest_time = None
-    for d in deliveries.values():
-        if d.get("provisional"):
-            # Not concluded by gc yet — the session has not seen it, so it
-            # cannot be the turn being answered (explicit --turn-ts above
-            # still resolves it).
-            continue
-        t = common._event_time({"ts": d.get("received_at") or ""})
-        if t is None:
-            continue
-        t = t.replace(microsecond=0)
-        if newest_time is None or t > newest_time:
-            newest, newest_time = d, t
-    if newest is None or newest_time <= pointer_time:
+    # One selection and one comparison, shared with upload --thread-current
+    # (common.select_mention_only_delivery / mention_only_delivery_supersedes):
+    # the newest CONFIRMED delivery, and only when strictly newer than the
+    # pointer at whole-second precision. A provisional record is not
+    # concluded by gc yet — the session has not seen it, so it cannot be the
+    # turn being answered (explicit --turn-ts above still resolves it).
+    newest = common.select_mention_only_delivery(list(deliveries.values()))
+    if not common.mention_only_delivery_supersedes(newest, (turn or {}).get("delivered_at") or ""):
         return None
     return newest
 

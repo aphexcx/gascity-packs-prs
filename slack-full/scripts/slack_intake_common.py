@@ -563,7 +563,8 @@ def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
     mo_event = _latest_mention_only_event(session_id)
     if gc_event is None:
         return mo_event
-    if mo_event is None:
+    if mo_event is None or (mo_event.get("payload") or {}).get("provisional"):
+        # A provisional record never outranks an inbound gc delivered.
         return gc_event
     gc_time = _event_time(gc_event)
     mo_time = _event_time(mo_event)
@@ -728,6 +729,10 @@ def session_is_mention_only_in(session_id: str, channel_id: str) -> bool:
             continue
         if b.get("session_id") in identities or b.get("session_name") in identities:
             return True
+        # The binding's further gc identifiers (codex r8 P2): a caller
+        # naming the session by one of them must get the adapter route too.
+        if any(a in identities for a in (b.get("aliases") or []) if isinstance(a, str)):
+            return True
     return False
 
 
@@ -769,8 +774,13 @@ def mention_only_deliveries_via_adapter(session_id: str) -> list[dict[str, Any]]
                 continue
             merged.setdefault((item["channel_id"], item["ts"]), item)
     out = list(merged.values())
-    out.sort(key=lambda d: (_event_time({"ts": d.get("received_at") or ""}) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), d["ts"]), reverse=True)
+    out.sort(key=_mention_only_delivery_order, reverse=True)
     return out
+
+
+def _mention_only_delivery_order(d: dict[str, Any]) -> tuple[datetime.datetime, str]:
+    received = _event_time({"ts": d.get("received_at") or ""})
+    return (received or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), d.get("ts") or "")
 
 
 def _mention_only_event(delivery: dict[str, Any], session_id: str) -> dict[str, Any]:
@@ -788,19 +798,62 @@ def _mention_only_event(delivery: dict[str, Any], session_id: str) -> dict[str, 
             "message_id": delivery["ts"],
             "thread_ts": delivery.get("thread_ts") or "",
             "reason": delivery.get("reason") or "",
+            "provisional": bool(delivery.get("provisional")),
         },
     }
 
 
-def _latest_mention_only_event(session_id: str) -> dict[str, Any] | None:
-    # A provisional record is an injection gc has not concluded yet (it
-    # waits for the session's next idle boundary): the session may still be
-    # answering something else, so it is never the "latest inbound". An
-    # explicit ts still resolves it (mention_only_delivery_by_ts).
-    for d in mention_only_deliveries_via_adapter(session_id):
+def select_mention_only_delivery(deliveries: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """THE mention-only record the latest-inbound tooling resolves.
+
+    One selection for every reader (reply-current, react, upload
+    --thread-current) so the destination and the company-pointer guard can
+    never look at different records (citadel gate r6 MAJOR: the upload
+    guard read the newest record of the room, provisional included, while
+    the destination was the newest CONFIRMED one).
+
+    Newest first (sorted here, so no caller's order matters). A provisional record is an injection gc has
+    not concluded yet (it waits for the session's next idle boundary): the
+    session may still be answering something else, so it never outranks a
+    confirmed record. It is returned only when the session has no confirmed
+    record at all — the mark outlives gc's delivery by the event-stream
+    latency, and a first-ever delivery answered inside that window would
+    otherwise resolve to nothing (citadel read r3 MINOR 2). Callers still
+    rank it below any gc inbound or company pointer
+    (mention_only_delivery_supersedes). An explicit ts resolves any record
+    (mention_only_delivery_by_ts).
+    """
+    ordered = sorted(deliveries, key=_mention_only_delivery_order, reverse=True)
+    for d in ordered:
         if not d.get("provisional"):
-            return _mention_only_event(d, session_id)
-    return None
+            return d
+    return ordered[0] if ordered else None
+
+
+def mention_only_delivery_supersedes(delivery: dict[str, Any] | None, pointer_delivered_at: str) -> bool:
+    """True when delivery — the record select_mention_only_delivery chose —
+    is the turn being answered rather than the company pointer stamped
+    pointer_delivered_at.
+
+    Only a CONFIRMED delivery STRICTLY newer than the pointer wins. The
+    adapter stamps company pointers at whole-second RFC3339 while
+    mention-only received_at keeps fractional seconds (codex r4 P1), so the
+    two are compared at the shared precision: same-second is a tie, and ties
+    — like unparseable timestamps and provisional records — keep the company
+    surface (never auto-route a private reply into a public room).
+    """
+    if not delivery or delivery.get("provisional"):
+        return False
+    pointer_time = _event_time({"ts": pointer_delivered_at or ""})
+    delivery_time = _event_time({"ts": delivery.get("received_at") or ""})
+    if pointer_time is None or delivery_time is None:
+        return False
+    return delivery_time.replace(microsecond=0) > pointer_time.replace(microsecond=0)
+
+
+def _latest_mention_only_event(session_id: str) -> dict[str, Any] | None:
+    d = select_mention_only_delivery(mention_only_deliveries_via_adapter(session_id))
+    return _mention_only_event(d, session_id) if d else None
 
 
 def _mention_only_conversation(conversation_id: str) -> dict[str, str]:
@@ -815,14 +868,6 @@ def _mention_only_conversation(conversation_id: str) -> dict[str, str]:
         # no gc binding for it and must publish via the adapter.
         "mention_only": "1",
     }
-
-
-def mention_only_delivery_for(session_id: str, conversation_id: str) -> dict[str, Any] | None:
-    """Latest mention-only delivery record for session_id in conversation_id."""
-    for d in mention_only_deliveries_via_adapter(session_id):
-        if d.get("channel_id") == conversation_id:
-            return d
-    return None
 
 
 def mention_only_delivery_by_ts(

@@ -337,6 +337,23 @@ type IngressReceipt struct {
 	// the gateway replays these after the next startup recovery (codex r6
 	// P1). An entry leaves the list when its session is reached.
 	MentionOnlyPending []MentionOnlyPendingTarget `json:"mention_only_pending,omitempty"`
+	// MentionOnlyLane is the lane's replay intent, written IN the admission
+	// write — before the Slack ack — whenever the room has mention-only
+	// sessions outside company membership (citadel gate r7): selection runs
+	// after the ack and can wait on Slack lookups, and a process that exits
+	// before the lane has recorded its targets would otherwise leave an
+	// acked event with nothing for the startup replay to find. Cleared by
+	// the commit that records the selection (MentionOnlyPending) or finds
+	// nobody selected; a receipt still carrying it at startup has the whole
+	// lane re-run.
+	MentionOnlyLane *MentionOnlyLaneIntent `json:"mention_only_lane,omitempty"`
+}
+
+// MentionOnlyLaneIntent keeps the one envelope fact selection needs that
+// the receipt does not otherwise hold: the bot user of the delivering app's
+// authorization (switchboardBot).
+type MentionOnlyLaneIntent struct {
+	BotUserID string `json:"bot_user_id,omitempty"`
 }
 
 // MentionOnlyPendingTarget is one undelivered mention-only injection: the

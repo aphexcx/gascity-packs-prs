@@ -128,6 +128,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hold the others' copies; `upload --thread-current` refuses to pick a
   mention-only room when the session's company current turn is at least
   as new as that delivery (pass `--conversation-id` + `--thread-ts`).
+  Round 8 (citadel gates r6/r7 + read r3): `upload --thread-current`
+  compares the company pointer against the exact confirmed delivery it
+  selected — a still-provisional newer record of the same room used to
+  outvote a newer company DM and send the file into the old public
+  thread; selection and comparison are now one shared helper for
+  `reply-current` and `upload` (`select_mention_only_delivery`,
+  `mention_only_delivery_supersedes`), and a provisional record resolves
+  only when the session has no confirmed record at all, still below any
+  gc inbound or company pointer (the mark outlives gc's delivery by the
+  event-stream latency); the company lane resolves Slack User Group
+  mentions — labeled through the handle-alias registry, unlabeled
+  through subteam-aliases.json — with the legacy dispatcher's own
+  address resolution (`resolveAddressTarget`), so a mapped subteam
+  mention reaches a mention-only outsider of a company room; the lane's
+  replay intent (`mention_only_lane`) is written in the receipt's
+  admission write, before the Slack ack, so a process that exits before
+  the lane records its selection has the whole lane re-run at the next
+  startup; a failed legacy injection records its warning before it
+  releases the claim (no false permanent ⚠️ when a twin delivers first);
+  a pending entry is cleared across a binding's identifiers; the
+  reminder says the `--thread-current` shortcuts resolve a delivery once
+  gc has confirmed it. KNOWN LIMIT (documented in
+  `company_mention_only.go`, not changed): gc caps a `session.message` at
+  four minutes and emits `request.failed` code `timeout`, which the
+  adapter reads as definitive — a session busy longer than that looks
+  undelivered and is re-posted up to three more times; whether gc then
+  queues or drops the cancelled copies is unverified (owner test before
+  a city with long turns adopts the pack); the closing shape is to treat
+  the timeout code as pending and re-confirm the same request.
 
 ### Changed
 
