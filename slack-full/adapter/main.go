@@ -1761,6 +1761,11 @@ func main() {
 		log.Printf("WARN: company ingress store %q: %v — gateway starting DEGRADED (company events 503, never legacy; construction retried)",
 			cfg.companyIngressDir, rerr)
 	}
+	// The shutdown admission barrier is created BEFORE the gateway takes
+	// its copy of cfg: the gateway's mention-only lane reads cfg.draining
+	// to stop retrying at shutdown, and a flag assigned after the copy
+	// left that branch dead (citadel Fable read r1, jg-vobf70 round 6).
+	cfg.draining = &atomic.Bool{}
 	companyGW := newCompanyGateway(cfg, companyDirStore, companyBindStore, receipts)
 	if rerr != nil {
 		companyGW.setStoreError(rerr)
@@ -1798,8 +1803,8 @@ func main() {
 	// 2a'/2b') — wired before the handlers close over cfg. The spool
 	// receives what the shutdown drain cannot deliver; with no spool
 	// (SLACK_COALESCE_SPOOL_PATH explicitly empty) spill stays nil and
-	// the coalescer logs that residue as LOST instead.
-	cfg.draining = &atomic.Bool{}
+	// the coalescer logs that residue as LOST instead. (cfg.draining is
+	// created above, before the company gateway copies cfg.)
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
@@ -2092,6 +2097,15 @@ func main() {
 	//    through processSlackEvent concludes on gc-forward timeouts).
 	if !awaitWaitGroup(cfg.eventWG, shutdownEventDrainTimeout) {
 		log.Printf("shutdown: in-flight event goroutines still running after %s — proceeding to coalescer drain (a straggler admission lands in the spool via the closed gate, not in memory)", shutdownEventDrainTimeout)
+	}
+	// 3b. Join the company gateway's mention-only lane (jg-vobf70 round
+	//    6): its goroutines are spawned by the event goroutines awaited
+	//    above, inject straight into gc (never the coalescer), and stop
+	//    retrying once draining is set — so this wait is bounded by one
+	//    in-flight gc POST. An injection cut off here released its claim;
+	//    Slack's redelivery after the restart retakes it.
+	if !awaitWaitGroup(&companyGW.mentionOnlyWG, shutdownEventDrainTimeout) {
+		log.Printf("shutdown: company mention-only lane still running after %s — proceeding", shutdownEventDrainTimeout)
 	}
 	// 4. Buffered coalesced messages were already acked to Slack — drain
 	//    them to gc (to a fixpoint: flushAll also waits out in-flight

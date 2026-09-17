@@ -136,6 +136,10 @@ type companyGateway struct {
 	// triggerDelivery before the goroutine starts.
 	deliverWG sync.WaitGroup
 
+	// mentionOnlyWG tracks only the mention-only lane's goroutines (also
+	// counted in deliverWG); shutdown joins it (main.go step 3b).
+	mentionOnlyWG sync.WaitGroup
+
 	// chains is the per-root in-process ownership registry (S5): one active
 	// chain per root triple, so a sweep pass or a live result trigger for an
 	// owned root enqueues into the running chain instead of racing it.
@@ -2168,6 +2172,7 @@ func (g *companyGateway) startRecovery(ctx context.Context) {
 			}
 			g.barrier.Store(true)
 			log.Printf("company: startup recovery complete; admission barrier open")
+			g.replayMentionOnlyPending()
 			go g.runSweep(ctx)
 			return
 		}

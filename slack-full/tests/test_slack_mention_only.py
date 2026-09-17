@@ -177,6 +177,58 @@ def test_bind_room_mentions_only_rejects_session_already_ambient_here(
     assert "AMBIENTLY" in str(exc.value)
 
 
+def test_bind_room_mentions_only_rejects_ambient_recorded_by_session_name_with_distinct_alias(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """citadel gate r4 MAJOR: a session with a distinct alias resolved to
+    (id, alias) only, so an ambient participant recorded under its SESSION
+    NAME was invisible when the operator bound it mention-only by id or by
+    alias — the bind succeeded while the ambient membership stayed. The
+    identity set is id + alias + session name."""
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "group_id": "jg-grp",
+        "participants": [{"handle": "mayor", "session_name": "city-mayor"}],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "gc_get", lambda path: {
+        "items": [{"id": "jg-mayor-1", "alias": "mayor", "session_name": "city-mayor"}],
+    } if path == "/sessions" else {"items": []})
+    registered: list[dict[str, Any]] = []
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: registered.append(kw) or {"ok": True})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+    for who in ("jg-mayor-1", "mayor", "city-mayor"):
+        with pytest.raises(SystemExit) as exc:
+            bind.main(["C1", who, "--mentions-only"])
+        assert "AMBIENTLY" in str(exc.value)
+    assert registered == []
+
+    # --replace-ambient by id drops the record held under the session name.
+    assert bind.main(["C1", "jg-mayor-1", "--mentions-only", "--replace-ambient"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert rec["participants"] == []
+    assert [r["session_id"] for r in registered] == ["jg-mayor-1"]
+    # The adapter gets the whole identity set: (id, alias) plus the session
+    # name, which company bindings and /publish attribution may use.
+    assert registered[0]["session_name"] == "mayor"
+    assert registered[0]["aliases"] == ["city-mayor"]
+    assert rec["mention_only_participants"][0]["aliases"] == ["city-mayor"]
+
+    # The mirror check: the mention-only record holds (id, alias); an ambient
+    # bind by the session name must see it too (adapter unreachable → local).
+    def _down(_channel: str = "") -> dict[str, Any]:
+        raise common.AdapterError("down")
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", _down)
+    monkeypatch.setattr(common, "gc_post",
+                        lambda *a, **k: pytest.fail("gc must not be called on a conflict"))
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "city-mayor"])
+    assert "MENTION-ONLY" in str(exc.value)
+
+
 def test_bind_room_mentions_only_replace_ambient_clears_stale_record(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """citadel gate r2c MINOR: after the gc-side membership is removed, the
@@ -260,6 +312,14 @@ def test_bind_room_ambient_rebind_of_a_handle_drops_the_replaced_session(
     with pytest.raises(SystemExit) as exc:
         bind.main(["C1", "alice", "--mentions-only"])
     assert "AMBIENTLY" in str(exc.value)
+
+    # codex r6 P2: gc lowercases handles — `Mayor=carol` then `mayor=dave`
+    # is one handle there, so carol's local entry goes too.
+    common.save_pack_config({"bindings": {}})
+    assert bind.main(["C1", "carol", "--handle", "Mayor=carol"]) == 0
+    assert bind.main(["C1", "dave", "--handle", "mayor=dave"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert [(p["handle"], p["session_name"]) for p in rec["participants"]] == [("mayor", "dave")]
 
 
 def test_bind_room_ambient_rejects_session_already_mention_only_here(
@@ -773,3 +833,89 @@ def test_status_lists_mention_only_bindings_from_config_and_registry_file(
     st = status.collect_status(session="", since="", limit=10)
     assert st["mention_only_bindings"] == []
     assert "Mention-only" not in status.format_status(st)
+
+
+def test_status_prefers_registry_values_over_a_matching_config_row(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """citadel gate r4 MINOR: a handle changed through the adapter kept
+    showing the recorded one while the row was labelled pack-config+registry.
+    The registry is what the adapter enforces, so its values win; a config
+    row recorded by name only (no id yet) still merges into the same row."""
+    common, status = _import("slack_chat_status")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "delivery_mode": "mentions_only",
+        "mention_only_participants": [
+            {"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"},
+            {"handle": "ops", "session_name": "ops"},
+        ],
+    }
+    common.save_pack_config(cfg)
+    reg = tmp_path / ".gc" / "slack" / "mention_only_bindings.json"
+    reg.parent.mkdir(parents=True)
+    reg.write_text(json.dumps({"version": 1, "channels": {
+        "C1": [{"session_id": "jg-mayor-1", "session_name": "mayor", "handle": "chief"},
+               {"session_id": "jg-ops-1", "session_name": "ops", "handle": "ops"}],
+    }}))
+    monkeypatch.setattr(common, "_request", lambda method, url, body=None, *, csrf=True, timeout=30.0: {"items": []})
+
+    rows = status.collect_status(session="", since="", limit=10)["mention_only_bindings"]
+    assert [(r["session_id"], r["session_name"], r["handle"], r["source"]) for r in rows] == [
+        ("jg-mayor-1", "mayor", "chief", "pack-config+registry"),
+        ("jg-ops-1", "ops", "ops", "pack-config+registry"),
+    ]
+
+
+def test_status_marks_config_rows_missing_from_the_registry_as_stale(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """codex r6 P2: DELETE …/mention-only removes the registry entry and
+    leaves the pack-config record; status must not present it as current."""
+    common, status = _import("slack_chat_status")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "delivery_mode": "mentions_only",
+        "mention_only_participants": [
+            {"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1"},
+        ],
+    }
+    common.save_pack_config(cfg)
+    monkeypatch.setattr(common, "_request", lambda method, url, body=None, *, csrf=True, timeout=30.0: {"items": []})
+    # No registry file: nothing to check against, the row stands as recorded.
+    rows = status.collect_status(session="", since="", limit=10)["mention_only_bindings"]
+    assert [r["source"] for r in rows] == ["pack-config"]
+    reg = tmp_path / ".gc" / "slack" / "mention_only_bindings.json"
+    reg.parent.mkdir(parents=True)
+    reg.write_text(json.dumps({"version": 1, "channels": {}}))
+    rows = status.collect_status(session="", since="", limit=10)["mention_only_bindings"]
+    assert len(rows) == 1 and "stale" in rows[0]["source"]
+
+
+def test_bind_room_mentions_only_drops_registration_held_under_another_identifier(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r6 P2: a session first registered under its literal session
+    name (gc did not list it yet) and later resolved to (id, alias) matched
+    neither identifier in the adapter's upsert — two registrations, double
+    injection. The bind removes the one held under the other identifier."""
+    common, bind = _import("slack_chat_bind_room")
+    monkeypatch.setattr(common, "gc_get", lambda path: {
+        "items": [{"id": "jg-123", "alias": "mayor", "session_name": "rig__mayor"}],
+    } if path == "/sessions" else {"items": []})
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel="": {
+        "C1": [{"session_id": "rig__mayor", "session_name": "rig__mayor", "handle": "mayor"},
+               {"session_id": "jg-ops-1", "session_name": "ops", "handle": "ops"}],
+    })
+    removed: list[str] = []
+    monkeypatch.setattr(common, "remove_mention_only_via_adapter",
+                        lambda *, channel_id, session_id: removed.append(f"{channel_id}:{session_id}") or {})
+    registered: list[dict[str, Any]] = []
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: registered.append(kw) or {"ok": True})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+
+    assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
+    assert removed == ["C1:rig__mayor"]
+    assert [(r["session_id"], r["session_name"]) for r in registered] == [("jg-123", "mayor")]

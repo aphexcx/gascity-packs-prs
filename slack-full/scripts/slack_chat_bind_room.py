@@ -188,6 +188,25 @@ def _default_handle_for_session(session_name: str) -> str:
     return session_name
 
 
+def _gc_session_entry(session_name: str) -> dict[str, str] | None:
+    """gc's ``/sessions`` row matching an operator-supplied id, alias or
+    session name — ``{"id", "alias", "session_name"}`` — or None when gc is
+    unreachable or does not list it (a warning says which)."""
+    try:
+        res = common.gc_get("/sessions")
+    except common.GCAPIError as exc:
+        sys.stderr.write(f"warn: could not resolve session {session_name!r} via gc /sessions ({exc}); using it verbatim\n")
+        return None
+    for entry in res.get("items", []) or []:
+        sid = (entry.get("id") or "").strip()
+        alias = (entry.get("alias") or "").strip()
+        sname = (entry.get("session_name") or "").strip()
+        if session_name in (sid, alias, sname) and sid:
+            return {"id": sid, "alias": alias, "session_name": sname}
+    sys.stderr.write(f"warn: session {session_name!r} not found in gc /sessions; using it verbatim\n")
+    return None
+
+
 def resolve_session_identity(session_name: str) -> tuple[str, str]:
     """Resolve an operator-supplied session name or id to (id, name).
 
@@ -199,19 +218,30 @@ def resolve_session_identity(session_name: str) -> tuple[str, str]:
     string is used for both and a warning is printed — gc's
     session-message endpoint accepts names too.
     """
-    try:
-        res = common.gc_get("/sessions")
-    except common.GCAPIError as exc:
-        sys.stderr.write(f"warn: could not resolve session {session_name!r} via gc /sessions ({exc}); using it verbatim\n")
+    entry = _gc_session_entry(session_name)
+    if entry is None:
         return session_name, session_name
-    for entry in res.get("items", []) or []:
-        sid = (entry.get("id") or "").strip()
-        alias = (entry.get("alias") or "").strip()
-        sname = (entry.get("session_name") or "").strip()
-        if session_name in (sid, alias, sname) and sid:
-            return sid, (alias or sname or session_name)
-    sys.stderr.write(f"warn: session {session_name!r} not found in gc /sessions; using it verbatim\n")
-    return session_name, session_name
+    return entry["id"], (entry["alias"] or entry["session_name"] or session_name)
+
+
+def session_identity_set(session: str) -> set[str]:
+    """Every identifier one session may be recorded under: the literal the
+    operator typed plus gc's id, alias AND session name.
+
+    The conflict checks compare identities through this set only. (id,
+    display name) is not enough: a session with a distinct alias resolves
+    to (id, alias), so an ambient participant recorded under its session
+    name went unseen and ``--mentions-only`` by id succeeded on top of the
+    ambient membership (citadel gate r4 MAJOR).
+    """
+    ids = {session}
+    try:
+        entry = _gc_session_entry(session)
+    except Exception:  # noqa: BLE001 — best-effort widening only
+        entry = None
+    if entry:
+        ids |= set(entry.values())
+    return {i for i in ids if i}
 
 
 def build_conversation_ref(
@@ -429,10 +459,12 @@ def main(argv: list[str]) -> int:
     for p in prior_rec.get("participants") or []:
         if not (isinstance(p, dict) and p.get("session_name")):
             continue
-        key = p.get("handle") or ("\x00" + p["session_name"])
+        # gc lowercases handles, so `Mayor=old` then `mayor=new` is ONE
+        # handle there; the local key folds case the same way (codex r6 P2).
+        key = (p.get("handle") or "").lower() or ("\x00" + p["session_name"])
         merged_participants[key] = {"handle": p.get("handle", ""), "session_name": p["session_name"]}
     for h, sname in participants:
-        merged_participants[h] = {"handle": h, "session_name": sname}
+        merged_participants[h.lower()] = {"handle": h, "session_name": sname}
     cfg["bindings"][binding_key] = {
         "kind": args.kind,
         "conversation": conv,
@@ -476,17 +508,6 @@ def main(argv: list[str]) -> int:
     return 0
 
 
-def _session_aliases(session: str) -> set[str]:
-    """Every identifier a session may be recorded under (literal + gc id/name)."""
-    ids = {session}
-    try:
-        sid, name = resolve_session_identity(session)
-        ids |= {sid, name}
-    except Exception:  # noqa: BLE001 — best-effort widening only
-        pass
-    return {i for i in ids if i}
-
-
 def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> list[str]:
     """Sessions already recorded as AMBIENT participants of this room.
 
@@ -505,7 +526,7 @@ def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]
         return []
     out: list[str] = []
     for session in sessions:
-        if _session_aliases(session) & ambient:
+        if session_identity_set(session) & ambient:
             out.append(session)
     return out
 
@@ -520,7 +541,7 @@ def forget_ambient_record(cfg: dict[str, Any], binding_key: str, sessions: list[
         return
     gone: set[str] = set()
     for s in sessions:
-        gone |= _session_aliases(s)
+        gone |= session_identity_set(s)
     rec["participants"] = [p for p in rec.get("participants") or []
                            if not (isinstance(p, dict) and p.get("session_name") in gone)]
     if rec.get("binding_owner") in gone:
@@ -557,7 +578,7 @@ def mention_only_conflicts(
         # or by a partially failed multi-session bind that never reached
         # the pack record.
         for b in live:
-            mo |= {b.get("session_id") or "", b.get("session_name") or ""}
+            mo |= {b.get("session_id") or "", b.get("session_name") or "", *(b.get("aliases") or [])}
         mo.discard("")
         kept = [p for p in entries
                 if {p.get("session_name") or "", p.get("session_id") or ""} & mo]
@@ -571,11 +592,11 @@ def mention_only_conflicts(
             common.save_pack_config(cfg)
     else:
         for p in entries:
-            mo |= {p.get("session_name") or "", p.get("session_id") or ""}
+            mo |= {p.get("session_name") or "", p.get("session_id") or "", *(p.get("aliases") or [])}
         mo.discard("")
     if not mo:
         return []
-    return [s for s in sessions if _session_aliases(s) & mo]
+    return [s for s in sessions if session_identity_set(s) & mo]
 
 
 def gc_binding_to_conversation(session: str, conversation_id: str) -> bool:
@@ -593,6 +614,37 @@ def gc_binding_to_conversation(session: str, conversation_id: str) -> bool:
         if cid == conversation_id:
             return True
     return False
+
+
+def drop_stale_mention_only_registrations(conversation_id: str, session: str, session_id: str) -> list[str]:
+    """Remove this session's registrations held under ANOTHER identifier.
+
+    The adapter's upsert matches on (session_id, session_name) only. A
+    session first bound by its session name before gc listed it is stored
+    under that literal; a later bind resolves to (id, alias) — neither
+    matches, both registrations stay, and every qualifying message is
+    injected twice (codex r6 P2). Best-effort: adapter unreachable → the
+    upsert's own matching is all there is, as before. Returns the ids removed.
+    """
+    try:
+        live = common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or []
+    except (common.AdapterError, common.GCAPIError):
+        return []
+    ids = session_identity_set(session) | {session_id}
+    removed: list[str] = []
+    for b in live:
+        if not isinstance(b, dict):
+            continue
+        old_id = b.get("session_id") or ""
+        if not old_id or old_id == session_id:
+            continue
+        if {old_id, b.get("session_name") or ""} & ids:
+            try:
+                common.remove_mention_only_via_adapter(channel_id=conversation_id, session_id=old_id)
+                removed.append(old_id)
+            except (common.AdapterError, common.GCAPIError) as exc:
+                sys.stderr.write(f"warn: could not remove stale mention-only registration {old_id!r}: {exc}\n")
+    return removed
 
 
 def mention_only_incompatible_flags(args: argparse.Namespace) -> list[str]:
@@ -619,7 +671,7 @@ def record_mention_only_binding(
     binding_key: str,
     kind: str,
     conv: dict[str, str],
-    records: list[dict[str, str]],
+    records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Merge mention-only participants into the pack config's binding record.
 
@@ -686,8 +738,11 @@ def _main_mentions_only(
         # instructions used to leave this record, and the block, in place).
         forget_ambient_record(cfg, binding_key, conflicts)
         conflicts = []
+    # gc may hold the binding under any of the session's identifiers (a
+    # --binding-owner is stored as typed), so ask for each of them.
     live = [s for s in sessions if s not in conflicts
-            and gc_binding_to_conversation(s, args.conversation_id)]
+            and any(gc_binding_to_conversation(i, args.conversation_id)
+                    for i in sorted(session_identity_set(s)))]
     conflicts += live
     if conflicts:
         hint = ("Remove the ambient membership first (gc extmsg participants / bindings), "
@@ -705,15 +760,22 @@ def _main_mentions_only(
             "message, so mention-only cannot be layered on top. " + hint)
 
     registered: list[dict[str, Any]] = []
-    records: list[dict[str, str]] = []
+    records: list[dict[str, Any]] = []
     for handle, session in participants:
         session_id, session_name = resolve_session_identity(session)
+        drop_stale_mention_only_registrations(args.conversation_id, session, session_id)
+        # The adapter matches the session at runtime (company membership,
+        # own-thread posts) under ANY identifier, so it gets the full set —
+        # (id, display name) alone drops the session name of a session with
+        # a distinct alias (codex r6 P2). Omitted when there is nothing more.
+        extra = sorted(session_identity_set(session) - {session_id, session_name})
         try:
             res = common.register_mention_only_via_adapter(
                 channel_id=args.conversation_id,
                 session_id=session_id,
                 session_name=session_name,
                 handle=handle,
+                **({"aliases": extra} if extra else {}),
             )
         except common.AdapterError as exc:
             raise SystemExit(
@@ -721,7 +783,10 @@ def _main_mentions_only(
                 "(the running adapter must include mention-only support — "
                 "POST /mention-only — restart it on the current pack build)") from exc
         registered.append(res)
-        records.append({"handle": handle, "session_name": session_name, "session_id": session_id})
+        record = {"handle": handle, "session_name": session_name, "session_id": session_id}
+        if extra:
+            record["aliases"] = extra
+        records.append(record)
 
     rec = record_mention_only_binding(
         cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)

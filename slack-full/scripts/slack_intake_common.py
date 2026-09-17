@@ -673,14 +673,23 @@ def register_mention_only_via_adapter(
     session_id: str,
     session_name: str = "",
     handle: str = "",
+    aliases: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Register (channel, session) as a mention-only binding: POST /mention-only."""
-    return _adapter_json("POST", "/mention-only", {
+    """Register (channel, session) as a mention-only binding: POST /mention-only.
+
+    ``aliases`` are the session's further gc identifiers (its session_name
+    when ``session_name`` carries a distinct alias); the adapter matches
+    company membership and own-thread posts under any of them.
+    """
+    body: dict[str, Any] = {
         "channel_id": channel_id,
         "session_id": session_id,
         "session_name": session_name,
         "handle": handle,
-    })
+    }
+    if aliases:
+        body["aliases"] = aliases
+    return _adapter_json("POST", "/mention-only", body)
 
 
 def remove_mention_only_via_adapter(*, channel_id: str, session_id: str) -> dict[str, Any]:

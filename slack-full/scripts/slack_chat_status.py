@@ -83,17 +83,27 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
             if not isinstance(b, dict):
                 continue
             k = (cid, b.get("session_id") or "")
-            row = rows.get(k) or {
+            # The registry is what the adapter enforces, so its values win
+            # over a matching pack-config row (a handle changed through the
+            # adapter used to keep showing the recorded one — citadel gate
+            # r4 MINOR); the config row only fills what the registry omits.
+            prior = rows.pop(k, None) or rows.pop((cid, b.get("session_name") or ""), None) or {}
+            rows[k] = {
                 "conversation_id": cid,
-                "session_id": b.get("session_id") or "",
-                "session_name": b.get("session_name") or "",
-                "handle": b.get("handle") or "",
-                "source": "adapter",
+                "session_id": b.get("session_id") or prior.get("session_id") or "",
+                "session_name": b.get("session_name") or prior.get("session_name") or "",
+                "handle": b.get("handle") or prior.get("handle") or "",
+                "source": "pack-config+registry" if prior else "registry",
             }
-            row["source"] = "pack-config+registry" if row.get("source") == "pack-config" else row["source"]
-            if row["source"] == "adapter":
-                row["source"] = "registry"
-            rows[k] = row
+    # A row the pack config still lists after `DELETE …/mention-only`
+    # removed it from the registry is not enforced by anything; say so
+    # instead of presenting it as a current binding (codex r6 P2). Only
+    # when the registry file is there to be read.
+    reg_path = common.mention_only_registry_path()
+    if reg_path is not None and reg_path.exists():
+        for row in rows.values():
+            if row["source"] == "pack-config":
+                row["source"] = "pack-config only — NOT in the adapter registry (stale)"
     out = [rows[k] for k in sorted(rows)]
     if session:
         out = [r for r in out if session in (r["session_id"], r["session_name"])]

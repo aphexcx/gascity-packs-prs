@@ -75,15 +75,64 @@ type mentionOnlyBinding struct {
 	SessionID   string `json:"session_id"`
 	SessionName string `json:"session_name,omitempty"`
 	Handle      string `json:"handle,omitempty"`
+	// Aliases are the session's further identifiers in gc — for a session
+	// with a distinct alias, SessionName carries the alias and this its
+	// session_name. Company bindings and /publish attribution may use any
+	// of them, so every runtime comparison goes through matchesSession
+	// (codex r6 P2: a company member bound under its session name was not
+	// recognized and got the gateway copy AND the mention-only copy).
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 // matchesSession reports whether id names this binding's session under
-// either identifier.
+// any of its identifiers.
 func (b mentionOnlyBinding) matchesSession(id string) bool {
 	if id == "" {
 		return false
 	}
-	return id == b.SessionID || (b.SessionName != "" && id == b.SessionName)
+	if id == b.SessionID || (b.SessionName != "" && id == b.SessionName) {
+		return true
+	}
+	for _, a := range b.Aliases {
+		if a == id {
+			return true
+		}
+	}
+	return false
+}
+
+// logKeys is identifiers() de-duplicated — the delivery log files a record
+// under each, so the reply tooling finds it by whichever one it holds.
+func (b mentionOnlyBinding) logKeys() []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, id := range b.identifiers() {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// identifiers lists every non-empty identifier of the binding's session.
+func (b mentionOnlyBinding) identifiers() []string {
+	out := []string{b.SessionID}
+	if b.SessionName != "" {
+		out = append(out, b.SessionName)
+	}
+	return append(out, b.Aliases...)
+}
+
+// sameSession reports whether two bindings name one session under any
+// pair of their identifiers.
+func (b mentionOnlyBinding) sameSession(other mentionOnlyBinding) bool {
+	for _, id := range other.identifiers() {
+		if b.matchesSession(id) {
+			return true
+		}
+	}
+	return false
 }
 
 type mentionOnlyDiskFile struct {
@@ -178,8 +227,7 @@ func (r *mentionOnlyRegistry) upsertLocked(channel string, b mentionOnlyBinding)
 	kept := list[:0:0]
 	replaced := false
 	for _, existing := range list {
-		if existing.SessionID == b.SessionID || existing.matchesSession(b.SessionID) ||
-			(b.SessionName != "" && existing.matchesSession(b.SessionName)) {
+		if existing.sameSession(b) {
 			if !replaced {
 				kept = append(kept, b) // in place: binding order is stable across re-binds
 				replaced = true
@@ -223,6 +271,13 @@ func (r *mentionOnlyRegistry) Set(channel string, b mentionOnlyBinding) error {
 	b.SessionID = strings.TrimSpace(b.SessionID)
 	b.SessionName = strings.TrimSpace(b.SessionName)
 	b.Handle = strings.TrimSpace(strings.TrimPrefix(b.Handle, "@"))
+	aliases := b.Aliases[:0:0]
+	for _, a := range b.Aliases {
+		if a = strings.TrimSpace(a); a != "" && a != b.SessionID && a != b.SessionName {
+			aliases = append(aliases, a)
+		}
+	}
+	b.Aliases = aliases
 	if channel == "" || b.SessionID == "" {
 		return errors.New("channel_id and session_id are required")
 	}
@@ -252,7 +307,7 @@ func (r *mentionOnlyRegistry) Delete(channel, sessionID string) (existed bool, e
 	list := r.channels[channel]
 	kept := list[:0:0]
 	for _, b := range list {
-		if b.SessionID == sessionID || (b.SessionName != "" && b.SessionName == sessionID) {
+		if b.matchesSession(sessionID) {
 			existed = true
 			continue
 		}
@@ -501,10 +556,7 @@ func (l *mentionOnlyDeliveryLog) record(b mentionOnlyBinding, d mentionOnlyDeliv
 	if l == nil {
 		return
 	}
-	keys := []string{b.SessionID}
-	if b.SessionName != "" && b.SessionName != b.SessionID {
-		keys = append(keys, b.SessionName)
-	}
+	keys := b.logKeys()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, k := range keys {
@@ -522,10 +574,7 @@ func (l *mentionOnlyDeliveryLog) remove(b mentionOnlyBinding, channel, ts string
 	if l == nil {
 		return
 	}
-	keys := []string{b.SessionID}
-	if b.SessionName != "" && b.SessionName != b.SessionID {
-		keys = append(keys, b.SessionName)
-	}
+	keys := b.logKeys()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, k := range keys {
@@ -742,8 +791,12 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 // postMentionOnlyReminder injects body into sessionID via gc's session-
 // message endpoint. Returns gc's delivery receipt (zero when gc emits
 // none) and whether gc ACCEPTED the injection — mirrors
-// dispatchToAliasedSession's transport contract.
-func postMentionOnlyReminder(cfg config, sessionID, body string) (deliveryReceipt, bool) {
+// dispatchToAliasedSession's transport contract. A 202 is gc's ASYNCHRONOUS
+// acceptance (status accepted + request_id + event_cursor): the injection
+// has not reached the session yet. With a confirm hook the terminal result
+// is awaited and a failed one reads as not accepted (codex r6 P1); without
+// one (the legacy lane) acceptance stands, as in the alias dispatcher.
+func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mentionOnlyAsyncConfirm) (deliveryReceipt, bool) {
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	target := fmt.Sprintf("%s/v0/city/%s/session/%s/messages",
 		cfg.gcAPIBase, url.PathEscape(cfg.cityName), url.PathEscape(sessionID))
@@ -766,12 +819,32 @@ func postMentionOnlyReminder(cfg config, sessionID, body string) (deliveryReceip
 		log.Printf("mention-only dispatch: %s -> %s: %s", target, resp.Status, string(respBody))
 		return deliveryReceipt{}, false
 	}
+	if resp.StatusCode == http.StatusAccepted && confirm != nil {
+		var accepted companyAsyncAccepted
+		if readErr == nil {
+			readErr = json.Unmarshal(respBody, &accepted)
+		}
+		requestID, cursor, err := normalizeCompanyAsyncAcceptance(accepted)
+		if readErr != nil || err != nil {
+			log.Printf("mention-only dispatch: session=%s 202 without a usable acceptance (%v / %v) — treated as not delivered", sessionID, readErr, err)
+			return deliveryReceipt{}, false
+		}
+		if detail, ok := confirm(requestID, cursor); !ok {
+			log.Printf("mention-only dispatch: session=%s async request %s did not conclude delivered: %s", sessionID, requestID, detail)
+			return deliveryReceipt{}, false
+		}
+		return deliveryReceipt{}, true
+	}
 	if readErr != nil {
 		log.Printf("mention-only dispatch: session=%s accepted; receipt unreadable: %v", sessionID, readErr)
 		return deliveryReceipt{}, true
 	}
 	return parseDeliveryReceipt(respBody), true
 }
+
+// mentionOnlyAsyncConfirm awaits the terminal result of a 202-accepted
+// session.message request; ok only when gc reports it delivered.
+type mentionOnlyAsyncConfirm func(requestID, eventCursor string) (detail string, ok bool)
 
 // ownThreadScanLimit is the conversations.replies window the own-thread
 // fallback scan reads when the preamble's (context-limit-sized) fetch did
@@ -830,9 +903,20 @@ func forgetAliasDeliveryForMentionOnly(cfg config, bindings []mentionOnlyBinding
 // a per-(session, channel, ts) claim collapsing Slack's twin deliveries.
 // A failed injection releases its claim (a parked twin or Slack redelivery
 // retries it), logs, and marks the message with ⚠️ so the human sees the
-// session was not reached. Returns the number of injections gc accepted
+// session was not reached; the marker is removed when a later attempt
+// reaches every session it stood for (mentionOnlyFailureMarks). Returns the number of injections gc accepted
 // and the number that failed (skipped twins count as neither).
 func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage) (delivered, failed int) {
+	d, f, _ := deliverMentionOnlyOutcomes(cfg, targets, inbound, nil)
+	return len(d), len(f)
+}
+
+// deliverMentionOnlyOutcomes is deliverMentionOnly with per-target results:
+// the targets whose injection THIS call saw gc accept (and vouch for), and
+// the ones it saw fail, and the ones skipped on a COMMITTED claim — another
+// copy of the origin in this process saw gc deliver them (a claim is
+// committed only then), so they are settled, not pending.
+func deliverMentionOnlyOutcomes(cfg config, targets []mentionOnlyTarget, inbound externalInboundMessage, confirm mentionOnlyAsyncConfirm) (delivered, failed, settled []mentionOnlyTarget) {
 	channel := inbound.Conversation.ConversationID
 	ts := inbound.ProviderMessageID
 	for _, t := range targets {
@@ -850,6 +934,7 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			proceed, wait = cfg.channelClaims.begin(key)
 		}
 		if skipped {
+			settled = append(settled, t)
 			continue
 		}
 		body := formatMentionOnlyReminder(cfg, inbound, t.reason, t.binding.Handle)
@@ -866,12 +951,12 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			ReceivedAt: inbound.ReceivedAt,
 		}
 		cfg.mentionOnlyDeliveries.record(t.binding, record)
-		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body)
+		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
 		for attempt := 0; ok && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
 			log.Printf("mention-only: session=%s chan=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
 				t.binding.SessionID, channel, ts, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
-			receipt, ok = postMentionOnlyReminder(cfg, t.binding.SessionID, body)
+			receipt, ok = postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm)
 			verdict = receipt.verdict(cfg.deliveryReceiptGate)
 		}
 		if ok && verdict == receiptUnconfirmed {
@@ -884,16 +969,21 @@ func deliverMentionOnly(cfg config, targets []mentionOnlyTarget, inbound externa
 			cfg.channelClaims.forget(key)
 			log.Printf("mention-only: FAILED session=%s chan=%s ts=%s reason=%s — claim released for a twin/redelivery retry",
 				t.binding.SessionID, channel, ts, t.reason)
-			reactMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
-			failed++
+			if mentionOnlyFailures.failed(channel, ts, t.binding.SessionID) {
+				reactMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
+			}
+			failed = append(failed, t)
 			continue
 		}
 		cfg.channelClaims.commit(key)
+		if mentionOnlyFailures.recovered(channel, ts, t.binding.SessionID) {
+			clearMentionOnlyDispatchFailure(cfg.slackBotToken, channel, ts)
+		}
 		log.Printf("mention-only: delivered session=%s chan=%s ts=%s thread=%s reason=%s %s",
 			t.binding.SessionID, channel, ts, inbound.ReplyToMessageID, t.reason, receipt.logField(verdict))
-		delivered++
+		delivered = append(delivered, t)
 	}
-	return delivered, failed
+	return delivered, failed, settled
 }
 
 // reactMentionOnlyDispatchFailure posts ⚠️ on the message whose mention-only
@@ -916,6 +1006,77 @@ func reactMentionOnlyDispatchFailure(token, channelID, ts string) {
 	}
 }
 
+// clearMentionOnlyDispatchFailure removes the ⚠️ once every session the
+// marker stood for has been reached after all. Best-effort.
+func clearMentionOnlyDispatchFailure(token, channelID, ts string) {
+	if token == "" {
+		return
+	}
+	resp, err := removeReactionFromSlack(token, slackReactionsAddReq{
+		Channel:   channelID,
+		Name:      "warning",
+		Timestamp: ts,
+	})
+	if err != nil {
+		log.Printf("clear warning (mention-only delivered on retry): chan=%s ts=%s: %v", channelID, ts, err)
+		return
+	}
+	if !resp.OK && resp.Error != "no_reaction" {
+		log.Printf("clear warning (mention-only delivered on retry): chan=%s ts=%s: slack error=%s", channelID, ts, resp.Error)
+	}
+}
+
+// mentionOnlyFailureMarks remembers which sessions a message's ⚠️ stands
+// for, so the marker is posted once and removed when a later attempt — the
+// company lane's in-place retry, the app_mention twin, a Slack redelivery —
+// reaches the last of them. Without it a first-attempt failure left a
+// permanent false "session not reached" marker on a message that was
+// delivered seconds later (citadel Fable read r1). In-memory: a restart
+// forgets the marks and leaves the ⚠️ standing, the conservative side.
+type mentionOnlyFailureMarks struct {
+	mu sync.Mutex
+	m  map[string]map[string]bool
+}
+
+const mentionOnlyFailureMarksMax = 2048
+
+var mentionOnlyFailures = &mentionOnlyFailureMarks{m: make(map[string]map[string]bool)}
+
+// failed records the miss; true when the message has no marker yet.
+func (f *mentionOnlyFailureMarks) failed(channel, ts, sessionID string) (first bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := channel + "|" + ts
+	set, ok := f.m[key]
+	if !ok {
+		if len(f.m) >= mentionOnlyFailureMarksMax {
+			f.m = make(map[string]map[string]bool)
+		}
+		set = make(map[string]bool)
+		f.m[key] = set
+	}
+	set[sessionID] = true
+	return !ok
+}
+
+// recovered drops the session's miss; true when it was the last one the
+// message's marker stood for.
+func (f *mentionOnlyFailureMarks) recovered(channel, ts, sessionID string) (cleared bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := channel + "|" + ts
+	set, ok := f.m[key]
+	if !ok || !set[sessionID] {
+		return false
+	}
+	delete(set, sessionID)
+	if len(set) > 0 {
+		return false
+	}
+	delete(f.m, key)
+	return true
+}
+
 // --- admin endpoints -----------------------------------------------------------
 
 type mentionOnlyRequest struct {
@@ -923,6 +1084,8 @@ type mentionOnlyRequest struct {
 	SessionID   string `json:"session_id"`
 	SessionName string `json:"session_name,omitempty"`
 	Handle      string `json:"handle,omitempty"`
+	// Aliases: the session's further gc identifiers (see mentionOnlyBinding).
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type mentionOnlyReceipt struct {
@@ -942,7 +1105,7 @@ func handleMentionOnlyBind(reg *mentionOnlyRegistry) http.HandlerFunc {
 			return
 		}
 		channel := strings.TrimSpace(req.ChannelID)
-		b := mentionOnlyBinding{SessionID: req.SessionID, SessionName: req.SessionName, Handle: req.Handle}
+		b := mentionOnlyBinding{SessionID: req.SessionID, SessionName: req.SessionName, Handle: req.Handle, Aliases: req.Aliases}
 		if channel == "" || strings.TrimSpace(b.SessionID) == "" {
 			http.Error(w, "channel_id and session_id are required", http.StatusBadRequest)
 			return

@@ -65,7 +65,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   company binding targeting another city no longer shadows a local
   mention-only session of the same name; `reply-current` treats gc's
   200 + `FailureKind=auth` receipt like an HTTP refusal when choosing
-  the mention-only adapter route.
+  the mention-only adapter route. Round 6 (citadel gate r4 MAJOR,
+  `slack_chat_bind_room.py:483`): the bind conflict checks compare a
+  session's full identity set — gc id + alias + session name — so an
+  ambient participant recorded under its session name is no longer
+  invisible to `--mentions-only` by id or alias (the bind used to
+  succeed on top of the ambient membership: every-message wakes PLUS
+  mention injections); `--replace-ambient`, the mirror check for an
+  ambient bind and the live gc-binding probe use the same set. Gate r4
+  MINOR: `gc slack status` prefers the registry's values (what the
+  adapter enforces) over a matching pack-config row. Fable read r1:
+  the gateway's copy of the config now carries the shutdown drain flag
+  (it was assigned after the copy, so the lane's stop-retrying branch
+  was dead) and shutdown joins the lane; the lane records the sessions
+  it reached on the durable ingress receipt
+  (`mention_only_delivered`), so a Slack redelivery after a restart or
+  past the 10-minute in-memory claim does not wake the session twice
+  (the write follows the injection — a crash in between can still
+  deliver twice, never zero); the ⚠️ posted on a failed injection is
+  removed when a later attempt reaches every session it stood for;
+  with `SLACK_APP_ID` set, only the switchboard app's copy counts as
+  "the bot was mentioned" (a persona app's `app_mention` or bot user
+  id does not), and `SLACK_SWITCHBOARD_BOT_USER_ID` names the bot user
+  when set. Round-6 codex: injections still failed when a lane run ends
+  (retry ladder exhausted, or cut short by shutdown) are left on the
+  receipt (`mention_only_pending`) and replayed once after the next
+  startup recovery — the event was acked at admission, so nothing else
+  would retry them; the targets are written as pending BEFORE the first
+  POST, so a process that exits mid-run leaves them for the replay; gc's
+  asynchronous 202 acceptance is awaited to its terminal result on the
+  event stream (a `request.failed` is a failed injection, not a
+  delivery; an interrupted stream re-confirms the same request rather
+  than re-posting); a copy skipped on its twin's committed claim
+  settles the delivery on the receipt (the twin may have outrun the
+  receipt); only injections a run saw gc deliver are recorded as
+  delivered (the delivery log is provisional); a mention-only bind
+  removes the session's registration held under another identifier
+  (double injection) and registers the session's further gc identifiers
+  as `aliases`, which the adapter matches everywhere it compares a
+  binding to a session (company-member exclusion, own-thread posts,
+  upsert, delete, delivery log); the ambient participant merge folds
+  handle case like gc does; `gc slack status` labels a pack-config row the
+  registry no longer holds as stale.
 
 ### Changed
 

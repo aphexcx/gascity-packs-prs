@@ -434,7 +434,16 @@ is a company member of the room is skipped (its gateway delivery is the
 copy). A session bound ambiently to the room is refused for
 `--mentions-only`; after its gc-side membership is removed, re-run with
 `--replace-ambient` to drop the stale entry from the pack config's
-record, which is what the conflict check reads.
+record, which is what the conflict check reads (it compares the
+session's gc id, alias and session name alike). In a company room "the
+bot was @mentioned" means the SWITCHBOARD's bot user. The manifests
+assume only the switchboard app subscribes `app_mention`; set
+`SLACK_APP_ID` (and ideally `SLACK_SWITCHBOARD_BOT_USER_ID`) so a persona
+app's copy of an event is never read as a switchboard mention — with
+`SLACK_APP_ID` unset, every delivering app's `app_mention` and bot user
+id are taken as the switchboard's. Delivery is at-least-once: the
+sessions the lane reached are recorded on the durable ingress receipt,
+so Slack redeliveries after a restart are not injected again.
 
 `--binding-owner SESSION` is what makes outbound publishes (and
 therefore `gc slack reply-current --via gc`) actually work. Without

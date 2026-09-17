@@ -323,6 +323,28 @@ type IngressReceipt struct {
 	// "" | "eyes" | "done" | "degraded". Cosmetic — the durable receipt, not
 	// the emoji, stays authoritative, so an ack failure never changes status.
 	AckState string `json:"ack_state,omitempty"`
+	// MentionOnlyDelivered lists the mention-only sessions OUTSIDE company
+	// membership that the gateway's mention-only lane has reached for this
+	// origin (jg-vobf70 round 6). The lane's own dedup is a 10-minute
+	// in-memory claim; this is its durable half, so a Slack redelivery that
+	// arrives after a restart (or after the claim's TTL) does not wake the
+	// session a second time. Absent on every receipt the lane never touched.
+	MentionOnlyDelivered []string `json:"mention_only_delivered,omitempty"`
+	// MentionOnlyPending lists the lane's injections that were still failed
+	// when its run ended — retry ladder exhausted, or cut short by shutdown.
+	// The event was acked to Slack at admission and the company sweep only
+	// drives the company delivery, so nothing else would ever retry them:
+	// the gateway replays these after the next startup recovery (codex r6
+	// P1). An entry leaves the list when its session is reached.
+	MentionOnlyPending []MentionOnlyPendingTarget `json:"mention_only_pending,omitempty"`
+}
+
+// MentionOnlyPendingTarget is one undelivered mention-only injection: the
+// session plus why it was selected, so a replay does not need the envelope
+// (whose authorizations — the bot user — the receipt does not keep).
+type MentionOnlyPendingTarget struct {
+	SessionID string `json:"session_id"`
+	Reason    string `json:"reason"`
 }
 
 // NewIngressReceiptStore opens (creating if needed) the receipt directory
