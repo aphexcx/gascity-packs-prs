@@ -48,6 +48,22 @@ pin the company turn explicitly.
 participants, which a mention-only session is not. Bind ambient and
 mention-only sessions for the same room in two invocations.
 
+Imported COMPANY rooms (`gc slack import-company-directory`) work too:
+the company gateway owns those channels' events and delivers to the
+room's company members itself, and it runs the mention-only lane for
+every registered session that is NOT a company member of the room
+(same rules: bot @mention, `@handle:` prefix, own-thread follow-ups).
+A mention-only binding for a session that IS a company member of the
+room is redundant there and is skipped — the gateway's delivery is its
+copy, never a second one.
+
+A session already bound AMBIENTLY to the room (gc group participant or
+`--binding-owner`) is refused for `--mentions-only`. Once its gc-side
+membership has been removed, re-run with `--replace-ambient`: the
+conflict check reads the pack config's binding record, and only that
+flag drops the stale ambient entry from it. A session gc still reports
+as actively bound to the room stays refused.
+
 Examples
 --------
 

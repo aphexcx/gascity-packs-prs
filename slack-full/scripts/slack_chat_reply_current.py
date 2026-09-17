@@ -652,22 +652,36 @@ def main(argv: list[str]) -> int:
         if via == "adapter":
             result = common.publish_via_adapter(**publish_kwargs)
         else:
+            # gc refuses an unbound (session, conversation) either as an
+            # HTTP error or — its normal shape — as a 200 whose receipt
+            # says Delivered=false / FailureKind=auth (codex r5 P2). If
+            # the adapter lists the session as a mention-only participant
+            # there, gc could never have posted, so the adapter is the
+            # correct — and only — route.
+            refusal = ""
             try:
                 result = common.publish_via_gc_outbound(**publish_kwargs)
             except common.GCAPIError as gc_exc:
-                # gc refused (typically: no binding for this session +
-                # conversation). If the adapter lists the session as a
-                # mention-only participant there, gc could never have
-                # posted, so the adapter is the correct — and only — route.
+                refusal = str(gc_exc)
+                result = None
+            else:
+                delivered, kind = common.interpret_publish_receipt(result)
+                if not delivered and kind == "auth":
+                    refusal = "receipt: not delivered, failure_kind=auth"
+            if refusal:
                 if not common.session_is_mention_only_in(session_id, conv["conversation_id"]):
-                    raise
-                print(
-                    f"note: gc refused ({gc_exc}); {conv['conversation_id']} is a "
-                    "mention-only room for this session — publishing via the adapter",
-                    file=sys.stderr,
-                )
-                via = "adapter"
-                result = common.publish_via_adapter(**publish_kwargs)
+                    if result is None:
+                        raise common.GCAPIError(refusal)
+                    # Not a mention-only room: the auth receipt stands as
+                    # gc's answer (reported below like any failed receipt).
+                else:
+                    print(
+                        f"note: gc refused ({refusal}); {conv['conversation_id']} is a "
+                        "mention-only room for this session — publishing via the adapter",
+                        file=sys.stderr,
+                    )
+                    via = "adapter"
+                    result = common.publish_via_adapter(**publish_kwargs)
     except (common.AdapterError, common.GCAPIError) as exc:
         return _print_failure_envelope(
             stage="publish",

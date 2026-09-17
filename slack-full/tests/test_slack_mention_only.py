@@ -177,6 +177,91 @@ def test_bind_room_mentions_only_rejects_session_already_ambient_here(
     assert "AMBIENTLY" in str(exc.value)
 
 
+def test_bind_room_mentions_only_replace_ambient_clears_stale_record(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """citadel gate r2c MINOR: after the gc-side membership is removed, the
+    pack record still lists the session as ambient and the conflict check
+    kept refusing. The error now names --replace-ambient, and that flag
+    drops the stale entry (participant AND binding owner) before registering."""
+    common, bind = _import("slack_chat_bind_room")
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C1"] = {
+        "kind": "room",
+        "conversation": {"conversation_id": "C1"},
+        "group_id": "jg-grp",
+        "participants": [{"handle": "mayor", "session_name": "mayor"},
+                         {"handle": "ops", "session_name": "ops-session"}],
+        "binding_owner": "mayor",
+    }
+    common.save_pack_config(cfg)
+    # gc: no active binding anymore (membership removed), sessions resolvable.
+    monkeypatch.setattr(common, "gc_get", lambda path: {
+        "items": [{"id": "jg-mayor-1", "alias": "mayor", "session_name": "mayor"}],
+    } if path == "/sessions" else {"items": []})
+    registered: list[dict[str, Any]] = []
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: registered.append(kw) or {"ok": True})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor", "--mentions-only"])
+    assert "AMBIENTLY" in str(exc.value) and "--replace-ambient" in str(exc.value)
+    assert registered == []
+
+    assert bind.main(["C1", "mayor", "--mentions-only", "--replace-ambient"]) == 0
+    assert [r["session_id"] for r in registered] == ["jg-mayor-1"]
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert [p["session_name"] for p in rec["participants"]] == ["ops-session"]
+    assert rec["binding_owner"] is None
+    assert [p["session_name"] for p in rec["mention_only_participants"]] == ["mayor"]
+    # Idempotent: the record is clean now, so the flag is no longer needed.
+    assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
+
+    # A binding gc still reports ACTIVE is refused even with the flag.
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": {"ConversationID": "C1"}},
+    ]} if path.startswith("/extmsg/bindings") else {"items": []})
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor", "--mentions-only", "--replace-ambient"])
+    assert "ACTIVE binding" in str(exc.value)
+
+
+def test_bind_room_ambient_rebind_of_a_handle_drops_the_replaced_session(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex round-4 P2 (c): gc upserts participants by HANDLE, so binding a
+    handle to a new session replaces the old session's membership on the gc
+    side; the local record (which the mention-only conflict check reads)
+    must drop the old session too, or it stays 'ambient' forever."""
+    common, bind = _import("slack_chat_bind_room")
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": []})
+    monkeypatch.setattr(common, "gc_post", lambda path, body: {"ID": "grp-1"} if path == "/extmsg/groups" else {"ID": "p-x"})
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+    assert bind.main(["C1", "old-mayor", "--handle", "mayor=old-mayor"]) == 0
+    assert bind.main(["C1", "new-mayor", "--handle", "mayor=new-mayor"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert [(p["handle"], p["session_name"]) for p in rec["participants"]] == [("mayor", "new-mayor")]
+
+    # old-mayor is no longer ambient here, so it may go mention-only.
+    monkeypatch.setattr(common, "register_mention_only_via_adapter", lambda **kw: {"ok": True})
+    assert bind.main(["C1", "old-mayor", "--mentions-only"]) == 0
+    # new-mayor still is.
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "new-mayor", "--mentions-only"])
+    assert "AMBIENTLY" in str(exc.value)
+
+    # codex r5 P2: a session holding TWO handles keeps its membership when
+    # only one of them is reassigned (gc still has the other pair).
+    common.save_pack_config({"bindings": {}})
+    assert bind.main(["C1", "alice", "--handle", "old=alice"]) == 0
+    assert bind.main(["C1", "alice", "--handle", "new=alice"]) == 0
+    assert bind.main(["C1", "bob", "--handle", "new=bob"]) == 0
+    rec = common.load_pack_config()["bindings"]["room:C1"]
+    assert sorted((p["handle"], p["session_name"]) for p in rec["participants"]) == [("new", "bob"), ("old", "alice")]
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "alice", "--mentions-only"])
+    assert "AMBIENTLY" in str(exc.value)
+
+
 def test_bind_room_ambient_rejects_session_already_mention_only_here(
         monkeypatch: pytest.MonkeyPatch) -> None:
     common, bind = _import("slack_chat_bind_room")
@@ -571,6 +656,43 @@ def test_reply_current_explicit_conversation_falls_back_to_adapter_only_when_gc_
     assert [u.rsplit("/", 1)[-1] for u in posts] == ["outbound", "publish"]
 
     # Not a mention-only room: gc's refusal stays a failure (no double route).
+    posts.clear()
+    code = rc.main(["--session", "jg-mayor-1", "--conversation-id", "C2",
+                    "--body", "hi", "--reply-to", "1.000"])
+    assert code == 1
+    assert [u.rsplit("/", 1)[-1] for u in posts] == ["outbound"]
+
+
+def test_reply_current_explicit_conversation_falls_back_on_auth_failure_receipt(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """codex r5 P2: gc's normal refusal for an unbound (session, conversation)
+    is HTTP 200 with Receipt.Delivered=false / FailureKind=auth, not an
+    exception — the mention-only fallback must read that shape too."""
+    common, rc = _import("slack_chat_reply_current")
+    posts: list[str] = []
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        if method == "POST":
+            posts.append(url)
+            if url.endswith("/extmsg/outbound"):
+                return {"Receipt": {"Delivered": False, "FailureKind": "auth",
+                                    "FailureMessage": "session not bound to conversation"}}
+            return {"delivered": True, "message_id": "9.000"}
+        return {}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: None)
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", lambda sid: None)
+    monkeypatch.setattr(common, "look_up_binding", lambda sid: None)
+    monkeypatch.setattr(common, "session_is_mention_only_in", lambda sid, cid: cid == "C1")
+
+    assert rc.main(["--session", "jg-mayor-1", "--conversation-id", "C1",
+                    "--body", "hi", "--reply-to", "1.000"]) == 0
+    assert [u.rsplit("/", 1)[-1] for u in posts] == ["outbound", "publish"]
+
+    # Not a mention-only room: the auth receipt stays gc's answer (a failure,
+    # no adapter route).
     posts.clear()
     code = rc.main(["--session", "jg-mayor-1", "--conversation-id", "C2",
                     "--body", "hi", "--reply-to", "1.000"])

@@ -42,7 +42,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session's company current-turn pointer (or the one `--turn-ts` names)
   is answered via the adapter instead of being diverted into the older
   company conversation; `--turn-ref` / `--origin-ts` / `--kind
-  room|dm|mpim` still pin the company turn.
+  room|dm|mpim` still pin the company turn. Round 5 (citadel gate r3
+  MAJOR, `main.go:4058`): imported company rooms no longer bypass
+  mention-only delivery — the company gateway, which consumes those
+  rooms' events before the legacy dispatcher, now runs the
+  mention-only lane itself on first admission for every registered
+  session outside company membership (bot @mention, `@handle:`
+  prefix, own-thread follow-ups; human-authored messages only; a
+  binding for a company member of the room is skipped, so no double
+  delivery). Gate r2c MINOR: `bind-room --mentions-only` for a session
+  the pack record lists as ambient now names `--replace-ambient`, which
+  drops the stale ambient entry (participant / binding owner) once the
+  gc-side membership is gone; a binding gc still reports active stays
+  refused. Round-4 P2s: re-binding a session under its other
+  identifier (name ↔ resolved id) replaces the registry record instead
+  of appending a second binding (double injection); an ambient
+  re-bind of a handle to a new session drops the replaced session from
+  the pack record (gc upserts by handle). Round-5 codex: a company-room
+  injection gc rejects is retried in place on a bounded backoff, and
+  the app_mention twin / a Slack redelivery retake the released claim
+  (the receipt is already acked, so nothing upstream retried it); a
+  company binding targeting another city no longer shadows a local
+  mention-only session of the same name; `reply-current` treats gc's
+  200 + `FailureKind=auth` receipt like an HTTP refusal when choosing
+  the mention-only adapter route.
 
 ### Changed
 

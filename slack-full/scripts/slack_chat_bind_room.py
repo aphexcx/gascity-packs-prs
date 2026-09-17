@@ -307,6 +307,14 @@ def main(argv: list[str]) -> int:
                              "as gc group participants — ambient participants bound in a "
                              "separate invocation are unaffected. Incompatible with the "
                              "peer-fanout flags, --default-handle and --binding-owner.")
+    parser.add_argument("--replace-ambient", action="store_true",
+                        help="With --mentions-only: the listed sessions' AMBIENT membership "
+                             "of this room has already been removed on the gc side, so drop "
+                             "them from the pack config's ambient record (participants / "
+                             "binding owner) and register them mention-only. Without it the "
+                             "conflict check keeps reading the stale local record and refuses. "
+                             "A session gc still reports as actively bound to the room is "
+                             "refused regardless.")
     parser.add_argument("--no-protocol-nudge", action="store_true",
                         help="Skip auto-delivery of the slack reply-protocol nudge "
                              "(react first, threaded reply, ack) to each newly-bound "
@@ -411,12 +419,20 @@ def main(argv: list[str]) -> int:
     # session_name; this invocation's handles win). gc offers no
     # participant listing, so this record is what the mention-only
     # conflict check reads (codex r2 P2).
+    # gc's upsert is keyed by HANDLE — one handle names one session, a
+    # session may hold several handles — so the local record is keyed the
+    # same way (codex round-4 P2 c, round-5 P2): a handle this invocation
+    # assigns to a different session replaces the earlier session's entry
+    # for THAT handle only; every other handle the earlier session holds
+    # stays, and so does its ambient membership in the conflict check.
     merged_participants: dict[str, dict[str, str]] = {}
     for p in prior_rec.get("participants") or []:
-        if isinstance(p, dict) and p.get("session_name"):
-            merged_participants[p["session_name"]] = {"handle": p.get("handle", ""), "session_name": p["session_name"]}
+        if not (isinstance(p, dict) and p.get("session_name")):
+            continue
+        key = p.get("handle") or ("\x00" + p["session_name"])
+        merged_participants[key] = {"handle": p.get("handle", ""), "session_name": p["session_name"]}
     for h, sname in participants:
-        merged_participants[sname] = {"handle": h, "session_name": sname}
+        merged_participants[h] = {"handle": h, "session_name": sname}
     cfg["bindings"][binding_key] = {
         "kind": args.kind,
         "conversation": conv,
@@ -492,6 +508,23 @@ def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]
         if _session_aliases(session) & ambient:
             out.append(session)
     return out
+
+
+def forget_ambient_record(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> None:
+    """Drop ``sessions`` from the room's local AMBIENT record (participants and
+    binding owner), under every identifier each is known by. The caller has
+    established that the gc-side membership is gone (``--replace-ambient``);
+    the record is only what the conflict check reads. Saved by the caller."""
+    rec = (cfg.get("bindings") or {}).get(binding_key)
+    if not isinstance(rec, dict):
+        return
+    gone: set[str] = set()
+    for s in sessions:
+        gone |= _session_aliases(s)
+    rec["participants"] = [p for p in rec.get("participants") or []
+                           if not (isinstance(p, dict) and p.get("session_name") in gone)]
+    if rec.get("binding_owner") in gone:
+        rec["binding_owner"] = None
 
 
 def mention_only_conflicts(
@@ -646,14 +679,30 @@ def _main_mentions_only(
     binding_key = f"{args.kind}:{args.conversation_id}"
     sessions = [session for _, session in participants]
     conflicts = ambient_conflicts(cfg, binding_key, sessions)
-    conflicts += [s for s in sessions if s not in conflicts
-                  and gc_binding_to_conversation(s, args.conversation_id)]
+    if conflicts and args.replace_ambient:
+        # The operator says the gc-side membership is gone; the pack
+        # record is the local copy this check reads, so clear it here —
+        # nothing else rewrites it (citadel gate r2c MINOR: the removal
+        # instructions used to leave this record, and the block, in place).
+        forget_ambient_record(cfg, binding_key, conflicts)
+        conflicts = []
+    live = [s for s in sessions if s not in conflicts
+            and gc_binding_to_conversation(s, args.conversation_id)]
+    conflicts += live
     if conflicts:
+        hint = ("Remove the ambient membership first (gc extmsg participants / bindings), "
+                "then re-run WITH --replace-ambient: the pack config's binding record is "
+                "the local copy this check reads, and only that flag drops the stale "
+                "ambient entry from it.")
+        if live:
+            hint = (f"gc still holds an ACTIVE binding of {', '.join(live)} to "
+                    f"{args.conversation_id}; remove it on the gc side first "
+                    "(--replace-ambient cannot override a live gc binding), then re-run "
+                    "with --replace-ambient.")
         raise SystemExit(
             f"{', '.join(conflicts)}: already bound AMBIENTLY to {args.conversation_id} "
             "(gc group participant / binding owner) — a gc member is woken for every "
-            "message, so mention-only cannot be layered on top. Remove the ambient "
-            "membership first (gc extmsg participants / bindings), then re-run.")
+            "message, so mention-only cannot be layered on top. " + hint)
 
     registered: list[dict[str, Any]] = []
     records: list[dict[str, str]] = []

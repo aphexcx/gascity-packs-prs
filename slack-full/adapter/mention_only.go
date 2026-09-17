@@ -168,16 +168,30 @@ func (r *mentionOnlyRegistry) load() error {
 	return nil
 }
 
+// upsertLocked replaces the binding for the same session, matched under
+// EITHER identifier of either record — a re-bind that carries gc's
+// resolved id for a session first registered by name (or vice versa)
+// replaces the earlier record instead of appending a second one, which
+// would inject every qualifying message twice (codex round-4 P2 b).
 func (r *mentionOnlyRegistry) upsertLocked(channel string, b mentionOnlyBinding) {
 	list := r.channels[channel]
-	for i := range list {
-		if list[i].SessionID == b.SessionID {
-			list[i] = b
-			r.channels[channel] = list
-			return
+	kept := list[:0:0]
+	replaced := false
+	for _, existing := range list {
+		if existing.SessionID == b.SessionID || existing.matchesSession(b.SessionID) ||
+			(b.SessionName != "" && existing.matchesSession(b.SessionName)) {
+			if !replaced {
+				kept = append(kept, b) // in place: binding order is stable across re-binds
+				replaced = true
+			}
+			continue
 		}
+		kept = append(kept, existing)
 	}
-	r.channels[channel] = append(list, b)
+	if !replaced {
+		kept = append(kept, b)
+	}
+	r.channels[channel] = kept
 }
 
 func (r *mentionOnlyRegistry) saveLocked() error {

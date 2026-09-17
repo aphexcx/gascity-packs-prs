@@ -539,10 +539,17 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// 200 and creates no receipt — it must never reach legacy dispatch,
 		// which would double-deliver by waking the channel-bound session.
 		// Non-company channels keep today's app_mention behavior byte-for-byte.
-		if _, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel); !ok {
+		room, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel)
+		if !ok {
 			return false
 		}
 		w.WriteHeader(http.StatusOK)
+		// The twin is a second entry into the mention-only lane for
+		// sessions outside company membership (jg-vobf70 round 5): the
+		// per-(session, channel, ts) claim skips it when the message
+		// copy already delivered, and retakes a claim a failed
+		// injection released.
+		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	default:
 		// Other non-message types follow today's path byte-for-byte.
@@ -565,7 +572,8 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	if ev.ChannelType == "mpim" {
 		return g.tryHandleMpimEvent(w, r, env, ev, agentApps)
 	}
-	if _, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel); !ok {
+	room, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel)
+	if !ok {
 		// Not an imported company room (including the nil-directory case):
 		// the legacy path handles it. Parking applies only to receipts
 		// already admitted, never to admission itself.
@@ -632,8 +640,11 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	}
 	if !created {
 		// Duplicate origin — an x-slack-retry redelivery of an already
-		// admitted event terminates here: ack, no second delivery.
+		// admitted event terminates here: ack, no second delivery. The
+		// mention-only lane still runs: its claim skips delivered
+		// sessions and retakes one a failed injection released.
 		w.WriteHeader(http.StatusOK)
+		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	}
 	// Admitted. Ack the transport, then trigger asynchronous delivery. If
@@ -641,6 +652,10 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// recovers it — backpressure, never a silent drop.
 	w.WriteHeader(http.StatusOK)
 	g.triggerDelivery(origin)
+	// Mention-only sessions outside company membership get their copy
+	// from the gateway too (jg-vobf70 round 5): the legacy dispatcher
+	// never sees this event, so its mention-only block cannot.
+	g.mentionOnlyForCompanyRoom(env, ev, room)
 	return true
 }
 

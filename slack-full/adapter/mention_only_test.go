@@ -809,3 +809,44 @@ func TestMentionOnlyRegistry_CorruptFileMovedAside(t *testing.T) {
 		t.Fatalf("no .corrupt-* copy found in %v", entries)
 	}
 }
+
+// codex round-4 P2 (b): re-binding a session under a different identifier
+// (name first, gc's resolved id later — or the reverse) replaces the
+// earlier record instead of leaving two bindings for one session, which
+// would inject every qualifying message twice.
+func TestMentionOnlyRegistry_RebindUnderOtherIdentifierReplaces(t *testing.T) {
+	reg, err := newMentionOnlyRegistry(filepath.Join(t.TempDir(), "mention_only.json"))
+	if err != nil {
+		t.Fatalf("newMentionOnlyRegistry: %v", err)
+	}
+	// Name-only registration (gc /sessions unreachable at bind time).
+	if err := reg.Set("C1", mentionOnlyBinding{SessionID: "mayor", SessionName: "mayor", Handle: "mayor"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	// Re-bind with the resolved id.
+	if err := reg.Set("C1", mentionOnlyBinding{SessionID: "jg-mayor-1", SessionName: "mayor", Handle: "mayor"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got := reg.ForChannel("C1")
+	if len(got) != 1 || got[0].SessionID != "jg-mayor-1" {
+		t.Fatalf("bindings after re-bind = %+v, want exactly the id-resolved record", got)
+	}
+	// And back to a name-only record: still one binding.
+	if err := reg.Set("C1", mentionOnlyBinding{SessionID: "mayor", SessionName: "", Handle: "mayor"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := reg.ForChannel("C1"); len(got) != 1 || got[0].SessionID != "mayor" {
+		t.Fatalf("bindings after name re-bind = %+v, want one record", got)
+	}
+	// A different session on the same channel is untouched.
+	if err := reg.Set("C1", mentionOnlyBinding{SessionID: "jg-ops-1", SessionName: "ops", Handle: "ops"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if got := reg.ForChannel("C1"); len(got) != 2 {
+		t.Fatalf("bindings = %+v, want two distinct sessions", got)
+	}
+	targets := selectMentionOnlyTargets(mentionOnlyInput{bindings: reg.ForChannel("C1"), botMentioned: true})
+	if len(targets) != 2 {
+		t.Fatalf("targets = %d, want one per session (no double injection)", len(targets))
+	}
+}

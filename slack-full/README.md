@@ -425,6 +425,17 @@ pins the company turn. Inspect bindings with `gc slack status`, the registry fil
 (`SLACK_MENTION_ONLY_BINDINGS_FILE`), or `GET …/svc/slack/mention-only`;
 remove one with `DELETE …/svc/slack/mention-only?channel_id=&session_id=`.
 
+Imported company rooms are covered as well: their events are consumed
+by the company gateway (which delivers to the room's company members),
+and the gateway runs the mention-only lane for every registered session
+outside company membership — once per admitted message, human-authored
+only, same selection rules. A mention-only binding for a session that
+is a company member of the room is skipped (its gateway delivery is the
+copy). A session bound ambiently to the room is refused for
+`--mentions-only`; after its gc-side membership is removed, re-run with
+`--replace-ambient` to drop the stale entry from the pack config's
+record, which is what the conflict check reads.
+
 `--binding-owner SESSION` is what makes outbound publishes (and
 therefore `gc slack reply-current --via gc`) actually work. Without
 it, peer fanout still fires on inbound, but `/extmsg/outbound` has
