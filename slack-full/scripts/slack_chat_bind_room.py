@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import urllib.parse
 from typing import Any
 
 import slack_intake_common as common
@@ -65,14 +66,62 @@ just publish-to-thread.
 """
 
 
-def deliver_protocol_nudge(session_id: str, conversation_id: str) -> None:
+# Reply protocol for a MENTION-ONLY participant (jg-vobf70). The session is
+# not a gc member of the room: the adapter injects a reminder only when the
+# message @mentions the bot user, addresses the session's handle, or replies
+# in a thread the session posted in — and the reply tooling resolves those
+# injections through the adapter's delivery log, so the same react-first /
+# threaded-reply protocol applies. Sent on every mention-only bind, like the
+# ambient nudge.
+MENTION_ONLY_NUDGE_TEMPLATE = """<system-reminder>
+Slack MENTION-ONLY room binding established for {conversation_id}.
+You are bound to this room in mention-only mode: you are woken only when a
+message @mentions your bot user, addresses your handle (@{handle}: ...), or is
+a reply in a thread you posted in. Everything else in the room stays silent
+for you — read it on demand with:
+  gc slack read --conversation-id {conversation_id}
+
+Reply protocol when you receive a `Slack mention-only room delivery` reminder:
+
+  1. **FIRST**: react with writing_hand — BEFORE you compose anything:
+       gc slack react --emoji writing_hand
+     (the reminder also carries the explicit --conversation-id/--message-id form)
+
+  2. THEN compose your reply to a tmpfile.
+
+  3. THEN publish as a threaded reply, using the command the reminder
+     carries (bindingless, straight through the slack adapter):
+       gc slack publish-to-channel --conversation-id {conversation_id} \
+           --thread-ts <thread ts from the reminder> --body-file <tmpfile>
+     (`gc slack reply-current --thread-current` also resolves this
+     delivery — a mention-only delivery newer than any company-room or DM
+     turn you hold takes precedence over the company dispatch; you hold
+     no channel binding here, so peers are not fanned out either way)
+
+The order is non-negotiable even when you have an instant answer. React
+first, every time.
+
+Use `gc slack publish-to-channel --conversation-id {conversation_id} --no-thread`
+ONLY for explicit top-level status broadcasts initiated by you, never as a
+reply to an inbound. Replies you post in threads make follow-ups in those
+threads reach you without a mention.
+</system-reminder>
+"""
+
+
+def deliver_protocol_nudge(
+    session_id: str,
+    conversation_id: str,
+    template: str = PROTOCOL_NUDGE_TEMPLATE,
+    **fields: str,
+) -> None:
     """Send the slack reply-protocol nudge to a session via `gc session nudge`.
 
     Best-effort — failures (session asleep, unknown target, gc binary
     missing) are logged to stderr and do not abort the bind. The nudge is
     idempotent so re-delivery on every bind is safe.
     """
-    body = PROTOCOL_NUDGE_TEMPLATE.format(conversation_id=conversation_id)
+    body = template.format(conversation_id=conversation_id, **fields)
     try:
         result = subprocess.run(
             ["gc", "session", "nudge", session_id, body],
@@ -137,6 +186,62 @@ def _default_handle_for_session(session_name: str) -> str:
     if "." in session_name:
         return session_name.rsplit(".", 1)[-1]
     return session_name
+
+
+def _gc_session_entry(session_name: str) -> dict[str, str] | None:
+    """gc's ``/sessions`` row matching an operator-supplied id, alias or
+    session name — ``{"id", "alias", "session_name"}`` — or None when gc is
+    unreachable or does not list it (a warning says which)."""
+    try:
+        res = common.gc_get("/sessions")
+    except common.GCAPIError as exc:
+        sys.stderr.write(f"warn: could not resolve session {session_name!r} via gc /sessions ({exc}); using it verbatim\n")
+        return None
+    for entry in res.get("items", []) or []:
+        sid = (entry.get("id") or "").strip()
+        alias = (entry.get("alias") or "").strip()
+        sname = (entry.get("session_name") or "").strip()
+        if session_name in (sid, alias, sname) and sid:
+            return {"id": sid, "alias": alias, "session_name": sname}
+    sys.stderr.write(f"warn: session {session_name!r} not found in gc /sessions; using it verbatim\n")
+    return None
+
+
+def resolve_session_identity(session_name: str) -> tuple[str, str]:
+    """Resolve an operator-supplied session name or id to (id, name).
+
+    The adapter's mention-only lane injects into the session by id and
+    matches the session's own posts by the id /publish carries, so a
+    name-bound participant must be resolved to gc's id at bind time.
+    Consults ``GET /sessions``; when the session is not listed (gc
+    unreachable, or a session that is not running yet) the literal
+    string is used for both and a warning is printed — gc's
+    session-message endpoint accepts names too.
+    """
+    entry = _gc_session_entry(session_name)
+    if entry is None:
+        return session_name, session_name
+    return entry["id"], (entry["alias"] or entry["session_name"] or session_name)
+
+
+def session_identity_set(session: str) -> set[str]:
+    """Every identifier one session may be recorded under: the literal the
+    operator typed plus gc's id, alias AND session name.
+
+    The conflict checks compare identities through this set only. (id,
+    display name) is not enough: a session with a distinct alias resolves
+    to (id, alias), so an ambient participant recorded under its session
+    name went unseen and ``--mentions-only`` by id succeeded on top of the
+    ambient membership (citadel gate r4 MAJOR).
+    """
+    ids = {session}
+    try:
+        entry = _gc_session_entry(session)
+    except Exception:  # noqa: BLE001 — best-effort widening only
+        entry = None
+    if entry:
+        ids |= set(entry.values())
+    return {i for i in ids if i}
 
 
 def build_conversation_ref(
@@ -222,6 +327,24 @@ def main(argv: list[str]) -> int:
                         help="Cap peer-triggered publishes per inbound (0 = unlimited)")
     parser.add_argument("--max-total-peer-deliveries", type=int, default=0,
                         help="Cap total peer deliveries per inbound (0 = unlimited)")
+    parser.add_argument("--mentions-only", action="store_true",
+                        help="Bind the listed sessions in MENTION-ONLY mode: the adapter "
+                             "wakes each one only for messages that @mention the bot user, "
+                             "address its handle (`@handle: ...`), or reply in a thread it "
+                             "posted in; everything else in the room is dropped for it "
+                             "(still readable via `gc slack read`). The sessions are "
+                             "registered with the adapter (POST /mention-only), NOT added "
+                             "as gc group participants — ambient participants bound in a "
+                             "separate invocation are unaffected. Incompatible with the "
+                             "peer-fanout flags, --default-handle and --binding-owner.")
+    parser.add_argument("--replace-ambient", action="store_true",
+                        help="With --mentions-only: the listed sessions' AMBIENT membership "
+                             "of this room has already been removed on the gc side, so drop "
+                             "them from the pack config's ambient record (participants / "
+                             "binding owner) and register them mention-only. Without it the "
+                             "conflict check keeps reading the stale local record and refuses. "
+                             "A session gc still reports as actively bound to the room is "
+                             "refused regardless.")
     parser.add_argument("--no-protocol-nudge", action="store_true",
                         help="Skip auto-delivery of the slack reply-protocol nudge "
                              "(react first, threaded reply, ack) to each newly-bound "
@@ -246,6 +369,9 @@ def main(argv: list[str]) -> int:
     city = common.gc_city_name()
     overrides = _parse_handle_overrides(args.handle)
     participants = build_participants(args.session_names, overrides, args.default_handle)
+    if args.mentions_only:
+        return _main_mentions_only(args, workspace_id=workspace_id, city=city,
+                                   participants=participants)
     default_handle = args.default_handle or participants[0][0]
     binding_owner = args.binding_owner.strip()
     conv = build_conversation_ref(
@@ -255,6 +381,23 @@ def main(argv: list[str]) -> int:
         scope_id=city,
     )
     fanout_policy = build_fanout_policy(args)
+
+    # The mirror of the mention-only conflict check: a session registered
+    # mention-only in this room must not also become a gc member (it would
+    # be woken for every message AND injected on mentions).
+    pre_cfg = common.load_pack_config()
+    pre_key = f"{args.kind}:{args.conversation_id}"
+    # The binding owner becomes an ambient recipient through /extmsg/bind
+    # even when it is not a positional participant (codex r2 P2).
+    ambient_candidates = [s for _, s in participants]
+    if binding_owner and binding_owner not in ambient_candidates:
+        ambient_candidates.append(binding_owner)
+    mo_conflicts = mention_only_conflicts(pre_cfg, pre_key, ambient_candidates, args.conversation_id)
+    if mo_conflicts:
+        raise SystemExit(
+            f"{', '.join(mo_conflicts)}: already bound MENTION-ONLY to {args.conversation_id}. "
+            "Remove that binding first (DELETE …/svc/slack/mention-only?channel_id=&session_id=) "
+            "before binding it ambiently.")
 
     group_body: dict[str, Any] = {
         "root_conversation": conv,
@@ -296,18 +439,44 @@ def main(argv: list[str]) -> int:
     cfg = common.load_pack_config()
     cfg.setdefault("bindings", {})
     binding_key = f"{args.kind}:{args.conversation_id}"
+    # Other sessions' mention-only registrations for this room ride along
+    # on the rewritten record (they live in the adapter's registry either
+    # way; this keeps `gc slack status` truthful).
+    prior_rec = cfg["bindings"].get(binding_key) or {}
+    prior_mention_only = prior_rec.get("mention_only_participants")
+    # gc's /extmsg/participants UPSERTS into the group: participants from
+    # earlier invocations stay members, so the record keeps them too (by
+    # session_name; this invocation's handles win). gc offers no
+    # participant listing, so this record is what the mention-only
+    # conflict check reads (codex r2 P2).
+    # gc's upsert is keyed by HANDLE — one handle names one session, a
+    # session may hold several handles — so the local record is keyed the
+    # same way (codex round-4 P2 c, round-5 P2): a handle this invocation
+    # assigns to a different session replaces the earlier session's entry
+    # for THAT handle only; every other handle the earlier session holds
+    # stays, and so does its ambient membership in the conflict check.
+    merged_participants: dict[str, dict[str, str]] = {}
+    for p in prior_rec.get("participants") or []:
+        if not (isinstance(p, dict) and p.get("session_name")):
+            continue
+        # gc lowercases handles, so `Mayor=old` then `mayor=new` is ONE
+        # handle there; the local key folds case the same way (codex r6 P2).
+        key = (p.get("handle") or "").lower() or ("\x00" + p["session_name"])
+        merged_participants[key] = {"handle": p.get("handle", ""), "session_name": p["session_name"]}
+    for h, sname in participants:
+        merged_participants[h.lower()] = {"handle": h, "session_name": sname}
     cfg["bindings"][binding_key] = {
         "kind": args.kind,
         "conversation": conv,
         "group_id": group_id,
         "default_handle": default_handle,
         "fanout_policy": fanout_policy,
-        "participants": [
-            {"handle": h, "session_name": s} for h, s in participants
-        ],
-        "binding_owner": binding_owner or None,
+        "participants": list(merged_participants.values()),
+        "binding_owner": binding_owner or (prior_rec.get("binding_owner") or None),
         "binding_record": (binding_record or {}).get("ID", "") or None,
     }
+    if prior_mention_only:
+        cfg["bindings"][binding_key]["mention_only_participants"] = prior_mention_only
     common.save_pack_config(cfg)
 
     # Deliver the protocol nudge to each participant session so respawned
@@ -330,6 +499,317 @@ def main(argv: list[str]) -> int:
         "participants": participant_records,
         "binding_owner": binding_owner or None,
         "binding_record": binding_record,
+        "protocol_nudge": {
+            "delivered_to": nudged,
+            "failures": nudge_failures,
+            "skipped": args.no_protocol_nudge,
+        },
+    }, indent=2, default=str))
+    return 0
+
+
+def ambient_conflicts(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> list[str]:
+    """Sessions already recorded as AMBIENT participants of this room.
+
+    A gc group member is woken for every message, so registering it
+    mention-only on top would keep the ambient wakes AND add injections
+    (codex r1 P1). Checked against the pack config's participant list;
+    the gc-side binding owner is checked by the caller.
+    """
+    rec = (cfg.get("bindings") or {}).get(binding_key) or {}
+    ambient = {p.get("session_name") for p in rec.get("participants") or [] if isinstance(p, dict)}
+    owner = rec.get("binding_owner")
+    if owner:
+        ambient.add(owner)
+    ambient.discard(None)
+    if not ambient:
+        return []
+    out: list[str] = []
+    for session in sessions:
+        if session_identity_set(session) & ambient:
+            out.append(session)
+    return out
+
+
+def forget_ambient_record(cfg: dict[str, Any], binding_key: str, sessions: list[str]) -> None:
+    """Drop ``sessions`` from the room's local AMBIENT record (participants and
+    binding owner), under every identifier each is known by. The caller has
+    established that the gc-side membership is gone (``--replace-ambient``);
+    the record is only what the conflict check reads. Saved by the caller."""
+    rec = (cfg.get("bindings") or {}).get(binding_key)
+    if not isinstance(rec, dict):
+        return
+    gone: set[str] = set()
+    for s in sessions:
+        gone |= session_identity_set(s)
+    rec["participants"] = [p for p in rec.get("participants") or []
+                           if not (isinstance(p, dict) and p.get("session_name") in gone)]
+    if rec.get("binding_owner") in gone:
+        rec["binding_owner"] = None
+
+
+def mention_only_conflicts(
+    cfg: dict[str, Any], binding_key: str, sessions: list[str], conversation_id: str = ""
+) -> list[str]:
+    """Sessions still registered MENTION-ONLY in this room (the mirror check
+    for an ambient bind).
+
+    The pack config is the local record; the adapter's registry is what is
+    enforced. When the adapter answers, a session the adapter no longer
+    lists (removed via DELETE /mention-only) is reconciled out of the pack
+    record instead of blocking the rebind forever (codex r2 P2). When the
+    adapter is unreachable the local record stands.
+    """
+    rec = (cfg.get("bindings") or {}).get(binding_key) or {}
+    entries = [p for p in rec.get("mention_only_participants") or [] if isinstance(p, dict)]
+    live: list[dict[str, Any]] | None = None
+    if conversation_id:
+        try:
+            # A room absent from the answer means "no bindings there"; only
+            # a transport failure leaves the local record unverified.
+            live = [b for b in (common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or [])
+                    if isinstance(b, dict)]
+        except (common.AdapterError, common.GCAPIError):
+            live = None
+    mo: set[str] = set()
+    if live is not None:
+        # The adapter's registry is authoritative when reachable (codex r3
+        # P2): it also covers bindings made directly via POST /mention-only
+        # or by a partially failed multi-session bind that never reached
+        # the pack record.
+        for b in live:
+            mo |= {b.get("session_id") or "", b.get("session_name") or "", *(b.get("aliases") or [])}
+        mo.discard("")
+        kept = [p for p in entries
+                if {p.get("session_name") or "", p.get("session_id") or ""} & mo]
+        if len(kept) != len(entries):
+            if kept:
+                rec["mention_only_participants"] = kept
+            else:
+                rec.pop("mention_only_participants", None)
+                if rec.get("delivery_mode") == "mentions_only" and not rec.get("participants"):
+                    cfg["bindings"].pop(binding_key, None)
+            common.save_pack_config(cfg)
+    else:
+        for p in entries:
+            mo |= {p.get("session_name") or "", p.get("session_id") or "", *(p.get("aliases") or [])}
+        mo.discard("")
+    if not mo:
+        return []
+    return [s for s in sessions if session_identity_set(s) & mo]
+
+
+def gc_binding_to_conversation(session: str, conversation_id: str) -> bool:
+    """True when gc holds an active extmsg binding of session to conversation_id
+    (a `--binding-owner`, or a bind-dm). Best-effort: gc unreachable → False."""
+    try:
+        res = common.gc_get(f"/extmsg/bindings?session_id={urllib.parse.quote(session, safe='')}")
+    except common.GCAPIError:
+        return False
+    for entry in res.get("items", []) or []:
+        if entry.get("Status") != "active":
+            continue
+        conv = entry.get("Conversation") or {}
+        cid = conv.get("ConversationID") or conv.get("conversation_id") or ""
+        if cid == conversation_id:
+            return True
+    return False
+
+
+def drop_stale_mention_only_registrations(conversation_id: str, session: str, session_id: str) -> list[str]:
+    """Remove this session's registrations held under ANOTHER identifier.
+
+    The adapter's upsert matches on (session_id, session_name) only. A
+    session first bound by its session name before gc listed it is stored
+    under that literal; a later bind resolves to (id, alias) — neither
+    matches, both registrations stay, and every qualifying message is
+    injected twice (codex r6 P2). Best-effort: adapter unreachable → the
+    upsert's own matching is all there is, as before. Returns the ids removed.
+    """
+    try:
+        live = common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or []
+    except (common.AdapterError, common.GCAPIError):
+        return []
+    ids = session_identity_set(session) | {session_id}
+    removed: list[str] = []
+    for b in live:
+        if not isinstance(b, dict):
+            continue
+        old_id = b.get("session_id") or ""
+        if not old_id or old_id == session_id:
+            continue
+        if {old_id, b.get("session_name") or ""} & ids:
+            try:
+                common.remove_mention_only_via_adapter(channel_id=conversation_id, session_id=old_id)
+                removed.append(old_id)
+            except (common.AdapterError, common.GCAPIError) as exc:
+                sys.stderr.write(f"warn: could not remove stale mention-only registration {old_id!r}: {exc}\n")
+    return removed
+
+
+def mention_only_incompatible_flags(args: argparse.Namespace) -> list[str]:
+    """Flags that only make sense for a gc group participant."""
+    bad: list[str] = []
+    if args.enable_peer_fanout:
+        bad.append("--enable-peer-fanout")
+    if args.allow_untargeted_publication:
+        bad.append("--allow-untargeted-publication")
+    if args.max_peer_triggered_publishes:
+        bad.append("--max-peer-triggered-publishes")
+    if args.max_total_peer_deliveries:
+        bad.append("--max-total-peer-deliveries")
+    if (args.default_handle or "").strip():
+        bad.append("--default-handle")
+    if (args.binding_owner or "").strip():
+        bad.append("--binding-owner")
+    return bad
+
+
+def record_mention_only_binding(
+    cfg: dict[str, Any],
+    *,
+    binding_key: str,
+    kind: str,
+    conv: dict[str, str],
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge mention-only participants into the pack config's binding record.
+
+    An existing AMBIENT record for the same room keeps its participants /
+    group untouched; the mention-only list is a sibling field, upserted by
+    session_name. A room with no record yet gets a minimal one whose
+    ``delivery_mode`` says what it is.
+    """
+    cfg.setdefault("bindings", {})
+    rec = cfg["bindings"].get(binding_key)
+    if not isinstance(rec, dict):
+        rec = {"kind": kind, "conversation": conv, "delivery_mode": "mentions_only"}
+        cfg["bindings"][binding_key] = rec
+    existing = [r for r in rec.get("mention_only_participants") or [] if isinstance(r, dict)]
+    by_name = {r.get("session_name"): r for r in existing}
+    for r in records:
+        by_name[r["session_name"]] = r
+    rec["mention_only_participants"] = [by_name[k] for k in sorted(by_name)]
+    if not rec.get("participants"):
+        rec["delivery_mode"] = "mentions_only"
+    return rec
+
+
+def _main_mentions_only(
+    args: argparse.Namespace,
+    *,
+    workspace_id: str,
+    city: str,
+    participants: list[tuple[str, str]],
+) -> int:
+    """`gc slack bind-room ... --mentions-only` (jg-vobf70).
+
+    1. Reject flags that only apply to gc group participants.
+    2. Resolve each session to its gc id (the adapter injects by id).
+    3. POST /mention-only on the adapter for each (channel, session, handle).
+    4. Record the binding under the pack config (inspectable via
+       `gc slack status` and the registry file).
+    5. Deliver the mention-only reply-protocol nudge.
+
+    No gc group, participant, or /extmsg/bind call is made: a gc member
+    would be woken for every message, which is exactly what this mode
+    exists to avoid.
+    """
+    bad = mention_only_incompatible_flags(args)
+    if bad:
+        raise SystemExit(
+            "--mentions-only cannot be combined with " + ", ".join(bad)
+            + " (those configure gc group participants; a mention-only session is not one)")
+
+    conv = build_conversation_ref(
+        conversation_id=args.conversation_id,
+        kind=args.kind,
+        workspace_id=workspace_id,
+        scope_id=city,
+    )
+    cfg = common.load_pack_config()
+    binding_key = f"{args.kind}:{args.conversation_id}"
+    sessions = [session for _, session in participants]
+    conflicts = ambient_conflicts(cfg, binding_key, sessions)
+    if conflicts and args.replace_ambient:
+        # The operator says the gc-side membership is gone; the pack
+        # record is the local copy this check reads, so clear it here —
+        # nothing else rewrites it (citadel gate r2c MINOR: the removal
+        # instructions used to leave this record, and the block, in place).
+        forget_ambient_record(cfg, binding_key, conflicts)
+        conflicts = []
+    # gc may hold the binding under any of the session's identifiers (a
+    # --binding-owner is stored as typed), so ask for each of them.
+    live = [s for s in sessions if s not in conflicts
+            and any(gc_binding_to_conversation(i, args.conversation_id)
+                    for i in sorted(session_identity_set(s)))]
+    conflicts += live
+    if conflicts:
+        hint = ("Remove the ambient membership first (gc extmsg participants / bindings), "
+                "then re-run WITH --replace-ambient: the pack config's binding record is "
+                "the local copy this check reads, and only that flag drops the stale "
+                "ambient entry from it.")
+        if live:
+            hint = (f"gc still holds an ACTIVE binding of {', '.join(live)} to "
+                    f"{args.conversation_id}; remove it on the gc side first "
+                    "(--replace-ambient cannot override a live gc binding), then re-run "
+                    "with --replace-ambient.")
+        raise SystemExit(
+            f"{', '.join(conflicts)}: already bound AMBIENTLY to {args.conversation_id} "
+            "(gc group participant / binding owner) — a gc member is woken for every "
+            "message, so mention-only cannot be layered on top. " + hint)
+
+    registered: list[dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
+    for handle, session in participants:
+        session_id, session_name = resolve_session_identity(session)
+        drop_stale_mention_only_registrations(args.conversation_id, session, session_id)
+        # The adapter matches the session at runtime (company membership,
+        # own-thread posts) under ANY identifier, so it gets the full set —
+        # (id, display name) alone drops the session name of a session with
+        # a distinct alias (codex r6 P2). Omitted when there is nothing more.
+        extra = sorted(session_identity_set(session) - {session_id, session_name})
+        try:
+            res = common.register_mention_only_via_adapter(
+                channel_id=args.conversation_id,
+                session_id=session_id,
+                session_name=session_name,
+                handle=handle,
+                **({"aliases": extra} if extra else {}),
+            )
+        except common.AdapterError as exc:
+            raise SystemExit(
+                f"register mention-only {handle}={session}: {exc}\n"
+                "(the running adapter must include mention-only support — "
+                "POST /mention-only — restart it on the current pack build)") from exc
+        registered.append(res)
+        record = {"handle": handle, "session_name": session_name, "session_id": session_id}
+        if extra:
+            record["aliases"] = extra
+        records.append(record)
+
+    rec = record_mention_only_binding(
+        cfg, binding_key=binding_key, kind=args.kind, conv=conv, records=records)
+    common.save_pack_config(cfg)
+
+    nudged: list[str] = []
+    nudge_failures: list[str] = []
+    if not args.no_protocol_nudge:
+        for r in records:
+            try:
+                deliver_protocol_nudge(
+                    r["session_id"], args.conversation_id,
+                    template=MENTION_ONLY_NUDGE_TEMPLATE, handle=r["handle"])
+                nudged.append(r["session_id"])
+            except Exception as exc:  # noqa: BLE001 — best-effort, never abort bind
+                nudge_failures.append(f"{r['session_id']}: {exc}")
+
+    print(json.dumps({
+        "binding_key": binding_key,
+        "delivery_mode": "mentions_only",
+        "conversation_id": args.conversation_id,
+        "mention_only_participants": rec.get("mention_only_participants", []),
+        "adapter": registered,
         "protocol_nudge": {
             "delivered_to": nudged,
             "failures": nudge_failures,

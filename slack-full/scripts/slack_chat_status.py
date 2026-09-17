@@ -52,6 +52,64 @@ def _bindings_for_session(session_id: str) -> list[dict[str, Any]]:
     return list(res.get("items") or [])
 
 
+def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
+    """Mention-only room bindings (jg-vobf70), from the pack config record
+    written by `gc slack bind-room --mentions-only` merged with the
+    adapter's registry file (what the adapter actually enforces). Both are
+    local files — no HTTP — and either being unavailable leaves it out."""
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    try:
+        bindings = common.load_pack_config().get("bindings") or {}
+    except common.GCAPIError:
+        bindings = {}
+    for key, rec in bindings.items():
+        if not isinstance(rec, dict):
+            continue
+        conv = rec.get("conversation") or {}
+        cid = conv.get("conversation_id") or key.split(":", 1)[-1]
+        for p in rec.get("mention_only_participants") or []:
+            if not isinstance(p, dict):
+                continue
+            rows[(cid, p.get("session_id") or p.get("session_name") or "")] = {
+                "conversation_id": cid,
+                "session_id": p.get("session_id") or "",
+                "session_name": p.get("session_name") or "",
+                "handle": p.get("handle") or "",
+                "source": "pack-config",
+            }
+    live = common.load_mention_only_registry_file()
+    for cid, entries in (live or {}).items():
+        for b in entries or []:
+            if not isinstance(b, dict):
+                continue
+            k = (cid, b.get("session_id") or "")
+            # The registry is what the adapter enforces, so its values win
+            # over a matching pack-config row (a handle changed through the
+            # adapter used to keep showing the recorded one — citadel gate
+            # r4 MINOR); the config row only fills what the registry omits.
+            prior = rows.pop(k, None) or rows.pop((cid, b.get("session_name") or ""), None) or {}
+            rows[k] = {
+                "conversation_id": cid,
+                "session_id": b.get("session_id") or prior.get("session_id") or "",
+                "session_name": b.get("session_name") or prior.get("session_name") or "",
+                "handle": b.get("handle") or prior.get("handle") or "",
+                "source": "pack-config+registry" if prior else "registry",
+            }
+    # A row the pack config still lists after `DELETE …/mention-only`
+    # removed it from the registry is not enforced by anything; say so
+    # instead of presenting it as a current binding (codex r6 P2). Only
+    # when the registry file is there to be read.
+    reg_path = common.mention_only_registry_path()
+    if reg_path is not None and reg_path.exists():
+        for row in rows.values():
+            if row["source"] == "pack-config":
+                row["source"] = "pack-config only — NOT in the adapter registry (stale)"
+    out = [rows[k] for k in sorted(rows)]
+    if session:
+        out = [r for r in out if session in (r["session_id"], r["session_name"])]
+    return out
+
+
 def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
     """Gather the read-only state used by both human and JSON renderers."""
     adapters = _adapters()
@@ -75,6 +133,7 @@ def collect_status(*, session: str, since: str, limit: int) -> dict[str, Any]:
         "adapters": adapters,
         "session": session,
         "bindings": bindings,
+        "mention_only_bindings": _mention_only_bindings(session),
         "events": {
             "since": since or None,
             "limit": limit,
@@ -133,6 +192,16 @@ def format_status(status: dict[str, Any]) -> str:
                 kind = conv.get("kind") or "?"
                 bstatus = b.get("Status") or "?"
                 lines.append(f"    {cid}  kind={kind}  status={bstatus}")
+
+    mention_only = status.get("mention_only_bindings") or []
+    if mention_only:
+        lines.append("")
+        lines.append("Mention-only room bindings (adapter lane, not gc members):")
+        for m in mention_only:
+            who = m.get("session_name") or m.get("session_id") or "?"
+            sid = m.get("session_id") or ""
+            tail = f" ({sid})" if sid and sid != who else ""
+            lines.append(f"  {m.get('conversation_id')}  → {who}{tail}  handle=@{m.get('handle') or '?'}  [{m.get('source')}]")
 
     recent = []
     for evt in inbound[-5:]:

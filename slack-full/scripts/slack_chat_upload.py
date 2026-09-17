@@ -70,6 +70,47 @@ def _resolve_conversation(session_id: str) -> dict[str, str]:
     }
 
 
+def _company_turn_not_older_than(session_id: str, conversation_id: str, message_id: str) -> str | None:
+    """Company surface (room/dm/mpim) whose current turn is at least as new
+    as the mention-only delivery --thread-current selected
+    (conversation_id/message_id).
+
+    Company deliveries move current-turn pointers, not the extmsg.inbound
+    events the latest-inbound scan reads — so a mention-only delivery can
+    look "latest" while the session is in fact answering a newer company DM,
+    and --thread-current would upload into the (public) mention-only room
+    (codex r7 P1). The pointer is compared against the EXACT record the
+    destination came from, with reply-current's rule
+    (common.mention_only_delivery_supersedes): a newer record of the same
+    room that was not selected — a still-provisional one — must not outvote
+    the company turn (citadel gate r6 MAJOR). None when the session has no
+    company pointer (or no GC_SESSION_NAME).
+    """
+    session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+    if not session_name:
+        return None
+    try:
+        import slack_company_outbound as outbound  # type: ignore
+    except ImportError:
+        return None
+    readers = {"room": "read_current_turn", "dm": "read_current_turn_dm",
+               "mpim": "read_current_turn_mpim"}
+    try:
+        source = outbound.resolve_reply_pointer_source(session_name)
+        if source is None:
+            return None
+        turn = getattr(outbound, readers[source])(session_name)
+    except outbound.OutboundError:
+        return None
+    selected = next(
+        (d for d in common.mention_only_deliveries_via_adapter(session_id)
+         if d.get("channel_id") == conversation_id and d.get("ts") == message_id),
+        None)
+    if common.mention_only_delivery_supersedes(selected, (turn or {}).get("delivered_at") or ""):
+        return None
+    return source
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description="Upload a file to a session's bound Slack channel "
@@ -161,6 +202,35 @@ def main(argv: list[str]) -> int:
         except common.GCAPIError as exc:
             raise SystemExit(str(exc)) from exc
 
+    # --thread-current resolves the latest inbound FIRST: when it reached
+    # this session through the adapter's mention-only lane (jg-vobf70) the
+    # session holds no gc binding for that room, so the upload must go
+    # bindingless through the adapter into THAT conversation — not into
+    # whatever binding the session happens to hold elsewhere.
+    thread_current_match: tuple[str, dict[str, str]] | None = None
+    mention_only_conv: dict[str, str] | None = None
+    if args.thread_current:
+        latest = common.find_latest_inbound_thread_for_session(session_id)
+        if latest:
+            mid, thread_root, latest_conv = latest
+            thread_current_match = (mid, latest_conv)
+            if (latest_conv or {}).get("mention_only"):
+                mention_only_conv = latest_conv
+                # The adapter hands thread_ts to Slack as-is, and Slack
+                # threads hang off the parent: a mention-only delivery that
+                # was itself a thread reply anchors at its thread ROOT, not
+                # its own ts (citadel gate r5; same rule as reply-current).
+                thread_current_match = (thread_root or mid, latest_conv)
+                newer = _company_turn_not_older_than(
+                    session_id, latest_conv.get("conversation_id", ""), mid)
+                if newer:
+                    raise SystemExit(
+                        f"--thread-current: this session's company {newer} turn is "
+                        "at least as new as its latest mention-only delivery "
+                        f"({latest_conv.get('conversation_id')}/{mid}); refusing to "
+                        "guess the destination — pass --conversation-id <id> "
+                        "--thread-ts <ts> explicitly")
+
     if conversation_id:
         if not os.environ.get("SLACK_WORKSPACE_ID", "").strip():
             raise SystemExit(
@@ -173,12 +243,29 @@ def main(argv: list[str]) -> int:
             "conversation_id": conversation_id,
             "kind": args.kind or "room",
         }
+    elif mention_only_conv is not None:
+        conv = {
+            "scope_id": mention_only_conv.get("scope_id") or common.gc_city_name(),
+            "provider": mention_only_conv.get("provider") or "slack",
+            "account_id": mention_only_conv.get("account_id")
+            or os.environ.get("SLACK_WORKSPACE_ID", ""),
+            "conversation_id": mention_only_conv.get("conversation_id", ""),
+            "kind": mention_only_conv.get("kind") or "room",
+        }
+        if via == "gc":
+            via = "adapter"
+            print(
+                f"note: {conv['conversation_id']} is a mention-only room for this "
+                "session (no gc binding) — uploading via the adapter",
+                file=sys.stderr,
+            )
     else:
         conv = _resolve_conversation(session_id)
         if not conv.get("conversation_id"):
             raise SystemExit(
                 f"session {session_id!r} binding has no conversation_id "
                 "(corrupt binding record?)")
+    bindingless = bool(conversation_id) or mention_only_conv is not None
 
     initial_comment = args.initial_comment
     if initial_comment and not args.raw:
@@ -187,7 +274,7 @@ def main(argv: list[str]) -> int:
 
     thread_ts = args.thread_ts.strip()
     if args.thread_current:
-        match = common.find_latest_inbound_message_id_for_session(session_id)
+        match = thread_current_match
         if not match:
             raise SystemExit(
                 f"session {session_id!r} has no inbound to thread under; "
@@ -247,7 +334,7 @@ def main(argv: list[str]) -> int:
             thread_ts=thread_ts,
         ), indent=2))
 
-    if conversation_id:
+    if bindingless:
         # Bindingless mode mirrors publish-to-channel's receipt contract:
         # an HTTP 200 with delivered=false (auth, missing scope, archived
         # channel) must surface as a non-zero exit so the caller notices.

@@ -156,13 +156,19 @@ def _resolve_conversation(
         cid = (payload.get("conversation_id") or "").strip()
         if cid:
             kind = args.kind if user_set_kind else _slack_kind_from_channel_id(cid, _DEFAULT_KIND)
-            return {
+            conv = {
                 "scope_id": common.gc_city_name(),
                 "provider": "slack",
                 "account_id": os.environ.get("SLACK_WORKSPACE_ID", ""),
                 "conversation_id": cid,
                 "kind": kind,
             }
+            if payload.get("mention_only"):
+                # Reached this session through the adapter's mention-only
+                # lane (jg-vobf70): no gc binding exists for it, so the
+                # publish must go through the adapter — see main().
+                conv["mention_only"] = "1"
+            return conv
     binding = common.look_up_binding(session_id)
     if binding:
         return {
@@ -180,7 +186,7 @@ def _resolve_conversation(
 _DEFAULT_KIND = "dm"
 
 
-def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str) -> str:
+def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str, session_id: str = "") -> str:
     """Resolve --turn-ts to its thread anchor via the transcript (gp-6j3).
 
     Returns the triggering inbound's thread root ("" when it was a
@@ -188,9 +194,16 @@ def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str) -> str:
     channel level: posting top-level when the triggering inbound was
     threaded is exactly the misfire --turn-ts exists to prevent, and the
     caller has the thread ts in its reminder to pass explicitly.
+
+    A mention-only delivery (jg-vobf70) has no transcript entry; the
+    lookup falls through to the adapter's delivery log for session_id
+    and, on a hit, marks conv as mention-only so the publish routes via
+    the adapter.
     """
     try:
         match = common.find_inbound_thread_by_ts(conv, turn_ts)
+        if match is None and session_id:
+            match = common.mention_only_delivery_by_ts(session_id, conv.get("conversation_id", ""), turn_ts)
     except common.GCAPIError as exc:
         raise SystemExit(
             f"--turn-ts {turn_ts}: transcript lookup failed ({exc}); "
@@ -203,8 +216,90 @@ def _resolve_turn_anchor(conv: dict[str, str], turn_ts: str) -> str:
             "of a coalesced batch has no entry of its own). Pass --reply-to "
             "<thread ts> (shown next to the message in your delivery "
             "reminder) to thread, or --no-thread for a top-level post.")
-    thread_root, _conv = match
+    thread_root, matched_conv = match
+    if matched_conv.get("mention_only"):
+        conv["mention_only"] = "1"
     return thread_root
+
+
+# Company current-turn pointer readers by the source name
+# resolve_reply_pointer_source returns.
+_COMPANY_POINTER_READERS = {
+    "room": "read_current_turn",
+    "dm": "read_current_turn_dm",
+    "mpim": "read_current_turn_mpim",
+}
+
+
+def _mention_only_delivery_superseding_company(
+    args: argparse.Namespace, session_name: str, outbound: Any, source: str
+) -> dict[str, Any] | None:
+    """The mention-only delivery that must win over the company pointer, or None.
+
+    jg-vobf70 round 4 (citadel gate MAJOR on PR #35): a session can hold a
+    live company room/DM pointer AND receive newer injections through the
+    adapter's mention-only lane, which never touches the company pointers.
+    ``reply-current`` used to divert to the company dispatch on the mere
+    presence of a pointer, so ``--thread-current`` answered the OLD company
+    conversation instead of the mention-only message being replied to.
+
+    Resolution, before any company dispatch:
+
+    * ``--turn-ts <ts>`` naming a mention-only delivery for this session →
+      that delivery (the legacy path anchors on it via the adapter log).
+    * otherwise the newest mention-only delivery, when it is strictly newer
+      than the selected company pointer's ``delivered_at``.
+
+    Anything else (no deliveries, an older/equal delivery, unparseable
+    timestamps) returns None and the company dispatch runs unchanged. Ties
+    keep the company surface — never auto-route a private reply into a
+    public room when both are just as current. Best-effort: an unreachable
+    adapter yields no deliveries, hence no change in behaviour.
+    """
+    identities: list[str] = []
+    explicit = (getattr(args, "session", "") or "").strip()
+    if explicit:
+        identities.append(explicit)
+    else:
+        try:
+            identities.append(common.current_session_id())
+        except common.GCAPIError:
+            pass
+    if session_name and session_name not in identities:
+        # Fallback only: the id query already merges gc-reported identity
+        # candidates (incl. the name) when gc is reachable.
+        identities.append(session_name)
+    deliveries: dict[tuple[str, str], dict[str, Any]] = {}
+    for ident in identities:
+        for d in common.mention_only_deliveries_via_adapter(ident):
+            deliveries.setdefault((d["channel_id"], d["ts"]), d)
+        if deliveries:
+            break
+    if not deliveries:
+        return None
+    turn_ts = (getattr(args, "turn_ts", "") or "").strip()
+    if turn_ts:
+        for d in deliveries.values():
+            if d.get("ts") == turn_ts:
+                return d
+        return None
+    reader = getattr(outbound, _COMPANY_POINTER_READERS.get(source, ""), None)
+    turn = None
+    if reader is not None:
+        try:
+            turn = reader(session_name)
+        except outbound.OutboundError:
+            turn = None
+    # One selection and one comparison, shared with upload --thread-current
+    # (common.select_mention_only_delivery / mention_only_delivery_supersedes):
+    # the newest CONFIRMED delivery, and only when strictly newer than the
+    # pointer at whole-second precision. A provisional record is not
+    # concluded by gc yet — the session has not seen it, so it cannot be the
+    # turn being answered (explicit --turn-ts above still resolves it).
+    newest = common.select_mention_only_delivery(list(deliveries.values()))
+    if not common.mention_only_delivery_supersedes(newest, (turn or {}).get("delivered_at") or ""):
+        return None
+    return newest
 
 
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
@@ -247,6 +342,27 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             session_name, kind_override=kind_override, turn_ref=turn_ref)
         if source is None:
             return None  # no company pointer — fall through to the legacy path
+        if not (turn_ref or origin_ts or kind_override):
+            # An explicit company selector (--turn-ref / --origin-ts /
+            # --kind room|dm|mpim) pins the company turn. Otherwise a
+            # mention-only delivery newer than the pointer (or the one
+            # --turn-ts names) is the inbound being answered: resolve
+            # it BEFORE the company dispatch (jg-vobf70 round 4).
+            superseding = _mention_only_delivery_superseding_company(
+                args, session_name, outbound, source)
+            if superseding is not None:
+                print(
+                    f"note: mention-only delivery {superseding['channel_id']}/"
+                    f"{superseding['ts']} is newer than the company {source} "
+                    "turn — resolving it instead of the company dispatch",
+                    file=sys.stderr,
+                )
+                if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+                    # --turn-ts named THIS delivery: pin its conversation so
+                    # the legacy path cannot pick a newer delivery in another
+                    # room and then miss the ts there (codex r4 P2).
+                    args.conversation_id = superseding["channel_id"]
+                return None
         if (getattr(args, "turn_ts", "") or "").strip():
             # --turn-ts anchors a channel-binding inbound; on a session
             # with a live company turn the reply would divert to the
@@ -437,7 +553,7 @@ def main(argv: list[str]) -> int:
         if turn_ts:
             # Thread under the turn's own inbound: its root when it was a
             # thread reply, the message itself when top-level.
-            thread_root = _resolve_turn_anchor(conv, turn_ts)
+            thread_root = _resolve_turn_anchor(conv, turn_ts, session_id)
             reply_to = thread_root or turn_ts
         else:
             match = common.find_latest_inbound_thread_for_session(session_id)
@@ -446,11 +562,13 @@ def main(argv: list[str]) -> int:
                     "no recent inbound transcript entry for this session; "
                     "cannot thread without --reply-to <ts>"
                 )
-            mid, thread_root, _conv = match
+            mid, thread_root, inbound_conv = match
             # A thread-reply inbound anchors at its thread ROOT, not its own
             # ts — Slack threads hang off the parent message, and a thread_ts
             # pointing at a child strands the reply outside the conversation.
             reply_to = thread_root or mid
+            if inbound_conv.get("mention_only") and inbound_conv.get("conversation_id") == conv["conversation_id"]:
+                conv["mention_only"] = "1"
     elif turn_ts and not reply_to and not args.no_thread:
         # gp-6j3: the caller named the exact inbound this reply answers
         # (the ts every delivery reminder carries). Anchor there — its
@@ -458,7 +576,7 @@ def main(argv: list[str]) -> int:
         # scan for the latest inbound, whose thread context under
         # coalesced delivery + interleaved traffic is routinely NOT the
         # message being answered.
-        reply_to = _resolve_turn_anchor(conv, turn_ts)
+        reply_to = _resolve_turn_anchor(conv, turn_ts, session_id)
     elif not reply_to and not args.no_thread:
         # gp-i62: a threaded inbound means the human is talking to this
         # session IN that thread — "reply to the latest inbound" must land
@@ -479,6 +597,24 @@ def main(argv: list[str]) -> int:
             _mid, thread_root, inbound_conv = match
             if thread_root and inbound_conv.get("conversation_id") == conv["conversation_id"]:
                 reply_to = thread_root
+            if inbound_conv.get("mention_only") and inbound_conv.get("conversation_id") == conv["conversation_id"]:
+                conv["mention_only"] = "1"
+
+    # Mention-only rooms (jg-vobf70): the session holds no gc binding for
+    # the conversation, so gc's /extmsg/outbound would reject the publish.
+    # Route through the adapter when the inbound being answered came via
+    # the mention-only lane. (An explicit --conversation-id naming a
+    # mention-only room is handled below: gc is tried first and the
+    # adapter takes over only when gc refuses AND the adapter lists this
+    # session as mention-only there — no extra call on the healthy path.)
+    via = args.via
+    if via == "gc" and conv.get("mention_only"):
+        via = "adapter"
+        print(
+            f"note: {conv['conversation_id']} is a mention-only room for this "
+            "session (no gc binding) — publishing via the adapter",
+            file=sys.stderr,
+        )
 
     idempotency_key = args.idempotency_key.strip()
     if not idempotency_key:
@@ -501,24 +637,53 @@ def main(argv: list[str]) -> int:
         idempotency_key=idempotency_key,
     )
     try:
-        if args.via == "adapter":
+        if via == "adapter":
             result = common.publish_via_adapter(**publish_kwargs)
         else:
-            result = common.publish_via_gc_outbound(**publish_kwargs)
+            # gc refuses an unbound (session, conversation) either as an
+            # HTTP error or — its normal shape — as a 200 whose receipt
+            # says Delivered=false / FailureKind=auth (codex r5 P2). If
+            # the adapter lists the session as a mention-only participant
+            # there, gc could never have posted, so the adapter is the
+            # correct — and only — route.
+            refusal = ""
+            try:
+                result = common.publish_via_gc_outbound(**publish_kwargs)
+            except common.GCAPIError as gc_exc:
+                refusal = str(gc_exc)
+                result = None
+            else:
+                delivered, kind = common.interpret_publish_receipt(result)
+                if not delivered and kind == "auth":
+                    refusal = "receipt: not delivered, failure_kind=auth"
+            if refusal:
+                if not common.session_is_mention_only_in(session_id, conv["conversation_id"]):
+                    if result is None:
+                        raise common.GCAPIError(refusal)
+                    # Not a mention-only room: the auth receipt stands as
+                    # gc's answer (reported below like any failed receipt).
+                else:
+                    print(
+                        f"note: gc refused ({refusal}); {conv['conversation_id']} is a "
+                        "mention-only room for this session — publishing via the adapter",
+                        file=sys.stderr,
+                    )
+                    via = "adapter"
+                    result = common.publish_via_adapter(**publish_kwargs)
     except (common.AdapterError, common.GCAPIError) as exc:
         return _print_failure_envelope(
             stage="publish",
             error=str(exc),
             conversation_id=conv["conversation_id"],
             session_id=session_id,
-            via=args.via,
+            via=via,
         )
 
     if args.verbose:
         print(json.dumps({
             "conversation_id": conv["conversation_id"],
             "session_id": session_id,
-            "via": args.via,
+            "via": via,
             "result": result,
         }, indent=2))
     else:

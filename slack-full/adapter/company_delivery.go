@@ -136,6 +136,10 @@ type companyGateway struct {
 	// triggerDelivery before the goroutine starts.
 	deliverWG sync.WaitGroup
 
+	// mentionOnlyWG tracks only the mention-only lane's goroutines (also
+	// counted in deliverWG); shutdown joins it (main.go step 3b).
+	mentionOnlyWG sync.WaitGroup
+
 	// chains is the per-root in-process ownership registry (S5): one active
 	// chain per root triple, so a sweep pass or a live result trigger for an
 	// owned root enqueues into the running chain instead of racing it.
@@ -159,6 +163,14 @@ type companyGateway struct {
 	// and the chat.postMessage path (the single reactions/message POST paths).
 	reactHook func(method, channel, ts, name string) ackOutcome
 	replyHook func(channel, threadTS, text string) bool
+	// beforeReceiptUpdate runs right before each generation-checked write
+	// in commitReceipt, so a test can land a competing commit between the
+	// read and the write. Nil in production.
+	beforeReceiptUpdate func()
+	// mentionOnlyLaneStart runs first in every mention-only lane goroutine;
+	// returning false abandons that run — a test's stand-in for a process
+	// that exits right after the Slack ack. Nil in production.
+	mentionOnlyLaneStart func() bool
 	// reactHookTok / replyHookTok are the token-parameterized ack hooks used
 	// by DM receipts (the ack actor is the owner agent's token, not the
 	// switchboard). When set they take precedence over reactHook/replyHook, so
@@ -539,10 +551,17 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// 200 and creates no receipt — it must never reach legacy dispatch,
 		// which would double-deliver by waking the channel-bound session.
 		// Non-company channels keep today's app_mention behavior byte-for-byte.
-		if _, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel); !ok {
+		room, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel)
+		if !ok {
 			return false
 		}
 		w.WriteHeader(http.StatusOK)
+		// The twin is a second entry into the mention-only lane for
+		// sessions outside company membership (jg-vobf70 round 5): the
+		// per-(session, channel, ts) claim skips it when the message
+		// copy already delivered, and retakes a claim a failed
+		// injection released.
+		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	default:
 		// Other non-message types follow today's path byte-for-byte.
@@ -565,7 +584,8 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	if ev.ChannelType == "mpim" {
 		return g.tryHandleMpimEvent(w, r, env, ev, agentApps)
 	}
-	if _, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel); !ok {
+	room, ok := g.dirStore.Snapshot().RoomByChannel(env.TeamID, ev.Channel)
+	if !ok {
 		// Not an imported company room (including the nil-directory case):
 		// the legacy path handles it. Parking applies only to receipts
 		// already admitted, never to admission itself.
@@ -619,8 +639,11 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// root-keyed derivation survives a later body redaction/loss (C7).
 		ThreadRootTS: deriveHumanRootTS(decodeCompanyMessage(origin, env.Event)),
 		Event:        append(json.RawMessage(nil), env.Event...),
+		// The mention-only lane runs after the ack below; its replay intent
+		// is durable BEFORE it (citadel gate r7).
+		MentionOnlyLane: g.mentionOnlyAdmissionIntent(env, ev, room),
 	}
-	created, _, err := store.Admit(receipt)
+	created, existing, err := store.Admit(receipt)
 	if err != nil {
 		// Receipt-store write failure. 503 WITHOUT x-slack-no-retry so
 		// Slack redelivers (~immediately, +1m, +5m, and hourly for 24h
@@ -632,8 +655,18 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	}
 	if !created {
 		// Duplicate origin — an x-slack-retry redelivery of an already
-		// admitted event terminates here: ack, no second delivery.
+		// admitted event terminates here: ack, no second delivery. The
+		// mention-only lane still runs: its claim skips delivered
+		// sessions and retakes one a failed injection released. The
+		// switchboard's copy first takes over an intent a persona copy
+		// wrote — durable before this ack, like the admission write.
+		if err := g.adoptMentionOnlyIntent(env, existing); err != nil {
+			log.Printf("company: mention-only intent of origin=%+v not taken over by the switchboard copy: %v", origin, err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
 		w.WriteHeader(http.StatusOK)
+		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true
 	}
 	// Admitted. Ack the transport, then trigger asynchronous delivery. If
@@ -641,6 +674,10 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 	// recovers it — backpressure, never a silent drop.
 	w.WriteHeader(http.StatusOK)
 	g.triggerDelivery(origin)
+	// Mention-only sessions outside company membership get their copy
+	// from the gateway too (jg-vobf70 round 5): the legacy dispatcher
+	// never sees this event, so its mention-only block cannot.
+	g.mentionOnlyForCompanyRoom(env, ev, room)
 	return true
 }
 
@@ -2074,33 +2111,39 @@ func (g *companyGateway) parkWithRecovery(r *IngressReceipt, reason string) {
 	}
 }
 
+// commitReceiptStaleRetries bounds commitReceipt's merge-on-stale loop: two
+// competing commits can land back to back (the delivery's finalize, then
+// its ack, milliseconds apart), so one retry is not enough; three is, and
+// a receipt still stale after that is contended for real.
+const commitReceiptStaleRetries = 3
+
 // commitReceipt applies apply(r) and persists via a generation-checked
 // Update. On ErrStale it re-reads the on-disk receipt, re-applies the
 // intent onto that fresh base (a merge, not a blind overwrite), and
-// retries exactly once.
+// retries — at most commitReceiptStaleRetries times, without sleeping.
 func (g *companyGateway) commitReceipt(r *IngressReceipt, apply func(cur *IngressReceipt)) error {
 	store := g.store()
 	if store == nil {
 		return errors.New("company: receipt store unavailable")
 	}
-	apply(r)
-	err := store.Update(r)
-	if err == nil {
-		return nil
+	for retry := 0; ; retry++ {
+		apply(r)
+		if g.beforeReceiptUpdate != nil {
+			g.beforeReceiptUpdate()
+		}
+		err := store.Update(r)
+		if err == nil || !errors.Is(err, ErrStale) || retry == commitReceiptStaleRetries {
+			return err
+		}
+		fresh, gerr := store.Get(r.Origin)
+		if gerr != nil {
+			return gerr
+		}
+		if fresh == nil {
+			return fmt.Errorf("company: receipt %s vanished during update", r.ID)
+		}
+		*r = *fresh
 	}
-	if !errors.Is(err, ErrStale) {
-		return err
-	}
-	fresh, gerr := store.Get(r.Origin)
-	if gerr != nil {
-		return gerr
-	}
-	if fresh == nil {
-		return fmt.Errorf("company: receipt %s vanished during update", r.ID)
-	}
-	*r = *fresh
-	apply(r)
-	return store.Update(r)
 }
 
 func (g *companyGateway) acquireSingleFlight(id string) bool {
@@ -2153,6 +2196,7 @@ func (g *companyGateway) startRecovery(ctx context.Context) {
 			}
 			g.barrier.Store(true)
 			log.Printf("company: startup recovery complete; admission barrier open")
+			g.replayMentionOnlyPending()
 			go g.runSweep(ctx)
 			return
 		}

@@ -61,7 +61,10 @@ Implemented:
       `--enable-peer-fanout`, `--allow-untargeted-publication`,
       `--max-peer-triggered-publishes`, `--max-total-peer-deliveries`,
       `--default-handle`, `--handle HANDLE=SESSION` (creates a
-      launcher-mode group + participants under the hood)
+      launcher-mode group + participants under the hood);
+      `--mentions-only` binds the sessions in mention-only mode instead
+      (adapter-side lane, not gc participants — see "Mention-only
+      rooms" below)
 - [x] `gc slack reply-current` — reply to the latest Slack event in the
       current session, by default through gc's `/extmsg/outbound` so
       transcript recording + peer fanout fire (`--via adapter` keeps the
@@ -376,6 +379,72 @@ in the conversation transcript and fans out a peer-publication
 reminder to the other bound sessions so they see what their peer just
 said.
 
+#### Mention-only rooms
+
+A room that is mostly someone else's lane should not wake a session on
+every message, but an UNBOUND room delivers nothing to it — not even
+@mentions of its own bot user. `--mentions-only` is the middle ground:
+
+```
+gc slack bind-room C0B2Y13DRMK mayor --mentions-only
+```
+
+The session is registered with the adapter (`POST
+…/svc/slack/mention-only`) and NOT added as a gc participant, so gc's
+every-message fan-out never reaches it. The adapter instead injects a
+`Slack mention-only room delivery` reminder into the session only when
+a message
+
+- @mentions the adapter's bot user (or arrives as `app_mention`), or
+  addresses the session's handle (`@handle: …`, a User Group mention
+  mapped to it, or a thread-sticky handle); or
+- is a reply in a thread whose root or an earlier reply the session
+  posted through this adapter (own-thread registry fed by `/publish`
+  and `/publish-file`; threads that predate the registry fall back to a
+  scan of the thread for the bot's own user).
+
+Everything else in the room is dropped for that session (still
+readable via `gc slack read --conversation-id C…`). Ambient
+participants of the same room, the room's channel copy to gc, and the
+`@handle:` alias dispatcher are unchanged; a message the alias
+dispatcher already injects into the same session is not delivered
+twice. Slack's message/app_mention twin pair collapses to one
+injection. `gc slack reply-current --thread-current`, `gc slack react`,
+and `gc slack upload --thread-current` resolve mention-only deliveries
+through the adapter's delivery log (`GET
+…/svc/slack/mention-only/deliveries?session_id=…`) and publish via the
+adapter, because the session holds no gc binding for the room; the
+reminder itself prescribes the bindingless
+`gc slack publish-to-channel --conversation-id C… --thread-ts <root>`
+form, which no company-room pointer can divert. `reply-current` consults
+the mention-only delivery log *before* its company-room/DM dispatch: a
+mention-only delivery newer than the session's company current-turn
+pointer (or the one `--turn-ts` names) is answered through the adapter;
+an explicit `--turn-ref`, `--origin-ts` or `--kind room|dm|mpim` still
+pins the company turn. Inspect bindings with `gc slack status`, the registry file
+(`SLACK_MENTION_ONLY_BINDINGS_FILE`), or `GET …/svc/slack/mention-only`;
+remove one with `DELETE …/svc/slack/mention-only?channel_id=&session_id=`.
+
+Imported company rooms are covered as well: their events are consumed
+by the company gateway (which delivers to the room's company members),
+and the gateway runs the mention-only lane for every registered session
+outside company membership — once per admitted message, human-authored
+only, same selection rules. A mention-only binding for a session that
+is a company member of the room is skipped (its gateway delivery is the
+copy). A session bound ambiently to the room is refused for
+`--mentions-only`; after its gc-side membership is removed, re-run with
+`--replace-ambient` to drop the stale entry from the pack config's
+record, which is what the conflict check reads (it compares the
+session's gc id, alias and session name alike). In a company room "the
+bot was @mentioned" means the SWITCHBOARD's bot user. The manifests
+assume only the switchboard app subscribes `app_mention`; set
+`SLACK_APP_ID` (and ideally `SLACK_SWITCHBOARD_BOT_USER_ID`) so a persona
+app's copy of an event is never read as a switchboard mention — with
+`SLACK_APP_ID` unset, every delivering app's `app_mention` and bot user
+id are taken as the switchboard's. Delivery is at-least-once: the
+sessions the lane reached are recorded on the durable ingress receipt,
+so Slack redeliveries after a restart are not injected again.
+
 `--binding-owner SESSION` is what makes outbound publishes (and
 therefore `gc slack reply-current --via gc`) actually work. Without
 it, peer fanout still fires on inbound, but `/extmsg/outbound` has
@@ -450,6 +519,8 @@ package docstring at the top of that file. Summary:
 | `HANDLE_PREFIX`                | `@`                                              | Leading address token for keyword routing. Empty disables routing.              |
 | `IDENTITY_STORE_PATH`          | `/tmp/gc-slack-adapter/identities.json`          | JSON file backing the per-session `chat:write.customize` identity registry.    |
 | `HANDLE_ALIAS_STORE_PATH`      | `/tmp/gc-slack-adapter/handle-aliases.json`      | JSON file backing the cross-channel handle → session-id alias registry.        |
+| `SLACK_MENTION_ONLY_BINDINGS_FILE` | `<GC_CITY_PATH>/.gc/slack/mention_only_bindings.json` (or `/tmp/gc-slack-adapter/mention_only_bindings.json`) | JSON registry of mention-only room bindings written by `gc slack bind-room --mentions-only` (`POST`/`DELETE …/mention-only`): channel id → sessions woken only by bot @mentions, handle addresses, and replies in threads they posted in (jg-vobf70). Persisted; survives restarts. |
+| `SLACK_OWN_THREADS_FILE`       | `<GC_CITY_PATH>/.gc/slack/own_threads.json` (or `/tmp/gc-slack-adapter/own_threads.json`) | JSON registry of (channel, thread root) → sessions that posted there via `/publish` / `/publish-file`; read by the mention-only lane for thread follow-ups. Bounded (oldest-updated evicted); a miss falls back to scanning the thread for the bot's own user. |
 | `SLACK_SUBTEAM_ALIAS_FILE`     | `<GC_CITY_PATH>/.gc/slack/subteam-aliases.json` (or `/tmp/gc-slack-adapter/subteam-aliases.json`) | JSON map of Slack User Group ("subteam") IDs → gc handles, hand-edited or written by `gc slack sync-subteam-aliases`. Required to route the unlabeled `<!subteam^Sxxx>` mention shape; the labeled `<!subteam^Sxxx\|@handle>` / `<!subteam^Sxxx\|handle>` shape is gated by `HANDLE_ALIAS_STORE_PATH` instead. Read-only at runtime; SIGHUP or restart to reload. |
 | `SLACK_USER_ALIAS_FILE`        | `<GC_CITY_PATH>/.gc/slack/slack-user-aliases.json` (or `/tmp/gc-slack-adapter/slack-user-aliases.json`) | JSON map of bare gc handle → raw Slack target ID — a user (`Uxxxx`/`Wxxxx`) or User Group (`Sxxxx`). The **outbound** inverse of `SLACK_SUBTEAM_ALIAS_FILE`: `/publish` rewrites `@handle` body tokens to Slack mention syntax (`<@Uxxxx>` / `<!subteam^Sxxxx>`) so they render as clickable, notifying mentions instead of literal text. Only handles present in the map are rewritten — unmapped handles stay literal (fail-safe, no surprise pings). The `@` is only treated as a mention at a left word boundary, so email-like `user@host` strings are left intact. Hand-edited (operator-curated allowlist); read-only at runtime, SIGHUP or restart to reload. |
 | `INBOUND_FILE_STORE`           | `/tmp/gc-slack-adapter/inbound`                  | Directory for downloaded inbound Slack file attachments.                        |
