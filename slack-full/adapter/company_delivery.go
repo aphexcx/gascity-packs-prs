@@ -643,7 +643,7 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// is durable BEFORE it (citadel gate r7).
 		MentionOnlyLane: g.mentionOnlyAdmissionIntent(env, ev, room),
 	}
-	created, _, err := store.Admit(receipt)
+	created, existing, err := store.Admit(receipt)
 	if err != nil {
 		// Receipt-store write failure. 503 WITHOUT x-slack-no-retry so
 		// Slack redelivers (~immediately, +1m, +5m, and hourly for 24h
@@ -657,7 +657,14 @@ func (g *companyGateway) tryHandleEvent(w http.ResponseWriter, r *http.Request, 
 		// Duplicate origin — an x-slack-retry redelivery of an already
 		// admitted event terminates here: ack, no second delivery. The
 		// mention-only lane still runs: its claim skips delivered
-		// sessions and retakes one a failed injection released.
+		// sessions and retakes one a failed injection released. The
+		// switchboard's copy first takes over an intent a persona copy
+		// wrote — durable before this ack, like the admission write.
+		if err := g.adoptMentionOnlyIntent(env, existing); err != nil {
+			log.Printf("company: mention-only intent of origin=%+v not taken over by the switchboard copy: %v", origin, err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return true
+		}
 		w.WriteHeader(http.StatusOK)
 		g.mentionOnlyForCompanyRoom(env, ev, room)
 		return true

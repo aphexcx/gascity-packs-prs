@@ -931,6 +931,17 @@ def test_provisional_record_resolves_only_when_it_is_the_sessions_sole_inbound(
     assert common.select_mention_only_delivery([pending, older]) is older
 
 
+def test_same_second_confirmed_records_order_by_slack_ts() -> None:
+    """citadel read r4 NOTE 6: two confirmed records stamped inside one
+    second are ordered by the messages' Slack ts, not by which lane
+    goroutine read the clock first."""
+    common, _ = _import("slack_chat_upload")
+    later_message = _delivery("C0B2Y13DRMK", "1700000002.000200", received_at="2026-09-10T08:10:00.100Z")
+    earlier_message = _delivery("C0B2Y13DRMK", "1700000001.000100", received_at="2026-09-10T08:10:00.900Z")
+    assert common.select_mention_only_delivery([earlier_message, later_message]) is later_message
+    assert common.select_mention_only_delivery([later_message, earlier_message]) is later_message
+
+
 # --- status --------------------------------------------------------------------------
 
 def test_status_lists_mention_only_bindings_from_config_and_registry_file(

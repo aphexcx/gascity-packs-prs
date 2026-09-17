@@ -1161,3 +1161,141 @@ func TestCompanyRoomMentionOnlyFailedThreadScanKeepsAdmissionIntent(t *testing.T
 		t.Fatalf("after replay: lane=%+v delivered=%v, want settled and both delivered", r.MentionOnlyLane, r.MentionOnlyDelivered)
 	}
 }
+
+// admitPersonaCopy delivers a PERSONA app's copy of ev (the multi-app
+// layout: persona apps subscribe message events in the room too).
+func admitPersonaCopy(t *testing.T, h *companyHarness, ev slackMessageEvent) {
+	t.Helper()
+	env := companyEnvelope(t, ev)
+	env.APIAppID = "A0PERSONA"
+	env.EventID = "EvP-" + ev.TS
+	env.Authorizations = []slackEventAuthorization{{UserID: "U0PERSONABOT", IsBot: true}}
+	w := httptest.NewRecorder()
+	if !h.gw.tryHandleEvent(w, httptest.NewRequest(http.MethodPost, "/slack/events", nil), env, h.gw.agentAppsSnapshot()) {
+		t.Fatalf("company gateway must own the persona copy")
+	}
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("persona copy status = %d, want 200", w.Result().StatusCode)
+	}
+}
+
+// Round-9 repro for citadel gate r8's MAJOR (company_mention_only.go:591 /
+// :157) and Fable read r4 MINOR 1, both orders: with SLACK_APP_ID set and
+// SLACK_SWITCHBOARD_BOT_USER_ID unset, a PERSONA app's copy of a switchboard
+// @mention cannot recognize the mention, selects nobody — and used to settle
+// the SHARED admission intent. A process that exited after the switchboard
+// copy's ack and before its pending write then left nothing for the startup
+// replay (persona first: the replay also ran AS the persona copy). The intent
+// now stays until a copy that can recognize the mention has selected, and
+// the switchboard's duplicate copy takes the intent over before its ack.
+func TestCompanyRoomMentionOnlyPersonaCopyCannotSettleTheSwitchboardIntent(t *testing.T) {
+	for _, personaFirst := range []bool{true, false} {
+		name := "switchboard copy first"
+		if personaFirst {
+			name = "persona copy first"
+		}
+		t.Run(name, func(t *testing.T) {
+			gc := newFakeGC(t)
+			df := baseDirectoryFile()
+			bf := baseBindingsFile()
+			h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+			h.openBarrier()
+			withMentionOnlyLane(t, h, outsiderBinding())
+			h.gw.cfg.slackAppID = "A0SWITCH"
+			h.gw.cfg.companySelfBotUserID = ""
+
+			ev := humanMessage("1700000000.003000", "<@"+companyMOBotUserID+"> are you there?")
+			// The switchboard copy's lane is cut off right after its ack (the
+			// process "exits"); the persona copy's lane runs to the end.
+			switchboardCutOff := func() {
+				h.gw.mentionOnlyLaneStart = func() bool { return false }
+				admitCompanyRoomMessage(t, h, ev)
+				h.wait()
+				h.gw.mentionOnlyLaneStart = nil
+			}
+			if personaFirst {
+				admitPersonaCopy(t, h, ev)
+				h.wait()
+				switchboardCutOff()
+			} else {
+				switchboardCutOff()
+				admitPersonaCopy(t, h, ev)
+				h.wait()
+			}
+			if got := outsiderPostCount(gc); got != 0 {
+				t.Fatalf("outsider posts before the restart = %d, want 0", got)
+			}
+
+			// "Restart": fresh in-memory state; the receipt store stays.
+			h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+			h.gw.cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+			h.gw.replayMentionOnlyPending()
+			h.wait()
+			if got := outsiderPostCount(gc); got != 1 {
+				t.Fatalf("after the startup replay: outsider posts = %d, want 1 (the persona copy settled the switchboard's intent)", got)
+			}
+			r, err := h.gw.store().Get(ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ev.TS})
+			if err != nil || r == nil {
+				t.Fatalf("receipt: %v %v", r, err)
+			}
+			if r.MentionOnlyLane != nil || len(r.MentionOnlyPending) != 0 || len(r.MentionOnlyDelivered) != 1 {
+				t.Fatalf("after replay: lane=%+v pending=%+v delivered=%v, want the intent settled and the outsider delivered",
+					r.MentionOnlyLane, r.MentionOnlyPending, r.MentionOnlyDelivered)
+			}
+			// Once only.
+			h.gw.replayMentionOnlyPending()
+			admitPersonaCopy(t, h, ev)
+			admitCompanyRoomMessage(t, h, ev)
+			h.wait()
+			if got := outsiderPostCount(gc); got != 1 {
+				t.Fatalf("replay must be once only: outsider posts = %d, want 1", got)
+			}
+		})
+	}
+}
+
+// Round 9 keeps round 8's settle semantics wherever the copy CAN recognize
+// a switchboard mention: a persona copy settles plain chatter once
+// SLACK_SWITCHBOARD_BOT_USER_ID is set; without it the persona copy leaves
+// the intent and the switchboard's own copy settles it.
+func TestCompanyRoomMentionOnlyIntentSettledOnlyByACopyThatSeesTheSwitchboardMention(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+	h.gw.cfg.slackAppID = "A0SWITCH"
+	intent := func(ts string) *MentionOnlyLaneIntent {
+		t.Helper()
+		r, err := h.gw.store().Get(ReceiptOrigin{TeamID: testTeamID, ChannelID: testChannelID, TS: ts})
+		if err != nil || r == nil {
+			t.Fatalf("receipt %s: %v %v", ts, r, err)
+		}
+		return r.MentionOnlyLane
+	}
+
+	h.gw.cfg.companySelfBotUserID = companyMOBotUserID
+	seen := humanMessage("1700000000.003100", "lunch anyone?")
+	admitPersonaCopy(t, h, seen)
+	h.wait()
+	if got := intent(seen.TS); got != nil {
+		t.Fatalf("bot user configured: persona copy left the intent %+v, want it settled (its selection is complete)", got)
+	}
+
+	h.gw.cfg.companySelfBotUserID = ""
+	blind := humanMessage("1700000000.003200", "coffee anyone?")
+	admitPersonaCopy(t, h, blind)
+	h.wait()
+	if got := intent(blind.TS); got == nil || got.AppID != "A0PERSONA" {
+		t.Fatalf("bot user unset: intent after the persona copy = %+v, want it kept under the persona's identity", got)
+	}
+	admitCompanyRoomMessage(t, h, blind)
+	h.wait()
+	if got := intent(blind.TS); got != nil {
+		t.Fatalf("intent after the switchboard copy = %+v, want it settled", got)
+	}
+	if got := outsiderPostCount(gc); got != 0 {
+		t.Fatalf("outsider posts = %d, want 0 (plain chatter)", got)
+	}
+}

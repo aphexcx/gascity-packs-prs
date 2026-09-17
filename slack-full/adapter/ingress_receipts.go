@@ -349,10 +349,15 @@ type IngressReceipt struct {
 	MentionOnlyLane *MentionOnlyLaneIntent `json:"mention_only_lane,omitempty"`
 }
 
-// MentionOnlyLaneIntent keeps the one envelope fact selection needs that
-// the receipt does not otherwise hold: the bot user of the delivering app's
-// authorization (switchboardBot).
+// MentionOnlyLaneIntent keeps the delivering identity selection reads and
+// the receipt does not otherwise hold: the app whose copy the startup replay
+// runs as, and the bot user of that app's authorization (switchboardBot).
+// The receipt's own APIAppID names the copy that CREATED it; when that was a
+// persona app's, the switchboard's duplicate copy takes the intent over
+// before its ack (adoptMentionOnlyIntent, round 9). AppID is empty on a
+// round-8 receipt — the replay then falls back to the receipt's APIAppID.
 type MentionOnlyLaneIntent struct {
+	AppID     string `json:"app_id,omitempty"`
 	BotUserID string `json:"bot_user_id,omitempty"`
 }
 

@@ -157,6 +157,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queues or drops the cancelled copies is unverified (owner test before
   a city with long turns adopts the pack); the closing shape is to treat
   the timeout code as pending and re-confirm the same request.
+  Round 9 (citadel gate r8 + read r4): in the multi-app layout
+  (`SLACK_APP_ID` set, persona apps subscribed to the room's message
+  events) with `SLACK_SWITCHBOARD_BOT_USER_ID` unset, a persona app's
+  copy cannot recognize a switchboard @mention; it selected nobody and
+  settled the admission intent it shares with the switchboard's copy,
+  so an exit after the switchboard copy's ack and before its pending
+  write lost the mention. The intent now carries the delivering app
+  (`mention_only_lane.app_id`); a copy that cannot recognize the
+  mention never settles it (what it does select is still delivered);
+  the switchboard's duplicate copy takes over an intent a persona copy
+  wrote, before its ack (503 when that write fails, so Slack
+  redelivers); the startup replay runs as the intent's app. The layout
+  is therefore safe without the variable, but set it: without it, a
+  room the switchboard app delivers no copy for keeps every human
+  message's intent and re-selects it at each startup until the
+  replay's 24-hour bound. Same-second confirmed delivery records order
+  by Slack ts. Costs to know: every human message in a room with
+  outsider bindings takes one extra generation-checked receipt write
+  (the settle); `mention_only_lane` is a pointer with `omitempty`, so a
+  pre-round-8 receipt decodes as nil (no replay intent — such receipts
+  predate the lane's replay) and a round-8 one without `app_id` replays
+  as the app that created the receipt.
 
 ### Changed
 

@@ -779,7 +779,13 @@ def mention_only_deliveries_via_adapter(session_id: str) -> list[dict[str, Any]]
 
 
 def _mention_only_delivery_order(d: dict[str, Any]) -> tuple[datetime.datetime, str]:
+    # Whole seconds, the precision mention_only_delivery_supersedes compares
+    # at: within one second received_at is the order the adapter's lane
+    # goroutines started in, so the Slack ts — the messages' own order —
+    # breaks the tie (citadel read r4 NOTE 6).
     received = _event_time({"ts": d.get("received_at") or ""})
+    if received is not None:
+        received = received.replace(microsecond=0)
     return (received or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc), d.get("ts") or "")
 
 

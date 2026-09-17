@@ -75,6 +75,16 @@ import (
 //     be delivered by persona apps too, whose envelope names the persona's
 //     bot, so the mention is pinned on SLACK_APP_ID /
 //     SLACK_SWITCHBOARD_BOT_USER_ID when configured (switchboardBot).
+//     MULTI-APP LAYOUT (SLACK_APP_ID set, persona apps subscribed to the
+//     room's message events): set SLACK_SWITCHBOARD_BOT_USER_ID. Without it
+//     a persona copy cannot recognize a switchboard @mention; the layout
+//     stays safe — such a copy never settles the admission intent, the
+//     switchboard's copy takes the intent over before its ack
+//     (adoptMentionOnlyIntent) and only a run that can recognize the
+//     mention, live or replayed, settles it (citadel gate r8) — at a cost:
+//     in a room the switchboard app delivers no copy for, every human
+//     message keeps its intent and is re-selected at each startup until the
+//     replay's 24-hour bound.
 //
 // Channels without mention-only bindings take exactly the path they took
 // before this file existed. The lane runs asynchronously under
@@ -146,7 +156,27 @@ func (g *companyGateway) mentionOnlyAdmissionIntent(env slackEventEnvelope, ev s
 	if len(g.mentionOnlyOutsiders(ev, room, false)) == 0 {
 		return nil
 	}
-	return &MentionOnlyLaneIntent{BotUserID: env.botUserID()}
+	return &MentionOnlyLaneIntent{AppID: env.APIAppID, BotUserID: env.botUserID()}
+}
+
+// adoptMentionOnlyIntent runs on the duplicate branch, BEFORE the ack: when
+// this copy is the switchboard app's and the unsettled intent on the receipt
+// carries another app's identity (a persona copy was admitted first), the
+// intent takes the switchboard's — so a process that exits after this ack has
+// the startup replay run AS the switchboard copy, the only one that
+// recognizes a switchboard @mention while SLACK_SWITCHBOARD_BOT_USER_ID is
+// unset (citadel read r4 MINOR 1). An error means the caller answers 503.
+func (g *companyGateway) adoptMentionOnlyIntent(env slackEventEnvelope, existing *IngressReceipt) error {
+	if g.cfg.slackAppID == "" || env.APIAppID != g.cfg.slackAppID ||
+		existing == nil || existing.MentionOnlyLane == nil || existing.MentionOnlyLane.AppID == env.APIAppID {
+		return nil
+	}
+	return g.commitReceipt(existing, func(cur *IngressReceipt) {
+		// Settled meanwhile by a run that could recognize the mention: stays so.
+		if cur.MentionOnlyLane != nil {
+			cur.MentionOnlyLane = &MentionOnlyLaneIntent{AppID: env.APIAppID, BotUserID: env.botUserID()}
+		}
+	})
 }
 
 // settleMentionOnlyIntent clears the admission intent of a lane run that
@@ -374,15 +404,20 @@ func (g *companyGateway) replayMentionOnlyPending() {
 		}
 		var ev slackMessageEvent
 		if err := json.Unmarshal(store.receiptBody(r), &ev); err != nil || ev.Channel == "" || ev.TS == "" {
-			log.Printf("company: mention-only replay %s: event body unavailable — %d pending injection(s) left", r.ID, len(r.MentionOnlyPending))
+			log.Printf("company: mention-only replay %s: event body unavailable — %d pending injection(s) left (unsettled admission intent: %t)",
+				r.ID, len(r.MentionOnlyPending), r.MentionOnlyLane != nil)
 			continue
 		}
 		if r.MentionOnlyLane != nil {
 			// The previous run exited between the ack and the lane's first
-			// write (citadel gate r7): nothing was selected yet, so the WHOLE
-			// lane runs again — selection included — on an envelope rebuilt
-			// from the receipt. The pending write clears the intent, so a
-			// receipt never carries both.
+			// write (citadel gate r7), or left its selection unfinished (failed
+			// own-thread scan, a persona copy that cannot see a switchboard
+			// mention): the WHOLE lane runs again — selection included — on an
+			// envelope rebuilt from the receipt. A finished selection's pending
+			// write clears the intent; an unfinished one keeps it BESIDE its
+			// pending entries, and this re-run selects those bindings again
+			// (sessions already reached are skipped; an entry it does not
+			// select again stays pending for the startup after).
 			g.replayMentionOnlyLane(r, ev)
 			continue
 		}
@@ -446,6 +481,9 @@ func (g *companyGateway) replayMentionOnlyLane(r *IngressReceipt, ev slackMessag
 		return
 	}
 	env := slackEventEnvelope{Type: "event_callback", TeamID: r.Origin.TeamID, APIAppID: r.APIAppID, EventID: r.EventID}
+	if r.MentionOnlyLane.AppID != "" {
+		env.APIAppID = r.MentionOnlyLane.AppID
+	}
 	if r.MentionOnlyLane.BotUserID != "" {
 		env.Authorizations = []slackEventAuthorization{{UserID: r.MentionOnlyLane.BotUserID, IsBot: true}}
 	}
@@ -530,6 +568,12 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 	// deliver (aliasLegDelivers stays false).
 	target, _ := resolveAddressTarget(cfg, cfg.handleAliases, cfg.subteamAliases, ev.Text)
 	botUID, fromSwitchboard := g.switchboardBot(env)
+	// A persona app's copy with no switchboard bot user configured cannot
+	// recognize a switchboard @mention (nor scan for its posts): what it
+	// selects is delivered, but its selection is never complete, so it must
+	// not settle the admission intent it shares with the switchboard's copy
+	// (citadel gate r8 Major).
+	blindCopy := !fromSwitchboard && botUID == ""
 	in := mentionOnlyInput{
 		bindings:      bindings,
 		botMentioned:  (ev.Type == "app_mention" && fromSwitchboard) || slackTextMentionsUser(ev.Text, botUID),
@@ -573,7 +617,10 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 			return
 		}
 	}
-	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed)
+	if blindCopy && len(targets) == 0 {
+		return
+	}
+	g.runMentionOnlyTargets(origin, ev, target, targets, scanFailed || blindCopy)
 }
 
 // runMentionOnlyTargets injects the selected targets (minus the ones the
