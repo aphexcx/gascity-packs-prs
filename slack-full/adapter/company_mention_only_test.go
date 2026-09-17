@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -836,5 +837,100 @@ func TestMentionOnlyRegistryUpsertMatchesAcrossAliases(t *testing.T) {
 	}
 	if existed, err := reg.Delete("C1", "rig__mayor"); err != nil || !existed {
 		t.Fatalf("Delete by alias: existed=%v err=%v", existed, err)
+	}
+}
+
+// (r7b) citadel Fable read r2 MINOR 1: the company delivery's finalize
+// commit and its ack commit can BOTH land between the lane's receipt read
+// and its write — two stale generations in a row. The lane's confirmed
+// outcome must still be recorded (one retry was not enough: the pending
+// marker stayed and the next restart re-injected a copy), and the merge
+// must keep what the two competing commits wrote.
+func TestCompanyRoomMentionOnlyOutcomeSurvivesTwoStaleGenerations(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+
+	r := admitReceived(t, h, "1700000000.001900")
+	origin := r.Origin
+	target := mentionOnlyTarget{binding: outsiderBinding(), reason: mentionOnlyReasonBotMention}
+	h.gw.recordMentionOnlyOutcome(origin, nil, []mentionOnlyTarget{target}, false)
+	if got, _ := h.gw.store().Get(origin); got == nil || len(got.MentionOnlyPending) != 1 {
+		t.Fatalf("seed: receipt=%+v, want the outsider pending before dispatch", got)
+	}
+
+	// The company delivery's two commits, each landing after the lane has
+	// read the receipt and before its generation-checked write.
+	competing := []func(cur *IngressReceipt){
+		func(cur *IngressReceipt) { cur.Status = ingressStatusDelivered },
+		func(cur *IngressReceipt) { cur.AckState = ackStateDone },
+	}
+	h.gw.beforeReceiptUpdate = func() {
+		if len(competing) == 0 {
+			return
+		}
+		apply := competing[0]
+		competing = competing[1:]
+		cur, err := h.receipts.Get(origin)
+		if err != nil || cur == nil {
+			t.Errorf("competing commit read: %v %v", cur, err)
+			return
+		}
+		apply(cur)
+		if err := h.receipts.Update(cur); err != nil {
+			t.Errorf("competing commit: %v", err)
+		}
+	}
+	t.Cleanup(func() { h.gw.beforeReceiptUpdate = nil })
+
+	h.gw.recordMentionOnlyOutcome(origin, []mentionOnlyTarget{target}, nil, true)
+
+	if len(competing) != 0 {
+		t.Fatalf("competing commits left = %d, want both to have landed mid-write", len(competing))
+	}
+	got, err := h.gw.store().Get(origin)
+	if err != nil || got == nil {
+		t.Fatalf("receipt: %v %v", got, err)
+	}
+	if len(got.MentionOnlyPending) != 0 || len(got.MentionOnlyDelivered) != 1 || got.MentionOnlyDelivered[0] != "outsider-session" {
+		t.Errorf("receipt pending=%+v delivered=%v, want none pending and the outsider delivered after two stale generations",
+			got.MentionOnlyPending, got.MentionOnlyDelivered)
+	}
+	if got.Status != ingressStatusDelivered || got.AckState != ackStateDone {
+		t.Errorf("receipt status=%q ack=%q, want the two competing commits kept (merge, not overwrite)", got.Status, got.AckState)
+	}
+}
+
+// (r7b) the merge-on-stale loop is bounded: a receipt that is stale on
+// every attempt gives up after commitReceiptStaleRetries retries with
+// ErrStale instead of spinning.
+func TestCommitReceiptStaleRetryIsBounded(t *testing.T) {
+	gc := newFakeGC(t)
+	df := baseDirectoryFile()
+	bf := baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+
+	r := admitReceived(t, h, "1700000000.001910")
+	writes := 0
+	h.gw.beforeReceiptUpdate = func() {
+		writes++
+		cur, err := h.receipts.Get(r.Origin)
+		if err != nil || cur == nil {
+			t.Errorf("competing commit read: %v %v", cur, err)
+			return
+		}
+		if err := h.receipts.Update(cur); err != nil {
+			t.Errorf("competing commit: %v", err)
+		}
+	}
+	t.Cleanup(func() { h.gw.beforeReceiptUpdate = nil })
+
+	err := h.gw.commitReceipt(r, func(cur *IngressReceipt) { cur.Reason = "never lands" })
+	if !errors.Is(err, ErrStale) {
+		t.Fatalf("commitReceipt err = %v, want ErrStale once the retries are spent", err)
+	}
+	if want := 1 + commitReceiptStaleRetries; writes != want {
+		t.Errorf("write attempts = %d, want %d (one try + %d retries)", writes, want, commitReceiptStaleRetries)
 	}
 }

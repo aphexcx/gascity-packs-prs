@@ -163,6 +163,10 @@ type companyGateway struct {
 	// and the chat.postMessage path (the single reactions/message POST paths).
 	reactHook func(method, channel, ts, name string) ackOutcome
 	replyHook func(channel, threadTS, text string) bool
+	// beforeReceiptUpdate runs right before each generation-checked write
+	// in commitReceipt, so a test can land a competing commit between the
+	// read and the write. Nil in production.
+	beforeReceiptUpdate func()
 	// reactHookTok / replyHookTok are the token-parameterized ack hooks used
 	// by DM receipts (the ack actor is the owner agent's token, not the
 	// switchboard). When set they take precedence over reactHook/replyHook, so
@@ -2093,33 +2097,39 @@ func (g *companyGateway) parkWithRecovery(r *IngressReceipt, reason string) {
 	}
 }
 
+// commitReceiptStaleRetries bounds commitReceipt's merge-on-stale loop: two
+// competing commits can land back to back (the delivery's finalize, then
+// its ack, milliseconds apart), so one retry is not enough; three is, and
+// a receipt still stale after that is contended for real.
+const commitReceiptStaleRetries = 3
+
 // commitReceipt applies apply(r) and persists via a generation-checked
 // Update. On ErrStale it re-reads the on-disk receipt, re-applies the
 // intent onto that fresh base (a merge, not a blind overwrite), and
-// retries exactly once.
+// retries — at most commitReceiptStaleRetries times, without sleeping.
 func (g *companyGateway) commitReceipt(r *IngressReceipt, apply func(cur *IngressReceipt)) error {
 	store := g.store()
 	if store == nil {
 		return errors.New("company: receipt store unavailable")
 	}
-	apply(r)
-	err := store.Update(r)
-	if err == nil {
-		return nil
+	for retry := 0; ; retry++ {
+		apply(r)
+		if g.beforeReceiptUpdate != nil {
+			g.beforeReceiptUpdate()
+		}
+		err := store.Update(r)
+		if err == nil || !errors.Is(err, ErrStale) || retry == commitReceiptStaleRetries {
+			return err
+		}
+		fresh, gerr := store.Get(r.Origin)
+		if gerr != nil {
+			return gerr
+		}
+		if fresh == nil {
+			return fmt.Errorf("company: receipt %s vanished during update", r.ID)
+		}
+		*r = *fresh
 	}
-	if !errors.Is(err, ErrStale) {
-		return err
-	}
-	fresh, gerr := store.Get(r.Origin)
-	if gerr != nil {
-		return gerr
-	}
-	if fresh == nil {
-		return fmt.Errorf("company: receipt %s vanished during update", r.ID)
-	}
-	*r = *fresh
-	apply(r)
-	return store.Update(r)
 }
 
 func (g *companyGateway) acquireSingleFlight(id string) bool {
