@@ -954,27 +954,28 @@ func mentionOnlyScanMinRefetch(limit int) int {
 // the event path (jg-8vnqyw item 1). A failed scan is not a negative: an
 // unmentioned follow-up has no app_mention twin and Slack was already acked,
 // so nothing upstream asks again. The scan is retried on
-// companyMentionOnlyRetryBackoff — the registry first, it may have learned
-// the thread meanwhile — and the first answer selects under the same rules
-// as an event-path scan. Returns the targets that answer adds to already. A
-// scan that never succeeds adds nothing: delivering blind would turn every
-// thread reply into a delivery for as long as conversations.replies is down.
+// companyMentionOnlyRetryBackoff and the first answer selects under the same
+// rules as an event-path scan. Only the scan decides: it is filtered by ts,
+// while a registry entry created during the backoff (the session's FIRST
+// post in the thread, made after this message) carries no ts and would admit
+// a message that preceded the session's participation. Returns the targets
+// that answer adds to already. A scan that never succeeds adds nothing:
+// delivering blind would turn every thread reply into a delivery for as long
+// as conversations.replies is down.
 func rescanOwnThreadTargets(cfg config, in mentionOnlyInput, already []mentionOnlyTarget, botUID, channel, threadTS, ts string) []mentionOnlyTarget {
 	for attempt, wait := range companyMentionOnlyRetryBackoff {
 		if !sleepUnlessDraining(cfg, wait) {
 			break
 		}
-		if in.threadPosters, in.threadKnown = cfg.ownThreads.posters(channel, threadTS); !in.threadKnown {
-			fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-			replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, channel, threadTS, ownThreadScanLimit)
-			cancel()
-			if err != nil {
-				log.Printf("mention-only: own-thread rescan failed chan=%s thread=%s (attempt %d/%d): %v",
-					channel, threadTS, attempt+1, len(companyMentionOnlyRetryBackoff), err)
-				continue
-			}
-			in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ts)
+		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
+		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, channel, threadTS, ownThreadScanLimit)
+		cancel()
+		if err != nil {
+			log.Printf("mention-only: own-thread rescan failed chan=%s thread=%s (attempt %d/%d): %v",
+				channel, threadTS, attempt+1, len(companyMentionOnlyRetryBackoff), err)
+			continue
 		}
+		in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ts)
 		var added []mentionOnlyTarget
 	selected:
 		for _, t := range selectMentionOnlyTargets(in) {

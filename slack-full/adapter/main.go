@@ -4240,29 +4240,39 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				defer cfg.eventWG.Done()
 			}
 			defer dispatchInflightWG.Done()
-			_, failed := deliverMentionOnly(cfg, targets, inbound)
-			firstAttemptFailed <- len(failed) > 0
-			if mentionOnlyRescan != nil {
-				// What the failed scan could not select is delivered here,
-				// detached: the event does not wait on Slack's recovery.
-				if added := mentionOnlyRescan(targets); len(added) > 0 {
-					_, lateFailed := deliverMentionOnly(cfg, added, inbound)
-					failed = append(failed, lateFailed...)
-				}
-			}
-			if len(failed) == 0 {
-				return
-			}
 			// Slack got its 200 before the lane ran and owes no
 			// redelivery, and an own-thread follow-up has no app_mention
 			// twin — the forgotten event id alone lost the message on one
 			// transient gc failure (codex r6 post-cap). Retry in place on
 			// the company lane's bounded backoff; a twin arriving meanwhile
 			// takes the released claim and the retry skips on it.
-			if _, lost := retryMentionOnlyFailed(cfg, "mention-only:", failed, inbound, mentionOnlyConfirmFor(cfg)); len(lost) > 0 {
-				log.Printf("mention-only: UNDELIVERED chan=%s ts=%s %d injection(s) after %d in-place retries — message marked ⚠️; only an app_mention twin can still deliver them",
-					inbound.Conversation.ConversationID, inbound.ProviderMessageID, len(lost), len(companyMentionOnlyRetryBackoff))
+			retryFailed := func(failed []mentionOnlyTarget) {
+				if len(failed) == 0 {
+					return
+				}
+				if _, lost := retryMentionOnlyFailed(cfg, "mention-only:", failed, inbound, mentionOnlyConfirmFor(cfg)); len(lost) > 0 {
+					log.Printf("mention-only: UNDELIVERED chan=%s ts=%s %d injection(s) after %d in-place retries — message marked ⚠️; only an app_mention twin can still deliver them",
+						inbound.Conversation.ConversationID, inbound.ProviderMessageID, len(lost), len(companyMentionOnlyRetryBackoff))
+				}
 			}
+			_, failed := deliverMentionOnly(cfg, targets, inbound)
+			firstAttemptFailed <- len(failed) > 0
+			var rescan sync.WaitGroup
+			if mentionOnlyRescan != nil {
+				// What the failed scan could not select is delivered beside
+				// the retries of what it could: neither the event nor an
+				// already-selected session's retry waits on Slack's recovery.
+				rescan.Add(1)
+				go func() {
+					defer rescan.Done()
+					if added := mentionOnlyRescan(targets); len(added) > 0 {
+						_, lateFailed := deliverMentionOnly(cfg, added, inbound)
+						retryFailed(lateFailed)
+					}
+				}()
+			}
+			retryFailed(failed)
+			rescan.Wait()
 		}(mentionOnlyInbound(inbound, msg.Files, filesBlock))
 		select {
 		case failed := <-firstAttemptFailed:

@@ -610,7 +610,7 @@ func TestMentionOnly_FailedOwnThreadScanRescannedInPlace(t *testing.T) {
 	companyMentionOnlyRetryBackoff = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond}
 	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
 	var mu sync.Mutex
-	failures := 2 // the preamble's fetch and the event-path scan
+	failures := 2 // the event-path scan and the first rescan
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if !strings.HasSuffix(r.URL.Path, "/conversations.replies") {
@@ -679,6 +679,102 @@ func TestMentionOnly_OwnThreadScanNeverSucceedsDeliversNothing(t *testing.T) {
 	if _, injections := gc.snapshot(); len(injections) != 0 {
 		t.Fatalf("injections = %+v, want none while the scan never succeeded", injections)
 	}
+}
+
+// A registry entry created WHILE the rescan backs off is the session's first
+// post in the thread, made after this message: it must not admit the message
+// (the entry carries no ts). Only the ts-filtered scan decides.
+func TestMentionOnly_RescanIgnoresOwnershipGainedAfterTheMessage(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{5 * time.Millisecond, 5 * time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	var cfg config
+	var mu sync.Mutex
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.HasSuffix(r.URL.Path, "/conversations.replies") {
+			_, _ = fmt.Fprint(w, `{"ok":true}`)
+			return
+		}
+		mu.Lock()
+		calls++
+		n := calls
+		mu.Unlock()
+		if n <= 2 { // the event-path scan, then the first rescan
+			if n == 2 {
+				// The session answers a LATER mention in the thread meanwhile.
+				cfg.ownThreads.record("C1", "100.001800", "mayor-session")
+			}
+			http.Error(w, "slack is having a moment", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(slackConversationsRepliesResp{OK: true, Messages: []slackThreadMessage{
+			{User: "U_ALICE", TS: "100.001800", ThreadTS: "100.001800", Text: "anyone around?"},
+			{User: "U_ALICE", TS: "100.001801", ThreadTS: "100.001800", Text: "hello?"},
+			{User: testBotUserID, BotID: "B1", TS: "100.001805", ThreadTS: "100.001800", Text: "here now"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	withSlackAPIStub(t, srv)
+	gc := &mentionOnlyGCStub{}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg = mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvScan3", "C1", "100.001801", "100.001800", "hello?"), func() {})
+	dispatchInflightWG.Wait()
+
+	if _, injections := gc.snapshot(); len(injections) != 0 {
+		t.Fatalf("injections = %+v, want none: the session joined the thread after this message", injections)
+	}
+}
+
+// An already-selected session's failed injection keeps its own retry clock:
+// it must not queue behind another binding's rescan ladder.
+func TestMentionOnly_RescanDoesNotDelayASelectedSessionsRetry(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{10 * time.Millisecond, 1500 * time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/conversations.replies") {
+			http.Error(w, "down", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	withSlackAPIStub(t, srv)
+	gc := &mentionOnlyGCStub{failFirst: 1}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	// A second binding nobody addresses keeps the rescan alive.
+	if err := cfg.mentionOnly.Set("C1", mentionOnlyBinding{SessionID: "ops-session", SessionName: "ops", Handle: "ops"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvScan4", "C1", "100.001901", "100.001900", "@mayor: still there?"), func() {})
+
+	// The rescan ladder is still inside its 1.5 s step; the mayor's retry
+	// (10 ms step) must already have landed.
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, injections := gc.snapshot(); len(injections) == 1 && injections[0].sessionID == "mayor-session" {
+			break
+		}
+		if time.Now().After(deadline) {
+			_, injections := gc.snapshot()
+			t.Fatalf("injections = %+v after 1s, want the addressed session's retry delivered while the rescan still backs off", injections)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	dispatchInflightWG.Wait()
 }
 
 // Round 7: awaiting gc's terminal result must not hold the room's channel

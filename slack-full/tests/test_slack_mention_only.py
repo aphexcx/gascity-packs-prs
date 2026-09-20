@@ -1183,6 +1183,42 @@ def test_reply_current_for_another_session_ignores_the_callers_company_pointer(
     assert posts == []
 
 
+def test_session_flag_naming_the_caller_by_alias_keeps_the_callers_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Item 2, codex r1 P1: `--session ops` run BY ops (GC_SESSION_NAME is its
+    session_name rig__ops, `ops` its gc alias) is the caller, not another
+    session. Read as another session, its newer company DM — filed under
+    rig__ops — was skipped and the reply went to an older public room."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    _sessions(monkeypatch, common)
+    monkeypatch.setenv("GC_SESSION_ID", "jg-ops-1")
+    monkeypatch.setenv("GC_SESSION_NAME", "rig__ops")
+    assert common.company_pointer_session_names("ops") == ["rig__ops"]
+    assert common.company_pointer_session_names("rig.ops") == ["rig__ops"], "dot spelling, gc not needed"
+    assert common.company_pointer_session_names("mayor") == ["jg-mayor-1", "mayor", "rig__mayor"]
+
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda _sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:00:00Z")])
+    _fake_company_pointers(monkeypatch, {"rig__ops": ("dm", "2026-09-10T08:05:00Z")})
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "ops", "--thread-current"])
+    assert "refusing to guess" in str(exc.value)
+    assert captured == {}
+
+    common, rc = _import("slack_chat_reply_current")
+    _sessions(monkeypatch, common)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda _sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:00:00Z")])
+    fake = _fake_company_pointers(monkeypatch, {"rig__ops": ("dm", "2026-09-10T08:05:00Z")})
+    sent: list[dict[str, Any]] = []
+    fake.post_company_dm_reply = lambda **kw: sent.append(kw) or {"status": "posted"}
+    assert rc.main(["--session", "ops", "--body", "on it", "--thread-current"]) == 0
+    assert [kw["session_name"] for kw in sent] == ["rig__ops"], "the caller's own company DM turn answers"
+
+
 def test_reply_current_turn_ts_pins_the_delivery_room_without_a_company_pointer(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """Item 3: no company pointer. The session's LATEST inbound is a DM, and

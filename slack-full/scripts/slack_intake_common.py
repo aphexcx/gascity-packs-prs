@@ -506,16 +506,35 @@ def company_pointer_session_names(explicit_session: str = "") -> list[str]:
     session's identifiers, never the caller's name — which
     session_identity_candidates admits only when <other> IS the caller
     (jg-8vnqyw item 2: the caller's pointer used to stand in for the named
-    session's). ``--session <own id or name>`` behaves exactly like no flag,
-    without a gc call.
+    session's). ``--session`` naming the CALLER under any identifier gc
+    knows it by (id, alias, session_name, either dot/``__`` spelling) behaves
+    exactly like no flag: reading it as another session would skip the
+    caller's own company turn. Best-effort like session_identity_candidates:
+    gc unreachable leaves the literal and the environment to compare.
     """
     env_name = os.environ.get("GC_SESSION_NAME", "").strip()
+    env_id = os.environ.get("GC_SESSION_ID", "").strip()
     explicit = (explicit_session or "").strip()
-    if not explicit or explicit in (os.environ.get("GC_SESSION_ID", "").strip(), env_name):
-        return [env_name] if env_name else []
-    names = session_identity_candidates(explicit)
-    lead = [env_name] if env_name in names else []
-    return lead + sorted(names - set(lead))
+    own = [env_name] if env_name else []
+    if not explicit or explicit in (env_id, env_name):
+        return own
+    names = {explicit}
+    try:
+        entries = gc_get("/sessions").get("items", [])
+    except GCAPIError:
+        entries = []
+    for entry in entries:
+        ids = {(entry.get(k) or "").strip() for k in ("id", "alias", "session_name")} - {""}
+        if explicit in ids:
+            names |= ids
+            break
+
+    def spelled(name: str) -> str:
+        return name.replace(".", "__")
+
+    if {spelled(n) for n in names} & {spelled(e) for e in (env_id, env_name) if e}:
+        return own
+    return sorted(names)
 
 
 # --- inbound-event lookup -------------------------------------------------
