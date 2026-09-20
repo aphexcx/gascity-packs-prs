@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import http.client
 import json
 import os
 import pathlib
@@ -116,6 +117,15 @@ def slack_get(method: str, params: dict[str, str], token: str) -> dict[str, Any]
             raise SlackAPIError(f"{method} -> HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise SlackAPIError(f"{method} failed: {exc}") from exc
+        except http.client.IncompleteRead as exc:
+            raise SlackAPIError(
+                f"{method}: response cut short ({len(exc.partial)} bytes read, "
+                f"{exc.expected} more expected): a proxy or tunnel closed the "
+                "connection before the declared length", error="response_cut") from exc
+        except (http.client.HTTPException, ConnectionResetError, TimeoutError) as exc:
+            raise SlackAPIError(
+                f"{method}: transport failed during the body read: {exc}",
+                error="transport") from exc
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -164,6 +174,12 @@ def _friendly_api_error(exc: SlackAPIError, conversation_id: str, thread_ts: str
         "account_inactive": "Slack rejected the bot token (account_inactive)",
         "token_revoked": "Slack rejected the bot token (token_revoked) — reissue it at api.slack.com",
         "ratelimited": "Slack rate limit persisted after retries — wait a minute and retry",
+        "response_cut": (
+            f"{exc}; the Slack response was cut short by the network path; "
+            "the reader retried smaller pages and still failed; read the thread "
+            "in pages with --limit 20 or from another network"
+        ),
+        "transport": f"{exc}; check the network connection and retry the read",
     }
     return hints.get(exc.error, str(exc))
 
@@ -180,12 +196,27 @@ def _paginate(method: str, base_params: dict[str, str], limit: int,
     """
     messages: list[dict[str, Any]] = []
     cursor = ""
+    page_max = _PAGE_MAX
     while True:
         params = dict(base_params)
-        params["limit"] = str(min(_PAGE_MAX, limit - len(messages)))
+        page_limit = min(page_max, limit - len(messages))
+        params["limit"] = str(page_limit)
         if cursor:
             params["cursor"] = cursor
-        data = slack_get(method, params, token)
+        try:
+            data = slack_get(method, params, token)
+        except SlackAPIError as exc:
+            if exc.error != "response_cut" or page_limit <= 20:
+                raise
+            # Retry this cursor at 200 -> 100 -> 50 -> 20, retaining the
+            # smaller ceiling for later pages on the same network path.
+            page_max = page_limit // 2 if page_limit > 50 else 20
+            cut = exc.__cause__
+            cut_bytes = len(cut.partial) if isinstance(cut, http.client.IncompleteRead) else 0
+            print(f"{method}: page cut at {cut_bytes} bytes; retrying with limit {page_max}",
+                  file=sys.stderr)
+            _sleep(0)
+            continue
         page = [m for m in (data.get("messages") or []) if isinstance(m, dict)]
         messages.extend(page)
         cursor = ((data.get("response_metadata") or {}).get("next_cursor") or "").strip()
