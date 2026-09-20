@@ -777,6 +777,72 @@ func TestMentionOnly_RescanDoesNotDelayASelectedSessionsRetry(t *testing.T) {
 	dispatchInflightWG.Wait()
 }
 
+// …and the other way round: the rescan must not queue behind a selected
+// session's first injection, whose confirmation gc concludes at that
+// session's next idle boundary.
+func TestMentionOnly_RescanDoesNotWaitForASelectedSessionsConfirmation(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{5 * time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	prevHold := mentionOnlyConfirmHold
+	mentionOnlyConfirmHold = 20 * time.Millisecond
+	t.Cleanup(func() { mentionOnlyConfirmHold = prevHold })
+	var mu sync.Mutex
+	failed := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.HasSuffix(r.URL.Path, "/conversations.replies") {
+			_, _ = fmt.Fprint(w, `{"ok":true}`)
+			return
+		}
+		mu.Lock()
+		first := !failed
+		failed = true
+		mu.Unlock()
+		if first {
+			http.Error(w, "slack is having a moment", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(slackConversationsRepliesResp{OK: true, Messages: []slackThreadMessage{
+			{User: testBotUserID, BotID: "B1", TS: "100.002000", ThreadTS: "100.002000", Text: "status: shipped"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	withSlackAPIStub(t, srv)
+	gate := make(chan struct{})
+	gc := &mentionOnlyGCStub{streamGate: gate, gateSession: "mayor-session"}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	if err := cfg.mentionOnly.Set("C1", mentionOnlyBinding{SessionID: "ops-session", SessionName: "ops", Handle: "ops"}); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvScan5", "C1", "100.002001", "100.002000", "@mayor: which version?"), func() {})
+
+	// The mayor's confirmation is still held; ops must get its copy anyway.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		reached := false
+		_, injections := gc.snapshot()
+		for _, inj := range injections {
+			reached = reached || inj.sessionID == "ops-session"
+		}
+		if reached {
+			break
+		}
+		if time.Now().After(deadline) {
+			close(gate)
+			t.Fatalf("injections = %+v, want ops-session reached while mayor-session's confirmation is outstanding", injections)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(gate)
+	dispatchInflightWG.Wait()
+}
+
 // Round 7: awaiting gc's terminal result must not hold the room's channel
 // copy — gc concludes a session.message at the session's next idle boundary.
 // Past mentionOnlyConfirmHold the event moves on and the lane finishes

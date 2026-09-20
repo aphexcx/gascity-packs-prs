@@ -1279,6 +1279,38 @@ def test_reply_current_for_another_session_refuses_company_selectors(
         assert "live company dm turn" in str(exc.value)
 
 
+def test_another_sessions_pointers_are_checked_under_every_identifier(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Item 2, codex r3 P1: ops holds an OLDER room pointer under its alias
+    `ops` and a NEWER DM pointer under its session name `rig__ops`; the
+    mention-only delivery falls between them. Stopping at the first name
+    that has a pointer let the delivery outvote the older one and sent the
+    upload / reply into the public room past the newer private turn."""
+    pointers = {"ops": ("room", "2026-09-10T08:00:00Z"), "rig__ops": ("dm", "2026-09-10T08:10:00Z")}
+    between = [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:05:00Z")]
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    _sessions(monkeypatch, common)
+    monkeypatch.setenv("GC_SESSION_NAME", "mayor")
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: between)
+    _fake_company_pointers(monkeypatch, pointers)
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "jg-ops-1", "--thread-current"])
+    assert "company dm turn" in str(exc.value)
+    assert captured == {}
+
+    common, rc = _import("slack_chat_reply_current")
+    monkeypatch.setattr(common, "_request", lambda *a, **k: pytest.fail("published past the newer private turn"))
+    _sessions(monkeypatch, common)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter", lambda _sid: between)
+    _fake_company_pointers(monkeypatch, pointers)
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--session", "jg-ops-1", "--body", "on it", "--thread-current"])
+    assert "live company dm turn" in str(exc.value)
+
+
 def test_reply_current_turn_ts_pins_the_delivery_room_without_a_company_pointer(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """Item 3: no company pointer. The session's LATEST inbound is a DM, and

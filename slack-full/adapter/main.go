@@ -4255,13 +4255,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						inbound.Conversation.ConversationID, inbound.ProviderMessageID, len(lost), len(companyMentionOnlyRetryBackoff))
 				}
 			}
-			_, failed := deliverMentionOnly(cfg, targets, inbound)
-			firstAttemptFailed <- len(failed) > 0
 			var rescan sync.WaitGroup
 			if mentionOnlyRescan != nil {
 				// What the failed scan could not select is delivered beside
-				// the retries of what it could: neither the event nor an
-				// already-selected session's retry waits on Slack's recovery.
+				// what it could: the event does not wait on Slack's recovery,
+				// and neither lane waits on the other — gc concludes an
+				// injection at the session's next idle boundary, minutes for
+				// a busy one.
 				rescan.Add(1)
 				go func() {
 					defer rescan.Done()
@@ -4271,6 +4271,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					}
 				}()
 			}
+			_, failed := deliverMentionOnly(cfg, targets, inbound)
+			firstAttemptFailed <- len(failed) > 0
 			retryFailed(failed)
 			rescan.Wait()
 		}(mentionOnlyInbound(inbound, msg.Files, filesBlock))

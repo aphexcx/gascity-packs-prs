@@ -335,6 +335,9 @@ def _other_session_company_guard(args: argparse.Namespace, names: list[str] | No
     # A company selector pins the company turn: no mention-only delivery
     # overrides it (as for the caller's own turn), so it is refused below.
     pinned = bool((getattr(args, "origin_ts", "") or "").strip()) or args.kind in ("room", "dm", "mpim")
+    # EVERY name: the session's pointers can be filed under different
+    # identifiers, and the delivery must be newer than each one's newest.
+    chosen = None
     for name in names:
         try:
             source = outbound.resolve_reply_pointer_source(name)
@@ -350,9 +353,9 @@ def _other_session_company_guard(args: argparse.Namespace, names: list[str] | No
                 "turn (its current one, or the one --kind/--origin-ts pins); a company "
                 "reply can only be sent from the session itself — refusing to guess the "
                 "destination, pass --conversation-id <id> (and --reply-to <ts>) explicitly")
-        if (getattr(args, "turn_ts", "") or "").strip():
-            args.conversation_id = superseding["channel_id"]
-        return
+        chosen = superseding
+    if chosen is not None and (getattr(args, "turn_ts", "") or "").strip():
+        args.conversation_id = chosen["channel_id"]
 
 
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:

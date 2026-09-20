@@ -105,24 +105,27 @@ def _company_turn_not_older_than(
             f"--thread-current: cannot resolve --session {explicit_session!r} against gc "
             f"({exc}), so whose company turn is current is unknown; refusing to guess "
             "the destination — pass --conversation-id <id> --thread-ts <ts> explicitly") from exc
-    source = turn = None
+    # EVERY name: a session's pointers can be filed under different
+    # identifiers (an older room turn under its alias, a newer DM under its
+    # session name) — the delivery must be newer than each one's newest.
+    live: list[tuple[str, dict]] = []
     for session_name in names:
         try:
             source = outbound.resolve_reply_pointer_source(session_name)
             if source is not None:
-                turn = getattr(outbound, readers[source])(session_name)
-                break
+                live.append((source, getattr(outbound, readers[source])(session_name) or {}))
         except outbound.OutboundError:
-            return None
-    if source is None:
+            continue
+    if not live:
         return None
     selected = next(
         (d for d in common.mention_only_deliveries_via_adapter(session_id)
          if d.get("channel_id") == conversation_id and d.get("ts") == message_id),
         None)
-    if common.mention_only_delivery_supersedes(selected, (turn or {}).get("delivered_at") or ""):
-        return None
-    return source
+    for source, turn in live:
+        if not common.mention_only_delivery_supersedes(selected, turn.get("delivered_at") or ""):
+            return source
+    return None
 
 
 def main(argv: list[str]) -> int:
