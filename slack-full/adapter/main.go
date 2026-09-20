@@ -161,6 +161,26 @@
 //     JSON file backing the cross-channel
 //     handle → session-id alias registry.
 //
+//   - SLACK_MENTION_ONLY_BINDINGS_FILE Default "<GC_CITY_PATH>/.gc/slack/mention_only_bindings.json"
+//     when GC_CITY_PATH is set, otherwise
+//     "/tmp/gc-slack-adapter/mention_only_bindings.json".
+//     JSON file backing the mention-only room
+//     binding registry written by
+//     `gc slack bind-room --mentions-only`
+//     (POST/DELETE /mention-only). A session
+//     listed here for a channel is woken only
+//     by @mentions of the bot user, messages
+//     addressed to its handle, and replies in
+//     threads it posted in (jg-vobf70).
+//
+//   - SLACK_OWN_THREADS_FILE        Default "<GC_CITY_PATH>/.gc/slack/own_threads.json"
+//     when GC_CITY_PATH is set, otherwise
+//     "/tmp/gc-slack-adapter/own_threads.json".
+//     JSON file recording which sessions posted
+//     into which threads via /publish and
+//     /publish-file; read by the mention-only
+//     lane for thread follow-ups.
+//
 //   - INBOUND_FILE_STORE           Default "/tmp/gc-slack-adapter/inbound".
 //     Directory for downloaded inbound Slack
 //     file attachments. Files are organized as
@@ -383,6 +403,35 @@ type config struct {
 	// channel routes to the session registered under the "ops" handle
 	// even when that session has no Slack binding for the channel).
 	handleAliasStorePath string
+	// mentionOnlyStorePath is the JSON file backing the mention-only room
+	// binding registry (jg-vobf70): channel id → sessions that receive an
+	// inbound only when addressed (bot @mention / handle) or when it is a
+	// reply in a thread they posted in. Written by the /mention-only admin
+	// endpoints (`gc slack bind-room --mentions-only`). Sourced from
+	// SLACK_MENTION_ONLY_BINDINGS_FILE, defaulting to
+	// <GC_CITY_PATH>/.gc/slack/mention_only_bindings.json when GC_CITY_PATH
+	// is set, else /tmp/gc-slack-adapter/mention_only_bindings.json.
+	mentionOnlyStorePath string
+	// ownThreadsStorePath is the JSON file backing the own-thread registry:
+	// (channel, thread root) → sessions that posted into that thread
+	// through /publish or /publish-file. Consulted by the mention-only lane
+	// so follow-ups to a session's own posts still reach it. Sourced from
+	// SLACK_OWN_THREADS_FILE, same default convention as
+	// mentionOnlyStorePath (own_threads.json).
+	ownThreadsStorePath string
+	// mentionOnly / ownThreads / mentionOnlyDeliveries are the live
+	// registries behind the paths above, wired in main(). Nil in bare
+	// test configs: nil registries have no bindings and record nothing.
+	mentionOnly           *mentionOnlyRegistry
+	ownThreads            *ownThreadRegistry
+	mentionOnlyDeliveries *mentionOnlyDeliveryLog
+	// handleAliases / subteamAliases are the address registries the legacy
+	// dispatcher receives as parameters, also kept here so the company
+	// gateway's mention-only lane resolves a User Group mention with the
+	// same rules (resolveAddressTarget; citadel gate r6). Nil in bare test
+	// configs: only the `@handle:` prefix resolves then.
+	handleAliases  *handleAliasRegistry
+	subteamAliases *subteamAliasMap
 	// threadSessionsStorePath is the JSON file backing the thread →
 	// session registry used by Slack launcher mode (cby.5). When a
 	// `@@<handle>` post arrives in a thread, the adapter checks this
@@ -889,7 +938,11 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	defaultSubteamAliasPath := "/tmp/gc-slack-adapter/subteam-aliases.json"
 	defaultUserAliasPath := "/tmp/gc-slack-adapter/slack-user-aliases.json"
 	defaultPeerBotsPath := "/tmp/gc-slack-adapter/peer_bots.json"
+	defaultMentionOnlyPath := "/tmp/gc-slack-adapter/mention_only_bindings.json"
+	defaultOwnThreadsPath := "/tmp/gc-slack-adapter/own_threads.json"
 	if cityPath := getenv("GC_CITY_PATH"); cityPath != "" {
+		defaultMentionOnlyPath = filepath.Join(cityPath, ".gc", "slack", "mention_only_bindings.json")
+		defaultOwnThreadsPath = filepath.Join(cityPath, ".gc", "slack", "own_threads.json")
 		defaultMappingPath = filepath.Join(cityPath, ".gc", "slack", "channel_mappings.json")
 		defaultRigMappingPath = filepath.Join(cityPath, ".gc", "slack", "rig_mappings.json")
 		defaultAppsRegistryPath = filepath.Join(cityPath, ".gc", "slack", "apps.json")
@@ -912,6 +965,8 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 	cfg.subteamAliasStorePath = envOrFn("SLACK_SUBTEAM_ALIAS_FILE", defaultSubteamAliasPath)
 	cfg.userAliasStorePath = envOrFn("SLACK_USER_ALIAS_FILE", defaultUserAliasPath)
 	cfg.peerBotsPath = envOrFn("SLACK_PEER_BOTS_PATH", defaultPeerBotsPath)
+	cfg.mentionOnlyStorePath = envOrFn("SLACK_MENTION_ONLY_BINDINGS_FILE", defaultMentionOnlyPath)
+	cfg.ownThreadsStorePath = envOrFn("SLACK_OWN_THREADS_FILE", defaultOwnThreadsPath)
 	cfg.deliveryPolicyPath = envOrFn("SLACK_DELIVERY_POLICY_PATH", companyStateDirDefault(cfg.cityPath, "delivery_policy.json"))
 	if d, err := time.ParseDuration(envOrFn("SLACK_COALESCE_WINDOW", defaultCoalesceWindow.String())); err == nil && d >= 0 {
 		cfg.coalesceWindow = d
@@ -1575,6 +1630,8 @@ func main() {
 		cfg.appsRegistryPath,
 		cfg.threadSessionsStorePath,
 		cfg.roomLaunchPath,
+		cfg.mentionOnlyStorePath,
+		cfg.ownThreadsStorePath,
 	} {
 		if err := sweepOrphanTmpFiles(p); err != nil {
 			log.Printf("orphan-tmp sweep: %v", err)
@@ -1602,6 +1659,25 @@ func main() {
 	threadHandleSticky := newThreadHandleStickiness()
 	log.Printf("thread handle stickiness: in-memory only (no persistence in v1)")
 
+	// Mention-only room bindings + the own-thread registry that feeds
+	// their thread-follow-up rule (jg-vobf70). Both are cfg fields so
+	// processSlackEvent, /publish and /publish-file see them through the
+	// cfg value every handler closes over — assigned here, before any
+	// handler is constructed.
+	mentionOnlyReg, err := newMentionOnlyRegistry(cfg.mentionOnlyStorePath)
+	if err != nil {
+		log.Fatalf("mention-only registry: %v", err)
+	}
+	cfg.mentionOnly = mentionOnlyReg
+	log.Printf("mention-only registry: store=%s channels=%d", cfg.mentionOnlyStorePath, len(mentionOnlyReg.All()))
+	ownThreadsReg, err := newOwnThreadRegistry(cfg.ownThreadsStorePath)
+	if err != nil {
+		log.Fatalf("own-thread registry: %v", err)
+	}
+	cfg.ownThreads = ownThreadsReg
+	cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+	log.Printf("own-thread registry: store=%s", cfg.ownThreadsStorePath)
+
 	roomLaunchReg, err := newRoomLaunchMappingRegistry(cfg.roomLaunchPath)
 	if err != nil {
 		log.Fatalf("room launch mapping registry: %v", err)
@@ -1615,6 +1691,9 @@ func main() {
 	}
 	log.Printf("subteam alias map: store=%s entries=%d (read-only; SIGHUP or restart to reload)",
 		cfg.subteamAliasStorePath, subteamAliases.Len())
+	// On cfg before the company gateway takes its copy (mention-only lane).
+	cfg.handleAliases = aliasReg
+	cfg.subteamAliases = subteamAliases
 
 	userAliases, err := newUserAliasMap(cfg.userAliasStorePath)
 	if err != nil {
@@ -1697,6 +1776,11 @@ func main() {
 		log.Printf("WARN: company ingress store %q: %v — gateway starting DEGRADED (company events 503, never legacy; construction retried)",
 			cfg.companyIngressDir, rerr)
 	}
+	// The shutdown admission barrier is created BEFORE the gateway takes
+	// its copy of cfg: the gateway's mention-only lane reads cfg.draining
+	// to stop retrying at shutdown, and a flag assigned after the copy
+	// left that branch dead (citadel Fable read r1, jg-vobf70 round 6).
+	cfg.draining = &atomic.Bool{}
 	companyGW := newCompanyGateway(cfg, companyDirStore, companyBindStore, receipts)
 	if rerr != nil {
 		companyGW.setStoreError(rerr)
@@ -1735,8 +1819,8 @@ func main() {
 	// 2a'/2b') — wired before the handlers close over cfg. The spool
 	// receives what the shutdown drain cannot deliver; with no spool
 	// (SLACK_COALESCE_SPOOL_PATH explicitly empty) spill stays nil and
-	// the coalescer logs that residue as LOST instead.
-	cfg.draining = &atomic.Bool{}
+	// the coalescer logs that residue as LOST instead. (cfg.draining is
+	// created above, before the company gateway copies cfg.)
 	cfg.inboundSpool = newInboundSpool(cfg.coalesceSpoolPath)
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
@@ -1823,6 +1907,12 @@ func main() {
 	internalMux.HandleFunc("DELETE /identity", handleIdentityDelete(identityReg))
 	internalMux.HandleFunc("POST /handle-alias", handleHandleAlias(aliasReg))
 	internalMux.HandleFunc("DELETE /handle-alias", handleHandleAliasDelete(aliasReg))
+	// Mention-only room bindings (jg-vobf70): bind/unbind/list, plus the
+	// recent-deliveries view the pack scripts use to anchor replies.
+	internalMux.HandleFunc("POST /mention-only", handleMentionOnlyBind(cfg.mentionOnly))
+	internalMux.HandleFunc("DELETE /mention-only", handleMentionOnlyDelete(cfg.mentionOnly))
+	internalMux.HandleFunc("GET /mention-only", handleMentionOnlyList(cfg.mentionOnly))
+	internalMux.HandleFunc("GET /mention-only/deliveries", handleMentionOnlyDeliveries(cfg.mentionOnlyDeliveries))
 	// Company-rooms operator surface: the receipt listing + redrive endpoints
 	// (Phase 3b) backing the `gc slack company-status` / `company-redrive` verbs,
 	// plus the Phase 5 body-redaction hook (`gc slack company-redact`).
@@ -2042,6 +2132,15 @@ func main() {
 	//    through processSlackEvent concludes on gc-forward timeouts).
 	if !awaitWaitGroup(cfg.eventWG, shutdownEventDrainTimeout) {
 		log.Printf("shutdown: in-flight event goroutines still running after %s — proceeding to coalescer drain (a straggler admission lands in the spool via the closed gate, not in memory)", shutdownEventDrainTimeout)
+	}
+	// 3b. Join the company gateway's mention-only lane (jg-vobf70 round
+	//    6): its goroutines are spawned by the event goroutines awaited
+	//    above, inject straight into gc (never the coalescer), and stop
+	//    retrying once draining is set — so this wait is bounded by one
+	//    in-flight gc POST. An injection cut off here released its claim;
+	//    Slack's redelivery after the restart retakes it.
+	if !awaitWaitGroup(&companyGW.mentionOnlyWG, shutdownEventDrainTimeout) {
+		log.Printf("shutdown: company mention-only lane still running after %s — proceeding", shutdownEventDrainTimeout)
 	}
 	// 4. Buffered coalesced messages were already acked to Slack — drain
 	//    them to gc (to a fixpoint: flushAll also waits out in-flight
@@ -2386,6 +2485,15 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		// re-checking: the original delivery already consumed the mark.
 		if receipt.Delivered {
 			clearBusyReaction(cfg, req.Conversation.ConversationID, req.ReplyToMessageID)
+			// Own-thread registry (jg-vobf70): a threaded reply joins its
+			// thread; a top-level post roots a new one under its own ts.
+			// Either way, replies in that thread now reach the posting
+			// session even when it is bound mention-only.
+			root := req.ReplyToMessageID
+			if root == "" {
+				root = slackResp.TS
+			}
+			cfg.ownThreads.record(req.Conversation.ConversationID, root, identitySessionID)
 		}
 		// Remember delivered receipts so a subsequent retry with the same
 		// idempotency key replays this receipt instead of re-posting. Put
@@ -2554,6 +2662,13 @@ func handlePublishFile(cfg config, reg *identityRegistry) http.HandlerFunc {
 		// may be the agent's entire reply — it must clear the pending
 		// busy mark exactly like a text publish (hw-94w5k codex r1).
 		clearBusyReaction(cfg, req.Conversation.ConversationID, req.ReplyToMessageID)
+		// Own-thread registry (jg-vobf70): a threaded upload joins its
+		// thread. A top-level file post yields a file id, not a message
+		// ts, so it cannot root a thread here — follow-ups to it fall
+		// back to the Slack thread scan.
+		if req.ReplyToMessageID != "" {
+			cfg.ownThreads.record(req.Conversation.ConversationID, req.ReplyToMessageID, identitySessionID)
+		}
 		writeJSON(w, receipt)
 	}
 }
@@ -3472,6 +3587,35 @@ func slackKindFromChannelType(channelType, channelID string) string {
 	return "dm"
 }
 
+// resolveAddressTarget parses the address a message opens with: a Slack
+// User Group mention (labeled — gated by aliasReg; unlabeled — gated by
+// subteamMap; see the policy note in processSlackEvent) or, on a miss, the
+// `@handle:` prefix. Returns the handle and the text after the address;
+// ("", "") when the message addresses nobody. The one resolution for the
+// legacy dispatcher AND the company gateway's mention-only lane, so the two
+// cannot disagree on who a message names (citadel gate r6).
+func resolveAddressTarget(cfg config, aliasReg *handleAliasRegistry, subteamMap *subteamAliasMap, text string) (target, rest string) {
+	if h, sid, remainder, ok := parseSubteamMentionPrefix(text); ok {
+		if h != "" {
+			// Labeled form: preserve gpk-2zi behavior — aliasReg gate.
+			if aliasReg != nil {
+				if _, aliased := aliasReg.Get(h); aliased {
+					return h, remainder
+				}
+			}
+		} else if mappedHandle, mapped := subteamMap.Get(sid); mapped {
+			// Unlabeled form: subteamAliasMap is the gate.
+			return mappedHandle, remainder
+		}
+	}
+	if cfg.handlePrefix != "" {
+		if h, remainder := parseHandlePrefix(text, cfg.handlePrefix); h != "" {
+			return h, remainder
+		}
+	}
+	return "", ""
+}
+
 // processSlackEvent runs the per-inbound-event work (signature parse,
 // postInbound to gc, optional alias dispatch). It owns the dispatch
 // slot supplied by handleSlackEvents: the slot is released either on
@@ -3623,28 +3767,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// to a handle with no registered session yields the channel-bound
 	// session seeing ExplicitTarget but no alias goroutine firing.
 	// That matches the existing `@handle:` text-prefix semantics.
-	if h, sid, rest, ok := parseSubteamMentionPrefix(msg.Text); ok {
-		if h != "" {
-			// Labeled form: preserve gpk-2zi behavior — aliasReg gate.
-			if aliasReg != nil {
-				if _, aliased := aliasReg.Get(h); aliased {
-					target = h
-					text = rest
-				}
-			}
-		} else {
-			// Unlabeled form: subteamAliasMap is the gate.
-			if mappedHandle, mapped := subteamMap.Get(sid); mapped {
-				target = mappedHandle
-				text = rest
-			}
-		}
-	}
-	if target == "" && cfg.handlePrefix != "" {
-		if h, rest := parseHandlePrefix(msg.Text, cfg.handlePrefix); h != "" {
-			target = h
-			text = rest
-		}
+	if h, rest := resolveAddressTarget(cfg, aliasReg, subteamMap, msg.Text); h != "" {
+		target = h
+		text = rest
 	}
 
 	// Thread-stickiness: if no explicit target was parsed AND this is a
@@ -3814,11 +3939,23 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// inputs, nil classifier — no extra Slack call.
 	preambleLean := ""
 	parentAuthor, parentFirstLine := "", ""
+	// Mention-only room bindings for this channel (jg-vobf70). Resolved
+	// here so the thread-context fetch below can be reused by the
+	// own-thread fallback scan instead of calling Slack twice.
+	var mentionOnlyBindings []mentionOnlyBinding
+	if convKind == "room" {
+		mentionOnlyBindings = cfg.mentionOnly.ForChannel(msg.Channel)
+	}
+	var threadReplies []slackThreadMessage
+	threadRepliesFetched := false
 	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
 		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
 		cancel()
+		if err == nil {
+			threadReplies, threadRepliesFetched = replies, true
+		}
 		if err != nil {
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
 		} else {
@@ -4002,7 +4139,138 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// via Slack redelivery.
 	// Rooms only: DMs/MPIMs are direct conversations where latency
 	// matters more than wrapper overhead — they keep the immediate path.
+	// Mention-only lane (jg-vobf70): sessions bound to this room in
+	// mention-only mode are NOT gc members, so neither the buffered nor
+	// the urgent channel copy below can reach them. They get their own
+	// injection here — synchronously, ahead of the channel copy, under a
+	// per-(session, channel, ts) claim that collapses Slack's
+	// message/app_mention twin pair — and only when the message
+	// addresses them or lands in a thread they posted in
+	// (selectMentionOnlyTargets). Everything else in the room stays
+	// silent for them. The channel copy and every ambient member are
+	// untouched by this block; see mention_only.go for the rules.
+	mentionOnlyFailed := false
+	var mentionOnlyTargets []mentionOnlyTarget
+	// concludeEvent is how the alias leg's goroutine settles the event id
+	// once it owns the verdict: commit, unless a mention-only injection
+	// for this event failed — then the id stays forgotten so a retry can
+	// still run that leg (codex r1 P1).
+	concludeEvent := func() {
+		if mentionOnlyFailed {
+			cfg.eventDedup.forget(env.EventID)
+			return
+		}
+		cfg.eventDedup.commit(env.EventID)
+	}
+	if len(mentionOnlyBindings) > 0 {
+		moIn := mentionOnlyInput{
+			bindings:         mentionOnlyBindings,
+			botMentioned:     botMentioned,
+			target:           target,
+			aliasedSessionID: aliasedSessionID,
+			aliasLegDelivers: aliasedSessionID != "" && !aliasSuppressed,
+			isThreadReply:    isThreadReply,
+		}
+		if isThreadReply {
+			moIn.threadPosters, moIn.threadKnown = cfg.ownThreads.posters(msg.Channel, msg.ThreadTS)
+			if !moIn.threadKnown {
+				// Threads that predate the own-thread registry: scan
+				// the thread for the adapter's own bot user. Reuses
+				// the preamble's fetch when it ran; fetches once
+				// otherwise (skipChannelPost twins, nil cache).
+				if botUID := env.botUserID(); botUID != "" {
+					moIn.botPostedInThread = threadRepliesFetched && threadHasOwnBotPost(threadReplies, botUID, msg.TS)
+					// The preamble's fetch is capped at the context limit
+					// (20 by default) and conversations.replies pages
+					// oldest-first, so a bot reply past that window is
+					// invisible to it (codex r1 P2). Before concluding
+					// "never posted", scan a wider window once — whenever
+					// no fetch ran, or the fetched window may have been
+					// truncated.
+					if !moIn.botPostedInThread && (!threadRepliesFetched || len(threadReplies) >= mentionOnlyScanMinRefetch(cfg.slackThreadContextLimit)) {
+						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
+						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, ownThreadScanLimit)
+						cancel()
+						if err != nil {
+							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
+						} else {
+							moIn.botPostedInThread = threadHasOwnBotPost(replies, botUID, msg.TS)
+						}
+					}
+				}
+			}
+		}
+		mentionOnlyTargets = selectMentionOnlyTargets(moIn)
+	}
+	// runMentionOnly performs the injections. Called from exactly one of
+	// two places: right before a buffered channel copy is enqueued, or —
+	// on the urgent path — AFTER the busy mark is registered, so a
+	// mention-only session that replies before the channel copy lands
+	// finds the mark to clear (codex r2 P2).
+	runMentionOnly := func() {
+		targets := mentionOnlyTargets
+		if len(targets) == 0 {
+			return
+		}
+		// The lane runs in its own goroutine and this event waits for its
+		// FIRST attempt only up to mentionOnlyConfirmHold (round 7): gc's
+		// 202 is now awaited to its terminal result, and gc concludes a
+		// session.message at the session's next idle boundary — minutes for
+		// a busy session — which must not hold the channel copy or this
+		// event's dispatch slot. Event-path work, so inside eventWG (the
+		// Add precedes this event goroutine's Done); slotless past the
+		// hold, like the company lane.
+		firstAttemptFailed := make(chan bool, 1)
+		if cfg.eventWG != nil {
+			cfg.eventWG.Add(1)
+		}
+		dispatchInflightWG.Add(1)
+		go func(inbound externalInboundMessage) {
+			if cfg.eventWG != nil {
+				defer cfg.eventWG.Done()
+			}
+			defer dispatchInflightWG.Done()
+			_, failed := deliverMentionOnly(cfg, targets, inbound)
+			firstAttemptFailed <- len(failed) > 0
+			if len(failed) == 0 {
+				return
+			}
+			// Slack got its 200 before the lane ran and owes no
+			// redelivery, and an own-thread follow-up has no app_mention
+			// twin — the forgotten event id alone lost the message on one
+			// transient gc failure (codex r6 post-cap). Retry in place on
+			// the company lane's bounded backoff; a twin arriving meanwhile
+			// takes the released claim and the retry skips on it.
+			if _, lost := retryMentionOnlyFailed(cfg, "mention-only:", failed, inbound, mentionOnlyConfirmFor(cfg)); len(lost) > 0 {
+				log.Printf("mention-only: UNDELIVERED chan=%s ts=%s %d injection(s) after %d in-place retries — message marked ⚠️; only an app_mention twin can still deliver them",
+					inbound.Conversation.ConversationID, inbound.ProviderMessageID, len(lost), len(companyMentionOnlyRetryBackoff))
+			}
+		}(mentionOnlyInbound(inbound, msg.Files, filesBlock))
+		select {
+		case failed := <-firstAttemptFailed:
+			if failed {
+				// An addressed session's copy was not delivered (codex r1
+				// P1). The session-level claim is already released, but
+				// handleSlackEvents refuses a redelivery of an event id
+				// that concluded here — so the id must NOT commit: it is
+				// forgotten now, and the alias leg below concludes it the
+				// same way. The channel copy still proceeds; a retaken
+				// redelivery skips it on its concluded claim (or, for a
+				// buffered copy, costs the channel audience a duplicate
+				// gc dedups by ts) — the trade the alias leg makes too.
+				mentionOnlyFailed = true
+				commitDedup = false
+				cfg.eventDedup.forget(env.EventID)
+			}
+		case <-time.After(mentionOnlyConfirmHold):
+			log.Printf("mention-only: chan=%s ts=%s gc has not concluded the injection after %s — the lane finishes detached (it owns its retries); the channel copy proceeds",
+				inbound.Conversation.ConversationID, inbound.ProviderMessageID, mentionOnlyConfirmHold)
+		}
+	}
 	if willBuffer {
+		// Buffered chatter takes no busy mark (untargeted, not a bot
+		// mention), so the lane runs ahead of the enqueue.
+		runMentionOnly()
 		// A ts the channel audience already received is the trailing
 		// half of a bot-mention pair (message + app_mention, same ts)
 		// whose urgent twin delivered first. Buffering it would hand
@@ -4113,6 +4381,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if busyEligible {
 		busyAddDone, busyDisplacedMarks = cfg.busyMarks.markBoth(msg.Channel, msg.ThreadTS, msg.TS)
 	}
+	// Mention-only injections, now that the busy mark exists (codex r2
+	// P2): a session replying before the channel copy lands clears the
+	// mark instead of stranding the hourglass the add below would leave.
+	runMentionOnly()
 
 	if !skipChannelPost {
 		// The undecorated channel text, kept for the drain-time spool
@@ -4505,7 +4777,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						for _, d := range displaced {
 							go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 						}
-						cfg.eventDedup.commit(env.EventID)
+						concludeEvent()
 						return
 					}
 					log.Printf("alias dispatch: handle=%s ts=%s parked behind in-flight same-ts twin injection",
@@ -4530,6 +4802,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// while the injection claim is still held, and only then
 				// falls through to the failure branch, which releases
 				// the claim so a parked twin re-injects.
+				// A mention-only session addressed by alias gets its copy
+				// through this leg; log the anchor BEFORE the injection so
+				// the session's react/reply can resolve it as soon as the
+				// reminder lands (codex r1 P2 + r3 P2); rolled back below
+				// when gc rejects the injection.
+				recordAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 				aliasReceipt, aliasOK := dispatchToAliasedSession(cfg, aliasedSessionID, inbound, target)
 				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
@@ -4555,9 +4833,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					for _, d := range displaced {
 						go removeBusyReaction(cfg, inbound.Conversation.ConversationID, d.mark)
 					}
-					cfg.eventDedup.commit(env.EventID)
+					concludeEvent()
 					return
 				}
+				forgetAliasDeliveryForMentionOnly(cfg, mentionOnlyBindings, aliasedSessionID, inbound)
 				// The busy reaction was already launched for this
 				// message, but no reply is coming — the addressed
 				// session never got it and the channel-bound session
