@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import http.server
 import json
+import os
 import pathlib
 import socketserver
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -24,15 +26,17 @@ PACK_DIR = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS_DIR = PACK_DIR / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-Responder = Callable[[dict[str, str], dict[str, str]], tuple[int, Any]]
+Responder = Callable[[dict[str, str], dict[str, str]],
+                     tuple[int, Any] | tuple[int, Any, int]]
 
 
 class ScriptedSlackAPI:
     """Local HTTP server whose per-path behavior is a test-supplied callable.
 
     A responder receives (query-params, request-headers) and returns
-    (status, payload); dict payloads are JSON-encoded, bytes pass
-    through. Every request is recorded for assertions.
+    (status, payload) or (status, payload, cut_after_bytes); dict payloads
+    are JSON-encoded, bytes pass through. A cut sends the full Content-Length
+    but closes after the requested bytes. Every request is recorded.
     """
 
     def __init__(self) -> None:
@@ -56,7 +60,9 @@ class ScriptedSlackAPI:
                     self.send_response(404)
                     self.end_headers()
                     return
-                status, payload = responder(query, dict(self.headers))
+                response = responder(query, dict(self.headers))
+                status, payload = response[:2]
+                cut_after_bytes = response[2] if len(response) == 3 else None
                 body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
                 self.send_response(status)
                 if status == 429:
@@ -64,7 +70,10 @@ class ScriptedSlackAPI:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
+                self.wfile.write(body if cut_after_bytes is None else body[:cut_after_bytes])
+                if cut_after_bytes is not None:
+                    self.wfile.flush()
+                    self.close_connection = True
 
             def log_message(self, *args: Any, **kwargs: Any) -> None:
                 return
@@ -234,6 +243,76 @@ def test_thread_mode_uses_replies_endpoint(slack_api, monkeypatch, capsys):
     query = slack_api.calls("/conversations.replies")[0]["query"]
     assert query["ts"] == "100.0"
     assert query["channel"] == "C0TEST"
+
+
+def test_thread_read_retries_cut_page_at_smaller_limit(slack_api, monkeypatch, capsys):
+    mod = _import_module(monkeypatch, slack_api.url)
+    sleeps: list[float] = []
+    monkeypatch.setattr(mod, "_sleep", sleeps.append)
+    messages = [_msg(f"{100 + i}.0", "U1", f"message {i}") for i in range(60)]
+
+    def replies(query: dict[str, str], headers: dict[str, str]):
+        start = int(query.get("cursor", "0"))
+        page_limit = int(query["limit"])
+        end = min(start + page_limit, len(messages))
+        payload = {
+            "ok": True, "messages": messages[start:end],
+            "has_more": end < len(messages),
+            "response_metadata": {"next_cursor": str(end) if end < len(messages) else ""},
+        }
+        if page_limit > 50:
+            return 200, payload, 64
+        return 200, payload
+
+    slack_api.handlers["/conversations.replies"] = replies
+
+    assert mod.main(["--conversation-id", "C0TEST", "--thread-ts", "100.0",
+                     "--limit", "200", "--no-names", "--json"]) == 0
+    captured = capsys.readouterr()
+    data = json.loads(captured.out)
+    assert data["count"] == 60
+    assert [m["text"] for m in data["messages"]] == [f"message {i}" for i in range(60)]
+    assert data["has_more"] is False
+    queries = [call["query"] for call in slack_api.calls("/conversations.replies")]
+    assert [(q["limit"], q.get("cursor", "")) for q in queries] == [
+        ("200", ""), ("100", ""), ("50", ""), ("50", "50"),
+    ]
+    assert captured.err.splitlines() == [
+        "conversations.replies: page cut at 64 bytes; retrying with limit 100",
+        "conversations.replies: page cut at 64 bytes; retrying with limit 50",
+    ]
+    assert sleeps == [0, 0]
+
+
+def test_persistent_cut_exits_with_one_line(slack_api, monkeypatch):
+    monkeypatch.setenv("SLACK_API_BASE_URL", slack_api.url)
+    slack_api.handlers["/conversations.replies"] = lambda query, headers: (
+        200, {"ok": True, "messages": [_msg("100.0", "U1", "parent")],
+              "has_more": False}, 16,
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "slack_chat_read.py"),
+         "--conversation-id", "C0TEST", "--thread-ts", "100.0",
+         "--limit", "200", "--no-names", "--json"],
+        env=os.environ.copy(), capture_output=True, text=True, timeout=10,
+    )
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert "Traceback" not in result.stderr
+    lines = result.stderr.splitlines()
+    assert lines[:3] == [
+        f"conversations.replies: page cut at 16 bytes; retrying with limit {limit}"
+        for limit in (100, 50, 20)
+    ]
+    assert len(lines) == 4  # Three fallback notices, then one terminal error.
+    assert lines[-1].startswith("gc slack read:")
+    assert "response cut short" in lines[-1]
+    assert "--limit 20" in lines[-1]
+    assert [call["query"]["limit"] for call in slack_api.calls("/conversations.replies")] == [
+        "200", "100", "50", "20",
+    ]
 
 
 # --- rate limits ----------------------------------------------------------
