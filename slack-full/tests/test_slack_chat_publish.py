@@ -365,7 +365,8 @@ def test_summarize_publish_receipt_shapes() -> None:
                      "Entry": {"text": "the whole outbound text"}}},
         conversation_id="C1", thread_ts="1690.5",
     ) == {"delivered": True, "conversation_id": "C1",
-          "message_id": "1700.1", "thread_ts": "1690.5"}
+          "message_id": "1700.1", "thread_ts": "1690.5",
+         "reply_to_message_id": "1690.5"}
     # Adapter-direct lowercase, success, unthreaded.
     assert common.summarize_publish_receipt(
         {"delivered": True, "message_id": "1700.2", "conversation": {"x": 1}},

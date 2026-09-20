@@ -261,7 +261,11 @@ def test_thread_current_anchors_at_thread_root(
     body = _upload_thread_current(
         monkeypatch, tmp_path,
         lambda _sid: ("1786291407.960839", "1786250478.963679", _fake_binding()))
-    assert body["reply_to_message_id"] == "1786250478.963679"
+    # Fork rule since jg-vobf70 (65ba31ba): on the gc path the anchor is the
+    # inbound's own message id (gc's reply_to_message_id contract resolves the
+    # thread from its transcript entry); only the bindingless mention-only
+    # path anchors at the thread root. Upstream #293 anchored at the root here.
+    assert body["reply_to_message_id"] == "1786291407.960839"
 
 
 def test_thread_current_unthreaded_uses_own_ts(

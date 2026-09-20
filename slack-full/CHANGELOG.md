@@ -8,6 +8,178 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mention-only room bindings** (jg-vobf70, Afik 2026-09-10 for the US
+  fleet channel): `gc slack bind-room <C…> <session> --mentions-only`
+  registers the session with the adapter (`POST /mention-only`) instead
+  of as a gc group participant. The adapter injects a `Slack
+  mention-only room delivery` reminder into the session only when a
+  message @mentions the bot user (or arrives as `app_mention`),
+  addresses the session's handle (`@handle:` prefix, User Group
+  mention, thread-sticky handle), or replies in a thread the session
+  posted in (new own-thread registry fed by `/publish` and
+  `/publish-file`, with a scan of the thread for the bot's own user as
+  the pre-registry fallback). Everything else in the room is dropped
+  for that session — no wake — while ambient participants, the channel
+  copy to gc and the `@handle:` alias dispatcher are unchanged (an
+  alias injection into the same session suppresses the mention-only
+  copy; Slack's message/app_mention twin pair collapses to one
+  injection under a per-(session, channel, ts) claim; a failed
+  injection releases its claim and marks the message ⚠️). New
+  endpoints: `POST`/`DELETE`/`GET /mention-only`,
+  `GET /mention-only/deliveries?session_id=`; new env
+  `SLACK_MENTION_ONLY_BINDINGS_FILE`, `SLACK_OWN_THREADS_FILE`.
+  The reminder prescribes the bindingless `publish-to-channel
+  --thread-ts` reply. Pack side: `reply-current --thread-current`/`--turn-ts`, `react`, and
+  `upload --thread-current` resolve mention-only deliveries through the
+  adapter's delivery log and publish via the adapter (the session has
+  no gc binding there); `gc slack status` lists mention-only bindings
+  from the pack config and the registry file; the bind sends a
+  mention-only variant of the reply-protocol nudge. Round 4 (citadel
+  gate MAJOR): `reply-current` resolves mention-only deliveries BEFORE
+  the automatic company-room/DM dispatch — a delivery newer than the
+  session's company current-turn pointer (or the one `--turn-ts` names)
+  is answered via the adapter instead of being diverted into the older
+  company conversation; `--turn-ref` / `--origin-ts` / `--kind
+  room|dm|mpim` still pin the company turn. Round 5 (citadel gate r3
+  MAJOR, `main.go:4058`): imported company rooms no longer bypass
+  mention-only delivery — the company gateway, which consumes those
+  rooms' events before the legacy dispatcher, now runs the
+  mention-only lane itself on first admission for every registered
+  session outside company membership (bot @mention, `@handle:`
+  prefix, own-thread follow-ups; human-authored messages only; a
+  binding for a company member of the room is skipped, so no double
+  delivery). Gate r2c MINOR: `bind-room --mentions-only` for a session
+  the pack record lists as ambient now names `--replace-ambient`, which
+  drops the stale ambient entry (participant / binding owner) once the
+  gc-side membership is gone; a binding gc still reports active stays
+  refused. Round-4 P2s: re-binding a session under its other
+  identifier (name ↔ resolved id) replaces the registry record instead
+  of appending a second binding (double injection); an ambient
+  re-bind of a handle to a new session drops the replaced session from
+  the pack record (gc upserts by handle). Round-5 codex: a company-room
+  injection gc rejects is retried in place on a bounded backoff, and
+  the app_mention twin / a Slack redelivery retake the released claim
+  (the receipt is already acked, so nothing upstream retried it); a
+  company binding targeting another city no longer shadows a local
+  mention-only session of the same name; `reply-current` treats gc's
+  200 + `FailureKind=auth` receipt like an HTTP refusal when choosing
+  the mention-only adapter route. Round 6 (citadel gate r4 MAJOR,
+  `slack_chat_bind_room.py:483`): the bind conflict checks compare a
+  session's full identity set — gc id + alias + session name — so an
+  ambient participant recorded under its session name is no longer
+  invisible to `--mentions-only` by id or alias (the bind used to
+  succeed on top of the ambient membership: every-message wakes PLUS
+  mention injections); `--replace-ambient`, the mirror check for an
+  ambient bind and the live gc-binding probe use the same set. Gate r4
+  MINOR: `gc slack status` prefers the registry's values (what the
+  adapter enforces) over a matching pack-config row. Fable read r1:
+  the gateway's copy of the config now carries the shutdown drain flag
+  (it was assigned after the copy, so the lane's stop-retrying branch
+  was dead) and shutdown joins the lane; the lane records the sessions
+  it reached on the durable ingress receipt
+  (`mention_only_delivered`), so a Slack redelivery after a restart or
+  past the 10-minute in-memory claim does not wake the session twice
+  (the write follows the injection — a crash in between can still
+  deliver twice, never zero); the ⚠️ posted on a failed injection is
+  removed when a later attempt reaches every session it stood for;
+  with `SLACK_APP_ID` set, only the switchboard app's copy counts as
+  "the bot was mentioned" (a persona app's `app_mention` or bot user
+  id does not), and `SLACK_SWITCHBOARD_BOT_USER_ID` names the bot user
+  when set. Round-6 codex: injections still failed when a lane run ends
+  (retry ladder exhausted, or cut short by shutdown) are left on the
+  receipt (`mention_only_pending`) and replayed once after the next
+  startup recovery — the event was acked at admission, so nothing else
+  would retry them; the targets are written as pending BEFORE the first
+  POST, so a process that exits mid-run leaves them for the replay; gc's
+  asynchronous 202 acceptance is awaited to its terminal result on the
+  event stream (a `request.failed` is a failed injection, not a
+  delivery; an interrupted stream re-confirms the same request rather
+  than re-posting); a copy skipped on its twin's committed claim
+  settles the delivery on the receipt (the twin may have outrun the
+  receipt); only injections a run saw gc deliver are recorded as
+  delivered (the delivery log is provisional); a mention-only bind
+  removes the session's registration held under another identifier
+  (double injection) and registers the session's further gc identifiers
+  as `aliases`, which the adapter matches everywhere it compares a
+  binding to a session (company-member exclusion, own-thread posts,
+  upsert, delete, delivery log); the ambient participant merge folds
+  handle case like gc does; `gc slack status` labels a pack-config row the
+  registry no longer holds as stale. Round 7 (citadel gate r5): the
+  legacy (non-company) lane awaits gc's asynchronous 202 to its terminal
+  result too, through the same hook as the company lane — a 202 whose
+  request then failed used to commit the delivery claim, the Slack twin
+  was skipped on it and the session received nothing; a failed legacy
+  injection is retried in place on the same bounded backoff (Slack was
+  already acked, and an own-thread follow-up has no `app_mention` twin;
+  this lane has no receipt, so retries cut short by shutdown are not
+  replayed); `upload --thread-current` on a mention-only delivery that
+  was a thread reply anchors at the thread root, not the reply's ts;
+  the legacy lane runs beside the channel copy and holds it at most
+  10 s (gc concludes an injection at the session's next idle boundary);
+  a delivery-log record stays `provisional` until gc concludes it
+  delivered, and the pack scripts never pick a provisional record as the
+  session's latest inbound or over a company pointer (an explicit
+  `--turn-ts` still resolves it); the receipt's delivered marker is
+  matched across a binding's identifiers; the legacy lane's reminder
+  names files the adapter could not download; a room's mention-only
+  recipients are injected concurrently, so one busy session does not
+  hold the others' copies; `upload --thread-current` refuses to pick a
+  mention-only room when the session's company current turn is at least
+  as new as that delivery (pass `--conversation-id` + `--thread-ts`).
+  Round 8 (citadel gates r6/r7 + read r3): `upload --thread-current`
+  compares the company pointer against the exact confirmed delivery it
+  selected — a still-provisional newer record of the same room used to
+  outvote a newer company DM and send the file into the old public
+  thread; selection and comparison are now one shared helper for
+  `reply-current` and `upload` (`select_mention_only_delivery`,
+  `mention_only_delivery_supersedes`), and a provisional record resolves
+  only when the session has no confirmed record at all, still below any
+  gc inbound or company pointer (the mark outlives gc's delivery by the
+  event-stream latency); the company lane resolves Slack User Group
+  mentions — labeled through the handle-alias registry, unlabeled
+  through subteam-aliases.json — with the legacy dispatcher's own
+  address resolution (`resolveAddressTarget`), so a mapped subteam
+  mention reaches a mention-only outsider of a company room; the lane's
+  replay intent (`mention_only_lane`) is written in the receipt's
+  admission write, before the Slack ack, so a process that exits before
+  the lane records its selection has the whole lane re-run at the next
+  startup; a failed legacy injection records its warning before it
+  releases the claim (no false permanent ⚠️ when a twin delivers first);
+  a pending entry is cleared across a binding's identifiers; the
+  reminder says the `--thread-current` shortcuts resolve a delivery once
+  gc has confirmed it. KNOWN LIMIT (documented in
+  `company_mention_only.go`, not changed): gc caps a `session.message` at
+  four minutes and emits `request.failed` code `timeout`, which the
+  adapter reads as definitive — a session busy longer than that looks
+  undelivered and is re-posted up to three more times; whether gc then
+  queues or drops the cancelled copies is unverified (owner test before
+  a city with long turns adopts the pack); the closing shape is to treat
+  the timeout code as pending and re-confirm the same request.
+  Round 9 (citadel gate r8 + read r4): in the multi-app layout
+  (`SLACK_APP_ID` set, persona apps subscribed to the room's message
+  events) with `SLACK_SWITCHBOARD_BOT_USER_ID` unset, a persona app's
+  copy cannot recognize a switchboard @mention; it selected nobody and
+  settled the admission intent it shares with the switchboard's copy,
+  so an exit after the switchboard copy's ack and before its pending
+  write lost the mention. The intent now carries the delivering app
+  (`mention_only_lane.app_id`); a copy that cannot recognize the
+  mention never settles it (what it does select is still delivered);
+  the switchboard's duplicate copy takes over an intent a persona copy
+  wrote, before its ack (503 when that write fails, so Slack
+  redelivers); the startup replay runs as the intent's app. The layout
+  is therefore safe without the variable, but set it: without it, a
+  room the switchboard app delivers no copy for keeps every human
+  message's intent and re-selects it at each startup until the
+  replay's 24-hour bound. Same-second confirmed delivery records order
+  by Slack ts. Costs to know: every human message in a room with
+  outsider bindings takes one extra generation-checked receipt write
+  (the settle); `mention_only_lane` is a pointer with `omitempty`, so a
+  pre-round-8 receipt decodes as nil (no replay intent — such receipts
+  predate the lane's replay) and a round-8 one without `app_id` replays
+  as the app that created the receipt.
+
 ### Changed
 
 - Token-efficiency batch (gp-9e7, Afik-approved 1787421193 with items
