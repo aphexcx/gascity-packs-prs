@@ -45,6 +45,9 @@ gc slack read --conversation-id Cxxx --thread-ts 1234.5678 [...]
 - The bot must be **in the conversation**: Slack answers
   `not_in_channel` otherwise and the command tells you to invite it.
 - Rate limits (HTTP 429) are retried honoring `Retry-After`.
+- Cut response bodies are retried with smaller pages; if the cut persists,
+  the command exits non-zero with a one-line reason — try `--limit 20` as a
+  manual fallback or read from another network.
 
 ## No `gc slack search`
 
