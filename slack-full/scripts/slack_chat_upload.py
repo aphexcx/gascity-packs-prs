@@ -70,7 +70,9 @@ def _resolve_conversation(session_id: str) -> dict[str, str]:
     }
 
 
-def _company_turn_not_older_than(session_id: str, conversation_id: str, message_id: str) -> str | None:
+def _company_turn_not_older_than(
+    session_id: str, conversation_id: str, message_id: str, explicit_session: str = "",
+) -> str | None:
     """Company surface (room/dm/mpim) whose current turn is at least as new
     as the mention-only delivery --thread-current selected
     (conversation_id/message_id).
@@ -84,23 +86,26 @@ def _company_turn_not_older_than(session_id: str, conversation_id: str, message_
     (common.mention_only_delivery_supersedes): a newer record of the same
     room that was not selected — a still-provisional one — must not outvote
     the company turn (citadel gate r6 MAJOR). None when the session has no
-    company pointer (or no GC_SESSION_NAME).
+    company pointer. The pointer is the one of the session the upload acts
+    for: explicit_session (``--session``) when given, the caller's
+    GC_SESSION_NAME otherwise (common.company_pointer_session_names).
     """
-    session_name = os.environ.get("GC_SESSION_NAME", "").strip()
-    if not session_name:
-        return None
     try:
         import slack_company_outbound as outbound  # type: ignore
     except ImportError:
         return None
     readers = {"room": "read_current_turn", "dm": "read_current_turn_dm",
                "mpim": "read_current_turn_mpim"}
-    try:
-        source = outbound.resolve_reply_pointer_source(session_name)
-        if source is None:
+    source = turn = None
+    for session_name in common.company_pointer_session_names(explicit_session):
+        try:
+            source = outbound.resolve_reply_pointer_source(session_name)
+            if source is not None:
+                turn = getattr(outbound, readers[source])(session_name)
+                break
+        except outbound.OutboundError:
             return None
-        turn = getattr(outbound, readers[source])(session_name)
-    except outbound.OutboundError:
+    if source is None:
         return None
     selected = next(
         (d for d in common.mention_only_deliveries_via_adapter(session_id)
@@ -222,7 +227,8 @@ def main(argv: list[str]) -> int:
                 # its own ts (citadel gate r5; same rule as reply-current).
                 thread_current_match = (thread_root or mid, latest_conv)
                 newer = _company_turn_not_older_than(
-                    session_id, latest_conv.get("conversation_id", ""), mid)
+                    session_id, latest_conv.get("conversation_id", ""), mid,
+                    explicit_session=args.session)
                 if newer:
                     raise SystemExit(
                         f"--thread-current: this session's company {newer} turn is "

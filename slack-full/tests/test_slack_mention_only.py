@@ -1050,9 +1050,12 @@ def test_status_marks_config_rows_missing_from_the_registry_as_stale(
 def test_bind_room_mentions_only_drops_registration_held_under_another_identifier(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """codex r6 P2: a session first registered under its literal session
-    name (gc did not list it yet) and later resolved to (id, alias) matched
-    neither identifier in the adapter's upsert — two registrations, double
-    injection. The bind removes the one held under the other identifier."""
+    name (gc did not list it yet) and later resolved to (id, alias) must not
+    end up with two registrations (double injection). The new registration
+    carries the old literal as an alias, so the adapter's upsert folds the
+    old record into it — and since the bind now registers FIRST (jg-8vnqyw
+    item 4) it must NOT then `DELETE rig__mayor`: the adapter's DELETE
+    matches under any identifier and would remove the new registration."""
     common, bind = _import("slack_chat_bind_room")
     monkeypatch.setattr(common, "gc_get", lambda path: {
         "items": [{"id": "jg-123", "alias": "mayor", "session_name": "rig__mayor"}],
@@ -1070,5 +1073,210 @@ def test_bind_room_mentions_only_drops_registration_held_under_another_identifie
     monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
 
     assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
-    assert removed == ["C1:rig__mayor"]
-    assert [(r["session_id"], r["session_name"]) for r in registered] == [("jg-123", "mayor")]
+    assert removed == []
+    assert [(r["session_id"], r["session_name"], r["aliases"]) for r in registered] == [
+        ("jg-123", "mayor", ["rig__mayor"])]
+
+
+# --- jg-8vnqyw: PR #35 follow-ups ---------------------------------------------
+
+
+def _fake_company_pointers(monkeypatch: pytest.MonkeyPatch, pointers: dict[str, tuple[str, str]]):
+    """A stand-in slack_company_outbound keyed by session NAME:
+    {name: (source, delivered_at)}. Unlike _fake_company_outbound it answers
+    per name, so a test can tell WHOSE pointer was read."""
+    import types
+    fake = types.ModuleType("slack_company_outbound")
+
+    class OutboundError(Exception):
+        pass
+
+    fake.OutboundError = fake.TransientPostError = fake.DefinitivePostError = OutboundError
+    fake.asked = []
+
+    def resolve(name, **_kw):
+        fake.asked.append(name)
+        return pointers[name][0] if name in pointers else None
+
+    fake.resolve_reply_pointer_source = resolve
+    for reader in ("read_current_turn", "read_current_turn_dm", "read_current_turn_mpim"):
+        setattr(fake, reader, lambda name: {"delivered_at": pointers[name][1]} if name in pointers else None)
+    monkeypatch.setitem(sys.modules, "slack_company_outbound", fake)
+    return fake
+
+
+def _sessions(monkeypatch: pytest.MonkeyPatch, common) -> None:
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"id": "jg-mayor-1", "alias": "mayor", "session_name": "rig__mayor"},
+        {"id": "jg-ops-1", "alias": "ops", "session_name": "rig__ops"},
+    ]} if path == "/sessions" else {"items": []})
+
+
+def test_upload_thread_current_for_another_session_reads_that_sessions_company_pointer(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Item 2 (slack_chat_upload.py _company_turn_not_older_than): the mayor
+    uploads for ops. The MAYOR's company DM is newer than ops's mention-only
+    delivery, ops has no company pointer at all — the caller's pointer must
+    not refuse (or, the other way round, unlock) another session's upload."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+    _sessions(monkeypatch, common)
+    monkeypatch.setenv("GC_SESSION_NAME", "mayor")
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda _sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:00:00Z")])
+    fake = _fake_company_pointers(monkeypatch, {"mayor": ("dm", "2026-09-10T08:05:00Z")})
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+
+    assert upload.main(["--file", str(f), "--session", "jg-ops-1", "--thread-current"]) == 0
+    assert "mayor" not in fake.asked, "the CALLER's company pointer was read for --session jg-ops-1"
+    assert captured["body"]["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+    assert captured["body"]["reply_to_message_id"] == "2.000"
+
+    # The other direction: ops's own company DM is newer → refused, whatever the caller holds.
+    captured.clear()
+    _fake_company_pointers(monkeypatch, {"ops": ("dm", "2026-09-10T08:05:00Z")})
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "jg-ops-1", "--thread-current"])
+    assert "refusing to guess" in str(exc.value)
+    assert captured == {}
+
+
+def test_reply_current_for_another_session_ignores_the_callers_company_pointer(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 2 (reply-current _maybe_company_reply): the caller's live company
+    turn used to divert `--session <other> --thread-current` into the
+    CALLER's company dispatch. The named session's pointer decides."""
+    common, rc = _import("slack_chat_reply_current")
+    posts: list[dict[str, Any]] = []
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        if method == "POST":
+            posts.append({"url": url, "body": body or {}})
+            return {"delivered": True, "message_id": "9.000"}
+        return {}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "_scan_gc_inbound_events", lambda sid: None)
+    _sessions(monkeypatch, common)
+    monkeypatch.setenv("GC_SESSION_NAME", "mayor")
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:00:00Z")])
+    fake = _fake_company_pointers(monkeypatch, {"mayor": ("dm", "2026-09-10T08:05:00Z")})
+    fake.post_company_dm_reply = lambda **kw: pytest.fail(f"dispatched the CALLER's company DM reply: {kw}")
+
+    assert rc.main(["--session", "jg-ops-1", "--body", "on it", "--thread-current"]) == 0
+    assert "mayor" not in fake.asked
+    assert posts[0]["url"] == ADAPTER_BASE + "/publish"
+    assert posts[0]["body"]["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+    assert posts[0]["body"]["reply_to_message_id"] == "2.000"
+
+    # ops's OWN company turn is newer than its mention-only delivery: a company
+    # reply is never sent on another session's behalf, and the public room is
+    # not guessed either.
+    posts.clear()
+    _fake_company_pointers(monkeypatch, {"ops": ("dm", "2026-09-10T08:05:00Z")})
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--session", "jg-ops-1", "--body", "on it", "--thread-current"])
+    assert "live company dm turn" in str(exc.value)
+    assert posts == []
+
+
+def test_reply_current_turn_ts_pins_the_delivery_room_without_a_company_pointer(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 3: no company pointer. The session's LATEST inbound is a DM, and
+    --turn-ts names an older mention-only delivery in room C1: the reply
+    belongs to C1's thread — it used to be looked up in (and only in) the
+    latest inbound's conversation."""
+    common, rc = _import("slack_chat_reply_current")
+    posts: list[dict[str, Any]] = []
+
+    def fake_request(method: str, url: str, body: dict[str, Any] | None = None,
+                     *, csrf: bool = True, timeout: float = 30.0) -> dict[str, Any]:
+        if method == "POST":
+            posts.append({"url": url, "body": body or {}})
+            return {"delivered": True, "message_id": "9.000"}
+        return {}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+        "type": "extmsg.inbound", "payload": {"conversation_id": "D0DM", "message_id": "8.000"}})
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: None)
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda sid: [_delivery("C1", "7.000", "6.000")])
+
+    assert rc.main(["--session", "jg-mayor-1", "--turn-ts", "7.000", "--body", "reply"]) == 0
+    assert posts[0]["url"] == ADAPTER_BASE + "/publish"
+    assert posts[0]["body"]["conversation"]["conversation_id"] == "C1"
+    assert posts[0]["body"]["reply_to_message_id"] == "6.000"
+
+
+def test_bind_room_mentions_only_failed_rebind_leaves_the_old_registration(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 4: a session registered under its literal NAME is re-bound once gc
+    resolves it to an id. The old registration used to be deleted BEFORE the
+    new POST — a failed POST left the session unbound."""
+    common, bind = _import("slack_chat_bind_room")
+    monkeypatch.setattr(common, "gc_get", lambda path: {
+        "items": [{"id": "jg-123", "alias": "mayor", "session_name": "rig__mayor"}],
+    } if path == "/sessions" else {"items": []})
+    registry = {"C1": [{"session_id": "legacy-mayor", "session_name": "mayor", "handle": "mayor"}]}
+    calls: list[str] = []
+    monkeypatch.setattr(common, "list_mention_only_via_adapter", lambda channel="": registry)
+
+    def remove(*, channel_id: str, session_id: str) -> dict[str, Any]:
+        calls.append(f"DELETE {session_id}")
+        registry[channel_id] = [b for b in registry[channel_id] if b["session_id"] != session_id]
+        return {}
+
+    def refuse(**kw: Any) -> dict[str, Any]:
+        calls.append(f"POST {kw['session_id']}")
+        raise common.AdapterError("HTTP 503 from adapter")
+
+    monkeypatch.setattr(common, "remove_mention_only_via_adapter", remove)
+    monkeypatch.setattr(common, "register_mention_only_via_adapter", refuse)
+    monkeypatch.setattr(bind, "deliver_protocol_nudge", lambda *a, **k: None)
+
+    with pytest.raises(SystemExit) as exc:
+        bind.main(["C1", "mayor", "--mentions-only"])
+    assert calls == ["POST jg-123"], "the old registration was removed before the new one was confirmed"
+    assert [b["session_id"] for b in registry["C1"]] == ["legacy-mayor"]
+    assert exc.value.code not in (0, None)
+    assert "still bound as it was" in str(exc.value)
+
+    # The POST succeeds: the old record goes only now, after it.
+    calls.clear()
+    monkeypatch.setattr(common, "register_mention_only_via_adapter",
+                        lambda **kw: calls.append(f"POST {kw['session_id']}") or {"ok": True})
+    assert bind.main(["C1", "mayor", "--mentions-only"]) == 0
+    assert calls == ["POST jg-123", "DELETE legacy-mayor"]
+
+
+def test_status_session_filter_matches_a_stored_alias(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Item 5: `status --session rig__mayor` — a further gc identifier the
+    binding stores under aliases — found nothing: the filter compared the
+    primary id and name only."""
+    common, status = _import("slack_chat_status")
+    reg = tmp_path / ".gc" / "slack" / "mention_only_bindings.json"
+    reg.parent.mkdir(parents=True)
+    reg.write_text(json.dumps({"version": 1, "channels": {
+        "C1": [{"session_id": "jg-mayor-1", "session_name": "mayor", "handle": "mayor", "aliases": ["rig__mayor"]}],
+        "C2": [{"session_id": "jg-ops-1", "session_name": "ops", "handle": "ops"}],
+    }}))
+    monkeypatch.setattr(common, "_request", lambda method, url, body=None, *, csrf=True, timeout=30.0: {"items": []})
+
+    rows = status.collect_status(session="rig__mayor", since="", limit=10)["mention_only_bindings"]
+    assert [(r["conversation_id"], r["session_id"]) for r in rows] == [("C1", "jg-mayor-1")]
+    # A pack-config row carries its aliases too (bind-room records them).
+    reg.unlink()
+    cfg = common.load_pack_config()
+    cfg["bindings"]["room:C3"] = {
+        "kind": "room", "conversation": {"conversation_id": "C3"}, "delivery_mode": "mentions_only",
+        "mention_only_participants": [
+            {"handle": "mayor", "session_name": "mayor", "session_id": "jg-mayor-1", "aliases": ["rig__mayor"]}],
+    }
+    common.save_pack_config(cfg)
+    rows = status.collect_status(session="rig__mayor", since="", limit=10)["mention_only_bindings"]
+    assert [r["conversation_id"] for r in rows] == ["C3"]

@@ -302,6 +302,47 @@ def _mention_only_delivery_superseding_company(
     return newest
 
 
+def _other_session_company_guard(args: argparse.Namespace, names: list[str]) -> None:
+    """``--session <other>``: consult THAT session's company pointer (jg-8vnqyw item 2).
+
+    The caller's GC_SESSION_NAME used to be read here, so the caller's
+    pointer diverted — or was compared against — a reply made for another
+    session. A company reply posts with the acting agent's own token under
+    the GC_SESSION_NAME spoof guard, so it is never dispatched on another
+    session's behalf: a mention-only delivery newer than that session's
+    company turn (or the one --turn-ts names) resolves on the legacy path,
+    an explicit --conversation-id stands, and anything else is refused
+    rather than guessed — the same rule as upload --thread-current.
+    """
+    if (getattr(args, "turn_ref", "") or "").strip():
+        raise SystemExit(
+            "--turn-ref acts on the calling session's own company turn "
+            "(GC_SESSION_NAME) and cannot be combined with --session <other>")
+    if (args.conversation_id or "").strip():
+        return
+    try:
+        import slack_company_outbound as outbound  # type: ignore
+    except ImportError:
+        return
+    for name in names:
+        try:
+            source = outbound.resolve_reply_pointer_source(name)
+        except outbound.OutboundError:
+            continue
+        if source is None:
+            continue
+        superseding = _mention_only_delivery_superseding_company(args, name, outbound, source)
+        if superseding is None:
+            raise SystemExit(
+                f"--session {args.session}: that session has a live company {source} "
+                "turn at least as new as any mention-only delivery; a company reply "
+                "can only be sent from the session itself — refusing to guess the "
+                "destination, pass --conversation-id <id> (and --reply-to <ts>) explicitly")
+        if (getattr(args, "turn_ts", "") or "").strip():
+            args.conversation_id = superseding["channel_id"]
+        return
+
+
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     """Company-context path: post via the acting agent's own token.
 
@@ -320,6 +361,13 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     room (the legacy resolution the company delivery path never feeds).
     """
     session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+    explicit = (getattr(args, "session", "") or "").strip()
+    if explicit:
+        names = common.company_pointer_session_names(explicit)
+        if names and session_name not in names:
+            # Another session's reply: its pointer, not the caller's.
+            _other_session_company_guard(args, names)
+            return None
     if not session_name:
         if (getattr(args, "turn_ref", "") or "").strip():
             raise SystemExit(
@@ -535,6 +583,17 @@ def main(argv: list[str]) -> int:
                 conversation_id=(args.conversation_id or "").strip(),
                 via=args.via,
             )
+
+    if (args.turn_ts or "").strip() and not (args.conversation_id or "").strip():
+        # --turn-ts naming a mention-only delivery pins the reply to THAT
+        # delivery's room (jg-8vnqyw item 3). Only a session with a company
+        # pointer got this pin (_maybe_company_reply); without one the
+        # conversation came from the latest inbound — another room or a DM —
+        # and the ts was then looked up there.
+        for d in common.mention_only_deliveries_via_adapter(session_id):
+            if d.get("ts") == args.turn_ts.strip():
+                args.conversation_id = d["channel_id"]
+                break
 
     conv = _resolve_conversation(args, session_id)
     if not conv.get("conversation_id"):

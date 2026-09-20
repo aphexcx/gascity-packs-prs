@@ -218,6 +218,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Mention-only follow-ups** (jg-8vnqyw, five small findings parked by
+  the review of the mention-only room bindings):
+  - A FAILED own-thread scan is not a negative (legacy lane,
+    `processSlackEvent` → `rescanOwnThreadTargets`): an unmentioned
+    follow-up in a pre-registry thread was dropped when
+    `conversations.replies` errored on the event path. The lane now
+    rescans off the event path on the injection-retry backoff and
+    delivers under the scan's rules; a scan that never succeeds delivers
+    nothing (and logs `UNFINISHED`) rather than turning every thread
+    reply into a delivery.
+  - `--session <other>` reads THAT session's company pointer
+    (`common.company_pointer_session_names`): `upload --thread-current`
+    compared, and `reply-current` dispatched on, the CALLER's
+    `GC_SESSION_NAME`. A company reply is still never sent on another
+    session's behalf — `reply-current` refuses when the named session's
+    company turn is the current one.
+  - `reply-current --turn-ts` pins the reply to the room of the
+    mention-only delivery it names, company pointer or not.
+  - `bind-room --mentions-only` registers FIRST and removes a stale
+    registration only afterwards (never one the new registration answers
+    to — the adapter's DELETE matches under any identifier): a failed
+    POST used to leave the session unbound.
+  - `status --session` matches a binding's stored aliases
+    (`common.mention_only_binding_matches`, the Python twin of the
+    adapter's `matchesSession`).
+
 - **A 4xx-refused inbound is never re-posted as-is; transient failures
   back off** (gp-sgu7; citadel C0AP0KV9S9E 2026-09-08 00:14Z →
   2026-09-11, C0BKF28CYUE 2026-08-26 → 08-27). The live adapter posted

@@ -498,6 +498,26 @@ def session_identity_candidates(session_id: str) -> set[str]:
     return candidates
 
 
+def company_pointer_session_names(explicit_session: str = "") -> list[str]:
+    """Session names a company current-turn pointer may be filed under.
+
+    Company pointers are keyed by session NAME. Without ``--session`` that is
+    the caller's GC_SESSION_NAME. With ``--session <other>`` it is the NAMED
+    session's identifiers, never the caller's name — which
+    session_identity_candidates admits only when <other> IS the caller
+    (jg-8vnqyw item 2: the caller's pointer used to stand in for the named
+    session's). ``--session <own id or name>`` behaves exactly like no flag,
+    without a gc call.
+    """
+    env_name = os.environ.get("GC_SESSION_NAME", "").strip()
+    explicit = (explicit_session or "").strip()
+    if not explicit or explicit in (os.environ.get("GC_SESSION_ID", "").strip(), env_name):
+        return [env_name] if env_name else []
+    names = session_identity_candidates(explicit)
+    lead = [env_name] if env_name in names else []
+    return lead + sorted(names - set(lead))
+
+
 # --- inbound-event lookup -------------------------------------------------
 
 # Windows tried in order when scanning for a session's latest inbound.
@@ -709,6 +729,14 @@ def list_mention_only_via_adapter(channel_id: str = "") -> dict[str, list[dict[s
     return channels if isinstance(channels, dict) else {}
 
 
+def mention_only_binding_matches(binding: dict[str, Any], identities: set[str]) -> bool:
+    """Python twin of the adapter's mentionOnlyBinding.matchesSession: True
+    when any of identities names the binding's session under ANY identifier
+    it is stored with — session_id, session_name or a further gc alias."""
+    stored = {binding.get("session_id"), binding.get("session_name"), *(binding.get("aliases") or [])}
+    return any(isinstance(i, str) and i and i in identities for i in stored)
+
+
 def session_is_mention_only_in(session_id: str, channel_id: str) -> bool:
     """True when the adapter lists session_id (by id or name) as a
     mention-only participant of channel_id. Best-effort: an unreachable
@@ -727,11 +755,9 @@ def session_is_mention_only_in(session_id: str, channel_id: str) -> bool:
     for b in bindings:
         if not isinstance(b, dict):
             continue
-        if b.get("session_id") in identities or b.get("session_name") in identities:
-            return True
-        # The binding's further gc identifiers (codex r8 P2): a caller
-        # naming the session by one of them must get the adapter route too.
-        if any(a in identities for a in (b.get("aliases") or []) if isinstance(a, str)):
+        # Aliases included (codex r8 P2): a caller naming the session by one
+        # of its further gc identifiers must get the adapter route too.
+        if mention_only_binding_matches(b, identities):
             return True
     return False
 

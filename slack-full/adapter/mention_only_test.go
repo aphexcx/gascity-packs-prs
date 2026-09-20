@@ -601,6 +601,86 @@ func TestMentionOnly_FailedOwnThreadFollowUpRetriedInPlace(t *testing.T) {
 	}
 }
 
+// jg-8vnqyw item 1: a FAILED own-thread scan is not a negative. The thread
+// predates the registry and conversations.replies errors on the event path;
+// the unmentioned follow-up has no twin and Slack was already acked, so the
+// lane rescans on the bounded backoff and delivers under the scan's rules.
+func TestMentionOnly_FailedOwnThreadScanRescannedInPlace(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{10 * time.Millisecond, 10 * time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	var mu sync.Mutex
+	failures := 2 // the preamble's fetch and the event-path scan
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if !strings.HasSuffix(r.URL.Path, "/conversations.replies") {
+			_, _ = fmt.Fprint(w, `{"ok":true}`)
+			return
+		}
+		mu.Lock()
+		fail := failures > 0
+		if fail {
+			failures--
+		}
+		mu.Unlock()
+		if fail {
+			http.Error(w, "slack is having a moment", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(slackConversationsRepliesResp{OK: true, Messages: []slackThreadMessage{
+			{User: testBotUserID, BotID: "B1", TS: "100.001600", ThreadTS: "100.001600", Text: "status: shipped"},
+			{User: "U_ALICE", TS: "100.001601", ThreadTS: "100.001600", Text: "which version?"},
+		}})
+	}))
+	t.Cleanup(srv.Close)
+	withSlackAPIStub(t, srv)
+	gc := &mentionOnlyGCStub{}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvScan1", "C1", "100.001601", "100.001600", "which version?"), func() {})
+	dispatchInflightWG.Wait()
+
+	_, injections := gc.snapshot()
+	if len(injections) != 1 || injections[0].sessionID != "mayor-session" {
+		t.Fatalf("injections = %+v, want the follow-up delivered once the rescan succeeded", injections)
+	}
+}
+
+// A scan that never succeeds stays a non-delivery: the lane must not turn
+// every thread reply into a delivery while conversations.replies is down.
+func TestMentionOnly_OwnThreadScanNeverSucceedsDeliversNothing(t *testing.T) {
+	prev := companyMentionOnlyRetryBackoff
+	companyMentionOnlyRetryBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { companyMentionOnlyRetryBackoff = prev })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/conversations.replies") {
+			http.Error(w, "down", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"ok":true}`)
+	}))
+	t.Cleanup(srv.Close)
+	withSlackAPIStub(t, srv)
+	gc := &mentionOnlyGCStub{}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.busyReaction = ""
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		plainRoomEnvelope(t, "EvScan2", "C1", "100.001701", "100.001700", "anyone?"), func() {})
+	dispatchInflightWG.Wait()
+
+	if _, injections := gc.snapshot(); len(injections) != 0 {
+		t.Fatalf("injections = %+v, want none while the scan never succeeded", injections)
+	}
+}
+
 // Round 7: awaiting gc's terminal result must not hold the room's channel
 // copy — gc concludes a session.message at the session's next idle boundary.
 // Past mentionOnlyConfirmHold the event moves on and the lane finishes

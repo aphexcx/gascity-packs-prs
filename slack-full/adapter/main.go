@@ -4151,6 +4151,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// untouched by this block; see mention_only.go for the rules.
 	mentionOnlyFailed := false
 	var mentionOnlyTargets []mentionOnlyTarget
+	// mentionOnlyRescan is set when the own-thread scan below FAILED: the
+	// selection is unfinished, and the lane's goroutine finishes it
+	// (rescanOwnThreadTargets) instead of reading the failure as "not ours".
+	var mentionOnlyRescan func(already []mentionOnlyTarget) []mentionOnlyTarget
 	// concludeEvent is how the alias leg's goroutine settles the event id
 	// once it owns the verdict: commit, unless a mention-only injection
 	// for this event failed — then the id stays forgotten so a retry can
@@ -4192,7 +4196,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, ownThreadScanLimit)
 						cancel()
 						if err != nil {
-							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
+							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v — rescanning off the event path", msg.Channel, msg.ThreadTS, err)
+							mentionOnlyRescan = func(already []mentionOnlyTarget) []mentionOnlyTarget {
+								return rescanOwnThreadTargets(cfg, moIn, already, botUID, msg.Channel, msg.ThreadTS, msg.TS)
+							}
 						} else {
 							moIn.botPostedInThread = threadHasOwnBotPost(replies, botUID, msg.TS)
 						}
@@ -4201,6 +4208,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			}
 		}
 		mentionOnlyTargets = selectMentionOnlyTargets(moIn)
+		if len(mentionOnlyTargets) == len(mentionOnlyBindings) {
+			mentionOnlyRescan = nil // every binding is already addressed: nothing a scan could add
+		}
 	}
 	// runMentionOnly performs the injections. Called from exactly one of
 	// two places: right before a buffered channel copy is enqueued, or —
@@ -4209,7 +4219,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// finds the mark to clear (codex r2 P2).
 	runMentionOnly := func() {
 		targets := mentionOnlyTargets
-		if len(targets) == 0 {
+		if len(targets) == 0 && mentionOnlyRescan == nil {
 			return
 		}
 		// The lane runs in its own goroutine and this event waits for its
@@ -4232,6 +4242,14 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			defer dispatchInflightWG.Done()
 			_, failed := deliverMentionOnly(cfg, targets, inbound)
 			firstAttemptFailed <- len(failed) > 0
+			if mentionOnlyRescan != nil {
+				// What the failed scan could not select is delivered here,
+				// detached: the event does not wait on Slack's recovery.
+				if added := mentionOnlyRescan(targets); len(added) > 0 {
+					_, lateFailed := deliverMentionOnly(cfg, added, inbound)
+					failed = append(failed, lateFailed...)
+				}
+			}
 			if len(failed) == 0 {
 				return
 			}

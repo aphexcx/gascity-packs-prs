@@ -75,6 +75,7 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
                 "session_id": p.get("session_id") or "",
                 "session_name": p.get("session_name") or "",
                 "handle": p.get("handle") or "",
+                "aliases": p.get("aliases") or [],
                 "source": "pack-config",
             }
     live = common.load_mention_only_registry_file()
@@ -93,6 +94,7 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
                 "session_id": b.get("session_id") or prior.get("session_id") or "",
                 "session_name": b.get("session_name") or prior.get("session_name") or "",
                 "handle": b.get("handle") or prior.get("handle") or "",
+                "aliases": b.get("aliases") or prior.get("aliases") or [],
                 "source": "pack-config+registry" if prior else "registry",
             }
     # A row the pack config still lists after `DELETE …/mention-only`
@@ -106,7 +108,12 @@ def _mention_only_bindings(session: str) -> list[dict[str, Any]]:
                 row["source"] = "pack-config only — NOT in the adapter registry (stale)"
     out = [rows[k] for k in sorted(rows)]
     if session:
-        out = [r for r in out if session in (r["session_id"], r["session_name"])]
+        # Every stored identifier, like the adapter's matchesSession: a
+        # session asked for by a further gc alias finds its rows too.
+        out = [r for r in out if common.mention_only_binding_matches(r, {session})]
+    for r in out:
+        if not r["aliases"]:
+            del r["aliases"]
     return out
 
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -947,6 +948,48 @@ func mentionOnlyScanMinRefetch(limit int) int {
 		limit = defaultThreadContextLimit
 	}
 	return limit
+}
+
+// rescanOwnThreadTargets finishes a selection whose own-thread scan FAILED on
+// the event path (jg-8vnqyw item 1). A failed scan is not a negative: an
+// unmentioned follow-up has no app_mention twin and Slack was already acked,
+// so nothing upstream asks again. The scan is retried on
+// companyMentionOnlyRetryBackoff — the registry first, it may have learned
+// the thread meanwhile — and the first answer selects under the same rules
+// as an event-path scan. Returns the targets that answer adds to already. A
+// scan that never succeeds adds nothing: delivering blind would turn every
+// thread reply into a delivery for as long as conversations.replies is down.
+func rescanOwnThreadTargets(cfg config, in mentionOnlyInput, already []mentionOnlyTarget, botUID, channel, threadTS, ts string) []mentionOnlyTarget {
+	for attempt, wait := range companyMentionOnlyRetryBackoff {
+		if !sleepUnlessDraining(cfg, wait) {
+			break
+		}
+		if in.threadPosters, in.threadKnown = cfg.ownThreads.posters(channel, threadTS); !in.threadKnown {
+			fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
+			replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, channel, threadTS, ownThreadScanLimit)
+			cancel()
+			if err != nil {
+				log.Printf("mention-only: own-thread rescan failed chan=%s thread=%s (attempt %d/%d): %v",
+					channel, threadTS, attempt+1, len(companyMentionOnlyRetryBackoff), err)
+				continue
+			}
+			in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ts)
+		}
+		var added []mentionOnlyTarget
+	selected:
+		for _, t := range selectMentionOnlyTargets(in) {
+			for _, a := range already {
+				if a.binding.sameSession(t.binding) {
+					continue selected
+				}
+			}
+			added = append(added, t)
+		}
+		return added
+	}
+	log.Printf("mention-only: UNFINISHED chan=%s ts=%s thread=%s own-thread scan never succeeded — an unmentioned follow-up in a pre-registry thread was not delivered",
+		channel, ts, threadTS)
+	return nil
 }
 
 // recordAliasDeliveryForMentionOnly logs an alias-leg injection under any

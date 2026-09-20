@@ -616,15 +616,22 @@ def gc_binding_to_conversation(session: str, conversation_id: str) -> bool:
     return False
 
 
-def drop_stale_mention_only_registrations(conversation_id: str, session: str, session_id: str) -> list[str]:
+def drop_stale_mention_only_registrations(
+    conversation_id: str, session: str, session_id: str, registered: frozenset[str] = frozenset(),
+) -> list[str]:
     """Remove this session's registrations held under ANOTHER identifier.
 
-    The adapter's upsert matches on (session_id, session_name) only. A
-    session first bound by its session name before gc listed it is stored
-    under that literal; a later bind resolves to (id, alias) — neither
-    matches, both registrations stay, and every qualifying message is
-    injected twice (codex r6 P2). Best-effort: adapter unreachable → the
-    upsert's own matching is all there is, as before. Returns the ids removed.
+    A session first bound by its session name before gc listed it is stored
+    under that literal; a later bind resolves to (id, alias), and a record
+    the adapter's upsert did not fold into the new one would inject every
+    qualifying message twice (codex r6 P2). Runs AFTER the new registration
+    is confirmed (jg-8vnqyw item 4: run before it, a failed POST left the
+    session unbound). ``registered`` is every identifier the new
+    registration answers to: the adapter's DELETE matches a record under
+    ANY of its identifiers, so removing one of those would take the new
+    registration with it — the upsert already replaced such a record.
+    Best-effort: adapter unreachable → the upsert's own matching is all
+    there is, as before. Returns the ids removed.
     """
     try:
         live = common.list_mention_only_via_adapter(conversation_id).get(conversation_id) or []
@@ -636,7 +643,7 @@ def drop_stale_mention_only_registrations(conversation_id: str, session: str, se
         if not isinstance(b, dict):
             continue
         old_id = b.get("session_id") or ""
-        if not old_id or old_id == session_id:
+        if not old_id or old_id == session_id or old_id in registered:
             continue
         if {old_id, b.get("session_name") or ""} & ids:
             try:
@@ -763,7 +770,6 @@ def _main_mentions_only(
     records: list[dict[str, Any]] = []
     for handle, session in participants:
         session_id, session_name = resolve_session_identity(session)
-        drop_stale_mention_only_registrations(args.conversation_id, session, session_id)
         # The adapter matches the session at runtime (company membership,
         # own-thread posts) under ANY identifier, so it gets the full set —
         # (id, display name) alone drops the session name of a session with
@@ -780,8 +786,13 @@ def _main_mentions_only(
         except common.AdapterError as exc:
             raise SystemExit(
                 f"register mention-only {handle}={session}: {exc}\n"
+                "No existing registration was removed: a session bound here "
+                "before is still bound as it was.\n"
                 "(the running adapter must include mention-only support — "
                 "POST /mention-only — restart it on the current pack build)") from exc
+        drop_stale_mention_only_registrations(
+            args.conversation_id, session, session_id,
+            registered=frozenset({session_id, session_name, *extra}))
         registered.append(res)
         record = {"handle": handle, "session_name": session_name, "session_id": session_id}
         if extra:
