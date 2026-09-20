@@ -509,32 +509,43 @@ def company_pointer_session_names(explicit_session: str = "") -> list[str]:
     session's). ``--session`` naming the CALLER under any identifier gc
     knows it by (id, alias, session_name, either dot/``__`` spelling) behaves
     exactly like no flag: reading it as another session would skip the
-    caller's own company turn. Best-effort like session_identity_candidates:
-    gc unreachable leaves the literal and the environment to compare.
+    caller's own company turn. When gc cannot be asked and the flag is not
+    literally the caller, WHOSE pointer applies is unknown — the flag may be
+    the caller's alias, or another session whose pointer is filed under a
+    name only gc knows: GCAPIError, and the caller decides (see
+    company_state_absent) instead of routing past a private turn.
     """
     env_name = os.environ.get("GC_SESSION_NAME", "").strip()
     env_id = os.environ.get("GC_SESSION_ID", "").strip()
     explicit = (explicit_session or "").strip()
     own = [env_name] if env_name else []
-    if not explicit or explicit in (env_id, env_name):
-        return own
-    names = {explicit}
-    try:
-        entries = gc_get("/sessions").get("items", [])
-    except GCAPIError:
-        entries = []
-    for entry in entries:
-        ids = {(entry.get(k) or "").strip() for k in ("id", "alias", "session_name")} - {""}
-        if explicit in ids:
-            names |= ids
-            break
 
     def spelled(name: str) -> str:
         return name.replace(".", "__")
 
-    if {spelled(n) for n in names} & {spelled(e) for e in (env_id, env_name) if e}:
+    caller = {spelled(e) for e in (env_id, env_name) if e}
+    if not explicit or spelled(explicit) in caller:
+        return own
+    names = {explicit}
+    for entry in gc_get("/sessions").get("items", []):
+        ids = {(entry.get(k) or "").strip() for k in ("id", "alias", "session_name")} - {""}
+        if explicit in ids:
+            names |= ids
+            break
+    if {spelled(n) for n in names} & caller:
         return own
     return sorted(names)
+
+
+def company_state_absent(outbound: Any) -> bool:
+    """True when this deployment verifiably keeps no company current-turn
+    state (no turns directory): there is no company pointer to route past,
+    so an unresolvable ``--session`` costs nothing. Anything else — a stand-in
+    module, an unreadable path — counts as present."""
+    try:
+        return not outbound.turns_dir().is_dir()
+    except Exception:  # noqa: BLE001 — unknown means present
+        return False
 
 
 # --- inbound-event lookup -------------------------------------------------

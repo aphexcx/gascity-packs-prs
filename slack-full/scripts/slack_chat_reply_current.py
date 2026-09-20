@@ -302,7 +302,7 @@ def _mention_only_delivery_superseding_company(
     return newest
 
 
-def _other_session_company_guard(args: argparse.Namespace, names: list[str]) -> None:
+def _other_session_company_guard(args: argparse.Namespace, names: list[str] | None) -> None:
     """``--session <other>``: consult THAT session's company pointer (jg-8vnqyw item 2).
 
     The caller's GC_SESSION_NAME used to be read here, so the caller's
@@ -312,7 +312,8 @@ def _other_session_company_guard(args: argparse.Namespace, names: list[str]) -> 
     session's behalf: a mention-only delivery newer than that session's
     company turn (or the one --turn-ts names) resolves on the legacy path,
     an explicit --conversation-id stands, and anything else is refused
-    rather than guessed — the same rule as upload --thread-current.
+    rather than guessed — the same rule as upload --thread-current. names is
+    None when gc could not say whose session the flag names.
     """
     if (getattr(args, "turn_ref", "") or "").strip():
         raise SystemExit(
@@ -324,6 +325,16 @@ def _other_session_company_guard(args: argparse.Namespace, names: list[str]) -> 
         import slack_company_outbound as outbound  # type: ignore
     except ImportError:
         return
+    if names is None:
+        if common.company_state_absent(outbound):
+            return
+        raise SystemExit(
+            f"--session {args.session}: cannot resolve it against gc, so whose company "
+            "turn is current is unknown; refusing to guess the destination — pass "
+            "--conversation-id <id> (and --reply-to <ts>) explicitly")
+    # A company selector pins the company turn: no mention-only delivery
+    # overrides it (as for the caller's own turn), so it is refused below.
+    pinned = bool((getattr(args, "origin_ts", "") or "").strip()) or args.kind in ("room", "dm", "mpim")
     for name in names:
         try:
             source = outbound.resolve_reply_pointer_source(name)
@@ -331,12 +342,13 @@ def _other_session_company_guard(args: argparse.Namespace, names: list[str]) -> 
             continue
         if source is None:
             continue
-        superseding = _mention_only_delivery_superseding_company(args, name, outbound, source)
+        superseding = None if pinned else _mention_only_delivery_superseding_company(
+            args, name, outbound, source)
         if superseding is None:
             raise SystemExit(
                 f"--session {args.session}: that session has a live company {source} "
-                "turn at least as new as any mention-only delivery; a company reply "
-                "can only be sent from the session itself — refusing to guess the "
+                "turn (its current one, or the one --kind/--origin-ts pins); a company "
+                "reply can only be sent from the session itself — refusing to guess the "
                 "destination, pass --conversation-id <id> (and --reply-to <ts>) explicitly")
         if (getattr(args, "turn_ts", "") or "").strip():
             args.conversation_id = superseding["channel_id"]
@@ -363,8 +375,11 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     session_name = os.environ.get("GC_SESSION_NAME", "").strip()
     explicit = (getattr(args, "session", "") or "").strip()
     if explicit:
-        names = common.company_pointer_session_names(explicit)
-        if names and session_name not in names:
+        try:
+            names = common.company_pointer_session_names(explicit)
+        except common.GCAPIError:
+            names = None
+        if names is None or (names and session_name not in names):
             # Another session's reply: its pointer, not the caller's.
             _other_session_company_guard(args, names)
             return None

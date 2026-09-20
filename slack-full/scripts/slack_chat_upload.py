@@ -96,8 +96,17 @@ def _company_turn_not_older_than(
         return None
     readers = {"room": "read_current_turn", "dm": "read_current_turn_dm",
                "mpim": "read_current_turn_mpim"}
+    try:
+        names = common.company_pointer_session_names(explicit_session)
+    except common.GCAPIError as exc:
+        if common.company_state_absent(outbound):
+            return None
+        raise SystemExit(
+            f"--thread-current: cannot resolve --session {explicit_session!r} against gc "
+            f"({exc}), so whose company turn is current is unknown; refusing to guess "
+            "the destination — pass --conversation-id <id> --thread-ts <ts> explicitly") from exc
     source = turn = None
-    for session_name in common.company_pointer_session_names(explicit_session):
+    for session_name in names:
         try:
             source = outbound.resolve_reply_pointer_source(session_name)
             if source is not None:

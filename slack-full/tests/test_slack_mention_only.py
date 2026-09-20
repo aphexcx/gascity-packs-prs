@@ -1219,6 +1219,66 @@ def test_session_flag_naming_the_caller_by_alias_keeps_the_callers_company_point
     assert [kw["session_name"] for kw in sent] == ["rig__ops"], "the caller's own company DM turn answers"
 
 
+def test_unresolvable_session_flag_is_refused_not_routed_past_a_company_turn(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: pathlib.Path) -> None:
+    """Item 2, codex r2 P1: gc cannot be asked, and `--session ops` is not
+    literally the caller (GC_SESSION_NAME=rig__ops). It may be the caller's
+    alias, or another session whose pointer is filed under a name only gc
+    knows — either way the private-turn guard cannot be evaluated, so the
+    public room is not guessed. A deployment with no company turn state has
+    nothing to route past and keeps working."""
+    common, upload = _import("slack_chat_upload")
+    captured = _upload_capture(monkeypatch, common)
+
+    def gc_down(path: str):
+        raise common.GCAPIError("gc unreachable")
+
+    monkeypatch.setattr(common, "gc_get", gc_down)
+    monkeypatch.setenv("GC_SESSION_ID", "jg-ops-1")
+    monkeypatch.setenv("GC_SESSION_NAME", "rig__ops")
+    mo_conv = common._mention_only_conversation("C0B2Y13DRMK")
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session", lambda _sid: ("3.000", "2.000", mo_conv))
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda _sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000")])
+    fake = _fake_company_pointers(monkeypatch, {"rig__ops": ("dm", "2026-09-10T08:05:00Z")})
+    f = tmp_path / "shot.png"
+    f.write_bytes(b"\x89PNG")
+    with pytest.raises(SystemExit) as exc:
+        upload.main(["--file", str(f), "--session", "ops", "--thread-current"])
+    assert "cannot resolve --session 'ops'" in str(exc.value)
+    assert captured == {}
+    # No company turn state on this box: nothing to route past.
+    fake.turns_dir = lambda: tmp_path / "no-such-dir"
+    assert upload.main(["--file", str(f), "--session", "ops", "--thread-current"]) == 0
+    assert captured["body"]["conversation"]["conversation_id"] == "C0B2Y13DRMK"
+
+    common, rc = _import("slack_chat_reply_current")
+    monkeypatch.setattr(common, "gc_get", gc_down)
+    monkeypatch.setattr(common, "_request", lambda *a, **k: pytest.fail("published past an unknown company turn"))
+    _fake_company_pointers(monkeypatch, {"rig__ops": ("dm", "2026-09-10T08:05:00Z")})
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--session", "ops", "--body", "on it", "--thread-current"])
+    assert "cannot resolve it against gc" in str(exc.value)
+
+
+def test_reply_current_for_another_session_refuses_company_selectors(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Item 2, codex r2 P1: `--session <other> --kind dm --origin-ts <ts>` pins
+    that session's company DM turn. A newer mention-only delivery must not
+    override the pin and send the reply into the public room."""
+    common, rc = _import("slack_chat_reply_current")
+    monkeypatch.setattr(common, "_request", lambda *a, **k: pytest.fail("a company-pinned reply was published"))
+    _sessions(monkeypatch, common)
+    monkeypatch.setenv("GC_SESSION_NAME", "mayor")
+    monkeypatch.setattr(common, "mention_only_deliveries_via_adapter",
+                        lambda sid: [_delivery("C0B2Y13DRMK", "3.000", "2.000", received_at="2026-09-10T08:10:00Z")])
+    _fake_company_pointers(monkeypatch, {"ops": ("dm", "2026-09-10T08:05:00Z")})
+    for selectors in (["--kind", "dm"], ["--origin-ts", "5.000"]):
+        with pytest.raises(SystemExit) as exc:
+            rc.main(["--session", "jg-ops-1", "--body", "on it", *selectors])
+        assert "live company dm turn" in str(exc.value)
+
+
 def test_reply_current_turn_ts_pins_the_delivery_room_without_a_company_pointer(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """Item 3: no company pointer. The session's LATEST inbound is a DM, and
