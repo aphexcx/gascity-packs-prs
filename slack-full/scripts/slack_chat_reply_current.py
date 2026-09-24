@@ -339,10 +339,12 @@ def _explicit_target_uses_ordinary_route(
         if not mention_only:
             mention_only = common.session_is_mention_only_in(session_id, conv["conversation_id"])
         if not mention_only:
-            query = urllib.parse.urlencode({"session_id": session_id})
-            bindings = common.gc_get(f"/extmsg/bindings?{query}").get("items", [])
+            bindings = []
+            for identity in sorted(common.session_identity_candidates(session_id)):
+                query = urllib.parse.urlencode({"session_id": identity})
+                bindings.extend(common.gc_get(f"/extmsg/bindings?{query}").get("items", []))
             # A session can be bound to several channels; checking only its
-            # most recent binding would reject an older, still active target.
+            # most recent binding or one identity would reject an active target.
             bound = any(
                 entry.get("Status") == "active"
                 and all((entry.get("Conversation") or {}).get(key) == conv.get(key)

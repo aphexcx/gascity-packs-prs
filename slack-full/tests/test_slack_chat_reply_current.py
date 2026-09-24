@@ -1867,6 +1867,47 @@ def test_company_explicit_bound_target_uses_ordinary_route(
     assert body["reply_to_message_id"] == "100.000001"
 
 
+@pytest.mark.parametrize("bound_identity", [
+    "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
+])
+def test_company_explicit_target_checks_all_session_identities(
+        monkeypatch, tmp_path, bound_identity):
+    """Default invocation honors name/alias bindings and still rejects an unbound target."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+              "conversation_id": "C_INBOUND", "kind": "room"}
+
+    def bindings(path):
+        if path == "/sessions":
+            return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                               "session_name": "ollie-reported"}]}
+        if path == f"/extmsg/bindings?session_id={bound_identity}":
+            return {"items": [{"Status": "active", "Conversation": target}]}
+        return {"items": []}
+
+    monkeypatch.setattr(common, "gc_get", bindings)
+    argv = ["--conversation-id", "C_INBOUND", "--reply-to", "100.000001",
+            "--body", "answer the bound inbound"]
+    if bound_identity is None:
+        with pytest.raises(SystemExit, match="no active binding") as exc:
+            rc.main(argv)
+        assert "C_INBOUND/100.000001" in str(exc.value)
+        assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+        assert posts == []
+    else:
+        assert rc.main(argv) == 0
+        assert len(posts) == 1
+        url, body = posts[0]
+        assert url.endswith("/extmsg/outbound")
+        assert body["session_id"] == "gc-test-session"
+        assert body["conversation"] == target
+        assert body["reply_to_message_id"] == "100.000001"
+    assert company_posts == []
+
+
 @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
 @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
 def test_company_explicit_unbound_target_refuses_both_destinations(

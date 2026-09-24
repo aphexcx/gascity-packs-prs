@@ -1,0 +1,35 @@
+Command (from slack-full/adapter, outside review sandbox): env -u GC_TEMPLATE CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -count=1 -v -run ^TestTightenStorePermissions$ ./...
+
+=== RUN   TestTightenStorePermissions
+=== RUN   TestTightenStorePermissions/loose_perms_tightened
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/id drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/id/identities.json -rw-r--r-- -> -rw------- (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/alias drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/alias/handle-aliases.json -rw-r--r-- -> -rw------- (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/inbound drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/inbound/C123 drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsloose_perms_tightened2661422467/001/inbound/C123/1234.5678-pic.png -rw-r--r-- -> -rw------- (legacy state)
+=== RUN   TestTightenStorePermissions/already-tight_no-op
+=== RUN   TestTightenStorePermissions/missing_paths_no-op
+=== RUN   TestTightenStorePermissions/empty_paths_no-op
+=== RUN   TestTightenStorePermissions/setgid_bit_preserved_on_dir
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionssetgid_bit_preserved_on_dir3439675366/001/inbound dgrwxr-xr-x -> grwx------ (legacy state)
+=== RUN   TestTightenStorePermissions/operator-tighter_file_not_loosened
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionsoperator-tighter_file_not_loosened440719833/001 drwxr-xr-x -> -rwx------ (legacy state)
+=== RUN   TestTightenStorePermissions/symlinks_not_followed
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionssymlinks_not_followed1664258810/001/inbound drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionssymlinks_not_followed1664258810/001/inbound/C123 drwxr-xr-x -> -rwx------ (legacy state)
+2026/09/23 23:36:11 tighten store: skipping symlink /var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestTightenStorePermissionssymlinks_not_followed1664258810/001/inbound/C123/link
+=== RUN   TestTightenStorePermissions/operator-tighter_file:_subsequent_saveLocked_propagates_EACCES
+--- PASS: TestTightenStorePermissions (0.06s)
+    --- PASS: TestTightenStorePermissions/loose_perms_tightened (0.02s)
+    --- PASS: TestTightenStorePermissions/already-tight_no-op (0.01s)
+    --- PASS: TestTightenStorePermissions/missing_paths_no-op (0.01s)
+    --- PASS: TestTightenStorePermissions/empty_paths_no-op (0.00s)
+    --- PASS: TestTightenStorePermissions/setgid_bit_preserved_on_dir (0.01s)
+    --- PASS: TestTightenStorePermissions/operator-tighter_file_not_loosened (0.01s)
+    --- PASS: TestTightenStorePermissions/symlinks_not_followed (0.01s)
+    --- PASS: TestTightenStorePermissions/operator-tighter_file:_subsequent_saveLocked_propagates_EACCES (0.01s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	0.343s
+Exit: 0

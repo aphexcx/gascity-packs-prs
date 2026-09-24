@@ -1,5 +1,54 @@
 # gp-8tp1: explicit reply threads and company routing
 
+## Round 5: gp-bio1
+
+Continues draft PR #44 on gp-8tp1 from b96526817b34147b9f171482700061c0e310ef2f.
+The explicit-target guard now gathers bindings with one GET per identity from
+`common.session_identity_candidates(session_id)` before checking for an active
+conversation match. This covers the session ID, environment session name, and
+API-reported alias and session name. Unbound targets retain the same refusal
+before any POST. The round-4 delta adds no other binding queries to update.
+
+The new regression runs the default invocation (no `--session`) with a live
+company turn. Each identity is the sole holder of the requested binding in
+turn: the ordinary route posts to the requested conversation and thread. A
+fifth case has no binding under any identity and verifies that neither route
+posts. The Fable r2 comment on gp-bio1 is CLEAN and assigns no additional fixes.
+
+Evidence for this round:
+
+- round5-tests-python-red.txt: at b9652681 with only the five new cases added,
+  the three name/alias cases fail with the expected explicit-target refusal;
+  566 pass, including the ID-bound and unbound controls.
+- round5-tests-python-green.txt: all 569 pass after the guard fix. Both runs use
+  `env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest
+  slack-full/tests -q`, and report the same two existing fork DeprecationWarnings.
+- round5-tests-go-full.txt: Go 1.26.5 darwin/arm64; 1,186 top-level tests and
+  1,842 test/subtest outcomes pass, zero failures/skips. Run from
+  slack-full/adapter with `env -u GC_TEMPLATE
+  CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include
+  CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -count=1 -json ./...`.
+  Raw JSON is retained locally at /tmp/gp-bio1-go-full.jsonl.
+- round5-change.diff: zero-context diff from b9652681 for the guard and tests.
+
+All test requests are intercepted; no live Slack messages were sent. The
+prescribed `/Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version`
+reports v24.21.0; these suites run on Python/Go, and no unsupported-engine
+warning occurred. Fetch/push use the explicit aphexcx/gascity-packs-prs URL.
+The fetched fork2/main and local origin/main both resolve to
+7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a, also the PR merge base.
+
+The review sandbox again fails the unchanged
+`TestTightenStorePermissions/setgid_bit_preserved_on_dir` case. The worker's
+full suite passed; a focused outside-sandbox rerun also passes the top-level
+test and all eight subtests (round5-tests-review-environment.txt).
+Recurrence filed as pc_8039b75293bd, following pc_57ad64ab9acc.
+
+Worker Codex STANDARD round 5 (gpt-6-astra, first attempt) found no actionable
+regressions and independently passed all 569 Python tests and focused Go
+tests. See round5-review-standard-1.txt. The mayor gate r3 and Fable read r3
+follow READY; PR #44 remains draft for the founder merge decision.
+
 ## Round 4: gp-1rqe
 
 Continues draft PR #44 on gp-8tp1 from bcc16ff7208f2189a4e6ee5f3e5fc09c5acbf7dd.
