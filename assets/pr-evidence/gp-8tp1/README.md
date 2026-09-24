@@ -1,5 +1,63 @@
 # gp-8tp1: explicit reply threads and company routing
 
+## Round 7: gp-l3ie
+
+Continues draft PR #44 on gp-8tp1 from ed04e6c4144b44d41efba183c2edca51fa1a1bb2.
+The explicit-target guard now recognizes room-group participants even when
+bind-room was invoked without --binding-owner. Individual bindings retain
+priority; when none match, GET /extmsg/groups resolves the exact conversation
+and GET /beads?label=extmsg:group:participant:v1:<group-id> reads active participant
+records, following next_cursor. The session_id or stable session_name must
+match the same session_identity_candidates set already used for bindings.
+No extra /sessions lookup is introduced by the group check.
+
+Discovery: slack_chat_bind_room.py POSTs /extmsg/groups and /extmsg/participants.
+The local config mirror can outlive a participant removed through GC. The GC
+source's humaHandleExtMsgGroupLookup returns the group without participants;
+groupService.listParticipants and ResolveOutbound read live participant beads
+with the group label, skip closed records, and decode session_id/session_name.
+This patch uses those records through the existing public beads API; no GC or
+adapter changes are needed. The ordinary outbound route retains its own final
+authorization. Company selectors, DM/MPIM paths, and mention-only lookup are unchanged.
+
+The regression invokes bind-room with intercepted API calls, then reply-current
+with a live company pointer elsewhere. It covers ID, environment name, API alias,
+API session name, binding owner, nonmember, closed membership, wrong group,
+wrong workspace, absent/unavailable group, and membership on a second page.
+The local config remains present in the stale-membership cases: it cannot
+permit a post. All test requests are intercepted; no live Slack calls occur.
+
+Evidence:
+
+- round7-tests-python-red.txt: baseline plus tests only; 5 failed, 588 passed.
+  ID/name/alias group members and the second-page member fail at the old guard;
+  owner and refusal controls already pass.
+- round7-tests-python-green.txt: 593 passed, two existing fork warnings.
+  Both full runs: env -u GC_TEMPLATE uv run --no-project --with pytest python -m
+  pytest slack-full/tests -q.
+- round7-tests-go-full.txt: unchanged adapter suite; 1,186 top-level and 1,842
+  total passing outcomes, no failures/skips. Exact command and Go version are
+  in the transcript. No nonempty SLACK_*TOKEN environment values were present.
+- round7-change.diff: zero-context source/test diff against ed04e6c4.
+
+Toolchain check: /Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version
+returned v24.21.0. These suites use Python/Go; no unsupported-engine warning.
+The shared origin URL is aphexcx/gascity-packs; an authenticated explicit fetch
+of aphexcx/gascity-packs-prs main confirms FETCH_HEAD, origin/main, and the PR
+merge base all equal 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a.
+
+Read both Mayor comments: gate r4 blocks on this group regression; Fable r4
+is CLEAN and assigns no extra fix. Record-only legacy limitation: a user-set
+--kind thread (or dm on a C-channel) fails the guard's conversation-kind match
+and may refuse a bound target; the Mayor holds that follow-up after this PR.
+
+Worker Codex STANDARD round 7 (gpt-6-astra, high effort, first attempt) found no
+actionable regressions. The known review-sandbox setgid failure passed in the
+worker full suite and focused rerun (one top-level test/eight subtests): see
+round7-review-standard-1.txt and round7-tests-review-environment.txt; recurrence
+pc_0bfbf13952e5. The missing participant read endpoint is filed as pc_939e69f59749.
+Mayor gate r5 and Fable read r5 follow READY; PR #44 stays draft.
+
 ## Round 6: gp-12bl
 
 Continues draft PR #44 on gp-8tp1 from 3190c9af0f712192df46ae6b297f495fe302f8ae.

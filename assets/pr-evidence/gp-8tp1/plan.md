@@ -22,3 +22,14 @@ Authorized by the claimed gp-1rqe description; continue gp-8tp1 and draft PR #44
 - [x] Record rendered evidence, RED/GREEN results, full suites, and a zero-context diff.
 - [x] Finish Codex STANDARD review and resolve actionable findings; no actionable regressions.
 Delivery contract: commit, push gp-8tp1, update existing DRAFT PR #44, send READY, stamp and close gp-1rqe, and acknowledge drain.
+
+## Round 7: gp-l3ie
+
+Authorized by the claimed gp-l3ie contract; reuse gp-8tp1 and draft PR #44.
+
+- [x] Read every bead comment and round-6 review evidence; trace bind-room and GC group authorization.
+- [x] Reproduce group-only ID/name/alias and paginated membership failures at ed04e6c4.
+- [x] Add live group/participant lookup using existing session identities; retain all refusal and selector guards.
+- [x] Run full Python and unchanged Go suites; save RED/GREEN and zero-context diff.
+- [x] Finish worker STANDARD review and record its disposition.
+Delivery contract: push existing branch, update draft PR #44, send READY, stamp/close gp-l3ie, and acknowledge drain.

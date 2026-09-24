@@ -1,0 +1,7 @@
+Command (slack-full/adapter): env -u GC_TEMPLATE CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -count=1 -json ./...
+go version go1.26.5 darwin/arm64
+Top-level outcomes: {'pass': 1186}
+All test/subtest outcomes: {'pass': 1842}
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	64.643s
+Exit: 0

@@ -300,6 +300,38 @@ def _mention_only_delivery_superseding_company(
     return newest
 
 
+def _session_participates_in_group(identities: set[str], conv: dict[str, str]) -> bool:
+    """Check gc's live participant records, including name-bound room members."""
+    if conv.get("kind") != "room":
+        return False
+    group = common.gc_get("/extmsg/groups?" + urllib.parse.urlencode(conv))
+    group_id = group.get("ID")
+    if not group_id or group.get("RootConversation") != conv:
+        return False
+    # bind-room POSTs /extmsg/participants, which gc stores as labeled beads.
+    # There is no participant-list endpoint. Read the same live records that
+    # gc's group outbound resolver uses, rather than the local config mirror
+    # (which can retain participants removed directly through gc).
+    query = {"label": f"extmsg:group:participant:v1:{group_id}"}
+    seen_cursors: set[str] = set()
+    while True:
+        page = common.gc_get("/beads?" + urllib.parse.urlencode(query))
+        for entry in page.get("items", []) or []:
+            if entry.get("status") == "closed" or "gc:extmsg-participant" not in (entry.get("labels") or []):
+                continue
+            metadata = entry.get("metadata") or {}
+            if (metadata.get("group_id") == group_id
+                    and identities & {metadata.get("session_id"), metadata.get("session_name")}):
+                return True
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return False
+        if cursor in seen_cursors:
+            raise common.GCAPIError("group participant lookup repeated a page cursor")
+        seen_cursors.add(cursor)
+        query["cursor"] = cursor
+
+
 def _explicit_target_uses_ordinary_route(
     args: argparse.Namespace, turn: dict[str, Any],
     superseding: dict[str, Any] | None,
@@ -340,7 +372,8 @@ def _explicit_target_uses_ordinary_route(
             mention_only = common.session_is_mention_only_in(session_id, conv["conversation_id"])
         if not mention_only:
             bindings = []
-            for identity in sorted(common.session_identity_candidates(session_id)):
+            identities = common.session_identity_candidates(session_id)
+            for identity in sorted(identities):
                 query = urllib.parse.urlencode({"session_id": identity})
                 bindings.extend(common.gc_get(f"/extmsg/bindings?{query}").get("items", []))
             # A session can be bound to several channels; checking only its
@@ -351,6 +384,8 @@ def _explicit_target_uses_ordinary_route(
                         for key in ("scope_id", "provider", "account_id", "conversation_id", "kind"))
                 for entry in bindings
             )
+            if not bound:
+                bound = _session_participates_in_group(identities, conv)
     except (common.GCAPIError, SystemExit) as exc:
         refuse(str(exc))
     if not mention_only and not bound:
