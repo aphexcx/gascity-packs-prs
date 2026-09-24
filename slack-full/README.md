@@ -228,6 +228,23 @@ recent gc events to find the conversation, then POSTs to gc's
 fanout fires for bind-room sessions). `--via adapter` is available
 for adapter-only diagnostics that bypass gc.
 
+The adapter registers this static reply instruction for every inbound:
+
+```text
+Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>
+```
+
+This relies on gc's `renderExtmsgReplyInstructions` placeholder contract:
+`{thread_ts}` is the inbound's thread root, falling back to `{message_ts}`
+(the message's own timestamp) for a top-level post. The same command thus
+replies at an existing thread's root or starts a thread under a top-level
+message. The once-per-channel how-to explains `--reply-to <ts>` and retains
+`--no-thread` as the explicit top-level override.
+
+WeCom does not render this Slack Reply line: `wecom/adapter/src/inbound.js`
+provides a separate `gc wecom publish --chat … --text-file …` how-to, and
+`wecom/adapter/src/index.js` registers its matching WeCom Reply template.
+
 ```
                    ┌──── public ────┐
 Slack  ──HMAC──▶  Go adapter :8775  ──▶ gc /extmsg/inbound

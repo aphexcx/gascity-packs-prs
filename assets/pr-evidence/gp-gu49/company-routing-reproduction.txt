@@ -1,0 +1,6 @@
+command: env -u GC_TEMPLATE uv run --no-project --with pytest python assets/pr-evidence/gp-gu49/reproduce-company-routing.py
+
+--turn-ts: refused before posting: --turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead
+--reply-to: requested channel=C_INBOUND thread=100.000001
+--reply-to: captured channel=C0AAAAAAA thread=1700000000.000100
+Confirmed wrong-conversation routing; all network calls intercepted.

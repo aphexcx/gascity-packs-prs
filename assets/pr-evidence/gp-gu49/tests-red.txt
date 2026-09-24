@@ -1,0 +1,57 @@
+cwd: slack-full/adapter
+command: env -u GC_TEMPLATE CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -count=1 -v ./... -run '^(TestRegisterAdapterSendsReplyInstructionsTemplate|TestCoalescer_BurstDeliversAsOneInbound|TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn)$'
+
+=== RUN   TestCoalescer_BurstDeliversAsOneInbound
+2026/09/23 22:12:39 coalesce: chan=C1 buffered ts=100.000001 (window 40ms armed)
+2026/09/23 22:12:39 coalesce: chan=C1 buffered ts=100.000002 (pending=2)
+2026/09/23 22:12:39 coalesce: chan=C1 buffered ts=100.000003 (pending=3)
+2026/09/23 22:12:40 inbound (coalesced): chan=C1 batch=3 newest_ts=100.000003 text=906ch receipt=unsupported
+    token_efficiency_integration_test.go:140: reply help missing "gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>":
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+    token_efficiency_integration_test.go:140: reply help missing "--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread.":
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+    token_efficiency_integration_test.go:140: reply help must prescribe --reply-to, not --turn-ts:
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+--- FAIL: TestCoalescer_BurstDeliversAsOneInbound (0.04s)
+=== RUN   TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn
+2026/09/23 22:12:40 coalesce: chan=C1 buffered ts=100.000001 (window 1h0m0s armed)
+2026/09/23 22:12:40 inbound (coalesced): chan=C1 batch=1 newest_ts=100.000001 text=618ch receipt=unsupported
+2026/09/23 22:12:40 inbound: chan=C1 user=U_ALICE ts=100.000002 thread= target="" bot_mention=true files=0 spooled=0 text=10ch posted=10ch receipt=unsupported
+    token_efficiency_integration_test.go:199: reply help missing "gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>":
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+    token_efficiency_integration_test.go:199: reply help missing "--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread.":
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+    token_efficiency_integration_test.go:199: reply help must prescribe --reply-to, not --turn-ts:
+        full reply how-to, sent once per channel per adapter session]
+        To reply: write your reply to a file, then run:
+          gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+        --turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+        To react: gc slack react --emoji <name>
+--- FAIL: TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn (0.00s)
+=== RUN   TestRegisterAdapterSendsReplyInstructionsTemplate
+    token_efficiency_integration_test.go:431: reply_instructions = "Reply: gc slack reply-current --conversation-id {conversation_id} --turn-ts {message_ts} --body-file <file>", want "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
+    token_efficiency_integration_test.go:434: registered reply template must not carry --turn-ts
+--- FAIL: TestRegisterAdapterSendsReplyInstructionsTemplate (0.00s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.364s
+FAIL
