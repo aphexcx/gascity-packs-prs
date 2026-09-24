@@ -1,0 +1,10 @@
+Command: codex review --base origin/main -c 'sandbox_workspace_write.network_access=true'
+Exit: 0 (review completed; verdict changes required)
+Full log: /Users/tailor512/city/assets/ops/codex-gates/gp-gu49-standard-1.txt
+
+The placeholder contract is correct, but the new command introduces a verified wrong-conversation routing regression for company sessions. Targeted tests passed; the full adapter suite failed on an unrelated setgid-permission test.
+
+Review comment:
+
+- [P1] Preserve explicit-target safety for company sessions — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/inbound_coalescer.go:3449-3449
+  When a session also has a live company turn and no newer mention-only delivery, this command can silently reply to the company conversation instead of the specified inbound. `slack_chat_reply_current.py::_maybe_company_reply` runs before normal target resolution, ignores `--conversation-id` and `--reply-to`, and only rejects this diversion when `--turn-ts` is supplied. Replacing that flag therefore removes an existing wrong-conversation safeguard. Ensure explicit channel/thread targets are honored or rejected by company routing before shipping this template, and cover the mixed-session case with a regression test.

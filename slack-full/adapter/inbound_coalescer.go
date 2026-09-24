@@ -3429,23 +3429,21 @@ func replyHelpBlock(cfg config, channel string) string {
 	return fmt.Sprintf(
 		"[channel %s — full reply how-to, sent once per channel per adapter session]\n"+
 			"To reply: write your reply to a file, then run:\n"+
-			"  gc slack reply-current --conversation-id %s --turn-ts <ts of the message you are answering> --body-file <file>\n"+
-			"--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.\n"+
+			"  gc slack reply-current --conversation-id %s --reply-to <ts> --body-file <file>\n"+
+			"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread. --no-thread forces a top-level post.\n"+
 			"To react: gc slack react --emoji <name>",
 		display, neutralizeMarkupBoundaries(channel))
 }
 
 // slackReplyInstructionsTemplate is the one-line per-message reply
 // instruction registered with gc (extmsg ReplyInstructionsProvider).
-// gc substitutes {conversation_id} and {message_ts} per reminder; the
+// gc substitutes {conversation_id} and {thread_ts} per reminder; the
 // full how-to arrives once per channel via replyHelpBlock. Keep the
 // command shape in sync with scripts/slack_chat_reply_current.py —
 // tests/test_reply_template_contract.py pins the flags.
 //
-// --turn-ts {message_ts} pins the reply to the exact inbound the
-// reminder delivered (gp-6j3): without it, reply-current anchors on the
-// LATEST inbound at send time, and coalesced delivery + interleaved
-// channel/thread traffic routinely make that a different message —
-// replies landed top-level instead of in-thread, and in the wrong
-// thread outright, three times in one hour across two cities.
-const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --turn-ts {message_ts} --body-file <file>"
+// gc supplies {thread_ts} as the inbound's thread root, falling back
+// to {message_ts} for a top-level message. --reply-to therefore replies
+// in the existing thread or starts one under the top-level inbound,
+// without depending on the latest inbound at send time (gp-gu49).
+const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
