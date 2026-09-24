@@ -1,6 +1,67 @@
 # gp-8tp1: explicit reply threads and company routing
 
-This round reuses candidate dc065d2f2a45b31942209109d13a568a889ea92c from
+## Round 4: gp-1rqe
+
+Continues draft PR #44 on gp-8tp1 from bcc16ff7208f2189a4e6ee5f3e5fc09c5acbf7dd.
+The coalesced header now recommends only `--reply-to`, using the newest human
+member's thread root or own timestamp. Older members use that same rule.
+Count, channel, one-line header, and newest-human selection are preserved.
+The bot-reaction anchor test also needed its expected flag updated.
+
+An explicit matching company DM/MPIM with `--no-thread` keeps the company
+route when that route already posts top-level. A different unbound conversation
+or a threaded company pointer still refuses before any post. The module
+docstring and help recommend `--reply-to`; `--turn-ts` remains a compatibility
+form. Ordinary publishing now strips the same anchor whitespace as the guard.
+
+Evidence added for this round:
+
+- rendered-after-coalesced.txt: actual Go formatter output for channel and DM
+  inputs, both top-level and threaded. Live DM events still bypass buffering;
+  these DM cases verify the formatter's channel-independent anchor behavior.
+- round4-tests-go-red.txt / round4-tests-go-green.txt: four top-level tests and
+  four subtests fail at bcc16ff7 with only the regression tests changed, then
+  all eight outcomes pass after the fix.
+- round4-tests-python-red.txt / round4-tests-python-green.txt: the matching
+  DM, matching MPIM, and whitespace cases fail; four refusal controls pass.
+  After the fix all seven pass, with 557 deselected.
+- round4-tests-go-full.txt: 1,186 top-level tests, 1,842 passing test/subtest
+  outcomes, zero failures/skips; Go 1.26.5 darwin/arm64. Package output and
+  counts decoded from `go test -count=1 -json ./...`, with GC_TEMPLATE unset
+  and the prescribed ICU flags. The raw JSON is retained locally at
+  /tmp/gp-1rqe-go-full.jsonl.
+- round4-tests-python-full.txt: `env -u GC_TEMPLATE uv run --no-project --with
+  pytest python -m pytest slack-full/tests -q`: 564 passed; two existing fork
+  DeprecationWarnings. All prior explicit-target refusal tests remain green.
+- round4-change.diff: zero-context diff from bcc16ff7 for this round's seven
+  source, documentation, and test files. Earlier evidence below is historical.
+
+Every transcript records its exact command and exit status. Tests intercept
+outbound requests; no live Slack messages were sent. The prescribed
+`/Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version` check reports
+v24.21.0; these suites run on Go/Python. No unsupported-engine warning occurred.
+
+The binding query's single-session-identity limit is recorded without change,
+as requested. WeCom and company_hydration.go's `--turn-ref` contract are unchanged.
+The shared origin remote names aphexcx/gascity-packs; fork2 names the actual
+PR repository aphexcx/gascity-packs-prs, and is used for authenticated fetch/push.
+Both origin/main and fetched fork2/main have the same merge base with this
+branch: 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a. Papercut: pc_0c5bbb08fafd.
+
+Worker Codex STANDARD round 4 (gpt-6-astra, attempt 1) found no actionable
+regressions and independently passed all 564 Python tests and affected Go
+tests. Its sandbox reproduced the unchanged setgid-permission test failure;
+worker full-suite results above passed outside the sandbox. See
+round4-review-standard-1.txt and round4-tests-review-environment.txt.
+Recurrence: pc_57ad64ab9acc. Review command:
+
+```sh
+codex review --base origin/main -c 'sandbox_workspace_write.network_access=true'
+```
+
+## Prior round: gp-8tp1
+
+The prior round reuses candidate dc065d2f2a45b31942209109d13a568a889ea92c from
 draft PR #43 by cherry-pick, then fixes its verified company-routing P1.
 The gp-gu49 evidence remains historical; its BLOCKED verdict applies to the
 text-only candidate before this guard fix.

@@ -3124,12 +3124,14 @@ func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbo
 		}
 	}
 	var b strings.Builder
-	// --turn-ts resolves via the transcript, which records ONE entry for
-	// the whole batch (under the anchor ts — newest HUMAN message, since
-	// bot-tagged items are non-anchoring per gp-by3) — so the header
-	// steers replies to older members through --reply-to/--no-thread.
-	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --turn-ts %s to answer the newest; to answer an older one use --reply-to <its thread ts> or --no-thread instead (--turn-ts resolves only the newest)]\n",
-		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(anchor.ProviderMessageID))
+	// Reply directly to the root, or start a thread under a top-level
+	// message. Older members use the same rule without a transcript lookup.
+	replyTo := anchor.ReplyToMessageID
+	if replyTo == "" {
+		replyTo = anchor.ProviderMessageID
+	}
+	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --reply-to %s to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]\n",
+		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(replyTo))
 	for _, p := range batch {
 		m := p.inbound
 		sender := m.Actor.DisplayName

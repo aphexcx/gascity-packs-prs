@@ -1,0 +1,4 @@
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q -k 'company_dm_family_no_thread_without_ordinary_binding or reply_to_trims_whitespace_before_publishing'
+.......                                                                  [100%]
+7 passed, 557 deselected in 0.15s
+Exit: 0

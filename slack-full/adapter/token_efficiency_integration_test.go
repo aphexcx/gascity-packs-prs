@@ -205,8 +205,14 @@ func assertReplyHelpThreadsMessages(t *testing.T, text string) {
 	if start < 0 {
 		t.Fatalf("missing reply help block:\n%s", text)
 	}
-	// Limit the assertion to the how-to; coalesced message headers have
-	// separate turn-selection instructions.
+	// The batch header must agree with the how-to's threaded reply anchor.
+	for _, line := range strings.Split(text[:start], "\n") {
+		if strings.Contains(line, ", coalesced.") {
+			if !strings.Contains(line, "--reply-to ") || strings.Contains(line, "--turn-ts") || strings.Contains(line, "--no-thread") {
+				t.Errorf("coalesced header must prescribe --reply-to: %s", line)
+			}
+		}
+	}
 	help := text[start:]
 	for _, want := range []string{
 		"gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>",

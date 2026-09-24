@@ -1,0 +1,18 @@
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................................................................ [ 38%]
+........................................................................ [ 51%]
+........................................................................ [ 63%]
+........................................................................ [ 76%]
+........................................................................ [ 89%]
+............................................................             [100%]
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=51987) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+564 passed, 2 warnings in 39.15s
+Exit: 0

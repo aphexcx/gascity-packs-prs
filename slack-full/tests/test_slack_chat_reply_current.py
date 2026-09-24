@@ -1983,3 +1983,57 @@ def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypat
             rc.main(argv)
         assert posts == []
     assert company_posts == []
+
+
+@pytest.mark.parametrize("kind,channel", [("dm", "D0HUMANOLLIE"), ("mpim", "G0GROUP")])
+@pytest.mark.parametrize("target", ["matching", "other-conversation", "threaded-pointer"])
+def test_company_dm_family_no_thread_without_ordinary_binding(
+        monkeypatch, tmp_path, kind, channel, target):
+    """Keep a matching top-level company route; refuse destinations it cannot serve."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    outbound = sys.modules["slack_company_outbound"]
+    _write_dm_bindings(outbound)
+    _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+    pointer = outbound.turns_dir() / "dm" / "ollie-main.json"
+    turn = json.loads(pointer.read_text())
+    turn.update(kind=kind, channel_id=channel)
+    if target == "threaded-pointer":
+        turn["thread_root_ts"] = "1700000000.000100"
+    pointer.unlink()
+    pointer = outbound.turns_dir() / kind / "ollie-main.json"
+    pointer.parent.mkdir(exist_ok=True)
+    pointer.write_text(json.dumps(turn))
+    requested = "C_UNBOUND" if target == "other-conversation" else channel
+    argv = ["--session", "ollie-main", "--conversation-id", requested,
+            "--no-thread", "--body", "top-level company answer"]
+    if target == "matching":
+        assert rc.main(argv) == 0
+        assert len(company_posts) == 1 and posts == []
+        payload = company_posts[0]["payload"]
+        assert payload["channel"] == channel
+        assert not payload.get("thread_ts")
+    else:
+        with pytest.raises(SystemExit, match="no active binding") as exc:
+            rc.main(argv)
+        assert requested in str(exc.value) and channel in str(exc.value)
+        assert company_posts == [] and posts == []
+
+
+def test_reply_to_trims_whitespace_before_publishing(monkeypatch):
+    """Validation and the outbound payload must use the same normalized anchor."""
+    rc, common = _import_modules()
+    monkeypatch.delenv("GC_SESSION_NAME", raising=False)
+    posts = []
+
+    def fake_request(method, url, body=None, **kwargs):
+        if method == "POST":
+            posts.append(body)
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    assert rc.main(["--session", "gc-test-session", "--conversation-id", "C1",
+                    "--reply-to", " 100.000001 ", "--body", "thread this"]) == 0
+    assert len(posts) == 1
+    assert posts[0]["reply_to_message_id"] == "100.000001"

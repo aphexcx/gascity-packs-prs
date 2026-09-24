@@ -15,15 +15,12 @@ including when --conversation-id names the same conversation explicitly
 (gp-i62). --reply-to / --thread-current still override the anchor, and
 --no-thread forces a channel-level post.
 
---turn-ts <ts> (gp-6j3) pins the anchor to the exact inbound the session
-is answering — the ts carried in the delivery reminder — instead of the
-latest-inbound scan. Under coalesced delivery + interleaved traffic the
-latest inbound at SEND time is often not the message being answered
-(fleet repro: replies landing top-level instead of in-thread, and in the
-wrong thread outright). With --turn-ts the reply threads at that
-inbound's thread root when it was threaded and posts channel-level when
-it was not; if the ts cannot be resolved in the conversation's
-transcript, the command fails fast with guidance rather than guessing.
+--reply-to <ts> is the anchor of record in delivery reminders: use the
+inbound's thread root, or its own timestamp to start a thread under a
+top-level message. This also works for older members of a coalesced batch.
+--turn-ts <ts> (gp-6j3) is the older form kept for compatibility. It resolves
+the inbound in the transcript and replies at its thread root when threaded,
+or at channel level otherwise; an unresolved timestamp fails fast.
 """
 
 from __future__ import annotations
@@ -318,7 +315,10 @@ def _explicit_target_uses_ordinary_route(
     if turn["kind"] in ("dm", "mpim") and company_root == turn["ts"]:
         company_root = ""
     if (not channel or channel == company_channel) and not turn_ts:
-        if (not reply_to or reply_to == company_root) and not args.no_thread:
+        if args.no_thread:
+            if not company_root and not reply_to and not args.thread_current:
+                return False  # The company DM/MPIM route already posts top-level.
+        elif not reply_to or reply_to == company_root:
             return False  # Explicit selectors agree with the company route.
 
     requested = f"{channel or '(resolved conversation)'}/{reply_to or turn_ts or '(current thread)'}"
@@ -501,15 +501,12 @@ def main(argv: list[str]) -> int:
                         help="Slack message ts to reply to (threaded reply)")
     parser.add_argument(
         "--turn-ts", default="",
-        help=("Slack ts of the inbound this reply answers (carried in the "
-              "delivery reminder). Anchors the reply to that exact message: "
-              "its thread root when it was threaded, channel level when it "
-              "was not — instead of inheriting whatever inbound arrived "
-              "last, which interleaved traffic makes the wrong one "
-              "(gp-6j3). Fails fast when the ts is not in the "
-              "conversation's transcript (e.g. an older member of a "
-              "coalesced batch): pass --reply-to <thread ts> or "
-              "--no-thread instead."))
+        help=("Older transcript-based anchor, kept for compatibility: replies "
+              "at the named inbound's thread root when threaded, or at channel "
+              "level otherwise. Fails if the ts is absent from the transcript "
+              "(e.g. an older coalesced member). Prefer --reply-to <ts>, the "
+              "delivery reminder's anchor of record: the inbound's thread root "
+              "or its own ts for a top-level message."))
     parser.add_argument(
         "--origin-ts", default="",
         help=("Company rooms: pin a specific turn ts when a newer wake has "
@@ -599,7 +596,7 @@ def main(argv: list[str]) -> int:
     if not conv.get("account_id"):
         raise SystemExit("missing slack account_id (SLACK_WORKSPACE_ID env)")
 
-    reply_to = args.reply_to
+    reply_to = (args.reply_to or "").strip()
     turn_ts = (args.turn_ts or "").strip()
     if args.no_thread and (reply_to or args.thread_current):
         raise SystemExit(

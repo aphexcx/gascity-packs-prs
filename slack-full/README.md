@@ -240,6 +240,8 @@ This relies on gc's `renderExtmsgReplyInstructions` placeholder contract:
 replies at an existing thread's root or starts a thread under a top-level
 message. The once-per-channel how-to explains `--reply-to <ts>` and retains
 `--no-thread` as the explicit top-level override.
+Coalesced headers also use `--reply-to` with the newest member's thread root
+or own timestamp; older members follow the same root-or-own-timestamp rule.
 
 When a live company turn is present, an explicit `--conversation-id`,
 `--reply-to`, or `--turn-ts` cannot silently redirect to its channel or root.
