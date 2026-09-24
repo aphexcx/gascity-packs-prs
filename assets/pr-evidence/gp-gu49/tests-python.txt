@@ -1,0 +1,4 @@
+command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q -k 'reply_template_contract or slack_chat_reply_current'
+
+...............................................................          [100%]
+63 passed, 467 deselected in 0.30s
