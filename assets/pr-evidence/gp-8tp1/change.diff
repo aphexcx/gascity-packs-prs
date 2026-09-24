@@ -1,0 +1,380 @@
+diff --git a/slack-full/README.md b/slack-full/README.md
+index 4b47060..0f66b0d 100644
+--- a/slack-full/README.md
++++ b/slack-full/README.md
+@@ -230,0 +231,30 @@ for adapter-only diagnostics that bypass gc.
++The adapter registers this static reply instruction for every inbound:
++
++```text
++Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>
++```
++
++This relies on gc's `renderExtmsgReplyInstructions` placeholder contract:
++`{thread_ts}` is the inbound's thread root, falling back to `{message_ts}`
++(the message's own timestamp) for a top-level post. The same command thus
++replies at an existing thread's root or starts a thread under a top-level
++message. The once-per-channel how-to explains `--reply-to <ts>` and retains
++`--no-thread` as the explicit top-level override.
++
++When a live company turn is present, an explicit `--conversation-id`,
++`--reply-to`, or `--turn-ts` cannot silently redirect to its channel or root.
++A target outside that company turn is honored through ordinary resolution
++only when this session has an active gc binding to the target conversation
++(or a mention-only route through the adapter). All active bindings are checked,
++not just the newest. Without a binding, or when the binding check fails, the
++command refuses before posting and names both the requested and company targets.
++This check also applies to `--via adapter`. A thread-only override resolves its
++conversation using the usual inbound/binding lookup. Matching explicit company
++channel/root selectors retain the company route and acting agent's token;
++`--turn-ts` uses ordinary transcript resolution or refuses. Implicit replies
++retain the existing company/mention-only newest-turn selection.
++
++WeCom does not render this Slack Reply line: `wecom/adapter/src/inbound.js`
++provides a separate `gc wecom publish --chat … --text-file …` how-to, and
++`wecom/adapter/src/index.js` registers its matching WeCom Reply template.
++
+diff --git a/slack-full/adapter/inbound_coalescer.go b/slack-full/adapter/inbound_coalescer.go
+index d7ab421..3eb0829 100644
+--- a/slack-full/adapter/inbound_coalescer.go
++++ b/slack-full/adapter/inbound_coalescer.go
+@@ -3432,2 +3432,2 @@ func replyHelpBlock(cfg config, channel string) string {
+-			"  gc slack reply-current --conversation-id %s --turn-ts <ts of the message you are answering> --body-file <file>\n"+
+-			"--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.\n"+
++			"  gc slack reply-current --conversation-id %s --reply-to <ts> --body-file <file>\n"+
++			"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread. --no-thread forces a top-level post.\n"+
+@@ -3440 +3440 @@ func replyHelpBlock(cfg config, channel string) string {
+-// gc substitutes {conversation_id} and {message_ts} per reminder; the
++// gc substitutes {conversation_id} and {thread_ts} per reminder; the
+@@ -3445,7 +3445,5 @@ func replyHelpBlock(cfg config, channel string) string {
+-// --turn-ts {message_ts} pins the reply to the exact inbound the
+-// reminder delivered (gp-6j3): without it, reply-current anchors on the
+-// LATEST inbound at send time, and coalesced delivery + interleaved
+-// channel/thread traffic routinely make that a different message —
+-// replies landed top-level instead of in-thread, and in the wrong
+-// thread outright, three times in one hour across two cities.
+-const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --turn-ts {message_ts} --body-file <file>"
++// gc supplies {thread_ts} as the inbound's thread root, falling back
++// to {message_ts} for a top-level message. --reply-to therefore replies
++// in the existing thread or starts one under the top-level inbound,
++// without depending on the latest inbound at send time (gp-gu49).
++const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
+diff --git a/slack-full/adapter/token_efficiency_integration_test.go b/slack-full/adapter/token_efficiency_integration_test.go
+index e0138af..69b24da 100644
+--- a/slack-full/adapter/token_efficiency_integration_test.go
++++ b/slack-full/adapter/token_efficiency_integration_test.go
+@@ -139,0 +140 @@ func TestCoalescer_BurstDeliversAsOneInbound(t *testing.T) {
++	assertReplyHelpThreadsMessages(t, got.Text)
+@@ -197,0 +199,24 @@ func TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn(t *testing.T) {
++	assertReplyHelpThreadsMessages(t, got[0].Text)
++}
++
++func assertReplyHelpThreadsMessages(t *testing.T, text string) {
++	t.Helper()
++	start := strings.Index(text, "full reply how-to")
++	if start < 0 {
++		t.Fatalf("missing reply help block:\n%s", text)
++	}
++	// Limit the assertion to the how-to; coalesced message headers have
++	// separate turn-selection instructions.
++	help := text[start:]
++	for _, want := range []string{
++		"gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>",
++		"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread.",
++		"--no-thread forces a top-level post.",
++	} {
++		if !strings.Contains(help, want) {
++			t.Errorf("reply help missing %q:\n%s", want, help)
++		}
++	}
++	if strings.Contains(help, "--turn-ts") {
++		t.Errorf("reply help must prescribe --reply-to, not --turn-ts:\n%s", help)
++	}
+@@ -401,5 +426,9 @@ func TestRegisterAdapterSendsReplyInstructionsTemplate(t *testing.T) {
+-	if got.ReplyInstructions != slackReplyInstructionsTemplate {
+-		t.Fatalf("reply_instructions = %q, want %q", got.ReplyInstructions, slackReplyInstructionsTemplate)
+-	}
+-	if !strings.Contains(got.ReplyInstructions, "{conversation_id}") {
+-		t.Fatal("template must carry the {conversation_id} placeholder")
++	// gc's renderExtmsgReplyInstructions supplies thread_ts as the thread
++	// root, falling back to message_ts for a top-level inbound. One static
++	// template therefore replies in the right thread for both inbound kinds.
++	const want = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
++	if got.ReplyInstructions != want {
++		t.Errorf("reply_instructions = %q, want %q", got.ReplyInstructions, want)
++	}
++	if strings.Contains(got.ReplyInstructions, "--turn-ts") {
++		t.Error("registered reply template must not carry --turn-ts")
+diff --git a/slack-full/scripts/slack_chat_reply_current.py b/slack-full/scripts/slack_chat_reply_current.py
+index f0eb95e..5cd6c2d 100755
+--- a/slack-full/scripts/slack_chat_reply_current.py
++++ b/slack-full/scripts/slack_chat_reply_current.py
+@@ -36,0 +37 @@ import sys
++import urllib.parse
+@@ -304,0 +306,56 @@ def _mention_only_delivery_superseding_company(
++def _explicit_target_uses_ordinary_route(
++    args: argparse.Namespace, turn: dict[str, Any],
++    superseding: dict[str, Any] | None,
++) -> bool:
++    """Keep a live company pointer from capturing an explicit bound target."""
++    channel = (args.conversation_id or "").strip()
++    reply_to = (args.reply_to or "").strip()
++    turn_ts = (args.turn_ts or "").strip()
++    company_channel = turn["channel_id"]
++    company_root = turn["thread_root_ts"]
++    # Company DM/MPIM root turns post top-level. Naming that message with
++    # --reply-to requests a new thread, so it needs the ordinary route too.
++    if turn["kind"] in ("dm", "mpim") and company_root == turn["ts"]:
++        company_root = ""
++    if (not channel or channel == company_channel) and not turn_ts:
++        if (not reply_to or reply_to == company_root) and not args.no_thread:
++            return False  # Explicit selectors agree with the company route.
++
++    requested = f"{channel or '(resolved conversation)'}/{reply_to or turn_ts or '(current thread)'}"
++    company_target = f"{company_channel}/{company_root or '(top-level)'}"
++
++    def refuse(reason: str) -> None:
++        raise SystemExit(
++            f"explicit target {requested} conflicts with live company turn "
++            f"{company_target}: {' '.join(reason.split())}; use a bound "
++            "conversation or --turn-ref from the company reminder")
++
++    try:
++        session_id = (args.session or "").strip() or common.current_session_id()
++        conv = _resolve_conversation(args, session_id)
++        requested = f"{conv['conversation_id']}/{reply_to or turn_ts or '(current thread)'}"
++        # A selected mention-only delivery is already a session-scoped route.
++        mention_only = bool(superseding and superseding["channel_id"] == conv["conversation_id"])
++        if not mention_only:
++            mention_only = common.session_is_mention_only_in(session_id, conv["conversation_id"])
++        if not mention_only:
++            query = urllib.parse.urlencode({"session_id": session_id})
++            bindings = common.gc_get(f"/extmsg/bindings?{query}").get("items", [])
++            # A session can be bound to several channels; checking only its
++            # most recent binding would reject an older, still active target.
++            bound = any(
++                entry.get("Status") == "active"
++                and all((entry.get("Conversation") or {}).get(key) == conv.get(key)
++                        for key in ("scope_id", "provider", "account_id", "conversation_id", "kind"))
++                for entry in bindings
++            )
++    except (common.GCAPIError, SystemExit) as exc:
++        refuse(str(exc))
++    if not mention_only and not bound:
++        refuse("no active binding for this session and target")
++    # Pin the resolved channel so the ordinary path cannot pick up an inbound
++    # that arrived in a different channel during the binding check.
++    args.conversation_id = conv["conversation_id"]
++    return True
++
++
+@@ -318,3 +375,3 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+-    Only the *absence* of a company pointer returns ``None`` so the legacy path
+-    runs byte-for-byte; a session with any company pointer answers into the
+-    room (the legacy resolution the company delivery path never feeds).
++    Explicit targets outside that pointer use ordinary resolution when bound
++    to this session, and fail with both destinations otherwise. Implicit
++    replies retain the company/mention-only newest-turn selection.
+@@ -344,0 +402 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
++        superseding = None
+@@ -353,12 +411,9 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+-            if superseding is not None:
+-                print(
+-                    f"note: mention-only delivery {superseding['channel_id']}/"
+-                    f"{superseding['ts']} is newer than the company {source} "
+-                    "turn — resolving it instead of the company dispatch",
+-                    file=sys.stderr,
+-                )
+-                if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+-                    # --turn-ts named THIS delivery: pin its conversation so
+-                    # the legacy path cannot pick a newer delivery in another
+-                    # room and then miss the ts there (codex r4 P2).
+-                    args.conversation_id = superseding["channel_id"]
++        if (superseding is not None and (args.turn_ts or "").strip()
++                and not (args.conversation_id or "").strip()):
++            args.conversation_id = superseding["channel_id"]
++        if any((args.conversation_id, args.reply_to, args.turn_ts)):
++            turn = (outbound.read_turn_ref(session_name, turn_ref) if turn_ref else
++                    getattr(outbound, _COMPANY_POINTER_READERS[source])(session_name))
++            if turn is None:
++                raise SystemExit("company turn disappeared before explicit target validation; retry")
++            if _explicit_target_uses_ordinary_route(args, turn, superseding):
+@@ -366,9 +421,11 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+-        if (getattr(args, "turn_ts", "") or "").strip():
+-            # --turn-ts anchors a channel-binding inbound; on a session
+-            # with a live company turn the reply would divert to the
+-            # company room regardless of the anchor. Refuse instead of
+-            # silently misrouting (gp-6j3).
+-            raise SystemExit(
+-                "--turn-ts targets a channel-binding inbound, but this "
+-                "session has a live company turn; use --turn-ref from the "
+-                "company reminder instead")
++            # A later wake must not move a matching explicit target after the
++            # comparison. Company verbs verify this timestamp before posting.
++            origin_ts = origin_ts or turn["ts"]
++        elif superseding is not None:
++            print(
++                f"note: mention-only delivery {superseding['channel_id']}/"
++                f"{superseding['ts']} is newer than the company {source} "
++                "turn — resolving it instead of the company dispatch",
++                file=sys.stderr,
++            )
++            return None
+diff --git a/slack-full/tests/test_slack_chat_reply_current.py b/slack-full/tests/test_slack_chat_reply_current.py
+index 069bc36..bb84200 100755
+--- a/slack-full/tests/test_slack_chat_reply_current.py
++++ b/slack-full/tests/test_slack_chat_reply_current.py
+@@ -1831,0 +1832,154 @@ def test_turn_ts_pins_the_named_mention_only_room_over_a_newer_one(
++
++
++@pytest.mark.parametrize("flag,explicit_conversation", [
++    ("--reply-to", True), ("--reply-to", False),
++    ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
++])
++def test_company_explicit_bound_target_uses_ordinary_route(
++        monkeypatch, tmp_path, flag, explicit_conversation):
++    """A company pointer must not capture an explicitly addressed bound turn."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    common = sys.modules["slack_intake_common"]
++    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
++              "conversation_id": "C_INBOUND", "kind": "room"}
++    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
++        {"Status": "active", "Conversation": target},
++        {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
++    ]} if path.startswith("/extmsg/bindings?") else {})
++    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
++        "payload": {"conversation_id": "C_INBOUND"}})
++    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
++    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
++                        lambda sid: ("100.000002", "100.000001", target))
++    argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
++    if explicit_conversation or flag == "conversation-only":
++        argv += ["--conversation-id", "C_INBOUND"]
++    if flag != "conversation-only":
++        argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
++    assert rc.main(argv) == 0
++    assert company_posts == []
++    assert len(posts) == 1
++    url, body = posts[0]
++    assert url.endswith("/extmsg/outbound")
++    assert body["conversation"]["conversation_id"] == "C_INBOUND"
++    assert body["reply_to_message_id"] == "100.000001"
++
++
++@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
++@pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
++def test_company_explicit_unbound_target_refuses_both_destinations(
++        monkeypatch, tmp_path, flag, binding_state):
++    """Fail before any post instead of redirecting an unbound explicit target."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    common = sys.modules["slack_intake_common"]
++    def bindings(path):
++        if binding_state == "unavailable":
++            raise common.GCAPIError("gc unavailable")
++        if binding_state == "absent":
++            return {"items": []}
++        return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
++                           "Conversation": {"scope_id": "test-city", "provider": "slack",
++                                            "account_id": "T_OTHER" if binding_state == "other-workspace" else "T0TESTWS",
++                                            "conversation_id": "C_INBOUND", "kind": "room"}}]}
++    monkeypatch.setattr(common, "gc_get", bindings)
++    argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
++    if flag != "conversation-only":
++        argv += [flag, "100.000001"]
++    with pytest.raises(SystemExit) as exc:
++        rc.main(argv)
++    error = str(exc.value)
++    assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
++    assert "\n" not in error
++    assert company_posts == [] and posts == []
++
++
++@pytest.mark.parametrize("explicit_conversation", [True, False])
++def test_company_matching_explicit_reply_keeps_company_route(monkeypatch, tmp_path, explicit_conversation):
++    """Naming the current company root must preserve the acting-agent route."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    argv = ["--body", "company answer", "--reply-to", "1700000000.000100"]
++    if explicit_conversation:
++        argv += ["--conversation-id", "C0AAAAAAA"]
++    assert rc.main(argv) == 0
++    assert posts == [] and len(company_posts) == 1
++    assert company_posts[0]["payload"]["channel"] == "C0AAAAAAA"
++    assert company_posts[0]["payload"]["thread_ts"] == "1700000000.000100"
++
++
++@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
++@pytest.mark.parametrize("bound", [True, False])
++def test_company_other_thread_in_same_channel_honored_only_when_bound(
++        monkeypatch, tmp_path, flag, bound):
++    """Channel equality must not hide a requested thread different from the pointer."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    common = sys.modules["slack_intake_common"]
++    conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
++            "conversation_id": "C0AAAAAAA", "kind": "room"}
++    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
++        {"Status": "active", "Conversation": conv}] if bound else []})
++    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
++    argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
++            flag, "100.000001", "--body", "another thread", "--via", "adapter"]
++    if bound:
++        assert rc.main(argv) == 0
++        assert len(posts) == 1
++        assert posts[0][1]["conversation"]["conversation_id"] == "C0AAAAAAA"
++        assert posts[0][1]["reply_to_message_id"] == "100.000001"
++    else:
++        with pytest.raises(SystemExit) as exc:
++            rc.main(argv)
++        assert "C0AAAAAAA/100.000001" in str(exc.value)
++        assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
++        assert posts == []
++    assert company_posts == []
++
++
++@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
++def test_company_explicit_thread_without_channel_refuses_unbound_target(monkeypatch, tmp_path, flag):
++    """A thread-only override must resolve its channel before checking membership."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    common = sys.modules["slack_intake_common"]
++    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
++        "payload": {"conversation_id": "C_UNBOUND"}})
++    with pytest.raises(SystemExit) as exc:
++        rc.main(["--session", "ollie-main", flag, "100.000001", "--body", "do not send"])
++    assert "C_UNBOUND/100.000001" in str(exc.value)
++    assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
++    assert posts == [] and company_posts == []
++
++
++@pytest.mark.parametrize("bound", [True, False])
++def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypatch, tmp_path, bound):
++    """The DM company verb posts top-level for a root turn; --reply-to must thread."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    outbound = sys.modules["slack_company_outbound"]
++    common = sys.modules["slack_intake_common"]
++    _write_dm_bindings(outbound)
++    _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
++    conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
++            "conversation_id": "D0HUMANOLLIE", "kind": "dm"}
++    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
++        {"Status": "active", "Conversation": conv}] if bound else []})
++    argv = ["--session", "ollie-main", "--conversation-id", "D0HUMANOLLIE",
++            "--reply-to", "1700000000.000900", "--body", "thread this DM"]
++    if bound:
++        assert rc.main(argv) == 0
++        assert len(posts) == 1
++        assert posts[0][1]["reply_to_message_id"] == "1700000000.000900"
++    else:
++        with pytest.raises(SystemExit, match="D0HUMANOLLIE"):
++            rc.main(argv)
++        assert posts == []
++    assert company_posts == []

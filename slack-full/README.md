@@ -241,6 +241,19 @@ replies at an existing thread's root or starts a thread under a top-level
 message. The once-per-channel how-to explains `--reply-to <ts>` and retains
 `--no-thread` as the explicit top-level override.
 
+When a live company turn is present, an explicit `--conversation-id`,
+`--reply-to`, or `--turn-ts` cannot silently redirect to its channel or root.
+A target outside that company turn is honored through ordinary resolution
+only when this session has an active gc binding to the target conversation
+(or a mention-only route through the adapter). All active bindings are checked,
+not just the newest. Without a binding, or when the binding check fails, the
+command refuses before posting and names both the requested and company targets.
+This check also applies to `--via adapter`. A thread-only override resolves its
+conversation using the usual inbound/binding lookup. Matching explicit company
+channel/root selectors retain the company route and acting agent's token;
+`--turn-ts` uses ordinary transcript resolution or refuses. Implicit replies
+retain the existing company/mention-only newest-turn selection.
+
 WeCom does not render this Slack Reply line: `wecom/adapter/src/inbound.js`
 provides a separate `gc wecom publish --chat … --text-file …` how-to, and
 `wecom/adapter/src/index.js` registers its matching WeCom Reply template.
