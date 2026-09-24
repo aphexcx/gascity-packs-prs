@@ -1,0 +1,25 @@
+Command: codex review --base origin/main -c sandbox_workspace_write.network_access=true
+Class: STANDARD; model: gpt-6-astra; reasoning effort: high; worker round 6, attempt 1
+Base: 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a (origin/main = fetched fork2/main = merge base)
+Reviewed: 3190c9af0f712192df46ae6b297f495fe302f8ae plus round6 guard/test changes
+Source: /tmp/gp-12bl-review-standard-1.txt
+Exit: 0
+Result: one P2 in earlier PR code; scoped company-selector fix has passing coverage.
+
+The company-selector checks are covered by passing Python tests, but the new target guard incorrectly excludes valid group-participant routes.
+
+Review comment:
+
+- [P2] Recognize group participants when validating explicit targets — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/scripts/slack_chat_reply_current.py:342-345
+  For a session added using `gc slack bind-room` without `--binding-owner`, `slack_chat_bind_room.py` creates group participants, not one-to-one bindings. Querying only `/extmsg/bindings` therefore rejects an explicit reply to that room whenever a conflicting company pointer exists, even though gc's ordinary outbound path authorizes group participants. An offline base/head comparison confirms a previously successful ordinary-route reply now fails with `no active binding`. Check group membership before refusing the target and add a group-only regression test.
+
+Disposition: verified the reported group-only refusal at both 3190c9af and the
+round-6 worktree. The explicit-target guard function is unchanged in round 6.
+This is outside gp-12bl's scope, which excludes the identity/binding lookup;
+Fable r3 was CLEAN and assigned no additional fix. Escalated to mayor; not
+silently treated as a clean review. See round6-review-group-route.txt.
+
+The review sandbox failed the unchanged setgid-permission test. Worker full
+Go suite passed all 1842 outcomes, and the focused worker rerun passed one
+top-level test plus eight subtests. See round6-tests-review-environment.txt.
+Papercut recurrence: pc_dbf30a3b63ae (prior pc_8039b75293bd).

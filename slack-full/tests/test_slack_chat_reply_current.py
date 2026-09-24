@@ -1867,6 +1867,78 @@ def test_company_explicit_bound_target_uses_ordinary_route(
     assert body["reply_to_message_id"] == "100.000001"
 
 
+@pytest.mark.parametrize("selector,value", [
+    ("--origin-ts", "1700000000.000001"),  # stale
+    ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+    ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+    ("--kind", "room"),
+])
+@pytest.mark.parametrize("channel,via", [
+    ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+])
+def test_company_selector_refuses_conflicting_bound_target(
+        monkeypatch, tmp_path, selector, value, channel, via):
+    """A bound channel or different thread cannot silently discard a company pin."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = rc.common
+    outbound = sys.modules["slack_company_outbound"]
+    if selector == "--turn-ref":
+        turn = outbound.read_current_turn("ollie-main")
+        turn["turn_ref"] = value
+        ref_dir = outbound.turns_dir() / "by-ref"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+              "conversation_id": channel, "kind": "room"}
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": target},
+    ]} if path.startswith("/extmsg/bindings?") else {})
+
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--conversation-id", channel, "--reply-to", "100.000001",
+                 selector, value, "--body", "do not discard the pin", "--via", via])
+    error = str(exc.value)
+    assert selector in error and f"{channel}/100.000001" in error
+    assert "drop" in error and "selector" in error and "target" in error
+    assert company_posts == [] and posts == []
+
+
+@pytest.mark.parametrize("selector,value", [
+    ("--origin-ts", "1700000000.000001"),
+    ("--origin-ts", "1700000000.000500"),
+    ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+    ("--kind", "room"),
+])
+def test_company_selector_matching_target_preserves_company_validation(
+        monkeypatch, tmp_path, selector, value):
+    """Matching targets keep fresh pins and the company's stale-origin refusal."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    outbound = sys.modules["slack_company_outbound"]
+    if selector == "--turn-ref":
+        turn = outbound.read_current_turn("ollie-main")
+        turn["turn_ref"] = value
+        ref_dir = outbound.turns_dir() / "by-ref"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+    argv = ["--conversation-id", "C0AAAAAAA", "--reply-to", "1700000000.000100",
+            selector, value, "--body", "keep the company pin"]
+    if selector == "--origin-ts" and value == "1700000000.000001":
+        with pytest.raises(SystemExit, match="does not match the current turn ts"):
+            rc.main(argv)
+        assert company_posts == []
+    else:
+        assert rc.main(argv) == 0
+        assert len(company_posts) == 1
+        assert company_posts[0]["token"] == "xoxb-ollie"
+        assert company_posts[0]["payload"]["channel"] == "C0AAAAAAA"
+        assert company_posts[0]["payload"]["thread_ts"] == "1700000000.000100"
+    assert posts == []
+
+
 @pytest.mark.parametrize("bound_identity", [
     "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
 ])

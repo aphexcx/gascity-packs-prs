@@ -419,6 +419,19 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             if turn is None:
                 raise SystemExit("company turn disappeared before explicit target validation; retry")
             if _explicit_target_uses_ordinary_route(args, turn, superseding):
+                # The ordinary route cannot honor company pins. Do not discard
+                # them just because the conflicting target has an active binding.
+                selectors = [flag for flag, value in (
+                    ("--turn-ref", turn_ref), ("--origin-ts", origin_ts),
+                    ("--kind", kind_override),
+                ) if value]
+                if selectors:
+                    anchor = ((args.reply_to or "").strip()
+                              or (args.turn_ts or "").strip() or "(current thread)")
+                    raise SystemExit(
+                        f"company selectors {', '.join(selectors)} conflict with "
+                        f"explicit target {args.conversation_id}/{anchor}; "
+                        "drop the company selectors or the explicit target")
                 return None
             # A later wake must not move a matching explicit target after the
             # comparison. Company verbs verify this timestamp before posting.

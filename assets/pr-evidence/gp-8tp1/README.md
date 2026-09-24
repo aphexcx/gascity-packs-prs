@@ -1,5 +1,55 @@
 # gp-8tp1: explicit reply threads and company routing
 
+## Round 6: gp-12bl
+
+Continues draft PR #44 on gp-8tp1 from 3190c9af0f712192df46ae6b297f495fe302f8ae.
+Implements option (a): before falling back to the ordinary route, refuse an
+explicit target that conflicts with `--turn-ref`, `--origin-ts`, or a company
+`--kind room|dm|mpim` override. The error names every supplied company selector
+and the resolved target, and asks the caller to drop the selectors or target.
+This happens before body loading or any POST. A fresh origin timestamp still
+cannot authorize a different bound destination; matching company targets keep
+the existing fresh/stale timestamp checks and acting-agent route. Without a
+company selector, the round-4/5 bound-target fallback remains unchanged.
+
+The Fable r3 comment on gp-12bl is CLEAN and assigns no additional fixes.
+The round-6 source delta is limited to the fallback in reply-current; no
+identity lookup, DM/MPIM routing, coalesced header, or Go source changes.
+
+Evidence:
+
+- `round6-tests-python-red.txt`: at 3190c9af with only the twelve new cases,
+  eight conflicting-target cases fail because no refusal occurs; 573 pass,
+  including four matching-target controls and all no-selector regressions.
+- `round6-tests-python-green.txt`: all 581 pass. Both full runs use
+  `env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest
+  slack-full/tests -q`; both report the same two existing fork warnings.
+- `round6-tests-go-full.txt`: unchanged full adapter suite, 1,186 top-level
+  and 1,842 total passing outcomes, zero failures/skips; Go 1.26.5 darwin/arm64.
+- `round6-change.diff`: zero-context guard/test diff from 3190c9af.
+
+The tests intercept outbound requests; no live Slack calls were made, and the
+Go runner verified that no SLACK_*TOKEN environment value was set. The required
+`/Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version` reports
+v24.21.0; these suites use Python/Go, with no unsupported-engine warning.
+The shared origin remote names aphexcx/gascity-packs; explicit fetch/push URLs
+name aphexcx/gascity-packs-prs. Local origin/main, fetched fork2/main, and the
+PR merge base all resolve to 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a.
+
+Worker Codex STANDARD round 6 (gpt-6-astra, first attempt) returned one P2:
+the existing guard does not recognize group participants without one-to-one
+bindings. An offline comparison confirms the same refusal at 3190c9af and
+with the round-6 fix. This bead excludes binding/identity lookup changes, so
+the finding is recorded and escalated to mayor for separate work; this is
+not a clean PR-level review. See `round6-review-standard-1.txt` and
+`round6-review-group-route.txt`.
+
+The review sandbox again stripped a directory's setgid bit in the unchanged
+permission test. The worker full suite and focused rerun (one top-level plus
+eight subtests) pass; see `round6-tests-review-environment.txt`.
+Recurrence: pc_dbf30a3b63ae. The mayor gate r4 and Fable read r4 follow READY;
+PR #44 stays draft pending review resolution and the founder merge decision.
+
 ## Round 5: gp-bio1
 
 Continues draft PR #44 on gp-8tp1 from b96526817b34147b9f171482700061c0e310ef2f.
