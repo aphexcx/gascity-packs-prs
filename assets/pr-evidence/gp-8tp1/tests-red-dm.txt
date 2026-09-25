@@ -1,0 +1,80 @@
+$ env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q -k 'company_dm_top_level_pointer'
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_company_dm_top_level_pointer_does_not_swallow_explicit_thread[True] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1080f2fd0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-379/test_company_dm_top_level_poin0')
+bound = True
+
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypatch, tmp_path, bound):
+        """The DM company verb posts top-level for a root turn; --reply-to must thread."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        outbound = sys.modules["slack_company_outbound"]
+        common = sys.modules["slack_intake_common"]
+        _write_dm_bindings(outbound)
+        _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "D0HUMANOLLIE", "kind": "dm"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        argv = ["--session", "ollie-main", "--conversation-id", "D0HUMANOLLIE",
+                "--reply-to", "1700000000.000900", "--body", "thread this DM"]
+        if bound:
+            assert rc.main(argv) == 0
+>           assert len(posts) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+
+slack-full/tests/test_slack_chat_reply_current.py:1978: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "D0HUMANOLLIE",
+  "message_id": "1700000000.000800"
+}
+__ test_company_dm_top_level_pointer_does_not_swallow_explicit_thread[False] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1073822c0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-379/test_company_dm_top_level_poin1')
+bound = False
+
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypatch, tmp_path, bound):
+        """The DM company verb posts top-level for a root turn; --reply-to must thread."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        outbound = sys.modules["slack_company_outbound"]
+        common = sys.modules["slack_intake_common"]
+        _write_dm_bindings(outbound)
+        _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "D0HUMANOLLIE", "kind": "dm"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        argv = ["--session", "ollie-main", "--conversation-id", "D0HUMANOLLIE",
+                "--reply-to", "1700000000.000900", "--body", "thread this DM"]
+        if bound:
+            assert rc.main(argv) == 0
+            assert len(posts) == 1
+            assert posts[0][1]["reply_to_message_id"] == "1700000000.000900"
+        else:
+>           with pytest.raises(SystemExit, match="D0HUMANOLLIE"):
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1981: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "D0HUMANOLLIE",
+  "message_id": "1700000000.000800"
+}
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_dm_top_level_pointer_does_not_swallow_explicit_thread[True]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_dm_top_level_pointer_does_not_swallow_explicit_thread[False]
+2 failed, 555 deselected in 0.26s

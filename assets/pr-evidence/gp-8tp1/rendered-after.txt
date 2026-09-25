@@ -1,0 +1,24 @@
+AFTER — gp-8tp1 working tree
+Source-derived rendering; gc placeholder fallback applied to synthetic inputs.
+
+top-level inbound
+conversation_id=C1 message_ts=100.000001 inbound_thread_ts=(empty) effective_thread_ts=100.000001
+
+[channel C1 — full reply how-to, sent once per channel per adapter session]
+To reply: write your reply to a file, then run:
+  gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>
+--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread. --no-thread forces a top-level post.
+To react: gc slack react --emoji <name>
+
+Reply: gc slack reply-current --conversation-id C1 --reply-to 100.000001 --body-file <file>
+
+threaded inbound
+conversation_id=C1 message_ts=100.000002 inbound_thread_ts=100.000000 effective_thread_ts=100.000000
+
+[channel C1 — full reply how-to, sent once per channel per adapter session]
+To reply: write your reply to a file, then run:
+  gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>
+--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread. --no-thread forces a top-level post.
+To react: gc slack react --emoji <name>
+
+Reply: gc slack reply-current --conversation-id C1 --reply-to 100.000000 --body-file <file>

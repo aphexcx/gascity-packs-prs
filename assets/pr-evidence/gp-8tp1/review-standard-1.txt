@@ -1,0 +1,7 @@
+$ codex review --base origin/main -c 'sandbox_workspace_write.network_access=true'
+Model: gpt-6-astra
+Worker STANDARD round 1; exit 0.
+
+No actionable defects remain in the latest reviewed diff. All 90 focused Python tests pass; the Go suite fails only on the unrelated, known setgid-permissions test.
+
+Full log: /Users/tailor512/city/assets/ops/codex-gates/gp-8tp1-standard-1.txt

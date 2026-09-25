@@ -137,6 +137,7 @@ func TestCoalescer_BurstDeliversAsOneInbound(t *testing.T) {
 	if !strings.Contains(got.Text, "full reply how-to") {
 		t.Fatalf("first delivery missing help block:\n%s", got.Text)
 	}
+	assertReplyHelpThreadsMessages(t, got.Text)
 	if len(stub.snapshotInbounds()) != 1 {
 		t.Fatalf("burst must deliver exactly once")
 	}
@@ -194,6 +195,36 @@ func TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn(t *testing.T) {
 	// Help block rode with the first (flush-ahead) delivery only.
 	if !strings.Contains(got[0].Text, "full reply how-to") || strings.Contains(got[1].Text, "full reply how-to") {
 		t.Fatalf("help block must appear exactly once, on the first delivery")
+	}
+	assertReplyHelpThreadsMessages(t, got[0].Text)
+}
+
+func assertReplyHelpThreadsMessages(t *testing.T, text string) {
+	t.Helper()
+	start := strings.Index(text, "full reply how-to")
+	if start < 0 {
+		t.Fatalf("missing reply help block:\n%s", text)
+	}
+	// The batch header must agree with the how-to's threaded reply anchor.
+	for _, line := range strings.Split(text[:start], "\n") {
+		if strings.Contains(line, ", coalesced.") {
+			if !strings.Contains(line, "--reply-to ") || strings.Contains(line, "--turn-ts") || strings.Contains(line, "--no-thread") {
+				t.Errorf("coalesced header must prescribe --reply-to: %s", line)
+			}
+		}
+	}
+	help := text[start:]
+	for _, want := range []string{
+		"gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>",
+		"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread.",
+		"--no-thread forces a top-level post.",
+	} {
+		if !strings.Contains(help, want) {
+			t.Errorf("reply help missing %q:\n%s", want, help)
+		}
+	}
+	if strings.Contains(help, "--turn-ts") {
+		t.Errorf("reply help must prescribe --reply-to, not --turn-ts:\n%s", help)
 	}
 }
 
@@ -398,10 +429,14 @@ func TestRegisterAdapterSendsReplyInstructionsTemplate(t *testing.T) {
 		t.Fatalf("registerAdapter: %v", err)
 	}
 	got := <-bodyCh
-	if got.ReplyInstructions != slackReplyInstructionsTemplate {
-		t.Fatalf("reply_instructions = %q, want %q", got.ReplyInstructions, slackReplyInstructionsTemplate)
+	// gc's renderExtmsgReplyInstructions supplies thread_ts as the thread
+	// root, falling back to message_ts for a top-level inbound. One static
+	// template therefore replies in the right thread for both inbound kinds.
+	const want = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
+	if got.ReplyInstructions != want {
+		t.Errorf("reply_instructions = %q, want %q", got.ReplyInstructions, want)
 	}
-	if !strings.Contains(got.ReplyInstructions, "{conversation_id}") {
-		t.Fatal("template must carry the {conversation_id} placeholder")
+	if strings.Contains(got.ReplyInstructions, "--turn-ts") {
+		t.Error("registered reply template must not carry --turn-ts")
 	}
 }

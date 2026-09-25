@@ -1,0 +1,93 @@
+diff --git a/slack-full/README.md b/slack-full/README.md
+index 4b47060..8bf86dd 100644
+--- a/slack-full/README.md
++++ b/slack-full/README.md
+@@ -230,0 +231,17 @@ for adapter-only diagnostics that bypass gc.
++The adapter registers this static reply instruction for every inbound:
++
++```text
++Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>
++```
++
++This relies on gc's `renderExtmsgReplyInstructions` placeholder contract:
++`{thread_ts}` is the inbound's thread root, falling back to `{message_ts}`
++(the message's own timestamp) for a top-level post. The same command thus
++replies at an existing thread's root or starts a thread under a top-level
++message. The once-per-channel how-to explains `--reply-to <ts>` and retains
++`--no-thread` as the explicit top-level override.
++
++WeCom does not render this Slack Reply line: `wecom/adapter/src/inbound.js`
++provides a separate `gc wecom publish --chat … --text-file …` how-to, and
++`wecom/adapter/src/index.js` registers its matching WeCom Reply template.
++
+diff --git a/slack-full/adapter/inbound_coalescer.go b/slack-full/adapter/inbound_coalescer.go
+index d7ab421..3eb0829 100644
+--- a/slack-full/adapter/inbound_coalescer.go
++++ b/slack-full/adapter/inbound_coalescer.go
+@@ -3432,2 +3432,2 @@ func replyHelpBlock(cfg config, channel string) string {
+-			"  gc slack reply-current --conversation-id %s --turn-ts <ts of the message you are answering> --body-file <file>\n"+
+-			"--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.\n"+
++			"  gc slack reply-current --conversation-id %s --reply-to <ts> --body-file <file>\n"+
++			"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread. --no-thread forces a top-level post.\n"+
+@@ -3440 +3440 @@ func replyHelpBlock(cfg config, channel string) string {
+-// gc substitutes {conversation_id} and {message_ts} per reminder; the
++// gc substitutes {conversation_id} and {thread_ts} per reminder; the
+@@ -3445,7 +3445,5 @@ func replyHelpBlock(cfg config, channel string) string {
+-// --turn-ts {message_ts} pins the reply to the exact inbound the
+-// reminder delivered (gp-6j3): without it, reply-current anchors on the
+-// LATEST inbound at send time, and coalesced delivery + interleaved
+-// channel/thread traffic routinely make that a different message —
+-// replies landed top-level instead of in-thread, and in the wrong
+-// thread outright, three times in one hour across two cities.
+-const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --turn-ts {message_ts} --body-file <file>"
++// gc supplies {thread_ts} as the inbound's thread root, falling back
++// to {message_ts} for a top-level message. --reply-to therefore replies
++// in the existing thread or starts one under the top-level inbound,
++// without depending on the latest inbound at send time (gp-gu49).
++const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
+diff --git a/slack-full/adapter/token_efficiency_integration_test.go b/slack-full/adapter/token_efficiency_integration_test.go
+index e0138af..69b24da 100644
+--- a/slack-full/adapter/token_efficiency_integration_test.go
++++ b/slack-full/adapter/token_efficiency_integration_test.go
+@@ -139,0 +140 @@ func TestCoalescer_BurstDeliversAsOneInbound(t *testing.T) {
++	assertReplyHelpThreadsMessages(t, got.Text)
+@@ -197,0 +199,24 @@ func TestCoalescer_BotMentionFlushesBufferAheadThenDeliversOwn(t *testing.T) {
++	assertReplyHelpThreadsMessages(t, got[0].Text)
++}
++
++func assertReplyHelpThreadsMessages(t *testing.T, text string) {
++	t.Helper()
++	start := strings.Index(text, "full reply how-to")
++	if start < 0 {
++		t.Fatalf("missing reply help block:\n%s", text)
++	}
++	// Limit the assertion to the how-to; coalesced message headers have
++	// separate turn-selection instructions.
++	help := text[start:]
++	for _, want := range []string{
++		"gc slack reply-current --conversation-id C1 --reply-to <ts> --body-file <file>",
++		"--reply-to <ts> replies in that message's thread; a top-level message's own ts starts its thread.",
++		"--no-thread forces a top-level post.",
++	} {
++		if !strings.Contains(help, want) {
++			t.Errorf("reply help missing %q:\n%s", want, help)
++		}
++	}
++	if strings.Contains(help, "--turn-ts") {
++		t.Errorf("reply help must prescribe --reply-to, not --turn-ts:\n%s", help)
++	}
+@@ -401,5 +426,9 @@ func TestRegisterAdapterSendsReplyInstructionsTemplate(t *testing.T) {
+-	if got.ReplyInstructions != slackReplyInstructionsTemplate {
+-		t.Fatalf("reply_instructions = %q, want %q", got.ReplyInstructions, slackReplyInstructionsTemplate)
+-	}
+-	if !strings.Contains(got.ReplyInstructions, "{conversation_id}") {
+-		t.Fatal("template must carry the {conversation_id} placeholder")
++	// gc's renderExtmsgReplyInstructions supplies thread_ts as the thread
++	// root, falling back to message_ts for a top-level inbound. One static
++	// template therefore replies in the right thread for both inbound kinds.
++	const want = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
++	if got.ReplyInstructions != want {
++		t.Errorf("reply_instructions = %q, want %q", got.ReplyInstructions, want)
++	}
++	if strings.Contains(got.ReplyInstructions, "--turn-ts") {
++		t.Error("registered reply template must not carry --turn-ts")

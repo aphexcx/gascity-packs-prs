@@ -1,0 +1,413 @@
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q
+Base: 3190c9af0f712192df46ae6b297f495fe302f8ae; only round-6 tests added
+Exit: 1
+
+........................................................................ [ 12%]
+........................................................................ [ 24%]
+.......................FFFFFFFF......................................... [ 37%]
+........................................................................ [ 49%]
+........................................................................ [ 61%]
+........................................................................ [ 74%]
+........................................................................ [ 86%]
+........................................................................ [ 99%]
+.....                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---origin-ts-1700000000.000001] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b943310>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_0')
+selector = '--origin-ts', value = '1700000000.000001', channel = 'C_INBOUND'
+via = 'gc'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C_INBOUND",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---origin-ts-1700000000.000500] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b18fe70>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_1')
+selector = '--origin-ts', value = '1700000000.000500', channel = 'C_INBOUND'
+via = 'gc'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C_INBOUND",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---turn-ref-gct-aaaaaaaaaaaaaaaaaaaa] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b296a50>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_2')
+selector = '--turn-ref', value = 'gct-aaaaaaaaaaaaaaaaaaaa'
+channel = 'C_INBOUND', via = 'gc'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C_INBOUND",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---kind-room] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ba2b230>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_3')
+selector = '--kind', value = 'room', channel = 'C_INBOUND', via = 'gc'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C_INBOUND",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---origin-ts-1700000000.000001] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b96a6d0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_4')
+selector = '--origin-ts', value = '1700000000.000001', channel = 'C0AAAAAAA'
+via = 'adapter'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---origin-ts-1700000000.000500] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b7d6820>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_5')
+selector = '--origin-ts', value = '1700000000.000500', channel = 'C0AAAAAAA'
+via = 'adapter'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---turn-ref-gct-aaaaaaaaaaaaaaaaaaaa] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b23db70>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_6')
+selector = '--turn-ref', value = 'gct-aaaaaaaaaaaaaaaaaaaa'
+channel = 'C0AAAAAAA', via = 'adapter'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+_ test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---kind-room] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b5f00c0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-402/test_company_selector_refuses_7')
+selector = '--kind', value = 'room', channel = 'C0AAAAAAA', via = 'adapter'
+
+    @pytest.mark.parametrize("selector,value", [
+        ("--origin-ts", "1700000000.000001"),  # stale
+        ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+        ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+        ("--kind", "room"),
+    ])
+    @pytest.mark.parametrize("channel,via", [
+        ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+    ])
+    def test_company_selector_refuses_conflicting_bound_target(
+            monkeypatch, tmp_path, selector, value, channel, via):
+        """A bound channel or different thread cannot silently discard a company pin."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        outbound = sys.modules["slack_company_outbound"]
+        if selector == "--turn-ref":
+            turn = outbound.read_current_turn("ollie-main")
+            turn["turn_ref"] = value
+            ref_dir = outbound.turns_dir() / "by-ref"
+            ref_dir.mkdir(parents=True, exist_ok=True)
+            (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": channel, "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1899: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "9.000",
+  "thread_ts": "100.000001"
+}
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=58473) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---origin-ts-1700000000.000001]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---origin-ts-1700000000.000500]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---turn-ref-gct-aaaaaaaaaaaaaaaaaaaa]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C_INBOUND-gc---kind-room]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---origin-ts-1700000000.000001]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---origin-ts-1700000000.000500]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---turn-ref-gct-aaaaaaaaaaaaaaaaaaaa]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_selector_refuses_conflicting_bound_target[C0AAAAAAA-adapter---kind-room]
+8 failed, 573 passed, 2 warnings in 40.55s

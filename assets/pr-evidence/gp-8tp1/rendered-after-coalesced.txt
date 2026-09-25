@@ -1,0 +1,26 @@
+Rendered by TestFormatCoalescedBlockReplyAnchor against the round-4 fix.
+C1 = channel; D1 = DM formatter input (live DMs still bypass buffering).
+
+[2 messages in C1, coalesced. Reply with --reply-to 100.000002 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+[100.000001] Afik: first thought
+
+[100.000002] Afik: second thought
+
+[2 messages in C1, coalesced. Reply with --reply-to 100.000000 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+[100.000001] Afik (in thread 100.000000): first thought
+
+[100.000002] Afik (in thread 100.000000): second thought
+
+[2 messages in D1, coalesced. Reply with --reply-to 100.000002 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+[100.000001] Afik: first thought
+
+[100.000002] Afik: second thought
+
+[2 messages in D1, coalesced. Reply with --reply-to 100.000000 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+[100.000001] Afik (in thread 100.000000): first thought
+
+[100.000002] Afik (in thread 100.000000): second thought

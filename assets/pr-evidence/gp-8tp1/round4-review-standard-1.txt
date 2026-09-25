@@ -1,0 +1,12 @@
+Command: codex review --base origin/main -c sandbox_workspace_write.network_access=true
+Class: STANDARD; model: gpt-6-astra; worker round 4, attempt 1
+Merge base: 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a
+Source: /tmp/gp-1rqe-review-standard-1.txt
+Exit: 0
+
+No actionable regressions were found. All 564 Python tests and the affected Go tests passed; the full Go suite failed only on the unchanged setgid-permission test under the review sandbox.
+
+Sandbox recurrence: TestTightenStorePermissions/setgid_bit_preserved_on_dir
+Papercut: pc_57ad64ab9acc (prior pc_ac8090bfb38a)
+Worker full suite passed 1,842 test/subtest outcomes; focused rerun is
+recorded in round4-tests-review-environment.txt.

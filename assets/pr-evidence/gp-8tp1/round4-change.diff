@@ -1,0 +1,199 @@
+diff --git a/slack-full/README.md b/slack-full/README.md
+index 0f66b0d..5a1b86b 100644
+--- a/slack-full/README.md
++++ b/slack-full/README.md
+@@ -242,0 +243,2 @@ message. The once-per-channel how-to explains `--reply-to <ts>` and retains
++Coalesced headers also use `--reply-to` with the newest member's thread root
++or own timestamp; older members follow the same root-or-own-timestamp rule.
+diff --git a/slack-full/adapter/inbound_coalescer.go b/slack-full/adapter/inbound_coalescer.go
+index 3eb0829..5705987 100644
+--- a/slack-full/adapter/inbound_coalescer.go
++++ b/slack-full/adapter/inbound_coalescer.go
+@@ -3127,6 +3127,8 @@ func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbo
+-	// --turn-ts resolves via the transcript, which records ONE entry for
+-	// the whole batch (under the anchor ts — newest HUMAN message, since
+-	// bot-tagged items are non-anchoring per gp-by3) — so the header
+-	// steers replies to older members through --reply-to/--no-thread.
+-	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --turn-ts %s to answer the newest; to answer an older one use --reply-to <its thread ts> or --no-thread instead (--turn-ts resolves only the newest)]\n",
+-		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(anchor.ProviderMessageID))
++	// Reply directly to the root, or start a thread under a top-level
++	// message. Older members use the same rule without a transcript lookup.
++	replyTo := anchor.ReplyToMessageID
++	if replyTo == "" {
++		replyTo = anchor.ProviderMessageID
++	}
++	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --reply-to %s to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]\n",
++		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(replyTo))
+diff --git a/slack-full/adapter/inbound_coalescer_test.go b/slack-full/adapter/inbound_coalescer_test.go
+index 72b0bef..b25330a 100644
+--- a/slack-full/adapter/inbound_coalescer_test.go
++++ b/slack-full/adapter/inbound_coalescer_test.go
+@@ -1076,2 +1076,2 @@ func TestFormatCoalescedBlockShape(t *testing.T) {
+-		"[2 messages in C1, coalesced. Reply with --turn-ts 2.000000 to answer the newest",
+-		"--reply-to <its thread ts> or --no-thread",
++		"[2 messages in C1, coalesced. Reply with --reply-to 1.000000 to answer the newest",
++		"--reply-to <its thread ts, else its own ts>",
+@@ -1086,0 +1087,34 @@ func TestFormatCoalescedBlockShape(t *testing.T) {
++func TestFormatCoalescedBlockReplyAnchor(t *testing.T) {
++	for _, channel := range []string{"C1", "D1"} {
++		for _, tc := range []struct {
++			name, root, want string
++		}{
++			{"top-level", "", "100.000002"},
++			{"thread", "100.000000", "100.000000"},
++		} {
++			t.Run(channel+"/"+tc.name, func(t *testing.T) {
++				batch := []pendingChannelInbound{
++					testPending(channel, "100.000001", "first thought"),
++					testPending(channel, "100.000002", "second thought"),
++				}
++				for i := range batch {
++					batch[i].inbound.ReplyToMessageID = tc.root
++				}
++				block := formatCoalescedBlock(config{}, channel, batch)
++				t.Logf("rendered burst:\n%s", block)
++				header, _, _ := strings.Cut(block, "\n")
++				if !strings.Contains(header, "[2 messages in "+channel+", coalesced.") ||
++					!strings.Contains(header, "--reply-to "+tc.want+" to answer the newest") ||
++					!strings.Contains(header, "--reply-to <its thread ts, else its own ts>") {
++					t.Errorf("header must anchor replies in the message's thread: %s", header)
++				}
++				for _, flag := range []string{"--turn-ts", "--no-thread"} {
++					if strings.Contains(header, flag) {
++						t.Errorf("header must not recommend %s: %s", flag, header)
++					}
++				}
++			})
++		}
++	}
++}
++
+diff --git a/slack-full/adapter/reaction_events_test.go b/slack-full/adapter/reaction_events_test.go
+index 16a554c..fabc658 100644
+--- a/slack-full/adapter/reaction_events_test.go
++++ b/slack-full/adapter/reaction_events_test.go
+@@ -519 +519 @@ func TestCoalescedBlockAnchorSkipsBotItems(t *testing.T) {
+-	if !strings.Contains(block, "--turn-ts 100.1 ") {
++	if !strings.Contains(block, "--reply-to 100.1 ") {
+@@ -522 +522 @@ func TestCoalescedBlockAnchorSkipsBotItems(t *testing.T) {
+-	if strings.Contains(block, "--turn-ts 100.299") {
++	if strings.Contains(block, "--reply-to 100.299") {
+diff --git a/slack-full/adapter/token_efficiency_integration_test.go b/slack-full/adapter/token_efficiency_integration_test.go
+index 69b24da..ec46986 100644
+--- a/slack-full/adapter/token_efficiency_integration_test.go
++++ b/slack-full/adapter/token_efficiency_integration_test.go
+@@ -208,2 +208,8 @@ func assertReplyHelpThreadsMessages(t *testing.T, text string) {
+-	// Limit the assertion to the how-to; coalesced message headers have
+-	// separate turn-selection instructions.
++	// The batch header must agree with the how-to's threaded reply anchor.
++	for _, line := range strings.Split(text[:start], "\n") {
++		if strings.Contains(line, ", coalesced.") {
++			if !strings.Contains(line, "--reply-to ") || strings.Contains(line, "--turn-ts") || strings.Contains(line, "--no-thread") {
++				t.Errorf("coalesced header must prescribe --reply-to: %s", line)
++			}
++		}
++	}
+diff --git a/slack-full/scripts/slack_chat_reply_current.py b/slack-full/scripts/slack_chat_reply_current.py
+index 5cd6c2d..246b967 100755
+--- a/slack-full/scripts/slack_chat_reply_current.py
++++ b/slack-full/scripts/slack_chat_reply_current.py
+@@ -18,9 +18,6 @@ including when --conversation-id names the same conversation explicitly
+---turn-ts <ts> (gp-6j3) pins the anchor to the exact inbound the session
+-is answering — the ts carried in the delivery reminder — instead of the
+-latest-inbound scan. Under coalesced delivery + interleaved traffic the
+-latest inbound at SEND time is often not the message being answered
+-(fleet repro: replies landing top-level instead of in-thread, and in the
+-wrong thread outright). With --turn-ts the reply threads at that
+-inbound's thread root when it was threaded and posts channel-level when
+-it was not; if the ts cannot be resolved in the conversation's
+-transcript, the command fails fast with guidance rather than guessing.
++--reply-to <ts> is the anchor of record in delivery reminders: use the
++inbound's thread root, or its own timestamp to start a thread under a
++top-level message. This also works for older members of a coalesced batch.
++--turn-ts <ts> (gp-6j3) is the older form kept for compatibility. It resolves
++the inbound in the transcript and replies at its thread root when threaded,
++or at channel level otherwise; an unresolved timestamp fails fast.
+@@ -321 +318,4 @@ def _explicit_target_uses_ordinary_route(
+-        if (not reply_to or reply_to == company_root) and not args.no_thread:
++        if args.no_thread:
++            if not company_root and not reply_to and not args.thread_current:
++                return False  # The company DM/MPIM route already posts top-level.
++        elif not reply_to or reply_to == company_root:
+@@ -504,9 +504,6 @@ def main(argv: list[str]) -> int:
+-        help=("Slack ts of the inbound this reply answers (carried in the "
+-              "delivery reminder). Anchors the reply to that exact message: "
+-              "its thread root when it was threaded, channel level when it "
+-              "was not — instead of inheriting whatever inbound arrived "
+-              "last, which interleaved traffic makes the wrong one "
+-              "(gp-6j3). Fails fast when the ts is not in the "
+-              "conversation's transcript (e.g. an older member of a "
+-              "coalesced batch): pass --reply-to <thread ts> or "
+-              "--no-thread instead."))
++        help=("Older transcript-based anchor, kept for compatibility: replies "
++              "at the named inbound's thread root when threaded, or at channel "
++              "level otherwise. Fails if the ts is absent from the transcript "
++              "(e.g. an older coalesced member). Prefer --reply-to <ts>, the "
++              "delivery reminder's anchor of record: the inbound's thread root "
++              "or its own ts for a top-level message."))
+@@ -602 +599 @@ def main(argv: list[str]) -> int:
+-    reply_to = args.reply_to
++    reply_to = (args.reply_to or "").strip()
+diff --git a/slack-full/tests/test_slack_chat_reply_current.py b/slack-full/tests/test_slack_chat_reply_current.py
+index bb84200..0dcd448 100755
+--- a/slack-full/tests/test_slack_chat_reply_current.py
++++ b/slack-full/tests/test_slack_chat_reply_current.py
+@@ -1985,0 +1986,54 @@ def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypat
++
++
++@pytest.mark.parametrize("kind,channel", [("dm", "D0HUMANOLLIE"), ("mpim", "G0GROUP")])
++@pytest.mark.parametrize("target", ["matching", "other-conversation", "threaded-pointer"])
++def test_company_dm_family_no_thread_without_ordinary_binding(
++        monkeypatch, tmp_path, kind, channel, target):
++    """Keep a matching top-level company route; refuse destinations it cannot serve."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    outbound = sys.modules["slack_company_outbound"]
++    _write_dm_bindings(outbound)
++    _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
++    pointer = outbound.turns_dir() / "dm" / "ollie-main.json"
++    turn = json.loads(pointer.read_text())
++    turn.update(kind=kind, channel_id=channel)
++    if target == "threaded-pointer":
++        turn["thread_root_ts"] = "1700000000.000100"
++    pointer.unlink()
++    pointer = outbound.turns_dir() / kind / "ollie-main.json"
++    pointer.parent.mkdir(exist_ok=True)
++    pointer.write_text(json.dumps(turn))
++    requested = "C_UNBOUND" if target == "other-conversation" else channel
++    argv = ["--session", "ollie-main", "--conversation-id", requested,
++            "--no-thread", "--body", "top-level company answer"]
++    if target == "matching":
++        assert rc.main(argv) == 0
++        assert len(company_posts) == 1 and posts == []
++        payload = company_posts[0]["payload"]
++        assert payload["channel"] == channel
++        assert not payload.get("thread_ts")
++    else:
++        with pytest.raises(SystemExit, match="no active binding") as exc:
++            rc.main(argv)
++        assert requested in str(exc.value) and channel in str(exc.value)
++        assert company_posts == [] and posts == []
++
++
++def test_reply_to_trims_whitespace_before_publishing(monkeypatch):
++    """Validation and the outbound payload must use the same normalized anchor."""
++    rc, common = _import_modules()
++    monkeypatch.delenv("GC_SESSION_NAME", raising=False)
++    posts = []
++
++    def fake_request(method, url, body=None, **kwargs):
++        if method == "POST":
++            posts.append(body)
++        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
++
++    monkeypatch.setattr(common, "_request", fake_request)
++    assert rc.main(["--session", "gc-test-session", "--conversation-id", "C1",
++                    "--reply-to", " 100.000001 ", "--body", "thread this"]) == 0
++    assert len(posts) == 1
++    assert posts[0]["reply_to_message_id"] == "100.000001"

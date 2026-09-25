@@ -1,0 +1,24 @@
+BEFORE — 7621e7b6a7f1db0a69c181d33b8c4e03f34fbc7a
+Source-derived rendering; gc placeholder fallback applied to synthetic inputs.
+
+top-level inbound
+conversation_id=C1 message_ts=100.000001 inbound_thread_ts=(empty) effective_thread_ts=100.000001
+
+[channel C1 — full reply how-to, sent once per channel per adapter session]
+To reply: write your reply to a file, then run:
+  gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+To react: gc slack react --emoji <name>
+
+Reply: gc slack reply-current --conversation-id C1 --turn-ts 100.000001 --body-file <file>
+
+threaded inbound
+conversation_id=C1 message_ts=100.000002 inbound_thread_ts=100.000000 effective_thread_ts=100.000000
+
+[channel C1 — full reply how-to, sent once per channel per adapter session]
+To reply: write your reply to a file, then run:
+  gc slack reply-current --conversation-id C1 --turn-ts <ts of the message you are answering> --body-file <file>
+--turn-ts (every delivery names its ts) anchors the reply to that exact inbound — its thread when threaded, top-level otherwise. Without it the reply threads under the LATEST inbound, which interleaved traffic can make the wrong one. --reply-to <thread ts> pins a thread explicitly; --no-thread forces a top-level post.
+To react: gc slack react --emoji <name>
+
+Reply: gc slack reply-current --conversation-id C1 --turn-ts 100.000002 --body-file <file>

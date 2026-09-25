@@ -1073,13 +1073,47 @@ func TestFormatCoalescedBlockShape(t *testing.T) {
 	got := formatCoalescedBlock(cfg, "C1", batch)
 
 	for _, want := range []string{
-		"[2 messages in C1, coalesced. Reply with --turn-ts 2.000000 to answer the newest",
-		"--reply-to <its thread ts> or --no-thread",
+		"[2 messages in C1, coalesced. Reply with --reply-to 1.000000 to answer the newest",
+		"--reply-to <its thread ts, else its own ts>",
 		"[1.000000] Afik: first line",
 		"[2.000000] Afik (in thread 1.000000): second",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("block missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatCoalescedBlockReplyAnchor(t *testing.T) {
+	for _, channel := range []string{"C1", "D1"} {
+		for _, tc := range []struct {
+			name, root, want string
+		}{
+			{"top-level", "", "100.000002"},
+			{"thread", "100.000000", "100.000000"},
+		} {
+			t.Run(channel+"/"+tc.name, func(t *testing.T) {
+				batch := []pendingChannelInbound{
+					testPending(channel, "100.000001", "first thought"),
+					testPending(channel, "100.000002", "second thought"),
+				}
+				for i := range batch {
+					batch[i].inbound.ReplyToMessageID = tc.root
+				}
+				block := formatCoalescedBlock(config{}, channel, batch)
+				t.Logf("rendered burst:\n%s", block)
+				header, _, _ := strings.Cut(block, "\n")
+				if !strings.Contains(header, "[2 messages in "+channel+", coalesced.") ||
+					!strings.Contains(header, "--reply-to "+tc.want+" to answer the newest") ||
+					!strings.Contains(header, "--reply-to <its thread ts, else its own ts>") {
+					t.Errorf("header must anchor replies in the message's thread: %s", header)
+				}
+				for _, flag := range []string{"--turn-ts", "--no-thread"} {
+					if strings.Contains(header, flag) {
+						t.Errorf("header must not recommend %s: %s", flag, header)
+					}
+				}
+			})
 		}
 	}
 }

@@ -1,0 +1,150 @@
+diff --git a/slack-full/scripts/slack_chat_reply_current.py b/slack-full/scripts/slack_chat_reply_current.py
+index 2262f1a..c044cbd 100755
+--- a/slack-full/scripts/slack_chat_reply_current.py
++++ b/slack-full/scripts/slack_chat_reply_current.py
+@@ -302,0 +303,32 @@ def _mention_only_delivery_superseding_company(
++def _session_participates_in_group(identities: set[str], conv: dict[str, str]) -> bool:
++    """Check gc's live participant records, including name-bound room members."""
++    if conv.get("kind") != "room":
++        return False
++    group = common.gc_get("/extmsg/groups?" + urllib.parse.urlencode(conv))
++    group_id = group.get("ID")
++    if not group_id or group.get("RootConversation") != conv:
++        return False
++    # bind-room POSTs /extmsg/participants, which gc stores as labeled beads.
++    # There is no participant-list endpoint. Read the same live records that
++    # gc's group outbound resolver uses, rather than the local config mirror
++    # (which can retain participants removed directly through gc).
++    query = {"label": f"extmsg:group:participant:v1:{group_id}"}
++    seen_cursors: set[str] = set()
++    while True:
++        page = common.gc_get("/beads?" + urllib.parse.urlencode(query))
++        for entry in page.get("items", []) or []:
++            if entry.get("status") == "closed" or "gc:extmsg-participant" not in (entry.get("labels") or []):
++                continue
++            metadata = entry.get("metadata") or {}
++            if (metadata.get("group_id") == group_id
++                    and identities & {metadata.get("session_id"), metadata.get("session_name")}):
++                return True
++        cursor = page.get("next_cursor")
++        if not cursor:
++            return False
++        if cursor in seen_cursors:
++            raise common.GCAPIError("group participant lookup repeated a page cursor")
++        seen_cursors.add(cursor)
++        query["cursor"] = cursor
++
++
+@@ -343 +375,2 @@ def _explicit_target_uses_ordinary_route(
+-            for identity in sorted(common.session_identity_candidates(session_id)):
++            identities = common.session_identity_candidates(session_id)
++            for identity in sorted(identities):
+@@ -353,0 +387,2 @@ def _explicit_target_uses_ordinary_route(
++            if not bound:
++                bound = _session_participates_in_group(identities, conv)
+diff --git a/slack-full/tests/test_slack_chat_reply_current.py b/slack-full/tests/test_slack_chat_reply_current.py
+index 348a493..0a26608 100755
+--- a/slack-full/tests/test_slack_chat_reply_current.py
++++ b/slack-full/tests/test_slack_chat_reply_current.py
+@@ -13,0 +14 @@ import sys
++import urllib.parse
+@@ -1982,0 +1984,99 @@ def test_company_explicit_target_checks_all_session_identities(
++@pytest.mark.parametrize("membership", [
++    "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
++    "owner", "nonmember", "closed", "other-group", "other-workspace",
++    "missing-group", "unavailable", "second-page",
++])
++def test_company_explicit_group_target_uses_live_participation(
++        monkeypatch, tmp_path, membership):
++    """Group-only members may reply; absent/stale membership must never post."""
++    rc, company_posts, posts = _company_pointer_and_mention_only(
++        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
++        delivery_received_at="2026-09-10T08:00:00Z")
++    common = rc.common
++    import slack_chat_bind_room as bind_room
++    monkeypatch.setattr(bind_room, "common", common)
++    group = {}
++    participants = []
++    bindings = []
++
++    def bind_post(path, body):
++        if path == "/extmsg/groups":
++            group.update(ID="group-room", RootConversation=body["root_conversation"])
++            return group
++        if path == "/extmsg/participants":
++            participants.append({
++                "id": "participant-" + body["handle"], "status": "open",
++                "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
++                "metadata": {"group_id": body["group_id"], "handle": body["handle"],
++                             "session_id": body["session_id"], "public": "true"},
++            })
++            return {"ID": participants[-1]["id"]}
++        if path == "/extmsg/bind":
++            bindings.append({"Status": "active", "SessionID": body["session_id"],
++                             "Conversation": body["conversation"]})
++            return {"ID": "binding-owner"}
++        raise AssertionError(path)
++
++    def gc_get(path):
++        parsed = urllib.parse.urlsplit(path)
++        query = dict(urllib.parse.parse_qsl(parsed.query))
++        if parsed.path == "/sessions":
++            return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
++                               "session_name": "ollie-reported"}]}
++        if parsed.path == "/extmsg/bindings":
++            return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
++        if parsed.path == "/extmsg/groups":
++            if membership in ("missing-group", "unavailable"):
++                raise common.GCAPIError("group lookup unavailable or not found")
++            if query != group["RootConversation"]:
++                raise common.GCAPIError("group not found for conversation")
++            return group
++        if parsed.path == "/beads":
++            assert query["label"] == "extmsg:group:participant:v1:group-room"
++            if membership == "second-page" and "cursor" not in query:
++                return {"items": [], "next_cursor": "next+page/="}
++            if membership == "second-page":
++                assert query["cursor"] == "next+page/="
++            return {"items": participants}
++        raise AssertionError(path)
++
++    monkeypatch.setattr(common, "gc_get", gc_get)
++    identity = membership if membership in {
++        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
++    } else "gc-test-session"
++    if membership == "nonmember":
++        identity = "another-session"
++    argv = ["C_GROUP", identity, "--no-protocol-nudge"]
++    if membership == "owner":
++        argv += ["--binding-owner", identity]
++    with monkeypatch.context() as binding_setup:
++        binding_setup.setattr(common, "gc_post", bind_post)
++        assert bind_room.main(argv) == 0
++    if membership == "closed":
++        participants[0]["status"] = "closed"
++    elif membership == "other-group":
++        participants[0]["metadata"]["group_id"] = "another-group"
++    elif membership == "other-workspace":
++        group["RootConversation"]["account_id"] = "T_OTHER"
++
++    argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
++            "--body", "answer the group inbound"]
++    if membership in {"nonmember", "closed", "other-group", "other-workspace",
++                       "missing-group", "unavailable"}:
++        with pytest.raises(SystemExit, match="conflicts with live company turn"):
++            rc.main(argv)
++        assert posts == []
++    else:
++        assert rc.main(argv) == 0
++        assert len(posts) == 1
++        url, body = posts[0]
++        assert url.endswith("/extmsg/outbound")
++        assert body["session_id"] == "gc-test-session"
++        assert body["conversation"] == {
++            "scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
++            "conversation_id": "C_GROUP", "kind": "room",
++        }
++        assert body["reply_to_message_id"] == "100.000001"
++    assert company_posts == []
++
++

@@ -1,0 +1,707 @@
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q
+Baseline: ed04e6c4144b44d41efba183c2edca51fa1a1bb2 plus regression tests only
+........................................................................ [ 12%]
+........................................................................ [ 24%]
+........................................FFFF.......F.................... [ 36%]
+........................................................................ [ 48%]
+........................................................................ [ 60%]
+........................................................................ [ 72%]
+........................................................................ [ 84%]
+........................................................................ [ 97%]
+.................                                                        [100%]
+=================================== FAILURES ===================================
+_ test_company_explicit_group_target_uses_live_participation[gc-test-session] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c1dfd90>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-409/test_company_explicit_group_ta0')
+membership = 'gc-test-session'
+
+    @pytest.mark.parametrize("membership", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        "owner", "nonmember", "closed", "other-group", "other-workspace",
+        "missing-group", "unavailable", "second-page",
+    ])
+    def test_company_explicit_group_target_uses_live_participation(
+            monkeypatch, tmp_path, membership):
+        """Group-only members may reply; absent/stale membership must never post."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        import slack_chat_bind_room as bind_room
+        monkeypatch.setattr(bind_room, "common", common)
+        group = {}
+        participants = []
+        bindings = []
+
+        def bind_post(path, body):
+            if path == "/extmsg/groups":
+                group.update(ID="group-room", RootConversation=body["root_conversation"])
+                return group
+            if path == "/extmsg/participants":
+                participants.append({
+                    "id": "participant-" + body["handle"], "status": "open",
+                    "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                    "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                                 "session_id": body["session_id"], "public": "true"},
+                })
+                return {"ID": participants[-1]["id"]}
+            if path == "/extmsg/bind":
+                bindings.append({"Status": "active", "SessionID": body["session_id"],
+                                 "Conversation": body["conversation"]})
+                return {"ID": "binding-owner"}
+            raise AssertionError(path)
+
+        def gc_get(path):
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query))
+            if parsed.path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if parsed.path == "/extmsg/bindings":
+                return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+            if parsed.path == "/extmsg/groups":
+                if membership in ("missing-group", "unavailable"):
+                    raise common.GCAPIError("group lookup unavailable or not found")
+                if query != group["RootConversation"]:
+                    raise common.GCAPIError("group not found for conversation")
+                return group
+            if parsed.path == "/beads":
+                assert query["label"] == "extmsg:group:participant:v1:group-room"
+                if membership == "second-page" and "cursor" not in query:
+                    return {"items": [], "next_cursor": "next+page/="}
+                if membership == "second-page":
+                    assert query["cursor"] == "next+page/="
+                return {"items": participants}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(common, "gc_get", gc_get)
+        identity = membership if membership in {
+            "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        } else "gc-test-session"
+        if membership == "nonmember":
+            identity = "another-session"
+        argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+        if membership == "owner":
+            argv += ["--binding-owner", identity]
+        with monkeypatch.context() as binding_setup:
+            binding_setup.setattr(common, "gc_post", bind_post)
+            assert bind_room.main(argv) == 0
+        if membership == "closed":
+            participants[0]["status"] = "closed"
+        elif membership == "other-group":
+            participants[0]["metadata"]["group_id"] = "another-group"
+        elif membership == "other-workspace":
+            group["RootConversation"]["account_id"] = "T_OTHER"
+
+        argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+                "--body", "answer the group inbound"]
+        if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                           "missing-group", "unavailable"}:
+            with pytest.raises(SystemExit, match="conflicts with live company turn"):
+                rc.main(argv)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2070:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:590: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:421: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:357: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_GROUP/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+----------------------------- Captured stdout call -----------------------------
+{
+  "binding_key": "room:C_GROUP",
+  "group_id": "group-room",
+  "default_handle": "gc-test-session",
+  "fanout_policy": null,
+  "participants": [
+    {
+      "ID": "participant-gc-test-session"
+    }
+  ],
+  "binding_owner": null,
+  "binding_record": null,
+  "protocol_nudge": {
+    "delivered_to": [],
+    "failures": [],
+    "skipped": true
+  }
+}
+____ test_company_explicit_group_target_uses_live_participation[ollie-main] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c1abbd0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-409/test_company_explicit_group_ta1')
+membership = 'ollie-main'
+
+    @pytest.mark.parametrize("membership", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        "owner", "nonmember", "closed", "other-group", "other-workspace",
+        "missing-group", "unavailable", "second-page",
+    ])
+    def test_company_explicit_group_target_uses_live_participation(
+            monkeypatch, tmp_path, membership):
+        """Group-only members may reply; absent/stale membership must never post."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        import slack_chat_bind_room as bind_room
+        monkeypatch.setattr(bind_room, "common", common)
+        group = {}
+        participants = []
+        bindings = []
+
+        def bind_post(path, body):
+            if path == "/extmsg/groups":
+                group.update(ID="group-room", RootConversation=body["root_conversation"])
+                return group
+            if path == "/extmsg/participants":
+                participants.append({
+                    "id": "participant-" + body["handle"], "status": "open",
+                    "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                    "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                                 "session_id": body["session_id"], "public": "true"},
+                })
+                return {"ID": participants[-1]["id"]}
+            if path == "/extmsg/bind":
+                bindings.append({"Status": "active", "SessionID": body["session_id"],
+                                 "Conversation": body["conversation"]})
+                return {"ID": "binding-owner"}
+            raise AssertionError(path)
+
+        def gc_get(path):
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query))
+            if parsed.path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if parsed.path == "/extmsg/bindings":
+                return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+            if parsed.path == "/extmsg/groups":
+                if membership in ("missing-group", "unavailable"):
+                    raise common.GCAPIError("group lookup unavailable or not found")
+                if query != group["RootConversation"]:
+                    raise common.GCAPIError("group not found for conversation")
+                return group
+            if parsed.path == "/beads":
+                assert query["label"] == "extmsg:group:participant:v1:group-room"
+                if membership == "second-page" and "cursor" not in query:
+                    return {"items": [], "next_cursor": "next+page/="}
+                if membership == "second-page":
+                    assert query["cursor"] == "next+page/="
+                return {"items": participants}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(common, "gc_get", gc_get)
+        identity = membership if membership in {
+            "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        } else "gc-test-session"
+        if membership == "nonmember":
+            identity = "another-session"
+        argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+        if membership == "owner":
+            argv += ["--binding-owner", identity]
+        with monkeypatch.context() as binding_setup:
+            binding_setup.setattr(common, "gc_post", bind_post)
+            assert bind_room.main(argv) == 0
+        if membership == "closed":
+            participants[0]["status"] = "closed"
+        elif membership == "other-group":
+            participants[0]["metadata"]["group_id"] = "another-group"
+        elif membership == "other-workspace":
+            group["RootConversation"]["account_id"] = "T_OTHER"
+
+        argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+                "--body", "answer the group inbound"]
+        if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                           "missing-group", "unavailable"}:
+            with pytest.raises(SystemExit, match="conflicts with live company turn"):
+                rc.main(argv)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2070:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:590: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:421: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:357: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_GROUP/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+----------------------------- Captured stdout call -----------------------------
+{
+  "binding_key": "room:C_GROUP",
+  "group_id": "group-room",
+  "default_handle": "ollie-main",
+  "fanout_policy": null,
+  "participants": [
+    {
+      "ID": "participant-ollie-main"
+    }
+  ],
+  "binding_owner": null,
+  "binding_record": null,
+  "protocol_nudge": {
+    "delivered_to": [],
+    "failures": [],
+    "skipped": true
+  }
+}
+___ test_company_explicit_group_target_uses_live_participation[ollie-alias] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c0292b0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-409/test_company_explicit_group_ta2')
+membership = 'ollie-alias'
+
+    @pytest.mark.parametrize("membership", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        "owner", "nonmember", "closed", "other-group", "other-workspace",
+        "missing-group", "unavailable", "second-page",
+    ])
+    def test_company_explicit_group_target_uses_live_participation(
+            monkeypatch, tmp_path, membership):
+        """Group-only members may reply; absent/stale membership must never post."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        import slack_chat_bind_room as bind_room
+        monkeypatch.setattr(bind_room, "common", common)
+        group = {}
+        participants = []
+        bindings = []
+
+        def bind_post(path, body):
+            if path == "/extmsg/groups":
+                group.update(ID="group-room", RootConversation=body["root_conversation"])
+                return group
+            if path == "/extmsg/participants":
+                participants.append({
+                    "id": "participant-" + body["handle"], "status": "open",
+                    "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                    "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                                 "session_id": body["session_id"], "public": "true"},
+                })
+                return {"ID": participants[-1]["id"]}
+            if path == "/extmsg/bind":
+                bindings.append({"Status": "active", "SessionID": body["session_id"],
+                                 "Conversation": body["conversation"]})
+                return {"ID": "binding-owner"}
+            raise AssertionError(path)
+
+        def gc_get(path):
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query))
+            if parsed.path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if parsed.path == "/extmsg/bindings":
+                return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+            if parsed.path == "/extmsg/groups":
+                if membership in ("missing-group", "unavailable"):
+                    raise common.GCAPIError("group lookup unavailable or not found")
+                if query != group["RootConversation"]:
+                    raise common.GCAPIError("group not found for conversation")
+                return group
+            if parsed.path == "/beads":
+                assert query["label"] == "extmsg:group:participant:v1:group-room"
+                if membership == "second-page" and "cursor" not in query:
+                    return {"items": [], "next_cursor": "next+page/="}
+                if membership == "second-page":
+                    assert query["cursor"] == "next+page/="
+                return {"items": participants}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(common, "gc_get", gc_get)
+        identity = membership if membership in {
+            "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        } else "gc-test-session"
+        if membership == "nonmember":
+            identity = "another-session"
+        argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+        if membership == "owner":
+            argv += ["--binding-owner", identity]
+        with monkeypatch.context() as binding_setup:
+            binding_setup.setattr(common, "gc_post", bind_post)
+            assert bind_room.main(argv) == 0
+        if membership == "closed":
+            participants[0]["status"] = "closed"
+        elif membership == "other-group":
+            participants[0]["metadata"]["group_id"] = "another-group"
+        elif membership == "other-workspace":
+            group["RootConversation"]["account_id"] = "T_OTHER"
+
+        argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+                "--body", "answer the group inbound"]
+        if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                           "missing-group", "unavailable"}:
+            with pytest.raises(SystemExit, match="conflicts with live company turn"):
+                rc.main(argv)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2070:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:590: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:421: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:357: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_GROUP/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+----------------------------- Captured stdout call -----------------------------
+{
+  "binding_key": "room:C_GROUP",
+  "group_id": "group-room",
+  "default_handle": "ollie-alias",
+  "fanout_policy": null,
+  "participants": [
+    {
+      "ID": "participant-ollie-alias"
+    }
+  ],
+  "binding_owner": null,
+  "binding_record": null,
+  "protocol_nudge": {
+    "delivered_to": [],
+    "failures": [],
+    "skipped": true
+  }
+}
+__ test_company_explicit_group_target_uses_live_participation[ollie-reported] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c1abc40>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-409/test_company_explicit_group_ta3')
+membership = 'ollie-reported'
+
+    @pytest.mark.parametrize("membership", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        "owner", "nonmember", "closed", "other-group", "other-workspace",
+        "missing-group", "unavailable", "second-page",
+    ])
+    def test_company_explicit_group_target_uses_live_participation(
+            monkeypatch, tmp_path, membership):
+        """Group-only members may reply; absent/stale membership must never post."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        import slack_chat_bind_room as bind_room
+        monkeypatch.setattr(bind_room, "common", common)
+        group = {}
+        participants = []
+        bindings = []
+
+        def bind_post(path, body):
+            if path == "/extmsg/groups":
+                group.update(ID="group-room", RootConversation=body["root_conversation"])
+                return group
+            if path == "/extmsg/participants":
+                participants.append({
+                    "id": "participant-" + body["handle"], "status": "open",
+                    "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                    "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                                 "session_id": body["session_id"], "public": "true"},
+                })
+                return {"ID": participants[-1]["id"]}
+            if path == "/extmsg/bind":
+                bindings.append({"Status": "active", "SessionID": body["session_id"],
+                                 "Conversation": body["conversation"]})
+                return {"ID": "binding-owner"}
+            raise AssertionError(path)
+
+        def gc_get(path):
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query))
+            if parsed.path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if parsed.path == "/extmsg/bindings":
+                return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+            if parsed.path == "/extmsg/groups":
+                if membership in ("missing-group", "unavailable"):
+                    raise common.GCAPIError("group lookup unavailable or not found")
+                if query != group["RootConversation"]:
+                    raise common.GCAPIError("group not found for conversation")
+                return group
+            if parsed.path == "/beads":
+                assert query["label"] == "extmsg:group:participant:v1:group-room"
+                if membership == "second-page" and "cursor" not in query:
+                    return {"items": [], "next_cursor": "next+page/="}
+                if membership == "second-page":
+                    assert query["cursor"] == "next+page/="
+                return {"items": participants}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(common, "gc_get", gc_get)
+        identity = membership if membership in {
+            "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        } else "gc-test-session"
+        if membership == "nonmember":
+            identity = "another-session"
+        argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+        if membership == "owner":
+            argv += ["--binding-owner", identity]
+        with monkeypatch.context() as binding_setup:
+            binding_setup.setattr(common, "gc_post", bind_post)
+            assert bind_room.main(argv) == 0
+        if membership == "closed":
+            participants[0]["status"] = "closed"
+        elif membership == "other-group":
+            participants[0]["metadata"]["group_id"] = "another-group"
+        elif membership == "other-workspace":
+            group["RootConversation"]["account_id"] = "T_OTHER"
+
+        argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+                "--body", "answer the group inbound"]
+        if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                           "missing-group", "unavailable"}:
+            with pytest.raises(SystemExit, match="conflicts with live company turn"):
+                rc.main(argv)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2070:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:590: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:421: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:357: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_GROUP/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+----------------------------- Captured stdout call -----------------------------
+{
+  "binding_key": "room:C_GROUP",
+  "group_id": "group-room",
+  "default_handle": "ollie-reported",
+  "fanout_policy": null,
+  "participants": [
+    {
+      "ID": "participant-ollie-reported"
+    }
+  ],
+  "binding_owner": null,
+  "binding_record": null,
+  "protocol_nudge": {
+    "delivered_to": [],
+    "failures": [],
+    "skipped": true
+  }
+}
+___ test_company_explicit_group_target_uses_live_participation[second-page] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bfada20>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-409/test_company_explicit_group_ta11')
+membership = 'second-page'
+
+    @pytest.mark.parametrize("membership", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        "owner", "nonmember", "closed", "other-group", "other-workspace",
+        "missing-group", "unavailable", "second-page",
+    ])
+    def test_company_explicit_group_target_uses_live_participation(
+            monkeypatch, tmp_path, membership):
+        """Group-only members may reply; absent/stale membership must never post."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = rc.common
+        import slack_chat_bind_room as bind_room
+        monkeypatch.setattr(bind_room, "common", common)
+        group = {}
+        participants = []
+        bindings = []
+
+        def bind_post(path, body):
+            if path == "/extmsg/groups":
+                group.update(ID="group-room", RootConversation=body["root_conversation"])
+                return group
+            if path == "/extmsg/participants":
+                participants.append({
+                    "id": "participant-" + body["handle"], "status": "open",
+                    "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                    "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                                 "session_id": body["session_id"], "public": "true"},
+                })
+                return {"ID": participants[-1]["id"]}
+            if path == "/extmsg/bind":
+                bindings.append({"Status": "active", "SessionID": body["session_id"],
+                                 "Conversation": body["conversation"]})
+                return {"ID": "binding-owner"}
+            raise AssertionError(path)
+
+        def gc_get(path):
+            parsed = urllib.parse.urlsplit(path)
+            query = dict(urllib.parse.parse_qsl(parsed.query))
+            if parsed.path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if parsed.path == "/extmsg/bindings":
+                return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+            if parsed.path == "/extmsg/groups":
+                if membership in ("missing-group", "unavailable"):
+                    raise common.GCAPIError("group lookup unavailable or not found")
+                if query != group["RootConversation"]:
+                    raise common.GCAPIError("group not found for conversation")
+                return group
+            if parsed.path == "/beads":
+                assert query["label"] == "extmsg:group:participant:v1:group-room"
+                if membership == "second-page" and "cursor" not in query:
+                    return {"items": [], "next_cursor": "next+page/="}
+                if membership == "second-page":
+                    assert query["cursor"] == "next+page/="
+                return {"items": participants}
+            raise AssertionError(path)
+
+        monkeypatch.setattr(common, "gc_get", gc_get)
+        identity = membership if membership in {
+            "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+        } else "gc-test-session"
+        if membership == "nonmember":
+            identity = "another-session"
+        argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+        if membership == "owner":
+            argv += ["--binding-owner", identity]
+        with monkeypatch.context() as binding_setup:
+            binding_setup.setattr(common, "gc_post", bind_post)
+            assert bind_room.main(argv) == 0
+        if membership == "closed":
+            participants[0]["status"] = "closed"
+        elif membership == "other-group":
+            participants[0]["metadata"]["group_id"] = "another-group"
+        elif membership == "other-workspace":
+            group["RootConversation"]["account_id"] = "T_OTHER"
+
+        argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+                "--body", "answer the group inbound"]
+        if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                           "missing-group", "unavailable"}:
+            with pytest.raises(SystemExit, match="conflicts with live company turn"):
+                rc.main(argv)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2070:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:590: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:421: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:357: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_GROUP/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+----------------------------- Captured stdout call -----------------------------
+{
+  "binding_key": "room:C_GROUP",
+  "group_id": "group-room",
+  "default_handle": "gc-test-session",
+  "fanout_policy": null,
+  "participants": [
+    {
+      "ID": "participant-gc-test-session"
+    }
+  ],
+  "binding_owner": null,
+  "binding_record": null,
+  "protocol_nudge": {
+    "delivered_to": [],
+    "failures": [],
+    "skipped": true
+  }
+}
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=43917) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_group_target_uses_live_participation[gc-test-session]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_group_target_uses_live_participation[ollie-main]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_group_target_uses_live_participation[ollie-alias]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_group_target_uses_live_participation[ollie-reported]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_group_target_uses_live_participation[second-page]
+5 failed, 588 passed, 2 warnings in 35.49s
+Exit: 1
