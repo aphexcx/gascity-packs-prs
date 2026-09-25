@@ -1,0 +1,48 @@
+Command (slack-full/adapter): env -u GC_TEMPLATE CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -count=1 -v -run 'TestFormatCoalescedBlock|TestCoalescedBlockAnchorSkipsBotItems|TestCoalescer_BurstDeliversAsOneInbound' ./...
+=== RUN   TestFormatCoalescedBlockShape
+--- PASS: TestFormatCoalescedBlockShape (0.00s)
+=== RUN   TestFormatCoalescedBlockReplyAnchor
+=== RUN   TestFormatCoalescedBlockReplyAnchor/C1/top-level
+    inbound_coalescer_test.go:1104: rendered burst:
+        [2 messages in C1, coalesced. Reply with --reply-to 100.000002 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+        [100.000001] Afik: first thought
+
+        [100.000002] Afik: second thought
+=== RUN   TestFormatCoalescedBlockReplyAnchor/C1/thread
+    inbound_coalescer_test.go:1104: rendered burst:
+        [2 messages in C1, coalesced. Reply with --reply-to 100.000000 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+        [100.000001] Afik (in thread 100.000000): first thought
+
+        [100.000002] Afik (in thread 100.000000): second thought
+=== RUN   TestFormatCoalescedBlockReplyAnchor/D1/top-level
+    inbound_coalescer_test.go:1104: rendered burst:
+        [2 messages in D1, coalesced. Reply with --reply-to 100.000002 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+        [100.000001] Afik: first thought
+
+        [100.000002] Afik: second thought
+=== RUN   TestFormatCoalescedBlockReplyAnchor/D1/thread
+    inbound_coalescer_test.go:1104: rendered burst:
+        [2 messages in D1, coalesced. Reply with --reply-to 100.000000 to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]
+
+        [100.000001] Afik (in thread 100.000000): first thought
+
+        [100.000002] Afik (in thread 100.000000): second thought
+--- PASS: TestFormatCoalescedBlockReplyAnchor (0.00s)
+    --- PASS: TestFormatCoalescedBlockReplyAnchor/C1/top-level (0.00s)
+    --- PASS: TestFormatCoalescedBlockReplyAnchor/C1/thread (0.00s)
+    --- PASS: TestFormatCoalescedBlockReplyAnchor/D1/top-level (0.00s)
+    --- PASS: TestFormatCoalescedBlockReplyAnchor/D1/thread (0.00s)
+=== RUN   TestCoalescedBlockAnchorSkipsBotItems
+--- PASS: TestCoalescedBlockAnchorSkipsBotItems (0.00s)
+=== RUN   TestCoalescer_BurstDeliversAsOneInbound
+2026/09/23 23:07:37 coalesce: chan=C1 buffered ts=100.000001 (window 40ms armed)
+2026/09/23 23:07:37 coalesce: chan=C1 buffered ts=100.000002 (pending=2)
+2026/09/23 23:07:37 coalesce: chan=C1 buffered ts=100.000003 (pending=3)
+2026/09/23 23:07:37 inbound (coalesced): chan=C1 batch=3 newest_ts=100.000003 text=645ch receipt=unsupported
+--- PASS: TestCoalescer_BurstDeliversAsOneInbound (0.05s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	0.362s
+Exit: 0

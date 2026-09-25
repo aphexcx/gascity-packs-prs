@@ -11,6 +11,7 @@ import argparse
 import json
 import pathlib
 import sys
+import urllib.parse
 from typing import Any
 
 import pytest
@@ -1829,3 +1830,423 @@ def test_turn_ts_pins_the_named_mention_only_room_over_a_newer_one(
     assert url == _MO_ADAPTER_BASE + "/publish"
     assert body["conversation"]["conversation_id"] == "C1OLDER"
     assert body["reply_to_message_id"] == "1.000"
+
+
+@pytest.mark.parametrize("flag,explicit_conversation", [
+    ("--reply-to", True), ("--reply-to", False),
+    ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+])
+def test_company_explicit_bound_target_uses_ordinary_route(
+        monkeypatch, tmp_path, flag, explicit_conversation):
+    """A company pointer must not capture an explicitly addressed bound turn."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+              "conversation_id": "C_INBOUND", "kind": "room"}
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": target},
+        {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+    ]} if path.startswith("/extmsg/bindings?") else {})
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+        "payload": {"conversation_id": "C_INBOUND"}})
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+    monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                        lambda sid: ("100.000002", "100.000001", target))
+    argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+    if explicit_conversation or flag == "conversation-only":
+        argv += ["--conversation-id", "C_INBOUND"]
+    if flag != "conversation-only":
+        argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+    assert rc.main(argv) == 0
+    assert company_posts == []
+    assert len(posts) == 1
+    url, body = posts[0]
+    assert url.endswith("/extmsg/outbound")
+    assert body["conversation"]["conversation_id"] == "C_INBOUND"
+    assert body["reply_to_message_id"] == "100.000001"
+
+
+@pytest.mark.parametrize("selector,value", [
+    ("--origin-ts", "1700000000.000001"),  # stale
+    ("--origin-ts", "1700000000.000500"),  # fresh, but a conflicting target
+    ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+    ("--kind", "room"),
+])
+@pytest.mark.parametrize("channel,via", [
+    ("C_INBOUND", "gc"), ("C0AAAAAAA", "adapter"),
+])
+def test_company_selector_refuses_conflicting_bound_target(
+        monkeypatch, tmp_path, selector, value, channel, via):
+    """A bound channel or different thread cannot silently discard a company pin."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = rc.common
+    outbound = sys.modules["slack_company_outbound"]
+    if selector == "--turn-ref":
+        turn = outbound.read_current_turn("ollie-main")
+        turn["turn_ref"] = value
+        ref_dir = outbound.turns_dir() / "by-ref"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+              "conversation_id": channel, "kind": "room"}
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": target},
+    ]} if path.startswith("/extmsg/bindings?") else {})
+
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--conversation-id", channel, "--reply-to", "100.000001",
+                 selector, value, "--body", "do not discard the pin", "--via", via])
+    error = str(exc.value)
+    assert selector in error and f"{channel}/100.000001" in error
+    assert "drop" in error and "selector" in error and "target" in error
+    assert company_posts == [] and posts == []
+
+
+@pytest.mark.parametrize("selector,value", [
+    ("--origin-ts", "1700000000.000001"),
+    ("--origin-ts", "1700000000.000500"),
+    ("--turn-ref", "gct-aaaaaaaaaaaaaaaaaaaa"),
+    ("--kind", "room"),
+])
+def test_company_selector_matching_target_preserves_company_validation(
+        monkeypatch, tmp_path, selector, value):
+    """Matching targets keep fresh pins and the company's stale-origin refusal."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    outbound = sys.modules["slack_company_outbound"]
+    if selector == "--turn-ref":
+        turn = outbound.read_current_turn("ollie-main")
+        turn["turn_ref"] = value
+        ref_dir = outbound.turns_dir() / "by-ref"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        (ref_dir / f"{value}.json").write_text(json.dumps(turn))
+    argv = ["--conversation-id", "C0AAAAAAA", "--reply-to", "1700000000.000100",
+            selector, value, "--body", "keep the company pin"]
+    if selector == "--origin-ts" and value == "1700000000.000001":
+        with pytest.raises(SystemExit, match="does not match the current turn ts"):
+            rc.main(argv)
+        assert company_posts == []
+    else:
+        assert rc.main(argv) == 0
+        assert len(company_posts) == 1
+        assert company_posts[0]["token"] == "xoxb-ollie"
+        assert company_posts[0]["payload"]["channel"] == "C0AAAAAAA"
+        assert company_posts[0]["payload"]["thread_ts"] == "1700000000.000100"
+    assert posts == []
+
+
+@pytest.mark.parametrize("bound_identity", [
+    "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
+])
+def test_company_explicit_target_checks_all_session_identities(
+        monkeypatch, tmp_path, bound_identity):
+    """Default invocation honors name/alias bindings and still rejects an unbound target."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+              "conversation_id": "C_INBOUND", "kind": "room"}
+
+    def bindings(path):
+        if path == "/sessions":
+            return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                               "session_name": "ollie-reported"}]}
+        if path == f"/extmsg/bindings?session_id={bound_identity}":
+            return {"items": [{"Status": "active", "Conversation": target}]}
+        return {"items": []}
+
+    monkeypatch.setattr(common, "gc_get", bindings)
+    argv = ["--conversation-id", "C_INBOUND", "--reply-to", "100.000001",
+            "--body", "answer the bound inbound"]
+    if bound_identity is None:
+        with pytest.raises(SystemExit, match="no active binding") as exc:
+            rc.main(argv)
+        assert "C_INBOUND/100.000001" in str(exc.value)
+        assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+        assert posts == []
+    else:
+        assert rc.main(argv) == 0
+        assert len(posts) == 1
+        url, body = posts[0]
+        assert url.endswith("/extmsg/outbound")
+        assert body["session_id"] == "gc-test-session"
+        assert body["conversation"] == target
+        assert body["reply_to_message_id"] == "100.000001"
+    assert company_posts == []
+
+
+@pytest.mark.parametrize("membership", [
+    "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+    "owner", "nonmember", "closed", "other-group", "other-workspace",
+    "missing-group", "unavailable", "second-page",
+])
+def test_company_explicit_group_target_uses_live_participation(
+        monkeypatch, tmp_path, membership):
+    """Group-only members may reply; absent/stale membership must never post."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = rc.common
+    import slack_chat_bind_room as bind_room
+    monkeypatch.setattr(bind_room, "common", common)
+    group = {}
+    participants = []
+    bindings = []
+
+    def bind_post(path, body):
+        if path == "/extmsg/groups":
+            group.update(ID="group-room", RootConversation=body["root_conversation"])
+            return group
+        if path == "/extmsg/participants":
+            participants.append({
+                "id": "participant-" + body["handle"], "status": "open",
+                "labels": ["gc:extmsg-participant", "extmsg:group:participant:v1:group-room"],
+                "metadata": {"group_id": body["group_id"], "handle": body["handle"],
+                             "session_id": body["session_id"], "public": "true"},
+            })
+            return {"ID": participants[-1]["id"]}
+        if path == "/extmsg/bind":
+            bindings.append({"Status": "active", "SessionID": body["session_id"],
+                             "Conversation": body["conversation"]})
+            return {"ID": "binding-owner"}
+        raise AssertionError(path)
+
+    def gc_get(path):
+        parsed = urllib.parse.urlsplit(path)
+        query = dict(urllib.parse.parse_qsl(parsed.query))
+        if parsed.path == "/sessions":
+            return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                               "session_name": "ollie-reported"}]}
+        if parsed.path == "/extmsg/bindings":
+            return {"items": [b for b in bindings if b["SessionID"] == query["session_id"]]}
+        if parsed.path == "/extmsg/groups":
+            if membership in ("missing-group", "unavailable"):
+                raise common.GCAPIError("group lookup unavailable or not found")
+            if query != group["RootConversation"]:
+                raise common.GCAPIError("group not found for conversation")
+            return group
+        if parsed.path == "/beads":
+            assert query["label"] == "extmsg:group:participant:v1:group-room"
+            if membership == "second-page" and "cursor" not in query:
+                return {"items": [], "next_cursor": "next+page/="}
+            if membership == "second-page":
+                assert query["cursor"] == "next+page/="
+            return {"items": participants}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(common, "gc_get", gc_get)
+    identity = membership if membership in {
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported",
+    } else "gc-test-session"
+    if membership == "nonmember":
+        identity = "another-session"
+    argv = ["C_GROUP", identity, "--no-protocol-nudge"]
+    if membership == "owner":
+        argv += ["--binding-owner", identity]
+    with monkeypatch.context() as binding_setup:
+        binding_setup.setattr(common, "gc_post", bind_post)
+        assert bind_room.main(argv) == 0
+    if membership == "closed":
+        participants[0]["status"] = "closed"
+    elif membership == "other-group":
+        participants[0]["metadata"]["group_id"] = "another-group"
+    elif membership == "other-workspace":
+        group["RootConversation"]["account_id"] = "T_OTHER"
+
+    argv = ["--conversation-id", "C_GROUP", "--reply-to", "100.000001",
+            "--body", "answer the group inbound"]
+    if membership in {"nonmember", "closed", "other-group", "other-workspace",
+                       "missing-group", "unavailable"}:
+        with pytest.raises(SystemExit, match="conflicts with live company turn"):
+            rc.main(argv)
+        assert posts == []
+    else:
+        assert rc.main(argv) == 0
+        assert len(posts) == 1
+        url, body = posts[0]
+        assert url.endswith("/extmsg/outbound")
+        assert body["session_id"] == "gc-test-session"
+        assert body["conversation"] == {
+            "scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+            "conversation_id": "C_GROUP", "kind": "room",
+        }
+        assert body["reply_to_message_id"] == "100.000001"
+    assert company_posts == []
+
+
+@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+@pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+def test_company_explicit_unbound_target_refuses_both_destinations(
+        monkeypatch, tmp_path, flag, binding_state):
+    """Fail before any post instead of redirecting an unbound explicit target."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    def bindings(path):
+        if binding_state == "unavailable":
+            raise common.GCAPIError("gc unavailable")
+        if binding_state == "absent":
+            return {"items": []}
+        return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                           "Conversation": {"scope_id": "test-city", "provider": "slack",
+                                            "account_id": "T_OTHER" if binding_state == "other-workspace" else "T0TESTWS",
+                                            "conversation_id": "C_INBOUND", "kind": "room"}}]}
+    monkeypatch.setattr(common, "gc_get", bindings)
+    argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+    if flag != "conversation-only":
+        argv += [flag, "100.000001"]
+    with pytest.raises(SystemExit) as exc:
+        rc.main(argv)
+    error = str(exc.value)
+    assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
+    assert "\n" not in error
+    assert company_posts == [] and posts == []
+
+
+@pytest.mark.parametrize("explicit_conversation", [True, False])
+def test_company_matching_explicit_reply_keeps_company_route(monkeypatch, tmp_path, explicit_conversation):
+    """Naming the current company root must preserve the acting-agent route."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    argv = ["--body", "company answer", "--reply-to", "1700000000.000100"]
+    if explicit_conversation:
+        argv += ["--conversation-id", "C0AAAAAAA"]
+    assert rc.main(argv) == 0
+    assert posts == [] and len(company_posts) == 1
+    assert company_posts[0]["payload"]["channel"] == "C0AAAAAAA"
+    assert company_posts[0]["payload"]["thread_ts"] == "1700000000.000100"
+
+
+@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+@pytest.mark.parametrize("bound", [True, False])
+def test_company_other_thread_in_same_channel_honored_only_when_bound(
+        monkeypatch, tmp_path, flag, bound):
+    """Channel equality must not hide a requested thread different from the pointer."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+            "conversation_id": "C0AAAAAAA", "kind": "room"}
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": conv}] if bound else []})
+    monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
+    argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
+            flag, "100.000001", "--body", "another thread", "--via", "adapter"]
+    if bound:
+        assert rc.main(argv) == 0
+        assert len(posts) == 1
+        assert posts[0][1]["conversation"]["conversation_id"] == "C0AAAAAAA"
+        assert posts[0][1]["reply_to_message_id"] == "100.000001"
+    else:
+        with pytest.raises(SystemExit) as exc:
+            rc.main(argv)
+        assert "C0AAAAAAA/100.000001" in str(exc.value)
+        assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+        assert posts == []
+    assert company_posts == []
+
+
+@pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+def test_company_explicit_thread_without_channel_refuses_unbound_target(monkeypatch, tmp_path, flag):
+    """A thread-only override must resolve its channel before checking membership."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    common = sys.modules["slack_intake_common"]
+    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+        "payload": {"conversation_id": "C_UNBOUND"}})
+    with pytest.raises(SystemExit) as exc:
+        rc.main(["--session", "ollie-main", flag, "100.000001", "--body", "do not send"])
+    assert "C_UNBOUND/100.000001" in str(exc.value)
+    assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+    assert posts == [] and company_posts == []
+
+
+@pytest.mark.parametrize("bound", [True, False])
+def test_company_dm_top_level_pointer_does_not_swallow_explicit_thread(monkeypatch, tmp_path, bound):
+    """The DM company verb posts top-level for a root turn; --reply-to must thread."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    outbound = sys.modules["slack_company_outbound"]
+    common = sys.modules["slack_intake_common"]
+    _write_dm_bindings(outbound)
+    _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+    conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+            "conversation_id": "D0HUMANOLLIE", "kind": "dm"}
+    monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+        {"Status": "active", "Conversation": conv}] if bound else []})
+    argv = ["--session", "ollie-main", "--conversation-id", "D0HUMANOLLIE",
+            "--reply-to", "1700000000.000900", "--body", "thread this DM"]
+    if bound:
+        assert rc.main(argv) == 0
+        assert len(posts) == 1
+        assert posts[0][1]["reply_to_message_id"] == "1700000000.000900"
+    else:
+        with pytest.raises(SystemExit, match="D0HUMANOLLIE"):
+            rc.main(argv)
+        assert posts == []
+    assert company_posts == []
+
+
+@pytest.mark.parametrize("kind,channel", [("dm", "D0HUMANOLLIE"), ("mpim", "G0GROUP")])
+@pytest.mark.parametrize("target", ["matching", "other-conversation", "threaded-pointer"])
+def test_company_dm_family_no_thread_without_ordinary_binding(
+        monkeypatch, tmp_path, kind, channel, target):
+    """Keep a matching top-level company route; refuse destinations it cannot serve."""
+    rc, company_posts, posts = _company_pointer_and_mention_only(
+        monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+        delivery_received_at="2026-09-10T08:00:00Z")
+    outbound = sys.modules["slack_company_outbound"]
+    _write_dm_bindings(outbound)
+    _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+    pointer = outbound.turns_dir() / "dm" / "ollie-main.json"
+    turn = json.loads(pointer.read_text())
+    turn.update(kind=kind, channel_id=channel)
+    if target == "threaded-pointer":
+        turn["thread_root_ts"] = "1700000000.000100"
+    pointer.unlink()
+    pointer = outbound.turns_dir() / kind / "ollie-main.json"
+    pointer.parent.mkdir(exist_ok=True)
+    pointer.write_text(json.dumps(turn))
+    requested = "C_UNBOUND" if target == "other-conversation" else channel
+    argv = ["--session", "ollie-main", "--conversation-id", requested,
+            "--no-thread", "--body", "top-level company answer"]
+    if target == "matching":
+        assert rc.main(argv) == 0
+        assert len(company_posts) == 1 and posts == []
+        payload = company_posts[0]["payload"]
+        assert payload["channel"] == channel
+        assert not payload.get("thread_ts")
+    else:
+        with pytest.raises(SystemExit, match="no active binding") as exc:
+            rc.main(argv)
+        assert requested in str(exc.value) and channel in str(exc.value)
+        assert company_posts == [] and posts == []
+
+
+def test_reply_to_trims_whitespace_before_publishing(monkeypatch):
+    """Validation and the outbound payload must use the same normalized anchor."""
+    rc, common = _import_modules()
+    monkeypatch.delenv("GC_SESSION_NAME", raising=False)
+    posts = []
+
+    def fake_request(method, url, body=None, **kwargs):
+        if method == "POST":
+            posts.append(body)
+        return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
+
+    monkeypatch.setattr(common, "_request", fake_request)
+    assert rc.main(["--session", "gc-test-session", "--conversation-id", "C1",
+                    "--reply-to", " 100.000001 ", "--body", "thread this"]) == 0
+    assert len(posts) == 1
+    assert posts[0]["reply_to_message_id"] == "100.000001"

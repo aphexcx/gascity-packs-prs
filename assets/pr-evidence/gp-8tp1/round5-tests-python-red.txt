@@ -1,0 +1,211 @@
+Base: b96526817b34147b9f171482700061c0e310ef2f (new tests only)
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q
+
+........................................................................ [ 12%]
+........................................................................ [ 25%]
+........................FFF............................................. [ 37%]
+........................................................................ [ 50%]
+........................................................................ [ 63%]
+........................................................................ [ 75%]
+........................................................................ [ 88%]
+.................................................................        [100%]
+=================================== FAILURES ===================================
+____ test_company_explicit_target_checks_all_session_identities[ollie-main] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107f148a0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-394/test_company_explicit_target_c1')
+bound_identity = 'ollie-main'
+
+    @pytest.mark.parametrize("bound_identity", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
+    ])
+    def test_company_explicit_target_checks_all_session_identities(
+            monkeypatch, tmp_path, bound_identity):
+        """Default invocation honors name/alias bindings and still rejects an unbound target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+
+        def bindings(path):
+            if path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if path == f"/extmsg/bindings?session_id={bound_identity}":
+                return {"items": [{"Status": "active", "Conversation": target}]}
+            return {"items": []}
+
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--conversation-id", "C_INBOUND", "--reply-to", "100.000001",
+                "--body", "answer the bound inbound"]
+        if bound_identity is None:
+            with pytest.raises(SystemExit, match="no active binding") as exc:
+                rc.main(argv)
+            assert "C_INBOUND/100.000001" in str(exc.value)
+            assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1901:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:575: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:419: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:355: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_INBOUND/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+___ test_company_explicit_target_checks_all_session_identities[ollie-alias] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107cf0910>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-394/test_company_explicit_target_c2')
+bound_identity = 'ollie-alias'
+
+    @pytest.mark.parametrize("bound_identity", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
+    ])
+    def test_company_explicit_target_checks_all_session_identities(
+            monkeypatch, tmp_path, bound_identity):
+        """Default invocation honors name/alias bindings and still rejects an unbound target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+
+        def bindings(path):
+            if path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if path == f"/extmsg/bindings?session_id={bound_identity}":
+                return {"items": [{"Status": "active", "Conversation": target}]}
+            return {"items": []}
+
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--conversation-id", "C_INBOUND", "--reply-to", "100.000001",
+                "--body", "answer the bound inbound"]
+        if bound_identity is None:
+            with pytest.raises(SystemExit, match="no active binding") as exc:
+                rc.main(argv)
+            assert "C_INBOUND/100.000001" in str(exc.value)
+            assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1901:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:575: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:419: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:355: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_INBOUND/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+__ test_company_explicit_target_checks_all_session_identities[ollie-reported] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1081c5080>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-394/test_company_explicit_target_c3')
+bound_identity = 'ollie-reported'
+
+    @pytest.mark.parametrize("bound_identity", [
+        "gc-test-session", "ollie-main", "ollie-alias", "ollie-reported", None,
+    ])
+    def test_company_explicit_target_checks_all_session_identities(
+            monkeypatch, tmp_path, bound_identity):
+        """Default invocation honors name/alias bindings and still rejects an unbound target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+
+        def bindings(path):
+            if path == "/sessions":
+                return {"items": [{"id": "gc-test-session", "alias": "ollie-alias",
+                                   "session_name": "ollie-reported"}]}
+            if path == f"/extmsg/bindings?session_id={bound_identity}":
+                return {"items": [{"Status": "active", "Conversation": target}]}
+            return {"items": []}
+
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--conversation-id", "C_INBOUND", "--reply-to", "100.000001",
+                "--body", "answer the bound inbound"]
+        if bound_identity is None:
+            with pytest.raises(SystemExit, match="no active binding") as exc:
+                rc.main(argv)
+            assert "C_INBOUND/100.000001" in str(exc.value)
+            assert "C0AAAAAAA/1700000000.000100" in str(exc.value)
+            assert posts == []
+        else:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1901:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:575: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:419: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:355: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target C_INBOUND/100.000001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=62081) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_target_checks_all_session_identities[ollie-main]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_target_checks_all_session_identities[ollie-alias]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_target_checks_all_session_identities[ollie-reported]
+3 failed, 566 passed, 2 warnings in 40.94s
+Exit: 1

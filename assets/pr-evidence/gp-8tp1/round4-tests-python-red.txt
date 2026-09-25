@@ -1,0 +1,154 @@
+Base: bcc16ff7208f2189a4e6ee5f3e5fc09c5acbf7dd with regression tests only
+Command: env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q -k 'company_dm_family_no_thread_without_ordinary_binding or reply_to_trims_whitespace_before_publishing'
+FF....F                                                                  [100%]
+=================================== FAILURES ===================================
+_ test_company_dm_family_no_thread_without_ordinary_binding[matching-dm-D0HUMANOLLIE] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10c0ff100>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-388/test_company_dm_family_no_thre0')
+kind = 'dm', channel = 'D0HUMANOLLIE', target = 'matching'
+
+    @pytest.mark.parametrize("kind,channel", [("dm", "D0HUMANOLLIE"), ("mpim", "G0GROUP")])
+    @pytest.mark.parametrize("target", ["matching", "other-conversation", "threaded-pointer"])
+    def test_company_dm_family_no_thread_without_ordinary_binding(
+            monkeypatch, tmp_path, kind, channel, target):
+        """Keep a matching top-level company route; refuse destinations it cannot serve."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        outbound = sys.modules["slack_company_outbound"]
+        _write_dm_bindings(outbound)
+        _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+        pointer = outbound.turns_dir() / "dm" / "ollie-main.json"
+        turn = json.loads(pointer.read_text())
+        turn.update(kind=kind, channel_id=channel)
+        if target == "threaded-pointer":
+            turn["thread_root_ts"] = "1700000000.000100"
+        pointer.unlink()
+        pointer = outbound.turns_dir() / kind / "ollie-main.json"
+        pointer.parent.mkdir(exist_ok=True)
+        pointer.write_text(json.dumps(turn))
+        requested = "C_UNBOUND" if target == "other-conversation" else channel
+        argv = ["--session", "ollie-main", "--conversation-id", requested,
+                "--no-thread", "--body", "top-level company answer"]
+        if target == "matching":
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2012:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:578: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:419: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:355: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target D0HUMANOLLIE/(current thread) conflicts with live company turn D0HUMANOLLIE/(top-level): no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+_ test_company_dm_family_no_thread_without_ordinary_binding[matching-mpim-G0GROUP] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b4422c0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-388/test_company_dm_family_no_thre1')
+kind = 'mpim', channel = 'G0GROUP', target = 'matching'
+
+    @pytest.mark.parametrize("kind,channel", [("dm", "D0HUMANOLLIE"), ("mpim", "G0GROUP")])
+    @pytest.mark.parametrize("target", ["matching", "other-conversation", "threaded-pointer"])
+    def test_company_dm_family_no_thread_without_ordinary_binding(
+            monkeypatch, tmp_path, kind, channel, target):
+        """Keep a matching top-level company route; refuse destinations it cannot serve."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        outbound = sys.modules["slack_company_outbound"]
+        _write_dm_bindings(outbound)
+        _write_dm_turn(outbound, session="ollie-main", delivered_at="2026-09-10T10:00:00Z")
+        pointer = outbound.turns_dir() / "dm" / "ollie-main.json"
+        turn = json.loads(pointer.read_text())
+        turn.update(kind=kind, channel_id=channel)
+        if target == "threaded-pointer":
+            turn["thread_root_ts"] = "1700000000.000100"
+        pointer.unlink()
+        pointer = outbound.turns_dir() / kind / "ollie-main.json"
+        pointer.parent.mkdir(exist_ok=True)
+        pointer.write_text(json.dumps(turn))
+        requested = "C_UNBOUND" if target == "other-conversation" else channel
+        argv = ["--session", "ollie-main", "--conversation-id", requested,
+                "--no-thread", "--body", "top-level company answer"]
+        if target == "matching":
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:2012:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:578: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:419: in _maybe_company_reply
+    if _explicit_target_uses_ordinary_route(args, turn, superseding):
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+slack-full/scripts/slack_chat_reply_current.py:355: in _explicit_target_uses_ordinary_route
+    refuse("no active binding for this session and target")
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+reason = 'no active binding for this session and target'
+
+    def refuse(reason: str) -> None:
+>       raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+E       SystemExit: explicit target G0GROUP/(current thread) conflicts with live company turn G0GROUP/(top-level): no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+
+slack-full/scripts/slack_chat_reply_current.py:328: SystemExit
+_______________ test_reply_to_trims_whitespace_before_publishing _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b9b7150>
+
+    def test_reply_to_trims_whitespace_before_publishing(monkeypatch):
+        """Validation and the outbound payload must use the same normalized anchor."""
+        rc, common = _import_modules()
+        monkeypatch.delenv("GC_SESSION_NAME", raising=False)
+        posts = []
+
+        def fake_request(method, url, body=None, **kwargs):
+            if method == "POST":
+                posts.append(body)
+            return {"Receipt": {"Delivered": True, "MessageID": "1700000.000200"}}
+
+        monkeypatch.setattr(common, "_request", fake_request)
+        assert rc.main(["--session", "gc-test-session", "--conversation-id", "C1",
+                        "--reply-to", " 100.000001 ", "--body", "thread this"]) == 0
+        assert len(posts) == 1
+>       assert posts[0]["reply_to_message_id"] == "100.000001"
+E       AssertionError: assert ' 100.000001 ' == '100.000001'
+E
+E         - 100.000001
+E         +  100.000001
+E         ? +          +
+
+slack-full/tests/test_slack_chat_reply_current.py:2039: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C1",
+  "message_id": "1700000.000200",
+  "thread_ts": " 100.000001 "
+}
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_dm_family_no_thread_without_ordinary_binding[matching-dm-D0HUMANOLLIE]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_dm_family_no_thread_without_ordinary_binding[matching-mpim-G0GROUP]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_reply_to_trims_whitespace_before_publishing
+3 failed, 4 passed, 557 deselected in 0.30s
+Exit: 1

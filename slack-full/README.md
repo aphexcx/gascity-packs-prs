@@ -228,6 +228,38 @@ recent gc events to find the conversation, then POSTs to gc's
 fanout fires for bind-room sessions). `--via adapter` is available
 for adapter-only diagnostics that bypass gc.
 
+The adapter registers this static reply instruction for every inbound:
+
+```text
+Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>
+```
+
+This relies on gc's `renderExtmsgReplyInstructions` placeholder contract:
+`{thread_ts}` is the inbound's thread root, falling back to `{message_ts}`
+(the message's own timestamp) for a top-level post. The same command thus
+replies at an existing thread's root or starts a thread under a top-level
+message. The once-per-channel how-to explains `--reply-to <ts>` and retains
+`--no-thread` as the explicit top-level override.
+Coalesced headers also use `--reply-to` with the newest member's thread root
+or own timestamp; older members follow the same root-or-own-timestamp rule.
+
+When a live company turn is present, an explicit `--conversation-id`,
+`--reply-to`, or `--turn-ts` cannot silently redirect to its channel or root.
+A target outside that company turn is honored through ordinary resolution
+only when this session has an active gc binding to the target conversation
+(or a mention-only route through the adapter). All active bindings are checked,
+not just the newest. Without a binding, or when the binding check fails, the
+command refuses before posting and names both the requested and company targets.
+This check also applies to `--via adapter`. A thread-only override resolves its
+conversation using the usual inbound/binding lookup. Matching explicit company
+channel/root selectors retain the company route and acting agent's token;
+`--turn-ts` uses ordinary transcript resolution or refuses. Implicit replies
+retain the existing company/mention-only newest-turn selection.
+
+WeCom does not render this Slack Reply line: `wecom/adapter/src/inbound.js`
+provides a separate `gc wecom publish --chat … --text-file …` how-to, and
+`wecom/adapter/src/index.js` registers its matching WeCom Reply template.
+
 ```
                    ┌──── public ────┐
 Slack  ──HMAC──▶  Go adapter :8775  ──▶ gc /extmsg/inbound

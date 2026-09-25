@@ -15,15 +15,12 @@ including when --conversation-id names the same conversation explicitly
 (gp-i62). --reply-to / --thread-current still override the anchor, and
 --no-thread forces a channel-level post.
 
---turn-ts <ts> (gp-6j3) pins the anchor to the exact inbound the session
-is answering — the ts carried in the delivery reminder — instead of the
-latest-inbound scan. Under coalesced delivery + interleaved traffic the
-latest inbound at SEND time is often not the message being answered
-(fleet repro: replies landing top-level instead of in-thread, and in the
-wrong thread outright). With --turn-ts the reply threads at that
-inbound's thread root when it was threaded and posts channel-level when
-it was not; if the ts cannot be resolved in the conversation's
-transcript, the command fails fast with guidance rather than guessing.
+--reply-to <ts> is the anchor of record in delivery reminders: use the
+inbound's thread root, or its own timestamp to start a thread under a
+top-level message. This also works for older members of a coalesced batch.
+--turn-ts <ts> (gp-6j3) is the older form kept for compatibility. It resolves
+the inbound in the transcript and replies at its thread root when threaded,
+or at channel level otherwise; an unresolved timestamp fails fast.
 """
 
 from __future__ import annotations
@@ -34,6 +31,7 @@ import json
 import os
 import pathlib
 import sys
+import urllib.parse
 from typing import Any
 
 import slack_intake_common as common
@@ -302,6 +300,102 @@ def _mention_only_delivery_superseding_company(
     return newest
 
 
+def _session_participates_in_group(identities: set[str], conv: dict[str, str]) -> bool:
+    """Check gc's live participant records, including name-bound room members."""
+    if conv.get("kind") != "room":
+        return False
+    group = common.gc_get("/extmsg/groups?" + urllib.parse.urlencode(conv))
+    group_id = group.get("ID")
+    if not group_id or group.get("RootConversation") != conv:
+        return False
+    # bind-room POSTs /extmsg/participants, which gc stores as labeled beads.
+    # There is no participant-list endpoint. Read the same live records that
+    # gc's group outbound resolver uses, rather than the local config mirror
+    # (which can retain participants removed directly through gc).
+    query = {"label": f"extmsg:group:participant:v1:{group_id}"}
+    seen_cursors: set[str] = set()
+    while True:
+        page = common.gc_get("/beads?" + urllib.parse.urlencode(query))
+        for entry in page.get("items", []) or []:
+            if entry.get("status") == "closed" or "gc:extmsg-participant" not in (entry.get("labels") or []):
+                continue
+            metadata = entry.get("metadata") or {}
+            if (metadata.get("group_id") == group_id
+                    and identities & {metadata.get("session_id"), metadata.get("session_name")}):
+                return True
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return False
+        if cursor in seen_cursors:
+            raise common.GCAPIError("group participant lookup repeated a page cursor")
+        seen_cursors.add(cursor)
+        query["cursor"] = cursor
+
+
+def _explicit_target_uses_ordinary_route(
+    args: argparse.Namespace, turn: dict[str, Any],
+    superseding: dict[str, Any] | None,
+) -> bool:
+    """Keep a live company pointer from capturing an explicit bound target."""
+    channel = (args.conversation_id or "").strip()
+    reply_to = (args.reply_to or "").strip()
+    turn_ts = (args.turn_ts or "").strip()
+    company_channel = turn["channel_id"]
+    company_root = turn["thread_root_ts"]
+    # Company DM/MPIM root turns post top-level. Naming that message with
+    # --reply-to requests a new thread, so it needs the ordinary route too.
+    if turn["kind"] in ("dm", "mpim") and company_root == turn["ts"]:
+        company_root = ""
+    if (not channel or channel == company_channel) and not turn_ts:
+        if args.no_thread:
+            if not company_root and not reply_to and not args.thread_current:
+                return False  # The company DM/MPIM route already posts top-level.
+        elif not reply_to or reply_to == company_root:
+            return False  # Explicit selectors agree with the company route.
+
+    requested = f"{channel or '(resolved conversation)'}/{reply_to or turn_ts or '(current thread)'}"
+    company_target = f"{company_channel}/{company_root or '(top-level)'}"
+
+    def refuse(reason: str) -> None:
+        raise SystemExit(
+            f"explicit target {requested} conflicts with live company turn "
+            f"{company_target}: {' '.join(reason.split())}; use a bound "
+            "conversation or --turn-ref from the company reminder")
+
+    try:
+        session_id = (args.session or "").strip() or common.current_session_id()
+        conv = _resolve_conversation(args, session_id)
+        requested = f"{conv['conversation_id']}/{reply_to or turn_ts or '(current thread)'}"
+        # A selected mention-only delivery is already a session-scoped route.
+        mention_only = bool(superseding and superseding["channel_id"] == conv["conversation_id"])
+        if not mention_only:
+            mention_only = common.session_is_mention_only_in(session_id, conv["conversation_id"])
+        if not mention_only:
+            bindings = []
+            identities = common.session_identity_candidates(session_id)
+            for identity in sorted(identities):
+                query = urllib.parse.urlencode({"session_id": identity})
+                bindings.extend(common.gc_get(f"/extmsg/bindings?{query}").get("items", []))
+            # A session can be bound to several channels; checking only its
+            # most recent binding or one identity would reject an active target.
+            bound = any(
+                entry.get("Status") == "active"
+                and all((entry.get("Conversation") or {}).get(key) == conv.get(key)
+                        for key in ("scope_id", "provider", "account_id", "conversation_id", "kind"))
+                for entry in bindings
+            )
+            if not bound:
+                bound = _session_participates_in_group(identities, conv)
+    except (common.GCAPIError, SystemExit) as exc:
+        refuse(str(exc))
+    if not mention_only and not bound:
+        refuse("no active binding for this session and target")
+    # Pin the resolved channel so the ordinary path cannot pick up an inbound
+    # that arrived in a different channel during the binding check.
+    args.conversation_id = conv["conversation_id"]
+    return True
+
+
 def _maybe_company_reply(args: argparse.Namespace) -> int | None:
     """Company-context path: post via the acting agent's own token.
 
@@ -315,9 +409,9 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
         post an ordinary reply into the room's thread root with no live
         mentions.
 
-    Only the *absence* of a company pointer returns ``None`` so the legacy path
-    runs byte-for-byte; a session with any company pointer answers into the
-    room (the legacy resolution the company delivery path never feeds).
+    Explicit targets outside that pointer use ordinary resolution when bound
+    to this session, and fail with both destinations otherwise. Implicit
+    replies retain the company/mention-only newest-turn selection.
     """
     session_name = os.environ.get("GC_SESSION_NAME", "").strip()
     if not session_name:
@@ -342,6 +436,7 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             session_name, kind_override=kind_override, turn_ref=turn_ref)
         if source is None:
             return None  # no company pointer — fall through to the legacy path
+        superseding = None
         if not (turn_ref or origin_ts or kind_override):
             # An explicit company selector (--turn-ref / --origin-ts /
             # --kind room|dm|mpim) pins the company turn. Otherwise a
@@ -350,28 +445,40 @@ def _maybe_company_reply(args: argparse.Namespace) -> int | None:
             # it BEFORE the company dispatch (jg-vobf70 round 4).
             superseding = _mention_only_delivery_superseding_company(
                 args, session_name, outbound, source)
-            if superseding is not None:
-                print(
-                    f"note: mention-only delivery {superseding['channel_id']}/"
-                    f"{superseding['ts']} is newer than the company {source} "
-                    "turn — resolving it instead of the company dispatch",
-                    file=sys.stderr,
-                )
-                if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
-                    # --turn-ts named THIS delivery: pin its conversation so
-                    # the legacy path cannot pick a newer delivery in another
-                    # room and then miss the ts there (codex r4 P2).
-                    args.conversation_id = superseding["channel_id"]
+        if (superseding is not None and (args.turn_ts or "").strip()
+                and not (args.conversation_id or "").strip()):
+            args.conversation_id = superseding["channel_id"]
+        if any((args.conversation_id, args.reply_to, args.turn_ts)):
+            turn = (outbound.read_turn_ref(session_name, turn_ref) if turn_ref else
+                    getattr(outbound, _COMPANY_POINTER_READERS[source])(session_name))
+            if turn is None:
+                raise SystemExit("company turn disappeared before explicit target validation; retry")
+            if _explicit_target_uses_ordinary_route(args, turn, superseding):
+                # The ordinary route cannot honor company pins. Do not discard
+                # them just because the conflicting target has an active binding.
+                selectors = [flag for flag, value in (
+                    ("--turn-ref", turn_ref), ("--origin-ts", origin_ts),
+                    ("--kind", kind_override),
+                ) if value]
+                if selectors:
+                    anchor = ((args.reply_to or "").strip()
+                              or (args.turn_ts or "").strip() or "(current thread)")
+                    raise SystemExit(
+                        f"company selectors {', '.join(selectors)} conflict with "
+                        f"explicit target {args.conversation_id}/{anchor}; "
+                        "drop the company selectors or the explicit target")
                 return None
-        if (getattr(args, "turn_ts", "") or "").strip():
-            # --turn-ts anchors a channel-binding inbound; on a session
-            # with a live company turn the reply would divert to the
-            # company room regardless of the anchor. Refuse instead of
-            # silently misrouting (gp-6j3).
-            raise SystemExit(
-                "--turn-ts targets a channel-binding inbound, but this "
-                "session has a live company turn; use --turn-ref from the "
-                "company reminder instead")
+            # A later wake must not move a matching explicit target after the
+            # comparison. Company verbs verify this timestamp before posting.
+            origin_ts = origin_ts or turn["ts"]
+        elif superseding is not None:
+            print(
+                f"note: mention-only delivery {superseding['channel_id']}/"
+                f"{superseding['ts']} is newer than the company {source} "
+                "turn — resolving it instead of the company dispatch",
+                file=sys.stderr,
+            )
+            return None
         body = _load_body(args)
         if source == "dm":
             result = outbound.post_company_dm_reply(
@@ -444,15 +551,12 @@ def main(argv: list[str]) -> int:
                         help="Slack message ts to reply to (threaded reply)")
     parser.add_argument(
         "--turn-ts", default="",
-        help=("Slack ts of the inbound this reply answers (carried in the "
-              "delivery reminder). Anchors the reply to that exact message: "
-              "its thread root when it was threaded, channel level when it "
-              "was not — instead of inheriting whatever inbound arrived "
-              "last, which interleaved traffic makes the wrong one "
-              "(gp-6j3). Fails fast when the ts is not in the "
-              "conversation's transcript (e.g. an older member of a "
-              "coalesced batch): pass --reply-to <thread ts> or "
-              "--no-thread instead."))
+        help=("Older transcript-based anchor, kept for compatibility: replies "
+              "at the named inbound's thread root when threaded, or at channel "
+              "level otherwise. Fails if the ts is absent from the transcript "
+              "(e.g. an older coalesced member). Prefer --reply-to <ts>, the "
+              "delivery reminder's anchor of record: the inbound's thread root "
+              "or its own ts for a top-level message."))
     parser.add_argument(
         "--origin-ts", default="",
         help=("Company rooms: pin a specific turn ts when a newer wake has "
@@ -542,7 +646,7 @@ def main(argv: list[str]) -> int:
     if not conv.get("account_id"):
         raise SystemExit("missing slack account_id (SLACK_WORKSPACE_ID env)")
 
-    reply_to = args.reply_to
+    reply_to = (args.reply_to or "").strip()
     turn_ts = (args.turn_ts or "").strip()
     if args.no_thread and (reply_to or args.thread_current):
         raise SystemExit(

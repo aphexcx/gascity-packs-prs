@@ -1,0 +1,1126 @@
+$ env -u GC_TEMPLATE uv run --no-project --with pytest python -m pytest slack-full/tests -q -k company_explicit or company_matching_explicit or company_other_thread
+FFFFFFFFFFFFFFFFF..FFFFFF                                                [100%]
+=================================== FAILURES ===================================
+___ test_company_explicit_bound_target_uses_ordinary_route[--reply-to-True] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10ae16ea0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_bound_ta0')
+flag = '--reply-to', explicit_conversation = True
+
+    @pytest.mark.parametrize("flag,explicit_conversation", [
+        ("--reply-to", True), ("--reply-to", False),
+        ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+    ])
+    def test_company_explicit_bound_target_uses_ordinary_route(
+            monkeypatch, tmp_path, flag, explicit_conversation):
+        """A company pointer must not capture an explicitly addressed bound turn."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+            {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_INBOUND"}})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+        monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                            lambda sid: ("100.000002", "100.000001", target))
+        argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+        if explicit_conversation or flag == "conversation-only":
+            argv += ["--conversation-id", "C_INBOUND"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+        assert rc.main(argv) == 0
+>       assert company_posts == []
+E       AssertionError: assert [{'token': 'x...000.000100'}}] == []
+E
+E         Left contains one more item: {'token': 'xoxb-ollie', 'payload': {'channel': 'C0AAAAAAA', 'text': 'answer the bound inbound', 'thread_ts': '1700000000.000100'}}
+E         Use -v to get more diff
+
+slack-full/tests/test_slack_chat_reply_current.py:1862: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+___ test_company_explicit_bound_target_uses_ordinary_route[--reply-to-False] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10a9922c0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_bound_ta1')
+flag = '--reply-to', explicit_conversation = False
+
+    @pytest.mark.parametrize("flag,explicit_conversation", [
+        ("--reply-to", True), ("--reply-to", False),
+        ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+    ])
+    def test_company_explicit_bound_target_uses_ordinary_route(
+            monkeypatch, tmp_path, flag, explicit_conversation):
+        """A company pointer must not capture an explicitly addressed bound turn."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+            {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_INBOUND"}})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+        monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                            lambda sid: ("100.000002", "100.000001", target))
+        argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+        if explicit_conversation or flag == "conversation-only":
+            argv += ["--conversation-id", "C_INBOUND"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+        assert rc.main(argv) == 0
+>       assert company_posts == []
+E       AssertionError: assert [{'token': 'x...000.000100'}}] == []
+E
+E         Left contains one more item: {'token': 'xoxb-ollie', 'payload': {'channel': 'C0AAAAAAA', 'text': 'answer the bound inbound', 'thread_ts': '1700000000.000100'}}
+E         Use -v to get more diff
+
+slack-full/tests/test_slack_chat_reply_current.py:1862: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+____ test_company_explicit_bound_target_uses_ordinary_route[--turn-ts-True] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af67bf0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_bound_ta2')
+flag = '--turn-ts', explicit_conversation = True
+
+    @pytest.mark.parametrize("flag,explicit_conversation", [
+        ("--reply-to", True), ("--reply-to", False),
+        ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+    ])
+    def test_company_explicit_bound_target_uses_ordinary_route(
+            monkeypatch, tmp_path, flag, explicit_conversation):
+        """A company pointer must not capture an explicitly addressed bound turn."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+            {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_INBOUND"}})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+        monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                            lambda sid: ("100.000002", "100.000001", target))
+        argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+        if explicit_conversation or flag == "conversation-only":
+            argv += ["--conversation-id", "C_INBOUND"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+>       assert rc.main(argv) == 0
+               ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1861:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:521: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = Namespace(session='ollie-main', conversation_id='C_INBOUND', kind=None, reply_to='', turn_ts='100.000002', origin_ts='...no_thread=False, idempotency_key='', body='answer the bound inbound', body_file='', raw=False, via='gc', verbose=False)
+
+    def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+        """Company-context path: post via the acting agent's own token.
+
+        Additive and inert for non-company sessions. Whenever this session has an
+        active company current-turn pointer we divert by the turn ``kind``:
+
+          * ``peer_delegation`` → post a delegation result into the human root
+            thread (``gc_delegation_result`` gate, requester the only live mention);
+          * ``peer_result`` → post a synthesis into the root with no live mentions;
+          * ``ambient`` / ``thread_ambient`` / ``targeted`` / ``peer_input`` →
+            post an ordinary reply into the room's thread root with no live
+            mentions.
+
+        Only the *absence* of a company pointer returns ``None`` so the legacy path
+        runs byte-for-byte; a session with any company pointer answers into the
+        room (the legacy resolution the company delivery path never feeds).
+        """
+        session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+        if not session_name:
+            if (getattr(args, "turn_ref", "") or "").strip():
+                raise SystemExit(
+                    "--turn-ref requires GC_SESSION_NAME so the immutable company "
+                    "turn can be verified against its bound agent session")
+            return None
+        try:
+            import slack_company_outbound as outbound  # type: ignore
+        except ImportError:
+            return None
+        # `--kind room|dm|mpim` overrides which pointer this reply acts on when more
+        # than one turn is live; anything else (thread / unset) leaves the
+        # newest-by-delivered-at default. A non-company value is ignored here and
+        # left to the legacy conversation-kind path.
+        kind_override = args.kind if args.kind in ("room", "dm", "mpim") else ""
+        origin_ts = (getattr(args, "origin_ts", "") or "").strip()
+        turn_ref = (getattr(args, "turn_ref", "") or "").strip()
+        try:
+            source = outbound.resolve_reply_pointer_source(
+                session_name, kind_override=kind_override, turn_ref=turn_ref)
+            if source is None:
+                return None  # no company pointer — fall through to the legacy path
+            if not (turn_ref or origin_ts or kind_override):
+                # An explicit company selector (--turn-ref / --origin-ts /
+                # --kind room|dm|mpim) pins the company turn. Otherwise a
+                # mention-only delivery newer than the pointer (or the one
+                # --turn-ts names) is the inbound being answered: resolve
+                # it BEFORE the company dispatch (jg-vobf70 round 4).
+                superseding = _mention_only_delivery_superseding_company(
+                    args, session_name, outbound, source)
+                if superseding is not None:
+                    print(
+                        f"note: mention-only delivery {superseding['channel_id']}/"
+                        f"{superseding['ts']} is newer than the company {source} "
+                        "turn — resolving it instead of the company dispatch",
+                        file=sys.stderr,
+                    )
+                    if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+                        # --turn-ts named THIS delivery: pin its conversation so
+                        # the legacy path cannot pick a newer delivery in another
+                        # room and then miss the ts there (codex r4 P2).
+                        args.conversation_id = superseding["channel_id"]
+                    return None
+            if (getattr(args, "turn_ts", "") or "").strip():
+                # --turn-ts anchors a channel-binding inbound; on a session
+                # with a live company turn the reply would divert to the
+                # company room regardless of the anchor. Refuse instead of
+                # silently misrouting (gp-6j3).
+>               raise SystemExit(
+                    "--turn-ts targets a channel-binding inbound, but this "
+                    "session has a live company turn; use --turn-ref from the "
+                    "company reminder instead")
+E                   SystemExit: --turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead
+
+slack-full/scripts/slack_chat_reply_current.py:371: SystemExit
+___ test_company_explicit_bound_target_uses_ordinary_route[--turn-ts-False] ____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10adb3ce0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_bound_ta3')
+flag = '--turn-ts', explicit_conversation = False
+
+    @pytest.mark.parametrize("flag,explicit_conversation", [
+        ("--reply-to", True), ("--reply-to", False),
+        ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+    ])
+    def test_company_explicit_bound_target_uses_ordinary_route(
+            monkeypatch, tmp_path, flag, explicit_conversation):
+        """A company pointer must not capture an explicitly addressed bound turn."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+            {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_INBOUND"}})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+        monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                            lambda sid: ("100.000002", "100.000001", target))
+        argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+        if explicit_conversation or flag == "conversation-only":
+            argv += ["--conversation-id", "C_INBOUND"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+>       assert rc.main(argv) == 0
+               ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1861:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:521: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = Namespace(session='ollie-main', conversation_id='', kind=None, reply_to='', turn_ts='100.000002', origin_ts='', turn_r...no_thread=False, idempotency_key='', body='answer the bound inbound', body_file='', raw=False, via='gc', verbose=False)
+
+    def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+        """Company-context path: post via the acting agent's own token.
+
+        Additive and inert for non-company sessions. Whenever this session has an
+        active company current-turn pointer we divert by the turn ``kind``:
+
+          * ``peer_delegation`` → post a delegation result into the human root
+            thread (``gc_delegation_result`` gate, requester the only live mention);
+          * ``peer_result`` → post a synthesis into the root with no live mentions;
+          * ``ambient`` / ``thread_ambient`` / ``targeted`` / ``peer_input`` →
+            post an ordinary reply into the room's thread root with no live
+            mentions.
+
+        Only the *absence* of a company pointer returns ``None`` so the legacy path
+        runs byte-for-byte; a session with any company pointer answers into the
+        room (the legacy resolution the company delivery path never feeds).
+        """
+        session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+        if not session_name:
+            if (getattr(args, "turn_ref", "") or "").strip():
+                raise SystemExit(
+                    "--turn-ref requires GC_SESSION_NAME so the immutable company "
+                    "turn can be verified against its bound agent session")
+            return None
+        try:
+            import slack_company_outbound as outbound  # type: ignore
+        except ImportError:
+            return None
+        # `--kind room|dm|mpim` overrides which pointer this reply acts on when more
+        # than one turn is live; anything else (thread / unset) leaves the
+        # newest-by-delivered-at default. A non-company value is ignored here and
+        # left to the legacy conversation-kind path.
+        kind_override = args.kind if args.kind in ("room", "dm", "mpim") else ""
+        origin_ts = (getattr(args, "origin_ts", "") or "").strip()
+        turn_ref = (getattr(args, "turn_ref", "") or "").strip()
+        try:
+            source = outbound.resolve_reply_pointer_source(
+                session_name, kind_override=kind_override, turn_ref=turn_ref)
+            if source is None:
+                return None  # no company pointer — fall through to the legacy path
+            if not (turn_ref or origin_ts or kind_override):
+                # An explicit company selector (--turn-ref / --origin-ts /
+                # --kind room|dm|mpim) pins the company turn. Otherwise a
+                # mention-only delivery newer than the pointer (or the one
+                # --turn-ts names) is the inbound being answered: resolve
+                # it BEFORE the company dispatch (jg-vobf70 round 4).
+                superseding = _mention_only_delivery_superseding_company(
+                    args, session_name, outbound, source)
+                if superseding is not None:
+                    print(
+                        f"note: mention-only delivery {superseding['channel_id']}/"
+                        f"{superseding['ts']} is newer than the company {source} "
+                        "turn — resolving it instead of the company dispatch",
+                        file=sys.stderr,
+                    )
+                    if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+                        # --turn-ts named THIS delivery: pin its conversation so
+                        # the legacy path cannot pick a newer delivery in another
+                        # room and then miss the ts there (codex r4 P2).
+                        args.conversation_id = superseding["channel_id"]
+                    return None
+            if (getattr(args, "turn_ts", "") or "").strip():
+                # --turn-ts anchors a channel-binding inbound; on a session
+                # with a live company turn the reply would divert to the
+                # company room regardless of the anchor. Refuse instead of
+                # silently misrouting (gp-6j3).
+>               raise SystemExit(
+                    "--turn-ts targets a channel-binding inbound, but this "
+                    "session has a live company turn; use --turn-ref from the "
+                    "company reminder instead")
+E                   SystemExit: --turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead
+
+slack-full/scripts/slack_chat_reply_current.py:371: SystemExit
+_ test_company_explicit_bound_target_uses_ordinary_route[conversation-only-True] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10af896a0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_bound_ta4')
+flag = 'conversation-only', explicit_conversation = True
+
+    @pytest.mark.parametrize("flag,explicit_conversation", [
+        ("--reply-to", True), ("--reply-to", False),
+        ("--turn-ts", True), ("--turn-ts", False), ("conversation-only", True),
+    ])
+    def test_company_explicit_bound_target_uses_ordinary_route(
+            monkeypatch, tmp_path, flag, explicit_conversation):
+        """A company pointer must not capture an explicitly addressed bound turn."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        target = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                  "conversation_id": "C_INBOUND", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": target},
+            {"Status": "active", "Conversation": dict(target, conversation_id="C_NEWER")},
+        ]} if path.startswith("/extmsg/bindings?") else {})
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_INBOUND"}})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda conv, ts: ("100.000001", target))
+        monkeypatch.setattr(common, "find_latest_inbound_thread_for_session",
+                            lambda sid: ("100.000002", "100.000001", target))
+        argv = ["--session", "ollie-main", "--body", "answer the bound inbound"]
+        if explicit_conversation or flag == "conversation-only":
+            argv += ["--conversation-id", "C_INBOUND"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001" if flag == "--reply-to" else "100.000002"]
+        assert rc.main(argv) == 0
+>       assert company_posts == []
+E       AssertionError: assert [{'token': 'x...000.000100'}}] == []
+E
+E         Left contains one more item: {'token': 'xoxb-ollie', 'payload': {'channel': 'C0AAAAAAA', 'text': 'answer the bound inbound', 'thread_ts': '1700000000.000100'}}
+E         Use -v to get more diff
+
+slack-full/tests/test_slack_chat_reply_current.py:1862: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[absent---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b07c650>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_0')
+flag = '--reply-to', binding_state = 'absent'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[absent---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b07e250>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_1')
+flag = '--turn-ts', binding_state = 'absent'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+        with pytest.raises(SystemExit) as exc:
+            rc.main(argv)
+        error = str(exc.value)
+>       assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
+E       AssertionError: assert ('C_INBOUND' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead')
+
+slack-full/tests/test_slack_chat_reply_current.py:1894: AssertionError
+_ test_company_explicit_unbound_target_refuses_both_destinations[absent-conversation-only] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b020d70>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_2')
+flag = 'conversation-only', binding_state = 'absent'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[inactive---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b023a70>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_3')
+flag = '--reply-to', binding_state = 'inactive'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[inactive---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b345c50>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_4')
+flag = '--turn-ts', binding_state = 'inactive'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+        with pytest.raises(SystemExit) as exc:
+            rc.main(argv)
+        error = str(exc.value)
+>       assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
+E       AssertionError: assert ('C_INBOUND' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead')
+
+slack-full/tests/test_slack_chat_reply_current.py:1894: AssertionError
+_ test_company_explicit_unbound_target_refuses_both_destinations[inactive-conversation-only] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b450130>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_5')
+flag = 'conversation-only', binding_state = 'inactive'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[other-workspace---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b05ce20>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_6')
+flag = '--reply-to', binding_state = 'other-workspace'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[other-workspace---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3d6a50>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_7')
+flag = '--turn-ts', binding_state = 'other-workspace'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+        with pytest.raises(SystemExit) as exc:
+            rc.main(argv)
+        error = str(exc.value)
+>       assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
+E       AssertionError: assert ('C_INBOUND' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead')
+
+slack-full/tests/test_slack_chat_reply_current.py:1894: AssertionError
+_ test_company_explicit_unbound_target_refuses_both_destinations[other-workspace-conversation-only] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3d68d0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_8')
+flag = 'conversation-only', binding_state = 'other-workspace'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[unavailable---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3ac730>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_9')
+flag = '--reply-to', binding_state = 'unavailable'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_unbound_target_refuses_both_destinations[unavailable---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3ac260>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_10')
+flag = '--turn-ts', binding_state = 'unavailable'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+        with pytest.raises(SystemExit) as exc:
+            rc.main(argv)
+        error = str(exc.value)
+>       assert "C_INBOUND" in error and "C0AAAAAAA/1700000000.000100" in error
+E       AssertionError: assert ('C_INBOUND' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead')
+
+slack-full/tests/test_slack_chat_reply_current.py:1894: AssertionError
+_ test_company_explicit_unbound_target_refuses_both_destinations[unavailable-conversation-only] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3e1450>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_unbound_11')
+flag = 'conversation-only', binding_state = 'unavailable'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts", "conversation-only"])
+    @pytest.mark.parametrize("binding_state", ["absent", "inactive", "other-workspace", "unavailable"])
+    def test_company_explicit_unbound_target_refuses_both_destinations(
+            monkeypatch, tmp_path, flag, binding_state):
+        """Fail before any post instead of redirecting an unbound explicit target."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        def bindings(path):
+            if binding_state == "unavailable":
+                raise common.GCAPIError("gc unavailable")
+            if binding_state == "absent":
+                return {"items": []}
+            return {"items": [{"Status": "inactive" if binding_state == "inactive" else "active",
+                               "Conversation": {"provider": "slack", "account_id": "T_OTHER",
+                                                "conversation_id": "C_INBOUND", "kind": "room"}}]}
+        monkeypatch.setattr(common, "gc_get", bindings)
+        argv = ["--session", "ollie-main", "--conversation-id", "C_INBOUND", "--body", "do not redirect"]
+        if flag != "conversation-only":
+            argv += [flag, "100.000001"]
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1891: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_other_thread_in_same_channel_honored_only_when_bound[True---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10afd61d0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_other_thread_in_s0')
+flag = '--reply-to', bound = True
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_other_thread_in_same_channel_honored_only_when_bound(
+            monkeypatch, tmp_path, flag, bound):
+        """Channel equality must not hide a requested thread different from the pointer."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "C0AAAAAAA", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
+        argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
+                flag, "100.000001", "--body", "another thread", "--via", "adapter"]
+        if bound:
+            assert rc.main(argv) == 0
+>           assert len(posts) == 1
+E           assert 0 == 1
+E            +  where 0 = len([])
+
+slack-full/tests/test_slack_chat_reply_current.py:1932: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_other_thread_in_same_channel_honored_only_when_bound[True---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b071750>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_other_thread_in_s1')
+flag = '--turn-ts', bound = True
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_other_thread_in_same_channel_honored_only_when_bound(
+            monkeypatch, tmp_path, flag, bound):
+        """Channel equality must not hide a requested thread different from the pointer."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "C0AAAAAAA", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
+        argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
+                flag, "100.000001", "--body", "another thread", "--via", "adapter"]
+        if bound:
+>           assert rc.main(argv) == 0
+                   ^^^^^^^^^^^^^
+
+slack-full/tests/test_slack_chat_reply_current.py:1931:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+slack-full/scripts/slack_chat_reply_current.py:521: in main
+    company_rc = _maybe_company_reply(args)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+args = Namespace(session='ollie-main', conversation_id='C0AAAAAAA', kind=None, reply_to='', turn_ts='100.000001', origin_ts='...lse, no_thread=False, idempotency_key='', body='another thread', body_file='', raw=False, via='adapter', verbose=False)
+
+    def _maybe_company_reply(args: argparse.Namespace) -> int | None:
+        """Company-context path: post via the acting agent's own token.
+
+        Additive and inert for non-company sessions. Whenever this session has an
+        active company current-turn pointer we divert by the turn ``kind``:
+
+          * ``peer_delegation`` → post a delegation result into the human root
+            thread (``gc_delegation_result`` gate, requester the only live mention);
+          * ``peer_result`` → post a synthesis into the root with no live mentions;
+          * ``ambient`` / ``thread_ambient`` / ``targeted`` / ``peer_input`` →
+            post an ordinary reply into the room's thread root with no live
+            mentions.
+
+        Only the *absence* of a company pointer returns ``None`` so the legacy path
+        runs byte-for-byte; a session with any company pointer answers into the
+        room (the legacy resolution the company delivery path never feeds).
+        """
+        session_name = os.environ.get("GC_SESSION_NAME", "").strip()
+        if not session_name:
+            if (getattr(args, "turn_ref", "") or "").strip():
+                raise SystemExit(
+                    "--turn-ref requires GC_SESSION_NAME so the immutable company "
+                    "turn can be verified against its bound agent session")
+            return None
+        try:
+            import slack_company_outbound as outbound  # type: ignore
+        except ImportError:
+            return None
+        # `--kind room|dm|mpim` overrides which pointer this reply acts on when more
+        # than one turn is live; anything else (thread / unset) leaves the
+        # newest-by-delivered-at default. A non-company value is ignored here and
+        # left to the legacy conversation-kind path.
+        kind_override = args.kind if args.kind in ("room", "dm", "mpim") else ""
+        origin_ts = (getattr(args, "origin_ts", "") or "").strip()
+        turn_ref = (getattr(args, "turn_ref", "") or "").strip()
+        try:
+            source = outbound.resolve_reply_pointer_source(
+                session_name, kind_override=kind_override, turn_ref=turn_ref)
+            if source is None:
+                return None  # no company pointer — fall through to the legacy path
+            if not (turn_ref or origin_ts or kind_override):
+                # An explicit company selector (--turn-ref / --origin-ts /
+                # --kind room|dm|mpim) pins the company turn. Otherwise a
+                # mention-only delivery newer than the pointer (or the one
+                # --turn-ts names) is the inbound being answered: resolve
+                # it BEFORE the company dispatch (jg-vobf70 round 4).
+                superseding = _mention_only_delivery_superseding_company(
+                    args, session_name, outbound, source)
+                if superseding is not None:
+                    print(
+                        f"note: mention-only delivery {superseding['channel_id']}/"
+                        f"{superseding['ts']} is newer than the company {source} "
+                        "turn — resolving it instead of the company dispatch",
+                        file=sys.stderr,
+                    )
+                    if (getattr(args, "turn_ts", "") or "").strip() and not (args.conversation_id or "").strip():
+                        # --turn-ts named THIS delivery: pin its conversation so
+                        # the legacy path cannot pick a newer delivery in another
+                        # room and then miss the ts there (codex r4 P2).
+                        args.conversation_id = superseding["channel_id"]
+                    return None
+            if (getattr(args, "turn_ts", "") or "").strip():
+                # --turn-ts anchors a channel-binding inbound; on a session
+                # with a live company turn the reply would divert to the
+                # company room regardless of the anchor. Refuse instead of
+                # silently misrouting (gp-6j3).
+>               raise SystemExit(
+                    "--turn-ts targets a channel-binding inbound, but this "
+                    "session has a live company turn; use --turn-ref from the "
+                    "company reminder instead")
+E                   SystemExit: --turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead
+
+slack-full/scripts/slack_chat_reply_current.py:371: SystemExit
+_ test_company_other_thread_in_same_channel_honored_only_when_bound[False---reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b340910>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_other_thread_in_s2')
+flag = '--reply-to', bound = False
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_other_thread_in_same_channel_honored_only_when_bound(
+            monkeypatch, tmp_path, flag, bound):
+        """Channel equality must not hide a requested thread different from the pointer."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "C0AAAAAAA", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
+        argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
+                flag, "100.000001", "--body", "another thread", "--via", "adapter"]
+        if bound:
+            assert rc.main(argv) == 0
+            assert len(posts) == 1
+            assert posts[0][1]["conversation"]["conversation_id"] == "C0AAAAAAA"
+            assert posts[0][1]["reply_to_message_id"] == "100.000001"
+        else:
+>           with pytest.raises(SystemExit) as exc:
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^
+E           Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1936: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_other_thread_in_same_channel_honored_only_when_bound[False---turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b3bc9f0>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_other_thread_in_s3')
+flag = '--turn-ts', bound = False
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    @pytest.mark.parametrize("bound", [True, False])
+    def test_company_other_thread_in_same_channel_honored_only_when_bound(
+            monkeypatch, tmp_path, flag, bound):
+        """Channel equality must not hide a requested thread different from the pointer."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        conv = {"scope_id": "test-city", "provider": "slack", "account_id": "T0TESTWS",
+                "conversation_id": "C0AAAAAAA", "kind": "room"}
+        monkeypatch.setattr(common, "gc_get", lambda path: {"items": [
+            {"Status": "active", "Conversation": conv}] if bound else []})
+        monkeypatch.setattr(common, "find_inbound_thread_by_ts", lambda c, ts: ("100.000001", conv))
+        argv = ["--session", "ollie-main", "--conversation-id", "C0AAAAAAA",
+                flag, "100.000001", "--body", "another thread", "--via", "adapter"]
+        if bound:
+            assert rc.main(argv) == 0
+            assert len(posts) == 1
+            assert posts[0][1]["conversation"]["conversation_id"] == "C0AAAAAAA"
+            assert posts[0][1]["reply_to_message_id"] == "100.000001"
+        else:
+            with pytest.raises(SystemExit) as exc:
+                rc.main(argv)
+>           assert "C0AAAAAAA/100.000001" in str(exc.value)
+E           AssertionError: assert 'C0AAAAAAA/100.000001' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead'
+E            +  where '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead' = str(SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead'))
+E            +    where SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead') = <ExceptionInfo SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead') tblen=3>.value
+
+slack-full/tests/test_slack_chat_reply_current.py:1938: AssertionError
+_ test_company_explicit_thread_without_channel_refuses_unbound_target[--reply-to] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b094b40>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_thread_w0')
+flag = '--reply-to'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    def test_company_explicit_thread_without_channel_refuses_unbound_target(monkeypatch, tmp_path, flag):
+        """A thread-only override must resolve its channel before checking membership."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_UNBOUND"}})
+>       with pytest.raises(SystemExit) as exc:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE SystemExit
+
+slack-full/tests/test_slack_chat_reply_current.py:1953: Failed
+----------------------------- Captured stdout call -----------------------------
+{
+  "delivered": true,
+  "conversation_id": "C0AAAAAAA",
+  "message_id": "1700000000.000800",
+  "thread_ts": "1700000000.000100"
+}
+_ test_company_explicit_thread_without_channel_refuses_unbound_target[--turn-ts] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10b41a040>
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-377/test_company_explicit_thread_w1')
+flag = '--turn-ts'
+
+    @pytest.mark.parametrize("flag", ["--reply-to", "--turn-ts"])
+    def test_company_explicit_thread_without_channel_refuses_unbound_target(monkeypatch, tmp_path, flag):
+        """A thread-only override must resolve its channel before checking membership."""
+        rc, company_posts, posts = _company_pointer_and_mention_only(
+            monkeypatch, tmp_path, pointer_delivered_at="2026-09-10T09:00:00Z",
+            delivery_received_at="2026-09-10T08:00:00Z")
+        common = sys.modules["slack_intake_common"]
+        monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda sid: {
+            "payload": {"conversation_id": "C_UNBOUND"}})
+        with pytest.raises(SystemExit) as exc:
+            rc.main(["--session", "ollie-main", flag, "100.000001", "--body", "do not send"])
+>       assert "C_UNBOUND/100.000001" in str(exc.value)
+E       AssertionError: assert 'C_UNBOUND/100.000001' in '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead'
+E        +  where '--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead' = str(SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead'))
+E        +    where SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead') = <ExceptionInfo SystemExit('--turn-ts targets a channel-binding inbound, but this session has a live company turn; use --turn-ref from the company reminder instead') tblen=3>.value
+
+slack-full/tests/test_slack_chat_reply_current.py:1955: AssertionError
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_bound_target_uses_ordinary_route[--reply-to-True]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_bound_target_uses_ordinary_route[--reply-to-False]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_bound_target_uses_ordinary_route[--turn-ts-True]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_bound_target_uses_ordinary_route[--turn-ts-False]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_bound_target_uses_ordinary_route[conversation-only-True]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[absent---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[absent---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[absent-conversation-only]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[inactive---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[inactive---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[inactive-conversation-only]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[other-workspace---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[other-workspace---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[other-workspace-conversation-only]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[unavailable---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[unavailable---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_unbound_target_refuses_both_destinations[unavailable-conversation-only]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_other_thread_in_same_channel_honored_only_when_bound[True---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_other_thread_in_same_channel_honored_only_when_bound[True---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_other_thread_in_same_channel_honored_only_when_bound[False---reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_other_thread_in_same_channel_honored_only_when_bound[False---turn-ts]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_thread_without_channel_refuses_unbound_target[--reply-to]
+FAILED slack-full/tests/test_slack_chat_reply_current.py::test_company_explicit_thread_without_channel_refuses_unbound_target[--turn-ts]
+23 failed, 2 passed, 530 deselected in 0.59s

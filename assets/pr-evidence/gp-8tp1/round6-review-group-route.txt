@@ -1,0 +1,11 @@
+Offline group-only route check; all HTTP calls mocked.
+Prior head: 3190c9af0f712192df46ae6b297f495fe302f8ae
+Current: prior head plus round-6 selector fix
+_explicit_target_uses_ordinary_route AST is identical before and after round 6.
+pre-round6: explicit target C_GROUP/100.001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+GET calls: ['/sessions', '/extmsg/bindings?session_id=gc-test-session', '/extmsg/bindings?session_id=ollie-main']
+POSTs: 0
+round6: explicit target C_GROUP/100.001 conflicts with live company turn C0AAAAAAA/1700000000.000100: no active binding for this session and target; use a bound conversation or --turn-ref from the company reminder
+GET calls: ['/sessions', '/extmsg/bindings?session_id=gc-test-session', '/extmsg/bindings?session_id=ollie-main']
+POSTs: 0
+Finding is pre-existing at the assigned baseline; not changed by round 6. Deferred to mayor because the bead excludes identity/binding lookup changes.
