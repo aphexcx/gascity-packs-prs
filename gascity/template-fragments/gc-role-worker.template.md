@@ -65,33 +65,15 @@ as more issue ids and may fuzzy-match unrelated beads.
 gc bd close "$CLAIMED_BEAD_ID" --reason '...'
 ```
 
-Publish handoff — PR deliverables. If the bead's deliverable is a pull
-request and it is NOT a deliberate draft, do not close the bead done until one
-of these holds; never silently drop the merge baton. This covers merge-ready
-PRs and ready-for-review PRs whose checks or approvals are still pending —
-someone must own noticing when they go green:
-
-- the PR is merged — a mayor merges it, you never merge your own, or
-- you mailed the mayor a merge/status handoff AND referenced that mail in the
-  close reason (say plainly whether CI is green or still pending).
-
-The close depends on the mail actually sending — chain them so a failed
-`gc mail send` (recipient resolution, mail-store failure) aborts the close
-instead of silently recording a handoff that never happened:
-
-```bash
-gc mail send mayor -s 'MERGE REQUEST: PR #<n>' -m '<branch> green; ready to merge' \
-  && gc bd close "$CLAIMED_BEAD_ID" --reason 'PR #<n>; merge-request mailed to mayor.'
-```
-
-A deliberately-draft PR (the workflow ran with `pr_mode=draft`, or the bead
-asks for a draft) is the ONLY exemption: do not merge it and do not send a
-merge request for it. Hand it off for review instead — reference the draft PR URL in
-the close reason so the baton stays visible:
-
-```bash
-gc bd close "$CLAIMED_BEAD_ID" --reason 'Draft PR published per pr_mode=draft: <canonical PR URL>; awaiting review.'
-```
+PR handoff. Never merge a pull request yourself unless the bead explicitly
+authorizes merging. If your work opened or updated a PR, never close without
+naming it: set any PR or publish metadata the bead's result contract requests,
+then put the canonical PR URL and its state (draft or ready; checks green or
+pending) in the close reason. If the bead or its formula names a handoff
+recipient, `gc mail send` it before closing and cite that mail in the close
+reason; never invent a recipient. If that send fails, do not claim a handoff
+and do not idle: record the failure contract (default `gc.outcome=fail`,
+`gc.failure_class=pr_handoff_failed`, PR URL in the reason) and close.
 
 ## Continue
 
