@@ -213,7 +213,7 @@ test('a text not_sent failure passes through and says a same-key retry is safe',
   assert.equal(requests.length, 1, 'text is never transport-retried by the CLI');
   assert.match(run.stderr.split('\n')[0], /idempotency key key-text/);
   assert.match(run.stderr, /"failure_kind":"not_sent"/);
-  assert.match(run.stderr, /nothing was written; retry with --idempotency-key key-text/);
+  assert.match(run.stderr, /the failed chunk was not written; retry with --idempotency-key key-text/);
 });
 
 test('a text delivery_unknown failure tells the operator to check the chat, not to retry the key', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
