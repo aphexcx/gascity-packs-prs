@@ -53,10 +53,18 @@ gc wecom publish --chat <chatid-or-userid> --file /abs/path/contract.docx [--tex
 - `--idempotency-key` — reuse a previous invocation's key to RESUME a
   failed or ambiguous media send without duplicating whatever already
   reached the chat. Media sends generate one automatically per
-  invocation (echoed in the response, and in the retry hint printed on
-  failure); pass the echoed key back here when retrying by hand. The
-  key must be paired with the same chat/file/caption — the adapter
-  answers a mismatched reuse with HTTP 409.
+  invocation (echoed before the request goes out, in the response, and
+  in the retry hint printed on failure); pass the echoed key back here
+  when retrying by hand. The key must be paired with the same
+  chat/file/caption — the adapter answers a mismatched reuse with HTTP
+  409 (`idempotency_conflict`). A same-key retry of a send whose WeCom
+  acknowledgement never arrived is also refused with HTTP 409,
+  `failure_kind` `delivery_unknown`, for text and media alike. The
+  failure hint follows `failure_kind`: on `delivery_unknown` (the first
+  502 or the 409 refusal) it prints no retry command — check the chat
+  first, and resend with a FRESH key only if the message is genuinely
+  missing; on `not_sent`, and on any other failure with HTTP 429 or
+  above, it names the key to retry with.
 
 ## Transcript
 

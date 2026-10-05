@@ -226,6 +226,10 @@ if [ -n "$media" ]; then
   # printing the generated key, so the natural rerun minted a fresh key
   # and duplicated the media. Print it up front, unconditionally.
   echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
+elif [ -n "$idempotency_key" ]; then
+  # Keyed text: the adapter resumes a same-key retry after the chunks it
+  # already delivered and refuses one whose last chunk went unacknowledged.
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
@@ -254,10 +258,45 @@ payload=$(printf '%s' "$response" | sed '$d')
 if [ "$status" -ge 400 ] 2>/dev/null; then
   echo "gc wecom publish: adapter returned HTTP $status" >&2
   [ -n "$payload" ] && echo "$payload" >&2
-  # Failed or ambiguous media sends resume under the SAME key — repeating
-  # the command with a fresh key would deliver the media a second time.
-  if [ -n "$media" ] && [ "$status" -ge 429 ]; then
-    echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  # The adapter's failure_kind says whether anything reached the chat.
+  # A media transport retry leaves every attempt's body in the payload,
+  # back to back, so read the LAST one (the answer $status belongs to).
+  failure_kind=$(printf '%s' "$payload" | jq -rs 'last | .failure_kind // empty' 2>/dev/null || true)
+  if [ -n "$media" ]; then
+    # A failed media send resumes under the SAME key (a fresh key would
+    # deliver the media a second time) — except one whose acknowledgement
+    # never arrived: the adapter refuses that same-key retry (409), and
+    # only the chat can say whether the media landed. curl's transport
+    # retry usually turns the first 502 into that 409, so both statuses
+    # take the check-the-chat hint.
+    if [ "$failure_kind" = "delivery_unknown" ]; then
+      echo "gc wecom publish: the media may already be in the chat — check the chat first; a same-key retry is refused (HTTP 409); resend with a FRESH key only if it is genuinely missing" >&2
+    elif [ "$status" -ge 429 ]; then
+      echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+    fi
+  else
+    case "$failure_kind" in
+      not_sent)
+        if [ -n "$idempotency_key" ]; then
+          echo "gc wecom publish: the failed chunk was not written; retry with --idempotency-key $idempotency_key (safe — it resumes without repeating delivered chunks)" >&2
+        else
+          echo "gc wecom publish: nothing was written; retrying is safe" >&2
+        fi
+        ;;
+      delivery_unknown)
+        # Only a keyed send has a same-key retry to refuse (HTTP 409).
+        if [ -n "$idempotency_key" ]; then
+          echo "gc wecom publish: the message may already be in the chat — check it before resending; a same-key retry is refused (HTTP 409), so resend with a fresh key only if it is missing" >&2
+        else
+          echo "gc wecom publish: the message may already be in the chat — check it before resending" >&2
+        fi
+        ;;
+      *)
+        if [ -n "$idempotency_key" ] && [ "$status" -ge 429 ]; then
+          echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+        fi
+        ;;
+    esac
   fi
   exit 1
 fi
