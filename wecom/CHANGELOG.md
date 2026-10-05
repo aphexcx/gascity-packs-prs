@@ -23,19 +23,30 @@
     `chunks_delivered`. A mismatched key reuse is still a 409 with
     `failure_kind` `idempotency_conflict`.
   - Keyed text is journaled so the refusal survives an adapter restart:
-    ONE journal write per publish, before the first chunk, recording
-    every remaining chunk as attempted. The outcome (delivered, nothing
-    written, unacknowledged, partial progress) amends that entry in
-    memory and reaches disk with the next journal write. A restart before
-    that write refuses the key, the safe side. Text entries expire 24 h
-    after their last update. A text write never displaces another entry:
+    one write per successful text publish; failures add one. The first
+    write goes out before the first chunk and records every remaining
+    chunk as attempted. A delivered publish drops its entry in memory,
+    and the drop reaches disk with the next journal write; a restart
+    before then refuses the key, the safe side. A failed publish writes
+    its outcome at once: nothing written drops the entry (a restart
+    never answers 409 for a key told "retrying is safe"), a pre-write
+    refusal mid-message records the resume point, and an unacknowledged
+    chunk records delivery-unknown with that chunk's index (a refusal
+    after a restart reports the chunk that timed out). Text entries
+    expire 24 h after their last update. A text write never displaces another entry:
     when the journal is full it is skipped and logged once, so text
     traffic cannot evict a media receipt.
   - An explicit provider rejection keeps `502 provider_error`, now with
     the `errcode`.
   - `gc wecom publish` echoes a supplied text key and says whether a
     retry is safe; the same-key-refused hint prints only when a key was
-    supplied.
+    supplied. Media picks its hint by `failure_kind` too: on
+    `delivery_unknown` (the first 502, or the 409 that curl's transport
+    retry turns it into) it says to check the chat first and resend with
+    a fresh key only if the media is genuinely missing, instead of
+    naming the key to retry; `not_sent` and the other failures at 429 or
+    above keep the resume hint. The hint reads the last response body,
+    since a transport retry leaves every attempt's body in the output.
 - Outbound FILE publish (jg-d0xr scope extension 8/23): `gc wecom
   publish --chat <id> --file /abs/path.docx [--text caption]` sends a
   WeCom file message via the same `/publish-media` pipeline as
