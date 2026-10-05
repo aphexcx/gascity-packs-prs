@@ -940,15 +940,22 @@ export function createOutboundPublisher(deps) {
     };
   }
 
-  // journalCovers reports whether the journal still holds what a retry of
-  // text state `s` needs: the refusal for a delivery-unknown state, the
-  // resume point for partial progress. Checked live, never cached — a
-  // media write may prune a text entry, and a text entry expires.
+  // journalCovers reports whether a retry of text state `s` that
+  // rehydrates from the journal would answer what `s` answers: the
+  // refusal for a delivery-unknown state, the resume point for partial
+  // progress, a fresh send for zero progress (no text entry at all is
+  // fine there). Checked live, never cached — a media write may prune a
+  // text entry, and a text entry expires. A failed publish whose outcome
+  // write was skipped or failed leaves the pre-send entry (every chunk
+  // attempted) behind, which rehydrates as a refusal — so it covers only
+  // a delivery-unknown state, never a key that was told to resume or
+  // that retrying is safe.
   function journalCovers(key, s) {
     const e = journal.get?.(key);
-    if (e?.endpoint !== 'publish') return false;
+    if (e?.endpoint !== 'publish') return !s.deliveryUnknown && s.chunksDelivered === 0;
     const r = stateFromJournalEntry(e);
-    return r.deliveryUnknown || (!s.deliveryUnknown && r.chunksDelivered === s.chunksDelivered);
+    if (s.deliveryUnknown) return r.deliveryUnknown;
+    return !r.deliveryUnknown && r.chunksDelivered === s.chunksDelivered;
   }
 
   // The journal is rehydrated LAZILY on a map miss (finding 7 — see
@@ -1070,7 +1077,9 @@ export function createOutboundPublisher(deps) {
         return false;
       };
       // Prefer settled, then a zero-progress text entry (a retry restarts
-      // at chunk 0 anyway); otherwise GROW — never block a text delivery.
+      // at chunk 0 anyway — unless a failed forget left its pre-send latch
+      // in the journal, which would rehydrate as a refusal); otherwise
+      // GROW — never block a text delivery.
       // A delivery-unknown entry (its chunk may be in the chat) or one
       // with partial progress (a bare restart would repeat its delivered
       // chunks) may leave memory only while the journal covers it — the
@@ -1079,7 +1088,7 @@ export function createOutboundPublisher(deps) {
       // documented last resort, logged), so failures cannot grow the pool
       // without bound.
       evict((s) => !!s.receipt)
-        || evict((s) => s.chunksDelivered === 0 && !s.deliveryUnknown)
+        || evict((s, k) => s.chunksDelivered === 0 && !s.deliveryUnknown && journalCovers(k, s))
         || evict((s, k) => journalCovers(k, s))
         || (countByEndpoint('publish') >= 2 * textStatesCap && evict(() => true)
           && (log('text publish pool at twice its cap and the journal does not cover it: dropped an unresolved text key (its retry protection is lost)'), true));
