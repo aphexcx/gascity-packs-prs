@@ -3407,6 +3407,81 @@ test('partial-progress keyed text states are bounded in memory and still resume 
   assert.deepEqual(sentByKey.get(current), chunks, 'the evicted key resumed at chunk 2 — every chunk exactly once');
 });
 
+test('a resumable text key whose outcome write was lost is not evicted on the pre-send entry', async (t) => {
+  const text = '很长的消息。'.repeat(400);
+  const chunks = chunkText(text);
+  assert.ok(chunks.length > 1);
+  const inner = createAttemptJournal();
+  // Lose key-lost's resume-point outcome write; the journal keeps its
+  // pre-send entry (every chunk attempted), which reads as delivery-unknown.
+  const lossy = {
+    ...inner,
+    record(key, patch, opts) {
+      if (key === 'key-lost' && patch.chunksDelivered > 0) return false;
+      return inner.record(key, patch, opts);
+    },
+  };
+  let failNext = true;
+  const sentByKey = new Map();
+  let current = '';
+  const { publisher } = makePublisher({
+    journal: lossy,
+    textStatesCap: 2,
+    sendMessage: async (chatid, body) => {
+      const sent = sentByKey.get(current) ?? [];
+      if (sent.length === 1 && failNext) throw notConnected();
+      sent.push(body.markdown.content);
+      sentByKey.set(current, sent);
+      return { headers: { req_id: `TEXT_${sent.length}` } };
+    },
+  });
+  for (const key of ['key-lost', 'key-a', 'key-b']) {
+    current = key;
+    const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text, idempotency_key: key });
+    assert.equal(res.json().failure_kind, 'not_sent');
+  }
+  failNext = false;
+  current = 'key-lost';
+  const retry = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text, idempotency_key: current });
+  assert.equal(retry.statusCode, 200, `the key was told to resume; got ${retry.statusCode} ${JSON.stringify(retry.json())}`);
+  assert.deepEqual(sentByKey.get(current), chunks, 'it resumed at chunk 2 — every chunk exactly once');
+});
+
+// Codex round 6 P2: the same hole for a zero-progress key whose eager
+// forget failed (disk full) — the stale pre-send latch must not stand in
+// for the in-memory "retrying is safe" state.
+test('a not_sent text key whose journal forget failed is not evicted onto its stale latch', async (t) => {
+  const inner = createAttemptJournal();
+  const lossy = {
+    ...inner,
+    forget(key, opts) {
+      if (key === 'key-stuck') return false; // the persist failed; the entry stays
+      return inner.forget(key, opts);
+    },
+  };
+  let failNext = true;
+  const sent = [];
+  const { publisher } = makePublisher({
+    journal: lossy,
+    textStatesCap: 2,
+    sendMessage: async (chatid, body) => {
+      if (failNext) throw notConnected();
+      sent.push(body.markdown.content);
+      return { headers: { req_id: 'TEXT_OK' } };
+    },
+  });
+  for (const key of ['key-stuck', 'key-a', 'key-b']) {
+    const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: key });
+    assert.equal(res.statusCode, 503);
+    assert.match(res.json().error, /Retrying is safe\.$/);
+  }
+  assert.equal(inner.get('key-stuck').chunksAttempted, 1, 'fixture: the stale pre-send latch is still journaled');
+  failNext = false;
+  const retry = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-stuck' });
+  assert.equal(retry.statusCode, 200, `the key was told retrying is safe; got ${retry.statusCode} ${JSON.stringify(retry.json())}`);
+  assert.deepEqual(sent, ['hello']);
+});
+
 test('a text publish with a missing body 400s like before', async (t) => {
   const { publisher } = makePublisher();
   const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' } });
