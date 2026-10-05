@@ -1005,11 +1005,20 @@ export function createOutboundPublisher(deps) {
       // Prefer settled, then a zero-progress text entry (a retry restarts
       // at chunk 0 anyway); otherwise GROW — never block a text delivery.
       // A delivery-unknown entry is never zero-progress: its chunk may be
-      // in the chat, and evicting it would let a retry send it again.
+      // in the chat. It may leave memory only when the journal holds it
+      // (the next retry rehydrates the refusal); with the journal broken,
+      // past twice the cap the oldest one goes anyway — the journal's own
+      // documented last resort, logged — so failures cannot grow the
+      // pool without bound.
       evict((s) => !!s.receipt)
-        || evict((s) => s.chunksDelivered === 0 && !s.receipt && !s.deliveryUnknown);
+        || evict((s) => s.chunksDelivered === 0 && !s.receipt && !s.deliveryUnknown)
+        || evict((s) => s.deliveryUnknown && s.journaled)
+        || (countByEndpoint('publish') >= 2 * textStatesCap && evict((s) => s.deliveryUnknown)
+          && (log('text publish pool at twice its cap with the journal unavailable: dropped a delivery-unknown key (its retry protection is lost)'), true));
     }
-    state = journaledText ? stateFromJournalEntry(journaled) : { chunksDelivered: 0, endpoint };
+    state = journaledText
+      ? { ...stateFromJournalEntry(journaled), journaled: true }
+      : { chunksDelivered: 0, endpoint };
     publishStates.set(key, state);
     return state;
   }
@@ -1303,12 +1312,21 @@ export function createOutboundPublisher(deps) {
             state.chunksAttempted = state.chunksDelivered;
             if (journalText) {
               if (state.chunksDelivered === 0) journal.forget?.(key);
-              else journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
+              else {
+                journal.record(key, {
+                  endpoint: 'publish', chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered,
+                }, { critical: false });
+              }
             }
           } else {
             sendFailure = 'unknown';
             state.deliveryUnknown = true;
-            if (journalText) journal.record(key, { deliveryUnknown: true }, { critical: false });
+            // The complete text state, not a bare flag: if the pre-send
+            // write was lost (or pruned meanwhile) a bare patch would
+            // rehydrate as a media entry and answer a spurious 409.
+            state.journaled = journalText && journal.record(key, {
+              endpoint: 'publish', chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true,
+            }, { critical: false });
           }
           throw err;
         }
@@ -1363,7 +1381,7 @@ export function createOutboundPublisher(deps) {
           conversation: convo,
           delivered: false,
           failure_kind: 'not_sent',
-          error: `nothing was written: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} never left the adapter, so it is not in the chat. `
+          error: `not sent: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} is not in the chat. `
             + (delivered === 0
               ? 'Retrying is safe.'
               : `Chunks 1–${delivered} were delivered earlier; retry with the same idempotency key to resume at chunk ${chunk} without repeating them.`),

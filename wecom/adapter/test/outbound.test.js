@@ -124,6 +124,7 @@ function makePublisher(overrides = {}) {
     ...(overrides.journal ? { journal: overrides.journal } : {}),
     ...(overrides.withUploadDeadline ? { withUploadDeadline: overrides.withUploadDeadline } : {}),
     publishStatesCap: overrides.publishStatesCap ?? 512,
+    ...(overrides.textStatesCap ? { textStatesCap: overrides.textStatesCap } : {}),
   });
   return { publisher, calls, outboundPosts, cfg };
 }
@@ -2892,7 +2893,7 @@ test('a pre-write refusal on text answers 503 not_sent and says nothing was writ
   const body = res.json();
   assert.equal(body.delivered, false);
   assert.equal(body.failure_kind, 'not_sent');
-  assert.match(body.error, /^nothing was written: the WebSocket is not connected/);
+  assert.match(body.error, /^not sent: the WebSocket is not connected \(nothing was written\)/);
   assert.match(body.error, /Retrying is safe\.$/);
   assert.equal(body.chunk, 1);
   assert.equal(body.chunks_delivered, 0);
@@ -2999,6 +3000,57 @@ test('an unacknowledged text chunk survives an adapter restart as delivery-unkno
   assert.equal(retry.statusCode, 502);
   assert.equal(retry.json().failure_kind, 'delivery_unknown');
   assert.equal(attempts, 0);
+});
+
+test('a lost pre-send journal write still journals the ack timeout as TEXT — no spurious 409 after a restart', async (t) => {
+  const inner = createAttemptJournal();
+  // Drop the pre-send latch (a failed non-critical write); keep the rest.
+  const lossy = {
+    ...inner,
+    record(key, patch, opts) {
+      if (patch.chunksAttempted !== undefined && !patch.deliveryUnknown) return false;
+      return inner.record(key, patch, opts);
+    },
+  };
+  const body = { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-lossy' };
+  const before = makePublisher({ journal: lossy, sendMessage: async () => { throw ackTimeout(); } });
+  assert.equal((await publishText(before.publisher, body)).statusCode, 502);
+  assert.equal(inner.get('key-lossy').endpoint, 'publish');
+
+  let attempts = 0;
+  const after = makePublisher({ journal: inner, sendMessage: async () => { attempts += 1; return {}; } });
+  const retry = await publishText(after.publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(attempts, 0);
+});
+
+test('delivery-unknown text states are bounded in memory and still refused once evicted', async (t) => {
+  const { publisher } = makePublisher({ textStatesCap: 2, sendMessage: async () => { throw ackTimeout(); } });
+  for (let i = 0; i < 20; i++) {
+    const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: `key-bound-${i}` });
+    assert.equal(res.statusCode, 502);
+  }
+  assert.ok(publisher.stats().publishStates <= 3, `pool grew to ${publisher.stats().publishStates}`);
+  // The first key left memory long ago; the journal still refuses it.
+  const retry = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-bound-0' });
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+});
+
+test('with the journal unavailable, delivery-unknown text states stop at twice the cap', async (t) => {
+  const broken = { ...createAttemptJournal(), record: () => false, get: () => undefined, forget: () => false };
+  const logs = [];
+  const { publisher } = makePublisher({
+    journal: broken,
+    textStatesCap: 2,
+    log: (m) => logs.push(m),
+    sendMessage: async () => { throw ackTimeout(); },
+  });
+  for (let i = 0; i < 20; i++) {
+    await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: `key-broken-${i}` });
+  }
+  assert.ok(publisher.stats().publishStates <= 5, `pool grew to ${publisher.stats().publishStates}`);
+  assert.ok(logs.some((m) => /retry protection is lost/.test(m)));
 });
 
 test('a keyed text that fails pre-write at chunk 2 answers not_sent and the retry resumes at chunk 2', async (t) => {
