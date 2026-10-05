@@ -236,3 +236,58 @@ test('a keyless text delivery_unknown failure says check the chat, with no same-
   assert.match(run.stderr, /the message may already be in the chat — check it before resending/);
   assert.doesNotMatch(run.stderr, /same-key|idempotency/, 'no key was supplied, so there is no same-key retry to mention');
 });
+
+// Round 3: media picks its failure hint by failure_kind, as text does. A
+// delivery_unknown send must not be told to retry its key — the adapter
+// refuses that retry with a 409 — and curl's transport retry usually
+// turns the first 502 into that 409 before the CLI reads the answer.
+test('a media delivery_unknown failure says check the chat, not retry the key', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'photo.png');
+  fs.writeFileSync(file, pngBytes);
+  // The adapter's real sequence: the ack timeout answers 502, and the
+  // same-key transport retry is refused with 409.
+  const { requests, url } = await startCaptureServer(t, (record, n) => ({
+    status: n === 1 ? 502 : 409,
+    payload: { delivered: false, failure_kind: 'delivery_unknown', idempotency_key: record.body.idempotency_key },
+  }));
+
+  const run = await runPublish(['--chat', 'zhang_san', '--image', file], url);
+  assert.equal(run.code, 1);
+  assert.equal(requests.length, 2, 'curl retried the 502 once and stopped at the 409');
+  const key = requests[0].body.idempotency_key;
+  assert.match(run.stderr, /adapter returned HTTP 409/);
+  assert.match(run.stderr, /check the chat first; a same-key retry is refused \(HTTP 409\); resend with a FRESH key only if it is genuinely missing/);
+  assert.doesNotMatch(run.stderr, new RegExp(`retry with --idempotency-key ${key}`));
+});
+
+test('a media 502 delivery_unknown alone also gets the check-the-chat hint', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'photo.png');
+  fs.writeFileSync(file, pngBytes);
+  const { requests, url } = await startCaptureServer(t, () => (
+    { status: 502, payload: { delivered: false, failure_kind: 'delivery_unknown' } }
+  ));
+
+  const run = await runPublish(['--chat', 'zhang_san', '--image', file], url);
+  assert.equal(run.code, 1);
+  const key = requests[0].body.idempotency_key;
+  assert.match(run.stderr, /adapter returned HTTP 502/);
+  assert.match(run.stderr, /check the chat first; a same-key retry is refused/);
+  assert.doesNotMatch(run.stderr, new RegExp(`retry with --idempotency-key ${key}`));
+});
+
+test('a media not_sent failure keeps the same-key resume hint', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const dir = tmpDir(t);
+  const file = path.join(dir, 'photo.png');
+  fs.writeFileSync(file, pngBytes);
+  const { requests, url } = await startCaptureServer(t, () => (
+    { status: 503, payload: { delivered: false, failure_kind: 'not_sent' } }
+  ));
+
+  const run = await runPublish(['--chat', 'zhang_san', '--image', file], url);
+  assert.equal(run.code, 1);
+  const key = requests[0].body.idempotency_key;
+  assert.match(run.stderr, new RegExp(`retry with --idempotency-key ${key} to resume`));
+  assert.doesNotMatch(run.stderr, /check the chat first/);
+});

@@ -222,6 +222,10 @@ export class JournalUnavailableError extends Error {}
 //     or any other entry.
 //   - a MEDIA write at the cap still prunes by the policy above; text
 //     entries never settle, so they go only in its last-resort step.
+//   - cadence: one write per successful text publish (before its first
+//     chunk; the drop of the delivered key rides the next write), and a
+//     failed publish adds one, made at once, so its outcome is on disk
+//     before the caller is answered (see handlePublish).
 //
 // filePath null keeps the journal in memory only (tests).
 export function createAttemptJournal({
@@ -341,12 +345,7 @@ export function createAttemptJournal({
     // ifRoom (text writes): never displace another entry — when the
     // write would exceed the cap or the byte cap, skip it (logged once
     // until a text write fits again) and return false.
-    //
-    // deferred (text outcomes): when the key is already journaled, merge
-    // in memory only and let the next write persist it — callers use it
-    // only for patches whose loss errs toward refusing a retry. A key not
-    // journaled takes the normal write.
-    record(key, patch, { critical = true, ifRoom = false, deferred = false } = {}) {
+    record(key, patch, { critical = true, ifRoom = false } = {}) {
       const fail = (err) => {
         const wrapped = new JournalUnavailableError(
           `the outbound attempt journal cannot be written (${err.code ?? scrubErrorMessage(err.message)}) — `
@@ -363,7 +362,6 @@ export function createAttemptJournal({
       const merged = { ...(prev ?? {}), ...patch, updatedAt: now() };
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
-      if (deferred && hadKey) return true;
       const pruned = [];
       // Retention policy (round-2 findings 7, 12): bound BOTH the entry
       // count and the total serialized bytes. Per-entry size is already
@@ -418,7 +416,8 @@ export function createAttemptJournal({
     // restart — a fully delivered text send, or one that failed before
     // anything was written. Always non-critical: a lost forget leaves an
     // entry a restart may over-refuse (delivery-unknown), the safe side.
-    // deferred drops it in memory only; the next write persists the drop.
+    // deferred drops it in memory only; the next write persists the drop
+    // (a delivered text send — the one caller whose drop may wait).
     forget(key, { deferred = false } = {}) {
       if (degraded || !entries.has(key)) return false;
       const prev = entries.get(key);
@@ -1357,30 +1356,34 @@ export function createOutboundPublisher(deps) {
     // logging them is within the no-content-logging policy.
     //
     // chunksAttempted latches in memory BEFORE each frame goes out
-    // (media's caption discipline). A keyed publish makes ONE journal
-    // write, before the first chunk, recording every remaining chunk as
+    // (media's caption discipline). A keyed publish writes the journal
+    // once before the first chunk, recording every remaining chunk as
     // attempted: a crash anywhere in the loop rehydrates as
-    // delivery-unknown. The outcome then amends that entry in memory
-    // (deferred — the next journal write persists it): delivered or
-    // nothing written drops it, an unacknowledged chunk marks it, a
-    // pre-write refusal mid-message keeps the resume point. A lost
-    // amendment errs toward refusing a retry after a restart, never
-    // toward re-sending. Text journal writes are non-critical and ifRoom:
-    // a full or broken journal never blocks text delivery (it only loses
-    // the restart-durable half of the protection). Text keys are not
-    // byte-capped on the wire, so only a key within media's cap is
-    // journaled — that keeps every entry small and the persist cheap.
+    // delivery-unknown. A DELIVERED publish drops that entry in memory
+    // only (deferred — the next journal write persists the drop), so it
+    // costs one write; a restart before then refuses the key, the safe
+    // side. A FAILED publish writes its outcome at once, so it costs two:
+    // nothing written drops the entry (a restart must not answer 409 for
+    // a key just told "retrying is safe"), a pre-write refusal
+    // mid-message records the resume point, and an unacknowledged chunk
+    // records deliveryUnknown with that chunk's index (a refusal after a
+    // restart names the chunk that timed out and never understates
+    // chunks_delivered). A lost outcome write errs toward refusing a
+    // retry after a restart, never toward re-sending. Text journal
+    // writes are non-critical and ifRoom: a full or broken journal never
+    // blocks text delivery (it only loses the restart-durable half of
+    // the protection). Text keys are not byte-capped on the wire, so only
+    // a key within media's cap is journaled — that keeps every entry
+    // small and the persist cheap.
     const journalText = !!key && Buffer.byteLength(key) <= MAX_IDEMPOTENCY_KEY_BYTES && !journal.isDegraded?.();
-    const amendJournal = (patch) => journal.record(key, { endpoint: 'publish', ...patch }, { critical: false, ifRoom: true, deferred: true });
+    const journalTextState = (patch) => journal.record(key, { endpoint: 'publish', ...patch }, { critical: false, ifRoom: true });
     let chunkCount = 0;
     let sendFailure = ''; // set only by a failed sendMessage: not_written | rejected | unknown
     const send = async () => {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
       if (journalText && state.chunksDelivered < chunks.length) {
-        journal.record(key, {
-          endpoint: 'publish', chunksAttempted: chunks.length, chunksDelivered: state.chunksDelivered,
-        }, { critical: false, ifRoom: true });
+        journalTextState({ chunksAttempted: chunks.length, chunksDelivered: state.chunksDelivered });
       }
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
         state.chunksAttempted = i + 1;
@@ -1399,8 +1402,8 @@ export function createOutboundPublisher(deps) {
             sendFailure = typeof err?.errcode === 'number' ? 'rejected' : 'not_written';
             state.chunksAttempted = state.chunksDelivered;
             if (journalText) {
-              if (state.chunksDelivered === 0) journal.forget?.(key, { deferred: true });
-              else amendJournal({ chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered });
+              if (state.chunksDelivered === 0) journal.forget?.(key);
+              else journalTextState({ chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered });
             }
           } else {
             sendFailure = 'unknown';
@@ -1410,7 +1413,7 @@ export function createOutboundPublisher(deps) {
             // and a bare patch would rehydrate as a media entry and
             // answer a spurious idempotency_conflict.
             if (journalText) {
-              amendJournal({ chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true });
+              journalTextState({ chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true });
             }
           }
           throw err;
