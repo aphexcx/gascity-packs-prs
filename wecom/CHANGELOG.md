@@ -2,6 +2,19 @@
 
 ## 0.0.1 (unreleased)
 
+- Text send failure kinds (jg-qx7fek, 10/5): text `/publish` no longer
+  answers every send failure with `502 provider_error`. A pre-write
+  refusal (`WebSocket not connected`, full SDK reply queue) answers
+  `503 not_sent` — nothing was written, retrying is safe. A written chunk
+  whose acknowledgement never arrived answers `502 delivery_unknown`
+  with the chunk index, and a keyed retry of it is REFUSED with the same
+  body `/publish-media` uses (text state now carries `chunksAttempted`,
+  journaled for keyed sends so the refusal survives an adapter restart;
+  delivered or never-written text keys are dropped from the journal).
+  An explicit provider rejection keeps `502 provider_error`, now with
+  the `errcode`. `gc wecom publish` echoes a supplied text key and says
+  whether a retry is safe. gc itself is unaffected (any 5xx is transient
+  to it).
 - Outbound FILE publish (jg-d0xr scope extension 8/23): `gc wecom
   publish --chat <id> --file /abs/path.docx [--text caption]` sends a
   WeCom file message via the same `/publish-media` pipeline as

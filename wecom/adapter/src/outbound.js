@@ -362,6 +362,23 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
       }
       return true;
     },
+    // forget drops a key's entry once nothing about it needs to survive a
+    // restart — a fully delivered text send, or one that failed before
+    // anything was written. Always non-critical: a lost forget leaves an
+    // entry a restart may over-refuse (delivery-unknown), the safe side.
+    forget(key) {
+      if (degraded || !entries.has(key)) return false;
+      const prev = entries.get(key);
+      entries.delete(key);
+      try {
+        persist();
+      } catch (err) {
+        entries.set(key, prev);
+        log(`outbound attempt journal: could not drop a settled key (${err.code ?? scrubErrorMessage(err.message)})`);
+        return false;
+      }
+      return true;
+    },
     get(key) {
       return entries.get(key);
     },
@@ -843,7 +860,9 @@ export function createOutboundPublisher(deps) {
   // retry, because the message may already be visible in the chat.
   function stateFromJournalEntry(e) {
     return {
-      endpoint: 'publish-media',
+      // Text entries carry endpoint 'publish'; media entries predate the
+      // field and are identified by their fingerprint.
+      endpoint: e.endpoint ?? 'publish-media',
       fingerprint: e.fingerprint,
       mediaId: e.mediaId,
       mediaSent: !!e.mediaSent,
@@ -952,8 +971,12 @@ export function createOutboundPublisher(deps) {
     // Rehydration is an ADMISSION and counts against the media cap like
     // any other (round-3 finding 2: uncapped rehydration grew the state
     // map past the cap it claims to hold).
+    // A journaled TEXT key (an unacknowledged chunk, or partial progress
+    // that outlived a restart) rehydrates through the text admission
+    // below — text never refuses.
     const journaled = journal.get?.(key);
-    if (journaled) {
+    const journaledText = journaled?.endpoint === 'publish';
+    if (journaled && !journaledText) {
       state = stateFromJournalEntry(journaled);
       if (!admitMedia()) {
         // The pool is full of live/pinned sends. A SETTLED journaled key
@@ -967,7 +990,7 @@ export function createOutboundPublisher(deps) {
       return state;
     }
 
-    if (endpoint === 'publish-media') {
+    if (endpoint === 'publish-media' && !journaledText) {
       // Refuse only when every media slot is a live or pinned send.
       if (!admitMedia()) return null;
     } else if (countByEndpoint('publish') >= textStatesCap) {
@@ -981,9 +1004,12 @@ export function createOutboundPublisher(deps) {
       };
       // Prefer settled, then a zero-progress text entry (a retry restarts
       // at chunk 0 anyway); otherwise GROW — never block a text delivery.
-      evict((s) => !!s.receipt) || evict((s) => s.chunksDelivered === 0 && !s.receipt);
+      // A delivery-unknown entry is never zero-progress: its chunk may be
+      // in the chat, and evicting it would let a retry send it again.
+      evict((s) => !!s.receipt)
+        || evict((s) => s.chunksDelivered === 0 && !s.receipt && !s.deliveryUnknown);
     }
-    state = { chunksDelivered: 0, endpoint };
+    state = journaledText ? stateFromJournalEntry(journaled) : { chunksDelivered: 0, endpoint };
     publishStates.set(key, state);
     return state;
   }
@@ -1071,6 +1097,24 @@ export function createOutboundPublisher(deps) {
     if (!key) return;
     if (state.fingerprint || state.mediaId || state.mediaSent || state.receipt || state.chunksDelivered > 0) return;
     if (publishStates.get(key) === state) publishStates.delete(key);
+  }
+
+  // writeDeliveryUnknown answers a send whose acknowledgement never
+  // arrived, and every keyed retry of it. /publish and /publish-media
+  // share this one shape so the CLI and its callers classify both alike.
+  // The only way past it is a FRESH key, after checking the chat.
+  function writeDeliveryUnknown(res, { convo, key, detail = '', extra = {} }) {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      conversation: convo,
+      delivered: false,
+      failure_kind: 'delivery_unknown',
+      error: 'the WeCom acknowledgement for a send under this idempotency key never arrived — the message may or may not be visible in the chat. '
+        + 'Check the chat first; re-send with a FRESH key only if it is genuinely missing.'
+        + (detail ? ` (${detail})` : ''),
+      idempotency_key: key,
+      ...extra,
+    }));
   }
 
   // --- /publish: text/markdown --------------------------------------------
@@ -1208,39 +1252,133 @@ export function createOutboundPublisher(deps) {
       }));
       return;
     }
-    if (pub.idempotency_key) state.endpoint = 'publish';
+    const key = pub.idempotency_key;
+    if (key) state.endpoint = 'publish';
+
+    // A chunk was attempted without an acknowledgement (in this process,
+    // or journaled before a restart): it may already be in the chat, so
+    // this key is not blindly retryable — exactly media's rule.
+    if (state.deliveryUnknown || (state.chunksAttempted ?? 0) > state.chunksDelivered) {
+      token.finish(new Error(`delivery unknown for ${key}`));
+      writeDeliveryUnknown(res, {
+        convo,
+        key,
+        extra: { chunk: state.chunksDelivered + 1, chunks_delivered: state.chunksDelivered },
+      });
+      return;
+    }
 
     // The delivered log line (below) names feedbackBase so a later
     // feedback_event correlates back to this exact publish — feedback
     // ids are adapter-minted identifiers, not conversation content, so
     // logging them is within the no-content-logging policy.
+    //
+    // chunksAttempted latches BEFORE each frame goes out (media's caption
+    // discipline) and keyed attempts are journaled, so an unacknowledged
+    // chunk refuses a retry even across an adapter restart. Text journal
+    // writes are non-critical: a broken journal never blocks text
+    // delivery (it only loses the restart-durable half of the protection).
+    const journalText = !!key && !journal.isDegraded?.();
+    let chunkCount = 0;
+    let sendFailure = ''; // set only by a failed sendMessage: not_written | rejected | unknown
     const send = async () => {
       const chunks = chunkText(pub.text);
+      chunkCount = chunks.length;
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
-        const chunkReceipt = await sendMessage(chatid, {
-          msgtype: 'markdown',
-          markdown: {
-            content: chunks[i],
-            ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
-          },
-        });
+        state.chunksAttempted = i + 1;
+        if (journalText) journal.record(key, { endpoint: 'publish', chunksAttempted: i + 1, chunksDelivered: i }, { critical: false });
+        let chunkReceipt;
+        try {
+          chunkReceipt = await sendMessage(chatid, {
+            msgtype: 'markdown',
+            markdown: {
+              content: chunks[i],
+              ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
+            },
+          });
+        } catch (err) {
+          if (isDefiniteSendFailure(err)) {
+            // Nothing from this chunk is in the chat: keep the key retryable.
+            sendFailure = typeof err?.errcode === 'number' ? 'rejected' : 'not_written';
+            state.chunksAttempted = state.chunksDelivered;
+            if (journalText) {
+              if (state.chunksDelivered === 0) journal.forget?.(key);
+              else journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
+            }
+          } else {
+            sendFailure = 'unknown';
+            state.deliveryUnknown = true;
+            if (journalText) journal.record(key, { deliveryUnknown: true }, { critical: false });
+          }
+          throw err;
+        }
         state.messageID = chunkReceipt?.headers?.req_id ?? state.messageID;
         state.chunksDelivered = i + 1;
       }
+      if (journalText) journal.forget?.(key);
     };
     try {
       await chainSend(chatid, send);
     } catch (err) {
       token.finish(err);
+      const chunk = state.chunksDelivered + 1;
+      const delivered = state.chunksDelivered;
       // Allowlist-render the provider error at the log sink (round-2
       // finding 13; round-3 finding 3): only structured fields and
       // canonical labels reach the service log — never raw errmsg text.
-      log(`publish → ${chatid} failed at chunk ${state.chunksDelivered + 1}: ${describeProviderError(err)}`);
+      log(`publish → ${chatid} failed at chunk ${chunk}: ${describeProviderError(err)}`);
+      // Failure mapping (jg-qx7fek). gc reads only the status (any 5xx is
+      // transient to it); the CLI and the outbox read failure_kind.
+      //   pre-write refusal (isDefiniteSendFailure, no errcode), and a
+      //     retry cannot repeat a visible chunk (nothing delivered yet,
+      //     or keyed so a retry resumes after the delivered ones)
+      //                                    → 503 not_sent
+      //   written, no acknowledgement (ack timeout, socket-loss
+      //     cancellation, anything unrecognized)
+      //                                    → 502 delivery_unknown; a keyed
+      //                                      retry is refused the same way
+      //   explicit provider rejection (ack frame with errcode ≠ 0): the
+      //     frame was written and refused, nothing is visible
+      //                                    → 502 provider_error + errcode
+      //   pre-write refusal on a KEYLESS send after earlier chunks were
+      //     delivered (a bare retry would repeat them), or a failure
+      //     before any send (bad text)     → 502 provider_error
+      const extra = {
+        chunk,
+        chunks_delivered: delivered,
+        ...(key ? { idempotency_key: key } : {}),
+      };
+      if (sendFailure === 'unknown') {
+        writeDeliveryUnknown(res, {
+          convo,
+          key,
+          detail: `chunk ${chunk} of ${chunkCount}: ${describeProviderError(err)}`,
+          extra: { chunk, chunks_delivered: delivered },
+        });
+        return;
+      }
+      if (sendFailure === 'not_written' && (delivered === 0 || key)) {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          conversation: convo,
+          delivered: false,
+          failure_kind: 'not_sent',
+          error: `nothing was written: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} never left the adapter, so it is not in the chat. `
+            + (delivered === 0
+              ? 'Retrying is safe.'
+              : `Chunks 1–${delivered} were delivered earlier; retry with the same idempotency key to resume at chunk ${chunk} without repeating them.`),
+          ...extra,
+        }));
+        return;
+      }
       res.writeHead(502, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         conversation: convo,
         delivered: false,
         failure_kind: 'provider_error',
+        ...(sendFailure ? { error: describeProviderError(err) } : {}),
+        ...(typeof err?.errcode === 'number' ? { errcode: err.errcode } : {}),
+        ...extra,
       }));
       return;
     }
@@ -1445,18 +1583,7 @@ export function createOutboundPublisher(deps) {
         idempotency_key: key,
       }));
     };
-    const failDeliveryUnknown = (detail = '') => {
-      res.writeHead(502, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        conversation: convo,
-        delivered: false,
-        failure_kind: 'delivery_unknown',
-        error: 'the WeCom acknowledgement for a send under this idempotency key never arrived — the message may or may not be visible in the chat. '
-          + 'Check the chat first; re-send with a FRESH key only if it is genuinely missing.'
-          + (detail ? ` (${detail})` : ''),
-        idempotency_key: key,
-      }));
-    };
+    const failDeliveryUnknown = (detail = '') => writeDeliveryUnknown(res, { convo, key, detail });
     const fail503Journal = (message) => {
       res.writeHead(503, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({

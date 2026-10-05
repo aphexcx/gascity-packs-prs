@@ -226,6 +226,10 @@ if [ -n "$media" ]; then
   # printing the generated key, so the natural rerun minted a fresh key
   # and duplicated the media. Print it up front, unconditionally.
   echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
+elif [ -n "$idempotency_key" ]; then
+  # Keyed text: the adapter resumes a same-key retry after the chunks it
+  # already delivered and refuses one whose last chunk went unacknowledged.
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
@@ -258,6 +262,27 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
   # the command with a fresh key would deliver the media a second time.
   if [ -n "$media" ] && [ "$status" -ge 429 ]; then
     echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+  fi
+  # Text: the adapter's failure_kind says whether anything reached the chat.
+  if [ -z "$media" ]; then
+    failure_kind=$(printf '%s' "$payload" | jq -r '.failure_kind // empty' 2>/dev/null || true)
+    case "$failure_kind" in
+      not_sent)
+        if [ -n "$idempotency_key" ]; then
+          echo "gc wecom publish: nothing was written; retry with --idempotency-key $idempotency_key (safe — it resumes without repeating delivered chunks)" >&2
+        else
+          echo "gc wecom publish: nothing was written; retrying is safe" >&2
+        fi
+        ;;
+      delivery_unknown)
+        echo "gc wecom publish: the message may already be in the chat — check it before resending; a same-key retry is refused, so resend with a fresh key only if it is missing" >&2
+        ;;
+      *)
+        if [ -n "$idempotency_key" ] && [ "$status" -ge 429 ]; then
+          echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume this send without duplicating it" >&2
+        fi
+        ;;
+    esac
   fi
   exit 1
 fi
