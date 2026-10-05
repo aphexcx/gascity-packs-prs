@@ -209,10 +209,37 @@ export class JournalUnavailableError extends Error {}
 // see handlePublishMedia), which is what keeps the full-rewrite persist
 // below cheap enough to run per stage latch.
 //
+// TEXT entries (endpoint 'publish', jg-qx7fek) are guests in the media
+// journal, and the guarantees are exactly these:
+//   - a text entry expires `textTtlMs` (default 24 h) after its last
+//     update: it is ignored by get() and dropped on load and on every
+//     write. Text entries never settle, so without the expiry an
+//     unacknowledged chunk would hold its slot forever.
+//   - a text write is ifRoom: it NEVER displaces another entry. At the
+//     cap (or the byte cap) it is skipped, logged once until a text
+//     write fits again, and the send goes ahead with in-memory
+//     protection only. So text traffic can never evict a media receipt —
+//     or any other entry.
+//   - a MEDIA write at the cap still prunes by the policy above; text
+//     entries never settle, so they go only in its last-resort step.
+//
 // filePath null keeps the journal in memory only (tests).
-export function createAttemptJournal({ filePath = null, log = () => {}, cap = 512, maxBytes = 4 * 1024 * 1024 } = {}) {
+export function createAttemptJournal({
+  filePath = null,
+  log = () => {},
+  cap = 512,
+  maxBytes = 4 * 1024 * 1024,
+  textTtlMs = 24 * 60 * 60 * 1000,
+  now = Date.now,
+} = {}) {
   const entries = new Map(); // key → { fingerprint, mediaId, sendAttempted, mediaSent, … }
   let degraded = false;
+  let textSkipLogged = false;
+
+  const expiredText = (e) => e?.endpoint === 'publish' && now() - (e.updatedAt ?? 0) > textTtlMs;
+  const dropExpiredText = () => {
+    for (const [k, e] of entries) if (expiredText(e)) entries.delete(k);
+  };
 
   // tryLoad → Map (valid), undefined (absent), or null (corrupt/unreadable).
   const tryLoad = (p) => {
@@ -267,6 +294,7 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
     }
     if (loaded) {
       for (const [k, v] of loaded) entries.set(k, v);
+      dropExpiredText();
     } else if (sawCorrupt) {
       degraded = true;
       log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '
@@ -309,7 +337,16 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
     // (the default) throws JournalUnavailableError when durability cannot
     // be established — callers must stop the send; critical:false logs,
     // rolls the in-memory mutation back, and returns false.
-    record(key, patch, { critical = true } = {}) {
+    //
+    // ifRoom (text writes): never displace another entry — when the
+    // write would exceed the cap or the byte cap, skip it (logged once
+    // until a text write fits again) and return false.
+    //
+    // deferred (text outcomes): when the key is already journaled, merge
+    // in memory only and let the next write persist it — callers use it
+    // only for patches whose loss errs toward refusing a retry. A key not
+    // journaled takes the normal write.
+    record(key, patch, { critical = true, ifRoom = false, deferred = false } = {}) {
       const fail = (err) => {
         const wrapped = new JournalUnavailableError(
           `the outbound attempt journal cannot be written (${err.code ?? scrubErrorMessage(err.message)}) — `
@@ -320,11 +357,13 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
         return false;
       };
       if (degraded) return fail(new Error('journal is degraded (quarantined corrupt state on startup)'));
+      dropExpiredText();
       const hadKey = entries.has(key);
       const prev = entries.get(key);
-      const merged = { ...(prev ?? {}), ...patch, updatedAt: Date.now() };
+      const merged = { ...(prev ?? {}), ...patch, updatedAt: now() };
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
+      if (deferred && hadKey) return true;
       const pruned = [];
       // Retention policy (round-2 findings 7, 12): bound BOTH the entry
       // count and the total serialized bytes. Per-entry size is already
@@ -332,10 +371,22 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
       // belt-and-suspenders guard against a pathological in-cap burst.
       // Drop the oldest SETTLED entry first; only when nothing is settled
       // drop the oldest of all — that entry loses its delivery-unknown
-      // protection, so say so.
+      // protection, so say so. An ifRoom write drops nothing.
       const overBytes = () =>
         Buffer.byteLength(JSON.stringify({ version: 2, entries: Object.fromEntries(entries) })) > maxBytes;
-      while (entries.size > cap || (entries.size > 1 && overBytes())) {
+      const overCap = () => entries.size > cap || (entries.size > 1 && overBytes());
+      // ifRoom checks the byte cap even for a lone entry: skipping it is
+      // free, whereas the prune loop below must keep at least one.
+      if (ifRoom && (entries.size > cap || overBytes())) {
+        entries.delete(key);
+        if (hadKey) entries.set(key, prev);
+        if (!textSkipLogged) {
+          textSkipLogged = true;
+          log('outbound attempt journal full: a text send is not journaled (no entry is displaced for it; its retry protection does not survive a restart)');
+        }
+        return false;
+      }
+      while (overCap()) {
         let dropped = null;
         for (const [k, e] of entries) {
           if (e.receipt) { dropped = k; break; }
@@ -360,16 +411,19 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
         }
         return fail(err);
       }
+      if (ifRoom) textSkipLogged = false;
       return true;
     },
     // forget drops a key's entry once nothing about it needs to survive a
     // restart — a fully delivered text send, or one that failed before
     // anything was written. Always non-critical: a lost forget leaves an
     // entry a restart may over-refuse (delivery-unknown), the safe side.
-    forget(key) {
+    // deferred drops it in memory only; the next write persists the drop.
+    forget(key, { deferred = false } = {}) {
       if (degraded || !entries.has(key)) return false;
       const prev = entries.get(key);
       entries.delete(key);
+      if (deferred) return true;
       try {
         persist();
       } catch (err) {
@@ -380,7 +434,8 @@ export function createAttemptJournal({ filePath = null, log = () => {}, cap = 51
       return true;
     },
     get(key) {
-      return entries.get(key);
+      const e = entries.get(key);
+      return expiredText(e) ? undefined : e;
     },
     entries() {
       return [...entries];
@@ -886,6 +941,17 @@ export function createOutboundPublisher(deps) {
     };
   }
 
+  // journalCovers reports whether the journal still holds what a retry of
+  // text state `s` needs: the refusal for a delivery-unknown state, the
+  // resume point for partial progress. Checked live, never cached — a
+  // media write may prune a text entry, and a text entry expires.
+  function journalCovers(key, s) {
+    const e = journal.get?.(key);
+    if (e?.endpoint !== 'publish') return false;
+    const r = stateFromJournalEntry(e);
+    return r.deliveryUnknown || (!s.deliveryUnknown && r.chunksDelivered === s.chunksDelivered);
+  }
+
   // The journal is rehydrated LAZILY on a map miss (finding 7 — see
   // rehydrateFromJournal in publishStateFor), not bulk-loaded at
   // construction: bulk-loading would pull up to 512 media entries into
@@ -937,10 +1003,12 @@ export function createOutboundPublisher(deps) {
   //     of genuinely LIVE (in-flight, retained-upload, or pinned) sends:
   //     a true concurrency bound, not a permanent wedge. The upload gate
   //     and the journal cap bound the real resources (finding 9).
-  //   - TEXT never refuses (finding 8 / legacy restore): it evicts the
-  //     oldest settled or zero-progress text entry, and GROWS when
-  //     nothing is evictable — exactly the pre-jg-d0xr behavior. Text
-  //     states carry no buffer, so growth is bounded by live concurrency.
+  //   - TEXT never refuses (finding 8 / legacy restore): at its cap it
+  //     evicts one non-live text entry — settled, zero-progress, or one
+  //     whose retry state the journal holds (jg-qx7fek) — and GROWS when
+  //     none is evictable. Past twice the cap the oldest non-live entry
+  //     goes anyway, logged. So the pool holds at most twice the cap plus
+  //     the live (in-flight) sends; text states carry no buffer.
   function publishStateFor(key, endpoint = 'publish') {
     if (!key) return { chunksDelivered: 0, endpoint }; // untracked, per-call state
     let state = publishStates.get(key);
@@ -998,27 +1066,26 @@ export function createOutboundPublisher(deps) {
         for (const [k, s] of publishStates) {
           if ((s.endpoint ?? 'publish') !== 'publish') continue;
           if (s.promise || s.pinned) continue;
-          if (predicate(s)) { publishStates.delete(k); return true; }
+          if (predicate(s, k)) { publishStates.delete(k); return true; }
         }
         return false;
       };
       // Prefer settled, then a zero-progress text entry (a retry restarts
       // at chunk 0 anyway); otherwise GROW — never block a text delivery.
-      // A delivery-unknown entry is never zero-progress: its chunk may be
-      // in the chat. It may leave memory only when the journal holds it
-      // (the next retry rehydrates the refusal); with the journal broken,
-      // past twice the cap the oldest one goes anyway — the journal's own
-      // documented last resort, logged — so failures cannot grow the
-      // pool without bound.
+      // A delivery-unknown entry (its chunk may be in the chat) or one
+      // with partial progress (a bare restart would repeat its delivered
+      // chunks) may leave memory only while the journal covers it — the
+      // next retry rehydrates the refusal or the resume point. Past twice
+      // the cap the oldest non-live entry goes anyway (the journal's own
+      // documented last resort, logged), so failures cannot grow the pool
+      // without bound.
       evict((s) => !!s.receipt)
-        || evict((s) => s.chunksDelivered === 0 && !s.receipt && !s.deliveryUnknown)
-        || evict((s) => s.deliveryUnknown && s.journaled)
-        || (countByEndpoint('publish') >= 2 * textStatesCap && evict((s) => s.deliveryUnknown)
-          && (log('text publish pool at twice its cap with the journal unavailable: dropped a delivery-unknown key (its retry protection is lost)'), true));
+        || evict((s) => s.chunksDelivered === 0 && !s.deliveryUnknown)
+        || evict((s, k) => journalCovers(k, s))
+        || (countByEndpoint('publish') >= 2 * textStatesCap && evict(() => true)
+          && (log('text publish pool at twice its cap and the journal does not cover it: dropped an unresolved text key (its retry protection is lost)'), true));
     }
-    state = journaledText
-      ? { ...stateFromJournalEntry(journaled), journaled: true }
-      : { chunksDelivered: 0, endpoint };
+    state = journaledText ? stateFromJournalEntry(journaled) : { chunksDelivered: 0, endpoint };
     publishStates.set(key, state);
     return state;
   }
@@ -1109,11 +1176,17 @@ export function createOutboundPublisher(deps) {
   }
 
   // writeDeliveryUnknown answers a send whose acknowledgement never
-  // arrived, and every keyed retry of it. /publish and /publish-media
-  // share this one shape so the CLI and its callers classify both alike.
-  // The only way past it is a FRESH key, after checking the chat.
-  function writeDeliveryUnknown(res, { convo, key, detail = '', extra = {} }) {
-    res.writeHead(502, { 'Content-Type': 'application/json' });
+  // arrived (502), and every keyed retry of it (`refused`: 409, nothing
+  // sent). /publish and /publish-media share this one body so the CLI and
+  // its callers classify both alike. The refusal is a 4xx because gc's
+  // extmsg HTTP adapter ignores the body and maps any 5xx to a TRANSIENT
+  // publish failure; gc never mints a fresh key, so a 5xx refusal would
+  // be retried forever and a lost chunk would never surface. A 409 maps
+  // to a PERMANENT failure the caller sees. failure_kind delivery_unknown
+  // tells it from a mismatched key reuse (idempotency_conflict). The only
+  // way past it is a FRESH key, after checking the chat.
+  function writeDeliveryUnknown(res, { convo, key, detail = '', extra = {}, refused = false }) {
+    res.writeHead(refused ? 409 : 502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       conversation: convo,
       delivered: false,
@@ -1272,6 +1345,7 @@ export function createOutboundPublisher(deps) {
       writeDeliveryUnknown(res, {
         convo,
         key,
+        refused: true,
         extra: { chunk: state.chunksDelivered + 1, chunks_delivered: state.chunksDelivered },
       });
       return;
@@ -1282,20 +1356,34 @@ export function createOutboundPublisher(deps) {
     // ids are adapter-minted identifiers, not conversation content, so
     // logging them is within the no-content-logging policy.
     //
-    // chunksAttempted latches BEFORE each frame goes out (media's caption
-    // discipline) and keyed attempts are journaled, so an unacknowledged
-    // chunk refuses a retry even across an adapter restart. Text journal
-    // writes are non-critical: a broken journal never blocks text
-    // delivery (it only loses the restart-durable half of the protection).
-    const journalText = !!key && !journal.isDegraded?.();
+    // chunksAttempted latches in memory BEFORE each frame goes out
+    // (media's caption discipline). A keyed publish makes ONE journal
+    // write, before the first chunk, recording every remaining chunk as
+    // attempted: a crash anywhere in the loop rehydrates as
+    // delivery-unknown. The outcome then amends that entry in memory
+    // (deferred — the next journal write persists it): delivered or
+    // nothing written drops it, an unacknowledged chunk marks it, a
+    // pre-write refusal mid-message keeps the resume point. A lost
+    // amendment errs toward refusing a retry after a restart, never
+    // toward re-sending. Text journal writes are non-critical and ifRoom:
+    // a full or broken journal never blocks text delivery (it only loses
+    // the restart-durable half of the protection). Text keys are not
+    // byte-capped on the wire, so only a key within media's cap is
+    // journaled — that keeps every entry small and the persist cheap.
+    const journalText = !!key && Buffer.byteLength(key) <= MAX_IDEMPOTENCY_KEY_BYTES && !journal.isDegraded?.();
+    const amendJournal = (patch) => journal.record(key, { endpoint: 'publish', ...patch }, { critical: false, ifRoom: true, deferred: true });
     let chunkCount = 0;
     let sendFailure = ''; // set only by a failed sendMessage: not_written | rejected | unknown
     const send = async () => {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
+      if (journalText && state.chunksDelivered < chunks.length) {
+        journal.record(key, {
+          endpoint: 'publish', chunksAttempted: chunks.length, chunksDelivered: state.chunksDelivered,
+        }, { critical: false, ifRoom: true });
+      }
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
         state.chunksAttempted = i + 1;
-        if (journalText) journal.record(key, { endpoint: 'publish', chunksAttempted: i + 1, chunksDelivered: i }, { critical: false });
         let chunkReceipt;
         try {
           chunkReceipt = await sendMessage(chatid, {
@@ -1311,29 +1399,26 @@ export function createOutboundPublisher(deps) {
             sendFailure = typeof err?.errcode === 'number' ? 'rejected' : 'not_written';
             state.chunksAttempted = state.chunksDelivered;
             if (journalText) {
-              if (state.chunksDelivered === 0) journal.forget?.(key);
-              else {
-                journal.record(key, {
-                  endpoint: 'publish', chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered,
-                }, { critical: false });
-              }
+              if (state.chunksDelivered === 0) journal.forget?.(key, { deferred: true });
+              else amendJournal({ chunksAttempted: state.chunksDelivered, chunksDelivered: state.chunksDelivered });
             }
           } else {
             sendFailure = 'unknown';
             state.deliveryUnknown = true;
             // The complete text state, not a bare flag: if the pre-send
-            // write was lost (or pruned meanwhile) a bare patch would
-            // rehydrate as a media entry and answer a spurious 409.
-            state.journaled = journalText && journal.record(key, {
-              endpoint: 'publish', chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true,
-            }, { critical: false });
+            // write was lost (or pruned meanwhile) this is a fresh write,
+            // and a bare patch would rehydrate as a media entry and
+            // answer a spurious idempotency_conflict.
+            if (journalText) {
+              amendJournal({ chunksAttempted: i + 1, chunksDelivered: state.chunksDelivered, deliveryUnknown: true });
+            }
           }
           throw err;
         }
         state.messageID = chunkReceipt?.headers?.req_id ?? state.messageID;
         state.chunksDelivered = i + 1;
       }
-      if (journalText) journal.forget?.(key);
+      if (journalText) journal.forget?.(key, { deferred: true });
     };
     try {
       await chainSend(chatid, send);
@@ -1346,7 +1431,7 @@ export function createOutboundPublisher(deps) {
       // canonical labels reach the service log — never raw errmsg text.
       log(`publish → ${chatid} failed at chunk ${chunk}: ${describeProviderError(err)}`);
       // Failure mapping (jg-qx7fek). gc reads only the status (any 5xx is
-      // transient to it); the CLI and the outbox read failure_kind.
+      // transient to it, a 409 permanent); the CLI reads failure_kind.
       //   pre-write refusal (isDefiniteSendFailure, no errcode), and a
       //     retry cannot repeat a visible chunk (nothing delivered yet,
       //     or keyed so a retry resumes after the delivered ones)
@@ -1354,7 +1439,8 @@ export function createOutboundPublisher(deps) {
       //   written, no acknowledgement (ack timeout, socket-loss
       //     cancellation, anything unrecognized)
       //                                    → 502 delivery_unknown; a keyed
-      //                                      retry is refused the same way
+      //                                      retry is refused: 409 with the
+      //                                      same failure_kind (above)
       //   explicit provider rejection (ack frame with errcode ≠ 0): the
       //     frame was written and refused, nothing is visible
       //                                    → 502 provider_error + errcode
@@ -1660,9 +1746,10 @@ export function createOutboundPublisher(deps) {
     if (state.deliveryUnknown) {
       // A previous attempt's acknowledgement never arrived (or the
       // adapter died mid-send): the message may already be visible in
-      // the chat, so this key is not blindly retryable (finding 3).
+      // the chat, so this key is not blindly retryable (finding 3) —
+      // refused with a 409 (see writeDeliveryUnknown).
       token.finish(new Error(`delivery unknown for ${key}`));
-      failDeliveryUnknown();
+      writeDeliveryUnknown(res, { convo, key, refused: true });
       return;
     }
 
