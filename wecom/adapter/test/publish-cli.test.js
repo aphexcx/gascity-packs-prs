@@ -201,3 +201,28 @@ test('text publishes pass --idempotency-key through and omit it otherwise', { sk
   assert.ok(!('idempotency_key' in requests[0].body), 'bare text publishes stay byte-identical to the old wire');
   assert.equal(requests[1].body.idempotency_key, 'key-text');
 });
+
+// jg-qx7fek: the adapter's text failure_kind passes through verbatim and
+// the CLI says whether a retry is safe.
+test('a text not_sent failure passes through and says a same-key retry is safe', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const { requests, url } = await startCaptureServer(t, () => (
+    { status: 503, payload: { delivered: false, failure_kind: 'not_sent', error: 'nothing was written: the WebSocket is not connected (nothing was written)' } }
+  ));
+  const run = await runPublish(['--chat', 'zhang_san', '--text', 'hello', '--idempotency-key', 'key-text'], url);
+  assert.equal(run.code, 1);
+  assert.equal(requests.length, 1, 'text is never transport-retried by the CLI');
+  assert.match(run.stderr.split('\n')[0], /idempotency key key-text/);
+  assert.match(run.stderr, /"failure_kind":"not_sent"/);
+  assert.match(run.stderr, /nothing was written; retry with --idempotency-key key-text/);
+});
+
+test('a text delivery_unknown failure tells the operator to check the chat, not to retry the key', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const { url } = await startCaptureServer(t, () => (
+    { status: 502, payload: { delivered: false, failure_kind: 'delivery_unknown', idempotency_key: 'key-text' } }
+  ));
+  const run = await runPublish(['--chat', 'zhang_san', '--text', 'hello', '--idempotency-key', 'key-text'], url);
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /"failure_kind":"delivery_unknown"/);
+  assert.match(run.stderr, /check it before resending; a same-key retry is refused/);
+  assert.doesNotMatch(run.stderr, /nothing was written/);
+});

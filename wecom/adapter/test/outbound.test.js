@@ -1425,7 +1425,8 @@ test('after an in-flight text failure only ONE waiting retry re-sends', async (t
   failFirst();
   const [r1, r2, r3] = await Promise.all([p1, p2, p3]);
 
-  assert.equal(r1.statusCode, 502);
+  assert.equal(r1.statusCode, 503, 'a pre-write refusal is not_sent (jg-qx7fek)');
+  assert.equal(r1.json().failure_kind, 'not_sent');
   assert.equal(r2.statusCode, 200);
   assert.equal(r3.statusCode, 200);
   assert.equal(sendAttempts, 2, 'the message must not be re-sent by both waiters');
@@ -2871,6 +2872,197 @@ test('long text chunks at the UTF-8 byte cap and a keyed retry never re-sends', 
   const retry = await publishText(publisher, body);
   assert.equal(retry.statusCode, 200);
   assert.equal(calls.length, expectedChunks.length, 'a keyed retry must not re-send chunks');
+});
+
+// jg-qx7fek: text /publish tells "nothing was written" (503 not_sent)
+// from "written, acknowledgement lost" (502 delivery_unknown), and a keyed
+// retry of an unacknowledged chunk is refused like media's — 道格拉斯 got
+// the 10/5 黄历 twice after a bare resend of an ack-timed-out chunk.
+const notConnected = () => new Error('WebSocket not connected, unable to send data');
+const ackTimeout = () => new Error('Reply ack timeout (10000ms) for reqId: TEXT_1');
+
+test('a pre-write refusal on text answers 503 not_sent and says nothing was written', async (t) => {
+  const { publisher } = makePublisher({ sendMessage: async () => { throw notConnected(); } });
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'hello',
+    idempotency_key: 'key-prewrite',
+  });
+  assert.equal(res.statusCode, 503);
+  const body = res.json();
+  assert.equal(body.delivered, false);
+  assert.equal(body.failure_kind, 'not_sent');
+  assert.match(body.error, /^nothing was written: the WebSocket is not connected/);
+  assert.match(body.error, /Retrying is safe\.$/);
+  assert.equal(body.chunk, 1);
+  assert.equal(body.chunks_delivered, 0);
+  assert.equal(body.idempotency_key, 'key-prewrite');
+});
+
+test('a keyed text retry after a pre-write refusal sends exactly once', async (t) => {
+  let attempts = 0;
+  const sent = [];
+  const { publisher } = makePublisher({
+    sendMessage: async (chatid, body) => {
+      attempts += 1;
+      if (attempts === 1) throw notConnected();
+      sent.push(body.markdown.content);
+      return { headers: { req_id: 'TEXT_OK' } };
+    },
+  });
+  const body = { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-prewrite-retry' };
+  assert.equal((await publishText(publisher, body)).statusCode, 503);
+  const retry = await publishText(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(retry.json().delivered, true);
+  assert.deepEqual(sent, ['hello'], 'one sendMessage on the retry');
+});
+
+test('an ack timeout on text chunk 1 answers 502 delivery_unknown with the chunk index', async (t) => {
+  const { publisher } = makePublisher({ sendMessage: async () => { throw ackTimeout(); } });
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'hello',
+    idempotency_key: 'key-ack-text',
+  });
+  assert.equal(res.statusCode, 502);
+  const body = res.json();
+  assert.equal(body.failure_kind, 'delivery_unknown');
+  assert.match(body.error, /may or may not be visible/);
+  assert.match(body.error, /chunk 1 of 1: the provider acknowledgement timed out/);
+  assert.equal(body.chunk, 1);
+  assert.equal(body.chunks_delivered, 0);
+  assert.equal(body.idempotency_key, 'key-ack-text');
+});
+
+test('a keyed text retry after an ack timeout is refused with the media delivery-unknown shape — no second send', async (t) => {
+  const dir = tmpDir(t);
+  let attempts = 0;
+  const { publisher } = makePublisher({
+    sendMessage: async () => { attempts += 1; throw ackTimeout(); },
+    sendMediaMessage: async () => { throw ackTimeout(); },
+  });
+  const body = { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-ack-retry' };
+  assert.equal((await publishText(publisher, body)).statusCode, 502);
+  const retry = await publishText(publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(attempts, 1, 'the unacknowledged chunk must not be sent again');
+
+  // Same status and body shape as media's refusal, so callers classify both alike.
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const mediaBody = { conversation: { conversation_id: 'zhang_san' }, file_path: file, media_kind: 'image', idempotency_key: 'key-ack-media' };
+  await publishMedia(publisher, mediaBody);
+  const mediaRetry = await publishMedia(publisher, mediaBody);
+  assert.equal(mediaRetry.statusCode, retry.statusCode);
+  const { chunk, chunks_delivered: cd, ...textShape } = retry.json();
+  assert.equal(chunk, 1);
+  assert.equal(cd, 0);
+  assert.deepEqual(Object.keys(textShape), Object.keys(mediaRetry.json()));
+  assert.equal(textShape.error, mediaRetry.json().error);
+});
+
+test('a plain delivered text answers the unchanged receipt and leaves nothing journaled', async (t) => {
+  const dir = tmpDir(t);
+  const journal = createAttemptJournal({ filePath: path.join(dir, 'attempts.json') });
+  const { publisher } = makePublisher({ journal });
+  const res = await publishText(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    text: 'hello',
+    idempotency_key: 'key-plain',
+  });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(res.json(), {
+    conversation: { conversation_id: 'zhang_san' },
+    message_id: 'TEXT_1',
+    delivered: true,
+  });
+  assert.equal(journal.get('key-plain'), undefined, 'a delivered text key is dropped from the journal');
+});
+
+test('an unacknowledged text chunk survives an adapter restart as delivery-unknown', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const body = { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-restart-text' };
+  const before = makePublisher({
+    journal: createAttemptJournal({ filePath: journalPath }),
+    sendMessage: async () => { throw ackTimeout(); },
+  });
+  assert.equal((await publishText(before.publisher, body)).statusCode, 502);
+
+  let attempts = 0;
+  const after = makePublisher({
+    journal: createAttemptJournal({ filePath: journalPath }),
+    sendMessage: async () => { attempts += 1; return { headers: { req_id: 'TEXT_OK' } }; },
+  });
+  const retry = await publishText(after.publisher, body);
+  assert.equal(retry.statusCode, 502);
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(attempts, 0);
+});
+
+test('a keyed text that fails pre-write at chunk 2 answers not_sent and the retry resumes at chunk 2', async (t) => {
+  const text = '很长的消息。'.repeat(400);
+  const chunks = chunkText(text);
+  assert.ok(chunks.length > 1);
+  let attempts = 0;
+  const sent = [];
+  const { publisher } = makePublisher({
+    sendMessage: async (chatid, body) => {
+      attempts += 1;
+      if (attempts === 2) throw notConnected();
+      sent.push(body.markdown.content);
+      return { headers: { req_id: `TEXT_${attempts}` } };
+    },
+  });
+  const body = { conversation: { conversation_id: 'zhang_san' }, text, idempotency_key: 'key-partial-text' };
+  const first = await publishText(publisher, body);
+  assert.equal(first.statusCode, 503);
+  assert.equal(first.json().failure_kind, 'not_sent');
+  assert.equal(first.json().chunk, 2);
+  assert.equal(first.json().chunks_delivered, 1);
+  assert.match(first.json().error, /retry with the same idempotency key to resume at chunk 2/);
+  const retry = await publishText(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.deepEqual(sent, chunks, 'every chunk exactly once');
+});
+
+test('a keyless text that fails pre-write after chunk 1 stays provider_error (a bare retry would repeat chunk 1)', async (t) => {
+  const text = '很长的消息。'.repeat(400);
+  let attempts = 0;
+  const { publisher } = makePublisher({
+    sendMessage: async () => {
+      attempts += 1;
+      if (attempts === 2) throw notConnected();
+      return { headers: { req_id: `TEXT_${attempts}` } };
+    },
+  });
+  const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text });
+  assert.equal(res.statusCode, 502);
+  assert.equal(res.json().failure_kind, 'provider_error');
+  assert.equal(res.json().chunks_delivered, 1);
+  assert.equal(res.json().idempotency_key, undefined);
+});
+
+test('a provider errcode rejection on text answers provider_error with the errcode and stays retryable', async (t) => {
+  let attempts = 0;
+  const { publisher } = makePublisher({
+    sendMessage: async () => {
+      attempts += 1;
+      if (attempts === 1) throw { errcode: 40008, errmsg: 'secret provider text' };
+      return { headers: { req_id: 'TEXT_OK' } };
+    },
+  });
+  const body = { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: 'key-nack-text' };
+  const first = await publishText(publisher, body);
+  assert.equal(first.statusCode, 502);
+  assert.equal(first.json().failure_kind, 'provider_error');
+  assert.equal(first.json().errcode, 40008);
+  assert.equal(first.json().error, 'provider rejected the message: errcode 40008');
+  assert.doesNotMatch(first.body, /secret provider text/);
+  const retry = await publishText(publisher, body);
+  assert.equal(retry.statusCode, 200);
+  assert.equal(attempts, 2);
 });
 
 test('a text publish with a missing body 400s like before', async (t) => {
