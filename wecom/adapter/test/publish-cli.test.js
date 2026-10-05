@@ -226,3 +226,13 @@ test('a text delivery_unknown failure tells the operator to check the chat, not 
   assert.match(run.stderr, /check it before resending; a same-key retry is refused/);
   assert.doesNotMatch(run.stderr, /nothing was written/);
 });
+
+test('a keyless text delivery_unknown failure says check the chat, with no same-key hint', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const { url } = await startCaptureServer(t, () => (
+    { status: 502, payload: { delivered: false, failure_kind: 'delivery_unknown' } }
+  ));
+  const run = await runPublish(['--chat', 'zhang_san', '--text', 'hello'], url);
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /the message may already be in the chat — check it before resending/);
+  assert.doesNotMatch(run.stderr, /same-key|idempotency/, 'no key was supplied, so there is no same-key retry to mention');
+});

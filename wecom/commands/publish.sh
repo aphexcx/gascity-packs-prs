@@ -275,7 +275,12 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
         fi
         ;;
       delivery_unknown)
-        echo "gc wecom publish: the message may already be in the chat — check it before resending; a same-key retry is refused, so resend with a fresh key only if it is missing" >&2
+        # Only a keyed send has a same-key retry to refuse (HTTP 409).
+        if [ -n "$idempotency_key" ]; then
+          echo "gc wecom publish: the message may already be in the chat — check it before resending; a same-key retry is refused (HTTP 409), so resend with a fresh key only if it is missing" >&2
+        else
+          echo "gc wecom publish: the message may already be in the chat — check it before resending" >&2
+        fi
         ;;
       *)
         if [ -n "$idempotency_key" ] && [ "$status" -ge 429 ]; then

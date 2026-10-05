@@ -56,7 +56,11 @@ gc wecom publish --chat <chatid-or-userid> --file /abs/path/contract.docx [--tex
   invocation (echoed in the response, and in the retry hint printed on
   failure); pass the echoed key back here when retrying by hand. The
   key must be paired with the same chat/file/caption — the adapter
-  answers a mismatched reuse with HTTP 409.
+  answers a mismatched reuse with HTTP 409 (`idempotency_conflict`). A
+  same-key retry of a send whose WeCom acknowledgement never arrived is
+  also refused with HTTP 409, `failure_kind` `delivery_unknown`, for
+  text and media alike: check the chat, and resend with a fresh key only
+  if the message is missing.
 
 ## Transcript
 

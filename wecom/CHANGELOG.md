@@ -3,18 +3,39 @@
 ## 0.0.1 (unreleased)
 
 - Text send failure kinds (jg-qx7fek, 10/5): text `/publish` no longer
-  answers every send failure with `502 provider_error`. A pre-write
-  refusal (`WebSocket not connected`, full SDK reply queue) answers
-  `503 not_sent` — nothing was written, retrying is safe. A written chunk
-  whose acknowledgement never arrived answers `502 delivery_unknown`
-  with the chunk index, and a keyed retry of it is REFUSED with the same
-  body `/publish-media` uses (text state now carries `chunksAttempted`,
-  journaled for keyed sends so the refusal survives an adapter restart;
-  delivered or never-written text keys are dropped from the journal).
-  An explicit provider rejection keeps `502 provider_error`, now with
-  the `errcode`. `gc wecom publish` echoes a supplied text key and says
-  whether a retry is safe. gc itself is unaffected (any 5xx is transient
-  to it).
+  answers every send failure with `502 provider_error`.
+  - A pre-write refusal (`WebSocket not connected`, full SDK reply
+    queue) answers `503 not_sent` when a retry cannot repeat a visible
+    chunk: nothing was delivered yet, or the send is keyed (a same-key
+    retry resumes after the delivered chunks). A KEYLESS send refused
+    after earlier chunks were delivered stays `502 provider_error`,
+    because a bare retry would send those chunks again.
+  - A written chunk whose acknowledgement never arrived answers
+    `502 delivery_unknown` with `chunk` and `chunks_delivered`.
+  - A keyed retry of that send is REFUSED, and nothing is sent. The
+    refusal is HTTP `409` with `failure_kind` `delivery_unknown`, for
+    `/publish` and `/publish-media` alike (media's refusal was a 502). gc's
+    extmsg HTTP adapter maps any 5xx to a transient publish failure and
+    never mints a fresh key, so a 502 refusal was retried forever and the
+    caller never learned of the lost chunk; a 4xx is a permanent failure
+    the caller sees. The body is media's delivery-unknown body
+    (`failure_kind`, `error`, `idempotency_key`); text adds `chunk` and
+    `chunks_delivered`. A mismatched key reuse is still a 409 with
+    `failure_kind` `idempotency_conflict`.
+  - Keyed text is journaled so the refusal survives an adapter restart:
+    ONE journal write per publish, before the first chunk, recording
+    every remaining chunk as attempted. The outcome (delivered, nothing
+    written, unacknowledged, partial progress) amends that entry in
+    memory and reaches disk with the next journal write. A restart before
+    that write refuses the key, the safe side. Text entries expire 24 h
+    after their last update. A text write never displaces another entry:
+    when the journal is full it is skipped and logged once, so text
+    traffic cannot evict a media receipt.
+  - An explicit provider rejection keeps `502 provider_error`, now with
+    the `errcode`.
+  - `gc wecom publish` echoes a supplied text key and says whether a
+    retry is safe; the same-key-refused hint prints only when a key was
+    supplied.
 - Outbound FILE publish (jg-d0xr scope extension 8/23): `gc wecom
   publish --chat <id> --file /abs/path.docx [--text caption]` sends a
   WeCom file message via the same `/publish-media` pipeline as
