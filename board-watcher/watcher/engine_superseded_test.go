@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -164,5 +167,68 @@ func TestOwnWriteSupersededByAPeerBeforeSettleDoesNotSilenceTheRevert(t *testing
 	r.pastDebounce()
 	if len(r.not.calls) != 2 || r.not.calls[1].Verb != "updated" {
 		t.Fatalf("the peer's revert to our never-settled content was not notified: %v", r.not.calls)
+	}
+}
+
+// TestLoadOfASnapshotWithoutLedgerCountsSeedsThem is the pre-upgrade half
+// of finding 3a: a watcher upgraded in place loads a snapshot persisted by a
+// binary that kept no counts, so every historical ledger entry would get one
+// suppression. The load seeds the counts for everything on record and
+// persists them at once; an entry appended after that load is live, and a
+// second restart does not seed again.
+func TestLoadOfASnapshotWithoutLedgerCountsSeedsThem(t *testing.T) {
+	r := newTestRig(t)
+	ours := "# ours\n"
+	superseded := "# ours, an older version\n"
+	// The pre-upgrade snapshot: doc.md settled at our content, no counts.
+	r.be.set("doc.md", 1000, ours)
+	pre := fmt.Sprintf(`{"schema":1,"files":{"doc.md":{"mtime_unix":1000,"size":%d,"sha256":%q}}}`+"\n",
+		len(ours), sha256hex([]byte(ours)))
+	if err := os.MkdirAll(filepath.Dir(r.eng.cfg.snapshotPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.eng.cfg.snapshotPath(), []byte(pre), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(superseded)))
+	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(ours)))
+	r.recordOwnWrite(t, "gone.md", ledgerTombstone)
+
+	r.tick() // loads the snapshot, seeds the counts
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	if err != nil || snap == nil || snap.LedgerConsumed == nil {
+		t.Fatalf("the seed was not persisted with the snapshot: %+v (%v)", snap, err)
+	}
+	if len(snap.LedgerConsumed) != 3 {
+		t.Fatalf("seeded counts = %v, want the three historical entries", snap.LedgerConsumed)
+	}
+
+	// A peer's revert to the superseded bytes, and a peer's deletion of a
+	// doc we once deleted, are theirs.
+	r.be.set("doc.md", 2000, superseded)
+	r.pastDebounce()
+	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "updated" {
+		t.Fatalf("the peer's change to our superseded pre-upgrade bytes was not notified: %v", r.not.calls)
+	}
+	r.be.set("gone.md", 3000, "peer")
+	r.pastDebounce()
+	r.be.remove("gone.md")
+	r.pastDebounce()
+	if len(r.not.calls) != 3 || r.not.calls[2].Verb != "removed" {
+		t.Fatalf("the peer's deletion was not notified (the pre-upgrade tombstone suppressed it): %v", r.not.calls)
+	}
+
+	// An own write after the upgrade is live, across a restart in between:
+	// the seeded snapshot must not be seeded again.
+	fresh := "# ours, after the upgrade\n"
+	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(fresh)))
+	r2 := &testRig{be: r.be, not: &fakeNotifier{}, clock: r.clock.Add(time.Minute)}
+	r2.eng = newEngine(r.eng.cfg, r.be, r2.not)
+	r2.eng.now = func() time.Time { return r2.clock }
+	r2.tick()
+	r2.be.set("doc.md", 4000, fresh)
+	r2.pastDebounce()
+	if len(r2.not.calls) != 0 {
+		t.Fatalf("an own write recorded after the seed was notified after a restart (the counts were seeded again): %v", r2.not.calls)
 	}
 }

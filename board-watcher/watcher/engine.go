@@ -37,7 +37,10 @@ type snapshot struct {
 	// superseded own write cannot silence a peer's later change (gf-4c9 row
 	// 8, rounds 1 and 2). Persisted with the snapshot so a restart does not
 	// re-arm spent entries.
-	LedgerConsumed map[string]int `json:"ledger_consumed,omitempty"`
+	// Never omitted: a snapshot that carries no counts at all is one a
+	// binary from before this field persisted, and loadOrBaseline seeds it
+	// (finding 3a's "pre-upgrade history"); an empty map is a seeded one.
+	LedgerConsumed map[string]int `json:"ledger_consumed"`
 }
 
 // settleOwnWrite is the engine's ledger check for a state of name that just
@@ -169,6 +172,19 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 		return err
 	}
 	if snap != nil {
+		if snap.LedgerConsumed == nil {
+			// A snapshot persisted before the counts existed: every entry
+			// the ledger holds describes a write that state already reflects
+			// or that a later write superseded, so none may explain a change
+			// observed from now on (the pre-upgrade half of finding 3a; the
+			// same rule as the baseline below). Persisted at once so the
+			// seed happens exactly once.
+			snap.LedgerConsumed = map[string]int{}
+			e.ledger.retireAll(snap.LedgerConsumed)
+			e.snap = snap
+			log.Printf("ledger counts seeded for a snapshot without them")
+			return e.persist()
+		}
 		e.snap = snap
 		return nil
 	}
@@ -181,7 +197,11 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 	// being recorded already reflects (or that a later write superseded), so
 	// none of them may explain a change observed after this baseline: a
 	// peer's revert to bytes we once wrote, or a peer's deletion of a doc we
-	// once deleted, is theirs (finding 3a).
+	// once deleted, is theirs (finding 3a). This retires every entry on
+	// record, not only the ones whose (file, sha) is the settled state or
+	// whose tombstone names an absent file: an entry for OTHER bytes of a
+	// present doc is a superseded own write, and a peer's later change to
+	// exactly those bytes would otherwise settle silently against it once.
 	e.ledger.retireAll(snap.LedgerConsumed)
 	for name, st := range lst {
 		entry := snapshotEntry{MTimeUnix: st.MTimeUnix, Size: st.Size}
