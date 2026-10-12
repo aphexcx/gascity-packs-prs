@@ -13,6 +13,9 @@ EVENT_REQUIRED_SCOPE = {
     "message.groups": "groups:history",
     "message.im": "im:history",
     "message.mpim": "mpim:history",
+    # slack-full forwards human reactions to bound sessions (gp-by3).
+    "reaction_added": "reactions:read",
+    "reaction_removed": "reactions:read",
 }
 
 EXPECTED_MANIFESTS = {

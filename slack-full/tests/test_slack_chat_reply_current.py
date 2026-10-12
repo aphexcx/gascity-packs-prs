@@ -2141,6 +2141,9 @@ def test_company_explicit_group_target_uses_live_participation(
                              "session_id": body["session_id"], "public": "true"},
             })
             return {"ID": participants[-1]["id"]}
+        if path == "/extmsg/unbind":
+            # --group-only (upstream #313) removes direct bindings first.
+            return {}
         if path == "/extmsg/bind":
             bindings.append({"Status": "active", "SessionID": body["session_id"],
                              "Conversation": body["conversation"]})
@@ -2176,9 +2179,15 @@ def test_company_explicit_group_target_uses_live_participation(
     } else "gc-test-session"
     if membership == "nonmember":
         identity = "another-session"
+    # Upstream #313: every ambient bind-room declares its outbound publisher
+    # (--binding-owner) or --group-only. The owner case declares the identity;
+    # every other case declares the room group-routed, which leaves the live
+    # participation check (gp-8tp1) as the only membership authority.
     argv = ["C_GROUP", identity, "--no-protocol-nudge"]
     if membership == "owner":
         argv += ["--binding-owner", identity]
+    else:
+        argv += ["--group-only"]
     with monkeypatch.context() as binding_setup:
         binding_setup.setattr(common, "gc_post", bind_post)
         assert bind_room.main(argv) == 0
