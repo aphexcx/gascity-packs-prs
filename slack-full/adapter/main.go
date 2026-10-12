@@ -302,6 +302,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -2440,6 +2441,15 @@ func newPublishDedupCache(ttl time.Duration) *publishDedupCache {
 }
 
 // Get returns the cached receipt for key when one is present and unexpired.
+//
+// The receipt comes back as the caller's own copy: publishReceipt is a value
+// but its Metadata is a map, and a copy that shared the cached map let two
+// concurrent retries of one posted-but-unconfirmed key — each re-verifying
+// through confirmPublishReceipt, which writes the readback detail into that
+// map — race on it without the cache's lock, a fatal concurrent map write
+// (gf-pu2 finding 3e; the gf-jr0 vs-main gate's Major at
+// publish_readback.go:631). Metadata is cloned on the way out, and on the
+// way in (Put), so nothing outside this type ever holds the cached map.
 func (c *publishDedupCache) Get(key string) (publishReceipt, bool) {
 	if key == "" {
 		return publishReceipt{}, false
@@ -2454,7 +2464,15 @@ func (c *publishDedupCache) Get(key string) (publishReceipt, bool) {
 		delete(c.entries, key)
 		return publishReceipt{}, false
 	}
-	return e.receipt, true
+	return e.receipt.clone(), true
+}
+
+// clone returns a receipt that shares nothing with r: Metadata, the one
+// reference-typed field, is copied (nil stays nil).
+func (r publishReceipt) clone() publishReceipt {
+	out := r
+	out.Metadata = maps.Clone(r.Metadata)
+	return out
 }
 
 // publishReceiptBlocksRepost reports whether a retry on the same idempotency
@@ -2491,7 +2509,7 @@ func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	c.entries[key] = publishDedupEntry{receipt: receipt, expiresAt: now.Add(c.ttl)}
+	c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: now.Add(c.ttl)}
 	for k, e := range c.entries {
 		if !now.Before(e.expiresAt) {
 			delete(c.entries, k)
