@@ -14,7 +14,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { createInboundPipeline, renderText } from '../src/inbound.js';
+import { createInboundPipeline, postJSONWithRetry, renderText } from '../src/inbound.js';
 
 const testAesKey = crypto.randomBytes(32).toString('base64');
 
@@ -1558,3 +1558,75 @@ test('pending marks surviving compaction stay evictable — no ghost dedup entri
   await pipeline.enqueueInbound(inChat('X', 'chatX'));
   assert.equal(posts.filter((id) => id === 'X').length, 1, 'the fresh id replays exactly once — no ghost-consumed cap');
 });
+
+// --- gf-4c9 row 7: HTTP 408 / 429 are transient, never deterministic ------------
+
+// flushMicrotasks lets the pending fetch rejection and the retry's sleep()
+// schedule its (mocked) setTimeout before the clock is advanced; setImmediate
+// is left real by the timer mock.
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+// fakeFetchSequence answers successive fetches with the given statuses and
+// records every request body, restoring the real fetch when the test ends.
+function fakeFetchSequence(t, statuses) {
+  const bodies = [];
+  const queue = [...statuses];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (target, init) => {
+    bodies.push(JSON.parse(init.body));
+    const status = queue.shift();
+    if (status === undefined) throw new Error('fake fetch: no more statuses');
+    return new Response(status === 200 ? 'ok' : 'nope', {
+      status,
+      statusText: status === 200 ? 'OK' : 'status ' + status,
+    });
+  };
+  t.after(() => { globalThis.fetch = realFetch; });
+  return bodies;
+}
+
+for (const status of [408, 429]) {
+  test('postJSONWithRetry retries a ' + status + ' on the backoff ladder instead of surfacing it', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const bodies = fakeFetchSequence(t, [status, status, 200]);
+    const outcome = postJSONWithRetry('http://gc.test:9443/x', { msgid: 'M_' + status }, 'test')
+      .then(() => 'delivered', (err) => err);
+    // Two refusals, two backoff steps (1s, then 5s), then the accept.
+    for (const delay of [1000, 5000]) {
+      await flushMicrotasks();
+      t.mock.timers.tick(delay);
+    }
+    await flushMicrotasks();
+    assert.equal(await outcome, 'delivered', status + ' must be retried until gc accepts');
+    assert.equal(bodies.length, 3, 'one request per attempt');
+    assert.ok(bodies.every((b) => b.msgid === 'M_' + status), 'the same payload is resent');
+  });
+}
+
+test('postJSONWithRetry still rethrows a 400 at once (deterministic rejection)', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const bodies = fakeFetchSequence(t, [400, 200]);
+  const err = await postJSONWithRetry('http://gc.test:9443/x', { msgid: 'M_400' }, 'test').then(() => null, (e) => e);
+  assert.ok(err, 'a 400 is a deterministic rejection');
+  assert.equal(err.status, 400);
+  assert.equal(bodies.length, 1, 'no retry on a 400');
+});
+
+test('a 429 from gc never marks the message seen: the pipeline delivers it after the retry and drops only the later replay', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const bodies = fakeFetchSequence(t, [429, 200]);
+  // The real retry path (postJSONWithRetry) against the fake fetch, instead
+  // of the suite's capturing postInbound stub.
+  const { pipeline } = makePipeline(t, { deps: { postInbound: postJSONWithRetry } });
+  const msg = fileMessage({ msgid: 'F_429' });
+  const delivery = pipeline.enqueueInbound(frame(msg));
+  await flushMicrotasks();
+  t.mock.timers.tick(1000);
+  await delivery;
+  assert.equal(bodies.length, 2, 'the 429 was retried and then accepted');
+  assert.equal(pipeline.stats().seen, 1, 'marked seen only after gc accepted');
+  // The replay after delivery is dropped by the seen set, not re-posted.
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(bodies.length, 2);
+});
+

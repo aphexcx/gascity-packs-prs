@@ -36,14 +36,22 @@ export async function postJSON(target, body) {
 }
 
 // A 4xx is normally a deterministic rejection — retrying sends the same
-// bytes to the same validator. Two exceptions are transient: network
-// failures (no status), and 404, which gc's city-scoped endpoints return
+// bytes to the same validator. Four exceptions are transient: network
+// failures (no status); 404, which gc's city-scoped endpoints return
 // during normal city startup/restart until reconciliation completes
-// ("city not found or not running"). A genuinely wrong city name also
-// 404s — that misconfiguration shows up as an endless, logged retry loop
-// rather than silent message loss, which is the right failure mode here.
+// ("city not found or not running"); 408 (the server timed the request
+// out) and 429 (rate limited), which say nothing about the payload and
+// everything about the moment (gf-4c9 row 7, gf-9x2 codex gate Major at
+// inbound.js:46 — a 429 used to be surfaced as a deterministic rejection,
+// so the caller marked the message seen and its replay was dropped: a
+// transient throttle became permanent message loss). A genuinely wrong
+// city name also 404s — that misconfiguration shows up as an endless,
+// logged retry loop rather than silent message loss, which is the right
+// failure mode here, and the same backoff ladder bounds 408/429 retries.
+const retryableStatuses = new Set([404, 408, 429]);
+
 function isRetryable(err) {
-  return err.status === undefined || err.status >= 500 || err.status === 404;
+  return err.status === undefined || err.status >= 500 || retryableStatuses.has(err.status);
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
