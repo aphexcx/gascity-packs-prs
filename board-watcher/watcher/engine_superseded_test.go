@@ -232,3 +232,45 @@ func TestLoadOfASnapshotWithoutLedgerCountsSeedsThem(t *testing.T) {
 		t.Fatalf("an own write recorded after the seed was notified after a restart (the counts were seeded again): %v", r2.not.calls)
 	}
 }
+
+// TestOwnWriteLandingDuringAPeerSettleStaysLive is the lane's codex round 1
+// on the retirement rule: a peer's A is being settled (its content already
+// fetched) when this city's own write of B lands — the file and its ledger
+// entry — before the settle reads the ledger. A's settle matches nothing and
+// retires what it supersedes, which must not include B's entry: it lies
+// past the boundary drawn before the board was read, and B is the next
+// state to settle, silently, as our own.
+func TestOwnWriteLandingDuringAPeerSettleStaysLive(t *testing.T) {
+	r := newTestRig(t)
+	r.be.set("doc.md", 1000, "v0")
+	r.tick() // baseline
+
+	ours := "ours B"
+	landed := false
+	r.be.onFetch = func(name string) {
+		if name != "doc.md" || landed {
+			return
+		}
+		landed = true
+		r.be.set("doc.md", 3000, ours)
+		r.recordOwnWrite(t, "doc.md", sha256hex([]byte(ours)))
+	}
+	r.be.set("doc.md", 2000, "peer A")
+	r.pastDebounce()
+	if !landed {
+		t.Fatal("the own write did not land during the peer's settle")
+	}
+	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "updated" {
+		t.Fatalf("the peer's A: %v", r.not.calls)
+	}
+	r.be.onFetch = nil
+
+	r.pastDebounce()
+	if len(r.not.calls) != 1 {
+		t.Fatalf("our own write that landed during the peer's settle was notified (its entry was retired by that settle): %v", r.not.calls)
+	}
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	if got := snap.Files["doc.md"].SHA256; got != sha256hex([]byte(ours)) {
+		t.Fatalf("snapshot content = %s, want our B", got)
+	}
+}

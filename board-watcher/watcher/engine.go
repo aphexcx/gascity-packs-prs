@@ -51,7 +51,7 @@ func (e *engine) settleOwnWrite(name, sha string) bool {
 	if e.snap.LedgerConsumed == nil {
 		e.snap.LedgerConsumed = map[string]int{}
 	}
-	return e.ledger.settle(name, sha, e.snap.LedgerConsumed)
+	return e.ledger.settle(name, sha, e.snap.LedgerConsumed, e.ledgerBoundary)
 }
 
 // pendingChange tracks a doc that differs from the snapshot but has not
@@ -111,6 +111,10 @@ type engine struct {
 
 	snap    *snapshot
 	pending map[string]*pendingChange
+	// ledgerBoundary is the ledger\'s size captured before this cycle\'s board
+	// read (ledger.boundary): the retirement line for every settle of the
+	// cycle.
+	ledgerBoundary int64
 }
 
 func newEngine(cfg config, be backend, n notifier) *engine {
@@ -180,7 +184,7 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 			// same rule as the baseline below). Persisted at once so the
 			// seed happens exactly once.
 			snap.LedgerConsumed = map[string]int{}
-			e.ledger.retireAll(snap.LedgerConsumed)
+			e.ledger.retireAll(snap.LedgerConsumed, e.ledger.boundary())
 			e.snap = snap
 			log.Printf("ledger counts seeded for a snapshot without them")
 			return e.persist()
@@ -188,6 +192,7 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 		e.snap = snap
 		return nil
 	}
+	boundary := e.ledger.boundary()
 	lst, err := e.be.List(ctx)
 	if err != nil {
 		return err
@@ -202,7 +207,9 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 	// whose tombstone names an absent file: an entry for OTHER bytes of a
 	// present doc is a superseded own write, and a peer's later change to
 	// exactly those bytes would otherwise settle silently against it once.
-	e.ledger.retireAll(snap.LedgerConsumed)
+	// Only entries on record before the listing was taken: a write landing
+	// during the baseline read is the first change after it.
+	e.ledger.retireAll(snap.LedgerConsumed, boundary)
 	for name, st := range lst {
 		entry := snapshotEntry{MTimeUnix: st.MTimeUnix, Size: st.Size}
 		// Hash at baseline so later touch-only changes settle silently. A
@@ -221,6 +228,10 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 }
 
 func (e *engine) cycle(ctx context.Context) error {
+	// The retirement line for this cycle's settles is drawn before the board
+	// is read: an own write landing after this point appends past it, and its
+	// entry survives until its own state settles.
+	e.ledgerBoundary = e.ledger.boundary()
 	lst, err := e.be.List(ctx)
 	if err != nil {
 		return err

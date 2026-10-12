@@ -14,6 +14,9 @@ type fakeBackend struct {
 	content  map[string][]byte
 	listErr  error
 	fetchErr map[string]error
+	// onFetch, when set, runs after Fetch has read a doc's content and before
+	// it returns: the window in which the board can move under a settle.
+	onFetch func(name string)
 }
 
 func (f *fakeBackend) List(_ context.Context) (listing, error) {
@@ -34,6 +37,9 @@ func (f *fakeBackend) Fetch(_ context.Context, name string) ([]byte, error) {
 	c, ok := f.content[name]
 	if !ok {
 		return nil, fmt.Errorf("fetch %s: not found", name)
+	}
+	if f.onFetch != nil {
+		f.onFetch(name)
 	}
 	return c, nil
 }

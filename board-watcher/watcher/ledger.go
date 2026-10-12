@@ -69,7 +69,16 @@ func ledgerKey(e ledgerEntry) string {
 // have not settled yet. A missing ledger file suppresses nothing. Malformed
 // lines are skipped: a corrupt ledger line should degrade to a spurious
 // nudge, not kill the suppression of every other entry.
-func (l *ledger) settle(file, sha string, consumed map[string]int) bool {
+//
+// boundary is the ledger's size, in bytes, captured BEFORE the board was
+// observed (ledger.boundary): only entries that lie before it may be
+// retired. An own write that lands between the board read and the ledger
+// read appends an entry past the boundary, and that entry describes a
+// state newer than the one settling here — retiring it would make the own
+// write's own settle, one poll later, read as a peer's (the lane's codex
+// round 1). The match itself may be any entry, since the state that settled
+// may be exactly that late own write.
+func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int64) bool {
 	entries := l.entriesFor(file)
 	if len(entries) == 0 {
 		return false
@@ -81,13 +90,13 @@ func (l *ledger) settle(file, sha string, consumed map[string]int) bool {
 	occurrence := make([]int, len(entries))
 	seen := map[string]int{}
 	for i, e := range entries {
-		key := ledgerKey(e)
+		key := ledgerKey(e.entry)
 		occurrence[i] = seen[key]
 		seen[key]++
 	}
 	match := -1
 	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].SHA256 == sha && consumed[ledgerKey(entries[i])] <= occurrence[i] {
+		if entries[i].entry.SHA256 == sha && consumed[ledgerKey(entries[i].entry)] <= occurrence[i] {
 			match = i
 			break
 		}
@@ -97,7 +106,10 @@ func (l *ledger) settle(file, sha string, consumed map[string]int) bool {
 		cutoff = match + 1
 	}
 	for i := 0; i < cutoff; i++ {
-		key := ledgerKey(entries[i])
+		if i != match && entries[i].offset >= boundary {
+			continue
+		}
+		key := ledgerKey(entries[i].entry)
 		if consumed[key] < occurrence[i]+1 {
 			consumed[key] = occurrence[i] + 1
 		}
@@ -105,38 +117,56 @@ func (l *ledger) settle(file, sha string, consumed map[string]int) bool {
 	return match >= 0
 }
 
-// retireAll spends every entry on record, for every file: the baseline's
-// view of the board already reflects every write the ledger describes, so
-// none of them may explain a change observed after it (finding 3a).
-func (l *ledger) retireAll(consumed map[string]int) {
-	for key, n := range l.occurrences() {
-		if consumed[key] < n {
-			consumed[key] = n
+// retireAll spends every entry on record before boundary, for every file:
+// the baseline's view of the board already reflects every write the ledger
+// described when the board was read, so none of them may explain a change
+// observed after it (finding 3a).
+func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
+	seen := map[string]int{}
+	l.scan(func(e ledgerEntry, offset int64) {
+		key := ledgerKey(e)
+		seen[key]++
+		if offset < boundary && consumed[key] < seen[key] {
+			consumed[key] = seen[key]
 		}
+	})
+}
+
+// boundary is the ledger's current size in bytes: every entry on record lies
+// before it and every entry appended from now on lies at or past it. Taken
+// before the board is read, it is the line settle and retireAll draw
+// between the writes a board observation can reflect and the ones it
+// cannot. A missing ledger is empty.
+func (l *ledger) boundary() int64 {
+	info, err := os.Stat(l.path)
+	if err != nil {
+		return 0
 	}
+	return info.Size()
+}
+
+// positionedEntry is one ledger entry with the byte offset its line starts
+// at, for the boundary rule.
+type positionedEntry struct {
+	entry  ledgerEntry
+	offset int64
 }
 
 // entriesFor reads the ledger's entries for one file, in file order.
-func (l *ledger) entriesFor(file string) []ledgerEntry {
-	var out []ledgerEntry
-	l.scan(func(e ledgerEntry) {
+func (l *ledger) entriesFor(file string) []positionedEntry {
+	var out []positionedEntry
+	l.scan(func(e ledgerEntry, offset int64) {
 		if e.File == file {
-			out = append(out, e)
+			out = append(out, positionedEntry{entry: e, offset: offset})
 		}
 	})
 	return out
 }
 
-// occurrences counts the ledger's entries per key, across every file.
-func (l *ledger) occurrences() map[string]int {
-	out := map[string]int{}
-	l.scan(func(e ledgerEntry) { out[ledgerKey(e)]++ })
-	return out
-}
-
-// scan calls fn for every well-formed entry of own-writes.jsonl, in order. A
-// missing file is an empty ledger.
-func (l *ledger) scan(fn func(ledgerEntry)) {
+// scan calls fn for every well-formed entry of own-writes.jsonl, in order,
+// with the byte offset its line starts at. A missing file is an empty
+// ledger.
+func (l *ledger) scan(fn func(ledgerEntry, int64)) {
 	f, err := os.Open(l.path)
 	if err != nil {
 		return
@@ -144,8 +174,12 @@ func (l *ledger) scan(fn func(ledgerEntry)) {
 	defer f.Close()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	var offset int64
 	for sc.Scan() {
-		line := bytes.TrimSpace(sc.Bytes())
+		raw := sc.Bytes()
+		start := offset
+		offset += int64(len(raw)) + 1
+		line := bytes.TrimSpace(raw)
 		if len(line) == 0 {
 			continue
 		}
@@ -153,6 +187,6 @@ func (l *ledger) scan(fn func(ledgerEntry)) {
 		if json.Unmarshal(line, &e) != nil {
 			continue
 		}
-		fn(e)
+		fn(e, start)
 	}
 }

@@ -27,23 +27,23 @@ func TestLedgerSettleTakesTheLatestMatchAndRetiresWhatItSupersedes(t *testing.T)
 
 	// The settle of A takes the LATER A entry and retires the tombstone and
 	// the earlier A; B, recorded after it, stays live and settles next.
-	if !l.settle("doc.md", a, consumed) {
+	if !l.settle("doc.md", a, consumed, l.boundary()) {
 		t.Fatal("own write of A did not match")
 	}
-	if !l.settle("doc.md", b, consumed) {
+	if !l.settle("doc.md", b, consumed, l.boundary()) {
 		t.Fatal("B, recorded after the settled A, must still match")
 	}
 	// The tombstone was retired by A's settle, and the earlier A was retired
 	// rather than spent by a change, so a deletion or a further A now is a
 	// peer's.
-	if l.settle("doc.md", ledgerTombstone, consumed) {
+	if l.settle("doc.md", ledgerTombstone, consumed, l.boundary()) {
 		t.Fatal("the tombstone superseded by A's settle still matched a deletion")
 	}
-	if l.settle("doc.md", a, consumed) {
+	if l.settle("doc.md", a, consumed, l.boundary()) {
 		t.Fatal("a retired A entry matched a later change")
 	}
 	// other.md is untouched by doc.md's settles.
-	if !l.settle("other.md", a, consumed) {
+	if !l.settle("other.md", a, consumed, l.boundary()) {
 		t.Fatal("other.md's own write was retired by doc.md's settles")
 	}
 
@@ -54,10 +54,10 @@ func TestLedgerSettleTakesTheLatestMatchAndRetiresWhatItSupersedes(t *testing.T)
 		`{"schema":1,"file":"doc.md","sha256":"-","ts":"2026-07-29T23:52:00Z"}`,
 	)
 	consumed2 := map[string]int{}
-	if l2.settle("doc.md", b, consumed2) {
+	if l2.settle("doc.md", b, consumed2, l2.boundary()) {
 		t.Fatal("a peer's content matched")
 	}
-	if l2.settle("doc.md", a, consumed2) || l2.settle("doc.md", ledgerTombstone, consumed2) {
+	if l2.settle("doc.md", a, consumed2, l2.boundary()) || l2.settle("doc.md", ledgerTombstone, consumed2, l2.boundary()) {
 		t.Fatal("entries superseded by a peer's settled state still matched")
 	}
 }
@@ -73,12 +73,12 @@ func TestLedgerRetireAllCoversEveryEntryOnRecord(t *testing.T) {
 		`{"schema":1,"file":"gone.md","sha256":"-","ts":"2026-07-29T23:52:00Z"}`,
 	)
 	consumed := map[string]int{}
-	l.retireAll(consumed)
-	if l.settle("doc.md", a, consumed) || l.settle("gone.md", ledgerTombstone, consumed) {
+	l.retireAll(consumed, l.boundary())
+	if l.settle("doc.md", a, consumed, l.boundary()) || l.settle("gone.md", ledgerTombstone, consumed, l.boundary()) {
 		t.Fatal("an entry on record at baseline matched a later change")
 	}
 	appendLedgerLine(t, l, `{"schema":1,"file":"doc.md","sha256":"`+a+`","ts":"2026-07-30T00:00:00Z"}`)
-	if !l.settle("doc.md", a, consumed) {
+	if !l.settle("doc.md", a, consumed, l.boundary()) {
 		t.Fatal("an entry appended after the baseline did not match")
 	}
 }
