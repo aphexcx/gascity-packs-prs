@@ -32,6 +32,10 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "emoji beside an escaped entity", posted: "R&D ✅ merged <ok>", stored: "R&amp;D :white_check_mark: merged &lt;ok&gt;"},
 		{name: "shortcode posted, shortcode stored", posted: "Done :tada:", stored: "Done :tada:"},
 		{name: "verbatim Unicode echo", posted: "Done 🎉", stored: "Done 🎉"},
+		{name: "colon-delimited time beside an emoji", posted: "Deploy at 12:30:45 ✅", stored: "Deploy at 12:30:45 :white_check_mark:"},
+		{name: "adjacent shortcode runs", posted: "a 🎉 ✅ b", stored: "a :tada: :white_check_mark: b"},
+		{name: "a changed timestamp is not an emoji", posted: "Deploy at 12:30:45", stored: "Deploy at 12:59:45", wantErr: true},
+		{name: "a changed ratio is not an emoji", posted: "Ratio 1:2:3", stored: "Ratio 1:4:3", wantErr: true},
 		{name: "different text beyond the emoji", posted: "Done 🎉", stored: "Done :tada: and more", wantErr: true},
 		{name: "truncated body", posted: "Done 🎉 see the thread", stored: "Done :tada:", wantErr: true},
 	}
@@ -69,5 +73,13 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 	}
 	if a, b := slackNormalizeText("Done 🎉"), slackNormalizeText("Done :tada: and more"); a == b {
 		t.Errorf("text beyond the emoji folded away: %q", a)
+	}
+	// Colon-delimited text that is not an emoji stays in the compare (the
+	// lane's codex round 1): two timestamps must not fold to one string.
+	if a, b := slackNormalizeText("Deploy at 12:30:45"), slackNormalizeText("Deploy at 12:59:45"); a == b {
+		t.Errorf("two different timestamps folded to the same text %q", a)
+	}
+	if got := slackNormalizeText("Deploy at 12:30:45"); got != "Deploy at 12:30:45" {
+		t.Errorf("a timestamp was folded: %q", got)
 	}
 }

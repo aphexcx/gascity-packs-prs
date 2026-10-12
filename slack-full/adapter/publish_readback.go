@@ -169,10 +169,15 @@ var slackEntityUnescape = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;",
 // wraps an auto-linked URL in.
 var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 
-// slackEmojiShortcode matches one Slack emoji shortcode (`:tada:`, `:+1:`,
-// `:skin-tone-4:`, `:family_man_woman_girl:`): the colon form Slack stores
-// for an emoji that was posted as a Unicode character.
-var slackEmojiShortcode = regexp.MustCompile(`:[a-z0-9_+\-]+:`)
+// slackEmojiShortcodeRun matches a run of one or more Slack emoji
+// shortcodes standing on their own (`:tada:`, `:+1::skin-tone-4:`,
+// `:family_man_woman_girl:`): the colon form Slack stores for an emoji that
+// was posted as a Unicode character. A run must not be glued to a letter or
+// digit on either side: a time such as 12:30:45 or a ratio 1:2:3 carries
+// colon-delimited text that is not an emoji and has to stay in the compare,
+// or two different timestamps would fold to the same text (the lane's codex
+// round 1). The groups keep the boundary characters.
+var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9])((?::[a-z0-9_+\-]+:)+)($|[^A-Za-z0-9])`)
 
 // slackKeycapSequence matches a keycap emoji (`1️⃣`, `#️⃣`): a digit, `#` or
 // `*` followed by an optional variation selector and the combining enclosing
@@ -212,7 +217,16 @@ func slackNormalizeText(text string) string {
 // finding 3c).
 func slackFoldEmoji(text string) string {
 	text = slackKeycapSequence.ReplaceAllString(text, "")
-	text = slackEmojiShortcode.ReplaceAllString(text, "")
+	// A match consumes the boundary after a run, which is also the boundary
+	// before the next one, so adjacent runs ("a :x: :y: b") take a second
+	// pass; the loop ends when a pass changes nothing.
+	for {
+		folded := slackEmojiShortcodeRun.ReplaceAllString(text, "$1$3")
+		if folded == text {
+			break
+		}
+		text = folded
+	}
 	return strings.Map(func(r rune) rune {
 		if isSlackEmojiRune(r) {
 			return -1
