@@ -256,6 +256,83 @@ func TestOwnDeleteTombstoneIsSuppressed(t *testing.T) {
 	}
 }
 
+// TestOwnDeleteTombstoneDoesNotSuppressLaterPeerDelete is gf-4c9 row 8 at
+// the engine level (the gf-9x2 codex gate's Major at ledger.go:54): after
+// this city's own deletion of ours.md settled silently against its
+// tombstone, a peer recreates ours.md (notified: added) and later deletes it
+// again. That second deletion is the peer's and must be notified; the old
+// tombstone was consumed by the first and may not silence it. The consumed
+// counts persist with the snapshot, so a restart between the two deletions
+// changes nothing.
+func TestOwnDeleteTombstoneDoesNotSuppressLaterPeerDelete(t *testing.T) {
+	r := newTestRig(t)
+	r.be.set("ours.md", 1000, "ours")
+	r.tick() // baseline
+
+	r.recordOwnWrite(t, "ours.md", ledgerTombstone)
+	r.be.remove("ours.md")
+	r.pastDebounce()
+	if len(r.not.calls) != 0 {
+		t.Fatalf("own delete notified: %v", r.not.calls)
+	}
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	if err != nil || snap == nil {
+		t.Fatalf("snapshot not persisted: %v", err)
+	}
+	if len(snap.LedgerConsumed) != 1 {
+		t.Fatalf("consumed tombstone not persisted with the snapshot: %+v", snap.LedgerConsumed)
+	}
+
+	// The peer recreates the doc: a plain addition, notified.
+	r.be.set("ours.md", 2000, "the peer's new version")
+	r.pastDebounce()
+	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "added" {
+		t.Fatalf("peer recreate: %v", r.not.calls)
+	}
+
+	// A restart in between (new engine, same state dir) must not re-arm the
+	// consumed tombstone.
+	r2 := &testRig{be: r.be, not: &fakeNotifier{}, clock: r.clock.Add(time.Minute)}
+	r2.eng = newEngine(r.eng.cfg, r.be, r2.not)
+	r2.eng.now = func() time.Time { return r2.clock }
+	r2.tick() // loads the persisted snapshot; nothing changed
+
+	// The peer deletes it again: THEIR deletion, and the old tombstone was
+	// spent on ours.
+	r2.be.remove("ours.md")
+	r2.pastDebounce()
+	if len(r2.not.calls) != 1 || r2.not.calls[0].Verb != "removed" || r2.not.calls[0].Name != "ours.md" {
+		t.Fatalf("peer delete after an own delete was not notified (the historical tombstone suppressed it): %v", r2.not.calls)
+	}
+}
+
+// TestPeerRevertToOnceOwnContentNotifies is the content-hash twin of the
+// tombstone case: after our own write of X settled silently, a peer edits
+// to Y (notified) and then reverts to X. The revert is the peer's change;
+// the spent own-write entry may not read it as ours.
+func TestPeerRevertToOnceOwnContentNotifies(t *testing.T) {
+	r := newTestRig(t)
+	r.tick() // empty baseline
+
+	ours := "# our own post\n"
+	r.recordOwnWrite(t, "ours.md", sha256hex([]byte(ours)))
+	r.be.set("ours.md", 4000, ours)
+	r.pastDebounce()
+	if len(r.not.calls) != 0 {
+		t.Fatalf("own write notified: %v", r.not.calls)
+	}
+	r.be.set("ours.md", 5000, ours+"peer amendment\n")
+	r.pastDebounce()
+	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "updated" {
+		t.Fatalf("peer edit: %v", r.not.calls)
+	}
+	r.be.set("ours.md", 6000, ours)
+	r.pastDebounce()
+	if len(r.not.calls) != 2 || r.not.calls[1].Verb != "updated" {
+		t.Fatalf("peer revert to once-own content was not notified: %v", r.not.calls)
+	}
+}
+
 func TestNotifyFailureRetriesNextCycle(t *testing.T) {
 	r := newTestRig(t)
 	r.tick() // empty baseline

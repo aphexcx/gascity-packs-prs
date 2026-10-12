@@ -29,6 +29,22 @@ type snapshotEntry struct {
 type snapshot struct {
 	Schema int                      `json:"schema"`
 	Files  map[string]snapshotEntry `json:"files"`
+	// LedgerConsumed counts, per own-writes.jsonl entry (ledgerKey), the
+	// settled changes it has already suppressed, so an entry suppresses
+	// exactly one change and a historical tombstone cannot silence a peer's
+	// later deletion of a recreated doc (gf-4c9 row 8). Persisted with the
+	// snapshot so a restart does not re-arm consumed entries.
+	LedgerConsumed map[string]int `json:"ledger_consumed,omitempty"`
+}
+
+// consumeOwnWrite is the engine's ledger check: it consumes one matching
+// unconsumed entry against the persisted counts, which the next persist()
+// writes out with the snapshot.
+func (e *engine) consumeOwnWrite(name, sha string) bool {
+	if e.snap.LedgerConsumed == nil {
+		e.snap.LedgerConsumed = map[string]int{}
+	}
+	return e.ledger.consume(name, sha, e.snap.LedgerConsumed)
 }
 
 // pendingChange tracks a doc that differs from the snapshot but has not
@@ -235,7 +251,7 @@ func (e *engine) track(name string, st fileStat, deleted bool, now time.Time) {
 // enough in practice.
 func (e *engine) settle(ctx context.Context, name string, p *pendingChange) {
 	if p.deleted {
-		if !e.ledger.matches(name, ledgerTombstone) {
+		if !e.consumeOwnWrite(name, ledgerTombstone) {
 			if err := e.notify.Notify(ctx, change{Name: name, Verb: "removed"}); err != nil {
 				log.Printf("notify %s removed: %v (will retry)", name, err)
 				return
@@ -268,7 +284,7 @@ func (e *engine) settle(ctx context.Context, name string, p *pendingChange) {
 	case existed && prev.SHA256 != "" && prev.SHA256 == sum:
 		// mtime moved but content didn't (touch, re-copy): settle silently.
 		log.Printf("%s restat settled silently (content unchanged)", name)
-	case e.ledger.matches(name, sum):
+	case e.consumeOwnWrite(name, sum):
 		log.Printf("own write of %s settled silently", name)
 	default:
 		ch := change{Name: name, Verb: verb, SHA256: sum, From: extractFrom(content)}

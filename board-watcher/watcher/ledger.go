@@ -26,20 +26,45 @@ type ledgerEntry struct {
 // It re-reads the file on every check: checks happen only when a change
 // settles (rare), the file is tiny, and re-reading picks up hashes the
 // write helper appended moments ago without any coordination.
+//
+// An entry suppresses exactly ONE settled change. The ledger is append-only
+// and the write path never retires an entry, so without that rule every
+// historical entry matched forever: after an own deletion of note.md, a
+// peer's recreate-then-delete of the same name settled silently against the
+// old tombstone, and a peer's revert to content this city once wrote was
+// read as an own write (gf-4c9 row 8; the gf-9x2 codex gate's ledger.go:54
+// finding). The watcher therefore keeps, in its persisted snapshot, how many
+// times each entry has already been consumed (keyed by the entry's full
+// text: file, sha256 and ts, so two genuine own writes of identical content
+// at different times are two entries and suppress two changes). Nothing
+// about the file format changes: the write helpers' contract stays as the
+// README and schema/own_writes.schema.json describe it.
 type ledger struct {
 	path string
 }
 
-// matches reports whether the ledger records (file, sha) as an own write.
-// A missing ledger file suppresses nothing. Malformed lines are skipped:
-// a corrupt ledger line should degrade to a spurious nudge, not kill the
-// suppression of every other entry.
-func (l *ledger) matches(file, sha string) bool {
+// ledgerKey is the identity of one entry: its file, hash and timestamp, in
+// the order the write path records them.
+func ledgerKey(e ledgerEntry) string {
+	return e.File + "\x1f" + e.SHA256 + "\x1f" + e.TS
+}
+
+// consume reports whether the ledger records (file, sha) as an own write
+// that has not yet been matched to a settled change, and if so records the
+// match in consumed (a count per entry key) so the same entry cannot
+// suppress a second change. A missing ledger file suppresses nothing.
+// Malformed lines are skipped: a corrupt ledger line should degrade to a
+// spurious nudge, not kill the suppression of every other entry.
+func (l *ledger) consume(file, sha string, consumed map[string]int) bool {
 	f, err := os.Open(l.path)
 	if err != nil {
 		return false
 	}
 	defer f.Close()
+	// Count the matching entries by key first: identical lines (same file,
+	// hash and second) are one key with several occurrences.
+	occurrences := map[string]int{}
+	var order []string
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -51,7 +76,18 @@ func (l *ledger) matches(file, sha string) bool {
 		if json.Unmarshal(line, &e) != nil {
 			continue
 		}
-		if e.File == file && e.SHA256 == sha {
+		if e.File != file || e.SHA256 != sha {
+			continue
+		}
+		key := ledgerKey(e)
+		if occurrences[key] == 0 {
+			order = append(order, key)
+		}
+		occurrences[key]++
+	}
+	for _, key := range order {
+		if consumed[key] < occurrences[key] {
+			consumed[key]++
 			return true
 		}
 	}
