@@ -57,6 +57,10 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "a code span beside an emoji", posted: "Run `items[:start:]` ✅", stored: "Run `items[:start:]` :white_check_mark:"},
 		{name: "a shortcode inside a code span stays literal on both sides", posted: "Type `:tada:` to cheer", stored: "Type `:tada:` to cheer"},
 		{name: "an unclosed backtick is not a code span", posted: "a ` 🎉", stored: "a ` :tada:"},
+		{name: "a colon-delimited path segment of a bare URL is text", posted: "See https://example.com/:customer_id:/orders", stored: "See https://example.com//orders", wantErr: true},
+		{name: "a changed URL segment that reads like a shortcode", posted: "See https://example.com/:customer_id:/orders", stored: "See https://example.com/:order_id:/orders", wantErr: true},
+		{name: "a bare URL beside an emoji", posted: "See https://example.com/:customer_id:/orders 🎉", stored: "See https://example.com/:customer_id:/orders :tada:"},
+		{name: "an auto-linked URL beside an emoji", posted: "See https://example.com/:customer_id:/orders 🎉", stored: "See <https://example.com/:customer_id:/orders> :tada:"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -103,7 +107,7 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 	}
 	// Symbols Slack stores as typed are not emoji and stay (the lane's codex
 	// round 2): ⌘, box drawing, Braille, arrows other than the emoji ones.
-	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]", "`items[:start:]`", "`x[:100:]`", "```\n:tada:\n```", "`:tada:` outside"} {
+	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]", "`items[:start:]`", "`x[:100:]`", "```\n:tada:\n```", "`:tada:` outside", "https://example.com/:customer_id:/orders", "http://h/:a: tail"} {
 		if got := slackNormalizeText(kept); got != kept {
 			t.Errorf("slackNormalizeText(%q) = %q, want it unchanged", kept, got)
 		}
