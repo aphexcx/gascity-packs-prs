@@ -83,7 +83,9 @@ is_approved() {
   candidate="$(printf '%s' "${1-}" | tr '[:upper:]' '[:lower:]')"
   [ -n "$candidate" ] || return 1
   for known in "${APPROVAL_VERDICTS[@]}"; do
-    if [ "$candidate" = "${known,,}" ]; then
+    # tr, not ${known,,}: the latter is Bash 4 and macOS ships Bash 3.2,
+    # where it exits "bad substitution" for every verdict (gf-4c9 row 12).
+    if [ "$candidate" = "$(printf '%s' "$known" | tr '[:upper:]' '[:lower:]')" ]; then
       return 0
     fi
   done
