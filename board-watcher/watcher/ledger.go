@@ -137,11 +137,13 @@ func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
 // the seed for a snapshot persisted by a binary that kept no counts. The
 // evidence is per file, never the snapshot's age as a whole (the lane's
 // codex round 3): a content entry is spent when its file's settled hash is
-// that content, or when the file settled at or after the entry was recorded
-// (its ts, the second the write helper appended it, against the settled
-// mtime) — the write is then the settled state or one it superseded; a
-// tombstone is spent when its file is absent from the snapshot, or settled
-// present at or after it. Everything else is a write the catch-up cycle has
+// that content, or when the file settled strictly after the entry was
+// recorded (its ts, the second the write helper appended it, against the
+// settled mtime; both are whole seconds, so an equal second proves nothing
+// and keeps the entry — the lane's codex round 4) — the write is then one
+// the settled state superseded; a tombstone is spent when its file is
+// absent from the snapshot, or settled present after it. Everything else is
+// a write the catch-up cycle has
 // yet to settle — an own update still debouncing when the snapshot was last
 // persisted, a write that landed while the watcher was stopped — and stays
 // live; an entry whose ts does not parse stays live too, so a malformed
@@ -160,7 +162,7 @@ func (l *ledger) retireSettled(consumed map[string]int, files map[string]snapsho
 		case e.SHA256 == settled.SHA256 && settled.SHA256 != "":
 		default:
 			ts, err := time.Parse(time.RFC3339, e.TS)
-			if err != nil || ts.Unix() > settled.MTimeUnix {
+			if err != nil || ts.Unix() >= settled.MTimeUnix {
 				return
 			}
 		}
