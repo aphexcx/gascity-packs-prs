@@ -111,10 +111,9 @@ type engine struct {
 
 	snap    *snapshot
 	pending map[string]*pendingChange
-	// ledgerBoundary is the ledger\'s size captured before this cycle\'s board
-	// read (ledger.boundary): the retirement line for every settle of the
-	// cycle.
-	ledgerBoundary int64
+	// ledgerBoundary is the retirement line drawn before this cycle's board
+	// read (ledger.boundary) for every settle of the cycle.
+	ledgerBoundary ledgerBoundary
 }
 
 func newEngine(cfg config, be backend, n notifier) *engine {

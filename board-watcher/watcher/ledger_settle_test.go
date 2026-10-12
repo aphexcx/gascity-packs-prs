@@ -145,3 +145,35 @@ func TestLedgerShrunkSinceBoundaryRetiresNothing(t *testing.T) {
 		t.Fatal("an entry of a pruned ledger was retired against a stale boundary")
 	}
 }
+
+// TestLedgerReplacedSinceBoundaryRetiresNothing: a ledger pruned and regrown
+// after the boundary was captured can be as large as the boundary again
+// with different bytes before it (a short historical tombstone removed, a
+// longer own-write entry appended), so size alone does not prove the
+// boundary still separates the entries the board read could reflect from
+// the ones it could not. The boundary carries the hash of the bytes before
+// it, and a ledger that no longer starts with those bytes retires nothing
+// (the lane's codex round 7).
+func TestLedgerReplacedSinceBoundaryRetiresNothing(t *testing.T) {
+	a := strings.Repeat("aa", 32)
+	l := writeLedger(t,
+		`{"schema":1,"file":"old.md","sha256":"-","ts":"2026-07-29T23:50:00Z"}`,
+	)
+	boundary := l.boundary()
+	// Pruned and regrown: the tombstone is gone and a longer own-write
+	// entry, recorded after the board read, now starts at offset zero.
+	regrown := `{"schema":1,"file":"doc.md","sha256":"` + a + `","ts":"2026-07-29T23:52:00Z","note":"recorded after the board read, past the old boundary"}` + "\n"
+	if err := os.WriteFile(l.path, []byte(regrown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if int64(len(regrown)) < boundary.size {
+		t.Fatalf("test shape: the regrown ledger (%d bytes) must reach the captured boundary (%d bytes)", len(regrown), boundary.size)
+	}
+	consumed := map[string]int{}
+	if l.settle("doc.md", strings.Repeat("cc", 32), consumed, boundary) {
+		t.Fatal("a peer's content matched")
+	}
+	if !l.settle("doc.md", a, consumed, l.boundary()) {
+		t.Fatal("an entry of a replaced ledger was retired against a stale boundary that its size alone satisfied")
+	}
+}

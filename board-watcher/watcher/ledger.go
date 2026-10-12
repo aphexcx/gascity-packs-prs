@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"io"
 	"os"
 )
 
@@ -78,12 +80,12 @@ func ledgerKey(e ledgerEntry) string {
 // write's own settle, one poll later, read as a peer's (the lane's codex
 // round 1). The match itself may be any entry, since the state that settled
 // may be exactly that late own write.
-func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int64) bool {
+func (l *ledger) settle(file, sha string, consumed map[string]int, boundary ledgerBoundary) bool {
 	entries := l.entriesFor(file)
 	if len(entries) == 0 {
 		return false
 	}
-	boundary = l.validBoundary(boundary)
+	cut := l.validBoundary(boundary)
 	// occurrence[i] is how many earlier entries share entry i's key, so an
 	// entry is unconsumed when consumed[key] <= occurrence[i]: identical
 	// lines (same file, hash and second) are one key with several
@@ -107,7 +109,7 @@ func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int6
 		cutoff = match + 1
 	}
 	for i := 0; i < cutoff; i++ {
-		if i != match && entries[i].offset >= boundary {
+		if i != match && entries[i].offset >= cut {
 			continue
 		}
 		key := ledgerKey(entries[i].entry)
@@ -122,13 +124,13 @@ func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int6
 // the baseline's view of the board already reflects every write the ledger
 // described when the board was read, so none of them may explain a change
 // observed after it (finding 3a).
-func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
-	boundary = l.validBoundary(boundary)
+func (l *ledger) retireAll(consumed map[string]int, boundary ledgerBoundary) {
+	cut := l.validBoundary(boundary)
 	seen := map[string]int{}
 	l.scan(func(e ledgerEntry, offset int64) {
 		key := ledgerKey(e)
 		seen[key]++
-		if offset < boundary && consumed[key] < seen[key] {
+		if offset < cut && consumed[key] < seen[key] {
 			consumed[key] = seen[key]
 		}
 	})
@@ -169,29 +171,68 @@ func (l *ledger) retireSettled(consumed map[string]int, files map[string]snapsho
 	}
 }
 
-// validBoundary returns boundary, or 0 when the ledger is now smaller than
-// it: the file was pruned or rewritten since the boundary was captured, so
-// its offsets no longer say which entries predate the board read, and
-// retiring nothing is the side that costs a spurious nudge rather than a
-// lost one (the lane's codex round 5).
-func (l *ledger) validBoundary(boundary int64) int64 {
-	if l.boundary() < boundary {
-		return 0
-	}
-	return boundary
+// ledgerBoundary is the retirement line a cycle draws before it reads the
+// board: the ledger's size then, and the hash of the bytes before it. Only
+// an entry that lies before the line may be retired by a settle of that
+// cycle; an entry appended after the board read lies past it, and that
+// entry describes a write the board read could not have reflected.
+type ledgerBoundary struct {
+	size   int64
+	prefix [sha256.Size]byte
 }
 
-// boundary is the ledger's current size in bytes: every entry on record lies
-// before it and every entry appended from now on lies at or past it. Taken
-// before the board is read, it is the line settle and retireAll draw
-// between the writes a board observation can reflect and the ones it
-// cannot. A missing ledger is empty.
-func (l *ledger) boundary() int64 {
-	info, err := os.Stat(l.path)
-	if err != nil {
+// validBoundary returns the boundary's offset, or 0 when the ledger no
+// longer starts with the bytes the boundary was drawn after: the file was
+// pruned or rewritten since (the README permits pruning), so its offsets
+// no longer say which entries predate the board read, and retiring nothing
+// is the side that costs a spurious nudge rather than a lost one. Size
+// alone does not prove the prefix: a ledger pruned and regrown can be as
+// large as before with a new entry at offset zero (the lane's codex rounds
+// 5 and 7).
+func (l *ledger) validBoundary(boundary ledgerBoundary) int64 {
+	if boundary.size == 0 {
 		return 0
 	}
-	return info.Size()
+	prefix, ok := l.prefixHash(boundary.size)
+	if !ok || prefix != boundary.prefix {
+		return 0
+	}
+	return boundary.size
+}
+
+// boundary is the ledger's current retirement line: its size in bytes
+// (every entry on record lies before it and every entry appended from now
+// on lies at or past it) and the hash of those bytes. Taken before the
+// board is read, it is the line settle and retireAll draw between the
+// writes a board observation can reflect and the ones it cannot. A missing
+// ledger is empty.
+func (l *ledger) boundary() ledgerBoundary {
+	info, err := os.Stat(l.path)
+	if err != nil {
+		return ledgerBoundary{}
+	}
+	prefix, ok := l.prefixHash(info.Size())
+	if !ok {
+		return ledgerBoundary{}
+	}
+	return ledgerBoundary{size: info.Size(), prefix: prefix}
+}
+
+// prefixHash hashes the ledger's first size bytes; ok is false when the
+// ledger cannot be read or is shorter than size.
+func (l *ledger) prefixHash(size int64) (prefix [sha256.Size]byte, ok bool) {
+	f, err := os.Open(l.path)
+	if err != nil {
+		return prefix, false
+	}
+	defer f.Close()
+	h := sha256.New()
+	n, err := io.CopyN(h, f, size)
+	if err != nil || n != size {
+		return prefix, false
+	}
+	copy(prefix[:], h.Sum(nil))
+	return prefix, true
 }
 
 // positionedEntry is one ledger entry with the byte offset its line starts
