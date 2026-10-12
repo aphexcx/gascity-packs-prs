@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const slackReadbackResponseLimit = 1 << 20
@@ -168,20 +169,70 @@ var slackEntityUnescape = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;",
 // wraps an auto-linked URL in.
 var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 
+// slackEmojiShortcode matches one Slack emoji shortcode (`:tada:`, `:+1:`,
+// `:skin-tone-4:`, `:family_man_woman_girl:`): the colon form Slack stores
+// for an emoji that was posted as a Unicode character.
+var slackEmojiShortcode = regexp.MustCompile(`:[a-z0-9_+\-]+:`)
+
+// slackKeycapSequence matches a keycap emoji (`1️⃣`, `#️⃣`): a digit, `#` or
+// `*` followed by an optional variation selector and the combining enclosing
+// keycap, which Slack stores as `:one:`, `:hash:` and the like. The base
+// character goes with it, since the shortcode carries none of it.
+var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
+
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
-// `>` in the stored text, and auto-links bare URLs into `<url>` spans.
+// `>` in the stored text, auto-links bare URLs into `<url>` spans, and
+// stores a Unicode emoji as its colon shortcode (`Done 🎉` reads back as
+// `Done :tada:`; https://docs.slack.dev/messaging/formatting-message-text/#emoji).
 //
 // It is applied to BOTH sides of the compare, never to one. Normalizing only
 // the expected text would require predicting Slack's output exactly — the
-// auto-link shape in particular is not something this repo can pin — whereas
-// folding both sides only requires that the fold be the same on each, which is
+// auto-link shape in particular is not something this repo can pin, and the
+// Unicode-to-shortcode table is Slack's, not this repo's — whereas folding
+// both sides only requires that the fold be the same on each, which is
 // checkable here. The fold is deliberately lossy in exactly the way Slack is
-// lossy: two texts that differ only by escaping or link markup compare equal,
-// because Slack cannot tell an operator which of the two it stored either.
-// Divergence that survives the fold is still reported unconfirmed.
+// lossy: two texts that differ only by escaping, link markup or emoji
+// compare equal, because Slack cannot tell an operator which of the two it
+// stored either. Divergence that survives the fold is still reported
+// unconfirmed.
 func slackNormalizeText(text string) string {
-	return slackAngleSpan.ReplaceAllString(slackEntityUnescape.Replace(text), "$1")
+	return slackFoldEmoji(slackAngleSpan.ReplaceAllString(slackEntityUnescape.Replace(text), "$1"))
+}
+
+// slackFoldEmoji removes every emoji from text in both of its spellings: the
+// colon shortcodes Slack stores, and the Unicode form that was posted —
+// keycap sequences, then the emoji characters themselves (Unicode "other
+// symbol", which holds the pictographs, flags' regional indicators and
+// marks such as © that Slack also stores as shortcodes), the skin-tone
+// modifiers, the zero-width joiner and variation selectors that build
+// sequences from them, and the tag characters of subdivision flags. Without
+// this an unkeyed publish of a message with an emoji in it read back as a
+// permanent failure although Slack had delivered it (gf-4c9 round 2,
+// finding 3c).
+func slackFoldEmoji(text string) string {
+	text = slackKeycapSequence.ReplaceAllString(text, "")
+	text = slackEmojiShortcode.ReplaceAllString(text, "")
+	return strings.Map(func(r rune) rune {
+		if isSlackEmojiRune(r) {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+func isSlackEmojiRune(r rune) bool {
+	switch r {
+	case 0x200D, 0xFE0E, 0xFE0F, 0x20E3:
+		return true
+	}
+	if r >= 0x1F3FB && r <= 0x1F3FF { // skin-tone modifiers
+		return true
+	}
+	if r >= 0xE0020 && r <= 0xE007F { // tag characters (subdivision flags)
+		return true
+	}
+	return unicode.Is(unicode.So, r)
 }
 
 // readBackPublishedMessage verifies a post through Slack's read API rather
