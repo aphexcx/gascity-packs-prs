@@ -229,12 +229,34 @@ func slackFoldEmoji(text string) string {
 		}
 		text = folded
 	}
-	return strings.Map(func(r rune) rune {
-		if isSlackEmojiRune(r) {
-			return -1
+	runes := []rune(text)
+	out := make([]rune, 0, len(runes))
+	for i, r := range runes {
+		switch {
+		case isSlackEmojiRune(r):
+		case isEmojiSequenceGlue(r) && (i > 0 && isSlackEmojiRune(runes[i-1]) || i+1 < len(runes) && isSlackEmojiRune(runes[i+1])):
+			// A joiner, variation selector, keycap or flag tag only goes with
+			// an emoji beside it: in other scripts the same characters shape
+			// ordinary text (a Devanagari conjunct with a zero-width joiner is
+			// not the same word without it), and Slack stores them as typed
+			// (the lane's codex round 4).
+		default:
+			out = append(out, r)
 		}
-		return r
-	}, text)
+	}
+	return string(out)
+}
+
+// isEmojiSequenceGlue reports the characters that build an emoji sequence
+// from emoji characters: the zero-width joiner, the variation selectors,
+// the combining enclosing keycap and the tag characters of subdivision
+// flags.
+func isEmojiSequenceGlue(r rune) bool {
+	switch r {
+	case 0x200D, 0xFE0E, 0xFE0F, 0x20E3:
+		return true
+	}
+	return r >= 0xE0020 && r <= 0xE007F
 }
 
 // slackEmojiRunes is the set of emoji characters the fold removes: the
@@ -401,13 +423,6 @@ var slackEmojiRunes = &unicode.RangeTable{
 }
 
 func isSlackEmojiRune(r rune) bool {
-	switch r {
-	case 0x200D, 0xFE0E, 0xFE0F, 0x20E3:
-		return true
-	}
-	if r >= 0xE0020 && r <= 0xE007F { // tag characters (subdivision flags)
-		return true
-	}
 	return unicode.Is(slackEmojiRunes, r)
 }
 

@@ -39,6 +39,9 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "a code namespace is not a shortcode run", posted: "Use std::vector::iterator", stored: "Use std::map::iterator", wantErr: true},
 		{name: "a code namespace beside an emoji", posted: "Use std::vector::iterator ✅", stored: "Use std::vector::iterator :white_check_mark:"},
 		{name: "music accidentals are not emoji", posted: "Play C♯", stored: "Play C♭", wantErr: true},
+		{name: "a joiner in Devanagari is text", posted: "क्\u200dष", stored: "क्ष", wantErr: true},
+		{name: "a joiner in Devanagari beside an emoji", posted: "क्\u200dष ✅", stored: "क्\u200dष :white_check_mark:"},
+		{name: "a text-style variation selector on a letter is text", posted: "a\ufe0e b", stored: "a b", wantErr: true},
 		{name: "a music note beside an emoji", posted: "♪ shipped 🎉", stored: "♪ shipped :tada:"},
 		{name: "box drawing is not an emoji", posted: "┌─┐ frame", stored: " frame", wantErr: true},
 		{name: "Braille is not an emoji", posted: "Braille ⠁⠃", stored: "Braille ", wantErr: true},
@@ -92,7 +95,7 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 	}
 	// Symbols Slack stores as typed are not emoji and stay (the lane's codex
 	// round 2): ⌘, box drawing, Braille, arrows other than the emoji ones.
-	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔"} {
+	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b"} {
 		if got := slackNormalizeText(kept); got != kept {
 			t.Errorf("slackNormalizeText(%q) = %q, want it unchanged", kept, got)
 		}
