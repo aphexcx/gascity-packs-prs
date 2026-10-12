@@ -51,6 +51,12 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "a changed ratio is not an emoji", posted: "Ratio 1:2:3", stored: "Ratio 1:4:3", wantErr: true},
 		{name: "different text beyond the emoji", posted: "Done 🎉", stored: "Done :tada: and more", wantErr: true},
 		{name: "truncated body", posted: "Done 🎉 see the thread", stored: "Done :tada:", wantErr: true},
+		{name: "a named slice bound inside a code span is code", posted: "Use `items[:start:]`", stored: "Use `items[:end:]`", wantErr: true},
+		{name: "a numeric slice bound that is an emoji name inside a code span is code", posted: "Use `items[:100:]`", stored: "Use `items[]`", wantErr: true},
+		{name: "a shortcode inside a code block is text", posted: "```\nx[:tada:]\n```", stored: "```\nx[]\n```", wantErr: true},
+		{name: "a code span beside an emoji", posted: "Run `items[:start:]` ✅", stored: "Run `items[:start:]` :white_check_mark:"},
+		{name: "a shortcode inside a code span stays literal on both sides", posted: "Type `:tada:` to cheer", stored: "Type `:tada:` to cheer"},
+		{name: "an unclosed backtick is not a code span", posted: "a ` 🎉", stored: "a ` :tada:"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -97,7 +103,7 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 	}
 	// Symbols Slack stores as typed are not emoji and stay (the lane's codex
 	// round 2): ⌘, box drawing, Braille, arrows other than the emoji ones.
-	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]"} {
+	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]", "`items[:start:]`", "`x[:100:]`", "```\n:tada:\n```", "`:tada:` outside"} {
 		if got := slackNormalizeText(kept); got != kept {
 			t.Errorf("slackNormalizeText(%q) = %q, want it unchanged", kept, got)
 		}

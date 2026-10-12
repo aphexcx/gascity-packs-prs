@@ -190,6 +190,15 @@ var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9:])((?::(?:\+1|-1
 // character goes with it, since the shortcode carries none of it.
 var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 
+// slackCodeSpan matches a closed mrkdwn code span: a fenced block between
+// two triple backticks, or an inline span between two single backticks on
+// one line. Slack renders the text inside as typed, so a shortcode-shaped
+// token there is code, not an emoji: a slice such as items[:start:] or
+// items[:100:] would otherwise fold to items[] and a changed snippet would
+// read back as delivered (the lane's codex round 6). An unclosed backtick is
+// a literal character and opens no span.
+var slackCodeSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
 // `>` in the stored text, auto-links bare URLs into `<url>` spans, and
@@ -220,7 +229,26 @@ func slackNormalizeText(text string) string {
 // this an unkeyed publish of a message with an emoji in it read back as a
 // permanent failure although Slack had delivered it (gf-4c9 round 2,
 // finding 3c).
+//
+// Code spans are left as typed on both sides: the fold applies to the text
+// between them only, so a shortcode-shaped token inside backticks is
+// compared literally (an emoji inside a code span is a compare of what
+// Slack stored, the refusing side, not a fold).
 func slackFoldEmoji(text string) string {
+	var out strings.Builder
+	last := 0
+	for _, span := range slackCodeSpan.FindAllStringIndex(text, -1) {
+		out.WriteString(slackFoldEmojiProse(text[last:span[0]]))
+		out.WriteString(text[span[0]:span[1]])
+		last = span[1]
+	}
+	out.WriteString(slackFoldEmojiProse(text[last:]))
+	return out.String()
+}
+
+// slackFoldEmojiProse removes every emoji, in both spellings, from text that
+// holds no code span.
+func slackFoldEmojiProse(text string) string {
 	text = slackKeycapSequence.ReplaceAllString(text, "")
 	// A match consumes the boundary after a run, which is also the boundary
 	// before the next one, so adjacent runs ("a :x: :y: b") take a second
