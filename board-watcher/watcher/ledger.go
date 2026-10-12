@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"time"
 )
 
 // ledgerTombstone is the sha256 value that records an own DELETION of a
@@ -127,6 +128,28 @@ func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
 		key := ledgerKey(e)
 		seen[key]++
 		if offset < boundary && consumed[key] < seen[key] {
+			consumed[key] = seen[key]
+		}
+	})
+}
+
+// retireBefore spends every entry recorded at or before cutoff (its ts, the
+// second the write helper appended it), for every file: the seed for a
+// snapshot persisted by a binary that kept no counts. Entries recorded
+// after cutoff — own writes that landed while the watcher was stopped — are
+// pending changes its catch-up cycle will settle, and stay live; an entry
+// whose ts does not parse stays live too, so a malformed line degrades to a
+// spurious nudge rather than a lost one.
+func (l *ledger) retireBefore(consumed map[string]int, cutoff time.Time) {
+	seen := map[string]int{}
+	l.scan(func(e ledgerEntry, _ int64) {
+		key := ledgerKey(e)
+		seen[key]++
+		ts, err := time.Parse(time.RFC3339, e.TS)
+		if err != nil || ts.After(cutoff) {
+			return
+		}
+		if consumed[key] < seen[key] {
 			consumed[key] = seen[key]
 		}
 	})

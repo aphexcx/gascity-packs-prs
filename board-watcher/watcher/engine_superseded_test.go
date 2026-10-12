@@ -123,7 +123,7 @@ func TestOwnDeleteAndRecreateInOneWindowThenPeerDeleteNotifies(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete-and-recreate notified: %v", r.not.calls)
 	}
-	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -190,17 +190,34 @@ func TestLoadOfASnapshotWithoutLedgerCountsSeedsThem(t *testing.T) {
 	if err := os.WriteFile(r.eng.cfg.snapshotPath(), []byte(pre), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The snapshot was persisted at a known time; the three historical
+	// entries predate it, and one own write of new content landed while the
+	// watcher was stopped (its entry is dated after the persist, and its
+	// file is on the board, newer than the snapshot).
+	persistedAt := time.Date(2026, 7, 30, 0, 30, 0, 0, time.UTC)
+	if err := os.Chtimes(r.eng.cfg.snapshotPath(), persistedAt, persistedAt); err != nil {
+		t.Fatal(err)
+	}
 	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(superseded)))
 	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(ours)))
 	r.recordOwnWrite(t, "gone.md", ledgerTombstone)
+	pending := "# ours, written while the watcher was down\n"
+	r.recordOwnWriteAt(t, "pending.md", sha256hex([]byte(pending)), "2026-07-30T00:45:00Z")
+	r.be.set("pending.md", 1500, pending)
 
 	r.tick() // loads the snapshot, seeds the counts
-	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil || snap.LedgerConsumed == nil {
 		t.Fatalf("the seed was not persisted with the snapshot: %+v (%v)", snap, err)
 	}
 	if len(snap.LedgerConsumed) != 3 {
-		t.Fatalf("seeded counts = %v, want the three historical entries", snap.LedgerConsumed)
+		t.Fatalf("seeded counts = %v, want the three historical entries and not the pending one", snap.LedgerConsumed)
+	}
+	// The catch-up cycle settles the pending own write silently.
+	r.advance(r.eng.cfg.debounce + time.Second)
+	r.tick()
+	if len(r.not.calls) != 0 {
+		t.Fatalf("the own write that landed while the watcher was stopped was notified (its entry was seeded away): %v", r.not.calls)
 	}
 
 	// A peer's revert to the superseded bytes, and a peer's deletion of a
@@ -269,7 +286,7 @@ func TestOwnWriteLandingDuringAPeerSettleStaysLive(t *testing.T) {
 	if len(r.not.calls) != 1 {
 		t.Fatalf("our own write that landed during the peer's settle was notified (its entry was retired by that settle): %v", r.not.calls)
 	}
-	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if got := snap.Files["doc.md"].SHA256; got != sha256hex([]byte(ours)) {
 		t.Fatalf("snapshot content = %s, want our B", got)
 	}

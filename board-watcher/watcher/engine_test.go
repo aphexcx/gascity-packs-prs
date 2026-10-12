@@ -115,7 +115,13 @@ func (r *testRig) pastDebounce() {
 
 func (r *testRig) recordOwnWrite(t *testing.T, name, sha string) {
 	t.Helper()
-	line := fmt.Sprintf("{\"schema\":1,\"file\":%q,\"sha256\":%q,\"ts\":\"2026-07-30T00:00:00Z\"}\n", name, sha)
+	r.recordOwnWriteAt(t, name, sha, "2026-07-30T00:00:00Z")
+}
+
+// recordOwnWriteAt appends an own-write entry dated ts.
+func (r *testRig) recordOwnWriteAt(t *testing.T, name, sha, ts string) {
+	t.Helper()
+	line := fmt.Sprintf("{\"schema\":1,\"file\":%q,\"sha256\":%q,\"ts\":%q}\n", name, sha, ts)
 	f, err := os.OpenFile(r.eng.cfg.ledgerPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +140,7 @@ func TestBaselineIsSilent(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("baseline notified: %v", r.not.calls)
 	}
-	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -204,7 +210,7 @@ func TestOwnWriteIsSuppressed(t *testing.T) {
 		t.Fatalf("own write notified: %v", r.not.calls)
 	}
 	// Still settled into the snapshot so a later peer edit diffs cleanly.
-	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["ours.md"]; !ok {
 		t.Fatal("own write not settled into snapshot")
 	}
@@ -239,7 +245,7 @@ func TestPeerDeleteNotifies(t *testing.T) {
 	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "removed" || r.not.calls[0].Name != "doomed.md" {
 		t.Fatalf("want removed notification, got %v", r.not.calls)
 	}
-	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["doomed.md"]; ok {
 		t.Error("deleted doc still in snapshot")
 	}
@@ -256,7 +262,7 @@ func TestOwnDeleteTombstoneIsSuppressed(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete notified: %v", r.not.calls)
 	}
-	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["ours.md"]; ok {
 		t.Error("own-deleted doc still in snapshot")
 	}
@@ -281,7 +287,7 @@ func TestOwnDeleteTombstoneDoesNotSuppressLaterPeerDelete(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete notified: %v", r.not.calls)
 	}
-	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -350,7 +356,7 @@ func TestNotifyFailureRetriesNextCycle(t *testing.T) {
 		t.Fatal("failed notify recorded a delivery")
 	}
 	// Change must NOT have settled — the nudge would be lost.
-	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["new.md"]; ok {
 		t.Fatal("change settled despite notify failure")
 	}
