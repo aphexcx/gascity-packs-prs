@@ -327,7 +327,7 @@ def test_make_test_names_the_runner_a_worker_would_otherwise_rediscover() -> Non
     and unset GC_TEMPLATE, which a gc worker session exports."""
     import subprocess
 
-    for target, dirs in (("test", "tests contributing/tests gascity/tests"), ("test-gascity", "tests gascity/tests")):
+    for target, dirs in (("test", "tests contributing-to-gascity/tests gascity/tests"), ("test-gascity", "tests gascity/tests")):
         out = subprocess.run(
             ["make", "-n", target], cwd=REPO_ROOT, capture_output=True, text=True, check=True
         ).stdout
