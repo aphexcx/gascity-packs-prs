@@ -171,25 +171,26 @@ func (e *engine) tick(ctx context.Context) {
 // watcher baselining an existing board must not spray the mayor with one
 // nudge per historical doc.
 func (e *engine) loadOrBaseline(ctx context.Context) error {
-	snap, persistedAt, err := loadSnapshot(e.cfg.snapshotPath())
+	snap, err := loadSnapshot(e.cfg.snapshotPath())
 	if err != nil {
 		return err
 	}
 	if snap != nil {
 		if snap.LedgerConsumed == nil {
 			// A snapshot persisted before the counts existed: every entry
-			// recorded up to the moment it was persisted describes a write
-			// that state already reflects or that a later write superseded,
+			// its settled state already accounts for, file by file, describes
+			// a write that state reflects or that a later write superseded,
 			// so none may explain a change observed from now on (the
-			// pre-upgrade half of finding 3a). Entries recorded AFTER it —
-			// own writes that landed while the watcher was stopped — are the
-			// pending changes the catch-up cycle is about to settle, and
-			// stay live (the lane's codex round 2). Persisted at once so the
+			// pre-upgrade half of finding 3a). Entries it does not account
+			// for — own writes that landed while the watcher was stopped, or
+			// were still debouncing when it last persisted — are the pending
+			// changes the catch-up cycle is about to settle, and stay live
+			// (the lane's codex rounds 2 and 3). Persisted at once so the
 			// seed happens exactly once.
 			snap.LedgerConsumed = map[string]int{}
-			e.ledger.retireBefore(snap.LedgerConsumed, persistedAt)
+			e.ledger.retireSettled(snap.LedgerConsumed, snap.Files)
 			e.snap = snap
-			log.Printf("ledger counts seeded for a snapshot without them (entries up to %s)", persistedAt.UTC().Format(time.RFC3339))
+			log.Printf("ledger counts seeded for a snapshot without them: %d entr(ies) spent", len(snap.LedgerConsumed))
 			return e.persist()
 		}
 		e.snap = snap
@@ -355,29 +356,22 @@ func (e *engine) persist() error {
 	return persistSnapshot(e.cfg.snapshotPath(), e.snap)
 }
 
-// loadSnapshot reads the persisted snapshot and the time it was persisted
-// (the file's mtime; persistSnapshot renames into place, so the rename's
-// time is the persist's). A missing file is no snapshot.
-func loadSnapshot(path string) (*snapshot, time.Time, error) {
+func loadSnapshot(path string) (*snapshot, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return nil, time.Time{}, nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("read snapshot: %w", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, time.Time{}, fmt.Errorf("stat snapshot: %w", err)
+		return nil, fmt.Errorf("read snapshot: %w", err)
 	}
 	var snap snapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
-		return nil, time.Time{}, fmt.Errorf("decode snapshot %s: %w", path, err)
+		return nil, fmt.Errorf("decode snapshot %s: %w", path, err)
 	}
 	if snap.Files == nil {
 		snap.Files = map[string]snapshotEntry{}
 	}
-	return &snap, info.ModTime(), nil
+	return &snap, nil
 }
 
 // persistSnapshot writes atomically (tmp + rename) so a crash mid-write

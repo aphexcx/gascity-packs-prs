@@ -123,7 +123,7 @@ func TestOwnDeleteAndRecreateInOneWindowThenPeerDeleteNotifies(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete-and-recreate notified: %v", r.not.calls)
 	}
-	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -180,33 +180,31 @@ func TestLoadOfASnapshotWithoutLedgerCountsSeedsThem(t *testing.T) {
 	r := newTestRig(t)
 	ours := "# ours\n"
 	superseded := "# ours, an older version\n"
-	// The pre-upgrade snapshot: doc.md settled at our content, no counts.
-	r.be.set("doc.md", 1000, ours)
-	pre := fmt.Sprintf(`{"schema":1,"files":{"doc.md":{"mtime_unix":1000,"size":%d,"sha256":%q}}}`+"\n",
-		len(ours), sha256hex([]byte(ours)))
+	// The pre-upgrade snapshot: doc.md settled at our content at 00:30, no
+	// counts. The historical entries (00:00) predate that settle: the
+	// superseded content, the settled content, a tombstone of an absent doc.
+	settledAt := time.Date(2026, 7, 30, 0, 30, 0, 0, time.UTC).Unix()
+	r.be.set("doc.md", settledAt, ours)
+	pre := fmt.Sprintf(`{"schema":1,"files":{"doc.md":{"mtime_unix":%d,"size":%d,"sha256":%q}}}`+"\n",
+		settledAt, len(ours), sha256hex([]byte(ours)))
 	if err := os.MkdirAll(filepath.Dir(r.eng.cfg.snapshotPath()), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(r.eng.cfg.snapshotPath(), []byte(pre), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// The snapshot was persisted at a known time; the three historical
-	// entries predate it, and one own write of new content landed while the
-	// watcher was stopped (its entry is dated after the persist, and its
-	// file is on the board, newer than the snapshot).
-	persistedAt := time.Date(2026, 7, 30, 0, 30, 0, 0, time.UTC)
-	if err := os.Chtimes(r.eng.cfg.snapshotPath(), persistedAt, persistedAt); err != nil {
-		t.Fatal(err)
-	}
 	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(superseded)))
 	r.recordOwnWrite(t, "doc.md", sha256hex([]byte(ours)))
 	r.recordOwnWrite(t, "gone.md", ledgerTombstone)
+	// One own write of a new doc landed while the watcher was stopped: its
+	// file is on the board and its entry is dated after doc.md's settle; the
+	// snapshot does not account for it.
 	pending := "# ours, written while the watcher was down\n"
 	r.recordOwnWriteAt(t, "pending.md", sha256hex([]byte(pending)), "2026-07-30T00:45:00Z")
-	r.be.set("pending.md", 1500, pending)
+	r.be.set("pending.md", settledAt+900, pending)
 
 	r.tick() // loads the snapshot, seeds the counts
-	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil || snap.LedgerConsumed == nil {
 		t.Fatalf("the seed was not persisted with the snapshot: %+v (%v)", snap, err)
 	}
@@ -286,8 +284,51 @@ func TestOwnWriteLandingDuringAPeerSettleStaysLive(t *testing.T) {
 	if len(r.not.calls) != 1 {
 		t.Fatalf("our own write that landed during the peer's settle was notified (its entry was retired by that settle): %v", r.not.calls)
 	}
-	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if got := snap.Files["doc.md"].SHA256; got != sha256hex([]byte(ours)) {
 		t.Fatalf("snapshot content = %s, want our B", got)
+	}
+}
+
+// TestSeedKeepsAnOwnUpdateThatWasDebouncingAtTheLastPersist is the lane's
+// codex round 3 on the seed: an own update to a.md is still debouncing when
+// an unrelated peer update to b.md settles and persists the (count-less)
+// snapshot, so the snapshot is NEWER than a.md's entry although a.md's
+// settled state is older. The seed must judge a.md's entry against a.md's
+// own settled state and keep it: the catch-up settles our update silently.
+func TestSeedKeepsAnOwnUpdateThatWasDebouncingAtTheLastPersist(t *testing.T) {
+	r := newTestRig(t)
+	base := time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
+	ours := "# ours, updated\n"
+	r.be.set("a.md", base.Unix(), "a v0")
+	r.be.set("b.md", base.Unix(), "b v0")
+	// The pre-upgrade snapshot: both docs settled at base, b.md later settled
+	// a peer's update at +20m (the persist that made the snapshot newer than
+	// our a.md update at +10m, which was still debouncing).
+	peerB := "b, the peer's version"
+	pre := fmt.Sprintf(`{"schema":1,"files":{"a.md":{"mtime_unix":%d,"size":4,"sha256":%q},"b.md":{"mtime_unix":%d,"size":%d,"sha256":%q}}}`+"\n",
+		base.Unix(), sha256hex([]byte("a v0")), base.Add(20*time.Minute).Unix(), len(peerB), sha256hex([]byte(peerB)))
+	if err := os.MkdirAll(filepath.Dir(r.eng.cfg.snapshotPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.eng.cfg.snapshotPath(), []byte(pre), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.be.set("b.md", base.Add(20*time.Minute).Unix(), peerB)
+	r.recordOwnWriteAt(t, "a.md", sha256hex([]byte(ours)), base.Add(10*time.Minute).UTC().Format(time.RFC3339))
+	r.be.set("a.md", base.Add(10*time.Minute).Unix(), ours)
+
+	r.tick() // loads, seeds
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	if err != nil || snap == nil || snap.LedgerConsumed == nil {
+		t.Fatalf("the seed was not persisted: %+v (%v)", snap, err)
+	}
+	if len(snap.LedgerConsumed) != 0 {
+		t.Fatalf("the still-pending own update to a.md was seeded away: %v", snap.LedgerConsumed)
+	}
+	r.advance(r.eng.cfg.debounce + time.Second)
+	r.tick()
+	if len(r.not.calls) != 0 {
+		t.Fatalf("our own update, debouncing when the snapshot was last persisted, was notified after the upgrade: %v", r.not.calls)
 	}
 }

@@ -133,21 +133,36 @@ func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
 	})
 }
 
-// retireBefore spends every entry recorded at or before cutoff (its ts, the
-// second the write helper appended it), for every file: the seed for a
-// snapshot persisted by a binary that kept no counts. Entries recorded
-// after cutoff — own writes that landed while the watcher was stopped — are
-// pending changes its catch-up cycle will settle, and stay live; an entry
-// whose ts does not parse stays live too, so a malformed line degrades to a
-// spurious nudge rather than a lost one.
-func (l *ledger) retireBefore(consumed map[string]int, cutoff time.Time) {
+// retireSettled spends every entry a settled snapshot already accounts for:
+// the seed for a snapshot persisted by a binary that kept no counts. The
+// evidence is per file, never the snapshot's age as a whole (the lane's
+// codex round 3): a content entry is spent when its file's settled hash is
+// that content, or when the file settled at or after the entry was recorded
+// (its ts, the second the write helper appended it, against the settled
+// mtime) — the write is then the settled state or one it superseded; a
+// tombstone is spent when its file is absent from the snapshot, or settled
+// present at or after it. Everything else is a write the catch-up cycle has
+// yet to settle — an own update still debouncing when the snapshot was last
+// persisted, a write that landed while the watcher was stopped — and stays
+// live; an entry whose ts does not parse stays live too, so a malformed
+// line degrades to a spurious nudge rather than a lost one.
+func (l *ledger) retireSettled(consumed map[string]int, files map[string]snapshotEntry) {
 	seen := map[string]int{}
 	l.scan(func(e ledgerEntry, _ int64) {
 		key := ledgerKey(e)
 		seen[key]++
-		ts, err := time.Parse(time.RFC3339, e.TS)
-		if err != nil || ts.After(cutoff) {
-			return
+		settled, present := files[e.File]
+		switch {
+		case !present:
+			if e.SHA256 != ledgerTombstone {
+				return
+			}
+		case e.SHA256 == settled.SHA256 && settled.SHA256 != "":
+		default:
+			ts, err := time.Parse(time.RFC3339, e.TS)
+			if err != nil || ts.Unix() > settled.MTimeUnix {
+				return
+			}
 		}
 		if consumed[key] < seen[key] {
 			consumed[key] = seen[key]

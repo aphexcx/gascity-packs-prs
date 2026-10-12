@@ -140,7 +140,7 @@ func TestBaselineIsSilent(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("baseline notified: %v", r.not.calls)
 	}
-	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestOwnWriteIsSuppressed(t *testing.T) {
 		t.Fatalf("own write notified: %v", r.not.calls)
 	}
 	// Still settled into the snapshot so a later peer edit diffs cleanly.
-	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["ours.md"]; !ok {
 		t.Fatal("own write not settled into snapshot")
 	}
@@ -245,7 +245,7 @@ func TestPeerDeleteNotifies(t *testing.T) {
 	if len(r.not.calls) != 1 || r.not.calls[0].Verb != "removed" || r.not.calls[0].Name != "doomed.md" {
 		t.Fatalf("want removed notification, got %v", r.not.calls)
 	}
-	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["doomed.md"]; ok {
 		t.Error("deleted doc still in snapshot")
 	}
@@ -262,7 +262,7 @@ func TestOwnDeleteTombstoneIsSuppressed(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete notified: %v", r.not.calls)
 	}
-	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["ours.md"]; ok {
 		t.Error("own-deleted doc still in snapshot")
 	}
@@ -287,7 +287,7 @@ func TestOwnDeleteTombstoneDoesNotSuppressLaterPeerDelete(t *testing.T) {
 	if len(r.not.calls) != 0 {
 		t.Fatalf("own delete notified: %v", r.not.calls)
 	}
-	snap, _, err := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, err := loadSnapshot(r.eng.cfg.snapshotPath())
 	if err != nil || snap == nil {
 		t.Fatalf("snapshot not persisted: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestNotifyFailureRetriesNextCycle(t *testing.T) {
 		t.Fatal("failed notify recorded a delivery")
 	}
 	// Change must NOT have settled — the nudge would be lost.
-	snap, _, _ := loadSnapshot(r.eng.cfg.snapshotPath())
+	snap, _ := loadSnapshot(r.eng.cfg.snapshotPath())
 	if _, ok := snap.Files["new.md"]; ok {
 		t.Fatal("change settled despite notify failure")
 	}
