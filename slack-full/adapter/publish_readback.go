@@ -172,12 +172,14 @@ var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 // slackEmojiShortcodeRun matches a run of one or more Slack emoji
 // shortcodes standing on their own (`:tada:`, `:+1::skin-tone-4:`,
 // `:family_man_woman_girl:`): the colon form Slack stores for an emoji that
-// was posted as a Unicode character. A run must not be glued to a letter or
-// digit on either side: a time such as 12:30:45 or a ratio 1:2:3 carries
+// was posted as a Unicode character. A run must not be glued to a letter, a
+// digit or another colon on either side: a time such as 12:30:45, a ratio
+// 1:2:3 or a code identifier such as std::vector::iterator carries
 // colon-delimited text that is not an emoji and has to stay in the compare,
-// or two different timestamps would fold to the same text (the lane's codex
-// round 1). The groups keep the boundary characters.
-var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9])((?::[a-z0-9_+\-]+:)+)($|[^A-Za-z0-9])`)
+// or two different timestamps or identifiers would fold to the same text
+// (the lane's codex rounds 1 and 3). The groups keep the boundary
+// characters.
+var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9:])((?::[a-z0-9_+\-]+:)+)($|[^A-Za-z0-9:])`)
 
 // slackKeycapSequence matches a keycap emoji (`1️⃣`, `#️⃣`): a digit, `#` or
 // `*` followed by an optional variation selector and the combining enclosing
@@ -236,50 +238,164 @@ func slackFoldEmoji(text string) string {
 }
 
 // slackEmojiRunes is the set of emoji characters the fold removes: the
-// pictographic blocks and the scattered emoji of the symbol blocks, after
-// Unicode's Extended_Pictographic list as Slack renders it, plus the
-// regional indicators and the skin-tone modifiers. It is deliberately NOT
-// the whole "other symbol" category: ⌘, box drawing, Braille and the like
-// are text Slack stores as typed, and folding them away would confirm a
-// changed body (the lane's codex round 2).
+// code points with Unicode's Emoji property (emoji-data.txt, Emoji=Yes,
+// Unicode 15.1), minus the digits, # and * whose keycap sequences
+// slackKeycapSequence handles, plus the skin-tone modifiers. These are the
+// characters Slack stores as a colon shortcode. It is deliberately not a
+// symbol block or a category: ⌘, box drawing, Braille, ♯ and ♭ are text
+// Slack stores as typed, and folding them away would confirm a changed
+// body (the lane's codex rounds 2 and 3).
 var slackEmojiRunes = &unicode.RangeTable{
 	R16: []unicode.Range16{
-		{Lo: 0x00A9, Hi: 0x00A9, Stride: 1}, // ©
-		{Lo: 0x00AE, Hi: 0x00AE, Stride: 1}, // ®
-		{Lo: 0x203C, Hi: 0x203C, Stride: 1}, // ‼
-		{Lo: 0x2049, Hi: 0x2049, Stride: 1}, // ⁉
-		{Lo: 0x2122, Hi: 0x2122, Stride: 1}, // ™
-		{Lo: 0x2139, Hi: 0x2139, Stride: 1}, // ℹ
-		{Lo: 0x2194, Hi: 0x2199, Stride: 1}, // ↔ … ↙
-		{Lo: 0x21A9, Hi: 0x21AA, Stride: 1}, // ↩ ↪
-		{Lo: 0x231A, Hi: 0x231B, Stride: 1}, // ⌚ ⌛
-		{Lo: 0x2328, Hi: 0x2328, Stride: 1}, // ⌨
-		{Lo: 0x23CF, Hi: 0x23CF, Stride: 1}, // ⏏
-		{Lo: 0x23E9, Hi: 0x23F3, Stride: 1}, // ⏩ … ⏳
-		{Lo: 0x23F8, Hi: 0x23FA, Stride: 1}, // ⏸ ⏹ ⏺
-		{Lo: 0x24C2, Hi: 0x24C2, Stride: 1}, // Ⓜ
-		{Lo: 0x25AA, Hi: 0x25AB, Stride: 1}, // ▪ ▫
-		{Lo: 0x25B6, Hi: 0x25B6, Stride: 1}, // ▶
-		{Lo: 0x25C0, Hi: 0x25C0, Stride: 1}, // ◀
-		{Lo: 0x25FB, Hi: 0x25FE, Stride: 1}, // ◻ … ◾
-		{Lo: 0x2600, Hi: 0x27BF, Stride: 1}, // Miscellaneous Symbols, Dingbats
-		{Lo: 0x2934, Hi: 0x2935, Stride: 1}, // ⤴ ⤵
-		{Lo: 0x2B05, Hi: 0x2B07, Stride: 1}, // ⬅ ⬆ ⬇
-		{Lo: 0x2B1B, Hi: 0x2B1C, Stride: 1}, // ⬛ ⬜
-		{Lo: 0x2B50, Hi: 0x2B50, Stride: 1}, // ⭐
-		{Lo: 0x2B55, Hi: 0x2B55, Stride: 1}, // ⭕
-		{Lo: 0x3030, Hi: 0x3030, Stride: 1}, // 〰
-		{Lo: 0x303D, Hi: 0x303D, Stride: 1}, // 〽
-		{Lo: 0x3297, Hi: 0x3297, Stride: 1}, // ㊗
-		{Lo: 0x3299, Hi: 0x3299, Stride: 1}, // ㊙
+		{Lo: 0x00A9, Hi: 0x00A9, Stride: 1},
+		{Lo: 0x00AE, Hi: 0x00AE, Stride: 1},
+		{Lo: 0x203C, Hi: 0x203C, Stride: 1},
+		{Lo: 0x2049, Hi: 0x2049, Stride: 1},
+		{Lo: 0x2122, Hi: 0x2122, Stride: 1},
+		{Lo: 0x2139, Hi: 0x2139, Stride: 1},
+		{Lo: 0x2194, Hi: 0x2199, Stride: 1},
+		{Lo: 0x21A9, Hi: 0x21AA, Stride: 1},
+		{Lo: 0x231A, Hi: 0x231B, Stride: 1},
+		{Lo: 0x2328, Hi: 0x2328, Stride: 1},
+		{Lo: 0x23CF, Hi: 0x23CF, Stride: 1},
+		{Lo: 0x23E9, Hi: 0x23F3, Stride: 1},
+		{Lo: 0x23F8, Hi: 0x23FA, Stride: 1},
+		{Lo: 0x24C2, Hi: 0x24C2, Stride: 1},
+		{Lo: 0x25AA, Hi: 0x25AB, Stride: 1},
+		{Lo: 0x25B6, Hi: 0x25B6, Stride: 1},
+		{Lo: 0x25C0, Hi: 0x25C0, Stride: 1},
+		{Lo: 0x25FB, Hi: 0x25FE, Stride: 1},
+		{Lo: 0x2600, Hi: 0x2604, Stride: 1},
+		{Lo: 0x260E, Hi: 0x260E, Stride: 1},
+		{Lo: 0x2611, Hi: 0x2611, Stride: 1},
+		{Lo: 0x2614, Hi: 0x2615, Stride: 1},
+		{Lo: 0x2618, Hi: 0x2618, Stride: 1},
+		{Lo: 0x261D, Hi: 0x261D, Stride: 1},
+		{Lo: 0x2620, Hi: 0x2620, Stride: 1},
+		{Lo: 0x2622, Hi: 0x2623, Stride: 1},
+		{Lo: 0x2626, Hi: 0x2626, Stride: 1},
+		{Lo: 0x262A, Hi: 0x262A, Stride: 1},
+		{Lo: 0x262E, Hi: 0x262F, Stride: 1},
+		{Lo: 0x2638, Hi: 0x263A, Stride: 1},
+		{Lo: 0x2640, Hi: 0x2640, Stride: 1},
+		{Lo: 0x2642, Hi: 0x2642, Stride: 1},
+		{Lo: 0x2648, Hi: 0x2653, Stride: 1},
+		{Lo: 0x265F, Hi: 0x2660, Stride: 1},
+		{Lo: 0x2663, Hi: 0x2663, Stride: 1},
+		{Lo: 0x2665, Hi: 0x2666, Stride: 1},
+		{Lo: 0x2668, Hi: 0x2668, Stride: 1},
+		{Lo: 0x267B, Hi: 0x267B, Stride: 1},
+		{Lo: 0x267E, Hi: 0x267F, Stride: 1},
+		{Lo: 0x2692, Hi: 0x2697, Stride: 1},
+		{Lo: 0x2699, Hi: 0x2699, Stride: 1},
+		{Lo: 0x269B, Hi: 0x269C, Stride: 1},
+		{Lo: 0x26A0, Hi: 0x26A1, Stride: 1},
+		{Lo: 0x26A7, Hi: 0x26A7, Stride: 1},
+		{Lo: 0x26AA, Hi: 0x26AB, Stride: 1},
+		{Lo: 0x26B0, Hi: 0x26B1, Stride: 1},
+		{Lo: 0x26BD, Hi: 0x26BE, Stride: 1},
+		{Lo: 0x26C4, Hi: 0x26C5, Stride: 1},
+		{Lo: 0x26C8, Hi: 0x26C8, Stride: 1},
+		{Lo: 0x26CE, Hi: 0x26CF, Stride: 1},
+		{Lo: 0x26D1, Hi: 0x26D1, Stride: 1},
+		{Lo: 0x26D3, Hi: 0x26D4, Stride: 1},
+		{Lo: 0x26E9, Hi: 0x26EA, Stride: 1},
+		{Lo: 0x26F0, Hi: 0x26F5, Stride: 1},
+		{Lo: 0x26F7, Hi: 0x26FA, Stride: 1},
+		{Lo: 0x26FD, Hi: 0x26FD, Stride: 1},
+		{Lo: 0x2702, Hi: 0x2702, Stride: 1},
+		{Lo: 0x2705, Hi: 0x2705, Stride: 1},
+		{Lo: 0x2708, Hi: 0x270D, Stride: 1},
+		{Lo: 0x270F, Hi: 0x270F, Stride: 1},
+		{Lo: 0x2712, Hi: 0x2712, Stride: 1},
+		{Lo: 0x2714, Hi: 0x2714, Stride: 1},
+		{Lo: 0x2716, Hi: 0x2716, Stride: 1},
+		{Lo: 0x271D, Hi: 0x271D, Stride: 1},
+		{Lo: 0x2721, Hi: 0x2721, Stride: 1},
+		{Lo: 0x2728, Hi: 0x2728, Stride: 1},
+		{Lo: 0x2733, Hi: 0x2734, Stride: 1},
+		{Lo: 0x2744, Hi: 0x2744, Stride: 1},
+		{Lo: 0x2747, Hi: 0x2747, Stride: 1},
+		{Lo: 0x274C, Hi: 0x274C, Stride: 1},
+		{Lo: 0x274E, Hi: 0x274E, Stride: 1},
+		{Lo: 0x2753, Hi: 0x2755, Stride: 1},
+		{Lo: 0x2757, Hi: 0x2757, Stride: 1},
+		{Lo: 0x2763, Hi: 0x2764, Stride: 1},
+		{Lo: 0x2795, Hi: 0x2797, Stride: 1},
+		{Lo: 0x27A1, Hi: 0x27A1, Stride: 1},
+		{Lo: 0x27B0, Hi: 0x27B0, Stride: 1},
+		{Lo: 0x27BF, Hi: 0x27BF, Stride: 1},
+		{Lo: 0x2934, Hi: 0x2935, Stride: 1},
+		{Lo: 0x2B05, Hi: 0x2B07, Stride: 1},
+		{Lo: 0x2B1B, Hi: 0x2B1C, Stride: 1},
+		{Lo: 0x2B50, Hi: 0x2B50, Stride: 1},
+		{Lo: 0x2B55, Hi: 0x2B55, Stride: 1},
+		{Lo: 0x3030, Hi: 0x3030, Stride: 1},
+		{Lo: 0x303D, Hi: 0x303D, Stride: 1},
+		{Lo: 0x3297, Hi: 0x3297, Stride: 1},
+		{Lo: 0x3299, Hi: 0x3299, Stride: 1},
 	},
 	R32: []unicode.Range32{
-		{Lo: 0x1F000, Hi: 0x1F0FF, Stride: 1}, // Mahjong, Domino, Playing Cards (🀄 🃏)
-		{Lo: 0x1F170, Hi: 0x1F251, Stride: 1}, // Enclosed Alphanumeric / Ideographic Supplement (🅰 … 🉑)
-		{Lo: 0x1F300, Hi: 0x1F6FF, Stride: 1}, // Pictographs, Emoticons, Transport; regional indicators and skin tones inside
-		{Lo: 0x1F780, Hi: 0x1F7FF, Stride: 1}, // Geometric Shapes Extended (🟠 …)
-		{Lo: 0x1F900, Hi: 0x1F9FF, Stride: 1}, // Supplemental Symbols and Pictographs
-		{Lo: 0x1FA70, Hi: 0x1FAFF, Stride: 1}, // Symbols and Pictographs Extended-A
+		{Lo: 0x1F004, Hi: 0x1F004, Stride: 1},
+		{Lo: 0x1F0CF, Hi: 0x1F0CF, Stride: 1},
+		{Lo: 0x1F170, Hi: 0x1F171, Stride: 1},
+		{Lo: 0x1F17E, Hi: 0x1F17F, Stride: 1},
+		{Lo: 0x1F18E, Hi: 0x1F18E, Stride: 1},
+		{Lo: 0x1F191, Hi: 0x1F19A, Stride: 1},
+		{Lo: 0x1F1E6, Hi: 0x1F1FF, Stride: 1},
+		{Lo: 0x1F201, Hi: 0x1F202, Stride: 1},
+		{Lo: 0x1F21A, Hi: 0x1F21A, Stride: 1},
+		{Lo: 0x1F22F, Hi: 0x1F22F, Stride: 1},
+		{Lo: 0x1F232, Hi: 0x1F23A, Stride: 1},
+		{Lo: 0x1F250, Hi: 0x1F251, Stride: 1},
+		{Lo: 0x1F300, Hi: 0x1F321, Stride: 1},
+		{Lo: 0x1F324, Hi: 0x1F393, Stride: 1},
+		{Lo: 0x1F396, Hi: 0x1F397, Stride: 1},
+		{Lo: 0x1F399, Hi: 0x1F39B, Stride: 1},
+		{Lo: 0x1F39E, Hi: 0x1F3F0, Stride: 1},
+		{Lo: 0x1F3F3, Hi: 0x1F3F5, Stride: 1},
+		{Lo: 0x1F3F7, Hi: 0x1F4FD, Stride: 1},
+		{Lo: 0x1F4FF, Hi: 0x1F53D, Stride: 1},
+		{Lo: 0x1F549, Hi: 0x1F54E, Stride: 1},
+		{Lo: 0x1F550, Hi: 0x1F567, Stride: 1},
+		{Lo: 0x1F56F, Hi: 0x1F570, Stride: 1},
+		{Lo: 0x1F573, Hi: 0x1F57A, Stride: 1},
+		{Lo: 0x1F587, Hi: 0x1F587, Stride: 1},
+		{Lo: 0x1F58A, Hi: 0x1F58D, Stride: 1},
+		{Lo: 0x1F590, Hi: 0x1F590, Stride: 1},
+		{Lo: 0x1F595, Hi: 0x1F596, Stride: 1},
+		{Lo: 0x1F5A4, Hi: 0x1F5A5, Stride: 1},
+		{Lo: 0x1F5A8, Hi: 0x1F5A8, Stride: 1},
+		{Lo: 0x1F5B1, Hi: 0x1F5B2, Stride: 1},
+		{Lo: 0x1F5BC, Hi: 0x1F5BC, Stride: 1},
+		{Lo: 0x1F5C2, Hi: 0x1F5C4, Stride: 1},
+		{Lo: 0x1F5D1, Hi: 0x1F5D3, Stride: 1},
+		{Lo: 0x1F5DC, Hi: 0x1F5DE, Stride: 1},
+		{Lo: 0x1F5E1, Hi: 0x1F5E1, Stride: 1},
+		{Lo: 0x1F5E3, Hi: 0x1F5E3, Stride: 1},
+		{Lo: 0x1F5E8, Hi: 0x1F5E8, Stride: 1},
+		{Lo: 0x1F5EF, Hi: 0x1F5EF, Stride: 1},
+		{Lo: 0x1F5F3, Hi: 0x1F5F3, Stride: 1},
+		{Lo: 0x1F5FA, Hi: 0x1F64F, Stride: 1},
+		{Lo: 0x1F680, Hi: 0x1F6C5, Stride: 1},
+		{Lo: 0x1F6CB, Hi: 0x1F6D2, Stride: 1},
+		{Lo: 0x1F6D5, Hi: 0x1F6D7, Stride: 1},
+		{Lo: 0x1F6DC, Hi: 0x1F6E5, Stride: 1},
+		{Lo: 0x1F6E9, Hi: 0x1F6E9, Stride: 1},
+		{Lo: 0x1F6EB, Hi: 0x1F6EC, Stride: 1},
+		{Lo: 0x1F6F0, Hi: 0x1F6F0, Stride: 1},
+		{Lo: 0x1F6F3, Hi: 0x1F6FC, Stride: 1},
+		{Lo: 0x1F7E0, Hi: 0x1F7EB, Stride: 1},
+		{Lo: 0x1F7F0, Hi: 0x1F7F0, Stride: 1},
+		{Lo: 0x1F90C, Hi: 0x1F93A, Stride: 1},
+		{Lo: 0x1F93C, Hi: 0x1F945, Stride: 1},
+		{Lo: 0x1F947, Hi: 0x1F9FF, Stride: 1},
+		{Lo: 0x1FA70, Hi: 0x1FA7C, Stride: 1},
+		{Lo: 0x1FA80, Hi: 0x1FA89, Stride: 1},
+		{Lo: 0x1FA8F, Hi: 0x1FAC6, Stride: 1},
+		{Lo: 0x1FACE, Hi: 0x1FADC, Stride: 1},
+		{Lo: 0x1FADF, Hi: 0x1FAE9, Stride: 1},
+		{Lo: 0x1FAF0, Hi: 0x1FAF8, Stride: 1},
 	},
 	LatinOffset: 2,
 }
