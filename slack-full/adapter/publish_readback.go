@@ -207,11 +207,11 @@ func slackNormalizeText(text string) string {
 
 // slackFoldEmoji removes every emoji from text in both of its spellings: the
 // colon shortcodes Slack stores, and the Unicode form that was posted —
-// keycap sequences, then the emoji characters themselves (Unicode "other
-// symbol", which holds the pictographs, flags' regional indicators and
-// marks such as © that Slack also stores as shortcodes), the skin-tone
-// modifiers, the zero-width joiner and variation selectors that build
-// sequences from them, and the tag characters of subdivision flags. Without
+// keycap sequences, then the emoji characters themselves (slackEmojiRunes:
+// the pictographic blocks, the scattered emoji of the symbol blocks such as
+// ©, the regional indicators of flags, the skin-tone modifiers), the
+// zero-width joiner and variation selectors that build sequences from
+// them, and the tag characters of subdivision flags. Without
 // this an unkeyed publish of a message with an emoji in it read back as a
 // permanent failure although Slack had delivered it (gf-4c9 round 2,
 // finding 3c).
@@ -235,18 +235,64 @@ func slackFoldEmoji(text string) string {
 	}, text)
 }
 
+// slackEmojiRunes is the set of emoji characters the fold removes: the
+// pictographic blocks and the scattered emoji of the symbol blocks, after
+// Unicode's Extended_Pictographic list as Slack renders it, plus the
+// regional indicators and the skin-tone modifiers. It is deliberately NOT
+// the whole "other symbol" category: ⌘, box drawing, Braille and the like
+// are text Slack stores as typed, and folding them away would confirm a
+// changed body (the lane's codex round 2).
+var slackEmojiRunes = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{Lo: 0x00A9, Hi: 0x00A9, Stride: 1}, // ©
+		{Lo: 0x00AE, Hi: 0x00AE, Stride: 1}, // ®
+		{Lo: 0x203C, Hi: 0x203C, Stride: 1}, // ‼
+		{Lo: 0x2049, Hi: 0x2049, Stride: 1}, // ⁉
+		{Lo: 0x2122, Hi: 0x2122, Stride: 1}, // ™
+		{Lo: 0x2139, Hi: 0x2139, Stride: 1}, // ℹ
+		{Lo: 0x2194, Hi: 0x2199, Stride: 1}, // ↔ … ↙
+		{Lo: 0x21A9, Hi: 0x21AA, Stride: 1}, // ↩ ↪
+		{Lo: 0x231A, Hi: 0x231B, Stride: 1}, // ⌚ ⌛
+		{Lo: 0x2328, Hi: 0x2328, Stride: 1}, // ⌨
+		{Lo: 0x23CF, Hi: 0x23CF, Stride: 1}, // ⏏
+		{Lo: 0x23E9, Hi: 0x23F3, Stride: 1}, // ⏩ … ⏳
+		{Lo: 0x23F8, Hi: 0x23FA, Stride: 1}, // ⏸ ⏹ ⏺
+		{Lo: 0x24C2, Hi: 0x24C2, Stride: 1}, // Ⓜ
+		{Lo: 0x25AA, Hi: 0x25AB, Stride: 1}, // ▪ ▫
+		{Lo: 0x25B6, Hi: 0x25B6, Stride: 1}, // ▶
+		{Lo: 0x25C0, Hi: 0x25C0, Stride: 1}, // ◀
+		{Lo: 0x25FB, Hi: 0x25FE, Stride: 1}, // ◻ … ◾
+		{Lo: 0x2600, Hi: 0x27BF, Stride: 1}, // Miscellaneous Symbols, Dingbats
+		{Lo: 0x2934, Hi: 0x2935, Stride: 1}, // ⤴ ⤵
+		{Lo: 0x2B05, Hi: 0x2B07, Stride: 1}, // ⬅ ⬆ ⬇
+		{Lo: 0x2B1B, Hi: 0x2B1C, Stride: 1}, // ⬛ ⬜
+		{Lo: 0x2B50, Hi: 0x2B50, Stride: 1}, // ⭐
+		{Lo: 0x2B55, Hi: 0x2B55, Stride: 1}, // ⭕
+		{Lo: 0x3030, Hi: 0x3030, Stride: 1}, // 〰
+		{Lo: 0x303D, Hi: 0x303D, Stride: 1}, // 〽
+		{Lo: 0x3297, Hi: 0x3297, Stride: 1}, // ㊗
+		{Lo: 0x3299, Hi: 0x3299, Stride: 1}, // ㊙
+	},
+	R32: []unicode.Range32{
+		{Lo: 0x1F000, Hi: 0x1F0FF, Stride: 1}, // Mahjong, Domino, Playing Cards (🀄 🃏)
+		{Lo: 0x1F170, Hi: 0x1F251, Stride: 1}, // Enclosed Alphanumeric / Ideographic Supplement (🅰 … 🉑)
+		{Lo: 0x1F300, Hi: 0x1F6FF, Stride: 1}, // Pictographs, Emoticons, Transport; regional indicators and skin tones inside
+		{Lo: 0x1F780, Hi: 0x1F7FF, Stride: 1}, // Geometric Shapes Extended (🟠 …)
+		{Lo: 0x1F900, Hi: 0x1F9FF, Stride: 1}, // Supplemental Symbols and Pictographs
+		{Lo: 0x1FA70, Hi: 0x1FAFF, Stride: 1}, // Symbols and Pictographs Extended-A
+	},
+	LatinOffset: 2,
+}
+
 func isSlackEmojiRune(r rune) bool {
 	switch r {
 	case 0x200D, 0xFE0E, 0xFE0F, 0x20E3:
 		return true
 	}
-	if r >= 0x1F3FB && r <= 0x1F3FF { // skin-tone modifiers
-		return true
-	}
 	if r >= 0xE0020 && r <= 0xE007F { // tag characters (subdivision flags)
 		return true
 	}
-	return unicode.Is(unicode.So, r)
+	return unicode.Is(slackEmojiRunes, r)
 }
 
 // readBackPublishedMessage verifies a post through Slack's read API rather
