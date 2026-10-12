@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"time"
 )
 
 // ledgerTombstone is the sha256 value that records an own DELETION of a
@@ -84,6 +83,7 @@ func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int6
 	if len(entries) == 0 {
 		return false
 	}
+	boundary = l.validBoundary(boundary)
 	// occurrence[i] is how many earlier entries share entry i's key, so an
 	// entry is unconsumed when consumed[key] <= occurrence[i]: identical
 	// lines (same file, hash and second) are one key with several
@@ -123,6 +123,7 @@ func (l *ledger) settle(file, sha string, consumed map[string]int, boundary int6
 // described when the board was read, so none of them may explain a change
 // observed after it (finding 3a).
 func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
+	boundary = l.validBoundary(boundary)
 	seen := map[string]int{}
 	l.scan(func(e ledgerEntry, offset int64) {
 		key := ledgerKey(e)
@@ -135,41 +136,49 @@ func (l *ledger) retireAll(consumed map[string]int, boundary int64) {
 
 // retireSettled spends every entry a settled snapshot already accounts for:
 // the seed for a snapshot persisted by a binary that kept no counts. The
-// evidence is per file, never the snapshot's age as a whole (the lane's
-// codex round 3): a content entry is spent when its file's settled hash is
-// that content, or when the file settled strictly after the entry was
-// recorded (its ts, the second the write helper appended it, against the
-// settled mtime; both are whole seconds, so an equal second proves nothing
-// and keeps the entry — the lane's codex round 4) — the write is then one
-// the settled state superseded; a tombstone is spent when its file is
-// absent from the snapshot, or settled present after it. Everything else is
-// a write the catch-up cycle has
-// yet to settle — an own update still debouncing when the snapshot was last
-// persisted, a write that landed while the watcher was stopped — and stays
-// live; an entry whose ts does not parse stays live too, so a malformed
-// line degrades to a spurious nudge rather than a lost one.
+// evidence is per file and comes from the ledger's own order, never from a
+// clock (the write helper's ts is this host's clock, a remote board's mtime
+// is the board host's; the lane's codex rounds 3 to 5): for each file, the
+// LAST entry that is the settled state — the content whose hash the
+// snapshot settled on, or a tombstone when the snapshot has no such file —
+// is spent, and so is every entry for the file before it, which a later own
+// write superseded. Entries after it, and every entry of a file whose
+// settled state the ledger never recorded, are writes the catch-up cycle
+// has yet to settle (an own update still debouncing at the last persist, a
+// write that landed while the watcher was stopped) and stay live.
 func (l *ledger) retireSettled(consumed map[string]int, files map[string]snapshotEntry) {
+	var entries []ledgerEntry
+	l.scan(func(e ledgerEntry, _ int64) { entries = append(entries, e) })
+	last := map[string]int{}
+	for i, e := range entries {
+		settled, present := files[e.File]
+		if (present && settled.SHA256 != "" && e.SHA256 == settled.SHA256) || (!present && e.SHA256 == ledgerTombstone) {
+			last[e.File] = i
+		}
+	}
 	seen := map[string]int{}
-	l.scan(func(e ledgerEntry, _ int64) {
+	for i, e := range entries {
 		key := ledgerKey(e)
 		seen[key]++
-		settled, present := files[e.File]
-		switch {
-		case !present:
-			if e.SHA256 != ledgerTombstone {
-				return
-			}
-		case e.SHA256 == settled.SHA256 && settled.SHA256 != "":
-		default:
-			ts, err := time.Parse(time.RFC3339, e.TS)
-			if err != nil || ts.Unix() >= settled.MTimeUnix {
-				return
-			}
+		if cut, ok := last[e.File]; !ok || i > cut {
+			continue
 		}
 		if consumed[key] < seen[key] {
 			consumed[key] = seen[key]
 		}
-	})
+	}
+}
+
+// validBoundary returns boundary, or 0 when the ledger is now smaller than
+// it: the file was pruned or rewritten since the boundary was captured, so
+// its offsets no longer say which entries predate the board read, and
+// retiring nothing is the side that costs a spurious nudge rather than a
+// lost one (the lane's codex round 5).
+func (l *ledger) validBoundary(boundary int64) int64 {
+	if l.boundary() < boundary {
+		return 0
+	}
+	return boundary
 }
 
 // boundary is the ledger's current size in bytes: every entry on record lies
@@ -212,21 +221,25 @@ func (l *ledger) scan(fn func(ledgerEntry, int64)) {
 		return
 	}
 	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	// Lines are read with their delimiter bytes so each offset is the byte
+	// the line starts at in the file, whatever the line ending (a scanner
+	// would drop a carriage return and undercount; the lane's codex round
+	// 5).
+	rd := bufio.NewReaderSize(f, 64*1024)
 	var offset int64
-	for sc.Scan() {
-		raw := sc.Bytes()
+	for {
+		raw, err := rd.ReadBytes('\n')
 		start := offset
-		offset += int64(len(raw)) + 1
+		offset += int64(len(raw))
 		line := bytes.TrimSpace(raw)
-		if len(line) == 0 {
-			continue
+		if len(line) > 0 {
+			var e ledgerEntry
+			if json.Unmarshal(line, &e) == nil {
+				fn(e, start)
+			}
 		}
-		var e ledgerEntry
-		if json.Unmarshal(line, &e) != nil {
-			continue
+		if err != nil {
+			return
 		}
-		fn(e, start)
 	}
 }

@@ -317,11 +317,12 @@ func TestSeedKeepsAnOwnUpdateThatWasDebouncingAtTheLastPersist(t *testing.T) {
 	r.be.set("b.md", base.Add(20*time.Minute).Unix(), peerB)
 	r.recordOwnWriteAt(t, "a.md", sha256hex([]byte(ours)), base.Add(10*time.Minute).UTC().Format(time.RFC3339))
 	r.be.set("a.md", base.Add(10*time.Minute).Unix(), ours)
-	// And an own update to b.md recorded in the SAME second b.md settled the
-	// peer's version (both clocks are whole seconds): equality proves nothing,
-	// the entry stays live (the lane's codex round 4).
-	oursB := "b, ours, same second"
-	r.recordOwnWriteAt(t, "b.md", sha256hex([]byte(oursB)), base.Add(20*time.Minute).UTC().Format(time.RFC3339))
+	// And an own update to b.md whose entry is dated BEFORE b.md settled the
+	// peer's version — a remote board's clock ahead of this host's (the
+	// lane's codex rounds 4 and 5): no clock is consulted, the ledger never
+	// recorded b.md's settled content, so the entry stays live.
+	oursB := "b, ours, the board's clock ahead"
+	r.recordOwnWriteAt(t, "b.md", sha256hex([]byte(oursB)), base.Add(15*time.Minute).UTC().Format(time.RFC3339))
 	r.be.set("b.md", base.Add(20*time.Minute).Unix()+1, oursB)
 
 	r.tick() // loads, seeds
@@ -335,6 +336,6 @@ func TestSeedKeepsAnOwnUpdateThatWasDebouncingAtTheLastPersist(t *testing.T) {
 	r.advance(r.eng.cfg.debounce + time.Second)
 	r.tick()
 	if len(r.not.calls) != 0 {
-		t.Fatalf("our own updates, debouncing when the snapshot was last persisted (one at the settled second), were notified after the upgrade: %v", r.not.calls)
+		t.Fatalf("our own updates, debouncing when the snapshot was last persisted (one dated before it by a clock ahead), were notified after the upgrade: %v", r.not.calls)
 	}
 }

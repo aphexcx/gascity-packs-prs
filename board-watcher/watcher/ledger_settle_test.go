@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -92,5 +93,55 @@ func appendLedgerLine(t *testing.T, l *ledger, line string) {
 	defer f.Close()
 	if _, err := f.WriteString(line + "\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestLedgerOffsetsCountCRLF is the lane's codex round 5: a writer that ends
+// lines with CRLF must not shift the byte offsets the boundary rule reads,
+// or an entry appended after the boundary could appear before it.
+func TestLedgerOffsetsCountCRLF(t *testing.T) {
+	a := strings.Repeat("aa", 32)
+	b := strings.Repeat("bb", 32)
+	path := filepath.Join(t.TempDir(), "own-writes.jsonl")
+	first := `{"schema":1,"file":"doc.md","sha256":"` + a + `","ts":"2026-07-29T23:51:00Z"}` + "\r\n"
+	if err := os.WriteFile(path, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l := &ledger{path: path}
+	boundary := l.boundary()
+	appendLedgerLine(t, l, `{"schema":1,"file":"doc.md","sha256":"`+b+`","ts":"2026-07-29T23:52:00Z"}`)
+	consumed := map[string]int{}
+	// A peer's state settles: the pre-boundary A is retired, the post-boundary
+	// B (an own write landing mid-cycle) stays live.
+	if l.settle("doc.md", strings.Repeat("cc", 32), consumed, boundary) {
+		t.Fatal("a peer's content matched")
+	}
+	if !l.settle("doc.md", b, consumed, l.boundary()) {
+		t.Fatal("the entry appended after a CRLF line was retired: its offset was undercounted")
+	}
+}
+
+// TestLedgerShrunkSinceBoundaryRetiresNothing: a ledger pruned after the
+// boundary was captured no longer maps the boundary to entries, so a settle
+// retires nothing rather than the wrong entries.
+func TestLedgerShrunkSinceBoundaryRetiresNothing(t *testing.T) {
+	a := strings.Repeat("aa", 32)
+	l := writeLedger(t,
+		`{"schema":1,"file":"old.md","sha256":"`+a+`","ts":"2026-07-29T23:50:00Z"}`,
+		`{"schema":1,"file":"old.md","sha256":"`+a+`","ts":"2026-07-29T23:51:00Z"}`,
+		`{"schema":1,"file":"doc.md","sha256":"`+a+`","ts":"2026-07-29T23:52:00Z"}`,
+	)
+	boundary := l.boundary()
+	// Pruned: the old entries are gone, doc.md's entry now starts before the
+	// captured boundary although it was recorded after the board read.
+	if err := os.WriteFile(l.path, []byte(`{"schema":1,"file":"doc.md","sha256":"`+a+`","ts":"2026-07-29T23:52:00Z"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	consumed := map[string]int{}
+	if l.settle("doc.md", strings.Repeat("cc", 32), consumed, boundary) {
+		t.Fatal("a peer's content matched")
+	}
+	if !l.settle("doc.md", a, consumed, l.boundary()) {
+		t.Fatal("an entry of a pruned ledger was retired against a stale boundary")
 	}
 }
