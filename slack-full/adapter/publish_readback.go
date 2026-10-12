@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -169,20 +170,28 @@ var slackEntityUnescape = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;",
 // wraps an auto-linked URL in.
 var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 
-// slackEmojiShortcodeRun matches a run of one or more Slack emoji
-// shortcodes standing on their own (`:tada:`, `:+1::skin-tone-4:`,
-// `:family_man_woman_girl:`): the colon form Slack stores for an emoji that
-// was posted as a Unicode character. A run must not be glued to a letter, a
-// digit or another colon on either side: a time such as 12:30:45, a ratio
-// 1:2:3 or a code identifier such as std::vector::iterator carries
-// colon-delimited text that is not an emoji and has to stay in the compare,
-// or two different timestamps or identifiers would fold to the same text
-// (the lane's codex rounds 1 and 3). The groups keep the boundary
-// characters.
-// A name holds a letter, or is one of Slack's digit-only names (:+1:, :-1:,
-// :100:, :1234:): a slice such as items[:2:] is code, not an emoji (the
-// lane's codex round 5).
-var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9:])((?::(?:\+1|-1|100|1234|[a-z0-9_+\-]*[a-z][a-z0-9_+\-]*):)+)($|[^A-Za-z0-9:])`)
+// slackEmojiShortcode matches one `:name:` token wherever it stands — glued
+// to a word or not. Whether the token IS an emoji is decided by its name
+// alone (slackIsStandardEmojiName): Slack stores a Unicode emoji as the colon
+// shortcode of its STANDARD name, with no regard for its neighbours
+// (`Done🎉` is stored as `Done:tada:`), so a shortcode beside letters must
+// fold exactly like one standing alone, and a shortcode-shaped token whose
+// name Slack has no emoji for (`items[:start_index:]`, `std::vector::iterator`,
+// `12:30:45`, `s3://bucket/:customer_id:/x`) is text that stays in the
+// compare, so a changed token still reads back as changed. The bundled table
+// of Slack's names is the source of truth (gf-pu2 finding 3d; the gf-jr0
+// vs-main gate's Major at :185 and the lane's codex rounds 1, 3, 5, 7 and 9
+// were all boundary heuristics standing in for that table).
+var slackEmojiShortcode = regexp.MustCompile(`:([a-z0-9_+\-]+):`)
+
+// slackIsStandardEmojiName reports whether name is one of Slack's standard
+// emoji shortcode names (slackStandardEmojiNames, generated from Slack's own
+// emoji table). A custom workspace emoji is not: it is typed as a shortcode
+// and stored as typed, so it compares equal on both sides without a fold.
+func slackIsStandardEmojiName(name string) bool {
+	_, found := slices.BinarySearch(slackStandardEmojiNames, name)
+	return found
+}
 
 // slackKeycapSequence matches a keycap emoji (`1️⃣`, `#️⃣`): a digit, `#` or
 // `*` followed by an optional variation selector and the combining enclosing
@@ -193,15 +202,16 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // slackVerbatimSpan matches the text Slack stores as typed, which the fold
 // copies through: a closed mrkdwn code span (a fenced block between two
 // triple backticks, or an inline span between two single backticks on one
-// line) and a bare http(s) URL token. Slack renders a code span as typed
-// and auto-links a URL without touching its characters, so a
-// shortcode-shaped token in either is code or a path segment, not an
-// emoji: a slice such as items[:start:] or items[:100:], or a path
+// line) and a bare URI token of any scheme (`https://…`, `s3://…`). Slack
+// renders a code span as typed and auto-links a URL without touching its
+// characters, so a shortcode-shaped token in either is code or a path
+// segment, not an emoji — even one whose name Slack does have, such as the
+// :id: of s3://bucket/:id:/x: a slice such as items[:100:], or a path
 // https://example.com/:customer_id:/orders, would otherwise fold on both
 // sides and a changed snippet or URL would read back as delivered (the
-// lane's codex rounds 6 and 8). An unclosed backtick is a literal
+// lane's codex rounds 6, 8 and 9). An unclosed backtick is a literal
 // character and opens no span.
-var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|https?://[^\\s<>|]+")
+var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+")
 
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
@@ -255,16 +265,16 @@ func slackFoldEmoji(text string) string {
 // holds no verbatim span.
 func slackFoldEmojiProse(text string) string {
 	text = slackKeycapSequence.ReplaceAllString(text, "")
-	// A match consumes the boundary after a run, which is also the boundary
-	// before the next one, so adjacent runs ("a :x: :y: b") take a second
-	// pass; the loop ends when a pass changes nothing.
-	for {
-		folded := slackEmojiShortcodeRun.ReplaceAllString(text, "$1$3")
-		if folded == text {
-			break
+	// Every `:name:` token whose name is a Slack standard emoji name goes,
+	// wherever it stands; every other one stays as typed. Matches are
+	// non-overlapping, so a run such as `:+1::skin-tone-4:` folds token by
+	// token and a kept token's closing colon is not re-read.
+	text = slackEmojiShortcode.ReplaceAllStringFunc(text, func(token string) string {
+		if slackIsStandardEmojiName(token[1 : len(token)-1]) {
+			return ""
 		}
-		text = folded
-	}
+		return token
+	})
 	runes := []rune(text)
 	out := make([]rune, 0, len(runes))
 	for i, r := range runes {

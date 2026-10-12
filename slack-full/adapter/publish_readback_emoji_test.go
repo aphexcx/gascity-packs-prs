@@ -17,6 +17,15 @@ import (
 // Unicode or shortcode, with skin tones, keycaps, flags and ZWJ sequences —
 // as the same lossy class as escaping: equal on both sides, never a reason
 // to refuse; text that differs beyond the emoji is still refused.
+//
+// Round 3 (gf-pu2 finding 3d; the gf-jr0 vs-main gate's Major at :185 and
+// the packs Fable read's reproduction): the shortcode fold required a
+// non-alphanumeric boundary while the Unicode fold was unconditional, so an
+// emoji glued to a word ("Done🎉", stored as "Done:tada:") still read back as
+// a permanent failure and the caller re-posted. A shortcode now folds by its
+// NAME alone — a Slack standard emoji name, from the bundled table — wherever
+// it stands; a shortcode-shaped token Slack has no emoji for stays in the
+// compare glued or not, and a URI of any scheme is compared as typed.
 func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -28,7 +37,7 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "thumbs up with a skin tone", posted: "Deploy 👍🏽 ok", stored: "Deploy :+1::skin-tone-4: ok"},
 		{name: "keycap digit", posted: "Step 1️⃣ done", stored: "Step :one: done"},
 		{name: "flag (regional indicators)", posted: "Region 🇺🇸 up", stored: "Region :us: up"},
-		{name: "ZWJ family sequence", posted: "Team 👨‍👩‍👧 ship", stored: "Team :family_man_woman_girl: ship"},
+		{name: "ZWJ family sequence", posted: "Team 👨‍👩‍👧 ship", stored: "Team :man-woman-girl: ship"},
 		{name: "emoji beside an escaped entity", posted: "R&D ✅ merged <ok>", stored: "R&amp;D :white_check_mark: merged &lt;ok&gt;"},
 		{name: "shortcode posted, shortcode stored", posted: "Done :tada:", stored: "Done :tada:"},
 		{name: "verbatim Unicode echo", posted: "Done 🎉", stored: "Done 🎉"},
@@ -61,6 +70,22 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "a changed URL segment that reads like a shortcode", posted: "See https://example.com/:customer_id:/orders", stored: "See https://example.com/:order_id:/orders", wantErr: true},
 		{name: "a bare URL beside an emoji", posted: "See https://example.com/:customer_id:/orders 🎉", stored: "See https://example.com/:customer_id:/orders :tada:"},
 		{name: "an auto-linked URL beside an emoji", posted: "See https://example.com/:customer_id:/orders 🎉", stored: "See <https://example.com/:customer_id:/orders> :tada:"},
+		// Round 3: an emoji glued to a word folds on both sides.
+		{name: "an emoji glued to the word before it", posted: "Done🎉", stored: "Done:tada:"},
+		{name: "a thumbs up glued to a word", posted: "LGTM👍", stored: "LGTM:+1:"},
+		{name: "a rocket glued to a version", posted: "v2🚀 shipped", stored: "v2:rocket: shipped"},
+		{name: "an emoji glued to the word after it", posted: "🎉Done", stored: ":tada:Done"},
+		{name: "a skin-toned emoji glued to a word", posted: "ship👍🏽now", stored: "ship:+1::skin-tone-4:now"},
+		{name: "glued emoji with different text beyond it", posted: "Done🎉", stored: "Done:tada: more", wantErr: true},
+		// Round 3: a shortcode-shaped token Slack has no emoji for is text, glued or not.
+		{name: "a named slice bound in prose is text", posted: "items[:start_index:]", stored: "items[:end_index:]", wantErr: true},
+		{name: "a dropped named slice bound in prose is refused", posted: "items[:start_index:]", stored: "items[]", wantErr: true},
+		{name: "a colon-delimited word run is text", posted: "key:value:other", stored: "key:other:other", wantErr: true},
+		{name: "a standalone unknown shortcode stays literal on both sides", posted: "ping :not_an_emoji_name: ok", stored: "ping :not_an_emoji_name: ok"},
+		// Round 3: a URI of any scheme is compared as typed, even when a segment is an emoji name.
+		{name: "an s3 path segment that is an emoji name is text", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket//x", wantErr: true},
+		{name: "a changed s3 path segment is refused", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket/:ok:/x", wantErr: true},
+		{name: "an s3 URI beside an emoji", posted: "see s3://bucket/:id:/x 🎉", stored: "see s3://bucket/:id:/x :tada:"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -86,8 +111,11 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 		{"👍🏽", ":+1::skin-tone-4:"},
 		{"1️⃣ first", ":one: first"},
 		{"🇺🇸", ":us:"},
-		{"👨‍👩‍👧", ":family_man_woman_girl:"},
+		{"👨‍👩‍👧", ":man-woman-girl:"},
 		{"ok ©", "ok :copyright:"},
+		{"Done🎉", "Done:tada:"},
+		{"🎉Done", ":tada:Done"},
+		{"LGTM👍🏽", "LGTM:+1::skin-tone-4:"},
 	}
 	for _, p := range pairs {
 		if a, b := slackNormalizeText(p[0]), slackNormalizeText(p[1]); a != b {
@@ -107,7 +135,7 @@ func TestSlackNormalizeTextFoldsEmojiSymmetrically(t *testing.T) {
 	}
 	// Symbols Slack stores as typed are not emoji and stay (the lane's codex
 	// round 2): ⌘, box drawing, Braille, arrows other than the emoji ones.
-	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]", "`items[:start:]`", "`x[:100:]`", "```\n:tada:\n```", "`:tada:` outside", "https://example.com/:customer_id:/orders", "http://h/:a: tail"} {
+	for _, kept := range []string{"Press ⌘Q", "┌─┐", "⠁⠃", "a → b", "x ≠ y", "std::vector::iterator", "C♯ C♭ ♪", "☖ ♔", "क्\u200dष", "a\ufe0e b", "items[:2:]", "x[1:2:3]", "`items[:start:]`", "`x[:100:]`", "```\n:tada:\n```", "`:tada:` outside", "https://example.com/:customer_id:/orders", "http://h/:a: tail", "items[:start_index:]", "key:value:other", "s3://bucket/:id:/x", "git+ssh://host/:ok:/repo", ":not_an_emoji_name:"} {
 		if got := slackNormalizeText(kept); got != kept {
 			t.Errorf("slackNormalizeText(%q) = %q, want it unchanged", kept, got)
 		}
