@@ -179,7 +179,10 @@ var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 // or two different timestamps or identifiers would fold to the same text
 // (the lane's codex rounds 1 and 3). The groups keep the boundary
 // characters.
-var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9:])((?::[a-z0-9_+\-]+:)+)($|[^A-Za-z0-9:])`)
+// A name holds a letter, or is one of Slack's digit-only names (:+1:, :-1:,
+// :100:, :1234:): a slice such as items[:2:] is code, not an emoji (the
+// lane's codex round 5).
+var slackEmojiShortcodeRun = regexp.MustCompile(`(^|[^A-Za-z0-9:])((?::(?:\+1|-1|100|1234|[a-z0-9_+\-]*[a-z][a-z0-9_+\-]*):)+)($|[^A-Za-z0-9:])`)
 
 // slackKeycapSequence matches a keycap emoji (`1️⃣`, `#️⃣`): a digit, `#` or
 // `*` followed by an optional variation selector and the combining enclosing
