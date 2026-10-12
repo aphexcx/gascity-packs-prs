@@ -29,22 +29,26 @@ type snapshotEntry struct {
 type snapshot struct {
 	Schema int                      `json:"schema"`
 	Files  map[string]snapshotEntry `json:"files"`
-	// LedgerConsumed counts, per own-writes.jsonl entry (ledgerKey), the
-	// settled changes it has already suppressed, so an entry suppresses
-	// exactly one change and a historical tombstone cannot silence a peer's
-	// later deletion of a recreated doc (gf-4c9 row 8). Persisted with the
-	// snapshot so a restart does not re-arm consumed entries.
+	// LedgerConsumed counts, per own-writes.jsonl entry (ledgerKey), how
+	// many times it has been spent — by the settled change it explained or
+	// by a retirement, when a newer state of its file settled or the
+	// baseline was taken (ledger.settle, ledger.retireAll) — so an entry
+	// suppresses at most one change and a historical tombstone or a
+	// superseded own write cannot silence a peer's later change (gf-4c9 row
+	// 8, rounds 1 and 2). Persisted with the snapshot so a restart does not
+	// re-arm spent entries.
 	LedgerConsumed map[string]int `json:"ledger_consumed,omitempty"`
 }
 
-// consumeOwnWrite is the engine's ledger check: it consumes one matching
-// unconsumed entry against the persisted counts, which the next persist()
-// writes out with the snapshot.
-func (e *engine) consumeOwnWrite(name, sha string) bool {
+// settleOwnWrite is the engine's ledger check for a state of name that just
+// settled: it spends the matching entry and retires what that state
+// supersedes against the persisted counts, which the next persist() writes
+// out with the snapshot, and reports whether the state was our own write.
+func (e *engine) settleOwnWrite(name, sha string) bool {
 	if e.snap.LedgerConsumed == nil {
 		e.snap.LedgerConsumed = map[string]int{}
 	}
-	return e.ledger.consume(name, sha, e.snap.LedgerConsumed)
+	return e.ledger.settle(name, sha, e.snap.LedgerConsumed)
 }
 
 // pendingChange tracks a doc that differs from the snapshot but has not
@@ -172,7 +176,13 @@ func (e *engine) loadOrBaseline(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	snap = &snapshot{Schema: 1, Files: map[string]snapshotEntry{}}
+	snap = &snapshot{Schema: 1, Files: map[string]snapshotEntry{}, LedgerConsumed: map[string]int{}}
+	// Every entry the ledger holds now describes a write the board state
+	// being recorded already reflects (or that a later write superseded), so
+	// none of them may explain a change observed after this baseline: a
+	// peer's revert to bytes we once wrote, or a peer's deletion of a doc we
+	// once deleted, is theirs (finding 3a).
+	e.ledger.retireAll(snap.LedgerConsumed)
 	for name, st := range lst {
 		entry := snapshotEntry{MTimeUnix: st.MTimeUnix, Size: st.Size}
 		// Hash at baseline so later touch-only changes settle silently. A
@@ -251,7 +261,7 @@ func (e *engine) track(name string, st fileStat, deleted bool, now time.Time) {
 // enough in practice.
 func (e *engine) settle(ctx context.Context, name string, p *pendingChange) {
 	if p.deleted {
-		if !e.consumeOwnWrite(name, ledgerTombstone) {
+		if !e.settleOwnWrite(name, ledgerTombstone) {
 			if err := e.notify.Notify(ctx, change{Name: name, Verb: "removed"}); err != nil {
 				log.Printf("notify %s removed: %v (will retry)", name, err)
 				return
@@ -280,11 +290,16 @@ func (e *engine) settle(ctx context.Context, name string, p *pendingChange) {
 		verb = "updated"
 	}
 
+	// The ledger is settled before the unchanged-content check, not inside
+	// the own-write arm only: an own rewrite of identical bytes settles as
+	// "content unchanged", and its entry must be spent by that settle, or it
+	// would still explain a peer's later revert to those bytes (finding 3a).
+	own := e.settleOwnWrite(name, sum)
 	switch {
 	case existed && prev.SHA256 != "" && prev.SHA256 == sum:
 		// mtime moved but content didn't (touch, re-copy): settle silently.
 		log.Printf("%s restat settled silently (content unchanged)", name)
-	case e.consumeOwnWrite(name, sum):
+	case own:
 		log.Printf("own write of %s settled silently", name)
 	default:
 		ch := change{Name: name, Verb: verb, SHA256: sum, From: extractFrom(content)}

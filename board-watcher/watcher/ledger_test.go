@@ -23,24 +23,26 @@ func TestLedgerMatches(t *testing.T) {
 		`{"schema":1,"file":"gone.md","sha256":"-","ts":"2026-07-29T23:56:00Z"}`,
 	)
 	consumed := map[string]int{}
-	if !l.consume("note.md", sha, consumed) {
+	if !l.settle("note.md", sha, consumed) {
 		t.Error("recorded own write did not match")
 	}
-	if !l.consume("gone.md", ledgerTombstone, consumed) {
+	if !l.settle("gone.md", ledgerTombstone, consumed) {
 		t.Error("recorded tombstone did not match")
 	}
-	if l.consume("note.md", strings.Repeat("cd", 32), consumed) {
+	if l.settle("note.md", strings.Repeat("cd", 32), consumed) {
 		t.Error("different hash matched")
 	}
-	if l.consume("other.md", sha, consumed) {
+	if l.settle("other.md", sha, consumed) {
 		t.Error("same hash under a different file matched")
 	}
 }
 
 // TestLedgerEntrySuppressesExactlyOneChange is gf-4c9 row 8 at the ledger
-// level: an entry is consumed by the change it explains and never matches
-// again; two identical entries (two own writes of the same bytes) suppress
-// two changes; the counts round-trip through the caller's map.
+// level: an entry is spent by the change it explains and never matches
+// again; two identical entries recorded before any settle (two own writes
+// of the same bytes in one window) are one settled state, so the later one
+// is spent by it and the earlier one retired as superseded (round 2); the
+// counts round-trip through the caller's map.
 func TestLedgerEntrySuppressesExactlyOneChange(t *testing.T) {
 	sha := strings.Repeat("ab", 32)
 	l := writeLedger(t,
@@ -49,19 +51,17 @@ func TestLedgerEntrySuppressesExactlyOneChange(t *testing.T) {
 		`{"schema":1,"file":"twice.md","sha256":"`+sha+`","ts":"2026-07-29T23:57:00Z"}`,
 	)
 	consumed := map[string]int{}
-	if !l.consume("gone.md", ledgerTombstone, consumed) {
+	if !l.settle("gone.md", ledgerTombstone, consumed) {
 		t.Fatal("first match of the tombstone")
 	}
-	if l.consume("gone.md", ledgerTombstone, consumed) {
+	if l.settle("gone.md", ledgerTombstone, consumed) {
 		t.Fatal("a consumed tombstone matched a second deletion")
 	}
-	for i := 1; i <= 2; i++ {
-		if !l.consume("twice.md", sha, consumed) {
-			t.Fatalf("identical entry %d did not match", i)
-		}
+	if !l.settle("twice.md", sha, consumed) {
+		t.Fatal("the own write of twice.md did not match")
 	}
-	if l.consume("twice.md", sha, consumed) {
-		t.Fatal("two identical entries suppressed a third change")
+	if l.settle("twice.md", sha, consumed) {
+		t.Fatal("two identical entries recorded before one settle suppressed a second change; the earlier one is superseded")
 	}
 	// A new entry appended later (the write helper's next own write) is
 	// unconsumed and matches again.
@@ -73,7 +73,7 @@ func TestLedgerEntrySuppressesExactlyOneChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	if !l.consume("gone.md", ledgerTombstone, consumed) {
+	if !l.settle("gone.md", ledgerTombstone, consumed) {
 		t.Fatal("a fresh tombstone with a new ts did not match")
 	}
 }
@@ -85,14 +85,14 @@ func TestLedgerToleratesGarbageLines(t *testing.T) {
 		"",
 		`{"schema":1,"file":"ok.md","sha256":"`+sha+`","ts":"2026-07-29T23:55:00Z"}`,
 	)
-	if !l.consume("ok.md", sha, map[string]int{}) {
+	if !l.settle("ok.md", sha, map[string]int{}) {
 		t.Error("valid line after garbage did not match")
 	}
 }
 
 func TestLedgerMissingFile(t *testing.T) {
 	l := &ledger{path: filepath.Join(t.TempDir(), "absent.jsonl")}
-	if l.consume("any.md", strings.Repeat("00", 32), map[string]int{}) {
+	if l.settle("any.md", strings.Repeat("00", 32), map[string]int{}) {
 		t.Error("missing ledger matched something")
 	}
 }
