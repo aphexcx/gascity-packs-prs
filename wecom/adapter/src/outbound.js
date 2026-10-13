@@ -197,7 +197,11 @@ export class JournalUnavailableError extends Error {}
 //     valid generation exists while corrupt ones do, the journal boots
 //     DEGRADED and every media publish is refused until an operator
 //     inspects the quarantined files — starting empty would re-send media
-//     users already saw.
+//     users already saw. The block survives a restart (gf-xid finding 3h):
+//     a startup that finds no generation to load but quarantine files
+//     still beside the journal path boots degraded too, so the operator
+//     contract holds until the quarantined files are actually removed,
+//     not for one process lifetime.
 //
 // Retention policy (round-2 findings 7 and 12): entries are pruned past
 // `cap` (default 512) AND past `maxBytes` of serialized journal (default
@@ -281,10 +285,29 @@ export function createAttemptJournal({
     }
   };
 
+  // quarantinedGenerations lists the quarantine files a startup left beside
+  // the journal: `<generation>.corrupt-<ts>` for the main, tmp and bak
+  // generations of THIS journal path. Another journal's quarantine in the
+  // same directory is not this journal's block. An unreadable directory
+  // reads as none here: the first persist into it fails closed anyway.
+  const generations = () => [filePath, `${filePath}.tmp`, `${filePath}.bak`];
+  const quarantinedGenerations = () => {
+    const dir = path.dirname(filePath);
+    let names;
+    try {
+      names = fs.readdirSync(dir);
+    } catch (err) {
+      if (err.code !== 'ENOENT') log(`outbound attempt journal: cannot list ${dir} for quarantined generations (${scrubErrorMessage(err.message)})`);
+      return [];
+    }
+    const prefixes = generations().map((p) => `${path.basename(p)}.corrupt-`);
+    return names.filter((n) => prefixes.some((prefix) => n.startsWith(prefix))).sort();
+  };
+
   if (filePath) {
     let loaded;
     let sawCorrupt = false;
-    for (const p of [filePath, `${filePath}.tmp`, `${filePath}.bak`]) {
+    for (const p of generations()) {
       const m = tryLoad(p);
       if (m instanceof Map) {
         loaded = m;
@@ -303,6 +326,22 @@ export function createAttemptJournal({
       degraded = true;
       log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '
         + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+    } else {
+      // Nothing to load and nothing newly corrupt: a previous startup may
+      // have quarantined every generation. Its block was in memory only,
+      // so the restart used to come up healthy and empty — able to re-send
+      // the quarantined attempts' media. The quarantine files ARE the
+      // persisted block: while they remain, so does the degraded state
+      // (gf-xid finding 3h). A journal that loaded a valid generation
+      // above is not blocked by stale quarantine files beside it — that is
+      // the backup-recovery case, already inspected by the recovery.
+      const remaining = quarantinedGenerations();
+      if (remaining.length > 0) {
+        degraded = true;
+        log(`outbound attempt journal: no generation to load but ${remaining.length} quarantined file(s) remain `
+          + `(${remaining.join(', ')}) — still DEGRADED from an earlier startup's corruption; `
+          + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+      }
     }
   }
 

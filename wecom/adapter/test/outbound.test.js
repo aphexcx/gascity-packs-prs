@@ -2442,6 +2442,75 @@ test('startup corruption quarantines the journal and fails closed instead of sta
   assert.equal(calls.length, 0, 'a degraded journal must refuse media publishes entirely');
 });
 
+// gf-xid finding 3h (the gf-pu2 vs-upstream gate's Major at outbound.js:294):
+// the degraded block lived only in memory. The first startup quarantined the
+// corrupt generations and refused media publishes; the NEXT restart found no
+// journal files at all, loaded nothing, and started healthy with empty retry
+// state — so the quarantined attempts' media could be re-sent after all, and
+// the operator contract the log line states ("until the quarantined journal
+// files are inspected and removed") held for one process lifetime only. The
+// block now persists: a startup that finds no generation to load but
+// unresolved quarantine files beside the journal path boots degraded too,
+// until the operator removes them.
+test('the corrupt-journal block survives a restart until the quarantined files are removed', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  fs.writeFileSync(journalPath, '{definitely not json');
+  const logs = [];
+  const first = createAttemptJournal({ filePath: journalPath, log: (m) => logs.push(m) });
+  assert.equal(first.isDegraded(), true, 'first startup: degraded');
+  const quarantined = () => fs.readdirSync(dir).filter((f) => f.startsWith('attempts.json.corrupt-'));
+  assert.equal(quarantined().length, 1);
+  assert.equal(fs.existsSync(journalPath), false, 'the corrupt main file was quarantined, not left in place');
+
+  // Restart: no journal generation exists any more, only the quarantine.
+  const second = createAttemptJournal({ filePath: journalPath, log: (m) => logs.push(m) });
+  assert.equal(second.isDegraded(), true, 'second startup must stay degraded while the quarantined files are unresolved');
+  assert.equal(second.record('key-after-restart', { fingerprint: { digest: 'd' } }, { critical: false }), false,
+    'a degraded restart must refuse writes exactly like the first startup');
+  assert.equal(fs.existsSync(journalPath), false, 'a degraded restart writes no fresh journal');
+  assert.ok(logs.some((m) => /quarantined .*unresolved|still quarantined|DEGRADED/.test(m)),
+    `the second startup must say why it is degraded: ${JSON.stringify(logs)}`);
+  const { publisher, calls } = makePublisher({ journal: second });
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const res = await publishMedia(publisher, {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-degraded-restart',
+  });
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.json().failure_kind, 'journal_unavailable');
+  assert.equal(calls.length, 0, 'a degraded restart must refuse media publishes entirely');
+
+  // The operator inspects and removes the quarantined files: the next
+  // startup is healthy and starts empty.
+  for (const f of quarantined()) fs.rmSync(path.join(dir, f));
+  const third = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(third.isDegraded(), false, 'after the operator clears the quarantine the journal boots healthy');
+  assert.equal(third.size(), 0);
+  assert.equal(third.record('key-clean', { fingerprint: { digest: 'd' } }), true);
+});
+
+// The quarantine detection must not reach past the journal's own name: a
+// quarantined generation of a DIFFERENT journal in the same directory, or a
+// recovered journal that still has old quarantine files beside it (the
+// backup-recovery case below), does not block a healthy startup.
+test('unresolved quarantine files block only the journal they belong to, and only when no generation loads', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  fs.writeFileSync(path.join(dir, 'other.json.corrupt-1'), 'x');
+  const fresh = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(fresh.isDegraded(), false, 'another journal\'s quarantine is not this journal\'s block');
+
+  // A valid generation beside an old quarantine file loads normally.
+  fresh.record('key-a', { fingerprint: { digest: 'd1' } });
+  fs.writeFileSync(path.join(dir, 'attempts.json.corrupt-2'), 'x');
+  const reloaded = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(reloaded.isDegraded(), false, 'a loadable generation wins over a stale quarantine file');
+  assert.equal(reloaded.get('key-a')?.fingerprint?.digest, 'd1');
+});
+
 test('a corrupt main journal recovers from the rotated backup generation', async (t) => {
   const dir = tmpDir(t);
   const journalPath = path.join(dir, 'attempts.json');
