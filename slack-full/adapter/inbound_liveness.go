@@ -365,6 +365,50 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	}
 }
 
+// retireExpiredPendingLocked drops the pending holds whose message has aged
+// out of the backfill window: the probe reads above the window's floor, so
+// such a message can never be re-read and its hold could never be released
+// by a retry — the watermark would stay frozen for good, and with origins
+// unpersisted every restart would replay the whole window (the lane's codex
+// round 2). A retired message is left to a live redelivery, exactly as every
+// failed replay was before the hold existed; the last hold to go releases
+// the held advance. With backfill disabled (no window) nothing can release a
+// hold, so every one is retired. Caller holds l.mu.
+func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) {
+	floor := ""
+	if win := l.cfg.backfillMaxWindow; win > 0 {
+		floor = slackTSFromTime(now.Add(-win))
+	}
+	for id, ch := range l.channels {
+		if len(ch.PendingTS) == 0 {
+			continue
+		}
+		kept := ch.PendingTS[:0]
+		var retired []string
+		for _, ts := range ch.PendingTS {
+			if floor == "" || compareSlackTS(ts, floor) <= 0 {
+				retired = append(retired, ts)
+				continue
+			}
+			kept = append(kept, ts)
+		}
+		if len(retired) == 0 {
+			continue
+		}
+		clear(ch.PendingTS[len(kept):])
+		ch.PendingTS = kept
+		if len(ch.PendingTS) == 0 && ch.HeldMaxTS != "" {
+			if compareSlackTS(ch.HeldMaxTS, ch.WatermarkTS) > 0 {
+				ch.WatermarkTS = ch.HeldMaxTS
+			}
+			ch.HeldMaxTS = ""
+		}
+		l.stateDirty = true
+		log.Printf("inbound liveness: channel=%s retired %d pending replay(s) out of the backfill window (%s) — left to a live redelivery; the watermark moves on (now %s)",
+			id, len(retired), strings.Join(retired, " "), ch.WatermarkTS)
+	}
+}
+
 // holdPendingLocked records a replay that did not commit: its ts joins the
 // channel's pending set, and a watermark a live advance already carried
 // past it goes back to where the probe read it (below every missed ts), so
@@ -550,6 +594,7 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}
 	l.probing = true
 	l.lastProbeAt = l.now()
+	l.retireExpiredPendingLocked(l.lastProbeAt)
 	channels := l.snapshotChannelsLocked()
 	l.mu.Unlock()
 	defer func() {
@@ -625,7 +670,9 @@ type watchedChannel struct {
 func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 	out := make([]watchedChannel, 0, len(l.channels))
 	for id, ch := range l.channels {
-		out = append(out, watchedChannel{id: id, ch: *ch})
+		c := *ch
+		c.PendingTS = slices.Clone(ch.PendingTS)
+		out = append(out, watchedChannel{id: id, ch: c})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ch.Pinned != out[j].ch.Pinned {
@@ -1036,6 +1083,10 @@ func (l *inboundLiveness) saveState() {
 	st := livenessState{LastInboundAt: l.lastInboundAt, Channels: make(map[string]*livenessChannel, len(l.channels))}
 	for id, ch := range l.channels {
 		c := *ch
+		// The pending set is the one reference-typed field: the encode below
+		// runs outside the lock while the live path and the backfill shift
+		// the same backing array (the lane's codex round 2).
+		c.PendingTS = slices.Clone(ch.PendingTS)
 		st.Channels[id] = &c
 	}
 	l.stateDirty = false

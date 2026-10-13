@@ -190,3 +190,34 @@ func TestReplayPublishReceiptReportsTheReVerificationExactlyOnce(t *testing.T) {
 		t.Fatalf("cached receipt after the concurrent re-verifies = %+v, %v; want delivered", cached, ok)
 	}
 }
+
+// A slower retry whose own readback stayed down writes the unconfirmed
+// receipt it read BEFORE a faster retry proved delivery; that write must not
+// undo the delivered receipt, or the next retry would re-verify it and run
+// the bookkeeping a second time (the lane's codex round 2).
+func TestReplayPublishReceiptStaleUnconfirmedWriteCannotReopenTheTransition(t *testing.T) {
+	fastReadbackTimings(t)
+	var captured slackPostMessageReq
+	captured.Text = "hello"
+	server := httptest.NewServer(newFakeSlackPublishHandler(t, &captured, "1700.001", nil))
+	t.Cleanup(server.Close)
+	withSlackAPIStub(t, server)
+
+	dedup := newPublishDedupCache(publishDedupTTL)
+	unconfirmed := publishReceipt{MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}}
+	dedup.Put("k-1", unconfirmed)
+
+	first, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
+	if !ok || !first.receipt.Delivered || !first.reVerified {
+		t.Fatalf("first replay = %+v, %v; want the re-verification", first, ok)
+	}
+	// The slower retry's stale write: the unconfirmed copy it took before.
+	dedup.Put("k-1", unconfirmed)
+	if cached, ok := dedup.Get("k-1"); !ok || !cached.Delivered {
+		t.Fatalf("cached receipt after a stale unconfirmed write = %+v, %v; want the delivered receipt kept", cached, ok)
+	}
+	third, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
+	if !ok || !third.receipt.Delivered || third.reVerified {
+		t.Fatalf("third replay = %+v, %v; want the delivered receipt replayed with no second re-verification", third, ok)
+	}
+}

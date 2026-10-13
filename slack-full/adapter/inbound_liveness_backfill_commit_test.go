@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,5 +260,92 @@ func TestLivenessBackfillHonorsTheDispatchVerdict(t *testing.T) {
 				t.Fatalf("watermark = %s, want %s", got, wantWatermark)
 			}
 		})
+	}
+}
+
+// The persistence snapshot copies the pending set under the lock (the
+// lane's codex round 2): saveState encodes after unlocking, and the live
+// path and the backfill mutate the same slice meanwhile. Run under -race.
+func TestLivenessSaveStateSnapshotsThePendingSetUnderTheLock(t *testing.T) {
+	base := time.Date(2026, 10, 12, 17, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	cfg := livenessTestConfig(t)
+	cfg.livenessStatePath = filepath.Join(t.TempDir(), "liveness.json")
+	l := newTestLiveness(t, cfg, newFakeHistory(), clock)
+	// A standing pending set keeps the backing array in place, so a
+	// delete shifts (writes) the same memory a shallow snapshot reads.
+	l.mu.Lock()
+	for i := 0; i < 64; i++ {
+		l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: tsAt(base, time.Duration(i+1)*time.Minute)}, watermark: l.channels["C1"].WatermarkTS})
+	}
+	l.mu.Unlock()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			ts := tsAt(base, time.Duration(i%64+1)*time.Minute)
+			l.mu.Lock()
+			l.touchChannelLocked("C1", "T1", ts, clock.now())
+			l.mu.Unlock()
+			l.mu.Lock()
+			l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: ts}, watermark: l.channels["C1"].WatermarkTS})
+			l.mu.Unlock()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 2000; i++ {
+			l.mu.Lock()
+			l.stateDirty = true
+			l.mu.Unlock()
+			l.saveState()
+		}
+	}()
+	wg.Wait()
+}
+
+// A pending hold whose message has aged out of the backfill window can never
+// be released by re-reading it (the probe reads above the window's floor), so
+// it is retired at the next probe and the held advance taken; the message is
+// left to a live redelivery, as before the hold existed (the lane's codex
+// round 2).
+func TestLivenessRetiresPendingHoldsOutsideTheBackfillWindow(t *testing.T) {
+	base := time.Date(2026, 10, 12, 17, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	cfg := livenessTestConfig(t)
+	l := newTestLiveness(t, cfg, hist, clock)
+	read, cleanup := captureLog(t)
+	t.Cleanup(cleanup)
+	pending, held := tsAt(base, 2*time.Minute), tsAt(base, 5*time.Minute)
+	l.mu.Lock()
+	l.channels["C1"].PendingTS = []string{pending}
+	l.channels["C1"].HeldMaxTS = held
+	l.mu.Unlock()
+	watermarkBefore := l.watermarkOf("C1")
+
+	// Inside the window the hold stands.
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	if got := l.watermarkOf("C1"); got != watermarkBefore {
+		t.Fatalf("watermark inside the window = %s, want held at %s", got, watermarkBefore)
+	}
+
+	// Past the window (backfillMaxWindow is an hour) it is retired.
+	clock.advance(2 * time.Hour)
+	l.tick(context.Background())
+	if got := l.watermarkOf("C1"); got != held {
+		t.Fatalf("watermark after the hold aged out = %s, want the held advance %s", got, held)
+	}
+	l.mu.Lock()
+	left := append([]string(nil), l.channels["C1"].PendingTS...)
+	heldLeft := l.channels["C1"].HeldMaxTS
+	l.mu.Unlock()
+	if len(left) != 0 || heldLeft != "" {
+		t.Fatalf("pending = %v held = %q after the window, want none", left, heldLeft)
+	}
+	if !strings.Contains(read(), "out of the backfill window") {
+		t.Errorf("retirement not logged: %s", read())
 	}
 }

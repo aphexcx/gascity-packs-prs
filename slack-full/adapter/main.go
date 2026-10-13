@@ -2502,6 +2502,11 @@ func publishReceiptBlocksRepost(receipt publishReceipt) bool {
 // Put records a receipt a retry must not re-post (publishReceiptBlocksRepost)
 // under key and sweeps expired entries so the map stays bounded under churn.
 // Empty keys and receipts that leave the key free to post again are ignored.
+// A delivered receipt is never replaced by an undelivered one: a slower retry
+// whose own readback stayed down writes back the unconfirmed copy it took
+// BEFORE a faster retry proved delivery, and that write must not reopen the
+// unconfirmed-to-delivered transition commitReVerified claims once (the
+// lane's codex round 2 on gf-xid finding 3f).
 func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	if key == "" || !publishReceiptBlocksRepost(receipt) {
 		return
@@ -2509,7 +2514,9 @@ func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: now.Add(c.ttl)}
+	if e, ok := c.entries[key]; !ok || receipt.Delivered || !e.receipt.Delivered {
+		c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: now.Add(c.ttl)}
+	}
 	for k, e := range c.entries {
 		if !now.Before(e.expiresAt) {
 			delete(c.entries, k)
