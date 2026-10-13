@@ -83,6 +83,7 @@ export async function postJSONWithRetry(target, body, label, log = () => {}) {
 // Receipt keys follow the same case/separator normalization as slack-full.
 // Colliding keys carry no usable answer; never choose one by iteration order.
 const receiptKey = (value) => typeof value === 'string' ? value.toLowerCase().replace(/[_\s-]/g, '') : '';
+const ambiguousReceipt = Symbol('ambiguousReceipt');
 function receiptMap(value) {
   const out = Object.create(null), collisions = new Set();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
@@ -92,6 +93,7 @@ function receiptMap(value) {
       delete out[name]; collisions.add(name);
     } else out[name] = field;
   }
+  if (collisions.size) out[ambiguousReceipt] = true;
   return out;
 }
 function receiptShortfall(receipt) {
@@ -100,11 +102,12 @@ function receiptShortfall(receipt) {
     && Number.isSafeInteger(expected) && expected > 0 && delivered < expected;
 }
 function landedUnconfirmed(receipt) {
-  if (!['pending', 'partial'].includes(receiptKey(receipt.status))
+  if (receipt[ambiguousReceipt] || !['pending', 'partial'].includes(receiptKey(receipt.status))
     || !Array.isArray(receipt.members) || receipt.members.length === 0) return false;
   let pending = false;
   for (const member of receipt.members) {
     const m = receiptMap(member), status = receiptKey(m.status);
+    if (m[ambiguousReceipt]) return false;
     if (status === 'delivered' && !receiptShortfall(m)) continue;
     if (status !== 'pending' || !Number.isSafeInteger(m.expectedbytes) || m.expectedbytes <= 0
       || !Number.isSafeInteger(m.deliveredbytes) || m.deliveredbytes < m.expectedbytes) return false;
@@ -114,10 +117,13 @@ function landedUnconfirmed(receipt) {
 }
 function receiptVerdict(receipt) {
   const status = receiptKey(receipt.status);
+  const members = Array.isArray(receipt.members) ? receipt.members.map(receiptMap) : [];
+  if (receipt[ambiguousReceipt] || members.some((m) => m[ambiguousReceipt])) return 'unverified';
+  // Pending fan-out can already have delivered to a member; hold the original.
+  if (status === 'pending') return 'pending';
   // A whole paste awaiting submit confirmation is held for its conclusion,
   // including a mixed delivered/pending fan-out summarized as partial.
   if (landedUnconfirmed(receipt)) return 'pending';
-  const members = Array.isArray(receipt.members) ? receipt.members.map(receiptMap) : [];
   if (members.some((m) => ['failed', 'partial'].includes(receiptKey(m.status))
     || (receiptKey(m.status) === 'delivered' && receiptShortfall(m)))) return 'failed';
   if (['failed', 'partial'].includes(status)) return 'failed';
@@ -801,7 +807,7 @@ export function createInboundPipeline(deps) {
     const itemCount = mediaItemsForMessage(msg).length;
     if (itemCount === 0) return null;
     if (msg.msgid) {
-      if (seenMsgIds.has(msg.msgid)) return null;
+      if (seenMsgIds.has(msg.msgid) || heldDeliveries.has(msg.msgid)) return null;
       const existing = hydrations.get(msg.msgid);
       if (existing) return { promise: existing.promise, owner: false };
       // A refusal sticks for the message's whole pending lifetime: if

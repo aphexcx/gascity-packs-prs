@@ -1824,3 +1824,56 @@ test('a replay of one held batch member polls the original envelope', async (t) 
   assert.equal(posts, 1);
   assert.equal(pipeline.stats().seen, 2, 'conclusion commits every original batch member');
 });
+
+
+test('pending mixed fan-out stays held even when another member failed', async (t) => {
+  let posts = 0, polls = 0;
+  const delivery = { status: 'pending', receipt_id: 'mixed', members: [
+    { status: 'delivered', delivered_bytes: 10, expected_bytes: 10 },
+    { status: 'failed', delivered_bytes: 0, expected_bytes: 10 },
+  ] };
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => { posts++; return { delivery }; },
+    getReceipt: async () => { polls++; return { receipt_id: 'mixed', state: 'concluded', delivery }; },
+    receiptSleep: async () => {},
+  } });
+  const msg = textMessage({ msgid: 'MIXED' });
+  await pipeline.enqueueInbound(frame(msg));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(posts, 1);
+  assert.equal(polls, 240);
+  assert.equal(pipeline.stats().seen, 0);
+});
+
+for (const delivery of [
+  { status: 'delivered', members: [{ status: 'failed', Status: 'delivered' }] },
+  { status: 'delivered', members: [{ status: 'failed' }], Members: [{ status: 'delivered' }] },
+]) {
+  test('nested receipt collisions stay unverified: ' + JSON.stringify(delivery), async (t) => {
+    let posts = 0;
+    const logs = [];
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => { posts++; return { delivery }; },
+      receiptSleep: async () => {}, log: (line) => logs.push(line),
+    } });
+    await pipeline.enqueueInbound(frame(textMessage({ msgid: 'COLLISION' })));
+    assert.equal(pipeline.stats().seen, 0);
+    assert.equal(posts, 1);
+    assert.ok(logs.some((line) => line.includes('unverified')));
+  });
+}
+
+test('a held media replay polls its original envelope without another download', async (t) => {
+  let downloads = 0;
+  const { pipeline } = makePipeline(t, {
+    downloadFile: async () => { downloads++; return { buffer: Buffer.from('payload'), filename: 'a.txt' }; },
+    deps: {
+      postInbound: async () => ({ delivery: { status: 'pending', receipt_id: 'media' } }),
+      getReceipt: async () => ({ receipt_id: 'media', state: 'pending' }), receiptSleep: async () => {},
+    },
+  });
+  const msg = fileMessage({ msgid: 'HELD_MEDIA' });
+  await pipeline.enqueueInbound(frame(msg));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(downloads, 1);
+});
