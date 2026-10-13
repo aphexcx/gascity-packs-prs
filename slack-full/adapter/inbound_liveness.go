@@ -1511,7 +1511,15 @@ func (l *inboundLiveness) loadState() {
 			if o.Live {
 				src = inboundOriginLive
 			}
-			l.originsPutLocked(originKey(id, o.TS), src, now)
+			key := originKey(id, o.TS)
+			l.originsPutLocked(key, src, now)
+			// Its presence in the file is the proof it was delivered: the
+			// latch comes back with it, so the next save under a hold
+			// carries it again (the lane's codex round 8).
+			if e, ok := l.origins[key]; ok {
+				e.delivered = true
+				l.origins[key] = e
+			}
 			restored++
 		}
 		ch.HeldOrigins = nil
@@ -1548,16 +1556,22 @@ func (l *inboundLiveness) liveDeliveredLocked(key string, e originEntry) bool {
 
 // heldOriginsLocked lists the origins channel knows above its watermark —
 // a replay that concluded delivered, or a live message — oldest first, for
-// the state file; a replay still in flight is left out. Caller holds l.mu.
-func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenessHeldOrigin {
+// the state file; a replay still in flight is left out, and so is a live
+// line whose forward has not concluded (unresolved counts them: the save
+// stays dirty so a later pass carries them once it has). Caller holds l.mu.
+func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) ([]livenessHeldOrigin, int) {
 	prefix := channel + "|"
 	now := l.now()
 	var out []livenessHeldOrigin
+	unresolved := 0
 	for key, e := range l.origins {
 		if e.source == inboundOriginUnknown || l.inFlight[key] || now.Sub(e.at) > livenessOriginTTL || !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		if e.source == inboundOriginLive && !l.liveDeliveredLocked(key, e) {
+			if watermark == "" || compareSlackTS(key[len(prefix):], watermark) > 0 {
+				unresolved++
+			}
 			continue
 		}
 		ts := key[len(prefix):]
@@ -1567,7 +1581,7 @@ func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenes
 		out = append(out, livenessHeldOrigin{TS: ts, Live: e.source == inboundOriginLive})
 	}
 	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
-	return out
+	return out, unresolved
 }
 
 // saveState persists the watermarks if anything changed. Errors are
@@ -1582,6 +1596,7 @@ func (l *inboundLiveness) saveState() {
 		return
 	}
 	st := livenessState{LastInboundAt: l.lastInboundAt, Channels: make(map[string]*livenessChannel, len(l.channels))}
+	unresolved := 0
 	for id, ch := range l.channels {
 		c := *ch
 		// The pending set is the one reference-typed field: the encode below
@@ -1592,11 +1607,18 @@ func (l *inboundLiveness) saveState() {
 		c.PendingMessages = maps.Clone(ch.PendingMessages)
 		c.HeldOrigins = nil
 		if floor, held := ch.originFloorLocked(); held {
-			c.HeldOrigins = l.heldOriginsLocked(id, floor)
+			var n int
+			c.HeldOrigins, n = l.heldOriginsLocked(id, floor)
+			unresolved += n
 		}
 		st.Channels[id] = &c
 	}
-	l.stateDirty = false
+	// A live line still forwarding is not in this file; the dedup commit
+	// that concludes it does not dirty the state, so the save stays dirty
+	// until a pass finds every held line resolved (the lane's codex round
+	// 8: a quiet channel's later saves, the shutdown save included, used to
+	// skip the write and a restart replayed the delivered line).
+	l.stateDirty = unresolved > 0
 	l.mu.Unlock()
 	data, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

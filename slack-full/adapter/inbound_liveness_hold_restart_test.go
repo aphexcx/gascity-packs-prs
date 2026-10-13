@@ -172,14 +172,23 @@ func TestLivenessStatePersistsALiveLineOnlyOnceItsClaimCommitted(t *testing.T) {
 	if got := reloaded.originSource("C1", live); got != inboundOriginUnknown {
 		t.Fatalf("restored origin of a line whose forward has not concluded = %v, want unknown (the recovery must replay it)", got)
 	}
-	// The forward reaches gc: the claim commits, and the next save carries the line.
+	// The forward reaches gc: the claim commits, and the next periodic save
+	// carries the line without anything else dirtying the state (the lane's
+	// codex round 8: the commit itself does not).
 	cfg.eventDedup.commit("EvF")
-	l.mu.Lock()
-	l.stateDirty = true
-	l.mu.Unlock()
 	l.saveState()
 	reloaded = newTestLiveness(t, cfg, hist, clock)
 	if got := reloaded.originSource("C1", live); got != inboundOriginLive {
 		t.Fatalf("restored origin of a delivered line = %v, want live", got)
+	}
+	// Restored, the line stays delivered through a further save and
+	// restart: its presence in the file was the proof.
+	reloaded.mu.Lock()
+	reloaded.stateDirty = true
+	reloaded.mu.Unlock()
+	reloaded.saveState()
+	again := newTestLiveness(t, cfg, hist, clock)
+	if got := again.originSource("C1", live); got != inboundOriginLive {
+		t.Fatalf("origin of a delivered line after a second restart = %v, want live", got)
 	}
 }
