@@ -126,12 +126,12 @@ func TestLivenessProbeHoldsTheWatermarkWhileAThreadReadFails(t *testing.T) {
 	}
 }
 
-// A thread read that keeps failing cannot hold the channel forever: once the
-// hold is older than the backfill window, the replies it guarded are below
-// the floor the probe reads from, so the hold retires (left to a live
-// redelivery, as every unread message past the window is) and the watermark
-// takes the advance it was holding back.
-func TestLivenessThreadHoldRetiresOutsideTheBackfillWindow(t *testing.T) {
+// A thread read that keeps failing holds the channel at the backfill
+// window's floor, no further: what is below the floor the probe can no
+// longer read, what is above it is still unknown (the lane's codex round 3
+// on the first cut, which released the whole held advance after one window
+// and could skip a reply that arrived, unread, inside it).
+func TestLivenessThreadHoldRidesTheBackfillWindowFloor(t *testing.T) {
 	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
 	clock := &fakeClock{t: base}
 	hist := newFakeHistory()
@@ -163,16 +163,126 @@ func TestLivenessThreadHoldRetiresOutsideTheBackfillWindow(t *testing.T) {
 	if envs := rec.all(); len(envs) != 1 {
 		t.Fatalf("delivered %d, want the channel message once", len(envs))
 	}
-	// Past the window the hold retires and the watermark moves on.
-	clock.advance(31 * time.Minute)
+	// A newer reply lands in the thread, still unread (the read keeps
+	// failing), and a live message above everything is seen.
+	parent.LatestReply = tsAt(base, 50*time.Minute)
+	lateReply := histMsg(parent.LatestReply, "U2", "late reply")
+	lateReply.ThreadTS = parent.TS
+	lateReply.Raw, _ = json.Marshal(map[string]any{"type": "message", "ts": lateReply.TS, "user": "U2", "text": "late reply", "thread_ts": parent.TS})
+	hist.byChan["C1"] = []slackHistoryMessage{parent, channelMsg}
+	hist.threads["C1|"+parent.TS] = []slackHistoryMessage{reply, lateReply}
+	live := tsAt(base, 55*time.Minute)
+	clock.advance(14 * time.Minute) // base+56m
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+		t.Fatalf("live message = %v, want live", got)
+	}
+	// Past the window (base+68m: the watchdog probes once the live message
+	// is 10 minutes old) the hold moves up to the floor (base+8m) — not to
+	// the live advance at base+55m, which would skip the unread reply at
+	// base+50m. The first reply, at base+2m, is below the floor now: left to
+	// a live redelivery, as every message out of the window is.
+	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
+	floor := slackTSFromTime(clock.now().Add(-lcfg.backfillMaxWindow))
+	if got := l.threadHoldOf("C1"); got != floor {
+		t.Fatalf("thread hold after the window = %q, want the window's floor %s", got, floor)
+	}
+	if got := l.watermarkOf("C1"); got != floor {
+		t.Fatalf("watermark after the window = %s, want the floor %s (never the held advance %s over the unread reply)", got, floor, live)
+	}
+	if !strings.Contains(read(), "moved the thread-read hold") {
+		t.Errorf("the moved hold is not logged: %s", read())
+	}
+	// The read recovers: the reply above the floor replays, the hold
+	// releases, and the watermark takes the live advance.
+	delete(hist.errs, "C1|"+parent.TS)
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	envs := rec.all()
+	if len(envs) != 2 {
+		t.Fatalf("delivered %d after the read recovered, want 2 (the channel message, then the reply above the floor)", len(envs))
+	}
+	var inner map[string]any
+	_ = json.Unmarshal(envs[1].Event, &inner)
+	if inner["text"] != "late reply" {
+		t.Fatalf("second replay = %v, want the late reply", inner)
+	}
 	if got := l.threadHoldOf("C1"); got != "" {
-		t.Fatalf("thread hold after the window = %q, want retired", got)
+		t.Fatalf("thread hold after the recovered read = %q, want released", got)
 	}
-	if got := l.watermarkOf("C1"); got != channelMsg.TS {
-		t.Fatalf("watermark after the retired hold = %s, want the held advance %s", got, channelMsg.TS)
+	if got := l.watermarkOf("C1"); got != live {
+		t.Fatalf("watermark after the release = %s, want %s", got, live)
 	}
-	if !strings.Contains(read(), "retired the thread-read hold") {
-		t.Errorf("the retired hold is not logged: %s", read())
+}
+
+// The release waits for the replay: a recovered thread with more replies
+// than the per-channel backfill cap is replayed over several probes, and
+// the held advance (a live message newer than every reply) is not taken
+// until the last of them has gone (the lane's codex round 3 on the first
+// cut, which released at probe time and let the cap strand the rest below
+// the released watermark).
+func TestLivenessThreadHoldWaitsForTheCappedReplay(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	lcfg := livenessTestConfig(t)
+	l := newTestLiveness(t, lcfg, hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	watermarkBefore := l.watermarkOf("C1")
+	parent := histMsg(tsAt(base, -time.Hour), "U1", "old thread")
+	parent.ReplyCount = 1
+	n := livenessMaxBackfillPerChannel + 20
+	var replies []slackHistoryMessage
+	for i := 0; i < n; i++ {
+		r := histMsg(tsAt(base, 2*time.Minute+time.Duration(i)*time.Second), "U2", fmt.Sprintf("reply %d", i))
+		r.ThreadTS = parent.TS
+		r.Raw, _ = json.Marshal(map[string]any{"type": "message", "ts": r.TS, "user": "U2", "text": r.Text, "thread_ts": parent.TS})
+		replies = append(replies, r)
+	}
+	parent.LatestReply = replies[n-1].TS
+	hist.byChan["C1"] = []slackHistoryMessage{parent}
+	hist.threads["C1|"+parent.TS] = replies
+	hist.errs["C1|"+parent.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+
+	// The hold, then a live message newer than every reply.
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	if got := l.threadHoldOf("C1"); got != watermarkBefore {
+		t.Fatalf("thread hold = %q, want %s", got, watermarkBefore)
+	}
+	live := tsAt(base, 10*time.Minute)
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+		t.Fatalf("live message = %v, want live", got)
+	}
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
+
+	// The read recovers: the cap replays the first 100, the hold stays, and
+	// the watermark stays below the 20 left for the next probe.
+	delete(hist.errs, "C1|"+parent.TS)
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	if envs := rec.all(); len(envs) != livenessMaxBackfillPerChannel {
+		t.Fatalf("delivered %d, want the cap %d", len(envs), livenessMaxBackfillPerChannel)
+	}
+	if got := l.threadHoldOf("C1"); got != watermarkBefore {
+		t.Fatalf("thread hold after a capped replay = %q, want kept at %s", got, watermarkBefore)
+	}
+	if got := l.watermarkOf("C1"); got != watermarkBefore {
+		t.Fatalf("watermark after a capped replay = %s, want held at %s (20 replies are still unreplayed below the live advance)", got, watermarkBefore)
+	}
+	// The next probe replays the rest; the hold releases to the live advance.
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	if envs := rec.all(); len(envs) != n {
+		t.Fatalf("delivered %d after the second pass, want all %d replies", len(envs), n)
+	}
+	if got := l.threadHoldOf("C1"); got != "" {
+		t.Fatalf("thread hold after the complete replay = %q, want released", got)
+	}
+	if got := l.watermarkOf("C1"); got != live {
+		t.Fatalf("watermark after the complete replay = %s, want the live advance %s", got, live)
 	}
 }
