@@ -251,10 +251,12 @@ type livenessHeldReplay struct {
 	// Listing says the hold stands for a thread's history listing, not a
 	// message the adapter read (gf-d7b finding 3m): Msg carries the
 	// thread's latest reply ts and its parent (ThreadTS), nothing else, and
-	// the replies of that thread above the watermark are what was never
-	// read. Released when the latest reply lands or a probe reads the
-	// thread through (settlePendingThreads).
-	Listing bool `json:"listing,omitempty"`
+	// the replies of that thread above Cursor (the probe's reading) are
+	// what was never read. Released when the latest reply lands or a probe
+	// reads the thread through (settlePendingThreads); the dead letter
+	// names the thread and the cursor (gf-d7b finding 3p).
+	Listing bool   `json:"listing,omitempty"`
+	Cursor  string `json:"cursor,omitempty"`
 }
 
 // clipHeldMessage returns the message as a held replay keeps it: the text
@@ -619,6 +621,9 @@ func (l *inboundLiveness) holdThreadListingLocked(channel, teamID, threadTS, lat
 	ch := l.channels[channel]
 	if held, ok := ch.PendingMessages[latestReply]; ok {
 		held.Listing = true
+		if held.Cursor == "" || compareSlackTS(watermark, held.Cursor) < 0 {
+			held.Cursor = watermark
+		}
 		ch.PendingMessages[latestReply] = held
 	}
 	log.Printf("inbound liveness: channel=%s thread %s cannot be pending (%d pending already) — the watermark holds below its latest reply %s so the listing names it again", channel, threadTS, len(ch.PendingThreads), latestReply)
@@ -831,7 +836,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 		reason := fmt.Sprintf("inbound liveness: held replay aged out of the backfill window (%s) after %d attempt(s) — never delivered to gc; re-post by hand", l.cfg.backfillMaxWindow, r.held.Attempts)
 		switch {
 		case r.held.Listing:
-			reason = fmt.Sprintf("inbound liveness: a thread's listing hold aged out of the backfill window (%s) — the replies of thread %s up to this ts were never read (the pending set was full every probe); read them from Slack", l.cfg.backfillMaxWindow, r.held.Msg.ThreadTS)
+			reason = fmt.Sprintf("inbound liveness: a thread's listing hold aged out of the backfill window (%s) — the replies of thread %s above %s and up to this ts were never read (the pending set was full and the reads failed every probe); read them from Slack", l.cfg.backfillMaxWindow, r.held.Msg.ThreadTS, r.held.Cursor)
 		case !r.known:
 			reason += " (the message text was not recorded with the hold; read it from Slack at this ts)"
 		case r.held.TextDropped:
@@ -869,7 +874,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 	dir := strings.TrimSpace(l.cfg.inboundDeadLetterDir)
 	for channel, records := range byChannel {
 		if dir == "" {
-			log.Printf("inbound liveness: channel=%s %d held replay(s) LOST — no inbound dead-letter dir configured (SLACK_INBOUND_DEAD_LETTER_DIR); the lines are logged here and nowhere else", channel, len(records))
+			log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) LOST — no inbound dead-letter dir configured (SLACK_INBOUND_DEAD_LETTER_DIR); the lines are logged here and nowhere else", channel, len(records))
 			for _, rec := range records {
 				log.Printf("inbound liveness: LOST channel=%s ts=%s user=%s thread=%s text=%q", channel, rec.Inbound.ProviderMessageID, rec.Inbound.Actor.ID, rec.Inbound.ReplyToMessageID, rec.Inbound.Text)
 			}
@@ -883,9 +888,9 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 			}
 			continue
 		}
-		log.Printf("inbound liveness: channel=%s %d held replay(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
+		log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
 		if l.alert != nil {
-			go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: %d inbound message(s) in <#%s> could not be delivered to gc within %s and went to the inbound dead letter (%s). Re-post them by hand.", len(records), channel, l.cfg.backfillMaxWindow, path))
+			go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: %d inbound record(s) in <#%s> could not be delivered to gc within %s and went to the inbound dead letter (%s). Re-post them by hand.", len(records), channel, l.cfg.backfillMaxWindow, path))
 		}
 	}
 }
