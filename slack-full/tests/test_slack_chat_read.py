@@ -469,3 +469,39 @@ def test_adapter_env_export_prefix_is_stripped(monkeypatch, tmp_path):
     import os
     assert os.environ["SLACK_BOT_TOKEN"] == "xoxb-from-file"
     assert os.environ["SLACK_WORKSPACE_ID"] == "T0PLAIN"
+
+
+def test_history_continues_after_empty_cursor_page(monkeypatch, capsys):
+    mod = _import_module(monkeypatch, 'http://unused.invalid')
+    calls = []
+    def get(method, params, token):
+        calls.append(params)
+        if len(calls) == 1:
+            return {"messages": [], "response_metadata": {"next_cursor": "NEXT"}}
+        return {"messages": [_msg("100.0", "U1", "found after empty page")]}
+    monkeypatch.setattr(mod, 'slack_get', get)
+    messages, more = mod.fetch_history('C1', limit=10, oldest='', newest='', token='test')
+    assert [m['text'] for m in messages] == ['found after empty page']
+    assert calls[1]['cursor'] == 'NEXT'
+    assert more is False
+
+
+def test_history_repeated_cursor_reports_incomplete(monkeypatch, capsys):
+    mod = _import_module(monkeypatch, 'http://unused.invalid')
+    calls = []
+    def get(method, params, token):
+        calls.append(params)
+        assert len(calls) <= 2, 'cursor cycle must terminate'
+        return {"messages": [], "response_metadata": {"next_cursor": "REPEAT"}}
+    monkeypatch.setattr(mod, 'slack_get', get)
+    messages, more = mod.fetch_history('C1', limit=10, oldest='', newest='', token='test')
+    assert messages == []
+    assert len(calls) == 2
+    assert more is True
+    assert 'repeated cursor' in capsys.readouterr().err
+
+
+def test_history_missing_cursor_preserves_has_more(monkeypatch):
+    mod = _import_module(monkeypatch, 'http://unused.invalid')
+    monkeypatch.setattr(mod, 'slack_get', lambda *args: {"messages": [], "has_more": True})
+    assert mod.fetch_history('C1', limit=10, oldest='', newest='', token='test') == ([], True)

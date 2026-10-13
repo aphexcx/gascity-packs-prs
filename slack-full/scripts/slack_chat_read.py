@@ -196,6 +196,7 @@ def _paginate(method: str, base_params: dict[str, str], limit: int,
     """
     messages: list[dict[str, Any]] = []
     cursor = ""
+    seen_cursors: set[str] = set()
     page_max = _PAGE_MAX
     while True:
         params = dict(base_params)
@@ -223,8 +224,12 @@ def _paginate(method: str, base_params: dict[str, str], limit: int,
         more_reported = bool(data.get("has_more")) or bool(cursor)
         if len(messages) >= limit:
             return messages[:limit], more_reported or len(messages) > limit
-        if not cursor or not page:
-            return messages, False
+        if not cursor:
+            return messages, more_reported
+        if cursor in seen_cursors:
+            print(f"{method}: repeated cursor; history is incomplete", file=sys.stderr)
+            return messages, True
+        seen_cursors.add(cursor)
 
 
 def fetch_history(conversation_id: str, *, limit: int, oldest: str, newest: str,
