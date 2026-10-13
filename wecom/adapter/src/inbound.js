@@ -158,7 +158,13 @@ async function getReceiptJSON(target, signal) {
     const response = await fetch(target, {
       headers: { 'X-GC-Request': 'gc-wecom-adapter' }, signal: deadline,
     });
-    if (!response.ok) throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), { status: response.status });
+    if (!response.ok) {
+      const body = await response.text();
+      throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), {
+        status: response.status,
+        cityUnavailable: response.status === 404 && body.includes('city not found or not running'),
+      });
+    }
     return response.json();
   });
 }
@@ -901,7 +907,7 @@ export function createInboundPipeline(deps) {
         answer = receiptMap(await getReceipt(`${delivery.target}/receipts/${encodeURIComponent(id)}`, delivery.abort.signal));
       } catch (err) {
         if (!deliveryReservations.has(delivery)) return;
-        if (err.status === 404 || err.status === 405) {
+        if ((err.status === 404 && !err.cityUnavailable) || err.status === 405) {
           log(`${delivery.label}: receipt endpoint unavailable (${err.status}); failing open`);
           finishDelivery(delivery, 'unsupported');
           return;
@@ -928,10 +934,17 @@ export function createInboundPipeline(deps) {
       let verdict = landedUnconfirmed(receipt) ? 'delivered' : receiptVerdict(receipt);
       if (verdict === 'pending') return; // Concluded records never change; do not poll again.
       if (verdict === 'failed') {
+        // Confirmed failure uses the normal delivery retry path. The old
+        // ambiguous-receipt deadline must not cancel this known recovery.
+        clearTimeout(delivery.expiry);
         delivery.receipt = receipt;
         verdict = await deliverInbound(delivery, log, postInbound, receiptSleep);
         if (!deliveryReservations.has(delivery)) return;
-        if (verdict === 'pending') continue; // Follow the new recovery receipt.
+        if (verdict === 'pending') {
+          delivery.expiry = setTimeout(() => expireDelivery(delivery), heldDeliveryTtlMs);
+          delivery.expiry.unref?.();
+          continue; // The new ambiguous receipt gets its own bounded hold.
+        }
       }
       finishDelivery(delivery, verdict);
       return;

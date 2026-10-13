@@ -2100,3 +2100,44 @@ for (const path of ['post', 'lookup']) {
     assert.equal(calls, 1);
   });
 }
+
+test('3v confirmed failure recovery outlives the ambiguous hold deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let posts = 0;
+  const backoff = deferred();
+  const logs = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    heldDeliveryTtlMs: 1000,
+    postInbound: async () => ({ delivery: { status: ++posts === 1 ? 'pending' : 'delivered', receipt_id: 'deadline' } }),
+    getReceipt: async () => ({ state: 'concluded', receipt_id: 'deadline', delivery: { status: 'failed', receipt_id: 'deadline' } }),
+    receiptSleep: (ms) => ms === 5000 ? Promise.resolve() : backoff.promise,
+    log: (line) => logs.push(line),
+  } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'RECOVER_DEADLINE' })));
+  await new Promise(setImmediate);
+  t.mock.timers.tick(1000);
+  assert.equal(pipeline.stats().seen, 0, 'explicit failure cannot expire as successful delivery');
+  backoff.resolve();
+  await pipeline.waitForReceipts();
+  assert.equal(posts, 2);
+  assert.equal(pipeline.stats().seen, 1);
+  assert.ok(!logs.some((line) => line.startsWith('LOST')));
+});
+
+test('3v city-not-running receipt 404 retains recovery through the real lookup helper', async (t) => {
+  let posts = 0, polls = 0;
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => ++polls === 1
+    ? { ok: false, status: 404, text: async () => JSON.stringify({ detail: 'city not found or not running' }) }
+    : { ok: true, json: async () => ({ state: 'concluded', receipt_id: 'restart', delivery: { status: 'failed', receipt_id: 'restart' } }) };
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => ({ delivery: { status: ++posts === 1 ? 'pending' : 'delivered', receipt_id: 'restart' } }),
+    receiptSleep: async () => {},
+  } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'CITY_RESTART' })));
+  await pipeline.waitForReceipts();
+  assert.equal(posts, 2);
+  assert.equal(polls, 2);
+  assert.equal(pipeline.stats().seen, 1);
+});
