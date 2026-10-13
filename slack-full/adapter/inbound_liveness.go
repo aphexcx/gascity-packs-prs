@@ -167,8 +167,10 @@ type livenessChannel struct {
 	WatermarkTS string    `json:"watermark_ts"`
 	LastSeenAt  time.Time `json:"last_seen_at"`
 	Pinned      bool      `json:"pinned,omitempty"`
-	// PendingTS holds the ts of replays that did not commit (oldest first,
-	// capped at livenessMaxBackfillPerChannel): the watermark never crosses
+	// PendingTS holds the ts of replays that did not commit, and of missed
+	// messages a pass never reached — the per-channel cap, a cancellation
+	// (gf-d7b finding 3n) — (oldest first, capped at
+	// livenessMaxBackfillPerChannel): the watermark never crosses
 	// PendingTS[0] until that message lands — a committed retry or a live
 	// copy — so the next probe re-reads it, and nothing delivered or seen
 	// above it is lost: those origins are known and skipped (gf-xid finding
@@ -1379,21 +1381,30 @@ var livenessBackfillSettleWait = 30 * time.Second
 // at its first failure left its newer missed messages unreplayed, and a
 // live message that advanced the watermark meanwhile put them below it for
 // good; the pass now replays everything it can and the watermark holds
-// instead.) Returns the count delivered and the channels this pass left
-// INCOMPLETE — a message the per-channel cap or a cancellation left for the
-// next probe, un-marked and not pending, so a thread it belongs to stays
-// pending (settlePendingThreads).
+// instead.) A message the per-channel cap or a cancellation leaves
+// unreplayed is HELD pending on its channel exactly as a failed replay is
+// (holdPendingLocked, not an attempt; gf-d7b finding 3n): the watermark does
+// not cross it, the retry timer re-reads it under live traffic, and the
+// next probe replays it — before, it was left un-marked and not pending,
+// and a live message that advanced the watermark past it excluded it from
+// every later probe for good. The pending set holds at most
+// livenessMaxBackfillPerChannel of them; the watermark holds below the
+// oldest, which guards every one above it, and the next pass holds what it
+// still cannot reach. Returns the count delivered and the channels this
+// pass left INCOMPLETE, so a thread a left message belongs to stays pending
+// (settlePendingThreads).
 func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) (int, map[string]bool) {
 	perChannel := map[string]int{}
 	delivered := 0
 	incomplete := map[string]bool{}
+	left := map[string]int{}
 	for _, m := range missed {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			incomplete[m.channel] = true
-			continue
-		}
-		if perChannel[m.channel] >= livenessMaxBackfillPerChannel {
-			incomplete[m.channel] = true
+			left[m.channel]++
+			l.mu.Lock()
+			l.holdPendingLocked(m, false)
+			l.mu.Unlock()
 			continue
 		}
 		perChannel[m.channel]++
@@ -1433,6 +1444,13 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		l.touchChannelLocked(m.channel, m.teamID, m.msg.TS, now)
 		l.mu.Unlock()
 		log.Printf("inbound liveness: backfilled channel=%s ts=%s user=%s thread=%s text=%dch", m.channel, m.msg.TS, m.msg.User, m.msg.ThreadTS, len(m.msg.Text))
+	}
+	for channel, n := range left {
+		why := fmt.Sprintf("the per-channel cap of %d", livenessMaxBackfillPerChannel)
+		if ctx.Err() != nil {
+			why = "a cancellation"
+		}
+		log.Printf("inbound liveness: backfill channel=%s left %d missed message(s) unreplayed this pass (%s) — held pending: the watermark holds below them and the next probe replays them", channel, n, why)
 	}
 	return delivered, incomplete
 }
