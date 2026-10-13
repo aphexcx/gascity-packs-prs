@@ -47,8 +47,12 @@ function makePipeline(t, overrides = {}) {
     transcribe: overrides.transcribe ?? null,
     gate: overrides.gate ?? null,
     quota: overrides.quota ?? null,
-    postInbound: overrides.postInbound
-      ?? (async (target, body) => { posts.push({ target, body }); }),
+    postInbound: async (...args) => {
+      const result = overrides.postInbound
+        ? await overrides.postInbound(...args)
+        : posts.push({ target: args[0], body: args[1] });
+      return result && typeof result === 'object' ? result : { delivery: { status: 'delivered' } };
+    },
     // The suite pins exact envelopes; the once-per-conversation reply
     // how-to (production default ON) is exercised by its own tests.
     replyHelpOnce: false,
@@ -163,6 +167,7 @@ test('hydration starts immediately even while the conversation chain is blocked'
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'T_BLOCKER') await aDelivered;
       posts.push(body.message.provider_message_id);
+      return { delivery: { status: 'delivered' } };
     },
     downloadFile: async () => {
       downloadStartedResolve();
@@ -213,6 +218,7 @@ test('delivery success and deterministic rejection both clean the maps', async (
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'F_BAD') throw reject400;
       posts.push(body.message.provider_message_id);
+      return { delivery: { status: 'delivered' } };
     },
   });
 
@@ -223,9 +229,9 @@ test('delivery success and deterministic rejection both clean the maps', async (
   assert.equal(stats.hydrations, 0, 'hydration entries must not outlive their bridge');
   assert.equal(stats.inflight, 0);
   assert.equal(stats.chains, 0);
-  assert.equal(stats.seen, 2, 'both ids marked seen (rejection is deterministic)');
+  assert.equal(stats.seen, 1, 'only the delivered id is marked seen');
 
-  // The rejected id never re-posts on replay.
+  // The rejected id remains eligible; gc may accept it after a repair.
   await pipeline.enqueueInbound(frame(fileMessage({ msgid: 'F_BAD', from: { userid: 'li_si' } })));
   assert.deepEqual(posts, ['F_OK']);
 });
@@ -251,6 +257,7 @@ test('messages in different conversations bridge concurrently, same conversation
       const id = body.message.provider_message_id;
       if (id === 'T_A1') await firstHeld;
       order.push(id);
+      return { delivery: { status: 'delivered' } };
     },
   });
   const a1 = pipeline.enqueueInbound(frame(textMessage({ msgid: 'T_A1', from: { userid: 'alice' } })));
@@ -305,6 +312,7 @@ test('a full backlog refuses NEW media and never evicts live entries — replays
       const id = body.message.provider_message_id;
       if (id === 'H_1' || id === 'H_2') await outage;
       posts.push({ id, text: body.message.text });
+      return { delivery: { status: 'delivered' } };
     },
     hydrationsCap: 2,
   });
@@ -376,6 +384,7 @@ test('the TTL sweep never evicts a hydration whose bridge is queued behind anoth
       const id = body.message.provider_message_id;
       if (id === 'T_A') await aHeld;
       posts.push(id);
+      return { delivery: { status: 'delivered' } };
     },
   });
 
@@ -434,6 +443,7 @@ test('a refused msgid replays into the SAME refusal after capacity clears — no
       if (id === 'M_FULL') await fullHeld;
       if (id === 'T_HOLD') await holdHeld;
       posts.push({ id, text: body.message.text });
+      return { delivery: { status: 'delivered' } };
     },
     hydrationsCap: 1,
   });
@@ -497,6 +507,7 @@ test('2,048-message churn cannot evict a pending msgid from the seen set (no dou
       const id = body.message.provider_message_id;
       if (id === 'T_HOLD') await holdHeld;
       posts.push(id);
+      return { delivery: { status: 'delivered' } };
     },
   });
 
@@ -543,6 +554,7 @@ test('pending marks hold the seen set above cap and re-trim on the last settle',
       const id = body.message.provider_message_id;
       if (holds.has(id)) await new Promise((r) => { const prev = holds.get(id); holds.set(id, () => { prev?.(); r(); }); });
       posts.push(id);
+      return { delivery: { status: 'delivered' } };
     },
   });
   // Rebuild with cap 2 (makePipeline has no knob for it).
@@ -560,6 +572,7 @@ test('pending marks hold the seen set above cap and re-trim on the last settle',
       const id = body.message.provider_message_id;
       if (id.startsWith('HOLD_')) await new Promise((r) => holdsHeld.set(id, r));
       posts2.push(id);
+      return { delivery: { status: 'delivered' } };
     },
     seenMsgIdCap: 2,
   });
@@ -610,6 +623,7 @@ test('mixed-order eviction: cap governs the non-pending count, not the front slo
       const id = body.message.provider_message_id;
       if (id.startsWith('HOLD_')) await new Promise((r) => holdsHeld.set(id, r));
       posts.push(id);
+      return { delivery: { status: 'delivered' } };
     },
     seenMsgIdCap: 2,
   });
@@ -665,7 +679,7 @@ test('a synchronous setup throw releases the pending refcount and rethrows', asy
       return Date.now();
     },
     downloadFile: async () => ({ buffer: Buffer.from('img'), filename: 'p.png' }),
-    postInbound: async () => {},
+    postInbound: async () => ({ delivery: { status: 'delivered' } }),
   });
   assert.throws(
     () => p.enqueueInbound(frame(fileMessage({ msgid: 'F_THROW' }))),
@@ -922,6 +936,7 @@ test('batches flush in order behind an earlier in-flight delivery (chain preserv
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'O_1') await firstGate;
       order.push(body.message.provider_message_id);
+      return { delivery: { status: 'delivered' } };
     },
   });
   // Batch 1 (O_1) flushes and its POST hangs; batch 2 (O_2) flushes into
@@ -1008,6 +1023,7 @@ test('each conversation gets its own help block; a rejected first delivery re-ar
         throw err;
       }
       posts.push(body.message);
+      return { delivery: { status: 'delivered' } };
     },
   });
   // First delivery for li_si is deterministically rejected — the session
@@ -1151,6 +1167,7 @@ test('a rejected carrying delivery restores the peer context for the next one', 
         throw err;
       }
       delivered.push(body.message.text);
+      return { delivery: { status: 'delivered' } };
     },
   });
   await pipeline.enqueueInbound(frame(groupText({ msgid: 'PR_1', from: { userid: 'citadel_bot' }, text: { content: '上下文' } })));
@@ -1315,6 +1332,7 @@ test('restoration after rejection dedups a peer replay buffered mid-POST (codex 
         throw err;
       }
       delivered.push(body.message.text);
+      return { delivery: { status: 'delivered' } };
     },
   });
   pipelineRef = pipeline;
@@ -1336,6 +1354,7 @@ test('flushAll in draining mode also awaits in-chain batches and late frames (co
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'DR_1') await gate;
       delivered.push(body.message.provider_message_id);
+      return { delivery: { status: 'delivered' } };
     },
   });
   // DR_1 buffered; flush it into a chain whose POST hangs, then start
@@ -1391,6 +1410,7 @@ test('a peer post arriving after a NEWER human message is not stolen by an older
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'ST_H0') await gate;
       delivered.push(body.message.text);
+      return { delivery: { status: 'delivered' } };
     },
   });
   const room = (over) => textMessage({ chattype: 'group', chatid: 'wrST', ...over });
@@ -1504,6 +1524,7 @@ test('restore keeps the ORIGINAL copy of a mid-POST peer replay, preserving arri
         throw err;
       }
       delivered.push(body.message.text);
+      return { delivery: { status: 'delivered' } };
     },
   });
   pipelineRef = pipeline;
@@ -1533,6 +1554,7 @@ test('pending marks surviving compaction stay evictable — no ghost dedup entri
     postInbound: async (target, body) => {
       if (body.message.provider_message_id === 'HOLD') await gate;
       posts.push(body.message.provider_message_id);
+      return { delivery: { status: 'delivered' } };
     },
   });
   const inChat = (msgid, userid, content = 'x') => frame(textMessage({ msgid, from: { userid }, text: { content } }));
@@ -1576,7 +1598,7 @@ function fakeFetchSequence(t, statuses) {
     bodies.push(JSON.parse(init.body));
     const status = queue.shift();
     if (status === undefined) throw new Error('fake fetch: no more statuses');
-    return new Response(status === 200 ? 'ok' : 'nope', {
+    return new Response(status === 200 ? JSON.stringify({ delivery: { status: 'delivered' } }) : 'nope', {
       status,
       statusText: status === 200 ? 'OK' : 'status ' + status,
     });
@@ -1630,3 +1652,130 @@ test('a 429 from gc never marks the message seen: the pipeline delivers it after
   assert.equal(bodies.length, 2);
 });
 
+
+// The HTTP response acknowledges ingress; only the receipt concludes delivery.
+for (const status of ['failed', 'partial']) {
+  test(`receipt ${status} retries boundedly and a replay is still deliverable`, async (t) => {
+    let posts = 0;
+    const logs = [];
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => { posts++; return { delivery: { status, receipt_id: 'r1' } }; },
+      receiptSleep: async () => {}, log: (line) => logs.push(line),
+    } });
+    const msg = textMessage({ msgid: 'NEGATIVE_' + status });
+    await pipeline.enqueueInbound(frame(msg));
+    assert.equal(pipeline.stats().seen, 0);
+    assert.equal(posts, 4, 'initial post and three retries');
+    assert.ok(logs.some((line) => line.includes('LOST') && line.includes(msg.msgid) && line.includes('你好')));
+    await pipeline.enqueueInbound(frame(msg));
+    assert.equal(posts, 8, 'a provider replay gets a new bounded delivery attempt');
+  });
+}
+
+test('pending receipt is polled, without reposting, before seen is committed', async (t) => {
+  let posts = 0, polls = 0;
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'r/1' } }; },
+    getReceipt: async (url) => {
+      assert.ok(url.endsWith('/receipts/r%2F1'));
+      assert.equal(pipeline.stats().seen, 0);
+      polls++;
+      return { receipt_id: 'r/1', state: polls === 1 ? 'pending' : 'concluded',
+        delivery: { status: polls === 1 ? 'pending' : 'delivered', receipt_id: 'r/1' } };
+    }, receiptSleep: async () => {},
+  } });
+  const msg = textMessage({ msgid: 'PENDING' });
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(polls, 2);
+  assert.equal(posts, 1);
+  assert.equal(pipeline.stats().seen, 1);
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(posts, 1);
+});
+
+test('no_route is terminal and commits deduplication', async (t) => {
+  let posts = 0;
+  const { pipeline } = makePipeline(t, { deps: { postInbound: async () => {
+    posts++; return { delivery: { status: 'no_route', receipt_id: 'r1' } };
+  } } });
+  const msg = textMessage({ msgid: 'NOROUTE' });
+  await pipeline.enqueueInbound(frame(msg));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(posts, 1);
+  assert.equal(pipeline.stats().seen, 1);
+});
+
+for (const delivery of [
+  { status: 'delivered', Status: 'failed' },
+  { status: 'renamed_status' },
+  { status: 'delivered', delivered_bytes: 2, expected_bytes: 10 },
+  { status: 'delivered', members: [{ status: 'failed' }] },
+]) {
+  test('receipt contradiction or drift is never silently marked seen: ' + JSON.stringify(delivery), async (t) => {
+    let posts = 0;
+    const logs = [];
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => { posts++; return { delivery }; },
+      receiptSleep: async () => {}, log: (line) => logs.push(line),
+    } });
+    await pipeline.enqueueInbound(frame(textMessage({ msgid: 'DRIFT' })));
+    assert.equal(pipeline.stats().seen, 0);
+    assert.ok(logs.some((line) => line.includes('LOST') && line.includes('DRIFT')));
+    assert.equal(posts, delivery.status === 'delivered' && !delivery.Status ? 4 : 1);
+  });
+}
+
+
+test('postJSONWithRetry returns gc receipt JSON to the caller', async (t) => {
+  fakeFetchSequence(t, [200]);
+  const result = await postJSONWithRetry('http://gc.test/x', {}, 'test');
+  assert.equal(result.delivery.status, 'delivered');
+});
+
+test('a failed receipt recovers on the same envelope and then suppresses replay', async (t) => {
+  const bodies = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async (_url, body) => {
+      bodies.push(body);
+      return { delivery: { status: bodies.length === 1 ? 'partial' : 'delivered' } };
+    }, receiptSleep: async () => {},
+  } });
+  const msg = textMessage({ msgid: 'RECOVERED' });
+  await pipeline.enqueueInbound(frame(msg));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(bodies.length, 2);
+  assert.deepEqual(bodies[0], bodies[1]);
+  assert.equal(pipeline.stats().seen, 1);
+});
+
+test('an unresolved pending receipt stays a poll on provider replay', async (t) => {
+  let posts = 0, polls = 0;
+  const logs = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'held' } }; },
+    getReceipt: async () => { polls++; return { receipt_id: 'held', state: 'pending' }; },
+    receiptSleep: async () => {}, log: (line) => logs.push(line),
+  } });
+  const msg = textMessage({ msgid: 'HELD' });
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(pipeline.stats().seen, 0);
+  assert.equal(polls, 120);
+  assert.ok(logs.some((line) => line.includes('LOST') && line.includes('HELD')));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(posts, 1);
+  assert.equal(polls, 240);
+});
+
+test('a receipt for another fan-out cannot conclude or repost a pending message', async (t) => {
+  let posts = 0;
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'mine' } }; },
+    getReceipt: async () => ({ receipt_id: 'other', state: 'unknown' }),
+    receiptSleep: async () => {},
+  } });
+  const msg = textMessage({ msgid: 'MISMATCH' });
+  await pipeline.enqueueInbound(frame(msg));
+  await pipeline.enqueueInbound(frame(msg));
+  assert.equal(pipeline.stats().seen, 0);
+  assert.equal(posts, 1);
+});

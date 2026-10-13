@@ -29,10 +29,11 @@ export async function postJSON(target, body) {
     err.status = resp.status;
     throw err;
   }
-  // Drain the success body: undici only reuses a connection once its
-  // response body is consumed, and sustained inbound traffic on
-  // never-drained responses accumulates connections until delivery stalls.
-  await resp.arrayBuffer().catch(() => {});
+  try {
+    return await resp.json();
+  } catch (cause) {
+    throw Object.assign(new Error('gc returned an unreadable delivery receipt', { cause }), { unverified: true });
+  }
 }
 
 // A 4xx is normally a deterministic rejection — retrying sends the same
@@ -51,7 +52,7 @@ export async function postJSON(target, body) {
 const retryableStatuses = new Set([404, 408, 429]);
 
 function isRetryable(err) {
-  return err.status === undefined || err.status >= 500 || retryableStatuses.has(err.status);
+  return !err.unverified && (err.status === undefined || err.status >= 500 || retryableStatuses.has(err.status));
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -67,8 +68,7 @@ const retryDelaysMs = [1000, 5000, 15000, 60000];
 export async function postJSONWithRetry(target, body, label, log = () => {}) {
   for (let attempt = 0; ; attempt++) {
     try {
-      await postJSON(target, body);
-      return;
+      return await postJSON(target, body);
     } catch (err) {
       if (!isRetryable(err)) throw err;
       const delay = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)];
@@ -77,6 +77,88 @@ export async function postJSONWithRetry(target, body, label, log = () => {}) {
       }
       await sleep(delay);
     }
+  }
+}
+
+// Receipt keys follow the same case/separator normalization as slack-full.
+// Colliding keys carry no usable answer; never choose one by iteration order.
+const receiptKey = (value) => typeof value === 'string' ? value.toLowerCase().replace(/[_\s-]/g, '') : '';
+function receiptMap(value) {
+  const out = Object.create(null), collisions = new Set();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [key, field] of Object.entries(value)) {
+    const name = receiptKey(key);
+    if (Object.hasOwn(out, name) || collisions.has(name)) {
+      delete out[name]; collisions.add(name);
+    } else out[name] = field;
+  }
+  return out;
+}
+function receiptShortfall(receipt) {
+  const delivered = receipt.deliveredbytes, expected = receipt.expectedbytes;
+  return Number.isSafeInteger(delivered) && delivered >= 0
+    && Number.isSafeInteger(expected) && expected > 0 && delivered < expected;
+}
+function receiptVerdict(receipt) {
+  const status = receiptKey(receipt.status);
+  const members = Array.isArray(receipt.members) ? receipt.members.map(receiptMap) : [];
+  if (members.some((m) => ['failed', 'partial'].includes(receiptKey(m.status))
+    || (receiptKey(m.status) === 'delivered' && receiptShortfall(m)))) return 'failed';
+  if (['failed', 'partial'].includes(status)) return 'failed';
+  if (status === 'pending' || (status === 'delivered'
+    && members.some((m) => receiptKey(m.status) === 'pending'))) return 'pending';
+  if (status === 'delivered') return receiptShortfall(receipt) ? 'failed' : 'delivered';
+  if (status === 'noroute') return 'no_route';
+  return 'unverified';
+}
+async function getReceiptJSON(target) {
+  const response = await fetch(target, {
+    headers: { 'X-GC-Request': 'gc-wecom-adapter' }, signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`receipt lookup HTTP ${response.status}`);
+  return response.json();
+}
+
+// A negative receipt gets three retries on the transport's existing ladder.
+// Pending is only polled. If its bounded follow-up cannot conclude, keep its
+// id for the next provider replay so that replay polls instead of re-posting.
+async function deliverInbound(target, body, label, log, post, get, pause, holds) {
+  const key = body.message.dedup_key;
+  let receipt = holds.get(key);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (!receipt) receipt = receiptMap(receiptMap(await post(target, body, label, log)).delivery);
+    let verdict = receiptVerdict(receipt);
+    if (verdict === 'pending') {
+      const id = receipt.receiptid;
+      if (typeof id !== 'string' || !id.trim()) throw new Error('pending delivery has no receipt id; outcome unverified');
+      holds.set(key, receipt);
+      for (let poll = 0; poll < 120; poll++) {
+        await pause(5000);
+        let answer;
+        try { answer = receiptMap(await get(`${target}/receipts/${encodeURIComponent(id)}`)); }
+        catch (err) {
+          log(`${label}: receipt lookup failed (${JSON.stringify(err.message)}); still held`);
+          continue;
+        }
+        if (answer.receiptid !== id) throw new Error('receipt lookup returned a different or missing id; outcome unverified');
+        const state = receiptKey(answer.state);
+        if (state === 'pending') continue;
+        if (state === 'unknown') { verdict = 'failed'; break; }
+        if (state !== 'concluded') throw new Error('receipt lookup returned an unknown state; outcome unverified');
+        receipt = receiptMap(answer.delivery);
+        if (receipt.receiptid !== id) throw new Error('concluded receipt id does not match; outcome unverified');
+        verdict = receiptVerdict(receipt);
+        if (verdict !== 'pending') break;
+      }
+      if (verdict === 'pending') throw new Error('receipt remained pending after 120 polls; outcome unverified');
+    }
+    if (verdict === 'delivered' || verdict === 'no_route') { holds.delete(key); return; }
+    if (verdict !== 'failed') throw new Error('gc returned an unsupported or contradictory receipt; outcome unverified');
+    holds.delete(key);
+    if (attempt === 3) throw new Error('gc delivery failed after four attempts');
+    log(`${label}: gc delivery not confirmed; retry ${attempt + 1}/3`);
+    await pause(retryDelaysMs[attempt]);
+    receipt = undefined;
   }
 }
 
@@ -335,6 +417,8 @@ export function createInboundPipeline(deps) {
     transcribeGate = null,
     quota = null,
     postInbound = postJSONWithRetry,
+    getReceipt = getReceiptJSON,
+    receiptSleep = sleep,
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
     seenMsgIdCap = 2048,
@@ -344,10 +428,11 @@ export function createInboundPipeline(deps) {
   } = deps;
 
   // Dedup by msgid: reconnects can replay frames the bot already handled.
-  // An id is marked seen only AFTER gc accepts the POST — marking earlier
+  // An id is marked seen only AFTER gc reports delivered or no_route — marking earlier
   // would turn a transient gc failure into permanent message loss when the
   // SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
   // of a not-yet-accepted id.
+  const heldReceipts = new Map();
   const seenMsgIds = new Set();
   // Eviction bookkeeping (codex r5): seenMsgIdOrder is append-only with a
   // cursor (seenHead) marking the logical front — slots behind the cursor
@@ -949,17 +1034,15 @@ export function createInboundPipeline(deps) {
         // reconnect is not guaranteed, so the retry loop is the delivery
         // mechanism, not a bonus. The in-flight markers hold for the whole
         // retry so a replay arriving mid-retry can't double-post.
-        await postInbound(target, { message }, label, log);
+        await deliverInbound(target, { message }, label, log, postInbound, getReceipt, receiptSleep, heldReceipts);
         for (const id of msgids) markSeen(id);
         log(`${label} → gc (${newest.conversation.kind} ${newest.conversation.conversation_id}, ${members.length === 1 ? newest.msg.msgtype : `${members.length} messages`})`);
       } catch (err) {
-        // Only deterministic 4xx rejections land here (transient failures
-        // retry forever): a replay would fail identically, so mark seen to
-        // stop pointless re-posts.
-        for (const id of msgids) markSeen(id);
+        // No terminal delivery attestation: preserve replay eligibility and
+        // record the full envelope so an operator can recover without replay.
         if (firstHelp) replyHelpSent.delete(convKey);
         restorePeerContext(convKey, peerCtx);
-        log(`${label} rejected by gc (${err.message}); dropped`);
+        log(`LOST ${JSON.stringify({ label, error: err.message, target, message })}`);
       } finally {
         for (const id of msgids) inflightMsgIds.delete(id);
       }
