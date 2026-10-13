@@ -69,7 +69,8 @@ func TestReplayPublishReceiptConcurrentReVerifiesDoNotRace(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			receipt, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
+			replay, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
+			receipt := replay.receipt
 			if !ok || receipt.Delivered {
 				t.Errorf("replay = %+v, %v; want the remembered undelivered receipt", receipt, ok)
 			}

@@ -2741,9 +2741,20 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		// that must not be re-posted, answer from it. This is the chokepoint
 		// that absorbs a retry after a delivered-but-timed-out POST (gpk-lbhl)
 		// — the original Slack message stands, no duplicate.
-		if cached, ok := replayPublishReceipt(cfg.slackBotToken, dedup, req.IdempotencyKey, target); ok {
-			log.Printf("publish: dedup hit idem=%s conv=%s delivered=%t -> returning cached receipt (no re-post)",
-				req.IdempotencyKey, req.Conversation.ConversationID, cached.Delivered)
+		if replay, ok := replayPublishReceipt(cfg.slackBotToken, dedup, req.IdempotencyKey, target); ok {
+			cached := replay.receipt
+			log.Printf("publish: dedup hit idem=%s conv=%s delivered=%t re_verified=%t -> returning cached receipt (no re-post)",
+				req.IdempotencyKey, req.Conversation.ConversationID, cached.Delivered, replay.reVerified)
+			// A replay that re-verified a posted-but-unconfirmed receipt is
+			// the delivery proof for a message whose first readback failed,
+			// so the bookkeeping the fresh-post path runs below is owed
+			// here, once, with the cached ts as the root of a top-level
+			// post (gf-xid finding 3f). A replay of a receipt that was
+			// already delivered runs nothing: the original delivery
+			// consumed the busy mark and recorded the thread.
+			if replay.reVerified {
+				recordDeliveredPublish(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, cached.MessageID, identitySessionID)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cached)
 			return
@@ -2811,22 +2822,12 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		// idempotency key replays it. Put ignores empty keys and the receipts
 		// that carry no evidence Slack took the message
 		// (publishReceiptBlocksRepost).
-		// Busy-reaction lifecycle, remove side (hq-xizo): a delivered
-		// publish into a conversation/thread carrying a pending busy
-		// mark means the agent's reply has landed — clear the busy
-		// emoji. The dedup-replay path above returns earlier without
-		// re-checking: the original delivery already consumed the mark.
+		// The delivery-success bookkeeping (recordDeliveredPublish) runs
+		// for a confirmed post here, and for a posted-but-unconfirmed one
+		// on the dedup replay that re-verifies it above — once per
+		// delivered message either way.
 		if receipt.Delivered {
-			clearBusyReaction(cfg, req.Conversation.ConversationID, req.ReplyToMessageID)
-			// Own-thread registry (jg-vobf70): a threaded reply joins its
-			// thread; a top-level post roots a new one under its own ts.
-			// Either way, replies in that thread now reach the posting
-			// session even when it is bound mention-only.
-			root := req.ReplyToMessageID
-			if root == "" {
-				root = slackResp.TS
-			}
-			cfg.ownThreads.record(req.Conversation.ConversationID, root, identitySessionID)
+			recordDeliveredPublish(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, slackResp.TS, identitySessionID)
 		}
 		// Remember delivered receipts so a subsequent retry with the same
 		// idempotency key replays this receipt instead of re-posting. Put
@@ -3329,6 +3330,27 @@ func handleReact(cfg config) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)
 	}
+}
+
+// recordDeliveredPublish is the delivery-success bookkeeping of a text
+// publish, run exactly once per delivered message by whichever path first
+// PROVES the delivery: the fresh post whose readback confirmed it, or the
+// dedup replay that re-verified a posted-but-unconfirmed receipt (gf-xid
+// finding 3f). It is one function so the two paths cannot drift.
+//
+// Busy-reaction lifecycle, remove side (hq-xizo): a delivered publish into a
+// conversation/thread carrying a pending busy mark means the agent's reply
+// has landed — clear the busy emoji. Own-thread registry (jg-vobf70): a
+// threaded reply joins its thread; a top-level post roots a new one under its
+// own ts (messageTS). Either way, replies in that thread now reach the
+// posting session even when it is bound mention-only.
+func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
+	clearBusyReaction(cfg, conversationID, replyTo)
+	root := replyTo
+	if root == "" {
+		root = messageTS
+	}
+	cfg.ownThreads.record(conversationID, root, sessionID)
 }
 
 // clearBusyReaction consumes pending busy mark(s) for a delivered

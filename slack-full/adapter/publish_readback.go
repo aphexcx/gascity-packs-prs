@@ -615,6 +615,21 @@ func confirmPublishReceipt(token string, receipt *publishReceipt, target slackRe
 	receipt.Metadata[receiptMetadataKeyReadback] = detail
 }
 
+// publishReplay is what replayPublishReceipt answers a retry with: the receipt
+// to return, and whether THIS replay is the one that proved the message
+// delivered. A receipt that was already delivered when it was cached replays
+// as it stands and proves nothing new; a posted-but-unconfirmed receipt whose
+// re-verification now reads the message back is the first time anything knows
+// the message landed, and the delivery-success bookkeeping the fresh-post path
+// runs (the busy reaction, the own-thread registry) is owed exactly then (gf-xid
+// finding 3f; the gf-pu2 vs-main gate's Major at main.go:2744).
+type publishReplay struct {
+	receipt publishReceipt
+	// reVerified is true when the replay turned a posted-but-unconfirmed
+	// receipt into a delivered one.
+	reVerified bool
+}
+
 // replayPublishReceipt answers a retry on an idempotency key that already
 // produced a receipt, without posting to Slack again.
 //
@@ -623,19 +638,21 @@ func confirmPublishReceipt(token string, receipt *publishReceipt, target slackRe
 // instead: the message very probably exists, so the one thing this must not do
 // is post it a second time. Only a readback that positively reports the message
 // absent releases the key, and then by returning ok=false so the caller's
-// normal post path runs.
+// normal post path runs. A re-verification that proves delivery is reported
+// as such (publishReplay.reVerified) so the caller runs the delivery-success
+// bookkeeping it skipped when the first readback failed.
 func replayPublishReceipt(
 	token string,
 	dedup *publishDedupCache,
 	key string,
 	target slackReadbackTarget,
-) (publishReceipt, bool) {
+) (publishReplay, bool) {
 	cached, ok := dedup.Get(key)
 	if !ok {
-		return publishReceipt{}, false
+		return publishReplay{}, false
 	}
 	if cached.Delivered {
-		return cached, true
+		return publishReplay{receipt: cached}, true
 	}
 	target.messageTS = cached.MessageID
 	confirmPublishReceipt(token, &cached, target)
@@ -643,10 +660,10 @@ func replayPublishReceipt(
 		log.Printf("publish: dedup re-verify idem=%s ts=%s -> Slack does not have the message; releasing the key",
 			key, cached.MessageID)
 		dedup.Delete(key)
-		return publishReceipt{}, false
+		return publishReplay{}, false
 	}
 	dedup.Put(key, cached)
-	return cached, true
+	return publishReplay{receipt: cached, reVerified: cached.Delivered}, true
 }
 
 func newSlackReadbackRequest(token, channel, messageTS, threadTS string) (*http.Request, error) {
