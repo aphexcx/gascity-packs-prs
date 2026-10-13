@@ -573,6 +573,29 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	}
 }
 
+// advanceWatermarkLocked moves channel's watermark up to ts — the newest
+// message a probe read above it — without landing anything: a hold keeps
+// the watermark and remembers the advance (HeldMaxTS), exactly as a live
+// advance is kept, and takes it when the last hold releases. Caller holds
+// l.mu.
+func (l *inboundLiveness) advanceWatermarkLocked(channel, ts string) {
+	ch := l.channels[channel]
+	if ch == nil || ts == "" {
+		return
+	}
+	if len(ch.PendingTS) > 0 && compareSlackTS(ts, ch.PendingTS[0]) >= 0 {
+		if ch.HeldMaxTS == "" || compareSlackTS(ts, ch.HeldMaxTS) > 0 {
+			ch.HeldMaxTS = ts
+			l.stateDirty = true
+		}
+		return
+	}
+	if ch.WatermarkTS == "" || compareSlackTS(ts, ch.WatermarkTS) > 0 {
+		ch.WatermarkTS = ts
+		l.stateDirty = true
+	}
+}
+
 // heldLocked reports whether a pending replay keeps the channel's
 // watermark from advancing. Caller holds l.mu.
 func (ch *livenessChannel) heldLocked() bool {
@@ -1416,6 +1439,10 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 		reads = append(reads, threadReads...)
 		settles[c.id] = stretchSettles
 	}
+	// A message read twice this probe — from a stretch and above the
+	// watermark, say — is one missed message: counted once, replayed once,
+	// charged to the cap once (the lane's codex round 8).
+	missed = dedupeMissed(missed)
 	l.lastMissed.Store(int64(len(missed)))
 	if len(skipped) > 0 {
 		log.Printf("inbound liveness: probe (%s) skipped %d channel(s): %s", reason, len(skipped), strings.Join(skipped, "; "))
@@ -1450,6 +1477,21 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 		go l.postAlert(fmt.Sprintf(":arrows_counterclockwise: gc-slack-adapter backfilled %d message(s) that landed while inbound was down (%s; %s).",
 			delivered, reason, summarizeByChannel(byChannel)))
 	}
+}
+
+// dedupeMissed keeps the first of every (channel, ts) in missed.
+func dedupeMissed(missed []missedMessage) []missedMessage {
+	seen := make(map[string]bool, len(missed))
+	out := missed[:0]
+	for _, m := range missed {
+		key := originKey(m.channel, m.msg.TS)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, m)
+	}
+	return out
 }
 
 // settleStretches applies the probe's unread-stretch shrinks and drops, per
@@ -1629,6 +1671,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		l.mu.Unlock()
 	}
 	latest := ""
+	top := "" // the newest message read above the watermark
 	for page := 0; ; page++ {
 		msgs, more, err := l.fetchHistoryPage(ctx, channel, fetchFrom, latest, livenessHistoryLimit)
 		if err != nil {
@@ -1655,6 +1698,9 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			break
 		}
 		collect(msgs, oldest, ch.WatermarkTS)
+		if top == "" && len(msgs) > 0 && compareSlackTS(msgs[len(msgs)-1].TS, oldest) > 0 {
+			top = msgs[len(msgs)-1].TS
+		}
 		if !more || len(msgs) == 0 || compareSlackTS(msgs[0].TS, oldest) <= 0 {
 			break
 		}
@@ -1687,6 +1733,17 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		if c, ok := cursor[held.Msg.ThreadTS]; !ok || compareSlackTS(held.Cursor, c) < 0 {
 			cursor[held.Msg.ThreadTS] = held.Cursor
 		}
+	}
+	if top != "" {
+		// Everything between the watermark and the newest message read is
+		// now read: delivered, known, not dispatchable, held with its
+		// stretch, or left as a stretch. The watermark moves up to it after
+		// the backfill (touchChannelLocked: a hold keeps it, remembering
+		// the advance), so the next probe does not read, and leave again,
+		// what this one read — a bot-only backlog above an unmoved
+		// watermark re-registered its drained pages every probe (the
+		// lane's codex round 8).
+		settles = append(settles, func() { l.advanceWatermarkLocked(channel, top) })
 	}
 	// Most recently active threads first; cap reads per probe.
 	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })

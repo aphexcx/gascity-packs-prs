@@ -66,13 +66,9 @@ func (f *fakeHistory) history(_ context.Context, channel, oldest, latest string,
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
-	page := limit
-	if f.pageSize > 0 && f.pageSize < page {
-		page = f.pageSize
-	}
 	more := false
-	if page > 0 && len(out) > page {
-		out = out[len(out)-page:] // the newest page, as Slack pages newest-first
+	if limit > 0 && len(out) > limit { // pageSize caps the replies page only
+		out = out[len(out)-limit:] // the newest page, as Slack pages newest-first
 		more = true
 	}
 	return out, more, nil
@@ -329,12 +325,14 @@ func TestLivenessWatchdogAlarmsAndBackfills(t *testing.T) {
 	if a := alerts.all()[0]; !strings.Contains(a, "INBOUND LIVENESS ALARM") || !strings.Contains(a, "C1:2") {
 		t.Errorf("alert = %q", a)
 	}
-	// Watermark advanced past the backfilled messages.
+	// Watermark advanced past everything the probe read: the backfilled
+	// messages and the bot and join lines after them (as a live bot line
+	// moves it; gf-d7b: the next probe does not read them again).
 	l.mu.Lock()
 	wm := l.channels["C1"].WatermarkTS
 	l.mu.Unlock()
-	if wm != missed2.TS {
-		t.Errorf("watermark = %s, want %s", wm, missed2.TS)
+	if wm != joinMsg.TS {
+		t.Errorf("watermark = %s, want %s (the newest message read)", wm, joinMsg.TS)
 	}
 	// The live copy of a backfilled message is dropped; an unrelated
 	// live message is accepted and clears the stall.
