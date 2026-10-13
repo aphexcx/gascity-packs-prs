@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -149,5 +150,43 @@ func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *
 				t.Fatalf("posters after a plain replay = %v, want the one record", sessions)
 			}
 		})
+	}
+}
+
+// Concurrent retries of one posted-but-unconfirmed key can all read the
+// message back; exactly one of them is the delivery proof and runs the
+// bookkeeping (the lane's codex round 1: the slower retry's busy-reaction
+// clear would otherwise take a mark a NEWER inbound registered in between).
+func TestReplayPublishReceiptReportsTheReVerificationExactlyOnce(t *testing.T) {
+	fastReadbackTimings(t)
+	var captured slackPostMessageReq
+	captured.Text = "hello"
+	server := httptest.NewServer(newFakeSlackPublishHandler(t, &captured, "1700.001", nil))
+	t.Cleanup(server.Close)
+	withSlackAPIStub(t, server)
+
+	dedup := newPublishDedupCache(publishDedupTTL)
+	dedup.Put("k-1", publishReceipt{MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}})
+	var reVerified atomic.Int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			replay, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
+			if !ok || !replay.receipt.Delivered {
+				t.Errorf("replay = %+v, %v; want the re-verified delivered receipt", replay.receipt, ok)
+			}
+			if replay.reVerified {
+				reVerified.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if got := reVerified.Load(); got != 1 {
+		t.Fatalf("%d of 8 concurrent replays reported the re-verification, want exactly 1", got)
+	}
+	if cached, ok := dedup.Get("k-1"); !ok || !cached.Delivered {
+		t.Fatalf("cached receipt after the concurrent re-verifies = %+v, %v; want delivered", cached, ok)
 	}
 }

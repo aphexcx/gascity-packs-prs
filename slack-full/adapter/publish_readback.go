@@ -684,8 +684,15 @@ func replayPublishReceipt(
 		dedup.Delete(key)
 		return publishReplay{}, false
 	}
+	if cached.Delivered {
+		// The transition is claimed under the cache's lock: of several
+		// concurrent retries that re-verified the same receipt, exactly one
+		// reports it and runs the bookkeeping; the others replay the
+		// delivered receipt as it stands.
+		return publishReplay{receipt: cached, reVerified: dedup.commitReVerified(key, cached)}, true
+	}
 	dedup.Put(key, cached)
-	return publishReplay{receipt: cached, reVerified: cached.Delivered}, true
+	return publishReplay{receipt: cached}, true
 }
 
 func newSlackReadbackRequest(token, channel, messageTS, threadTS string) (*http.Request, error) {

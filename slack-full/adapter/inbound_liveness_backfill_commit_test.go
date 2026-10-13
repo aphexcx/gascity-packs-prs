@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -111,10 +112,12 @@ func TestLivenessBackfillCommitsOnlyAfterTheForwardReachesGC(t *testing.T) {
 	}
 }
 
-// A channel's backfill halts at its first failed message: the newer missed
-// messages behind it are not replayed in that probe, so the watermark cannot
-// move past the failure, and the next probe replays them all in order.
-func TestLivenessBackfillHaltsTheChannelAtTheFirstFailedForward(t *testing.T) {
+// A failed replay holds the channel's watermark below itself while the
+// newer missed messages behind it still deliver: nothing delivered or seen
+// above the failure is lost, and the failure is re-read by the next probe
+// (the lane's codex round 1 on the first cut, which halted the channel and
+// could strand the rest once a live message advanced the watermark).
+func TestLivenessBackfillHoldsTheWatermarkBelowAFailedReplay(t *testing.T) {
 	gcStub, hits := flakyGCStub(t, 1)
 	cfg := dedupTestConfig(t, gcStub.URL)
 	base := time.Now()
@@ -127,31 +130,58 @@ func TestLivenessBackfillHaltsTheChannelAtTheFirstFailedForward(t *testing.T) {
 	l.deliver = deliverViaHandler(events)
 
 	watermarkBefore := l.watermarkOf("C1")
-	first, second := tsAt(base, 2*time.Minute), tsAt(base, 3*time.Minute)
+	first, second, live := tsAt(base, 2*time.Minute), tsAt(base, 3*time.Minute), tsAt(base, 4*time.Minute)
 	hist.byChan["C1"] = []slackHistoryMessage{histMsg(second, "U1", "second"), histMsg(first, "U1", "first")}
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
-	awaitInboundHits(t, hits, 1)
-	if got := l.backfilledTotal.Load(); got != 0 {
-		t.Fatalf("backfilled = %d, want 0: the channel halts at the first failure", got)
+	awaitInboundHits(t, hits, 2)
+	if got := l.backfilledTotal.Load(); got != 1 {
+		t.Fatalf("backfilled = %d, want 1: the second message still delivers behind the failed first", got)
+	}
+	if got := l.originSource("C1", first); got != inboundOriginUnknown {
+		t.Fatalf("origin of the failed first = %v, want unknown", got)
+	}
+	if got := l.originSource("C1", second); got != inboundOriginBackfilled {
+		t.Fatalf("origin of the delivered second = %v, want backfilled", got)
 	}
 	if got := l.watermarkOf("C1"); got != watermarkBefore {
-		t.Fatalf("watermark = %s after a halted channel, want unchanged %s", got, watermarkBefore)
+		t.Fatalf("watermark = %s after a failed first replay, want held at %s", got, watermarkBefore)
 	}
-	for _, ts := range []string{first, second} {
-		if got := l.originSource("C1", ts); got != inboundOriginUnknown {
-			t.Fatalf("origin %s = %v after a halted channel, want unknown", ts, got)
-		}
+	// A live message now: seen, but the watermark still does not cross the
+	// pending failure.
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+		t.Fatalf("live message = %v, want live", got)
+	}
+	if got := l.watermarkOf("C1"); got != watermarkBefore {
+		t.Fatalf("watermark = %s after a live message above a pending failure, want held at %s", got, watermarkBefore)
+	}
+	// The hold survives the state file.
+	l.statePath = filepath.Join(t.TempDir(), "liveness.json")
+	l.saveState()
+	reloaded := &inboundLiveness{cfg: lcfg, now: clock.now, channels: map[string]*livenessChannel{}, origins: map[string]originEntry{}, statePath: l.statePath}
+	reloaded.loadState()
+	if ch := reloaded.channels["C1"]; ch == nil || len(ch.PendingTS) != 1 || ch.PendingTS[0] != first || ch.WatermarkTS != watermarkBefore {
+		t.Fatalf("reloaded channel = %+v, want the pending %s and the held watermark", ch, first)
 	}
 
+	// The next probe re-reads from the held watermark: the failed first is
+	// retried and commits; the delivered second and the live message are
+	// skipped by their origins; the watermark jumps to the newest seen.
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
 	awaitInboundHits(t, hits, 3)
 	if got := l.backfilledTotal.Load(); got != 2 {
 		t.Fatalf("backfilled = %d after the retry, want 2", got)
 	}
-	if got := l.watermarkOf("C1"); got != second {
-		t.Fatalf("watermark after the retry = %s, want %s", got, second)
+	if got := l.watermarkOf("C1"); got != live {
+		t.Fatalf("watermark after the retry = %s, want %s (the newest message seen while held)", got, live)
+	}
+	l.mu.Lock()
+	pending := append([]string(nil), l.channels["C1"].PendingTS...)
+	l.mu.Unlock()
+	if len(pending) != 0 {
+		t.Fatalf("pending after the retry = %v, want none", pending)
 	}
 }
 

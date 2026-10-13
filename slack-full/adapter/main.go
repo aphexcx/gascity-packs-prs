@@ -2517,6 +2517,29 @@ func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	}
 }
 
+// commitReVerified records receipt — a posted-but-unconfirmed receipt a replay
+// has just re-verified as delivered — under key, and reports whether THIS
+// caller made the unconfirmed-to-delivered transition. Two retries of one key
+// can both Get the unconfirmed receipt and both read the message back; only
+// the first to commit here is the delivery proof, and only it may run the
+// delivery-success bookkeeping (the lane's codex round 1 on gf-xid finding
+// 3f: the slower retry's clearBusyReaction would otherwise take a mark a NEWER
+// inbound registered in between). A key whose cached receipt is already
+// delivered keeps that receipt and answers false; a key no longer cached
+// (expired or released between Get and here) is recorded and answers true.
+func (c *publishDedupCache) commitReVerified(key string, receipt publishReceipt) bool {
+	if key == "" || !receipt.Delivered {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.entries[key]; ok && e.receipt.Delivered {
+		return false
+	}
+	c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: c.now().Add(c.ttl)}
+	return true
+}
+
 // Delete forgets key. It is how a remembered posted-but-unconfirmed receipt is
 // released once a later readback proves the message is not in the channel: the
 // key has to be free to post again at that point.

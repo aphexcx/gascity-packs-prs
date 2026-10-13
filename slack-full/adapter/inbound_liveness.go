@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,6 +148,16 @@ type livenessChannel struct {
 	WatermarkTS string    `json:"watermark_ts"`
 	LastSeenAt  time.Time `json:"last_seen_at"`
 	Pinned      bool      `json:"pinned,omitempty"`
+	// PendingTS holds the ts of replays that did not commit (oldest first,
+	// capped at livenessMaxBackfillPerChannel): the watermark never crosses
+	// PendingTS[0] until that message lands — a committed retry or a live
+	// copy — so the next probe re-reads it, and nothing delivered or seen
+	// above it is lost: those origins are known and skipped (gf-xid finding
+	// 3g, the lane's codex round 1). HeldMaxTS is the newest ts an advance
+	// was refused for while held; the watermark jumps to it when the last
+	// pending replay lands.
+	PendingTS []string `json:"pending_ts,omitempty"`
+	HeldMaxTS string   `json:"held_max_ts,omitempty"`
 }
 
 // livenessState is the persisted shape.
@@ -165,6 +176,10 @@ type missedMessage struct {
 	channel string
 	teamID  string
 	msg     slackHistoryMessage
+	// watermark is the channel's watermark when the probe read it, below
+	// every missed ts: where the watermark goes back to if a live advance
+	// crossed a replay that then did not commit.
+	watermark string
 }
 
 // inboundLiveness is the process-wide tracker. Safe for concurrent use.
@@ -324,10 +339,55 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	if teamID != "" {
 		ch.TeamID = teamID
 	}
+	ch.LastSeenAt = now
+	l.stateDirty = true
+	// A message that landed — delivered by a retry or seen live — releases
+	// its pending hold. While any older replay is still pending the
+	// watermark does not cross it: the advance is remembered (HeldMaxTS)
+	// and taken when the last pending replay lands.
+	if i := slices.Index(ch.PendingTS, ts); i >= 0 {
+		ch.PendingTS = slices.Delete(ch.PendingTS, i, i+1)
+	}
+	if len(ch.PendingTS) > 0 && compareSlackTS(ts, ch.PendingTS[0]) > 0 {
+		if ch.HeldMaxTS == "" || compareSlackTS(ts, ch.HeldMaxTS) > 0 {
+			ch.HeldMaxTS = ts
+		}
+		return
+	}
+	if len(ch.PendingTS) == 0 && ch.HeldMaxTS != "" {
+		if compareSlackTS(ch.HeldMaxTS, ts) > 0 {
+			ts = ch.HeldMaxTS
+		}
+		ch.HeldMaxTS = ""
+	}
 	if ch.WatermarkTS == "" || compareSlackTS(ts, ch.WatermarkTS) > 0 {
 		ch.WatermarkTS = ts
 	}
-	ch.LastSeenAt = now
+}
+
+// holdPendingLocked records a replay that did not commit: its ts joins the
+// channel's pending set, and a watermark a live advance already carried
+// past it goes back to where the probe read it (below every missed ts), so
+// the next probe re-reads the message. Caller holds l.mu.
+func (l *inboundLiveness) holdPendingLocked(m missedMessage) {
+	ch := l.channels[m.channel]
+	if ch == nil {
+		ch = &livenessChannel{TeamID: m.teamID}
+		l.channels[m.channel] = ch
+		l.evictChannelsLocked()
+	}
+	ts := m.msg.TS
+	if i, found := slices.BinarySearchFunc(ch.PendingTS, ts, compareSlackTS); !found {
+		if len(ch.PendingTS) < livenessMaxBackfillPerChannel {
+			ch.PendingTS = slices.Insert(ch.PendingTS, i, ts)
+		}
+	}
+	if compareSlackTS(ch.WatermarkTS, ch.PendingTS[0]) >= 0 {
+		if ch.HeldMaxTS == "" || compareSlackTS(ch.WatermarkTS, ch.HeldMaxTS) > 0 {
+			ch.HeldMaxTS = ch.WatermarkTS
+		}
+		ch.WatermarkTS = m.watermark
+	}
 	l.stateDirty = true
 }
 
@@ -619,7 +679,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
 			continue
 		}
-		missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m})
+		missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
 	}
 	// Most recently active threads first; cap reads per probe.
 	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
@@ -642,7 +702,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
 				continue
 			}
-			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m})
+			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
 		}
 	}
 	return missed, nil
@@ -737,20 +797,21 @@ var livenessBackfillSettleWait = 30 * time.Second
 // immediate 200 precedes the forward, and a replay whose gc POST then failed
 // used to keep its marker and its watermark, so the live redelivery was
 // dropped as a duplicate and every later backfill skipped it). A replay that
-// did not commit is un-marked so a live copy can still land, and its channel
-// HALTS for this probe: the newer missed messages behind it are not
-// replayed, so the watermark cannot move past the failure and the next probe
-// replays them all in order. Returns the count delivered.
+// did not commit is un-marked so a live copy can still land, and its ts is
+// held pending on the channel (holdPendingLocked): the watermark does not
+// cross it until it lands, so the next probe re-reads it, while every later
+// message that did commit here, or arrived live, is skipped by its known
+// origin. (The lane's codex round 1 on the first cut: a channel that HALTED
+// at its first failure left its newer missed messages unreplayed, and a
+// live message that advanced the watermark meanwhile put them below it for
+// good; the pass now replays everything it can and the watermark holds
+// instead.) Returns the count delivered.
 func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) int {
 	perChannel := map[string]int{}
-	halted := map[string]bool{}
 	delivered := 0
 	for _, m := range missed {
 		if ctx.Err() != nil {
 			break
-		}
-		if halted[m.channel] {
-			continue
 		}
 		if perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			continue
@@ -775,9 +836,9 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		if ok, why := l.backfillCommitted(ctx, outcome); !ok {
 			l.mu.Lock()
 			delete(l.origins, key)
+			l.holdPendingLocked(m)
 			l.mu.Unlock()
-			halted[m.channel] = true
-			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s %s — left for a live redelivery or the next probe: the origin is unmarked, the channel's watermark stays below it and its newer missed messages wait", m.channel, m.msg.TS, why)
+			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s %s — left for a live redelivery or the next probe: the origin is unmarked and the channel's watermark holds below it", m.channel, m.msg.TS, why)
 			continue
 		}
 		delivered++
