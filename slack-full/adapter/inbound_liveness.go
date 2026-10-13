@@ -759,10 +759,28 @@ func (l *inboundLiveness) holdThreadListingLocked(channel, teamID, threadTS, lat
 		log.Printf("inbound liveness: channel=%s thread %s cannot be pending and its latest reply is unknown — left to its latest_reply listing", channel, threadTS)
 		return
 	}
+	ch := l.channels[channel]
+	// One listing hold per thread: an earlier one (an older latest reply)
+	// gives way, its cursor carried — a lower one kept, or the read that
+	// just delivered through moving past it (the lane's codex round 6:
+	// two holds on one thread, and the lowest cursor won every probe).
+	carried := ""
+	for ts, held := range ch.PendingMessages {
+		if !held.Listing || held.Msg.ThreadTS != threadTS || ts == latestReply {
+			continue
+		}
+		carried = held.Cursor
+		delete(ch.PendingMessages, ts)
+		if i := slices.Index(ch.PendingTS, ts); i >= 0 {
+			ch.PendingTS = slices.Delete(ch.PendingTS, i, i+1)
+		}
+	}
 	m := missedMessage{channel: channel, teamID: teamID, msg: slackHistoryMessage{TS: latestReply, ThreadTS: threadTS}, watermark: watermark}
 	l.holdPendingLocked(m, false)
-	ch := l.channels[channel]
 	if held, ok := ch.PendingMessages[latestReply]; ok {
+		if held.Cursor == "" && carried != "" {
+			held.Cursor = carried
+		}
 		held.Listing = true
 		// A failed read keeps the lowest cursor; a read that delivered a
 		// page and found more moves it up to what was delivered, or the
@@ -1135,13 +1153,25 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) (he
 		} else if i < len(ch.PendingTS) {
 			// Full: the set keeps the OLDEST outstanding ts, since the
 			// watermark holds below PendingTS[0] and that guards every
-			// message above it — the newest held gives way, still guarded,
-			// re-read and held again when the set has room (the lane's
-			// codex round 1: a stretch read below the watermark could not
-			// be held behind a full set and the watermark stayed above it).
-			evicted := ch.PendingTS[len(ch.PendingTS)-1]
-			delete(ch.PendingMessages, evicted)
-			ch.PendingTS = slices.Insert(ch.PendingTS[:len(ch.PendingTS)-1], i, ts)
+			// message above it — the newest held message gives way, still
+			// guarded, owned by its stretch, re-read and held again when
+			// the set has room (the lane's codex round 1: a stretch read
+			// below the watermark could not be held behind a full set and
+			// the watermark stayed above it). A listing hold is never
+			// evicted: it owns a thread's unread replies from its cursor,
+			// which no stretch covers (the lane's codex round 6); a set
+			// full of listing holds takes nothing more.
+			victim := -1
+			for j := len(ch.PendingTS) - 1; j > i; j-- {
+				if !ch.PendingMessages[ch.PendingTS[j]].Listing {
+					victim = j
+					break
+				}
+			}
+			if victim >= 0 {
+				delete(ch.PendingMessages, ch.PendingTS[victim])
+				ch.PendingTS = slices.Insert(slices.Delete(ch.PendingTS, victim, victim+1), i, ts)
+			}
 		}
 	}
 	if slices.Contains(ch.PendingTS, ts) {
@@ -1684,18 +1714,34 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			cursor[held.Msg.ThreadTS] = held.Cursor
 		}
 	}
+	owed := map[string]bool{}
 	for _, p := range ch.PendingThreads {
+		owed[p.ParentTS] = true
+	}
+	// A thread under a listing hold is owed a read the same way: the
+	// listing names it only while its parent is on the page the scan
+	// reaches, and newer channel messages push the parent past it (the
+	// lane's codex round 6).
+	for _, held := range ch.PendingMessages {
+		if held.Listing && held.Msg.ThreadTS != "" {
+			owed[held.Msg.ThreadTS] = true
+		}
+	}
+	listedCount := len(threads)
+	for parentTS := range owed {
 		listed := false
-		for _, t := range threads {
-			if t.TS == p.ParentTS {
+		for _, t := range threads[:listedCount] {
+			if t.TS == parentTS {
 				listed = true
 				break
 			}
 		}
 		if !listed {
-			threads = append(threads, slackHistoryMessage{TS: p.ParentTS})
+			threads = append(threads, slackHistoryMessage{TS: parentTS})
 		}
 	}
+	appended := threads[listedCount:]
+	sort.Slice(appended, func(i, j int) bool { return compareSlackTS(appended[i].TS, appended[j].TS) < 0 })
 	for _, p := range threads {
 		// A pending thread reads from its own cursor, below the watermark
 		// if that is where its undelivered replies are, never below the
@@ -1857,6 +1903,30 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 	incomplete := map[string]bool{}
 	left := map[string]int{}
 	leftRange := map[string][2]string{} // per channel: the ts range a pass left, both ends exclusive
+	// leaveLocked holds a message this pass did not deliver — never
+	// reached (attempted=false) or failed (attempted=true) — and gives it
+	// its owner at once, whatever the hold set does: the range this pass
+	// has left so far is an unread stretch — the holds alone did not keep
+	// it (live copies of every held message released them and the held
+	// advance carried the watermark past the rest; an older message's hold
+	// evicts a newer one's; a failed replay of a message read from a
+	// stretch lies below the watermark the read above it starts at; the
+	// lane's codex rounds 4 to 6). The stretch is read first by the next
+	// probe, whatever the watermark does. Caller holds l.mu.
+	leaveLocked := func(m missedMessage, attempted bool) {
+		l.holdPendingLocked(m, attempted)
+		r := leftRange[m.channel]
+		if r[0] == "" || compareSlackTS(m.msg.TS, r[0]) <= 0 {
+			r[0] = slackTSBefore(m.msg.TS)
+		}
+		if r[1] == "" || compareSlackTS(m.msg.TS, r[1]) >= 0 {
+			r[1] = slackTSAfter(m.msg.TS)
+		}
+		leftRange[m.channel] = r
+		if l.channels[m.channel] != nil {
+			l.addStretchLocked(m.channel, r[0], r[1])
+		}
+	}
 	for _, m := range missed {
 		if ctx.Err() != nil || perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			incomplete[m.channel] = true
@@ -1865,26 +1935,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 			// hold: nothing would release one (the lane's codex round 1).
 			if e, ok := l.origins[originKey(m.channel, m.msg.TS)]; !ok || e.source == inboundOriginUnknown {
 				left[m.channel]++
-				l.holdPendingLocked(m, false)
-				// Its owner, at once and whatever the hold set does: the
-				// range this pass left so far is an unread stretch — the
-				// holds alone did not keep it (live copies of every held
-				// message released them and the held advance carried the
-				// watermark past the rest; an older message's hold evicts
-				// a newer one's; the lane's codex rounds 4 and 5). The
-				// stretch is read first by the next probe, whatever the
-				// watermark does.
-				r := leftRange[m.channel]
-				if r[0] == "" || compareSlackTS(m.msg.TS, r[0]) <= 0 {
-					r[0] = slackTSBefore(m.msg.TS)
-				}
-				if r[1] == "" || compareSlackTS(m.msg.TS, r[1]) >= 0 {
-					r[1] = slackTSAfter(m.msg.TS)
-				}
-				leftRange[m.channel] = r
-				if l.channels[m.channel] != nil {
-					l.addStretchLocked(m.channel, r[0], r[1])
-				}
+				leaveLocked(m, false)
 			}
 			l.mu.Unlock()
 			continue
@@ -1914,7 +1965,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 			l.mu.Lock()
 			delete(l.origins, key)
 			delete(l.inFlight, key)
-			l.holdPendingLocked(m, true)
+			leaveLocked(m, true)
 			l.mu.Unlock()
 			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s %s — left for a live redelivery or the next probe: the origin is unmarked and the channel's watermark holds below it", m.channel, m.msg.TS, why)
 			continue

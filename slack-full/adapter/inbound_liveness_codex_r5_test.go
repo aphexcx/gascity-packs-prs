@@ -150,13 +150,21 @@ func TestLivenessAnEvictedHoldsMessageKeepsItsStretch(t *testing.T) {
 	if len(holds) != 100 || holds[0] != older[100].TS || holds[99] != newer[150-1].TS {
 		t.Fatalf("holds after the eviction = %d (%s..%s), want the 50 oldest older ones and 101-150: 151-200 evicted", len(holds), holds[0], holds[len(holds)-1])
 	}
-	// Live copies release every hold; the held advance is taken.
+	// A live message above everything, then live copies of every hold:
+	// the holds release and the held advance carries the watermark past
+	// the evicted 151-200.
+	above := tsAt(base, 20*time.Minute)
+	l.noteInboundEnvelope(liveMessageEnvelope(t, "EvAbove", "C1", above, "U1", "above"), "")
 	for _, ts := range holds {
 		l.noteInboundEnvelope(liveMessageEnvelope(t, "Ev"+ts, "C1", ts, "U1", "live copy"), "")
 	}
 	if got := l.pendingTSOf("C1"); len(got) != 0 {
 		t.Fatalf("holds after the live copies = %v, want none", got)
 	}
+	if got := l.watermarkOf("C1"); got != above {
+		t.Fatalf("watermark after the live copies = %s, want the held advance %s", got, above)
+	}
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(above, "U1", "above"))
 	replayUntilDrained(t, l, clock, 4)
 	texts := deliveredTexts(rec.all())
 	for i := 150; i < 200; i++ {
