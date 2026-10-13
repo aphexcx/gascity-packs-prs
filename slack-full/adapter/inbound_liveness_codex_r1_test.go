@@ -68,43 +68,53 @@ func TestLivenessTheHoldSetKeepsTheOldestOutstandingWhenFull(t *testing.T) {
 
 // P1: the pending stretch's progress was committed before the read above
 // the watermark, whose failure then discarded everything the probe had
-// collected, the stretch's messages included. The stretch stands until a
-// probe's every read succeeded; the next probe delivers its messages.
-func TestLivenessAFailedReadAboveTheWatermarkKeepsTheUnreadStretch(t *testing.T) {
+// collected, the stretch's messages included. The stretch's messages are
+// delivered or held before it settles, so nothing is lost either way: the
+// first cut kept the stretch untouched and replayed nothing on a probe
+// whose read above the watermark failed; since the lane's codex round 3
+// the stretch's work stands and replays on such a probe (a budget of one
+// request per probe would otherwise re-read the same stretch forever), and
+// the stretch settles after that delivery.
+func TestLivenessAFailedReadAboveTheWatermarkLosesNothingOfTheUnreadStretch(t *testing.T) {
 	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
 	clock := &fakeClock{t: base}
 	hist := newFakeHistory()
 	l := newTestLiveness(t, livenessTestConfig(t), hist, clock)
 	rec := &deliveryRecorder{status: http.StatusOK}
 	l.deliver = rec.deliver
+	read, cleanup := captureLog(t)
+	t.Cleanup(cleanup)
 
 	from, below := tsAt(base, -30*time.Minute), tsAt(base, -10*time.Minute)
 	inStretch := histMsg(tsAt(base, -20*time.Minute), "U1", "in the stretch")
-	hist.byChan["C1"] = []slackHistoryMessage{inStretch}
-	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = &livenessPendingHistory{From: from, Below: below} })
+	above := histMsg(tsAt(base, 2*time.Minute), "U1", "above the watermark")
+	hist.byChan["C1"] = []slackHistoryMessage{inStretch, above}
+	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = []livenessPendingHistory{{From: from, Below: below}} })
 	hist.failHistoryCall = 2 // the stretch reads, the read above the watermark fails
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
-	if envs := rec.all(); len(envs) != 0 {
-		t.Fatalf("delivered %d after the failed probe, want nothing", len(envs))
+	if envs := rec.all(); len(envs) != 1 || deliveredTexts(envs)["in the stretch"] != 1 {
+		t.Fatalf("delivered %d after the probe whose read above the watermark failed, want the stretch's message once (calls=%v)", len(envs), hist.calls)
 	}
-	if got := l.pendingHistoryOf("C1"); got == nil || got.From != from || got.Below != below {
-		t.Fatalf("pending history after the failed probe = %+v, want (%s, %s) untouched", got, from, below)
+	if got := l.pendingHistoryOf("C1"); got != nil {
+		t.Fatalf("pending history after the stretch was read through = %+v, want none", got)
+	}
+	if !strings.Contains(read(), "the channel above its watermark waits for the next probe") {
+		t.Errorf("the failed read above the watermark is not logged: %s", read())
 	}
 	clock.advance(3 * time.Minute)
 	l.tick(context.Background())
-	if envs := rec.all(); len(envs) != 1 || deliveredTexts(envs)["in the stretch"] != 1 {
-		t.Fatalf("delivered %d after the next probe, want the stretch's message once", len(envs))
-	}
-	if got := l.pendingHistoryOf("C1"); got != nil {
-		t.Fatalf("pending history after the stretch was read = %+v, want none", got)
+	if envs := rec.all(); len(envs) != 2 || deliveredTexts(envs)["above the watermark"] != 1 {
+		t.Fatalf("delivered %d after the next probe, want the message above the watermark too", len(envs))
 	}
 }
 
 // P1: a stretch the bound leaves on a probe whose older stretch is still
-// pending replaced it only when lower, and otherwise vanished. The two
-// merge: the lowest From, the highest Below.
-func TestLivenessTwoUnreadStretchesMerge(t *testing.T) {
+// pending replaced it only when lower, and otherwise vanished. Both are
+// kept — disjoint stretches side by side (the lane's codex round 3 made the
+// pending history a list; round 1 merged the two into one), the older one
+// shrunk to what the probe read of it, the new one above the watermark.
+func TestLivenessTwoUnreadStretchesAreBothKept(t *testing.T) {
 	prev := livenessMaxHistoryPages
 	livenessMaxHistoryPages = 2
 	t.Cleanup(func() { livenessMaxHistoryPages = prev })
@@ -125,15 +135,19 @@ func TestLivenessTwoUnreadStretchesMerge(t *testing.T) {
 	watermark := tsAt(base, 10*time.Minute)
 	l.setChannelLocked("C1", func(ch *livenessChannel) {
 		ch.WatermarkTS = watermark
-		ch.PendingHistory = &livenessPendingHistory{From: from, Below: old[499].TS}
+		ch.PendingHistory = []livenessPendingHistory{{From: from, Below: old[499].TS}}
 	})
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
-	// The window's floor (now - 1 h) has risen past From by two minutes.
+	// The window's floor (now - 1 h) has risen past From by two minutes;
+	// the two pages read the old stretch's newest 400 (its Below is
+	// exclusive: old[0..498]), leaving it below old[99]; the two pages
+	// read of the fresh history leave a stretch below fresh[100]. No page
+	// of either is lost, and the old one's crossed flag stands.
 	floor := slackTSFromTime(clock.now().Add(-time.Hour))
-	got := l.pendingHistoryOf("C1")
-	if got == nil || got.From != floor || got.Below != fresh[100].TS {
-		t.Fatalf("pending history = %+v, want the merged stretch (%s, %s): the old one's From at the floor, the new one's Below", got, floor, fresh[100].TS)
+	got := l.pendingHistoriesOf("C1")
+	if len(got) != 2 || got[0].From != floor || got[0].Below != old[99].TS || !got[0].FloorCrossed || got[1].From != watermark || got[1].Below != fresh[100].TS {
+		t.Fatalf("pending history = %+v, want two stretches (%s, %s) crossed and (%s, %s)", got, floor, old[99].TS, watermark, fresh[100].TS)
 	}
 }
 
@@ -163,7 +177,7 @@ func TestLivenessACutThreadListedFromTheStretchKeepsItsCursor(t *testing.T) {
 		hist.threads["C1|"+parent.TS] = []slackHistoryMessage{reply}
 	}
 	hist.byChan["C1"] = parents
-	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = &livenessPendingHistory{From: from, Below: below} })
+	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = []livenessPendingHistory{{From: from, Below: below}} })
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
 	if envs := rec.all(); len(envs) != livenessMaxThreadsPerChannel {

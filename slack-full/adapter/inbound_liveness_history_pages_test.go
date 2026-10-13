@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -22,11 +23,20 @@ import (
 // read — read first by the next probe and persisted with the state, and the
 // window closing on an unread stretch is logged and posted, never silent.
 
+// pendingHistoryOf returns the channel's lowest unread stretch, nil when none.
 func (l *inboundLiveness) pendingHistoryOf(channel string) *livenessPendingHistory {
+	all := l.pendingHistoriesOf(channel)
+	if len(all) == 0 {
+		return nil
+	}
+	return &all[0]
+}
+
+func (l *inboundLiveness) pendingHistoriesOf(channel string) []livenessPendingHistory {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if ch := l.channels[channel]; ch != nil {
-		return ch.pendingHistoryClone()
+		return slices.Clone(ch.PendingHistory)
 	}
 	return nil
 }
@@ -193,7 +203,7 @@ func TestLivenessUnreadHistoryPagesTheWindowClosesOnAreRetiredLoudly(t *testing.
 
 	from, below := tsAt(base, -30*time.Minute), tsAt(base, 30*time.Minute)
 	l.mu.Lock()
-	l.channels["C1"].PendingHistory = &livenessPendingHistory{From: from, Below: below}
+	l.channels["C1"].PendingHistory = []livenessPendingHistory{{From: from, Below: below}}
 	l.mu.Unlock()
 	// 45 minutes on, the floor (now - 1 h) passes From: the stretch shrinks
 	// to the floor; the read fails, so it stands.

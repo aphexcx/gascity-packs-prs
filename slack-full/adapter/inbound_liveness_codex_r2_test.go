@@ -83,7 +83,7 @@ func TestLivenessAnUnreadStretchSettlesOnlyAfterTheBackfill(t *testing.T) {
 	}
 	from, below := tsAt(base, -30*time.Minute), tsAt(base, -10*time.Minute)
 	hist.byChan["C1"] = []slackHistoryMessage{histMsg(tsAt(base, -20*time.Minute), "U1", "in the stretch")}
-	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = &livenessPendingHistory{From: from, Below: below} })
+	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = []livenessPendingHistory{{From: from, Below: below}} })
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
 	if envs := rec.all(); len(envs) != 1 {
@@ -155,7 +155,7 @@ func TestLivenessAPartialExpiryOfAnUnreadStretchIsReportedOnce(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	from, below := tsAt(base, -30*time.Minute), tsAt(base, 30*time.Minute)
-	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = &livenessPendingHistory{From: from, Below: below} })
+	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.PendingHistory = []livenessPendingHistory{{From: from, Below: below}} })
 	partial := func() int {
 		n := 0
 		for _, a := range alerts.all() {
