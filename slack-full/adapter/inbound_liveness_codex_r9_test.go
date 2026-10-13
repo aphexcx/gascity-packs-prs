@@ -32,10 +32,12 @@ func TestLivenessAPrefixTheFloorExcludesMidProbeIsReported(t *testing.T) {
 	t.Cleanup(cleanup)
 
 	// C2's stretch (-50m, -30m) holds a human line at -45m. C1 is probed
-	// first (pinned order) and its read takes twenty minutes: by the time
-	// C2 is read, the floor (now - 1 h) is at -28m, past the whole stretch.
+	// first (both pinned; the more recently active first) and its read
+	// takes twenty minutes: by the time C2 is read, the floor (now - 1 h)
+	// is at -28m, past the whole stretch.
 	human := histMsg(tsAt(base, -45*time.Minute), "UFOUNDER", "founder line under the floor")
 	hist.byChan["C2"] = []slackHistoryMessage{human}
+	l.setChannelLocked("C1", func(ch *livenessChannel) { ch.LastSeenAt = base.Add(time.Minute) })
 	l.setChannelLocked("C2", func(ch *livenessChannel) {
 		ch.PendingHistory = []livenessPendingHistory{{From: tsAt(base, -50*time.Minute), Below: tsAt(base, -30*time.Minute)}}
 	})

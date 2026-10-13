@@ -276,7 +276,7 @@ func TestLivenessSaveStateSnapshotsThePendingSetUnderTheLock(t *testing.T) {
 	// delete shifts (writes) the same memory a shallow snapshot reads.
 	l.mu.Lock()
 	for i := 0; i < 64; i++ {
-		l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: tsAt(base, time.Duration(i+1)*time.Minute)}, watermark: l.channels["C1"].WatermarkTS}, true)
+		l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: tsAt(base, time.Duration(i+1)*time.Minute)}, watermark: l.channels["C1"].WatermarkTS}, true, false)
 	}
 	l.mu.Unlock()
 	var wg sync.WaitGroup
@@ -289,7 +289,7 @@ func TestLivenessSaveStateSnapshotsThePendingSetUnderTheLock(t *testing.T) {
 			l.touchChannelLocked("C1", "T1", ts, clock.now())
 			l.mu.Unlock()
 			l.mu.Lock()
-			l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: ts}, watermark: l.channels["C1"].WatermarkTS}, true)
+			l.holdPendingLocked(missedMessage{channel: "C1", teamID: "T1", msg: slackHistoryMessage{TS: ts}, watermark: l.channels["C1"].WatermarkTS}, true, false)
 			l.mu.Unlock()
 		}
 	}()

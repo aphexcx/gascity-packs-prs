@@ -101,7 +101,7 @@ func TestLivenessStateNeverPersistsAnInFlightReplayAsDelivered(t *testing.T) {
 	inFlight := tsAt(base, 3*time.Minute)
 	delivered := tsAt(base, 4*time.Minute)
 	l.mu.Lock()
-	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(held, "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true)
+	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(held, "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true, false)
 	l.originsPutLocked(originKey("C1", inFlight), inboundOriginBackfilled, clock.now())
 	l.inFlight[originKey("C1", inFlight)] = true
 	l.originsPutLocked(originKey("C1", delivered), inboundOriginBackfilled, clock.now())
@@ -127,7 +127,7 @@ func TestLivenessStateWithEveryOriginHeldStillLoads(t *testing.T) {
 	hist := newFakeHistory()
 	l := newTestLiveness(t, cfg, hist, clock)
 	l.mu.Lock()
-	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(tsAt(base, time.Second), "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true)
+	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(tsAt(base, time.Second), "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true, false)
 	for i := 0; i < livenessOriginMax; i++ {
 		l.originsPutLocked(originKey("C1", tsAt(base, 2*time.Second+time.Duration(i)*time.Millisecond)), inboundOriginLive, clock.now())
 	}
@@ -160,7 +160,7 @@ func TestLivenessStatePersistsALiveLineOnlyOnceItsClaimCommitted(t *testing.T) {
 	held := tsAt(base, 2*time.Minute)
 	live := tsAt(base, 3*time.Minute)
 	l.mu.Lock()
-	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(held, "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true)
+	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(held, "U1", "held"), watermark: l.channels["C1"].WatermarkTS}, true, false)
 	l.mu.Unlock()
 	// The handler's order: the note, then the claim, then the forward.
 	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvF", "C1", live, "UFOUNDER", "founder line"), ""); got != inboundOriginLive {

@@ -806,7 +806,13 @@ func (l *inboundLiveness) holdThreadListingLocked(channel, teamID, threadTS, lat
 		}
 	}
 	m := missedMessage{channel: channel, teamID: teamID, msg: slackHistoryMessage{TS: latestReply, ThreadTS: threadTS}, watermark: watermark}
-	l.holdPendingLocked(m, false)
+	if !l.holdPendingLocked(m, false, true) {
+		// Every hold is a listing hold: a hundred threads held by their
+		// listing on one channel. Said loudly; the thread is left to its
+		// listing, which the hold set cannot keep.
+		log.Printf("inbound liveness: channel=%s thread %s cannot be held either — the hold set is full of threads held by their listing (%d); its replies above %s are left to its latest_reply listing", channel, threadTS, len(ch.PendingTS), watermark)
+		return
+	}
 	if held, ok := ch.PendingMessages[latestReply]; ok {
 		if held.Cursor == "" && carried != "" {
 			held.Cursor = carried
@@ -1169,7 +1175,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 // advance already carried past it goes back to where the probe read it
 // (below every missed ts), so the next probe re-reads the message. Caller
 // holds l.mu.
-func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) (held bool) {
+func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted, listing bool) (held bool) {
 	ch := l.channels[m.channel]
 	if ch == nil {
 		ch = &livenessChannel{TeamID: m.teamID}
@@ -1201,6 +1207,19 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) (he
 			if victim >= 0 {
 				delete(ch.PendingMessages, ch.PendingTS[victim])
 				ch.PendingTS = slices.Insert(slices.Delete(ch.PendingTS, victim, victim+1), i, ts)
+			}
+		} else if listing {
+			// A listing hold newer than every held message still gets in:
+			// it is a thread's only owner, and a message hold's message has
+			// its stretch — the newest message hold gives way (the lane's
+			// codex round 10: a refused listing hold left the thread with
+			// no owner at all).
+			for j := len(ch.PendingTS) - 1; j >= 0; j-- {
+				if !ch.PendingMessages[ch.PendingTS[j]].Listing {
+					delete(ch.PendingMessages, ch.PendingTS[j])
+					ch.PendingTS = append(slices.Delete(ch.PendingTS, j, j+1), ts)
+					break
+				}
 			}
 		}
 	}
@@ -1635,8 +1654,16 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			collect(msgs, from, ch.WatermarkTS)
 			pages++
 			pagesRead++
-			if !more || len(msgs) == 0 {
+			if !more {
 				done = true
+				break
+			}
+			if len(msgs) == 0 {
+				// Slack has more but gave nothing usable this page (the
+				// client drops entries without a ts): not a read-through —
+				// the stretch stands as it was read and the next probe
+				// goes on (the lane's codex round 10).
+				log.Printf("inbound liveness: channel=%s an empty unread-history page below %s with more to come; the stretch stands", channel, below)
 				break
 			}
 			below = msgs[0].TS
@@ -1714,7 +1741,20 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		if top == "" && len(msgs) > 0 && compareSlackTS(msgs[len(msgs)-1].TS, oldest) > 0 {
 			top = msgs[len(msgs)-1].TS
 		}
-		if !more || len(msgs) == 0 || compareSlackTS(msgs[0].TS, oldest) <= 0 {
+		if !more {
+			break
+		}
+		if len(msgs) == 0 {
+			// More to come but nothing usable this page: what lies below
+			// the last page read is pending, as after a failed later page
+			// (the lane's codex round 10).
+			if latest != "" {
+				leave(latest)
+			}
+			log.Printf("inbound liveness: channel=%s an empty history page below %q with more to come; the pages below are pending", channel, latest)
+			break
+		}
+		if compareSlackTS(msgs[0].TS, oldest) <= 0 {
 			break
 		}
 		latest = msgs[0].TS // oldest-first: the page below starts under it
@@ -1996,7 +2036,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 	// lane's codex rounds 4 to 6). The stretch is read first by the next
 	// probe, whatever the watermark does. Caller holds l.mu.
 	leaveLocked := func(m missedMessage, attempted bool) {
-		l.holdPendingLocked(m, attempted)
+		l.holdPendingLocked(m, attempted, false)
 		r := leftRange[m.channel]
 		if r[0] == "" || compareSlackTS(m.msg.TS, r[0]) <= 0 {
 			r[0] = slackTSBefore(m.msg.TS)

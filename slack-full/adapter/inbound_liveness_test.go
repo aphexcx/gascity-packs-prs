@@ -26,6 +26,10 @@ type fakeHistory struct {
 	// pageSize, when set, caps a replies page below the asked limit (Slack
 	// may answer fewer than limit with has_more set).
 	pageSize int
+	// emptyHistoryCall, when set, makes the n-th history call answer no
+	// messages with has_more (a page Slack filled with entries the client
+	// drops).
+	emptyHistoryCall int
 	// failHistoryCall, when set, fails the n-th history call (1-based,
 	// counting history calls only) once.
 	failHistoryCall int
@@ -61,6 +65,9 @@ func (f *fakeHistory) history(_ context.Context, channel, oldest, latest string,
 	}
 	if f.failHistoryCall > 0 && f.historyCalls == f.failHistoryCall {
 		return nil, false, fmt.Errorf("conversations.history not ok: ratelimited (scripted, call %d)", f.historyCalls)
+	}
+	if f.emptyHistoryCall > 0 && f.historyCalls == f.emptyHistoryCall {
+		return nil, true, nil
 	}
 	if err := f.errs[channel]; err != nil {
 		return nil, false, err
