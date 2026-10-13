@@ -617,7 +617,7 @@ func (ch *livenessChannel) originFloorLocked() (string, bool) {
 // (the lane's codex round 3); only shrinking or dropping one waits for the
 // backfill. A stretch it overlaps or touches merges with it (the union; a
 // crossed flag carries over). Caller holds l.mu with the channel present.
-func (l *inboundLiveness) addStretchLocked(channel, from, below string) {
+func (l *inboundLiveness) addStretchLocked(channel, from, below string, work bool) {
 	ch := l.channels[channel]
 	st := livenessPendingHistory{From: from, Below: below}
 	var kept []livenessPendingHistory
@@ -631,13 +631,20 @@ func (l *inboundLiveness) addStretchLocked(channel, from, below string) {
 			}
 			st.FloorCrossed = st.FloorCrossed || cur.FloorCrossed
 			// What was added into cur since its read: cur's own added
-			// range and this one.
-			st.addedFrom, st.addedBelow = from, below
-			if cur.addedFrom != "" && compareSlackTS(cur.addedFrom, st.addedFrom) < 0 {
-				st.addedFrom = cur.addedFrom
-			}
-			if cur.addedBelow != "" && compareSlackTS(cur.addedBelow, st.addedBelow) > 0 {
-				st.addedBelow = cur.addedBelow
+			// range and this one — when this one is WORK (messages a pass
+			// left), not a registration of an unread range the read
+			// above the watermark left again, which the settle subtracts
+			// its read from like any other (the lane's codex round 7: the
+			// same range re-registered every probe undid the progress of
+			// every read of it).
+			st.addedFrom, st.addedBelow = cur.addedFrom, cur.addedBelow
+			if work {
+				if st.addedFrom == "" || compareSlackTS(from, st.addedFrom) < 0 {
+					st.addedFrom = from
+				}
+				if st.addedBelow == "" || compareSlackTS(below, st.addedBelow) > 0 {
+					st.addedBelow = below
+				}
 			}
 			continue
 		}
@@ -689,7 +696,7 @@ func (l *inboundLiveness) settleStretchLocked(channel, from, below, readTo strin
 		if addedFrom != "" {
 			// The messages the replay left inside what was read stay
 			// pending as their own stretch.
-			l.addStretchLocked(channel, addedFrom, addedBelow)
+			l.addStretchLocked(channel, addedFrom, addedBelow, true)
 			log.Printf("inbound liveness: channel=%s the messages the replay left in (%s, %s) stay pending", channel, addedFrom, addedBelow)
 		}
 		return
@@ -1617,7 +1624,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	leave := func(below string) {
 		l.mu.Lock()
 		if l.channels[channel] != nil {
-			l.addStretchLocked(channel, oldest, below)
+			l.addStretchLocked(channel, oldest, below, false)
 		}
 		l.mu.Unlock()
 	}
@@ -1658,39 +1665,6 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			break
 		}
 	}
-	// Most recently active threads first; cap reads per probe.
-	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
-	if len(threads) > livenessMaxThreadsPerChannel {
-		// Every thread the cap cuts is PENDING from this probe's reading
-		// BEFORE the cut (gf-d7b finding 3m): the replies replayed from the
-		// threads that are read, and the live traffic, move the watermark
-		// past the cut threads' latest_reply, and the listing above would
-		// never name them again. The next probe reads each from its cursor
-		// (the pending loop below, which reads from the snapshot's pending
-		// set, takes them from the next probe on). One the pending set
-		// cannot take is read THIS probe instead — the cap is soft for it:
-		// a hold below its latest reply would keep it listed, but the ten
-		// busier threads would be read ahead of it every probe for as long
-		// as they stay busier, and nothing else could ever reach it.
-		cut := threads[livenessMaxThreadsPerChannel:]
-		kept := threads[:livenessMaxThreadsPerChannel:livenessMaxThreadsPerChannel]
-		pending := 0
-		l.mu.Lock()
-		for _, t := range cut {
-			from := oldest
-			if c, ok := threadFrom[t.TS]; ok {
-				from = c // a thread listed from the pending stretch: its floor
-			}
-			if l.notePendingThreadLocked(channel, ch.TeamID, t.TS, from) {
-				pending++
-				continue
-			}
-			kept = append(kept, t)
-		}
-		l.mu.Unlock()
-		log.Printf("inbound liveness: channel=%s has %d threads with fresh replies; reading the %d most recent this probe, %d pending for the next from where this probe read, %d read now because the pending set is full", channel, len(threads), livenessMaxThreadsPerChannel, pending, len(kept)-livenessMaxThreadsPerChannel)
-		threads = kept
-	}
 	// The threads this channel still owes a read (gf-c7n finding 3i) are
 	// read from their own cursor whether or not the listing above names
 	// them: a failed read left their replies unknown while the channel
@@ -1714,21 +1688,59 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			cursor[held.Msg.ThreadTS] = held.Cursor
 		}
 	}
-	owed := map[string]bool{}
+	// Most recently active threads first; cap reads per probe.
+	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
+	if len(threads) > livenessMaxThreadsPerChannel {
+		// Every thread the cap cuts is PENDING from this probe's reading
+		// BEFORE the cut (gf-d7b finding 3m): the replies replayed from the
+		// threads that are read, and the live traffic, move the watermark
+		// past the cut threads' latest_reply, and the listing above would
+		// never name them again. The next probe reads each from its cursor
+		// (the pending loop below, which reads from the snapshot's pending
+		// set, takes them from the next probe on). One the pending set
+		// cannot take is read THIS probe instead — the cap is soft for it:
+		// a hold below its latest reply would keep it listed, but the ten
+		// busier threads would be read ahead of it every probe for as long
+		// as they stay busier, and nothing else could ever reach it.
+		cut := threads[livenessMaxThreadsPerChannel:]
+		kept := threads[:livenessMaxThreadsPerChannel:livenessMaxThreadsPerChannel]
+		pending := 0
+		l.mu.Lock()
+		for _, t := range cut {
+			from := oldest
+			if c, ok := threadFrom[t.TS]; ok {
+				from = c // a thread listed from the pending stretch: its floor
+			}
+			if c, ok := cursor[t.TS]; ok && compareSlackTS(c, from) < 0 {
+				from = c // a listing hold's cursor: below the replies it owes (the lane's codex round 7)
+			}
+			if l.notePendingThreadLocked(channel, ch.TeamID, t.TS, from) {
+				pending++
+				continue
+			}
+			kept = append(kept, t)
+		}
+		l.mu.Unlock()
+		log.Printf("inbound liveness: channel=%s has %d threads with fresh replies; reading the %d most recent this probe, %d pending for the next from where this probe read, %d read now because the pending set is full", channel, len(threads), livenessMaxThreadsPerChannel, pending, len(kept)-livenessMaxThreadsPerChannel)
+		threads = kept
+	}
+	owed := map[string]string{} // parent ts → the latest reply its listing hold is keyed by, if any
 	for _, p := range ch.PendingThreads {
-		owed[p.ParentTS] = true
+		owed[p.ParentTS] = ""
 	}
 	// A thread under a listing hold is owed a read the same way: the
 	// listing names it only while its parent is on the page the scan
 	// reaches, and newer channel messages push the parent past it (the
-	// lane's codex round 6).
-	for _, held := range ch.PendingMessages {
+	// lane's codex round 6). Its entry carries the hold's key, so a read
+	// that delivers a page and finds more moves the hold's cursor (the
+	// lane's codex round 7).
+	for ts, held := range ch.PendingMessages {
 		if held.Listing && held.Msg.ThreadTS != "" {
-			owed[held.Msg.ThreadTS] = true
+			owed[held.Msg.ThreadTS] = ts
 		}
 	}
 	listedCount := len(threads)
-	for parentTS := range owed {
+	for parentTS, latest := range owed {
 		listed := false
 		for _, t := range threads[:listedCount] {
 			if t.TS == parentTS {
@@ -1737,7 +1749,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			}
 		}
 		if !listed {
-			threads = append(threads, slackHistoryMessage{TS: parentTS})
+			threads = append(threads, slackHistoryMessage{TS: parentTS, LatestReply: latest})
 		}
 	}
 	appended := threads[listedCount:]
@@ -1924,7 +1936,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		}
 		leftRange[m.channel] = r
 		if l.channels[m.channel] != nil {
-			l.addStretchLocked(m.channel, r[0], r[1])
+			l.addStretchLocked(m.channel, r[0], r[1], true)
 		}
 	}
 	for _, m := range missed {
