@@ -1880,9 +1880,11 @@ test('a held media replay polls its original envelope without another download',
 
 test('a forgotten held receipt stays unverified without a recovery POST', async (t) => {
   let posts = 0, forgotten = false;
-  const { pipeline, logs } = makePipeline(t, {
+  const logs = [];
+  const { pipeline } = makePipeline(t, {
     postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'held-expired' } }; },
     deps: {
+      log: (line) => logs.push(line),
       receiptSleep: async () => {},
       getReceipt: async () => ({ receipt_id: 'held-expired', state: forgotten ? 'unknown' : 'pending' }),
     },
@@ -1898,11 +1900,13 @@ test('a forgotten held receipt stays unverified without a recovery POST', async 
 
 test('held-envelope capacity refuses new POSTs until the original settles', async (t) => {
   let posts = 0, concluded = false;
-  const { pipeline, logs } = makePipeline(t, {
+  const logs = [];
+  const { pipeline } = makePipeline(t, {
     postInbound: async () => { posts++; return posts === 1
       ? { delivery: { status: 'pending', receipt_id: 'held-cap' } }
       : { delivery: { status: 'delivered' } }; },
     deps: {
+      log: (line) => logs.push(line),
       heldDeliveryCap: 1,
       receiptSleep: async () => {},
       getReceipt: async () => ({ receipt_id: 'held-cap', state: concluded ? 'concluded' : 'pending',

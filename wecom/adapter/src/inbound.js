@@ -418,7 +418,7 @@ export function conversationKeyFor(chattypeOrKind, id) {
 //                 replay-cache bounds (defaults 512 / 30min; test knobs)
 //   seenMsgIdCap  seen-set bound (default 2048; test knob)
 //   heldDeliveryCap bounds unresolved envelopes by refusing new delivery
-//                 admissions at capacity (default 512; test knob)
+//                 admissions at capacity (default 4096; test knob)
 //   coalesceWindowMs
 //                 per-conversation burst-coalescing window (default
 //                 cfg.coalesceWindowMs, then 0 = disabled); frames for
@@ -446,7 +446,7 @@ export function createInboundPipeline(deps) {
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
     seenMsgIdCap = 2048,
-    heldDeliveryCap = 512,
+    heldDeliveryCap = 4096,
     replyHelpOnce = true,
     now = Date.now,
     log = () => {},
