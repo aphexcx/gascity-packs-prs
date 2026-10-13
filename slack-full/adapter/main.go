@@ -3375,7 +3375,11 @@ func handleReact(cfg config) http.HandlerFunc {
 // own ts (messageTS). Either way, replies in that thread now reach the
 // posting session even when it is bound mention-only.
 func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sessionID string) {
-	clearBusyReaction(cfg, conversationID, replyTo)
+	// The published message's ts is the cutoff: a mark on an inbound that
+	// arrived after this reply was posted is not one this reply answers,
+	// which matters most on the replay path, where the proof can come long
+	// after the post (the lane's codex round 3).
+	clearBusyReactionBefore(cfg, conversationID, replyTo, messageTS)
 	root := replyTo
 	if root == "" {
 		root = messageTS
@@ -3403,14 +3407,21 @@ func recordDeliveredPublish(cfg config, conversationID, replyTo, messageTS, sess
 // the busy emoji sticks forever. Best-effort and async — failures are
 // logged and never affect the caller's receipt.
 func clearBusyReaction(cfg config, conversationID, threadKey string) {
+	clearBusyReactionBefore(cfg, conversationID, threadKey, "")
+}
+
+// clearBusyReactionBefore is clearBusyReaction with a cutoff: a mark on a
+// message at or after cutoffTS (the ts of the reply doing the clearing; ""
+// means none) stays pending, since that inbound arrived after the reply.
+func clearBusyReactionBefore(cfg config, conversationID, threadKey, cutoffTS string) {
 	if cfg.busyReaction == "" || conversationID == "" {
 		return
 	}
 	var taken []busyTaken
 	if threadKey == "" {
-		taken = cfg.busyMarks.takeConversation(conversationID)
+		taken = cfg.busyMarks.takeConversationBefore(conversationID, cutoffTS)
 	} else {
-		taken = cfg.busyMarks.take(conversationID, threadKey)
+		taken = cfg.busyMarks.takeBefore(conversationID, threadKey, cutoffTS)
 	}
 	for _, tk := range taken {
 		go removeBusyReaction(cfg, conversationID, tk)

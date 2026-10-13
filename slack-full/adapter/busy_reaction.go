@@ -442,6 +442,12 @@ func (r *busyReactionRegistry) restoreDisplaced(channel string, restore []busyDi
 // that conversation rather than leaving hourglasses stuck forever.
 // Expired entries are dropped, not returned.
 func (r *busyReactionRegistry) takeConversation(channel string) []busyTaken {
+	return r.takeConversationBefore(channel, "")
+}
+
+// takeConversationBefore is takeConversation with takeBefore's cutoff: a
+// mark on a message at or after cutoffTS stays pending.
+func (r *busyReactionRegistry) takeConversationBefore(channel, cutoffTS string) []busyTaken {
 	if r == nil || channel == "" {
 		return nil
 	}
@@ -452,6 +458,9 @@ func (r *busyReactionRegistry) takeConversation(channel string) []busyTaken {
 	var taken []busyTaken
 	for k, m := range r.entries {
 		if k.channel != channel {
+			continue
+		}
+		if cutoffTS != "" && compareSlackTS(m.messageTS, cutoffTS) >= 0 {
 			continue
 		}
 		delete(r.entries, k)
@@ -530,6 +539,18 @@ func (r *busyReactionRegistry) takeMessage(channel, threadTS, messageTS string) 
 // reactions.remove for a mark past its TTL (its stale ancestors
 // expire with it).
 func (r *busyReactionRegistry) take(channel, threadKey string) []busyTaken {
+	return r.takeBefore(channel, threadKey, "")
+}
+
+// takeBefore is take with a cutoff: an entry whose mark sits on a message
+// at or after cutoffTS (a Slack ts; "" means no cutoff) is left in place,
+// untouched — the inbound it marks arrived after the reply that is clearing
+// marks was posted, so that reply did not answer it (the lane's codex round
+// 3 on gf-xid finding 3f: a retry re-verified long after its post would
+// otherwise take the mark a newer inbound registered in the same thread).
+// Stale ancestors ride on the entry they were displaced into and are older
+// than it, so the cutoff on the entry's own mark covers them.
+func (r *busyReactionRegistry) takeBefore(channel, threadKey, cutoffTS string) []busyTaken {
 	if r == nil {
 		return nil
 	}
@@ -538,6 +559,9 @@ func (r *busyReactionRegistry) take(channel, threadKey string) []busyTaken {
 	key := busyReactionKey{channel: channel, threadKey: threadKey}
 	m, present := r.entries[key]
 	if !present {
+		return nil
+	}
+	if cutoffTS != "" && compareSlackTS(m.messageTS, cutoffTS) >= 0 {
 		return nil
 	}
 	delete(r.entries, key)

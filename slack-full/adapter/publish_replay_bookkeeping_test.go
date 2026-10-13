@@ -221,3 +221,67 @@ func TestReplayPublishReceiptStaleUnconfirmedWriteCannotReopenTheTransition(t *t
 		t.Fatalf("third replay = %+v, %v; want the delivered receipt replayed with no second re-verification", third, ok)
 	}
 }
+
+// The replay's busy-mark clear must not take a mark an inbound registered in
+// the thread AFTER the reply was posted: that inbound is not what the reply
+// answered. The published message's ts is the cutoff — Slack ts are ordered
+// within a channel — on both paths (the lane's codex round 3).
+func TestHandlePublishReplayDoesNotClearABusyMarkNewerThanTheReply(t *testing.T) {
+	fastReadbackTimings(t)
+	var reads, posts atomic.Int32
+	srv, reactions := replayBookkeepingStub(t, "1700.001", &reads, &posts)
+	withSlackAPIStub(t, srv)
+
+	marks := newBusyReactionRegistry()
+	done, _ := marks.markBoth("C1", "", "1600.000")
+	close(done)
+	cfg := config{slackBotToken: "xoxb-test", busyReaction: "hourglass", busyMarks: marks}
+	handler := handlePublish(cfg, nil, nil, newPublishDedupCache(publishDedupTTL))
+	publish := func() publishReceipt {
+		t.Helper()
+		raw, _ := json.Marshal(publishRequest{
+			SessionID:        "gc-1",
+			Conversation:     conversationRef{ConversationID: "C1", Kind: "room"},
+			Text:             "hello",
+			ReplyToMessageID: "1600.000",
+			IdempotencyKey:   "k-1",
+		})
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(string(raw))))
+		var receipt publishReceipt
+		if err := json.Unmarshal(rec.Body.Bytes(), &receipt); err != nil {
+			t.Fatalf("decode receipt %q: %v", rec.Body.String(), err)
+		}
+		return receipt
+	}
+
+	if first := publish(); first.Delivered {
+		t.Fatalf("first receipt = %+v, want posted but unconfirmed", first)
+	}
+	// A newer inbound in the same thread, after the reply was posted
+	// (its ts is newer than the reply's), takes the thread's mark.
+	newer, _ := marks.markBoth("C1", "1600.000", "1700.002")
+	close(newer)
+	if ts, ok := marks.pending("C1", "1600.000"); !ok || ts != "1700.002" {
+		t.Fatalf("pending mark before the retry = (%s, %v), want the newer inbound's", ts, ok)
+	}
+
+	if second := publish(); !second.Delivered {
+		t.Fatalf("retry receipt = %+v, want delivered", second)
+	}
+	if ts, ok := marks.pending("C1", "1600.000"); !ok || ts != "1700.002" {
+		t.Fatalf("pending mark after the re-verifying replay = (%s, %v), want the newer inbound's mark kept", ts, ok)
+	}
+	deadline := time.After(300 * time.Millisecond)
+	for {
+		select {
+		case rec := <-reactions.ch:
+			if rec.op == "remove" && rec.timestamp == "1700.002" {
+				t.Fatalf("the replay removed the newer inbound's busy reaction: %+v", rec)
+			}
+			continue
+		case <-deadline:
+		}
+		break
+	}
+}

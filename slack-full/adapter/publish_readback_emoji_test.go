@@ -91,6 +91,12 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "an emoji glued after a clock time", posted: "Done at 10:30🎉", stored: "Done at 10:30:tada:"},
 		{name: "an emoji glued after a key:value pair", posted: "state key:value✅", stored: "state key:value:white_check_mark:"},
 		{name: "a changed clock time before a glued emoji is refused", posted: "Done at 10:30🎉", stored: "Done at 10:45:tada:", wantErr: true},
+		// Round 4, codex round 3: a chained run whose glue word is itself an
+		// emoji name folds the same on both sides.
+		{name: "an emoji glued after a chain ending in an emoji-named word", posted: "key:value:ok✅", stored: "key:value:ok:white_check_mark:"},
+		{name: "an emoji glued after a numeric emoji-named word", posted: "Score 1:100🎉", stored: "Score 1:100:tada:"},
+		{name: "two Unicode emoji glued together", posted: "🆗✅", stored: ":ok::white_check_mark:"},
+		{name: "an emoji-named word then two glued emoji", posted: "a:ok🎉✅", stored: "a:ok:tada::white_check_mark:"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
