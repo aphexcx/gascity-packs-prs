@@ -306,11 +306,13 @@ export function createAttemptJournal({
 
   if (filePath) {
     let loaded;
+    let loadedFrom;
     let sawCorrupt = false;
     for (const p of generations()) {
       const m = tryLoad(p);
       if (m instanceof Map) {
         loaded = m;
+        loadedFrom = p;
         if (p !== filePath) log(`outbound attempt journal: recovered ${m.size} entries from ${p}`);
         break;
       }
@@ -319,9 +321,47 @@ export function createAttemptJournal({
         quarantine(p);
       }
     }
+    // The newest surviving write wins (gf-c7n finding 3j). persist fsyncs
+    // the tmp file BEFORE the two renames, so a valid tmp beside a valid
+    // main file is one write NEWER than it — a crash between writing tmp
+    // and rotating main — and that write may be a send attempt. A partial
+    // tmp (a crash mid-write) is not a generation; the next persist
+    // overwrites it.
+    if (loaded && loadedFrom === filePath) {
+      const newer = tryLoad(`${filePath}.tmp`);
+      if (newer instanceof Map) {
+        loaded = newer;
+        loadedFrom = `${filePath}.tmp`;
+        log(`outbound attempt journal: recovered ${newer.size} entries from ${loadedFrom} (a write newer than ${filePath})`);
+      }
+    }
     if (loaded) {
       for (const [k, v] of loaded) entries.set(k, v);
       dropExpiredText();
+      if (loadedFrom === `${filePath}.bak`) {
+        // The backup is ONE WRITE BEHIND the main file it stands in for
+        // (gf-c7n finding 3j; the gf-xid gate's Major at the recovery
+        // above). That lost write may have been the sendAttempted latch of
+        // any key still in flight — the latch is written before the frame
+        // goes out, so the frame may already be visible in the chat — and
+        // a key recovered without it hydrated as safe to retry: a re-send.
+        // Every media key the backup cannot prove past its sends (no
+        // receipt and no callback receipt, both written after the last
+        // send) is delivery-unknown: refused for blind retry, the side this
+        // journal always errs on. Text entries are left alone: their first
+        // write already records every chunk as attempted, which hydrates
+        // as a refusal on its own.
+        let marked = 0;
+        for (const e of entries.values()) {
+          if (e.endpoint === 'publish' || e.receipt || e.callbackReceipt || e.deliveryUnknown) continue;
+          e.deliveryUnknown = true;
+          marked += 1;
+        }
+        if (marked > 0) {
+          log(`outbound attempt journal: the backup generation is one write behind the lost main file — `
+            + `${marked} media key(s) it cannot prove past their sends are delivery-unknown (refused for retry, never re-sent)`);
+        }
+      }
     } else if (sawCorrupt) {
       degraded = true;
       log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '

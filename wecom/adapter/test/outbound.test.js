@@ -2546,6 +2546,81 @@ test('a crash between the backup rotation and the final rename recovers from the
   assert.equal(j2.get('key-t')?.mediaId, 'M_TMP', 'the newest surviving generation wins');
 });
 
+// gf-c7n finding 3j (the gf-xid vs-upstream gate's Major at outbound.js:322):
+// the backup generation is one write behind the main file. When that last
+// write was the sendAttempted latch and the main file is then corrupted,
+// recovering the backup lost the attempt marker and the key hydrated as
+// safe to retry — a re-send of media the user may already have seen. A
+// recovery from the backup now marks every media key it cannot prove past
+// its sends (no receipt, no callback receipt) delivery-unknown: the lost
+// write may have been a send attempt on any of them.
+test('recovery from the backup generation marks its unsettled media keys delivery-unknown', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  const body = {
+    conversation: { conversation_id: 'zhang_san' },
+    file_path: file,
+    media_kind: 'image',
+    idempotency_key: 'key-backup-older',
+  };
+
+  // Life 1: a settled key first, then the upload is journaled and the send
+  // attempt is the LAST write before the process dies mid-send.
+  const life1Journal = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  life1Journal.record('key-settled', { fingerprint: { digest: 's' }, mediaId: 'M_S', mediaSent: true, receipt: { delivered: true } });
+  const life1 = makePublisher({
+    journal: life1Journal,
+    sendMediaMessage: () => new Promise(() => {}),
+  });
+  publishMedia(life1.publisher, body); // intentionally not awaited: it never settles
+  while (!life1Journal.get('key-backup-older')?.sendAttempted) {
+    await new Promise((r) => setImmediate(r));
+  }
+  const backup = JSON.parse(fs.readFileSync(`${journalPath}.bak`, 'utf8')).entries['key-backup-older'];
+  assert.ok(backup?.mediaId, 'the backup holds the upload');
+  assert.equal(backup.sendAttempted, undefined, 'the backup predates the send attempt — the gate\'s shape');
+
+  // The main file is damaged; life 2 recovers from the backup.
+  fs.writeFileSync(journalPath, 'garbage{{{');
+  const logs = [];
+  const life2Journal = createAttemptJournal({ filePath: journalPath, log: (m) => logs.push(m) });
+  assert.equal(life2Journal.isDegraded(), false, 'a recovered backup is not the degraded state');
+  assert.equal(life2Journal.get('key-backup-older')?.deliveryUnknown, true,
+    'a key the backup cannot prove unattempted hydrates as delivery-unknown');
+  assert.equal(life2Journal.get('key-settled')?.deliveryUnknown, undefined, 'a settled key is past its sends: untouched');
+  assert.ok(logs.some((m) => /delivery-unknown/.test(m) && /1 /.test(m)), `the marking is logged: ${logs.join(' | ')}`);
+
+  const life2 = makePublisher({ journal: life2Journal });
+  const retry = await publishMedia(life2.publisher, body);
+  assert.equal(retry.statusCode, 409, 'a refused same-key retry is a 409 (permanent to gc)');
+  assert.equal(retry.json().failure_kind, 'delivery_unknown');
+  assert.equal(life2.calls.length, 0, 'the maybe-displayed media must not be sent again');
+});
+
+// The same contract for the main file: a valid tmp beside it is a NEWER
+// write (persist fsyncs tmp before the two renames), so a crash between
+// writing tmp and rotating main left the main file one write behind. The
+// newest surviving generation wins there too, so the attempt marker in
+// the tmp is what hydrates.
+test('a valid tmp generation newer than the main file is the one that loads', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const j1 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  j1.record('key-tmp-newer', { fingerprint: { digest: 'd' } });
+  j1.record('key-tmp-newer', { mediaId: 'M_1' });
+  // The crash window: the next write (the send attempt) reached the fsync'd
+  // tmp and never got renamed over the main file.
+  fs.writeFileSync(`${journalPath}.tmp`, JSON.stringify({
+    version: 2,
+    entries: { 'key-tmp-newer': { fingerprint: { digest: 'd' }, mediaId: 'M_1', sendAttempted: true } },
+  }));
+  const j2 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(j2.isDegraded(), false);
+  assert.equal(j2.get('key-tmp-newer')?.sendAttempted, true, 'the newer tmp write is what loads, not the older main file');
+  assert.equal(j2.get('key-tmp-newer')?.deliveryUnknown, undefined, 'nothing was lost, so nothing is marked');
+});
+
 // --- seeded receipt pinning (finding 6) ---------------------------------------------
 
 // Codex jg-d0xr finding 6: the just-settled media receipt sat in the
