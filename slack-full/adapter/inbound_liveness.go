@@ -92,13 +92,10 @@ const (
 	// livenessThreadScanWindow is how far back parents are scanned for
 	// fresh replies (history only returns parents by their own ts).
 	livenessThreadScanWindow = 24 * time.Hour
-	// livenessMaxThreadPages bounds the reply pages one probe reads from one
-	// thread (livenessHistoryLimit replies each). A thread's fresh replies
-	// are paged inside the probe, not across probes by the watermark: while
-	// a hold keeps the watermark still (a failed read of another thread, a
-	// pending replay) the first page would otherwise be the only one ever
-	// read (the lane's codex round 4).
-	livenessMaxThreadPages = 5
+	// livenessMaxPendingThreads caps the threads a channel remembers as
+	// pending (a read that failed, or found more than one probe replayed):
+	// each is re-read every probe from its own cursor until drained.
+	livenessMaxPendingThreads = 32
 	// livenessFetchTimeout bounds one Slack read.
 	livenessFetchTimeout = 15 * time.Second
 	// livenessMaxBackfillPerChannel caps replayed messages per channel
@@ -165,27 +162,23 @@ type livenessChannel struct {
 	// pending replay lands.
 	PendingTS []string `json:"pending_ts,omitempty"`
 	HeldMaxTS string   `json:"held_max_ts,omitempty"`
-	// ThreadHoldTS is the watermark as a probe read it when one of the
-	// channel's thread reads failed (gf-c7n finding 3i): the replies that
-	// read would have found are above it and unknown, so the watermark does
-	// not cross it — an advance is remembered as HeldMaxTS exactly as under
-	// a pending replay — until a probe reads every thread of the channel
-	// successfully and replays everything it found. While the reads keep
-	// failing the hold rides the backfill window's floor: what is below the
-	// floor is unreadable anyway, what is above it stays guarded.
-	ThreadHoldTS string `json:"thread_hold_ts,omitempty"`
-	// HeldOrigins is written by saveState and read by loadState only: the
-	// known origins above the watermark while the channel is held (a thread
-	// read hold or a pending replay), so a restart does not replay what a
-	// held channel already delivered or saw (the lane's codex round 4; the
-	// origins are otherwise in memory only).
-	HeldOrigins []livenessHeldOrigin `json:"held_origins,omitempty"`
+	// PendingThreads are the threads a probe could not finish reading
+	// (gf-c7n finding 3i): a thread-history read that failed, or one whose
+	// fresh replies outran what one probe read and replayed. Each is re-read
+	// every probe from its own cursor (Oldest: below every reply not yet
+	// delivered) whether or not the channel's watermark — which keeps moving
+	// with the channel messages and the live traffic — still lists it, and
+	// is dropped once a read found nothing undelivered past the cursor. The
+	// watermark is never held for a thread read: the thread carries its own
+	// progress. Capped at livenessMaxPendingThreads, oldest parent first;
+	// a thread whose parent has left the thread scan window retires.
+	PendingThreads []livenessPendingThread `json:"pending_threads,omitempty"`
 }
 
-// livenessHeldOrigin is one persisted origin of a held channel.
-type livenessHeldOrigin struct {
-	TS   string `json:"ts"`
-	Live bool   `json:"live,omitempty"`
+// livenessPendingThread is one thread a channel still owes a read.
+type livenessPendingThread struct {
+	ParentTS string `json:"parent_ts"`
+	Oldest   string `json:"oldest"` // replies above it are not all delivered yet
 }
 
 // livenessState is the persisted shape.
@@ -382,14 +375,6 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 		}
 		return
 	}
-	// A failed thread read holds the same way (gf-c7n finding 3i): the
-	// replies it would have found are above the hold and unknown.
-	if ch.ThreadHoldTS != "" && compareSlackTS(ts, ch.ThreadHoldTS) > 0 {
-		if ch.HeldMaxTS == "" || compareSlackTS(ts, ch.HeldMaxTS) > 0 {
-			ch.HeldMaxTS = ts
-		}
-		return
-	}
 	if !ch.heldLocked() && ch.HeldMaxTS != "" {
 		if compareSlackTS(ch.HeldMaxTS, ts) > 0 {
 			ts = ch.HeldMaxTS
@@ -401,10 +386,10 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	}
 }
 
-// heldLocked reports whether something keeps the channel's watermark from
-// advancing: a pending replay or a failed thread read. Caller holds l.mu.
+// heldLocked reports whether a pending replay keeps the channel's
+// watermark from advancing. Caller holds l.mu.
 func (ch *livenessChannel) heldLocked() bool {
-	return len(ch.PendingTS) > 0 || ch.ThreadHoldTS != ""
+	return len(ch.PendingTS) > 0
 }
 
 // releaseHeldAdvanceLocked takes the advance the holds refused once the
@@ -419,75 +404,94 @@ func (ch *livenessChannel) releaseHeldAdvanceLocked() {
 	ch.HeldMaxTS = ""
 }
 
-// holdThreadReadsLocked records that a probe of channel could not read
-// every thread with fresh replies: the watermark goes back to (and stays
-// at) where that probe read it, below every reply the failed reads would
-// have found, and an advance a live message already carried it past is
-// remembered. An existing hold keeps its older reading. Caller holds l.mu.
-func (l *inboundLiveness) holdThreadReadsLocked(channel, probeWatermark string) {
+// notePendingThreadLocked remembers that channel still owes thread a read:
+// the replies above oldest are not all delivered. An existing entry keeps
+// its own cursor. Caller holds l.mu.
+func (l *inboundLiveness) notePendingThreadLocked(channel, teamID, threadTS, oldest string) {
 	ch := l.channels[channel]
-	if ch == nil || probeWatermark == "" {
+	if ch == nil {
+		ch = &livenessChannel{TeamID: teamID}
+		l.channels[channel] = ch
+		l.evictChannelsLocked()
+	}
+	for _, p := range ch.PendingThreads {
+		if p.ParentTS == threadTS {
+			return
+		}
+	}
+	if len(ch.PendingThreads) >= livenessMaxPendingThreads {
+		log.Printf("inbound liveness: channel=%s already has %d pending thread(s); thread %s is left to its latest_reply listing", channel, len(ch.PendingThreads), threadTS)
 		return
 	}
-	if ch.ThreadHoldTS == "" || compareSlackTS(probeWatermark, ch.ThreadHoldTS) < 0 {
-		ch.ThreadHoldTS = probeWatermark
-	}
-	if compareSlackTS(ch.WatermarkTS, ch.ThreadHoldTS) > 0 {
-		if ch.HeldMaxTS == "" || compareSlackTS(ch.WatermarkTS, ch.HeldMaxTS) > 0 {
-			ch.HeldMaxTS = ch.WatermarkTS
-		}
-		ch.WatermarkTS = ch.ThreadHoldTS
-	}
+	ch.PendingThreads = append(ch.PendingThreads, livenessPendingThread{ParentTS: threadTS, Oldest: oldest})
+	sort.Slice(ch.PendingThreads, func(i, j int) bool {
+		return compareSlackTS(ch.PendingThreads[i].ParentTS, ch.PendingThreads[j].ParentTS) < 0
+	})
 	l.stateDirty = true
 }
 
-// releaseThreadHoldLocked drops channel's thread-read hold after a probe
-// read every thread with fresh replies AND the backfill replayed everything
-// that probe found for the channel (a failed replay holds pending on its
-// own; a replay the per-channel cap or a cancellation left for the next
-// probe keeps the hold, since the held advance may be newer than it). The
-// held advance is taken unless a pending replay still holds. Caller holds
-// l.mu.
-func (l *inboundLiveness) releaseThreadHoldLocked(channel string) {
-	ch := l.channels[channel]
-	if ch == nil || ch.ThreadHoldTS == "" {
-		return
-	}
-	ch.ThreadHoldTS = ""
-	ch.releaseHeldAdvanceLocked()
-	l.stateDirty = true
+// threadRead is what one probe learned about one thread: where it read
+// from (its replies above that are in the probe's missed set) and whether
+// the page was short (every reply above the cursor was read).
+type threadRead struct {
+	channel  string
+	threadTS string
+	oldest   string
+	complete bool
 }
 
-// heldOriginsLocked lists the known origins of channel above the watermark,
-// oldest first, for the state file (saveState). Caller holds l.mu.
-func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenessHeldOrigin {
-	prefix := channel + "|"
-	var out []livenessHeldOrigin
-	for key, e := range l.origins {
-		if e.source == inboundOriginUnknown || !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		ts := key[len(prefix):]
-		if watermark != "" && compareSlackTS(ts, watermark) <= 0 {
-			continue
-		}
-		out = append(out, livenessHeldOrigin{TS: ts, Live: e.source == inboundOriginLive})
-	}
-	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
-	return out
-}
-
-// releaseThreadHolds releases the thread-read hold of every channel whose
-// probe read every thread (clean) and whose replay this pass left nothing
-// behind (not incomplete).
-func (l *inboundLiveness) releaseThreadHolds(clean map[string]bool, incomplete map[string]bool) {
+// settlePendingThreads runs after the backfill with this probe's thread
+// reads: each thread's cursor moves past the replies this pass delivered
+// (or saw live), oldest first up to the first one it did not, and a
+// pending thread is dropped once a short page found nothing left past its
+// cursor and the channel's replay left nothing behind. A thread that is
+// not pending becomes pending when its page was full or the channel's
+// replay was incomplete: a live advance may carry the watermark past what
+// is left, and the thread's own cursor is what gets it read next probe.
+func (l *inboundLiveness) settlePendingThreads(reads []threadRead, missed []missedMessage, incomplete map[string]bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for channel := range clean {
-		if incomplete[channel] {
+	now := l.now()
+	for _, r := range reads {
+		cursor := r.oldest
+		drained := true
+		for _, m := range missed { // sorted oldest first by the caller
+			if m.channel != r.channel || m.msg.ThreadTS != r.threadTS {
+				continue
+			}
+			e, ok := l.origins[originKey(m.channel, m.msg.TS)]
+			if !ok || e.source == inboundOriginUnknown || now.Sub(e.at) > livenessOriginTTL {
+				drained = false
+				break
+			}
+			cursor = m.msg.TS
+		}
+		ch := l.channels[r.channel]
+		if ch == nil {
 			continue
 		}
-		l.releaseThreadHoldLocked(channel)
+		done := drained && r.complete && !incomplete[r.channel]
+		idx := -1
+		for i, p := range ch.PendingThreads {
+			if p.ParentTS == r.threadTS {
+				idx = i
+				break
+			}
+		}
+		switch {
+		case done && idx >= 0:
+			ch.PendingThreads = slices.Delete(ch.PendingThreads, idx, idx+1)
+			l.stateDirty = true
+			log.Printf("inbound liveness: channel=%s thread=%s drained; no longer pending", r.channel, r.threadTS)
+		case done:
+		case idx >= 0:
+			if compareSlackTS(cursor, ch.PendingThreads[idx].Oldest) > 0 {
+				ch.PendingThreads[idx].Oldest = cursor
+				l.stateDirty = true
+			}
+		default:
+			l.notePendingThreadLocked(r.channel, ch.TeamID, r.threadTS, cursor)
+		}
 	}
 }
 
@@ -506,30 +510,27 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) {
 		floor = slackTSFromTime(now.Add(-win))
 	}
 	for id, ch := range l.channels {
-		// A thread-read hold below the window's floor guards, below the
-		// floor, replies the probe can no longer read — but the reads are
-		// still failing, so what is above the floor is still unknown. The
-		// hold rides the floor: the watermark moves up to it and no further
-		// (the lane's codex round 3 on the first cut, which released the
-		// whole held advance after one window and could skip a reply that
-		// arrived, unread, inside it). With backfill disabled nothing can
-		// release the hold, so it is retired like a pending replay.
-		if ch.ThreadHoldTS != "" {
-			switch {
-			case floor == "":
-				ch.ThreadHoldTS = ""
-				ch.releaseHeldAdvanceLocked()
-				l.stateDirty = true
-				log.Printf("inbound liveness: channel=%s retired the thread-read hold (backfill disabled); the watermark moves on (now %s)", id, ch.WatermarkTS)
-			case compareSlackTS(ch.ThreadHoldTS, floor) < 0:
-				held := ch.ThreadHoldTS
-				ch.ThreadHoldTS = floor
-				if compareSlackTS(ch.WatermarkTS, floor) < 0 {
-					ch.WatermarkTS = floor
+		// A pending thread whose parent has left the thread scan window is
+		// one the adapter would never list again anyway: retired, its
+		// undelivered replies left to a live redelivery. With backfill
+		// disabled nothing replays, so every one is retired.
+		if len(ch.PendingThreads) > 0 {
+			scanFloor := slackTSFromTime(now.Add(-livenessThreadScanWindow))
+			keptThreads := ch.PendingThreads[:0]
+			var retiredThreads []string
+			for _, p := range ch.PendingThreads {
+				if floor == "" || compareSlackTS(p.ParentTS, scanFloor) < 0 {
+					retiredThreads = append(retiredThreads, p.ParentTS)
+					continue
 				}
+				keptThreads = append(keptThreads, p)
+			}
+			if len(retiredThreads) > 0 {
+				clear(ch.PendingThreads[len(keptThreads):])
+				ch.PendingThreads = keptThreads
 				l.stateDirty = true
-				log.Printf("inbound liveness: channel=%s moved the thread-read hold from %s up to the backfill window's floor %s — its thread reads are still failing; the replies below the floor are left to a live redelivery",
-					id, held, floor)
+				log.Printf("inbound liveness: channel=%s retired %d pending thread(s) out of the thread scan window (%s) — their undelivered replies are left to a live redelivery",
+					id, len(retiredThreads), strings.Join(retiredThreads, " "))
 			}
 		}
 		if len(ch.PendingTS) == 0 {
@@ -757,27 +758,22 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 
 	var missed []missedMessage
 	var skipped []string
-	// clean: the channels whose probe read every thread with fresh replies;
-	// their thread-read hold (if any) is released once this pass has
-	// replayed everything it found for them.
-	clean := map[string]bool{}
+	var reads []threadRead // the thread reads of this probe, settled after the backfill
 	for _, c := range channels {
-		found, threadReadsFailed, err := l.probeChannel(ctx, c.id, c.ch)
+		found, threadReads, err := l.probeChannel(ctx, c.id, c.ch)
 		if err != nil {
 			skipped = append(skipped, c.id+":"+scrubSlackSecrets(err.Error()))
 			continue
 		}
 		missed = append(missed, found...)
-		if threadReadsFailed == 0 {
-			clean[c.id] = true
-		}
+		reads = append(reads, threadReads...)
 	}
 	l.lastMissed.Store(int64(len(missed)))
 	if len(skipped) > 0 {
 		log.Printf("inbound liveness: probe (%s) skipped %d channel(s): %s", reason, len(skipped), strings.Join(skipped, "; "))
 	}
 	if len(missed) == 0 {
-		l.releaseThreadHolds(clean, nil)
+		l.settlePendingThreads(reads, nil, nil)
 		log.Printf("inbound liveness: probe (%s) clean — %d channel(s) checked, nothing missed", reason, len(channels))
 		return
 	}
@@ -798,7 +794,7 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 		return
 	}
 	delivered, incomplete := l.backfill(ctx, missed)
-	l.releaseThreadHolds(clean, incomplete)
+	l.settlePendingThreads(reads, missed, incomplete)
 	log.Printf("inbound liveness: backfill (%s) replayed %d/%d missed message(s)", reason, delivered, len(missed))
 	if mode == probeModeReconnect && delivered > 0 && l.alert != nil {
 		go l.postAlert(fmt.Sprintf(":arrows_counterclockwise: gc-slack-adapter backfilled %d message(s) that landed while inbound was down (%s; %s).",
@@ -828,6 +824,7 @@ func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 	for id, ch := range l.channels {
 		c := *ch
 		c.PendingTS = slices.Clone(ch.PendingTS)
+		c.PendingThreads = slices.Clone(ch.PendingThreads)
 		out = append(out, watchedChannel{id: id, ch: c})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -842,11 +839,12 @@ func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 // probeChannel reads one channel above its watermark (bounded by the
 // backfill window) and returns the human messages the adapter never
 // saw, including fresh thread replies.
-func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch livenessChannel) (missed []missedMessage, threadReadsFailed int, err error) {
+func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch livenessChannel) (missed []missedMessage, reads []threadRead, err error) {
 	now := l.now()
 	oldest := ch.WatermarkTS
+	floor := "" // the backfill window's floor: nothing is read below it
 	if win := l.cfg.backfillMaxWindow; win > 0 {
-		floor := slackTSFromTime(now.Add(-win))
+		floor = slackTSFromTime(now.Add(-win))
 		if oldest == "" || compareSlackTS(oldest, floor) < 0 {
 			oldest = floor
 		}
@@ -868,7 +866,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	defer cancel()
 	all, err := l.fetch.history(fctx, channel, fetchFrom, livenessHistoryLimit)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	var threads []slackHistoryMessage
 	for _, m := range all {
@@ -889,52 +887,64 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		log.Printf("inbound liveness: channel=%s has %d threads with fresh replies; reading the %d most recent this probe", channel, len(threads), livenessMaxThreadsPerChannel)
 		threads = threads[:livenessMaxThreadsPerChannel]
 	}
-	// A thread read that fails leaves its fresh replies unread and unknown.
-	// The channel messages found above still replay, but the watermark must
-	// not cross those replies on their account (gf-c7n finding 3i): the
-	// channel holds at this probe's reading until a probe reads every
-	// thread and replays what it found (probe releases it), and the next
-	// probe lists the thread again (its latest_reply still clears the held
-	// watermark). Without backfill nothing replays and nothing advances, so
-	// there is nothing to hold.
-	for _, p := range threads {
-		// A thread's fresh replies are paged here, oldest first, up to
-		// livenessMaxThreadPages: a held watermark re-reads the same range
-		// every probe, so the read itself must get past the first page.
-		pageOldest := oldest
-		for page := 0; page < livenessMaxThreadPages; page++ {
-			rctx, rcancel := context.WithTimeout(ctx, livenessFetchTimeout)
-			replies, err := l.fetch.replies(rctx, channel, p.TS, pageOldest, livenessHistoryLimit)
-			rcancel()
-			if err != nil {
-				threadReadsFailed++
-				log.Printf("inbound liveness: thread read channel=%s ts=%s: %v — its unread replies are unknown; the channel's watermark holds at %s until a probe reads every thread", channel, p.TS, scrubSlackSecrets(err.Error()), ch.WatermarkTS)
+	// The threads this channel still owes a read (gf-c7n finding 3i) are
+	// read from their own cursor whether or not the listing above names
+	// them: a failed read left their replies unknown while the channel
+	// messages found beside them replayed and the watermark moved on, so
+	// latest_reply alone would never list them again. A listed thread that
+	// is pending reads from its cursor too; its pending state is settled
+	// after the backfill (settlePendingThreads).
+	cursor := map[string]string{}
+	for _, p := range ch.PendingThreads {
+		cursor[p.ParentTS] = p.Oldest
+	}
+	for _, p := range ch.PendingThreads {
+		listed := false
+		for _, t := range threads {
+			if t.TS == p.ParentTS {
+				listed = true
 				break
-			}
-			for _, m := range replies {
-				if m.TS == p.TS || compareSlackTS(m.TS, oldest) <= 0 {
-					continue
-				}
-				if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
-					continue
-				}
-				missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
-			}
-			if len(replies) < livenessHistoryLimit {
-				break
-			}
-			pageOldest = replies[len(replies)-1].TS
-			if page == livenessMaxThreadPages-1 {
-				log.Printf("inbound liveness: thread read channel=%s ts=%s has more than %d fresh replies; reading the rest next probe", channel, p.TS, livenessMaxThreadPages*livenessHistoryLimit)
 			}
 		}
+		if !listed {
+			threads = append(threads, slackHistoryMessage{TS: p.ParentTS})
+		}
 	}
-	if threadReadsFailed > 0 && l.cfg.backfillMaxWindow > 0 {
-		l.mu.Lock()
-		l.holdThreadReadsLocked(channel, ch.WatermarkTS)
-		l.mu.Unlock()
+	for _, p := range threads {
+		// A pending thread reads from its own cursor, below the watermark
+		// if that is where its undelivered replies are, never below the
+		// window's floor.
+		from := oldest
+		if c, ok := cursor[p.TS]; ok {
+			from = c
+			if floor != "" && compareSlackTS(floor, from) > 0 {
+				from = floor
+			}
+		}
+		rctx, rcancel := context.WithTimeout(ctx, livenessFetchTimeout)
+		replies, err := l.fetch.replies(rctx, channel, p.TS, from, livenessHistoryLimit)
+		rcancel()
+		if err != nil {
+			// Its fresh replies are unknown: the thread is pending from
+			// this read's cursor, and the next probe reads it again.
+			log.Printf("inbound liveness: thread read channel=%s ts=%s: %v — its replies above %s are unknown; pending until a read succeeds", channel, p.TS, scrubSlackSecrets(err.Error()), from)
+			l.mu.Lock()
+			l.notePendingThreadLocked(channel, ch.TeamID, p.TS, from)
+			l.mu.Unlock()
+			continue
+		}
+		for _, m := range replies {
+			if m.TS == p.TS || compareSlackTS(m.TS, from) <= 0 {
+				continue
+			}
+			if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
+				continue
+			}
+			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
+		}
+		reads = append(reads, threadRead{channel: channel, threadTS: p.TS, oldest: from, complete: len(replies) < livenessHistoryLimit})
 	}
-	return missed, threadReadsFailed, nil
+	return missed, reads, nil
 }
 
 // historyMessageDispatchable mirrors processSlackEvent's admission
@@ -1036,8 +1046,8 @@ var livenessBackfillSettleWait = 30 * time.Second
 // good; the pass now replays everything it can and the watermark holds
 // instead.) Returns the count delivered and the channels this pass left
 // INCOMPLETE — a message the per-channel cap or a cancellation left for the
-// next probe, un-marked and not pending, so a watermark advance newer than
-// it must not be taken on this pass (the thread-read hold's release waits).
+// next probe, un-marked and not pending, so a thread it belongs to stays
+// pending (settlePendingThreads).
 func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) (int, map[string]bool) {
 	perChannel := map[string]int{}
 	delivered := 0
@@ -1247,29 +1257,12 @@ func (l *inboundLiveness) loadState() {
 		return
 	}
 	l.lastInboundAt = st.LastInboundAt
-	now := l.now()
-	restored := 0
 	for id, ch := range st.Channels {
 		if id == "" || ch == nil {
 			continue
 		}
 		ch.Pinned = false // re-derived from config each start
-		for _, o := range ch.HeldOrigins {
-			if o.TS == "" {
-				continue
-			}
-			src := inboundOriginBackfilled
-			if o.Live {
-				src = inboundOriginLive
-			}
-			l.originsPutLocked(originKey(id, o.TS), src, now)
-			restored++
-		}
-		ch.HeldOrigins = nil
 		l.channels[id] = ch
-	}
-	if restored > 0 {
-		log.Printf("inbound liveness: restored %d known origin(s) of held channel(s) from %s", restored, l.statePath)
 	}
 	log.Printf("inbound liveness: loaded state %s (channels=%d last_inbound=%s)", l.statePath, len(l.channels), st.LastInboundAt.UTC().Format(time.RFC3339))
 }
@@ -1292,10 +1285,7 @@ func (l *inboundLiveness) saveState() {
 		// runs outside the lock while the live path and the backfill shift
 		// the same backing array (the lane's codex round 2).
 		c.PendingTS = slices.Clone(ch.PendingTS)
-		c.HeldOrigins = nil
-		if ch.heldLocked() {
-			c.HeldOrigins = l.heldOriginsLocked(id, ch.WatermarkTS)
-		}
+		c.PendingThreads = slices.Clone(ch.PendingThreads)
 		st.Channels[id] = &c
 	}
 	l.stateDirty = false
