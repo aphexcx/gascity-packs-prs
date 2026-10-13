@@ -265,7 +265,16 @@ func slackFoldEmoji(text string) string {
 // holds no verbatim span.
 func slackFoldEmojiProse(text string) string {
 	text = slackKeycapSequence.ReplaceAllString(text, "")
-	text = slackFoldShortcodes(text)
+	// Every `:name:` token whose name is a Slack standard emoji name goes,
+	// wherever it stands; every other one stays as typed. Matches are
+	// non-overlapping, so a run such as `:+1::skin-tone-4:` folds token by
+	// token and a kept token's closing colon is not re-read.
+	text = slackEmojiShortcode.ReplaceAllStringFunc(text, func(token string) string {
+		if slackIsStandardEmojiName(token[1 : len(token)-1]) {
+			return ""
+		}
+		return token
+	})
 	runes := []rune(text)
 	out := make([]rune, 0, len(runes))
 	for i, r := range runes {
@@ -282,51 +291,6 @@ func slackFoldEmojiProse(text string) string {
 		}
 	}
 	return string(out)
-}
-
-// slackFoldShortcodes removes every `:name:` token whose name is a Slack
-// standard emoji name, wherever it stands, and keeps every other one as
-// typed. Colons are shared: a kept token's closing colon is re-read as the
-// next token's opening colon, so in `Done at 10:30:tada:` the kept `:30:`
-// still lets the `:tada:` glued after it fold (the gf-pu2 packs Opus read's
-// minor; a scan that consumed that colon compared the posted `Done at 10:30`
-// to the stored `Done at 10:30:tada:` and refused a delivered message). And
-// an emoji-named token followed, at its own closing colon, by another
-// emoji-named token is TEXT: Slack stores a Unicode emoji glued after a word
-// as that word plus `:name:`, so in the stored `key:value:ok:white_check_mark:`
-// of the posted `key:value:ok✅` the real emoji is the last token of the
-// chain and `:ok:` is the word `ok` between the typed colon and the stored
-// one — dropping it would fold the two sides differently (the lane's codex
-// round 3). Adjacent emoji each carry their own colons (`:ok::white_check_mark:`),
-// so a dropped token, consumed whole with its closing colon, never swallows
-// the next one. Both rules keep the fold symmetric: the same text folds the
-// same whether it was posted in Unicode or read back as shortcodes.
-func slackFoldShortcodes(text string) string {
-	var out strings.Builder
-	pos := 0
-	for pos < len(text) {
-		loc := slackEmojiShortcode.FindStringSubmatchIndex(text[pos:])
-		if loc == nil {
-			break
-		}
-		start, end := pos+loc[0], pos+loc[1]
-		out.WriteString(text[pos:start])
-		if slackIsStandardEmojiName(text[pos+loc[2]:pos+loc[3]]) && !slackEmojiTokenChainsAt(text, end-1) {
-			pos = end
-			continue
-		}
-		out.WriteString(text[start : end-1])
-		pos = end - 1
-	}
-	out.WriteString(text[pos:])
-	return out.String()
-}
-
-// slackEmojiTokenChainsAt reports whether an emoji-named `:name:` token
-// begins exactly at text[at] (a colon shared with the token before it).
-func slackEmojiTokenChainsAt(text string, at int) bool {
-	loc := slackEmojiShortcode.FindStringSubmatchIndex(text[at:])
-	return loc != nil && loc[0] == 0 && slackIsStandardEmojiName(text[at+loc[2]:at+loc[3]])
 }
 
 // isEmojiSequenceGlue reports the characters that build an emoji sequence

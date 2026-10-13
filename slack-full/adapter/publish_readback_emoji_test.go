@@ -86,17 +86,20 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "an s3 path segment that is an emoji name is text", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket//x", wantErr: true},
 		{name: "a changed s3 path segment is refused", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket/:ok:/x", wantErr: true},
 		{name: "an s3 URI beside an emoji", posted: "see s3://bucket/:id:/x 🎉", stored: "see s3://bucket/:id:/x :tada:"},
-		// Round 4 (the gf-pu2 packs Opus read's minor): a kept token's closing
-		// colon opens the shortcode glued right after it.
-		{name: "an emoji glued after a clock time", posted: "Done at 10:30🎉", stored: "Done at 10:30:tada:"},
-		{name: "an emoji glued after a key:value pair", posted: "state key:value✅", stored: "state key:value:white_check_mark:"},
-		{name: "a changed clock time before a glued emoji is refused", posted: "Done at 10:30🎉", stored: "Done at 10:45:tada:", wantErr: true},
-		// Round 4, codex round 3: a chained run whose glue word is itself an
-		// emoji name folds the same on both sides.
+		// Round 4 (gf-xid; the lane's codex rounds 3 and 4 on the Opus read's
+		// minor): the shortcode scan stays non-overlapping, left to right. A
+		// chain of colon-joined words around an emoji is ambiguous in BOTH
+		// orientations — the stored `key:value:ok:white_check_mark:` (posted
+		// `key:value:ok✅`) and the stored `:white_check_mark:ok:` (posted
+		// `✅ok:`) share the shape `:a:b:` with the emoji at opposite ends —
+		// and a local rule that folds one symmetrically breaks the other.
+		// These rows pin the pairs the non-overlapping scan folds the same
+		// on both sides; the glued-after-a-colon-word residual
+		// (`Done at 10:30🎉`) stays recorded, fail-closed.
 		{name: "an emoji glued after a chain ending in an emoji-named word", posted: "key:value:ok✅", stored: "key:value:ok:white_check_mark:"},
-		{name: "an emoji glued after a numeric emoji-named word", posted: "Score 1:100🎉", stored: "Score 1:100:tada:"},
+		{name: "an emoji glued before a colon-suffixed emoji-named word", posted: "✅ok:", stored: ":white_check_mark:ok:"},
 		{name: "two Unicode emoji glued together", posted: "🆗✅", stored: ":ok::white_check_mark:"},
-		{name: "an emoji-named word then two glued emoji", posted: "a:ok🎉✅", stored: "a:ok:tada::white_check_mark:"},
+		{name: "a changed clock time before a glued emoji is refused", posted: "Done at 10:30🎉", stored: "Done at 10:45:tada:", wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
