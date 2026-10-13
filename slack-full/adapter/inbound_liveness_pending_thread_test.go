@@ -272,3 +272,180 @@ func TestLivenessPendingThreadPagesPastTheFirstPage(t *testing.T) {
 		t.Fatalf("pending threads after the drain = %+v, want none", got)
 	}
 }
+
+// The lane's codex round 6 on 94ffc13f (four P2 on the pending-thread
+// cursor). A reply that arrived live after a failed thread read is in the
+// delivered record the state file carries for the pending thread, so a
+// restart's recovered read does not replay it.
+func TestLivenessRestartKeepsAPendingThreadsLiveRepliesDelivered(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	lcfg := livenessTestConfig(t)
+	lcfg.livenessStatePath = filepath.Join(t.TempDir(), "liveness.json")
+	l := newTestLiveness(t, lcfg, hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	parent, reply := threadWithReply(base, -time.Hour, 2*time.Minute)
+	hist.byChan["C1"] = []slackHistoryMessage{parent}
+	hist.threads["C1|"+parent.TS] = []slackHistoryMessage{reply}
+	hist.errs["C1|"+parent.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background()) // the read fails: the thread is pending
+	// The reply itself arrives live (a late Socket Mode redelivery).
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", reply.TS, "U2", "unread reply"), ""); got != inboundOriginLive {
+		t.Fatalf("live reply = %v, want live", got)
+	}
+	l.saveState()
+
+	// Restart: the read recovers; the live-delivered reply is not replayed.
+	delete(hist.errs, "C1|"+parent.TS)
+	clock.advance(time.Minute)
+	reloaded := newTestLiveness(t, lcfg, hist, clock)
+	reloaded.deliver = rec.deliver
+	if got := reloaded.originSource("C1", reply.TS); got != inboundOriginLive {
+		t.Fatalf("restored origin of the live reply = %v, want live", got)
+	}
+	reloaded.probe(context.Background(), probeModeReconnect, "startup (persisted watermarks)")
+	if envs := rec.all(); len(envs) != 0 {
+		t.Fatalf("delivered %d after the restart, want 0: the reply arrived live before it", len(envs))
+	}
+	if got := reloaded.pendingThreadsOf("C1"); len(got) != 0 {
+		t.Fatalf("pending threads after the recovered read = %+v, want none", got)
+	}
+}
+
+// A pending thread whose first page holds nothing to replay (bot replies,
+// replies already seen live) still moves its cursor past that page, so a
+// human reply on the next page is reached instead of the same page being
+// read forever.
+func TestLivenessPendingThreadCursorAdvancesPastFilteredReplies(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	l := newTestLiveness(t, livenessTestConfig(t), hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	parent := histMsg(tsAt(base, -time.Hour), "U1", "bot-busy thread")
+	parent.ReplyCount = 1
+	var replies []slackHistoryMessage
+	for i := 0; i < livenessHistoryLimit; i++ {
+		r := histMsg(tsAt(base, 2*time.Minute+time.Duration(i)*time.Second), "", fmt.Sprintf("bot reply %d", i))
+		r.BotID = "B1"
+		r.ThreadTS = parent.TS
+		replies = append(replies, r)
+	}
+	human := histMsg(tsAt(base, 2*time.Minute+time.Duration(livenessHistoryLimit)*time.Second), "U2", "the human reply on page 2")
+	human.ThreadTS = parent.TS
+	human.Raw, _ = json.Marshal(map[string]any{"type": "message", "ts": human.TS, "user": "U2", "text": human.Text, "thread_ts": parent.TS})
+	replies = append(replies, human)
+	parent.LatestReply = human.TS
+	hist.byChan["C1"] = []slackHistoryMessage{parent}
+	hist.threads["C1|"+parent.TS] = replies
+	hist.errs["C1|"+parent.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	delete(hist.errs, "C1|"+parent.TS)
+	live := tsAt(base, 10*time.Minute)
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+		t.Fatalf("live message = %v, want live", got)
+	}
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
+	for i := 0; i < 2; i++ {
+		clock.advance(12 * time.Minute)
+		l.tick(context.Background())
+	}
+	if envs := rec.all(); len(envs) != 1 {
+		t.Fatalf("delivered %d, want the one human reply behind a page of bot replies", len(envs))
+	}
+	if got := l.pendingThreadsOf("C1"); len(got) != 0 {
+		t.Fatalf("pending threads after the drain = %+v, want none", got)
+	}
+}
+
+// Slack's has_more, not the page's length, says whether a thread is read
+// through: a short page with more to come keeps the thread pending.
+func TestLivenessPendingThreadStaysUntilSlackHasNoMore(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	hist.pageSize = 50 // short pages, has_more set while replies remain
+	l := newTestLiveness(t, livenessTestConfig(t), hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	parent := histMsg(tsAt(base, -time.Hour), "U1", "old thread")
+	parent.ReplyCount = 1
+	n := 120
+	replies := threadReplies(base, parent, n)
+	parent.LatestReply = replies[n-1].TS
+	hist.byChan["C1"] = []slackHistoryMessage{parent}
+	hist.threads["C1|"+parent.TS] = replies
+	hist.errs["C1|"+parent.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	delete(hist.errs, "C1|"+parent.TS)
+	live := tsAt(base, 10*time.Minute)
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+		t.Fatalf("live message = %v, want live", got)
+	}
+	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	if envs := rec.all(); len(envs) != 50 {
+		t.Fatalf("delivered %d after the first short page, want 50", len(envs))
+	}
+	if got := l.pendingThreadsOf("C1"); len(got) != 1 {
+		t.Fatalf("pending threads after a short page with more = %+v, want kept", got)
+	}
+	for i := 0; i < 2; i++ {
+		clock.advance(12 * time.Minute)
+		l.tick(context.Background())
+	}
+	if envs := rec.all(); len(envs) != n {
+		t.Fatalf("delivered %d, want all %d", len(envs), n)
+	}
+	if got := l.pendingThreadsOf("C1"); len(got) != 0 {
+		t.Fatalf("pending threads after Slack had no more = %+v, want none", got)
+	}
+}
+
+// A pending thread does not wait for a stall either: live traffic every
+// minute keeps the watchdog quiet, and the thread is still re-read within
+// livenessHoldRetryInterval and drained once its read succeeds.
+func TestLivenessPendingThreadsRetryOnATimerUnderLiveTraffic(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	l := newTestLiveness(t, livenessTestConfig(t), hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	parent, reply := threadWithReply(base, -time.Hour, 2*time.Minute)
+	hist.byChan["C1"] = []slackHistoryMessage{parent}
+	hist.threads["C1|"+parent.TS] = []slackHistoryMessage{reply}
+	hist.errs["C1|"+parent.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+	clock.advance(12 * time.Minute)
+	l.tick(context.Background())
+	alarms := l.alarmsTotal.Load()
+	delete(hist.errs, "C1|"+parent.TS)
+	for i := 1; i <= 5; i++ {
+		clock.advance(time.Minute)
+		live := tsAt(base, 12*time.Minute+time.Duration(i)*time.Minute)
+		if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive"+live, "C1", live, "U1", "live"), ""); got != inboundOriginLive {
+			t.Fatalf("live message = %v, want live", got)
+		}
+		l.tick(context.Background())
+	}
+	if envs := rec.all(); len(envs) != 1 {
+		t.Fatalf("delivered %d after 5 minutes of live traffic, want the pending thread's reply by the retry", len(envs))
+	}
+	if got := l.pendingThreadsOf("C1"); len(got) != 0 {
+		t.Fatalf("pending threads after the retry = %+v, want none", got)
+	}
+	if got := l.alarmsTotal.Load(); got != alarms {
+		t.Fatalf("alarms = %d, want unchanged (%d)", got, alarms)
+	}
+}

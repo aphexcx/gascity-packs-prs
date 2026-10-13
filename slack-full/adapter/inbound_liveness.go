@@ -154,8 +154,11 @@ type historyFetcher interface {
 	// oldest-first, at most limit.
 	history(ctx context.Context, channel, oldest string, limit int) ([]slackHistoryMessage, error)
 	// replies returns the thread rooted at threadTS with ts > oldest,
-	// oldest-first (the parent is omitted), at most limit.
-	replies(ctx context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, error)
+	// oldest-first (the parent is omitted), at most limit, and whether
+	// Slack reports more past this page (has_more): a short page proves
+	// nothing on its own — the parent is dropped from it, and Slack may
+	// answer fewer than limit with more to come.
+	replies(ctx context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, bool, error)
 }
 
 // livenessChannel is one watched channel's state.
@@ -446,6 +449,24 @@ func (ch *livenessChannel) heldLocked() bool {
 	return len(ch.PendingTS) > 0
 }
 
+// originFloorLocked reports whether the channel's delivered record must
+// ride the state file (a pending replay or a pending thread: the next
+// probe reads below the watermark) and the ts above which it is needed —
+// the lowest of the watermark and every pending thread's cursor. Caller
+// holds l.mu.
+func (ch *livenessChannel) originFloorLocked() (string, bool) {
+	if len(ch.PendingTS) == 0 && len(ch.PendingThreads) == 0 {
+		return "", false
+	}
+	floor := ch.WatermarkTS
+	for _, p := range ch.PendingThreads {
+		if p.Oldest != "" && (floor == "" || compareSlackTS(p.Oldest, floor) < 0) {
+			floor = p.Oldest
+		}
+	}
+	return floor, true
+}
+
 // releaseHeldAdvanceLocked takes the advance the holds refused once the
 // last of them is gone. Caller holds l.mu.
 func (ch *livenessChannel) releaseHeldAdvanceLocked() {
@@ -485,40 +506,49 @@ func (l *inboundLiveness) notePendingThreadLocked(channel, teamID, threadTS, old
 }
 
 // threadRead is what one probe learned about one thread: where it read
-// from (its replies above that are in the probe's missed set) and whether
-// the page was short (every reply above the cursor was read).
+// from, every reply it fetched above that (oldest first; the missed ones
+// are in the probe's missed set, the rest were known or not dispatchable)
+// and whether Slack reported nothing more past the page.
 type threadRead struct {
 	channel  string
 	threadTS string
 	oldest   string
+	fetched  []string
 	complete bool
 }
 
 // settlePendingThreads runs after the backfill with this probe's thread
-// reads: each thread's cursor moves past the replies this pass delivered
-// (or saw live), oldest first up to the first one it did not, and a
-// pending thread is dropped once a short page found nothing left past its
-// cursor and the channel's replay left nothing behind. A thread that is
-// not pending becomes pending when its page was full or the channel's
-// replay was incomplete: a live advance may carry the watermark past what
-// is left, and the thread's own cursor is what gets it read next probe.
+// reads: each thread's cursor moves past the replies it fetched, oldest
+// first — one that was known or not dispatchable, or one this pass
+// delivered (or saw live) — up to the first undelivered one, and a pending
+// thread is dropped once Slack reported nothing more past a page that left
+// nothing undelivered and the channel's replay left nothing behind. A
+// thread that is not pending becomes pending when Slack has more or the
+// channel's replay was incomplete: a live advance may carry the watermark
+// past what is left, and the thread's own cursor is what gets it read next
+// probe.
 func (l *inboundLiveness) settlePendingThreads(reads []threadRead, missed []missedMessage, incomplete map[string]bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	for _, r := range reads {
+		wasMissed := map[string]bool{}
+		for _, m := range missed {
+			if m.channel == r.channel && m.msg.ThreadTS == r.threadTS {
+				wasMissed[m.msg.TS] = true
+			}
+		}
 		cursor := r.oldest
 		drained := true
-		for _, m := range missed { // sorted oldest first by the caller
-			if m.channel != r.channel || m.msg.ThreadTS != r.threadTS {
-				continue
+		for _, ts := range r.fetched { // oldest first
+			if wasMissed[ts] {
+				e, ok := l.origins[originKey(r.channel, ts)]
+				if !ok || e.source == inboundOriginUnknown || now.Sub(e.at) > livenessOriginTTL {
+					drained = false
+					break
+				}
 			}
-			e, ok := l.origins[originKey(m.channel, m.msg.TS)]
-			if !ok || e.source == inboundOriginUnknown || now.Sub(e.at) > livenessOriginTTL {
-				drained = false
-				break
-			}
-			cursor = m.msg.TS
+			cursor = ts
 		}
 		ch := l.channels[r.channel]
 		if ch == nil {
@@ -865,7 +895,7 @@ func (l *inboundLiveness) tick(ctx context.Context) {
 	due := idle >= stallAfter && now.Sub(l.lastProbeAt) >= livenessProbeMinInterval
 	held := 0
 	for _, ch := range l.channels {
-		held += len(ch.PendingTS)
+		held += len(ch.PendingTS) + len(ch.PendingThreads)
 	}
 	retry := !due && held > 0 && l.cfg.backfillMaxWindow > 0 && now.Sub(l.lastProbeAt) >= livenessHoldRetryInterval
 	l.mu.Unlock()
@@ -876,7 +906,7 @@ func (l *inboundLiveness) tick(ctx context.Context) {
 		// A held replay does not wait for a stall: live traffic keeps the
 		// watchdog quiet, and a hold left to the next stall, reconnect or
 		// restart could age out of the window unreplayed.
-		l.probe(ctx, probeModeRetry, fmt.Sprintf("held replay retry (%d held)", held))
+		l.probe(ctx, probeModeRetry, fmt.Sprintf("held replay retry (%d held replay(s) or pending thread(s))", held))
 	}
 }
 
@@ -1077,7 +1107,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			}
 		}
 		rctx, rcancel := context.WithTimeout(ctx, livenessFetchTimeout)
-		replies, err := l.fetch.replies(rctx, channel, p.TS, from, livenessHistoryLimit)
+		replies, more, err := l.fetch.replies(rctx, channel, p.TS, from, livenessHistoryLimit)
 		rcancel()
 		if err != nil {
 			// Its fresh replies are unknown: the thread is pending from
@@ -1088,16 +1118,18 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			l.mu.Unlock()
 			continue
 		}
+		read := threadRead{channel: channel, threadTS: p.TS, oldest: from, complete: !more}
 		for _, m := range replies {
 			if m.TS == p.TS || compareSlackTS(m.TS, from) <= 0 {
 				continue
 			}
+			read.fetched = append(read.fetched, m.TS)
 			if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
 				continue
 			}
 			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
 		}
-		reads = append(reads, threadRead{channel: channel, threadTS: p.TS, oldest: from, complete: len(replies) < livenessHistoryLimit})
+		reads = append(reads, read)
 	}
 	return missed, reads, nil
 }
@@ -1489,8 +1521,8 @@ func (l *inboundLiveness) saveState() {
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
 		c.PendingMessages = maps.Clone(ch.PendingMessages)
 		c.HeldOrigins = nil
-		if ch.heldLocked() {
-			c.HeldOrigins = l.heldOriginsLocked(id, ch.WatermarkTS)
+		if floor, held := ch.originFloorLocked(); held {
+			c.HeldOrigins = l.heldOriginsLocked(id, floor)
 		}
 		st.Channels[id] = &c
 	}
@@ -1577,6 +1609,7 @@ type slackHistoryResp struct {
 	OK       bool              `json:"ok"`
 	Error    string            `json:"error,omitempty"`
 	Messages []json.RawMessage `json:"messages,omitempty"`
+	HasMore  bool              `json:"has_more,omitempty"`
 }
 
 func (c *slackHistoryClient) history(ctx context.Context, channel, oldest string, limit int) ([]slackHistoryMessage, error) {
@@ -1586,10 +1619,11 @@ func (c *slackHistoryClient) history(ctx context.Context, channel, oldest string
 	if oldest != "" {
 		q.Set("oldest", oldest)
 	}
-	return c.get(ctx, "/conversations.history", q, "")
+	out, _, err := c.get(ctx, "/conversations.history", q, "")
+	return out, err
 }
 
-func (c *slackHistoryClient) replies(ctx context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, error) {
+func (c *slackHistoryClient) replies(ctx context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, bool, error) {
 	q := url.Values{}
 	q.Set("channel", channel)
 	q.Set("ts", threadTS)
@@ -1603,33 +1637,33 @@ func (c *slackHistoryClient) replies(ctx context.Context, channel, threadTS, old
 // get performs one read and returns messages oldest-first with Raw set.
 // conversations.history returns newest-first; replies oldest-first —
 // both are normalized here by ts.
-func (c *slackHistoryClient) get(ctx context.Context, method string, q url.Values, dropTS string) ([]slackHistoryMessage, error) {
+func (c *slackHistoryClient) get(ctx context.Context, method string, q url.Values, dropTS string) ([]slackHistoryMessage, bool, error) {
 	if c.token == "" {
-		return nil, errors.New("slack token empty")
+		return nil, false, errors.New("slack token empty")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, slackAPIBase+method+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("build %s: %w", method, err)
+		return nil, false, fmt.Errorf("build %s: %w", method, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", method, err)
+		return nil, false, fmt.Errorf("%s: %w", method, err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", method, err)
+		return nil, false, fmt.Errorf("read %s: %w", method, err)
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s HTTP %d: %s", method, resp.StatusCode, clipBodyForLog(body))
+		return nil, false, fmt.Errorf("%s HTTP %d: %s", method, resp.StatusCode, clipBodyForLog(body))
 	}
 	var hr slackHistoryResp
 	if err := json.Unmarshal(body, &hr); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", method, err)
+		return nil, false, fmt.Errorf("decode %s: %w", method, err)
 	}
 	if !hr.OK {
-		return nil, fmt.Errorf("%s not ok: %s", method, hr.Error)
+		return nil, false, fmt.Errorf("%s not ok: %s", method, hr.Error)
 	}
 	out := make([]slackHistoryMessage, 0, len(hr.Messages))
 	for _, raw := range hr.Messages {
@@ -1644,5 +1678,5 @@ func (c *slackHistoryClient) get(ctx context.Context, method string, q url.Value
 		out = append(out, m)
 	}
 	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
-	return out, nil
+	return out, hr.HasMore, nil
 }

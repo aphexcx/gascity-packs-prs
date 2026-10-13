@@ -22,6 +22,9 @@ type fakeHistory struct {
 	threads map[string][]slackHistoryMessage // key channel|threadTS → replies (parent excluded)
 	errs    map[string]error                 // key channel → history error; channel|threadTS → replies error
 	calls   []string
+	// pageSize, when set, caps a replies page below the asked limit (Slack
+	// may answer fewer than limit with has_more set).
+	pageSize int
 }
 
 func newFakeHistory() *fakeHistory {
@@ -50,12 +53,12 @@ func (f *fakeHistory) history(_ context.Context, channel, oldest string, _ int) 
 	return out, nil
 }
 
-func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, error) {
+func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "replies:"+channel+":"+threadTS+":"+oldest)
 	if err := f.errs[channel+"|"+threadTS]; err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var out []slackHistoryMessage
 	for _, m := range f.threads[channel+"|"+threadTS] {
@@ -63,10 +66,16 @@ func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest strin
 			out = append(out, m)
 		}
 	}
-	if limit > 0 && len(out) > limit {
-		out = out[:limit] // one page, oldest first, as the client answers
+	page := limit
+	if f.pageSize > 0 && f.pageSize < page {
+		page = f.pageSize
 	}
-	return out, nil
+	more := false
+	if page > 0 && len(out) > page {
+		out = out[:page] // one page, oldest first, as the client answers
+		more = true
+	}
+	return out, more, nil
 }
 
 // deliveryRecorder captures synthesized envelopes.
@@ -635,14 +644,14 @@ func TestSlackHistoryClient(t *testing.T) {
 	if !strings.Contains(string(msgs[0].Raw), `"text":"b"`) {
 		t.Errorf("raw not retained: %s", msgs[0].Raw)
 	}
-	replies, err := c.replies(context.Background(), "C1", "3.000000", "", 50)
+	replies, _, err := c.replies(context.Background(), "C1", "3.000000", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(replies) != 1 || replies[0].TS != "4.000000" || replies[0].ThreadTS != "3.000000" {
 		t.Errorf("replies = %+v (parent must be dropped)", replies)
 	}
-	if _, err := c.get(context.Background(), "/conversations.other", nil, ""); err == nil || !strings.Contains(err.Error(), "not_in_channel") {
+	if _, _, err := c.get(context.Background(), "/conversations.other", nil, ""); err == nil || !strings.Contains(err.Error(), "not_in_channel") {
 		t.Errorf("error surface = %v", err)
 	}
 }
