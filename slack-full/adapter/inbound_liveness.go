@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -80,6 +81,13 @@ const (
 	livenessAlertRepeat = 30 * time.Minute
 	// livenessPersistInterval paces state-file writes while dirty.
 	livenessPersistInterval = 60 * time.Second
+	// livenessHoldRetryInterval bounds how often a held replay (a failed
+	// replay waiting for gc) is retried while live traffic flows and no
+	// stall probe would run: one retry probe per interval, no alarm, until
+	// the hold lands or ages out of the backfill window (the Opus read's
+	// minor beside gf-c7n finding 3l: a held founder line waited for the
+	// next stall, reconnect or restart, and could age out unreplayed).
+	livenessHoldRetryInterval = 2 * time.Minute
 	// livenessStateMaxBytes bounds the state file the loader accepts. The
 	// held origins (gf-c7n finding 3l) can run to livenessOriginMax entries
 	// of a few dozen bytes each on top of the channels, well inside it.
@@ -174,6 +182,11 @@ type livenessChannel struct {
 	// everything above the hold). A replay still in flight is never one of
 	// them.
 	HeldOrigins []livenessHeldOrigin `json:"held_origins,omitempty"`
+	// PendingMessages carries, by ts, the held replays themselves (the
+	// history message, the attempts so far, when it was first held), so a
+	// hold that ages out of the backfill window goes to the adapter's
+	// inbound dead letter with its text, never silently.
+	PendingMessages map[string]livenessHeldReplay `json:"pending_messages,omitempty"`
 	// PendingThreads are the threads a probe could not finish reading
 	// (gf-c7n finding 3i): a thread-history read that failed, or one whose
 	// fresh replies outran what one probe read and replayed. Each is re-read
@@ -191,6 +204,23 @@ type livenessChannel struct {
 type livenessPendingThread struct {
 	ParentTS string `json:"parent_ts"`
 	Oldest   string `json:"oldest"` // replies above it are not all delivered yet
+}
+
+// livenessHeldReplay is one held replay: the message, its attempts, and
+// when it was first held.
+type livenessHeldReplay struct {
+	Msg      slackHistoryMessage `json:"msg"`
+	TeamID   string              `json:"team_id,omitempty"`
+	Attempts int                 `json:"attempts"`
+	HeldAt   time.Time           `json:"held_at"`
+}
+
+// livenessRetiredHold is a held replay that aged out, for the dead letter.
+type livenessRetiredHold struct {
+	channel string
+	ts      string
+	held    livenessHeldReplay
+	known   bool // the message itself was recorded with the hold
 }
 
 // livenessHeldOrigin is one persisted origin of a held channel.
@@ -391,6 +421,7 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	// and taken when the last pending replay lands.
 	if i := slices.Index(ch.PendingTS, ts); i >= 0 {
 		ch.PendingTS = slices.Delete(ch.PendingTS, i, i+1)
+		delete(ch.PendingMessages, ts)
 	}
 	if len(ch.PendingTS) > 0 && compareSlackTS(ts, ch.PendingTS[0]) > 0 {
 		if ch.HeldMaxTS == "" || compareSlackTS(ts, ch.HeldMaxTS) > 0 {
@@ -527,7 +558,8 @@ func (l *inboundLiveness) settlePendingThreads(reads []threadRead, missed []miss
 // failed replay was before the hold existed; the last hold to go releases
 // the held advance. With backfill disabled (no window) nothing can release a
 // hold, so every one is retired. Caller holds l.mu.
-func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) {
+func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRetiredHold {
+	var out []livenessRetiredHold
 	floor := ""
 	if win := l.cfg.backfillMaxWindow; win > 0 {
 		floor = slackTSFromTime(now.Add(-win))
@@ -573,10 +605,83 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) {
 		}
 		clear(ch.PendingTS[len(kept):])
 		ch.PendingTS = kept
+		for _, ts := range retired {
+			held, known := ch.PendingMessages[ts]
+			delete(ch.PendingMessages, ts)
+			out = append(out, livenessRetiredHold{channel: id, ts: ts, held: held, known: known})
+		}
 		ch.releaseHeldAdvanceLocked()
 		l.stateDirty = true
-		log.Printf("inbound liveness: channel=%s retired %d pending replay(s) out of the backfill window (%s) — left to a live redelivery; the watermark moves on (now %s)",
+		log.Printf("inbound liveness: channel=%s retired %d pending replay(s) out of the backfill window (%s) — never delivered to gc: going to the inbound dead letter; the watermark moves on (now %s)",
 			id, len(retired), strings.Join(retired, " "), ch.WatermarkTS)
+	}
+	return out
+}
+
+// deadLetterRetiredHolds writes every held replay that aged out of the
+// backfill window to the adapter's inbound dead letter (the designed alarm
+// for a line gc never received: <city>/.gc/slack/inbound_dead_letter, the
+// same file the coalescer and the receipt follow-ups use), with its text
+// and thread so a hand recovery re-posts the right bytes, and says so in
+// the log and on the operator channel. Nothing about a lost line is silent.
+func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) {
+	if len(retired) == 0 {
+		return
+	}
+	now := l.now().UTC()
+	byChannel := map[string][]inboundDeadLetterRecord{}
+	for _, r := range retired {
+		reason := fmt.Sprintf("inbound liveness: held replay aged out of the backfill window (%s) after %d attempt(s) — never delivered to gc; re-post by hand", l.cfg.backfillMaxWindow, r.held.Attempts)
+		if !r.known {
+			reason += " (the message text was not recorded with the hold; read it from Slack at this ts)"
+		}
+		team := r.held.TeamID
+		if team == "" {
+			team = l.cfg.accountID
+		}
+		byChannel[r.channel] = append(byChannel[r.channel], inboundDeadLetterRecord{
+			DeadLetteredAt: now,
+			Channel:        r.channel,
+			Attempts:       r.held.Attempts,
+			Reason:         reason,
+			Inbound: externalInboundMessage{
+				ProviderMessageID: r.ts,
+				Conversation: conversationRef{
+					ScopeID:        l.cfg.cityName,
+					Provider:       l.cfg.provider,
+					AccountID:      team,
+					ConversationID: r.channel,
+					Kind:           channelTypeFromID(r.channel),
+				},
+				Actor:            externalActor{ID: r.held.Msg.User, DisplayName: r.held.Msg.User},
+				Text:             r.held.Msg.Text,
+				ReplyToMessageID: r.held.Msg.ThreadTS,
+				DedupKey:         "slack-" + r.ts,
+				ReceivedAt:       now,
+			},
+		})
+	}
+	dir := strings.TrimSpace(l.cfg.inboundDeadLetterDir)
+	for channel, records := range byChannel {
+		if dir == "" {
+			log.Printf("inbound liveness: channel=%s %d held replay(s) LOST — no inbound dead-letter dir configured (SLACK_INBOUND_DEAD_LETTER_DIR); the lines are logged here and nowhere else", channel, len(records))
+			for _, rec := range records {
+				log.Printf("inbound liveness: LOST channel=%s ts=%s user=%s thread=%s text=%q", channel, rec.Inbound.ProviderMessageID, rec.Inbound.Actor.ID, rec.Inbound.ReplyToMessageID, rec.Inbound.Text)
+			}
+			continue
+		}
+		path, err := writeInboundDeadLetterRecords(dir, channel, records)
+		if err != nil {
+			log.Printf("inbound liveness: channel=%s dead-letter write FAILED for %d held replay(s) (dir %q): %v", channel, len(records), dir, err)
+			for _, rec := range records {
+				log.Printf("inbound liveness: LOST channel=%s ts=%s user=%s thread=%s text=%q", channel, rec.Inbound.ProviderMessageID, rec.Inbound.Actor.ID, rec.Inbound.ReplyToMessageID, rec.Inbound.Text)
+			}
+			continue
+		}
+		log.Printf("inbound liveness: channel=%s %d held replay(s) dead-lettered to %s — never delivered to gc", channel, len(records), path)
+		if l.alert != nil {
+			go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: %d inbound message(s) in <#%s> could not be delivered to gc within %s and went to the inbound dead letter (%s). Re-post them by hand.", len(records), channel, l.cfg.backfillMaxWindow, path))
+		}
 	}
 }
 
@@ -596,6 +701,17 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage) {
 		if len(ch.PendingTS) < livenessMaxBackfillPerChannel {
 			ch.PendingTS = slices.Insert(ch.PendingTS, i, ts)
 		}
+	}
+	if slices.Contains(ch.PendingTS, ts) {
+		if ch.PendingMessages == nil {
+			ch.PendingMessages = make(map[string]livenessHeldReplay)
+		}
+		held, known := ch.PendingMessages[ts]
+		if !known {
+			held = livenessHeldReplay{Msg: m.msg, TeamID: m.teamID, HeldAt: l.now()}
+		}
+		held.Attempts++
+		ch.PendingMessages[ts] = held
 	}
 	if compareSlackTS(ch.WatermarkTS, ch.PendingTS[0]) >= 0 {
 		if ch.HeldMaxTS == "" || compareSlackTS(ch.WatermarkTS, ch.HeldMaxTS) > 0 {
@@ -692,6 +808,10 @@ const (
 	// (or the process) was down — backfill with an informational note,
 	// no alarm (the transport is demonstrably back).
 	probeModeReconnect
+	// probeModeRetry: a held replay is due a retry while live traffic
+	// flows (no stall) — backfill with an informational note, no alarm
+	// and no reconnect note.
+	probeModeRetry
 )
 
 // runWatchdog is the periodic stall detector. Blocks until ctx is done.
@@ -743,11 +863,21 @@ func (l *inboundLiveness) tick(ctx context.Context) {
 	}
 	idle := now.Sub(ref)
 	due := idle >= stallAfter && now.Sub(l.lastProbeAt) >= livenessProbeMinInterval
-	l.mu.Unlock()
-	if !due {
-		return
+	held := 0
+	for _, ch := range l.channels {
+		held += len(ch.PendingTS)
 	}
-	l.probe(ctx, probeModeWatchdog, fmt.Sprintf("watchdog idle=%s", idle.Round(time.Second)))
+	retry := !due && held > 0 && l.cfg.backfillMaxWindow > 0 && now.Sub(l.lastProbeAt) >= livenessHoldRetryInterval
+	l.mu.Unlock()
+	switch {
+	case due:
+		l.probe(ctx, probeModeWatchdog, fmt.Sprintf("watchdog idle=%s", idle.Round(time.Second)))
+	case retry:
+		// A held replay does not wait for a stall: live traffic keeps the
+		// watchdog quiet, and a hold left to the next stall, reconnect or
+		// restart could age out of the window unreplayed.
+		l.probe(ctx, probeModeRetry, fmt.Sprintf("held replay retry (%d held)", held))
+	}
 }
 
 // probe reads every watched channel above its watermark, alarms on
@@ -765,7 +895,7 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}
 	l.probing = true
 	l.lastProbeAt = l.now()
-	l.retireExpiredPendingLocked(l.lastProbeAt)
+	retired := l.retireExpiredPendingLocked(l.lastProbeAt)
 	channels := l.snapshotChannelsLocked()
 	l.mu.Unlock()
 	defer func() {
@@ -773,6 +903,7 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 		l.probing = false
 		l.mu.Unlock()
 	}()
+	l.deadLetterRetiredHolds(retired)
 	l.probesTotal.Add(1)
 	if len(channels) == 0 {
 		log.Printf("inbound liveness: probe (%s) skipped — no watched channels yet (pin with SLACK_LIVENESS_CHANNELS)", reason)
@@ -848,6 +979,7 @@ func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 		c := *ch
 		c.PendingTS = slices.Clone(ch.PendingTS)
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
+		c.PendingMessages = maps.Clone(ch.PendingMessages)
 		out = append(out, watchedChannel{id: id, ch: c})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1355,6 +1487,7 @@ func (l *inboundLiveness) saveState() {
 		// the same backing array (the lane's codex round 2).
 		c.PendingTS = slices.Clone(ch.PendingTS)
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
+		c.PendingMessages = maps.Clone(ch.PendingMessages)
 		c.HeldOrigins = nil
 		if ch.heldLocked() {
 			c.HeldOrigins = l.heldOriginsLocked(id, ch.WatermarkTS)
