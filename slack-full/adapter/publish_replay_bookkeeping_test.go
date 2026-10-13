@@ -285,3 +285,72 @@ func TestHandlePublishReplayDoesNotClearABusyMarkNewerThanTheReply(t *testing.T)
 		break
 	}
 }
+
+// The cutoff must not leave an answered mark restorable (the lane's codex
+// round 5): when a newer inbound displaced the older mark before the reply's
+// proof came, takeBefore skips the newer mark — but the older one, displaced
+// into the newer inbound's hands, is answered by this reply, and a later
+// failure of the newer inbound's forward must remove it, not restore it. The
+// same goes for an answered stale ancestor riding on the newer entry. The
+// newer mark itself stays restorable: a reply older than it answered nothing
+// of it.
+func TestBusyReactionTakeBeforeBlocksRestoringTheAnsweredMarks(t *testing.T) {
+	marks := newBusyReactionRegistry()
+	const thread = "1600.000"
+	older, _ := marks.markBoth("C1", "", thread) // the inbound the reply answers
+	close(older)
+	// The newer inbound displaces the mark before the reply's proof comes;
+	// the older mark now rides in its hands for a possible restore.
+	newerDone, displaced := marks.markBoth("C1", thread, "1700.002")
+	if len(displaced) != 1 || displaced[0].mark.messageTS != thread {
+		t.Fatalf("the newer inbound displaced %+v; want the older mark in its hands", displaced)
+	}
+	// A failed earlier re-target's rollback parks an even older ancestor on
+	// the thread's entry as stale ancestry.
+	marks.restoreDisplaced("C1", []busyDisplaced{{threadKey: thread, mark: busyTaken{messageTS: "1500.000"}}})
+
+	// The reply, posted at 1700.001, is proven now: the newer mark is left
+	// pending and the answered ancestor is taken.
+	taken := marks.takeBefore("C1", thread, "1700.001")
+	if len(taken) != 1 || taken[0].messageTS != "1500.000" {
+		t.Fatalf("takeBefore = %+v, want the answered ancestor 1500.000 taken and nothing else", taken)
+	}
+	if ts, ok := marks.pending("C1", thread); !ok || ts != "1700.002" {
+		t.Fatalf("pending after takeBefore = (%s, %v), want the newer mark kept", ts, ok)
+	}
+
+	// The newer inbound's forward fails: its mark goes, and the answered
+	// mark it displaced is blocked from restoration (returned for removal).
+	blocked := marks.cancelBoth("C1", thread, "1700.002", newerDone, displaced)
+	var blockedTS []string
+	for _, b := range blocked {
+		blockedTS = append(blockedTS, b.messageTS)
+	}
+	if len(blocked) != 1 || blocked[0].messageTS != thread {
+		t.Fatalf("cancelBoth blocked %v, want the answered mark %s blocked from restoration", blockedTS, thread)
+	}
+	if ts, ok := marks.pending("C1", thread); ok {
+		t.Fatalf("pending after the cancel = %s, want nothing restored", ts)
+	}
+}
+
+func TestBusyReactionTakeBeforeLeavesTheNewerMarkRestorable(t *testing.T) {
+	marks := newBusyReactionRegistry()
+	const thread = "1600.000"
+	older, _ := marks.markBoth("C1", "", thread)
+	close(older)
+	newerDone, _ := marks.markBoth("C1", thread, "1700.002")
+	close(newerDone)
+	if taken := marks.takeBefore("C1", thread, "1700.001"); len(taken) != 0 {
+		t.Fatalf("takeBefore = %+v, want nothing taken", taken)
+	}
+	// A third inbound displaces the newer mark and then fails: the newer
+	// mark, which no reply answered, is restored.
+	thirdDone, displaced := marks.markBoth("C1", thread, "1800.003")
+	if blocked := marks.cancelBoth("C1", thread, "1800.003", thirdDone, displaced); len(blocked) != 0 {
+		t.Fatalf("cancelBoth blocked %+v, want the newer mark restored, not blocked", blocked)
+	}
+	if ts, ok := marks.pending("C1", thread); !ok || ts != "1700.002" {
+		t.Fatalf("pending after the third inbound's cancel = (%s, %v), want the newer mark restored", ts, ok)
+	}
+}

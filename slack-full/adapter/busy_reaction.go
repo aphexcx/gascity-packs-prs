@@ -152,7 +152,7 @@ type busyReactionRegistry struct {
 	// stick forever. Blocked marks are returned to the caller for
 	// immediate removal instead. Entries expire after
 	// busyTombstoneTTL and are swept opportunistically.
-	tombstones map[busyReactionKey]time.Time
+	tombstones map[busyReactionKey]busyTombstone
 	// now is the clock; nil means time.Now. Injectable so tests can
 	// drive TTL expiry without sleeping.
 	now func() time.Time
@@ -176,19 +176,29 @@ const busyTombstoneMaxEntries = 4096
 // tombstoneLocked records a consumed key, sweeping expired tombstones
 // and enforcing the cap. Called with r.mu held.
 func (r *busyReactionRegistry) tombstoneLocked(key busyReactionKey, now time.Time) {
-	for k, at := range r.tombstones {
-		if now.Sub(at) > busyTombstoneTTL {
+	r.tombstoneBeforeLocked(key, now, "")
+}
+
+// tombstoneBeforeLocked is tombstoneLocked with busyTombstone's cutoff. A
+// cutoff never narrows a live whole-key tombstone, and a later cutoff never
+// widens an earlier one past what it blocked: the widest live block wins.
+func (r *busyReactionRegistry) tombstoneBeforeLocked(key busyReactionKey, now time.Time, cutoffTS string) {
+	for k, t := range r.tombstones {
+		if now.Sub(t.at) > busyTombstoneTTL {
 			delete(r.tombstones, k)
 		}
 	}
-	r.tombstones[key] = now
+	if prev, ok := r.tombstones[key]; ok && cutoffTS != "" && (prev.cutoffTS == "" || compareSlackTS(prev.cutoffTS, cutoffTS) > 0) {
+		cutoffTS = prev.cutoffTS
+	}
+	r.tombstones[key] = busyTombstone{at: now, cutoffTS: cutoffTS}
 	if len(r.tombstones) > busyTombstoneMaxEntries {
 		var oldestK busyReactionKey
 		var oldestAt time.Time
 		first := true
-		for k, at := range r.tombstones {
-			if first || at.Before(oldestAt) {
-				oldestK, oldestAt, first = k, at, false
+		for k, t := range r.tombstones {
+			if first || t.at.Before(oldestAt) {
+				oldestK, oldestAt, first = k, t.at, false
 			}
 		}
 		if !first {
@@ -200,8 +210,31 @@ func (r *busyReactionRegistry) tombstoneLocked(key busyReactionKey, now time.Tim
 func newBusyReactionRegistry() *busyReactionRegistry {
 	return &busyReactionRegistry{
 		entries:    make(map[busyReactionKey]busyReactionMark),
-		tombstones: make(map[busyReactionKey]time.Time),
+		tombstones: make(map[busyReactionKey]busyTombstone),
 	}
+}
+
+// busyTombstone records that a reply consumed a key at `at`. cutoffTS ""
+// blocks restoring ANY mark under the key while the tombstone lives (take
+// / takeConversation consumed the whole entry); a Slack ts blocks only the
+// marks on messages OLDER than it — takeBefore left a newer mark pending
+// because the reply predates it, so a failure of that newer inbound's
+// forward still restores the newer mark, while the older marks the reply
+// answered (displaced into that inbound's hands, or riding as stale
+// ancestry) are blocked and removed instead (the lane's codex round 5 on
+// gf-xid finding 3f).
+type busyTombstone struct {
+	at       time.Time
+	cutoffTS string
+}
+
+// blocks reports whether a live tombstone blocks restoring a mark on
+// messageTS at now.
+func (t busyTombstone) blocks(messageTS string, now time.Time) bool {
+	if now.Sub(t.at) > busyTombstoneTTL {
+		return false
+	}
+	return t.cutoffTS == "" || compareSlackTS(messageTS, t.cutoffTS) < 0
 }
 
 func (r *busyReactionRegistry) clock() time.Time {
@@ -396,9 +429,19 @@ func (r *busyReactionRegistry) restoreLocked(channel string, now time.Time, perK
 			continue
 		}
 		key := busyReactionKey{channel: channel, threadKey: k}
-		if at, dead := r.tombstones[key]; dead && now.Sub(at) <= busyTombstoneTTL {
-			blocked = append(blocked, marks...)
-			continue
+		if t, dead := r.tombstones[key]; dead {
+			var restorable []busyTaken
+			for _, m := range marks {
+				if t.blocks(m.messageTS, now) {
+					blocked = append(blocked, m)
+				} else {
+					restorable = append(restorable, m)
+				}
+			}
+			if len(restorable) == 0 {
+				continue
+			}
+			marks = restorable
 		}
 		if cur, taken := r.entries[key]; taken {
 			cur.stale = mergeStale(cur.stale, marks)
@@ -461,6 +504,15 @@ func (r *busyReactionRegistry) takeConversationBefore(channel, cutoffTS string) 
 			continue
 		}
 		if cutoffTS != "" && compareSlackTS(m.messageTS, cutoffTS) >= 0 {
+			// As in takeBefore: the newer mark stays, its answered
+			// ancestry is taken, and the key is tombstoned below the
+			// cutoff.
+			for _, t := range r.takeAnsweredStaleLocked(k, cutoffTS, now) {
+				if !seen[t.messageTS] {
+					seen[t.messageTS] = true
+					taken = append(taken, t)
+				}
+			}
 			continue
 		}
 		delete(r.entries, k)
@@ -561,11 +613,20 @@ func (r *busyReactionRegistry) takeBefore(channel, threadKey, cutoffTS string) [
 	if !present {
 		return nil
 	}
+	now := r.clock()
 	if cutoffTS != "" && compareSlackTS(m.messageTS, cutoffTS) >= 0 {
-		return nil
+		// The thread's mark is newer than the reply: it stays. The reply
+		// still answers everything older — the stale ancestors riding on
+		// this entry are taken, and a cutoff tombstone keeps the marks the
+		// newer inbound displaced from being restored should its forward
+		// fail (they are returned to that caller for removal instead).
+		var taken []busyTaken
+		for _, k := range r.keysOfLocked(channel, m.messageTS) {
+			taken = append(taken, r.takeAnsweredStaleLocked(k, cutoffTS, now)...)
+		}
+		return taken
 	}
 	delete(r.entries, key)
-	now := r.clock()
 	r.tombstoneLocked(key, now)
 	expired := now.Sub(m.addedAt) > busyReactionTTL
 	seen := map[string]bool{}
@@ -589,6 +650,46 @@ func (r *busyReactionRegistry) takeBefore(channel, threadKey, cutoffTS string) [
 		delete(r.entries, k)
 		r.tombstoneLocked(k, now)
 		collect(sib, now.Sub(sib.addedAt) > busyReactionTTL)
+	}
+	return taken
+}
+
+// keysOfLocked lists the registry keys in channel whose entry marks
+// messageTS (the dual keys markBoth creates). Called with r.mu held.
+func (r *busyReactionRegistry) keysOfLocked(channel, messageTS string) []busyReactionKey {
+	var keys []busyReactionKey
+	for k, m := range r.entries {
+		if k.channel == channel && m.messageTS == messageTS {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
+
+// takeAnsweredStaleLocked implements takeBefore's skip branch for one key
+// whose own mark is newer than cutoffTS: the stale ancestors on messages
+// older than the cutoff leave the entry and are returned (unless expired),
+// and the key gets a cutoff tombstone so the marks displaced by the newer
+// inbound — held by its goroutine for a possible restore — are blocked below
+// the cutoff too. Called with r.mu held.
+func (r *busyReactionRegistry) takeAnsweredStaleLocked(key busyReactionKey, cutoffTS string, now time.Time) []busyTaken {
+	m, present := r.entries[key]
+	if !present {
+		return nil
+	}
+	var taken, kept []busyTaken
+	for _, t := range m.stale {
+		if compareSlackTS(t.messageTS, cutoffTS) < 0 {
+			taken = append(taken, t)
+		} else {
+			kept = append(kept, t)
+		}
+	}
+	m.stale = kept
+	r.entries[key] = m
+	r.tombstoneBeforeLocked(key, now, cutoffTS)
+	if now.Sub(m.addedAt) > busyReactionTTL {
+		return nil
 	}
 	return taken
 }
@@ -626,8 +727,8 @@ func (r *busyReactionRegistry) sweepLocked(now time.Time) {
 			delete(r.entries, k)
 		}
 	}
-	for k, at := range r.tombstones {
-		if now.Sub(at) > busyTombstoneTTL {
+	for k, t := range r.tombstones {
+		if now.Sub(t.at) > busyTombstoneTTL {
 			delete(r.tombstones, k)
 		}
 	}
