@@ -36,8 +36,11 @@ func TestLivenessMessagesBeyondTheHoldSetAreAnUnreadStretch(t *testing.T) {
 	if got := l.pendingTSOf("C1"); len(got) != livenessMaxBackfillPerChannel || got[0] != missed[100].TS {
 		t.Fatalf("holds = %d from %v, want 101-200", len(got), got[:min(len(got), 1)])
 	}
-	if got := l.pendingHistoryOf("C1"); got == nil || got.From != missed[199].TS || got.Below != slackTSAfter(missed[n-1].TS) {
-		t.Fatalf("pending history = %+v, want the overflow stretch above the newest held %s up to %s", got, missed[199].TS, missed[n-1].TS)
+	// The whole range the pass left — the held hundred included — is
+	// its own stretch (the lane's codex round 5 made every left message
+	// an owner of its own, whatever the hold set does).
+	if got := l.pendingHistoryOf("C1"); got == nil || got.From != slackTSBefore(missed[100].TS) || got.Below != slackTSAfter(missed[n-1].TS) {
+		t.Fatalf("pending history = %+v, want the stretch of everything left (just below %s, just above %s)", got, missed[100].TS, missed[n-1].TS)
 	}
 	// Live copies: 301 first, then every held one.
 	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "Ev301", "C1", missed[n-1].TS, "U1", missed[n-1].Text), ""); got != inboundOriginLive {

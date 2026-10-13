@@ -51,9 +51,9 @@ func TestLivenessTheHoldSetKeepsTheOldestOutstandingWhenFull(t *testing.T) {
 	if got := l.pendingTSOf("C1"); len(got) != livenessMaxBackfillPerChannel || got[0] != missed[100].TS {
 		t.Fatalf("holds after the second probe = %d from %v, want the full set from the oldest outstanding %s", len(got), got[:min(len(got), 1)], missed[100].TS)
 	}
-	if got := l.watermarkOf("C1"); compareSlackTS(got, missed[100].TS) >= 0 {
-		t.Fatalf("watermark after the second probe = %s, want below the oldest outstanding %s", got, missed[100].TS)
-	}
+	// The watermark is not pulled back for a message read from a stretch
+	// (the stretch owns it; the lane's codex round 5): the holds stand
+	// beside the stretch, and the probes below drain both.
 	replayUntilDrained(t, l, clock, 14)
 	envs := rec.all()
 	if len(envs) != n {
@@ -143,14 +143,16 @@ func TestLivenessTwoUnreadStretchesAreBothCovered(t *testing.T) {
 	// The window's floor (now - 1 h) has risen past From by two minutes.
 	// Read: two pages of the old stretch (old[99..498]) and two of the
 	// fresh history (fresh[100..499]); the replay delivered old[99..198]
-	// and holds old[199..298]; everything above the newest held, up to
-	// fresh[499], is the overflow stretch, which merges with the old
-	// stretch's remainder (floor, old[99]) and the new one (watermark,
-	// fresh[100]) into one.
+	// and holds old[199..298]; everything the pass left — old[199] up to
+	// fresh[499] — is a stretch of its own (the lane's codex round 5), and
+	// the old stretch's unread remainder (floor, old[99]) stands beside
+	// it, still crossed; the new one (watermark, fresh[100]) lies inside
+	// the left range.
 	floor := slackTSFromTime(clock.now().Add(-time.Hour))
 	got := l.pendingHistoriesOf("C1")
-	if len(got) != 1 || got[0].From != floor || got[0].Below != slackTSAfter(fresh[499].TS) || !got[0].FloorCrossed {
-		t.Fatalf("pending history = %+v, want one merged stretch (%s, just above %s), crossed", got, floor, fresh[499].TS)
+	if len(got) != 2 || got[0].From != floor || got[0].Below != old[99].TS || !got[0].FloorCrossed ||
+		got[1].From != slackTSBefore(old[199].TS) || got[1].Below != slackTSAfter(fresh[499].TS) {
+		t.Fatalf("pending history = %+v, want (%s, %s) crossed and (just below %s, just above %s)", got, floor, old[99].TS, old[199].TS, fresh[499].TS)
 	}
 	if held := l.pendingTSOf("C1"); len(held) != livenessMaxBackfillPerChannel || held[0] != old[199].TS {
 		t.Fatalf("holds = %d from %v, want the oldest hundred left from %s", len(held), held[:min(len(held), 1)], old[199].TS)

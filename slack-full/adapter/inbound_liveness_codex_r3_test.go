@@ -107,7 +107,7 @@ func TestLivenessTheDeliveredRecordReachesDownToAListingHoldsCursor(t *testing.T
 	ch := l.channels["C1"]
 	ch.WatermarkTS = tsAt(base, 3*time.Minute)
 	l.originsPutLocked(originKey("C1", delivered), inboundOriginBackfilled, clock.now())
-	l.holdThreadListingLocked("C1", "T1", tsAt(base, -time.Hour), latest, cursor)
+	l.holdThreadListingLocked("C1", "T1", tsAt(base, -time.Hour), latest, cursor, false)
 	floor, held := ch.originFloorLocked()
 	origins, _ := l.heldOriginsLocked("C1", floor)
 	l.mu.Unlock()

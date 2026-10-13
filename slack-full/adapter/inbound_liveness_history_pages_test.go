@@ -88,10 +88,10 @@ func TestLivenessBackfillPagesPastTheFirstHistoryPage(t *testing.T) {
 	if envs := rec.all(); len(envs) != livenessMaxBackfillPerChannel {
 		t.Fatalf("delivered %d after the first probe, want the cap %d", len(envs), livenessMaxBackfillPerChannel)
 	}
-	// The one message beyond the hold set (the 201st) is an unread
-	// stretch of its own above the newest held (the lane's codex round 4).
-	if got := l.pendingHistoryOf("C1"); got == nil || got.From != missed[n-2].TS || got.Below != slackTSAfter(missed[n-1].TS) {
-		t.Fatalf("pending history = %+v, want the overflow stretch (%s, just above %s)", got, missed[n-2].TS, missed[n-1].TS)
+	// Everything the pass left (101-201) is an unread stretch of its own
+	// (the lane's codex rounds 4 and 5), the holds beside it.
+	if got := l.pendingHistoryOf("C1"); got == nil || got.From != slackTSBefore(missed[100].TS) || got.Below != slackTSAfter(missed[n-1].TS) {
+		t.Fatalf("pending history = %+v, want the stretch of everything left (just below %s, just above %s)", got, missed[100].TS, missed[n-1].TS)
 	}
 	live := tsAt(base, 20*time.Minute)
 	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
@@ -163,8 +163,12 @@ func TestLivenessHistoryPagesAProbeCannotFinishArePendingAndReadFirstByTheNext(t
 	}
 	clock.advance(3 * time.Minute)
 	reloaded.tick(context.Background())
-	if got := reloaded.pendingHistoryOf("C1"); got != nil {
-		t.Fatalf("pending history after the next probe = %+v, want none: the one-message stretch was read through (calls=%v)", got, hist.calls)
+	// The one-message stretch the bound left was read through and is
+	// gone; what stands is the range the replays left (held beside it).
+	for _, st := range reloaded.pendingHistoriesOf("C1") {
+		if st.From == watermarkBefore {
+			t.Fatalf("pending history after the next probe = %+v, want the bound's stretch (%s, %s) read through and gone (calls=%v)", st, watermarkBefore, missed[1].TS, hist.calls)
+		}
 	}
 	if !strings.Contains(read(), "read the unread history pages") {
 		t.Errorf("the drained stretch is not logged: %s", read())
