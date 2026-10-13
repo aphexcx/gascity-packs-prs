@@ -176,7 +176,7 @@ func TestLivenessHeldReplayTextIsClippedAndTheStateFileSheds(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		msg := histMsg(tsAt(base, 2*time.Minute+time.Duration(i)*time.Second), "U1", big)
 		msg.Files = []slackFile{{ID: "F1"}, {ID: "F2"}}
-		l.holdPendingLocked(missedMessage{channel: "C1", msg: msg, watermark: l.channels["C1"].WatermarkTS})
+		l.holdPendingLocked(missedMessage{channel: "C1", msg: msg, watermark: l.channels["C1"].WatermarkTS}, true)
 	}
 	heldMsgs := l.channels["C1"].PendingMessages
 	l.mu.Unlock()
