@@ -12,30 +12,46 @@ import { hydrateMessageMedia, mediaItemsForMessage, neutralizeMarkupBoundaries }
 
 // --- gc extmsg wire helpers (wire-compatible with internal/extmsg) ----------
 
-export async function postJSON(target, body, signal) {
-  const resp = await fetch(target, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GC-Request': 'gc-wecom-adapter',
-    },
-    body: JSON.stringify(body),
-    // Deadline so a stalled gc handler (connection accepted, no response)
-    // aborts into the retry loop instead of pinning the per-conversation
-    // queue forever behind a request that never settles.
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
-  });
-  if (!resp.ok) {
-    const text = (await resp.text().catch(() => '')).trim();
-    const err = new Error(`${resp.status} ${resp.statusText}: ${text}`);
-    err.status = resp.status;
-    throw err;
-  }
+// Keep timeout and shutdown cancellation composable on every Node >=20.
+// Listeners and the timer belong to the request and leave when it settles.
+async function withRequestDeadline(signal, request) {
+  const controller = new AbortController();
+  const cancel = () => controller.abort(signal.reason);
+  if (signal?.aborted) cancel();
+  else signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('gc request timed out')), 15000);
+  timer.unref?.();
   try {
-    return await resp.json();
-  } catch {
-    return {}; // Older gc responses and schema drift fail open on HTTP success.
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
   }
+}
+
+export async function postJSON(target, body, signal) {
+  return withRequestDeadline(signal, async (deadline) => {
+    const resp = await fetch(target, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-GC-Request': 'gc-wecom-adapter',
+      },
+      body: JSON.stringify(body),
+      signal: deadline,
+    });
+    if (!resp.ok) {
+      const text = (await resp.text().catch(() => '')).trim();
+      const err = new Error(`${resp.status} ${resp.statusText}: ${text}`);
+      err.status = resp.status;
+      throw err;
+    }
+    try {
+      return await resp.json();
+    } catch {
+      return {}; // Older gc responses and schema drift fail open on HTTP success.
+    }
+  });
 }
 
 // A 4xx is normally a deterministic rejection — retrying sends the same
@@ -138,12 +154,13 @@ function receiptVerdict(receipt) {
   return 'unsupported';
 }
 async function getReceiptJSON(target, signal) {
-  const response = await fetch(target, {
-    headers: { 'X-GC-Request': 'gc-wecom-adapter' },
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+  return withRequestDeadline(signal, async (deadline) => {
+    const response = await fetch(target, {
+      headers: { 'X-GC-Request': 'gc-wecom-adapter' }, signal: deadline,
+    });
+    if (!response.ok) throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), { status: response.status });
+    return response.json();
   });
-  if (!response.ok) throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), { status: response.status });
-  return response.json();
 }
 
 // Only explicit negative delivery evidence permits a repost. Pending returns

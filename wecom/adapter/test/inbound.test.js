@@ -14,7 +14,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { createInboundPipeline, postJSONWithRetry, renderText } from '../src/inbound.js';
+import { createInboundPipeline, postJSON, postJSONWithRetry, renderText } from '../src/inbound.js';
 
 const testAesKey = crypto.randomBytes(32).toString('base64');
 
@@ -2071,3 +2071,32 @@ test('3v shutdown drain joins background receipt recovery', async (t) => {
   await draining;
   assert.equal(pipeline.stats().seen, 1);
 });
+
+for (const path of ['post', 'lookup']) {
+  test(`3v ${path} supports Node 20 without AbortSignal.any`, async (t) => {
+    const original = AbortSignal.any;
+    AbortSignal.any = undefined;
+    t.after(() => { AbortSignal.any = original; });
+    const fetchOriginal = globalThis.fetch;
+    t.after(() => { globalThis.fetch = fetchOriginal; });
+    let calls = 0;
+    globalThis.fetch = async (_url, options) => {
+      calls++;
+      assert.equal(options.signal.aborted, false);
+      return { ok: true, json: async () => ({ receipt_id: 'node20', state: 'concluded',
+        delivery: { status: 'delivered', receipt_id: 'node20' } }) };
+    };
+    if (path === 'post') {
+      await postJSON('http://gc.test/x', {}, new AbortController().signal);
+    } else {
+      const { pipeline } = makePipeline(t, { deps: {
+        postInbound: async () => ({ delivery: { status: 'pending', receipt_id: 'node20' } }),
+        receiptSleep: async () => {},
+      } });
+      await pipeline.enqueueInbound(frame(textMessage({ msgid: 'NODE20' })));
+      await pipeline.waitForReceipts();
+      assert.equal(pipeline.stats().seen, 1);
+    }
+    assert.equal(calls, 1);
+  });
+}
