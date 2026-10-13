@@ -204,15 +204,20 @@ def usage_fact_belongs(fact, ids, sess_ids, w0, w1):
 
     A fact that names a run id is that run's and no other's: a matching session
     never overrides it (a reused worker's facts for its next run used to land
-    in the previous run's report). A fact that names only a session is this
-    run's only while the session was serving it — bounded to the run's window
-    by the fact's own `at` (unix millis). A session-only fact without one
-    cannot be placed and is not captured.
+    in the previous run's report). A fact that is session-scoped — it names no
+    run, or its run id is gascity's fallback to the session bead itself
+    (beadmeta.ResolveRunID: workflow_id || molecule_id || gc.root_bead_id ||
+    the bead's own id, so a pooled session's facts outside any workflow carry
+    run_id == session_id) — is this run's only while the session was serving
+    it: bounded to the run's window by the fact's own `at` (unix millis). A
+    session-scoped fact without one cannot be placed and is not captured.
     """
     run_id = fact.get("run_id")
-    if run_id:
-        return run_id in ids
-    if fact.get("session_id") not in sess_ids:
+    if run_id in ids:
+        return True
+    if run_id and run_id not in sess_ids:
+        return False
+    if run_id not in sess_ids and fact.get("session_id") not in sess_ids:
         return False
     at = fact.get("at")
     if not isinstance(at, (int, float)) or isinstance(at, bool):
@@ -368,12 +373,13 @@ def main():
                 if usage_fact_belongs(u, ids, sess_ids, w0, w1):
                     uo.write(line)
                     n_use += 1
-                elif not u.get("run_id") and u.get("session_id") in sess_ids and u.get("at") is None:
+                elif (u.get("run_id") in sess_ids or (not u.get("run_id") and u.get("session_id") in sess_ids)) \
+                        and u.get("at") is None:
                     n_unplaced += 1
         manifest["sources"]["usage"] = {"count": n_use}
         if n_unplaced:
             manifest["gaps"].append(
-                f"{n_unplaced} session-only usage fact(s) carry no timestamp and could not be placed in the run's window")
+                f"{n_unplaced} session-scoped usage fact(s) carry no timestamp and could not be placed in the run's window")
     except FileNotFoundError:
         manifest["gaps"].append("usage.jsonl not found")
 

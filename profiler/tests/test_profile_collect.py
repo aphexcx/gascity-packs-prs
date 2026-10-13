@@ -268,6 +268,21 @@ class UsageFactMembershipTests(unittest.TestCase):
         self.assertFalse(self.belongs({"session_id": "ga-sess1"}))
         self.assertFalse(self.belongs({"session_id": "ga-sess1", "at": "soon"}))
 
+    def test_a_run_id_that_is_gascitys_session_fallback_is_session_scoped(self) -> None:
+        # The lane's codex round 1 (P1): gascity resolves a fact's run_id through
+        # beadmeta.ResolveRunID, which falls back to the acting bead's own id, so a
+        # pooled session's facts outside any workflow carry run_id == session_id.
+        # That is not "another run": it is session-scoped, and takes the window check.
+        self.assertTrue(self.belongs({"run_id": "ga-sess1", "session_id": "ga-sess1",
+                                      "at": self.at("2026-07-01T10:30:00Z")}))
+        self.assertTrue(self.belongs({"run_id": "ga-sess1", "at": self.at("2026-07-01T10:30:00Z")}))
+        self.assertFalse(self.belongs({"run_id": "ga-sess1", "session_id": "ga-sess1",
+                                       "at": self.at("2026-07-01T13:00:00Z")}))
+        self.assertFalse(self.belongs({"run_id": "ga-sess1", "session_id": "ga-sess1"}))
+        # Another session's fallback run id is another session's.
+        self.assertFalse(self.belongs({"run_id": "ga-sess-other", "session_id": "ga-sess1",
+                                       "at": self.at("2026-07-01T10:30:00Z")}))
+
     def test_a_fact_naming_neither_is_not_this_runs(self) -> None:
         self.assertFalse(self.belongs({"session_id": "ga-other", "at": self.at("2026-07-01T10:30:00Z")}))
         self.assertFalse(self.belongs({}))
@@ -347,6 +362,10 @@ class CollectEndToEndTests(unittest.TestCase):
             # The same worker's session-only fact from after the run closed.
             json.dumps({"kind": "compute", "session_id": "ga-sess1", "wall_seconds": 600.0,
                         "at": 1782910000000, "idempotency_key": "k5"}),
+            # gascity's run_id fallback to the session bead itself (no workflow
+            # metadata): session-scoped, inside the window — captured.
+            json.dumps({"kind": "compute", "run_id": "ga-sess1", "session_id": "ga-sess1",
+                        "wall_seconds": 0.0, "at": 1782900600000, "idempotency_key": "k6"}),
             "{ not json either",
         ]) + "\n", encoding="utf-8")
 
@@ -414,8 +433,8 @@ class CollectEndToEndTests(unittest.TestCase):
     def test_usage_slice_keeps_only_this_runs_facts(self) -> None:
         lines = (self.out / "usage.window.jsonl").read_text(encoding="utf-8").splitlines()
         keys = [json.loads(l)["idempotency_key"] for l in lines if l.strip()]
-        self.assertEqual(keys, ["k1", "k2"], "another run's facts must not be captured")
-        self.assertEqual(self.manifest["sources"]["usage"], {"count": 2})
+        self.assertEqual(keys, ["k1", "k2", "k6"], "another run's facts must not be captured")
+        self.assertEqual(self.manifest["sources"]["usage"], {"count": 3})
 
     def test_transcripts_resolve_by_session_key_and_gaps_are_disclosed(self) -> None:
         self.assertEqual(self.manifest["sources"]["transcripts"]["found"], 1)
