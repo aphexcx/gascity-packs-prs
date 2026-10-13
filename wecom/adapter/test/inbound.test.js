@@ -1653,7 +1653,7 @@ test('a 429 from gc never marks the message seen: the pipeline delivers it after
 });
 
 
-// The HTTP response acknowledges ingress; only the receipt concludes delivery.
+// Explicit delivery failures retry; unsupported receipts retain HTTP-success dedup.
 for (const status of ['failed', 'partial']) {
   test(`receipt ${status} retries boundedly and a replay is still deliverable`, async (t) => {
     let posts = 0;
@@ -1686,6 +1686,7 @@ test('pending receipt is polled, without reposting, before seen is committed', a
   } });
   const msg = textMessage({ msgid: 'PENDING' });
   await pipeline.enqueueInbound(frame(msg));
+  await pipeline.waitForReceipts();
   assert.equal(polls, 2);
   assert.equal(posts, 1);
   assert.equal(pipeline.stats().seen, 1);
@@ -1706,12 +1707,10 @@ test('no_route is terminal and commits deduplication', async (t) => {
 });
 
 for (const delivery of [
-  { status: 'delivered', Status: 'failed' },
-  { status: 'renamed_status' },
   { status: 'delivered', delivered_bytes: 2, expected_bytes: 10 },
   { status: 'delivered', members: [{ status: 'failed' }] },
 ]) {
-  test('receipt contradiction or drift is never silently marked seen: ' + JSON.stringify(delivery), async (t) => {
+  test('explicit receipt failure is not marked seen: ' + JSON.stringify(delivery), async (t) => {
     let posts = 0;
     const logs = [];
     const { pipeline } = makePipeline(t, { deps: {
@@ -1758,12 +1757,13 @@ test('an unresolved pending receipt stays a poll on provider replay', async (t) 
   } });
   const msg = textMessage({ msgid: 'HELD' });
   await pipeline.enqueueInbound(frame(msg));
+  await pipeline.waitForReceipts();
   assert.equal(pipeline.stats().seen, 0);
   assert.equal(polls, 120);
-  assert.ok(logs.some((line) => line.includes('LOST') && line.includes('HELD')));
+  assert.ok(!logs.some((line) => line.includes('LOST')));
   await pipeline.enqueueInbound(frame(msg));
   assert.equal(posts, 1);
-  assert.equal(polls, 240);
+  assert.equal(polls, 120);
 });
 
 test('a receipt for another fan-out cannot conclude or repost a pending message', async (t) => {
@@ -1776,7 +1776,8 @@ test('a receipt for another fan-out cannot conclude or repost a pending message'
   const msg = textMessage({ msgid: 'MISMATCH' });
   await pipeline.enqueueInbound(frame(msg));
   await pipeline.enqueueInbound(frame(msg));
-  assert.equal(pipeline.stats().seen, 0);
+  await pipeline.waitForReceipts();
+  assert.equal(pipeline.stats().seen, 1);
   assert.equal(posts, 1);
 });
 
@@ -1794,6 +1795,7 @@ for (const status of ['pending', 'partial']) {
       receiptSleep: async () => {}, log: (line) => logs.push(line),
     } });
     await pipeline.enqueueInbound(frame(textMessage({ msgid: 'WHOLE_' + status })));
+    await pipeline.waitForReceipts();
     assert.equal(posts, 1);
     assert.equal(polls, 1);
     assert.equal(pipeline.stats().seen, 1);
@@ -1802,12 +1804,13 @@ for (const status of ['pending', 'partial']) {
 }
 
 test('a replay of one held batch member polls the original envelope', async (t) => {
-  let posts = 0, polls = 0, resolved = false;
+  let posts = 0, polls = 0;
+  const conclusion = Promise.withResolvers();
   const { pipeline } = makePipeline(t, { deps: {
     coalesceWindowMs: 10000,
     postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'batch' } }; },
-    getReceipt: async () => { polls++; return { receipt_id: 'batch', state: resolved ? 'concluded' : 'pending',
-      delivery: { receipt_id: 'batch', status: resolved ? 'delivered' : 'pending' } }; },
+    getReceipt: async () => { polls++; await conclusion.promise; return { receipt_id: 'batch', state: 'concluded',
+      delivery: { receipt_id: 'batch', status: 'delivered' } }; },
     receiptSleep: async () => {},
   } });
   const a = textMessage({ msgid: 'BATCH_A' }), b = textMessage({ msgid: 'BATCH_B' });
@@ -1817,8 +1820,9 @@ test('a replay of one held batch member polls the original envelope', async (t) 
   const replay = pipeline.enqueueInbound(frame(a));
   await pipeline.flushAll(); await replay;
   assert.equal(posts, 1, 'a changed batch boundary must not bypass the held receipt');
-  assert.equal(polls, 240);
-  resolved = true;
+  assert.equal(polls, 1);
+  conclusion.resolve();
+  await pipeline.waitForReceipts();
   const finalReplay = pipeline.enqueueInbound(frame(b));
   await pipeline.flushAll(); await finalReplay;
   assert.equal(posts, 1);
@@ -1841,7 +1845,8 @@ test('pending mixed fan-out stays held even when another member failed', async (
   await pipeline.enqueueInbound(frame(msg));
   await pipeline.enqueueInbound(frame(msg));
   assert.equal(posts, 1);
-  assert.equal(polls, 240);
+  await pipeline.waitForReceipts();
+  assert.equal(polls, 1);
   assert.equal(pipeline.stats().seen, 0);
 });
 
@@ -1849,7 +1854,7 @@ for (const delivery of [
   { status: 'delivered', members: [{ status: 'failed', Status: 'delivered' }] },
   { status: 'delivered', members: [{ status: 'failed' }], Members: [{ status: 'delivered' }] },
 ]) {
-  test('nested receipt collisions stay unverified: ' + JSON.stringify(delivery), async (t) => {
+  test('nested receipt collisions fail open: ' + JSON.stringify(delivery), async (t) => {
     let posts = 0;
     const logs = [];
     const { pipeline } = makePipeline(t, { deps: {
@@ -1857,9 +1862,10 @@ for (const delivery of [
       receiptSleep: async () => {}, log: (line) => logs.push(line),
     } });
     await pipeline.enqueueInbound(frame(textMessage({ msgid: 'COLLISION' })));
-    assert.equal(pipeline.stats().seen, 0);
+    assert.equal(pipeline.stats().seen, 1);
     assert.equal(posts, 1);
     assert.ok(logs.some((line) => line.includes('unverified')));
+    assert.ok(!logs.some((line) => line.startsWith('LOST')));
   });
 }
 
@@ -1879,27 +1885,28 @@ test('a held media replay polls its original envelope without another download',
 });
 
 test('a forgotten held receipt stays unverified without a recovery POST', async (t) => {
-  let posts = 0, forgotten = false;
+  let posts = 0;
   const logs = [];
   const { pipeline } = makePipeline(t, {
     postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'held-expired' } }; },
     deps: {
       log: (line) => logs.push(line),
       receiptSleep: async () => {},
-      getReceipt: async () => ({ receipt_id: 'held-expired', state: forgotten ? 'unknown' : 'pending' }),
+      getReceipt: async () => ({ receipt_id: 'held-expired', state: 'unknown' }),
     },
   });
   const input = frame(textMessage({ msgid: 'EXPIRED' }));
   await pipeline.enqueueInbound(input);
-  forgotten = true;
+  await pipeline.waitForReceipts();
   await pipeline.enqueueInbound(input);
   assert.equal(posts, 1);
   assert.equal(pipeline.stats().seen, 0);
   assert.ok(logs.some((line) => /forgotten.*unverified/.test(line)));
 });
 
-test('held-envelope capacity refuses new POSTs until the original settles', async (t) => {
-  let posts = 0, concluded = false;
+test('held-envelope capacity allows live POSTs while the original settles', async (t) => {
+  let posts = 0;
+  const conclusion = Promise.withResolvers();
   const logs = [];
   const { pipeline } = makePipeline(t, {
     postInbound: async () => { posts++; return posts === 1
@@ -1909,20 +1916,113 @@ test('held-envelope capacity refuses new POSTs until the original settles', asyn
       log: (line) => logs.push(line),
       heldDeliveryCap: 1,
       receiptSleep: async () => {},
-      getReceipt: async () => ({ receipt_id: 'held-cap', state: concluded ? 'concluded' : 'pending',
-        delivery: { receipt_id: 'held-cap', status: 'delivered' } }),
+      getReceipt: async () => { await conclusion.promise; return { receipt_id: 'held-cap', state: 'concluded',
+        delivery: { receipt_id: 'held-cap', status: 'delivered' } }; },
     },
   });
   const first = frame(textMessage({ msgid: 'CAP_1' }));
   const second = frame(textMessage({ msgid: 'CAP_2' }));
   await pipeline.enqueueInbound(first);
   await pipeline.enqueueInbound(second);
-  assert.equal(posts, 1, 'capacity refuses before any ambiguous delivery is possible');
-  assert.equal(pipeline.stats().seen, 0);
-  assert.ok(logs.some((line) => /held delivery capacity/.test(line)));
-  concluded = true;
+  assert.equal(posts, 2, 'capacity never gates the next live POST');
+  assert.equal(pipeline.stats().seen, 1);
+  assert.ok(!logs.some((line) => line.startsWith('LOST')));
+  conclusion.resolve();
+  await pipeline.waitForReceipts();
   await pipeline.enqueueInbound(first);
   await pipeline.enqueueInbound(second);
   assert.equal(posts, 2);
   assert.equal(pipeline.stats().seen, 2);
+});
+
+// 3v: acceptance of one line must not depend on another line's receipt.
+for (const scenario of ['busy', 'wedged', 'concluded']) {
+  test(`3v next live line bypasses a ${scenario} receipt`, async (t) => {
+    let posts = 0, polls = 0;
+    const waiting = Promise.withResolvers();
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => ({ delivery: { status: ++posts === 1 ? 'pending' : 'delivered', receipt_id: 'first' } }),
+      receiptSleep: () => waiting.promise,
+      getReceipt: async () => { polls++; return { receipt_id: 'first', state: scenario === 'concluded' ? 'concluded' : 'pending',
+        delivery: { receipt_id: 'first', status: scenario === 'busy' ? 'delivered' : 'pending' } }; },
+    } });
+    const first = pipeline.enqueueInbound(frame(textMessage({ msgid: 'FIRST' })));
+    const second = pipeline.enqueueInbound(frame(textMessage({ msgid: 'SECOND' })));
+    // One event-loop boundary, not a wall-clock sleep: the fake receipt is
+    // deliberately blocked. The second POST must already have happened.
+    await new Promise(setImmediate);
+    assert.equal(posts, 2, 'receipt wait must not occupy the conversation queue');
+    await Promise.all([first, second]);
+    assert.equal(polls, 0);
+    waiting.resolve();
+    await pipeline.waitForReceipts();
+    assert.equal(polls, scenario === 'concluded' ? 1 : 120);
+  });
+}
+
+for (const response of [{}, { delivery: { status: 'future_status' } },
+  { delivery: { status: 'delivered', Status: 'failed' } }]) {
+  test('3v unsupported receipt fails open: ' + JSON.stringify(response), async (t) => {
+    let posts = 0;
+    const logs = [];
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => { posts++; return response; }, log: (line) => logs.push(line),
+    } });
+    const input = frame(textMessage({ msgid: 'LEGACY' }));
+    await pipeline.enqueueInbound(input);
+    await pipeline.enqueueInbound(input);
+    assert.equal(posts, 1);
+    assert.equal(pipeline.stats().seen, 1);
+    assert.ok(!logs.some((line) => line.startsWith('LOST')));
+  });
+}
+
+test('3v missing receipts endpoint fails open without loss or replay POST', async (t) => {
+  let posts = 0, polls = 0;
+  const logs = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'legacy' } }; },
+    getReceipt: async () => { polls++; throw Object.assign(new Error('receipt lookup HTTP 404'), { status: 404 }); },
+    receiptSleep: async () => {}, log: (line) => logs.push(line),
+  } });
+  const input = frame(textMessage({ msgid: 'NO_ENDPOINT' }));
+  await pipeline.enqueueInbound(input);
+  if (pipeline.waitForReceipts) await pipeline.waitForReceipts();
+  await pipeline.enqueueInbound(input);
+  assert.equal(pipeline.stats().seen, 1);
+  assert.equal(posts, 1);
+  assert.equal(polls, 1);
+  assert.ok(!logs.some((line) => line.startsWith('LOST')));
+});
+
+test('3v held delivery expires in time even with a wedged lookup', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const logs = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    heldDeliveryTtlMs: 1000,
+    postInbound: async () => ({ delivery: { status: 'pending', receipt_id: 'wedged' } }),
+    getReceipt: () => new Promise(() => {}), receiptSleep: async () => {}, log: (line) => logs.push(line),
+  } });
+  pipeline.enqueueInbound(frame(textMessage({ msgid: 'AGED_OUT' })));
+  await new Promise(setImmediate);
+  t.mock.timers.tick(1000);
+  assert.ok(logs.some((line) => line.startsWith('LOST') && line.includes('aged out') && line.includes('AGED_OUT')));
+  assert.equal(pipeline.stats().held, 0);
+});
+
+test('3v capacity never refuses a live POST', async (t) => {
+  let posts = 0;
+  const logs = [];
+  const { pipeline } = makePipeline(t, { deps: {
+    heldDeliveryCap: 1,
+    postInbound: async () => ({ delivery: { status: 'pending', receipt_id: String(++posts) } }),
+    getReceipt: async (url) => ({ receipt_id: url.split('/').at(-1), state: 'pending' }),
+    receiptSleep: async () => {}, log: (line) => logs.push(line),
+  } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'CAP_FIRST' })));
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'CAP_NEXT' })));
+  assert.equal(posts, 2);
+  assert.ok(!logs.some((line) => line.startsWith('LOST')));
+  if (pipeline.waitForReceipts) await pipeline.waitForReceipts();
+  assert.equal(pipeline.stats().held, 1);
 });

@@ -6,11 +6,13 @@
 // and instantiates one pipeline; tests instantiate their own with
 // injected deps. All dedup/ordering state is per-instance.
 
+import { setTimeout as receiptDelay } from 'node:timers/promises';
+
 import { hydrateMessageMedia, mediaItemsForMessage, neutralizeMarkupBoundaries } from './media.js';
 
 // --- gc extmsg wire helpers (wire-compatible with internal/extmsg) ----------
 
-export async function postJSON(target, body) {
+export async function postJSON(target, body, signal) {
   const resp = await fetch(target, {
     method: 'POST',
     headers: {
@@ -21,7 +23,7 @@ export async function postJSON(target, body) {
     // Deadline so a stalled gc handler (connection accepted, no response)
     // aborts into the retry loop instead of pinning the per-conversation
     // queue forever behind a request that never settles.
-    signal: AbortSignal.timeout(15000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
   if (!resp.ok) {
     const text = (await resp.text().catch(() => '')).trim();
@@ -31,8 +33,8 @@ export async function postJSON(target, body) {
   }
   try {
     return await resp.json();
-  } catch (cause) {
-    throw Object.assign(new Error('gc returned an unreadable delivery receipt', { cause }), { unverified: true });
+  } catch {
+    return {}; // Older gc responses and schema drift fail open on HTTP success.
   }
 }
 
@@ -65,17 +67,19 @@ export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // undelivered message.
 const retryDelaysMs = [1000, 5000, 15000, 60000];
 
-export async function postJSONWithRetry(target, body, label, log = () => {}) {
+export async function postJSONWithRetry(target, body, label, log = () => {}, signal) {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await postJSON(target, body);
+      return await postJSON(target, body, signal);
     } catch (err) {
+      signal?.throwIfAborted();
       if (!isRetryable(err)) throw err;
       const delay = retryDelaysMs[Math.min(attempt, retryDelaysMs.length - 1)];
       if (attempt === 0 || attempt % 10 === 0) {
         log(`${label}: attempt ${attempt + 1} failed (${err.message}); retrying in ${delay / 1000}s`);
       }
-      await sleep(delay);
+      if (signal) await receiptDelay(delay, undefined, { signal, ref: false });
+      else await sleep(delay);
     }
   }
 }
@@ -118,7 +122,7 @@ function landedUnconfirmed(receipt) {
 function receiptVerdict(receipt) {
   const status = receiptKey(receipt.status);
   const members = Array.isArray(receipt.members) ? receipt.members.map(receiptMap) : [];
-  if (receipt[ambiguousReceipt] || members.some((m) => m[ambiguousReceipt])) return 'unverified';
+  if (receipt[ambiguousReceipt] || members.some((m) => m[ambiguousReceipt])) return 'unsupported';
   // Pending fan-out can already have delivered to a member; hold the original.
   if (status === 'pending') return 'pending';
   // A whole paste awaiting submit confirmation is held for its conclusion,
@@ -131,56 +135,36 @@ function receiptVerdict(receipt) {
     && members.some((m) => receiptKey(m.status) === 'pending'))) return 'pending';
   if (status === 'delivered') return receiptShortfall(receipt) ? 'failed' : 'delivered';
   if (status === 'noroute') return 'no_route';
-  return 'unverified';
+  return 'unsupported';
 }
 async function getReceiptJSON(target) {
   const response = await fetch(target, {
     headers: { 'X-GC-Request': 'gc-wecom-adapter' }, signal: AbortSignal.timeout(15000),
   });
-  if (!response.ok) throw new Error(`receipt lookup HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), { status: response.status });
   return response.json();
 }
 
-// A negative receipt gets three retries on the transport's existing ladder.
-// Pending is only polled. If its bounded follow-up cannot conclude, keep its
-// id for the next provider replay so that replay polls instead of re-posting.
-async function deliverInbound(delivery, log, post, get, pause) {
+// Only explicit negative delivery evidence permits a repost. Pending returns
+// immediately so its follow-up cannot occupy the conversation's delivery queue.
+async function deliverInbound(delivery, log, post, pause) {
   const { target, body, label } = delivery;
-  let receipt = delivery.receipt;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (!receipt) receipt = receiptMap(receiptMap(await post(target, body, label, log)).delivery);
-    let verdict = receiptVerdict(receipt);
-    if (verdict === 'pending') {
-      const id = receipt.receiptid;
-      if (typeof id !== 'string' || !id.trim()) throw new Error('pending delivery has no receipt id; outcome unverified');
-      delivery.receipt = receipt;
-      for (let poll = 0; poll < 120; poll++) {
-        await pause(5000);
-        let answer;
-        try { answer = receiptMap(await get(`${target}/receipts/${encodeURIComponent(id)}`)); }
-        catch (err) {
-          log(`${label}: receipt lookup failed (${JSON.stringify(err.message)}); still held`);
-          continue;
-        }
-        if (answer.receiptid !== id) throw new Error('receipt lookup returned a different or missing id; outcome unverified');
-        const state = receiptKey(answer.state);
-        if (state === 'pending') continue;
-        if (state === 'unknown') throw new Error('held receipt was forgotten; outcome unverified');
-        if (state !== 'concluded') throw new Error('receipt lookup returned an unknown state; outcome unverified');
-        receipt = receiptMap(answer.delivery);
-        if (receipt.receiptid !== id) throw new Error('concluded receipt id does not match; outcome unverified');
-        verdict = landedUnconfirmed(receipt) ? 'delivered' : receiptVerdict(receipt);
-        if (verdict !== 'pending') break;
-      }
-      if (verdict === 'pending') throw new Error('receipt remained pending after 120 polls; outcome unverified');
+  for (;;) {
+    delivery.abort?.signal.throwIfAborted();
+    if (!delivery.receipt) {
+      const response = receiptMap(await post(target, body, label, log, delivery.abort?.signal));
+      delivery.receipt = response[ambiguousReceipt] ? receiptMap(null) : receiptMap(response.delivery);
     }
-    if (verdict === 'delivered' || verdict === 'no_route') { delivery.receipt = undefined; return; }
-    if (verdict !== 'failed') throw new Error('gc returned an unsupported or contradictory receipt; outcome unverified');
+    const verdict = receiptVerdict(delivery.receipt);
+    if (verdict !== 'failed') return verdict;
     delivery.receipt = undefined;
-    if (attempt === 3) throw new Error('gc delivery failed after four attempts');
+    if (delivery.reposts === 3) {
+      throw Object.assign(new Error('gc delivery failed after four attempts'), { deliveryFailed: true });
+    }
+    const attempt = delivery.reposts ?? 0;
+    delivery.reposts = attempt + 1;
     log(`${label}: gc delivery not confirmed; retry ${attempt + 1}/3`);
-    await pause(retryDelaysMs[attempt]);
-    receipt = undefined;
+    await pause(retryDelaysMs[attempt], delivery.abort?.signal);
   }
 }
 
@@ -442,7 +426,8 @@ export function createInboundPipeline(deps) {
     quota = null,
     postInbound = postJSONWithRetry,
     getReceipt = getReceiptJSON,
-    receiptSleep = sleep,
+    receiptSleep = (ms, signal) => receiptDelay(ms, undefined, { signal, ref: false }),
+    heldDeliveryTtlMs = 10 * 60 * 1000,
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
     seenMsgIdCap = 2048,
@@ -453,11 +438,12 @@ export function createInboundPipeline(deps) {
   } = deps;
 
   // Dedup by msgid: reconnects can replay frames the bot already handled.
-  // An id is marked seen only AFTER gc reports delivered or no_route — marking earlier
+  // An id is marked seen after delivery, no_route, or an unsupported receipt. Marking earlier
   // would turn a transient gc failure into permanent message loss when the
   // SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
   // of a not-yet-accepted id.
-  const deliveryReservations = new Set(); // includes active POSTs and retained holds
+  const deliveryReservations = new Set(); // held envelopes only; never gates live POSTs
+  const receiptFollowUps = new Set();
   const heldDeliveries = new Map(); // every member id points at its original envelope
   const seenMsgIds = new Set();
   // Eviction bookkeeping (codex r5): seenMsgIdOrder is append-only with a
@@ -856,29 +842,113 @@ export function createInboundPipeline(deps) {
     return { promise, owner: false };
   }
 
-  async function settleDelivery(delivery) {
+  function finishDelivery(delivery, verdict, error) {
     const { target, body, label, msgids } = delivery;
-    for (const id of msgids) inflightMsgIds.add(id);
-    try {
-      if (!deliveryReservations.has(delivery) && deliveryReservations.size >= heldDeliveryCap) {
-        throw new Error('held delivery capacity reached; message was not posted');
-      }
-      deliveryReservations.add(delivery);
-      await deliverInbound(delivery, log, postInbound, getReceipt, receiptSleep);
-      for (const id of msgids) { heldDeliveries.delete(id); markSeen(id); }
+    clearTimeout(delivery.expiry);
+    delivery.abort?.abort();
+    deliveryReservations.delete(delivery);
+    for (const id of msgids) {
+      if (heldDeliveries.get(id) === delivery) heldDeliveries.delete(id);
+      if (!error) markSeen(id);
+    }
+    if (error) {
+      delivery.onFailure();
+      const grade = error.deliveryFailed ? 'LOST' : 'delivery rejected';
+      log(`${grade} ${JSON.stringify({ label, error: error.message, target, message: body.message })}`);
+    } else {
+      if (verdict === 'unsupported') log(`${label}: receipt unsupported; unverified, accepting HTTP success`);
       log(`${label} → gc (${body.message.conversation.kind} ${body.message.conversation.conversation_id})`);
-    } catch (err) {
-      for (const id of msgids) {
-        if (delivery.receipt) heldDeliveries.set(id, delivery);
-        else heldDeliveries.delete(id);
+    }
+  }
+
+  function expireDelivery(delivery) {
+    if (!deliveryReservations.has(delivery)) return;
+    const { target, body, label } = delivery;
+    log(`LOST ${JSON.stringify({ label, error: 'held delivery aged out; outcome unverified, not reposting', target, message: body.message })}`);
+    // Keep the normal bounded replay marker: expiry is not proof that a
+    // late send failed. The full envelope above is the hand-recovery record.
+    finishDelivery(delivery, 'expired');
+  }
+
+  async function followReceipt(delivery) {
+    for (let poll = 0; poll < 120 && deliveryReservations.has(delivery); poll++) {
+      await receiptSleep(5000, delivery.abort.signal);
+      if (!deliveryReservations.has(delivery)) return;
+      const id = delivery.receipt.receiptid;
+      // No usable id or a concluded-but-pending answer stays held until
+      // expiry. Neither is permission to POST another copy.
+      if (typeof id !== 'string' || !id.trim()) return;
+      let answer;
+      try {
+        answer = receiptMap(await getReceipt(`${delivery.target}/receipts/${encodeURIComponent(id)}`));
+      } catch (err) {
+        if (!deliveryReservations.has(delivery)) return;
+        if (err.status !== undefined) {
+          log(`${delivery.label}: receipt endpoint unavailable (${err.status}); failing open`);
+          finishDelivery(delivery, 'unsupported');
+          return;
+        }
+        log(`${delivery.label}: receipt lookup failed (${JSON.stringify(err.message)}); still held`);
+        continue;
       }
-      // Pending keeps its original help/context with the held envelope. A
-      // known failed attempt restores that context for a future delivery.
-      if (!delivery.receipt) delivery.onFailure();
-      log(`LOST ${JSON.stringify({ label, error: err.message, target, message: body.message })}`);
+      if (!deliveryReservations.has(delivery)) return;
+      const state = receiptKey(answer.state);
+      if (answer[ambiguousReceipt] || answer.receiptid !== id || !['pending', 'unknown', 'concluded'].includes(state)) {
+        finishDelivery(delivery, 'unsupported');
+        return;
+      }
+      if (state === 'pending') continue;
+      if (state === 'unknown') {
+        log(`${delivery.label}: held receipt forgotten; outcome unverified, retained until expiry`);
+        return;
+      }
+      const receipt = receiptMap(answer.delivery);
+      if (receipt.receiptid !== id) {
+        finishDelivery(delivery, 'unsupported');
+        return;
+      }
+      let verdict = landedUnconfirmed(receipt) ? 'delivered' : receiptVerdict(receipt);
+      if (verdict === 'pending') return; // Concluded records never change; do not poll again.
+      if (verdict === 'failed') {
+        delivery.receipt = receipt;
+        verdict = await deliverInbound(delivery, log, postInbound, receiptSleep);
+        if (!deliveryReservations.has(delivery)) return;
+        if (verdict === 'pending') continue; // Follow the new recovery receipt.
+      }
+      finishDelivery(delivery, verdict);
+      return;
+    }
+    // The poll budget is bounded independently of provider replay. The
+    // expiry timer retires the hold even if a lookup never returns.
+  }
+
+  function holdDelivery(delivery) {
+    if (deliveryReservations.size >= heldDeliveryCap) {
+      log(`${delivery.label}: held delivery capacity reached after POST; failing open`);
+      finishDelivery(delivery, 'unsupported');
+      return;
+    }
+    deliveryReservations.add(delivery);
+    for (const id of delivery.msgids) heldDeliveries.set(id, delivery);
+    delivery.abort = new AbortController();
+    delivery.expiry = setTimeout(() => expireDelivery(delivery), heldDeliveryTtlMs);
+    delivery.expiry.unref?.();
+    const follow = followReceipt(delivery).catch((err) => {
+      if (deliveryReservations.has(delivery)) finishDelivery(delivery, '', err);
+    }).finally(() => receiptFollowUps.delete(follow));
+    receiptFollowUps.add(follow);
+  }
+
+  async function settleDelivery(delivery) {
+    for (const id of delivery.msgids) inflightMsgIds.add(id);
+    try {
+      const verdict = await deliverInbound(delivery, log, postInbound, receiptSleep);
+      if (verdict === 'pending') holdDelivery(delivery);
+      else finishDelivery(delivery, verdict);
+    } catch (err) {
+      finishDelivery(delivery, '', err);
     } finally {
-      if (!delivery.receipt) deliveryReservations.delete(delivery);
-      for (const id of msgids) inflightMsgIds.delete(id);
+      for (const id of delivery.msgids) inflightMsgIds.delete(id);
     }
   }
 
@@ -905,13 +975,12 @@ export function createInboundPipeline(deps) {
     // sweep.
     const cleanups = [];
     try {
-      // A replay may have different batch boundaries. Resolve each original
-      // held envelope once, then exclude all its members from this new batch.
+      // A replay may have different batch boundaries. Background follow-up
+      // owns each held envelope; exclude all its members from this new batch.
       const followed = new Set();
       const held = new Set(entries.map((entry) => heldDeliveries.get(entry.frame?.body?.msgid)).filter(Boolean));
       for (const delivery of held) {
         for (const id of delivery.msgids) followed.add(id);
-        await settleDelivery(delivery);
       }
       // Per-member admission + rendering. seenInBatch collapses duplicate
       // msgids WITHIN the batch (an SDK replay landing inside the window
@@ -1251,7 +1320,9 @@ export function createInboundPipeline(deps) {
     enqueueInbound,
     flushAll,
     // Introspection for tests and diagnostics only — not a public surface.
+    waitForReceipts: () => Promise.all([...receiptFollowUps]),
     stats: () => ({
+      held: deliveryReservations.size,
       hydrations: hydrations.size,
       inflight: inflightMsgIds.size,
       seen: seenMsgIds.size,
