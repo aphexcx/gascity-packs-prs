@@ -770,6 +770,25 @@ func (l *inboundLiveness) notePendingThreadLocked(channel, teamID, threadTS, old
 	return true
 }
 
+// admitListingHoldLocked puts a listing hold into a full hold set whose
+// newer entries are all listing holds: the newest MESSAGE hold anywhere in
+// the set gives way (its message has its stretch), since a listing hold is
+// a thread's only owner (the lane's codex rounds 10 and 11: a refused
+// listing hold left the thread with no owner at all; the first fix looked
+// for a victim above the hold's place only). A set with no message hold
+// takes nothing more. Caller holds l.mu.
+func (l *inboundLiveness) admitListingHoldLocked(ch *livenessChannel, ts string) {
+	for j := len(ch.PendingTS) - 1; j >= 0; j-- {
+		if !ch.PendingMessages[ch.PendingTS[j]].Listing {
+			delete(ch.PendingMessages, ch.PendingTS[j])
+			rest := slices.Delete(ch.PendingTS, j, j+1)
+			i, _ := slices.BinarySearchFunc(rest, ts, compareSlackTS)
+			ch.PendingTS = slices.Insert(rest, i, ts)
+			return
+		}
+	}
+}
+
 // holdThreadListingLocked keeps a thread the pending set could not take
 // reachable when a probe could not read it through either — its read
 // failed, or its replies outran the page or the replay (gf-d7b finding 3m):
@@ -1207,20 +1226,11 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted, listing 
 			if victim >= 0 {
 				delete(ch.PendingMessages, ch.PendingTS[victim])
 				ch.PendingTS = slices.Insert(slices.Delete(ch.PendingTS, victim, victim+1), i, ts)
+			} else if listing {
+				l.admitListingHoldLocked(ch, ts)
 			}
 		} else if listing {
-			// A listing hold newer than every held message still gets in:
-			// it is a thread's only owner, and a message hold's message has
-			// its stretch — the newest message hold gives way (the lane's
-			// codex round 10: a refused listing hold left the thread with
-			// no owner at all).
-			for j := len(ch.PendingTS) - 1; j >= 0; j-- {
-				if !ch.PendingMessages[ch.PendingTS[j]].Listing {
-					delete(ch.PendingMessages, ch.PendingTS[j])
-					ch.PendingTS = append(slices.Delete(ch.PendingTS, j, j+1), ts)
-					break
-				}
-			}
+			l.admitListingHoldLocked(ch, ts)
 		}
 	}
 	if slices.Contains(ch.PendingTS, ts) {
