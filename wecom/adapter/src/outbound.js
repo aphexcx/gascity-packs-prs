@@ -322,11 +322,11 @@ export function createAttemptJournal({
       }
     }
     // The newest surviving write wins (gf-c7n finding 3j). persist fsyncs
-    // the tmp file BEFORE the two renames, so a valid tmp beside a valid
-    // main file is one write NEWER than it — a crash between writing tmp
-    // and rotating main — and that write may be a send attempt. A partial
-    // tmp (a crash mid-write) is not a generation; the next persist
-    // overwrites it.
+    // the tmp file BEFORE the two renames and discards it when the write
+    // fails, so a valid tmp beside a valid main file is one write NEWER
+    // than it — the process died between writing tmp and rotating main —
+    // and that write may be a send attempt. A partial tmp (the process died
+    // mid-write) is not a generation; the next persist overwrites it.
     if (loaded && loadedFrom === filePath) {
       const newer = tryLoad(`${filePath}.tmp`);
       if (newer instanceof Map) {
@@ -394,19 +394,34 @@ export function createAttemptJournal({
     // un-flushed data is atomically nothing after a power loss.
     const fd = fs.openSync(tmp, 'w', 0o600);
     try {
-      fs.writeFileSync(fd, payload);
-      fs.fsyncSync(fd);
-    } finally {
-      fs.closeSync(fd);
-    }
-    // Rotate the previous good generation to .bak, land the new one, and
-    // fsync the directory so both renames are durable.
-    try {
-      fs.renameSync(filePath, `${filePath}.bak`);
+      try {
+        fs.writeFileSync(fd, payload);
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      // Rotate the previous good generation to .bak, land the new one, and
+      // fsync the directory so both renames are durable.
+      try {
+        fs.renameSync(filePath, `${filePath}.bak`);
+      } catch (err) {
+        if (err.code !== 'ENOENT') throw err;
+      }
+      fs.renameSync(tmp, filePath);
     } catch (err) {
-      if (err.code !== 'ENOENT') throw err;
+      // A failed write leaves no snapshot behind (gf-c7n finding 3j, the
+      // lane's codex round 2): the caller rolls its mutation back, and a
+      // surviving tmp would load at the next startup as the newest write —
+      // a state that never happened, possibly without a key this one
+      // dropped at capacity. The tmp a startup finds is only ever a write
+      // that was in flight when the process died.
+      try {
+        fs.unlinkSync(tmp);
+      } catch (unlinkErr) {
+        if (unlinkErr.code !== 'ENOENT') log(`outbound attempt journal: could not discard the failed write's snapshot ${tmp} (${unlinkErr.code ?? scrubErrorMessage(unlinkErr.message)})`);
+      }
+      throw err;
     }
-    fs.renameSync(tmp, filePath);
     const dirFd = fs.openSync(path.dirname(filePath), 'r');
     try {
       fs.fsyncSync(dirFd);

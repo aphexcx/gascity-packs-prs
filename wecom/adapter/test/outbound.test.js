@@ -2621,6 +2621,39 @@ test('a valid tmp generation newer than the main file is the one that loads', as
   assert.equal(j2.get('key-tmp-newer')?.deliveryUnknown, undefined, 'nothing was lost, so nothing is marked');
 });
 
+// The lane's codex round 2 on 98e2456c (P2): a valid tmp can also survive a
+// FAILED persist — fsync or the first rename throws, record() rolls its
+// in-memory mutation back, and the snapshot of the write that never
+// happened stays beside the intact main file. At capacity that snapshot
+// may have dropped a sent key; preferring it at the next startup would
+// discard that key's retry protection. A failed write now leaves no tmp
+// behind, so the tmp a startup finds is only ever a write in flight.
+test('a failed persist leaves no tmp snapshot behind, so a restart keeps the intact main journal', async (t) => {
+  const dir = tmpDir(t);
+  const journalPath = path.join(dir, 'attempts.json');
+  const j1 = createAttemptJournal({ filePath: journalPath, cap: 1, log: () => {} });
+  j1.record('key-sent', { fingerprint: { digest: 'd1' }, mediaId: 'M_1', sendAttempted: true });
+
+  // The next write's fsync fails: record() throws and rolls back; at cap 1
+  // the snapshot it wrote would have held only the new key.
+  const realFsync = fs.fsyncSync;
+  const mocked = t.mock.method(fs, 'fsyncSync', (fd) => {
+    mocked.mock.restore();
+    const err = new Error('EIO: i/o error, fsync');
+    err.code = 'EIO';
+    throw err;
+  });
+  assert.throws(() => j1.record('key-new', { fingerprint: { digest: 'd2' } }), /refusing to send without durable delivery state/);
+  assert.equal(fs.fsyncSync, realFsync, 'the injected failure fired once');
+  assert.equal(j1.get('key-sent')?.sendAttempted, true, 'the failed write was rolled back in memory');
+  assert.equal(fs.existsSync(`${journalPath}.tmp`), false, 'the failed write\'s snapshot is discarded');
+
+  const j2 = createAttemptJournal({ filePath: journalPath, log: () => {} });
+  assert.equal(j2.isDegraded(), false);
+  assert.equal(j2.get('key-sent')?.sendAttempted, true, 'the intact main journal is what loads');
+  assert.equal(j2.get('key-new'), undefined, 'the write that never happened is not resurrected');
+});
+
 // --- seeded receipt pinning (finding 6) ---------------------------------------------
 
 // Codex jg-d0xr finding 6: the just-settled media receipt sat in the
