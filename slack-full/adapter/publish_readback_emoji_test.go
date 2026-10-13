@@ -86,6 +86,11 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		{name: "an s3 path segment that is an emoji name is text", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket//x", wantErr: true},
 		{name: "a changed s3 path segment is refused", posted: "see s3://bucket/:id:/x", stored: "see s3://bucket/:ok:/x", wantErr: true},
 		{name: "an s3 URI beside an emoji", posted: "see s3://bucket/:id:/x 🎉", stored: "see s3://bucket/:id:/x :tada:"},
+		// Round 4 (the gf-pu2 packs Opus read's minor): a kept token's closing
+		// colon opens the shortcode glued right after it.
+		{name: "an emoji glued after a clock time", posted: "Done at 10:30🎉", stored: "Done at 10:30:tada:"},
+		{name: "an emoji glued after a key:value pair", posted: "state key:value✅", stored: "state key:value:white_check_mark:"},
+		{name: "a changed clock time before a glued emoji is refused", posted: "Done at 10:30🎉", stored: "Done at 10:45:tada:", wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

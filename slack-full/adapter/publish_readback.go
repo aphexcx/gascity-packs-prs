@@ -265,16 +265,7 @@ func slackFoldEmoji(text string) string {
 // holds no verbatim span.
 func slackFoldEmojiProse(text string) string {
 	text = slackKeycapSequence.ReplaceAllString(text, "")
-	// Every `:name:` token whose name is a Slack standard emoji name goes,
-	// wherever it stands; every other one stays as typed. Matches are
-	// non-overlapping, so a run such as `:+1::skin-tone-4:` folds token by
-	// token and a kept token's closing colon is not re-read.
-	text = slackEmojiShortcode.ReplaceAllStringFunc(text, func(token string) string {
-		if slackIsStandardEmojiName(token[1 : len(token)-1]) {
-			return ""
-		}
-		return token
-	})
+	text = slackFoldShortcodes(text)
 	runes := []rune(text)
 	out := make([]rune, 0, len(runes))
 	for i, r := range runes {
@@ -291,6 +282,37 @@ func slackFoldEmojiProse(text string) string {
 		}
 	}
 	return string(out)
+}
+
+// slackFoldShortcodes removes every `:name:` token whose name is a Slack
+// standard emoji name, wherever it stands, and keeps every other one as
+// typed. A kept token's closing colon is re-read as the next token's
+// opening colon: in `Done at 10:30:tada:` the first shortcode-shaped token
+// is `:30:` (not an emoji name) and the `:tada:` glued after it begins at
+// that token's closing colon, so a scan that consumed it compared the posted
+// `Done at 10:30` to the stored `Done at 10:30:tada:` and refused a
+// delivered message (the gf-pu2 packs Opus read's minor; fail-closed, never
+// a false success). A run such as `:+1::skin-tone-4:` still folds token by
+// token: a dropped token is consumed whole, including its closing colon.
+func slackFoldShortcodes(text string) string {
+	var out strings.Builder
+	pos := 0
+	for pos < len(text) {
+		loc := slackEmojiShortcode.FindStringSubmatchIndex(text[pos:])
+		if loc == nil {
+			break
+		}
+		start, end := pos+loc[0], pos+loc[1]
+		out.WriteString(text[pos:start])
+		if slackIsStandardEmojiName(text[pos+loc[2] : pos+loc[3]]) {
+			pos = end
+			continue
+		}
+		out.WriteString(text[start : end-1])
+		pos = end - 1
+	}
+	out.WriteString(text[pos:])
+	return out.String()
 }
 
 // isEmojiSequenceGlue reports the characters that build an emoji sequence
