@@ -119,7 +119,8 @@ def closure(all_beads, root_id):
                     changed = True
     # Sorted, not set order: the manifest hashes beads.json, so two collects of
     # the same run have to produce byte-identical output.
-    return [by_id[i] for i in sorted(known)]
+    return [{**by_id[i], "profile_role": "hierarchy" if i in hierarchy else "context"}
+            for i in sorted(known)]
 
 
 def project_slug(path):
@@ -261,7 +262,7 @@ def main():
     }
 
     # ---- beads (rig store) ----
-    all_beads = bd_json(["list", "--all", "--flat", "--json"], cwd=rig)
+    all_beads = bd_json(["list", "--all", "--limit", "0", "--flat", "--json"], cwd=rig)
     run_beads = closure(all_beads, args.root)
     run_beads.sort(key=lambda b: b.get("created_at") or "")
     with open(os.path.join(out, "beads.json"), "w") as f:
@@ -284,7 +285,7 @@ def main():
     session_beads, sess_ids = [], set()
     try:
         city_beads = bd_json(
-            ["list", "--all", "--include-infra", "--flat", "--json"], cwd=city)
+            ["list", "--all", "--limit", "0", "--include-infra", "--flat", "--json"], cwd=city)
         prefix = f"agent:{rig_name}/"
         for b in city_beads:
             labs = b.get("labels") or []

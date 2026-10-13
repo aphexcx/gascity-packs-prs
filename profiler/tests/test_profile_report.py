@@ -405,3 +405,14 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ContextStepTests(unittest.TestCase):
+    def test_old_context_does_not_inflate_workflow_wait(self):
+        beads = closed_run_beads()
+        baseline = report.analyze(ROOT, beads, [])
+        beads.append(bead("source", profile_role="context",
+                          created_at="2026-06-01T00:00:00Z", started_at="2026-07-01T10:00:00Z",
+                          closed_at="2026-07-01T11:00:00Z"))
+        result = report.analyze(ROOT, beads, [])
+        self.assertEqual(result["steps"], baseline["steps"])

@@ -207,7 +207,8 @@ def analyze(root_id, beads, session_beads, usage_facts=None, usage_malformed=0):
 
     steps = []
     for b in beads:
-        if b["id"] == root_id or b.get("issue_type") in ("convoy",):
+        if (b["id"] == root_id or b.get("issue_type") in ("convoy",)
+                or b.get("profile_role") == "context"):
             continue
         created, started, closed = pt(b.get("created_at")), pt(b.get("started_at")), pt(b.get("closed_at"))
         # Started-but-unclosed steps stay in: they are what an in-flight run has

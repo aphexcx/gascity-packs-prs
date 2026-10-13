@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
@@ -533,3 +534,31 @@ class CollectFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnlimitedCaptureTests(unittest.TestCase):
+    def test_both_queries_request_every_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = bead(ROOT, created_at="2026-07-01T10:00:00Z", closed_at="2026-07-01T11:00:00Z")
+            rig = [bead(f"unrelated-{i}") for i in range(55)] + [root]
+            sessions = [bead(f"session-{i}", issue_type="session", labels=["agent:rig/worker"],
+                             created_at="2026-07-01T10:05:00Z") for i in range(56)]
+            queries = []
+            def fake_bd(args, cwd):
+                queries.append(args)
+                rows = sessions if "--include-infra" in args else rig
+                return rows if "--limit" in args and args[args.index("--limit") + 1] == "0" else rows[:50]
+            argv = ["collect", ROOT, "--rig", tmp + "/rig", "--city", tmp + "/city", "--out", tmp + "/out"]
+            with mock.patch.object(collect, "bd_json", side_effect=fake_bd), mock.patch.object(sys, "argv", argv):
+                collect.main()
+            captured = json.loads(pathlib.Path(tmp, "out", "session-beads.json").read_text())
+            self.assertEqual(len(captured), 56)
+            self.assertEqual(len(queries), 2)
+
+    def test_closure_marks_context_without_mutating_source(self):
+        source = bead("source", created_at="2026-06-01T00:00:00Z")
+        run = bead(ROOT, metadata={"gc.source_bead_id": "source"})
+        captured = {b["id"]: b for b in collect.closure([source, run], ROOT)}
+        self.assertEqual(captured["source"].get("profile_role"), "context")
+        self.assertEqual(captured[ROOT].get("profile_role"), "hierarchy")
+        self.assertNotIn("profile_role", source)
