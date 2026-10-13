@@ -66,30 +66,43 @@ def bd_json(args, cwd):
 
 
 def closure(all_beads, root_id):
-    """Beads reachable from root via linkage metadata or dependency edges."""
+    """Beads reachable from root via linkage metadata or dependency edges.
+
+    Two kinds of reach. A bead that names a member of the run (linkage metadata
+    pointing at it, or a dependency on it) is IN the run's hierarchy and is
+    expanded from in turn: steps, children, a child run sourced from one of
+    this run's own beads. A bead a member names OUT of the hierarchy (the
+    source issue a run was cut from, an input convoy, a dependency) is captured
+    as context but is a leaf: nothing is expanded from it. Expanding from it
+    followed run A -> shared source issue -> run B -> B's steps, so a sibling
+    run's steps and usage landed in A's report.
+    """
     by_id = {b["id"]: b for b in all_beads}
     if root_id not in by_id:
         raise SystemExit(f"root bead {root_id} not found in rig store")
-    known = {root_id}
+    hierarchy = {root_id}  # expanded from
+    known = {root_id}      # hierarchy plus the leaves it references
     changed = True
     while changed:
         changed = False
         for b in all_beads:
-            if b["id"] in known:
+            if b["id"] in hierarchy:
                 continue
             md = b.get("metadata") or {}
-            linked = any(md.get(k) in known for k in LINK_KEYS)
+            linked = any(md.get(k) in hierarchy for k in LINK_KEYS)
             if not linked:
                 for d in b.get("dependencies") or []:
                     other = d.get("depends_on_id") or d.get("id")
-                    if other in known:
+                    if other in hierarchy:
                         linked = True
                         break
             if linked:
+                hierarchy.add(b["id"])
                 known.add(b["id"])
                 changed = True
-        # reverse edges: beads already known may link OUT to unknown beads
-        for bid in list(known):
+        # reverse edges: hierarchy beads may link OUT to beads outside it —
+        # captured as leaves, never expanded from.
+        for bid in list(hierarchy):
             b = by_id.get(bid)
             if not b:
                 continue
@@ -184,6 +197,28 @@ def find_transcript(work_dir, session_key, session_id=None, w0=None, w1=None):
             except OSError:
                 continue
     return None, None
+
+
+def usage_fact_belongs(fact, ids, sess_ids, w0, w1):
+    """Whether a usage fact (gascity usage.Fact) is this run's.
+
+    A fact that names a run id is that run's and no other's: a matching session
+    never overrides it (a reused worker's facts for its next run used to land
+    in the previous run's report). A fact that names only a session is this
+    run's only while the session was serving it — bounded to the run's window
+    by the fact's own `at` (unix millis). A session-only fact without one
+    cannot be placed and is not captured.
+    """
+    run_id = fact.get("run_id")
+    if run_id:
+        return run_id in ids
+    if fact.get("session_id") not in sess_ids:
+        return False
+    at = fact.get("at")
+    if not isinstance(at, (int, float)) or isinstance(at, bool):
+        return False
+    when = datetime.fromtimestamp(at / 1000, tz=timezone.utc)
+    return w0 <= when <= w1
 
 
 def sha256(path):
@@ -320,9 +355,9 @@ def main():
     # session_id are the only bead-id-valued keys on it; step_id holds a formula
     # step id (gc.step_id), never a bead id, so it cannot be matched against the
     # closure. profile_report.py joins step_id through each step bead's
-    # gc.step_id metadata instead.
+    # gc.step_id metadata instead. Membership: usage_fact_belongs.
     usage_path = os.path.join(city, ".gc", "usage.jsonl")
-    n_use = 0
+    n_use, n_unplaced = 0, 0
     try:
         with open(usage_path) as f, open(os.path.join(out, "usage.window.jsonl"), "w") as uo:
             for line in f:
@@ -330,10 +365,15 @@ def main():
                     u = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if u.get("run_id") in ids or u.get("session_id") in sess_ids:
+                if usage_fact_belongs(u, ids, sess_ids, w0, w1):
                     uo.write(line)
                     n_use += 1
+                elif not u.get("run_id") and u.get("session_id") in sess_ids and u.get("at") is None:
+                    n_unplaced += 1
         manifest["sources"]["usage"] = {"count": n_use}
+        if n_unplaced:
+            manifest["gaps"].append(
+                f"{n_unplaced} session-only usage fact(s) carry no timestamp and could not be placed in the run's window")
     except FileNotFoundError:
         manifest["gaps"].append("usage.jsonl not found")
 

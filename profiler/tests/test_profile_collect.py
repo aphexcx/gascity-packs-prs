@@ -93,6 +93,38 @@ class ClosureTests(unittest.TestCase):
         beads = [bead(ROOT), bead("ga-x", metadata=None, dependencies=None)]
         self.assertEqual([b["id"] for b in collect.closure(beads, ROOT)], [ROOT])
 
+    def test_a_shared_source_reference_does_not_pull_in_a_sibling_run(self) -> None:
+        # gf-c7n finding 3k (the gf-xid vs-main gate's Major at
+        # profile_collect.py:81): run A and run B both name the same source
+        # issue. Following A -> issue -> B -> B's steps put B's steps (and
+        # their usage) in A's report. A reference the run makes OUT of its
+        # hierarchy is captured as context, never expanded from.
+        beads = [
+            bead(ROOT, metadata={"gc.source_bead_id": "ga-issue"}),
+            bead("ga-issue", title="the shared source issue",
+                 dependencies=[{"depends_on_id": "ga-issue-dep"}]),
+            bead("ga-issue-dep"),
+            bead("ga-s1", metadata={"gc.root_bead_id": ROOT}),
+            bead("ga-run-b", metadata={"gc.source_bead_id": "ga-issue"}),
+            bead("ga-run-b-step", metadata={"gc.root_bead_id": "ga-run-b"}),
+            bead("ga-run-c", dependencies=[{"depends_on_id": "ga-issue"}]),
+            bead("ga-run-c-step", metadata={"gc.parent_bead_id": "ga-run-c"}),
+        ]
+        got = {b["id"] for b in collect.closure(beads, ROOT)}
+        self.assertEqual(got, {ROOT, "ga-issue", "ga-s1"})
+
+    def test_a_child_run_sourced_from_this_runs_own_step_is_part_of_it(self) -> None:
+        # The hierarchy is what a bead names INTO the run: a run whose source
+        # is one of this run's own steps is this run's child, not a sibling.
+        beads = [
+            bead(ROOT),
+            bead("ga-s1", metadata={"gc.root_bead_id": ROOT}),
+            bead("ga-child-run", metadata={"gc.source_bead_id": "ga-s1"}),
+            bead("ga-child-step", metadata={"gc.root_bead_id": "ga-child-run"}),
+        ]
+        got = {b["id"] for b in collect.closure(beads, ROOT)}
+        self.assertEqual(got, {ROOT, "ga-s1", "ga-child-run", "ga-child-step"})
+
     def test_closure_order_is_deterministic(self) -> None:
         # beads.json is hashed in the manifest, so set-iteration order will not do.
         beads = [bead(ROOT), bead("ga-b", metadata={"gc.root_bead_id": ROOT}),
@@ -195,6 +227,52 @@ class SessionKeyContainmentTests(unittest.TestCase):
             self.assertIsNone(method)
 
 
+class UsageFactMembershipTests(unittest.TestCase):
+    """usage_fact_belongs(): which usage facts are this run's (gf-c7n finding 3k,
+    the gf-xid vs-main gate's Major at profile_collect.py:333). A fact that names
+    a run id is that run's and no other's; a fact that names only a session is
+    this run's only while the session was serving it — a reused worker's later
+    facts for another run, or its facts from before the run, are not."""
+
+    W0 = collect.parse_ts("2026-07-01T09:58:00Z")
+    W1 = collect.parse_ts("2026-07-01T12:02:00Z")
+    IDS = {ROOT, "ga-s1"}
+    SESS = {"ga-sess1"}
+
+    def at(self, ts):
+        return int(collect.parse_ts(ts).timestamp() * 1000)
+
+    def belongs(self, fact):
+        return collect.usage_fact_belongs(fact, self.IDS, self.SESS, self.W0, self.W1)
+
+    def test_a_fact_naming_this_run_belongs(self) -> None:
+        self.assertTrue(self.belongs({"run_id": ROOT}))
+        self.assertTrue(self.belongs({"run_id": "ga-s1", "session_id": "ga-other"}))
+
+    def test_an_explicit_other_run_id_wins_over_a_matching_session(self) -> None:
+        # The gate's reproduction: a run B fact on a reused worker added $12 to
+        # run A's implement step.
+        self.assertFalse(self.belongs({"run_id": "ga-run-b", "session_id": "ga-sess1",
+                                       "at": self.at("2026-07-01T10:30:00Z")}))
+
+    def test_a_session_only_fact_belongs_inside_the_runs_window(self) -> None:
+        self.assertTrue(self.belongs({"session_id": "ga-sess1", "at": self.at("2026-07-01T10:30:00Z")}))
+        self.assertTrue(self.belongs({"session_id": "ga-sess1", "at": self.at("2026-07-01T09:58:00Z")}))
+        self.assertTrue(self.belongs({"session_id": "ga-sess1", "at": self.at("2026-07-01T12:02:00Z")}))
+
+    def test_a_session_only_fact_outside_the_window_is_not_this_runs(self) -> None:
+        self.assertFalse(self.belongs({"session_id": "ga-sess1", "at": self.at("2026-07-01T13:00:00Z")}))
+        self.assertFalse(self.belongs({"session_id": "ga-sess1", "at": self.at("2026-07-01T09:00:00Z")}))
+
+    def test_a_session_only_fact_without_a_timestamp_cannot_be_placed(self) -> None:
+        self.assertFalse(self.belongs({"session_id": "ga-sess1"}))
+        self.assertFalse(self.belongs({"session_id": "ga-sess1", "at": "soon"}))
+
+    def test_a_fact_naming_neither_is_not_this_runs(self) -> None:
+        self.assertFalse(self.belongs({"session_id": "ga-other", "at": self.at("2026-07-01T10:30:00Z")}))
+        self.assertFalse(self.belongs({}))
+
+
 class CollectEndToEndTests(unittest.TestCase):
     """A real collect run against a fixture rig + city, with gc stubbed."""
 
@@ -258,9 +336,17 @@ class CollectEndToEndTests(unittest.TestCase):
                         "input_tokens": 1000, "output_tokens": 200,
                         "cost_usd_estimate": 0.5, "idempotency_key": "k1"}),
             json.dumps({"kind": "compute", "session_id": "ga-sess1", "wall_seconds": 60.0,
+                        "at": 1782900000000,  # 2026-07-01T10:40:00Z, inside the window
                         "idempotency_key": "k2"}),
             json.dumps({"kind": "model", "run_id": "ga-somebody-else", "input_tokens": 9,
                         "idempotency_key": "k3"}),
+            # The reused worker's fact for ANOTHER run, inside this run's window:
+            # its explicit run id wins over the session match.
+            json.dumps({"kind": "model", "run_id": "ga-somebody-else", "session_id": "ga-sess1",
+                        "cost_usd_estimate": 12.0, "at": 1782900600000, "idempotency_key": "k4"}),
+            # The same worker's session-only fact from after the run closed.
+            json.dumps({"kind": "compute", "session_id": "ga-sess1", "wall_seconds": 600.0,
+                        "at": 1782910000000, "idempotency_key": "k5"}),
             "{ not json either",
         ]) + "\n", encoding="utf-8")
 
