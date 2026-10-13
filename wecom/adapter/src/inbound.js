@@ -943,6 +943,7 @@ export function createInboundPipeline(deps) {
         if (verdict === 'pending') {
           delivery.expiry = setTimeout(() => expireDelivery(delivery), heldDeliveryTtlMs);
           delivery.expiry.unref?.();
+          poll = -1; // Each replacement receipt gets the full lookup budget.
           continue; // The new ambiguous receipt gets its own bounded hold.
         }
       }

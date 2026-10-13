@@ -2141,3 +2141,22 @@ test('3v city-not-running receipt 404 retains recovery through the real lookup h
   assert.equal(polls, 2);
   assert.equal(pipeline.stats().seen, 1);
 });
+
+test('3v replacement pending receipt receives a full polling budget', async (t) => {
+  let posts = 0, oldPolls = 0, newPolls = 0;
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => ({ delivery: { status: ++posts < 3 ? 'pending' : 'delivered', receipt_id: posts === 1 ? 'old' : 'new' } }),
+    receiptSleep: async () => {},
+    getReceipt: async (url) => {
+      const id = url.split('/').at(-1);
+      const concluded = id === 'old' ? ++oldPolls === 119 : ++newPolls === 2;
+      return { receipt_id: id, state: concluded ? 'concluded' : 'pending', delivery: { receipt_id: id, status: 'failed' } };
+    },
+  } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'REPLACEMENT_BUDGET' })));
+  await pipeline.waitForReceipts();
+  assert.equal(posts, 3, 'the replacement failure must use the remaining recovery attempt');
+  assert.equal(newPolls, 2);
+  assert.equal(pipeline.stats().held, 0);
+  assert.equal(pipeline.stats().seen, 1);
+});
