@@ -1877,3 +1877,48 @@ test('a held media replay polls its original envelope without another download',
   await pipeline.enqueueInbound(frame(msg));
   assert.equal(downloads, 1);
 });
+
+test('a forgotten held receipt stays unverified without a recovery POST', async (t) => {
+  let posts = 0, forgotten = false;
+  const { pipeline, logs } = makePipeline(t, {
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'held-expired' } }; },
+    deps: {
+      receiptSleep: async () => {},
+      getReceipt: async () => ({ receipt_id: 'held-expired', state: forgotten ? 'unknown' : 'pending' }),
+    },
+  });
+  const input = frame(textMessage({ msgid: 'EXPIRED' }));
+  await pipeline.enqueueInbound(input);
+  forgotten = true;
+  await pipeline.enqueueInbound(input);
+  assert.equal(posts, 1);
+  assert.equal(pipeline.stats().seen, 0);
+  assert.ok(logs.some((line) => /forgotten.*unverified/.test(line)));
+});
+
+test('held-envelope capacity refuses new POSTs until the original settles', async (t) => {
+  let posts = 0, concluded = false;
+  const { pipeline, logs } = makePipeline(t, {
+    postInbound: async () => { posts++; return posts === 1
+      ? { delivery: { status: 'pending', receipt_id: 'held-cap' } }
+      : { delivery: { status: 'delivered' } }; },
+    deps: {
+      heldDeliveryCap: 1,
+      receiptSleep: async () => {},
+      getReceipt: async () => ({ receipt_id: 'held-cap', state: concluded ? 'concluded' : 'pending',
+        delivery: { receipt_id: 'held-cap', status: 'delivered' } }),
+    },
+  });
+  const first = frame(textMessage({ msgid: 'CAP_1' }));
+  const second = frame(textMessage({ msgid: 'CAP_2' }));
+  await pipeline.enqueueInbound(first);
+  await pipeline.enqueueInbound(second);
+  assert.equal(posts, 1, 'capacity refuses before any ambiguous delivery is possible');
+  assert.equal(pipeline.stats().seen, 0);
+  assert.ok(logs.some((line) => /held delivery capacity/.test(line)));
+  concluded = true;
+  await pipeline.enqueueInbound(first);
+  await pipeline.enqueueInbound(second);
+  assert.equal(posts, 2);
+  assert.equal(pipeline.stats().seen, 2);
+});

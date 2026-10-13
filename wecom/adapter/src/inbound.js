@@ -165,7 +165,7 @@ async function deliverInbound(delivery, log, post, get, pause) {
         if (answer.receiptid !== id) throw new Error('receipt lookup returned a different or missing id; outcome unverified');
         const state = receiptKey(answer.state);
         if (state === 'pending') continue;
-        if (state === 'unknown') { verdict = 'failed'; break; }
+        if (state === 'unknown') throw new Error('held receipt was forgotten; outcome unverified');
         if (state !== 'concluded') throw new Error('receipt lookup returned an unknown state; outcome unverified');
         receipt = receiptMap(answer.delivery);
         if (receipt.receiptid !== id) throw new Error('concluded receipt id does not match; outcome unverified');
@@ -417,6 +417,8 @@ export function conversationKeyFor(chattypeOrKind, id) {
 //   hydrationsCap / hydrationsTtlMs
 //                 replay-cache bounds (defaults 512 / 30min; test knobs)
 //   seenMsgIdCap  seen-set bound (default 2048; test knob)
+//   heldDeliveryCap bounds unresolved envelopes by refusing new delivery
+//                 admissions at capacity (default 512; test knob)
 //   coalesceWindowMs
 //                 per-conversation burst-coalescing window (default
 //                 cfg.coalesceWindowMs, then 0 = disabled); frames for
@@ -444,6 +446,7 @@ export function createInboundPipeline(deps) {
     hydrationsCap = 512,
     hydrationsTtlMs = 30 * 60 * 1000,
     seenMsgIdCap = 2048,
+    heldDeliveryCap = 512,
     replyHelpOnce = true,
     now = Date.now,
     log = () => {},
@@ -454,6 +457,7 @@ export function createInboundPipeline(deps) {
   // would turn a transient gc failure into permanent message loss when the
   // SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
   // of a not-yet-accepted id.
+  const deliveryReservations = new Set(); // includes active POSTs and retained holds
   const heldDeliveries = new Map(); // every member id points at its original envelope
   const seenMsgIds = new Set();
   // Eviction bookkeeping (codex r5): seenMsgIdOrder is append-only with a
@@ -856,6 +860,10 @@ export function createInboundPipeline(deps) {
     const { target, body, label, msgids } = delivery;
     for (const id of msgids) inflightMsgIds.add(id);
     try {
+      if (!deliveryReservations.has(delivery) && deliveryReservations.size >= heldDeliveryCap) {
+        throw new Error('held delivery capacity reached; message was not posted');
+      }
+      deliveryReservations.add(delivery);
       await deliverInbound(delivery, log, postInbound, getReceipt, receiptSleep);
       for (const id of msgids) { heldDeliveries.delete(id); markSeen(id); }
       log(`${label} → gc (${body.message.conversation.kind} ${body.message.conversation.conversation_id})`);
@@ -869,6 +877,7 @@ export function createInboundPipeline(deps) {
       if (!delivery.receipt) delivery.onFailure();
       log(`LOST ${JSON.stringify({ label, error: err.message, target, message: body.message })}`);
     } finally {
+      if (!delivery.receipt) deliveryReservations.delete(delivery);
       for (const id of msgids) inflightMsgIds.delete(id);
     }
   }
