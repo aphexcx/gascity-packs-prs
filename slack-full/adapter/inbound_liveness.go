@@ -241,6 +241,13 @@ type livenessState struct {
 type originEntry struct {
 	source inboundOriginSource
 	at     time.Time
+	// eventID is the Slack event a live origin was noted from: its dedup
+	// claim (begun after the note, concluded when the forward reached gc
+	// or durable retry ownership) says whether the line was delivered.
+	// delivered latches that conclusion once seen, so the claim's TTL sweep
+	// cannot turn a delivered line back into an unknown one.
+	eventID   string
+	delivered bool
 }
 
 // missedMessage is one history message the adapter never received.
@@ -393,6 +400,10 @@ func (l *inboundLiveness) noteInboundEnvelope(env slackEventEnvelope, transport 
 		return inboundOriginBackfilled
 	}
 	l.originsPutLocked(key, inboundOriginLive, now)
+	if e, ok := l.origins[key]; ok {
+		e.eventID = env.EventID
+		l.origins[key] = e
+	}
 	l.touchChannelLocked(ev.Channel, env.TeamID, ev.TS, now)
 	return inboundOriginLive
 }
@@ -1479,6 +1490,29 @@ func (l *inboundLiveness) loadState() {
 	log.Printf("inbound liveness: loaded state %s (channels=%d last_inbound=%s)", l.statePath, len(l.channels), st.LastInboundAt.UTC().Format(time.RFC3339))
 }
 
+// liveDeliveredLocked reports whether a live origin's line reached gc (or
+// durable retry ownership): its event's dedup claim concluded committed.
+// The note precedes the claim and the forward, so a line still buffered or
+// forwarding is not delivered yet, and a crash before it concludes must
+// leave it for the recovery to replay (the lane's codex round 7). The
+// conclusion latches on the entry once seen. Without the claim machinery
+// (no dedup cache: tests) a noted line counts as delivered. Caller holds
+// l.mu.
+func (l *inboundLiveness) liveDeliveredLocked(key string, e originEntry) bool {
+	if e.delivered {
+		return true
+	}
+	if l.cfg.eventDedup == nil {
+		return true
+	}
+	if e.eventID == "" || !l.cfg.eventDedup.committed(e.eventID) {
+		return false
+	}
+	e.delivered = true
+	l.origins[key] = e
+	return true
+}
+
 // heldOriginsLocked lists the origins channel knows above its watermark —
 // a replay that concluded delivered, or a live message — oldest first, for
 // the state file; a replay still in flight is left out. Caller holds l.mu.
@@ -1488,6 +1522,9 @@ func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenes
 	var out []livenessHeldOrigin
 	for key, e := range l.origins {
 		if e.source == inboundOriginUnknown || l.inFlight[key] || now.Sub(e.at) > livenessOriginTTL || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		if e.source == inboundOriginLive && !l.liveDeliveredLocked(key, e) {
 			continue
 		}
 		ts := key[len(prefix):]

@@ -144,3 +144,42 @@ func TestLivenessStateWithEveryOriginHeldStillLoads(t *testing.T) {
 	}
 	_ = fmt.Sprintf
 }
+
+// The lane's codex round 7 (P2): a live line is noted before its forward
+// runs, so a line still buffered or forwarding is not delivered yet. Its
+// origin rides the state file only once its event's dedup claim concluded
+// committed; a crash before that leaves it for the recovery to replay.
+func TestLivenessStatePersistsALiveLineOnlyOnceItsClaimCommitted(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	cfg := livenessTestConfig(t)
+	cfg.livenessStatePath = filepath.Join(t.TempDir(), "liveness.json")
+	cfg.eventDedup = newEventDedupCache(time.Minute)
+	hist := newFakeHistory()
+	l := newTestLiveness(t, cfg, hist, clock)
+	held := tsAt(base, 2*time.Minute)
+	live := tsAt(base, 3*time.Minute)
+	l.mu.Lock()
+	l.holdPendingLocked(missedMessage{channel: "C1", msg: histMsg(held, "U1", "held"), watermark: l.channels["C1"].WatermarkTS})
+	l.mu.Unlock()
+	// The handler's order: the note, then the claim, then the forward.
+	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvF", "C1", live, "UFOUNDER", "founder line"), ""); got != inboundOriginLive {
+		t.Fatalf("live = %v", got)
+	}
+	cfg.eventDedup.begin("EvF")
+	l.saveState()
+	reloaded := newTestLiveness(t, cfg, hist, clock)
+	if got := reloaded.originSource("C1", live); got != inboundOriginUnknown {
+		t.Fatalf("restored origin of a line whose forward has not concluded = %v, want unknown (the recovery must replay it)", got)
+	}
+	// The forward reaches gc: the claim commits, and the next save carries the line.
+	cfg.eventDedup.commit("EvF")
+	l.mu.Lock()
+	l.stateDirty = true
+	l.mu.Unlock()
+	l.saveState()
+	reloaded = newTestLiveness(t, cfg, hist, clock)
+	if got := reloaded.originSource("C1", live); got != inboundOriginLive {
+		t.Fatalf("restored origin of a delivered line = %v, want live", got)
+	}
+}
