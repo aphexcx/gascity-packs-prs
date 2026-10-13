@@ -174,7 +174,7 @@ type inboundLiveness struct {
 	// deliver runs one synthesized envelope through the events handler
 	// and returns the HTTP status it would have produced. Wired by
 	// main(); nil means "alarm only" (tests and disabled backfill).
-	deliver func(ctx context.Context, env slackEventEnvelope) int
+	deliver func(ctx context.Context, env slackEventEnvelope) backfillDelivery
 	// alert posts one alarm/recovery line to the operator channel; nil
 	// disables. Wired only when SLACK_LIVENESS_ALERT_CHANNEL is set.
 	alert func(ctx context.Context, text string) error
@@ -722,17 +722,35 @@ func (l *inboundLiveness) postAlert(text string) {
 	}
 }
 
+// livenessBackfillSettleWait bounds how long a replay waits for its
+// dispatch to conclude (the gc forward's own timeout is 20 s; the
+// mention-only confirm hold 10 s) before it is treated as not delivered.
+// A variable so tests can shorten it.
+var livenessBackfillSettleWait = 30 * time.Second
+
 // backfill replays missed messages, oldest first, through the events
 // pipeline as synthesized envelopes. Each origin is marked backfilled
-// BEFORE delivery so a racing live copy is dropped; a non-2xx outcome
-// un-marks it so a later live/redelivered copy can still land. Returns
-// the count delivered.
+// BEFORE delivery so a racing live copy is dropped. The recovery state —
+// that marker and the channel's watermark advance — COMMITS only once the
+// replay's dispatch concluded committed: delivered to gc, or durably queued
+// with retry ownership (backfillCommitted; gf-xid finding 3g — the handler's
+// immediate 200 precedes the forward, and a replay whose gc POST then failed
+// used to keep its marker and its watermark, so the live redelivery was
+// dropped as a duplicate and every later backfill skipped it). A replay that
+// did not commit is un-marked so a live copy can still land, and its channel
+// HALTS for this probe: the newer missed messages behind it are not
+// replayed, so the watermark cannot move past the failure and the next probe
+// replays them all in order. Returns the count delivered.
 func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) int {
 	perChannel := map[string]int{}
+	halted := map[string]bool{}
 	delivered := 0
 	for _, m := range missed {
 		if ctx.Err() != nil {
 			break
+		}
+		if halted[m.channel] {
+			continue
 		}
 		if perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			continue
@@ -753,12 +771,13 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		}
 		l.originsPutLocked(key, inboundOriginBackfilled, now)
 		l.mu.Unlock()
-		status := l.deliver(ctx, env)
-		if status < 200 || status >= 300 {
+		outcome := l.deliver(ctx, env)
+		if ok, why := l.backfillCommitted(ctx, outcome); !ok {
 			l.mu.Lock()
 			delete(l.origins, key)
 			l.mu.Unlock()
-			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s status=%d — left for a live redelivery", m.channel, m.msg.TS, status)
+			halted[m.channel] = true
+			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s %s — left for a live redelivery or the next probe: the origin is unmarked, the channel's watermark stays below it and its newer missed messages wait", m.channel, m.msg.TS, why)
 			continue
 		}
 		delivered++
@@ -769,6 +788,37 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		log.Printf("inbound liveness: backfilled channel=%s ts=%s user=%s thread=%s text=%dch", m.channel, m.msg.TS, m.msg.User, m.msg.ThreadTS, len(m.msg.Text))
 	}
 	return delivered
+}
+
+// backfillCommitted decides whether a replay's recovery state may commit:
+// the handler accepted the envelope AND the dispatch it took concluded
+// committed — delivered to gc, or durably queued with retry ownership — or
+// the handler took no dispatch claim at all and its status is the whole
+// answer (a deliver hook that runs no handler answers a nil verdict for the
+// same reason). Bounded by livenessBackfillSettleWait and ctx: a dispatch
+// still in flight at the bound is NOT committed. That errs toward a
+// duplicate — the event dedup parks a later replay behind the in-flight copy
+// and drops it on a commit, and gc dedups a channel copy by its message ts —
+// and never toward a silent loss, the trade this codebase always takes.
+func (l *inboundLiveness) backfillCommitted(ctx context.Context, outcome backfillDelivery) (bool, string) {
+	if !outcome.accepted() {
+		return false, fmt.Sprintf("status=%d", outcome.status)
+	}
+	if outcome.verdict == nil {
+		return true, ""
+	}
+	sctx, cancel := context.WithTimeout(ctx, livenessBackfillSettleWait)
+	defer cancel()
+	committed, settled, watched := outcome.verdict.settle(sctx)
+	switch {
+	case !watched:
+		return true, ""
+	case !settled:
+		return false, fmt.Sprintf("dispatch not concluded within %s", livenessBackfillSettleWait)
+	case !committed:
+		return false, "forward to gc failed (the dispatch claim was forgotten)"
+	}
+	return true, ""
 }
 
 // synthesizeEnvelope builds the event_callback envelope the Events API
@@ -837,21 +887,25 @@ func channelTypeFromID(id string) string {
 }
 
 // deliverViaHandler adapts an events handler into the deliver hook:
-// marshal the envelope, build the trusted "backfill" request, run the
-// handler in-memory, return its status.
-func deliverViaHandler(h http.Handler) func(ctx context.Context, env slackEventEnvelope) int {
-	return func(ctx context.Context, env slackEventEnvelope) int {
+// marshal the envelope, build the trusted "backfill" request carrying a
+// fresh backfillVerdict, run the handler in-memory, return its status and
+// the verdict the handler attached to the event's dispatch claim (gf-xid
+// finding 3g).
+func deliverViaHandler(h http.Handler) func(ctx context.Context, env slackEventEnvelope) backfillDelivery {
+	return func(ctx context.Context, env slackEventEnvelope) backfillDelivery {
 		body, err := json.Marshal(env)
 		if err != nil {
-			return http.StatusInternalServerError
+			return backfillDelivery{status: http.StatusInternalServerError}
 		}
-		req, _ := http.NewRequestWithContext(withTrustedTransport(ctx, transportBackfill), http.MethodPost, "/slack/events", bytes.NewReader(body))
+		verdict := &backfillVerdict{}
+		rctx := withBackfillVerdict(withTrustedTransport(ctx, transportBackfill), verdict)
+		req, _ := http.NewRequestWithContext(rctx, http.MethodPost, "/slack/events", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.ContentLength = int64(len(body))
 		req.RemoteAddr = transportBackfill
 		w := newMemResponseWriter()
 		h.ServeHTTP(w, req)
-		return w.Status()
+		return backfillDelivery{status: w.Status(), verdict: verdict}
 	}
 }
 

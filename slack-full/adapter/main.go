@@ -3648,6 +3648,13 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// Cheap in-memory op — the handler still acks promptly.
 		retryNum := r.Header.Get("X-Slack-Retry-Num")
 		proceed, wait := cfg.eventDedup.begin(env.EventID)
+		// A backfill replay reads the forward's outcome off this claim
+		// (gf-xid finding 3g): attached here, synchronously, so the
+		// backfill is never told "accepted" by a 200 whose dispatch then
+		// fails. Every conclusion of the claim — this delivery's own,
+		// the committed verdict a redelivery drops on, a parked copy's
+		// takeover — is what the backfill waits for.
+		backfillVerdictFrom(r).watch(cfg.eventDedup, env.EventID)
 		if !proceed && wait == nil {
 			log.Printf("slack event dedup: dropping redelivery event_id=%s retry_num=%q team_id=%q",
 				env.EventID, retryNum, clipTeamIDForLog(env.TeamID))

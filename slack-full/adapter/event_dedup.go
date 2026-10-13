@@ -163,6 +163,42 @@ func (c *eventDedupCache) forget(id string) {
 	}
 }
 
+// await returns the channel that closes when id's claim concludes — commit
+// or forget — and whether id is tracked at all. A nil cache, an empty id,
+// or an id this cache never began (or already evicted) reads as untracked,
+// and the caller keeps whatever it knew before asking. The channel of a
+// concluded claim that is still cached is already closed. It mutates
+// nothing: unlike begin, it never takes a claim (gf-xid finding 3g: the
+// backfill reads its own replay's verdict here).
+func (c *eventDedupCache) await(id string) (<-chan struct{}, bool) {
+	if c == nil || id == "" {
+		return nil, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[id]
+	if !ok {
+		return nil, false
+	}
+	return e.done, true
+}
+
+// committed reports whether id's claim concluded committed and is still
+// cached. A forgotten id reads false — the forward failed and a redelivery
+// owns the message — and so does an id that was never begun, was evicted
+// under cap pressure, or whose committed entry the TTL has since swept; a
+// caller that reads false on a claim it watched conclude treats the message
+// as NOT delivered, the side this codebase errs on (a duplicate over a loss).
+func (c *eventDedupCache) committed(id string) bool {
+	if c == nil || id == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[id]
+	return ok && !e.committedAt.IsZero()
+}
+
 // size reports the number of tracked ids. Test helper.
 func (c *eventDedupCache) size() int {
 	if c == nil {

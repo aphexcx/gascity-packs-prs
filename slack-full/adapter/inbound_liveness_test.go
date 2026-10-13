@@ -70,14 +70,14 @@ type deliveryRecorder struct {
 	status int
 }
 
-func (d *deliveryRecorder) deliver(_ context.Context, env slackEventEnvelope) int {
+func (d *deliveryRecorder) deliver(_ context.Context, env slackEventEnvelope) backfillDelivery {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.envs = append(d.envs, env)
 	if d.status == 0 {
-		return http.StatusOK
+		return backfillDelivery{status: http.StatusOK}
 	}
-	return d.status
+	return backfillDelivery{status: d.status}
 }
 
 func (d *deliveryRecorder) all() []slackEventEnvelope {
