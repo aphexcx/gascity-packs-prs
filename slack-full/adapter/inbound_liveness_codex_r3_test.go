@@ -99,10 +99,13 @@ func TestLivenessTheDeliveredRecordReachesDownToAListingHoldsCursor(t *testing.T
 	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
 	clock := &fakeClock{t: base}
 	l := newTestLiveness(t, livenessTestConfig(t), newFakeHistory(), clock)
+	// The watermark sits between the hold's cursor and the held reply, so
+	// the hold's own pull-back does not move it: the floor must reach the
+	// cursor on its own.
 	cursor, delivered, latest := tsAt(base, time.Minute), tsAt(base, 2*time.Minute), tsAt(base, 4*time.Minute)
 	l.mu.Lock()
 	ch := l.channels["C1"]
-	ch.WatermarkTS = tsAt(base, 5*time.Minute)
+	ch.WatermarkTS = tsAt(base, 3*time.Minute)
 	l.originsPutLocked(originKey("C1", delivered), inboundOriginBackfilled, clock.now())
 	l.holdThreadListingLocked("C1", "T1", tsAt(base, -time.Hour), latest, cursor)
 	floor, held := ch.originFloorLocked()

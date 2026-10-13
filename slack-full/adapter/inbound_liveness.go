@@ -271,6 +271,10 @@ type livenessHeldReplay struct {
 	// names the thread and the cursor (gf-d7b finding 3p).
 	Listing bool   `json:"listing,omitempty"`
 	Cursor  string `json:"cursor,omitempty"`
+	// FloorCrossed says the backfill window's floor has passed a listing
+	// hold's cursor: the replies between were dead-lettered once (the
+	// lane's codex round 4), and the cursor rides the floor from then on.
+	FloorCrossed bool `json:"floor_crossed,omitempty"`
 }
 
 // clipHeldMessage returns the message as a held replay keeps it: the text
@@ -427,6 +431,21 @@ func slackTSFromTime(t time.Time) string {
 	return fmt.Sprintf("%d.%06d", t.Unix(), t.Nanosecond()/1000)
 }
 
+// slackTSAfter returns the ts one microsecond above ts, the exclusive upper
+// bound that includes ts; a malformed ts is returned unchanged.
+func slackTSAfter(ts string) string {
+	sec, frac, ok := strings.Cut(ts, ".")
+	if !ok || len(frac) != 6 {
+		return ts
+	}
+	n, err := strconv.ParseInt(sec+frac, 10, 64)
+	if err != nil {
+		return ts
+	}
+	n++
+	return fmt.Sprintf("%d.%06d", n/1000000, n%1000000)
+}
+
 // Slack ts ordering reuses compareSlackTS (company_replay.go): numeric on
 // (seconds, fraction), malformed values sort last.
 
@@ -519,11 +538,15 @@ func (l *inboundLiveness) touchChannelLocked(channel, teamID, ts string, now tim
 	// its pending hold. While any older replay is still pending the
 	// watermark does not cross it: the advance is remembered (HeldMaxTS)
 	// and taken when the last pending replay lands.
-	if i := slices.Index(ch.PendingTS, ts); i >= 0 {
+	// A listing hold (finding 3m) stands for a thread, not this message:
+	// the latest reply landing does not say the older unread replies did,
+	// so it stays until a probe reads the thread through
+	// (settlePendingThreads; the lane's codex round 4).
+	if i := slices.Index(ch.PendingTS, ts); i >= 0 && !ch.PendingMessages[ts].Listing {
 		ch.PendingTS = slices.Delete(ch.PendingTS, i, i+1)
 		delete(ch.PendingMessages, ts)
 	}
-	if len(ch.PendingTS) > 0 && compareSlackTS(ts, ch.PendingTS[0]) > 0 {
+	if len(ch.PendingTS) > 0 && compareSlackTS(ts, ch.PendingTS[0]) >= 0 {
 		if ch.HeldMaxTS == "" || compareSlackTS(ts, ch.HeldMaxTS) > 0 {
 			ch.HeldMaxTS = ts
 		}
@@ -903,6 +926,20 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 			}
 			ch.PendingHistory = kept
 		}
+		// A listing hold's cursor the floor passes: the replies between
+		// can no longer be read — dead-lettered once, the cursor riding
+		// the floor from then on (the lane's codex round 4; the pending
+		// thread's shape).
+		for ts, held := range ch.PendingMessages {
+			if !held.Listing || held.FloorCrossed || floor == "" || held.Cursor == "" || compareSlackTS(held.Cursor, floor) >= 0 {
+				continue
+			}
+			out = append(out, livenessRetiredHold{channel: id, threadTS: held.Msg.ThreadTS, cursor: held.Cursor, reason: fmt.Sprintf("inbound liveness: a thread held by its listing has replies above %s that fell below the backfill window's floor (%s) while its reads kept failing — never delivered to gc, and no longer read: read the thread from Slack and re-post them by hand; the thread stays held above the floor", held.Cursor, l.cfg.backfillMaxWindow)})
+			held.FloorCrossed = true
+			held.Cursor = floor
+			ch.PendingMessages[ts] = held
+			l.stateDirty = true
+		}
 		if len(ch.PendingTS) == 0 {
 			continue
 		}
@@ -1037,7 +1074,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 // advance already carried past it goes back to where the probe read it
 // (below every missed ts), so the next probe re-reads the message. Caller
 // holds l.mu.
-func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) {
+func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) (held bool) {
 	ch := l.channels[m.channel]
 	if ch == nil {
 		ch = &livenessChannel{TeamID: m.teamID}
@@ -1081,6 +1118,7 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) {
 		ch.WatermarkTS = m.watermark
 	}
 	l.stateDirty = true
+	return slices.Contains(ch.PendingTS, ts)
 }
 
 // evictChannelsLocked drops the least recently active unpinned channels
@@ -1759,6 +1797,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 	delivered := 0
 	incomplete := map[string]bool{}
 	left := map[string]int{}
+	newestLeft := map[string]string{} // per channel: the newest ts a pass left
 	for _, m := range missed {
 		if ctx.Err() != nil || perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			incomplete[m.channel] = true
@@ -1768,6 +1807,9 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 			if e, ok := l.origins[originKey(m.channel, m.msg.TS)]; !ok || e.source == inboundOriginUnknown {
 				left[m.channel]++
 				l.holdPendingLocked(m, false)
+				if cur := newestLeft[m.channel]; cur == "" || compareSlackTS(m.msg.TS, cur) > 0 {
+					newestLeft[m.channel] = m.msg.TS
+				}
 			}
 			l.mu.Unlock()
 			continue
@@ -1816,6 +1858,21 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 			why = "a cancellation"
 		}
 		log.Printf("inbound liveness: backfill channel=%s left %d missed message(s) unreplayed this pass (%s) — held pending: the watermark holds below them and the next probe replays them", channel, n, why)
+		// The hold set keeps the oldest livenessMaxBackfillPerChannel of
+		// them; what a pass left above the newest held has no hold of its
+		// own, and the holds alone did not keep it: live copies of every
+		// held message released them and the held advance carried the
+		// watermark past the rest (the lane's codex round 4). The messages
+		// above the newest held are an unread stretch — read first by the
+		// next probe, whatever the watermark does.
+		l.mu.Lock()
+		if ch := l.channels[channel]; ch != nil && len(ch.PendingTS) > 0 {
+			if newest := ch.PendingTS[len(ch.PendingTS)-1]; compareSlackTS(newestLeft[channel], newest) > 0 {
+				l.addStretchLocked(channel, newest, slackTSAfter(newestLeft[channel]))
+				log.Printf("inbound liveness: backfill channel=%s the messages above the newest held %s and up to %s are beyond the hold set: pending as an unread stretch", channel, newest, newestLeft[channel])
+			}
+		}
+		l.mu.Unlock()
 	}
 	return delivered, incomplete
 }

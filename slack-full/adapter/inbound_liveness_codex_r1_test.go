@@ -110,11 +110,12 @@ func TestLivenessAFailedReadAboveTheWatermarkLosesNothingOfTheUnreadStretch(t *t
 }
 
 // P1: a stretch the bound leaves on a probe whose older stretch is still
-// pending replaced it only when lower, and otherwise vanished. Both are
-// kept — disjoint stretches side by side (the lane's codex round 3 made the
-// pending history a list; round 1 merged the two into one), the older one
-// shrunk to what the probe read of it, the new one above the watermark.
-func TestLivenessTwoUnreadStretchesAreBothKept(t *testing.T) {
+// pending replaced it only when lower, and otherwise vanished. Nothing is
+// lost: the old stretch (shrunk to what the probe read of it), the new one
+// above the watermark and the overflow beyond the hold set (the lane's
+// codex round 4) are all covered — here by one merged stretch, since the
+// overflow spans the gap between them.
+func TestLivenessTwoUnreadStretchesAreBothCovered(t *testing.T) {
 	prev := livenessMaxHistoryPages
 	livenessMaxHistoryPages = 2
 	t.Cleanup(func() { livenessMaxHistoryPages = prev })
@@ -139,15 +140,20 @@ func TestLivenessTwoUnreadStretchesAreBothKept(t *testing.T) {
 	})
 	clock.advance(12 * time.Minute)
 	l.tick(context.Background())
-	// The window's floor (now - 1 h) has risen past From by two minutes;
-	// the two pages read the old stretch's newest 400 (its Below is
-	// exclusive: old[0..498]), leaving it below old[99]; the two pages
-	// read of the fresh history leave a stretch below fresh[100]. No page
-	// of either is lost, and the old one's crossed flag stands.
+	// The window's floor (now - 1 h) has risen past From by two minutes.
+	// Read: two pages of the old stretch (old[99..498]) and two of the
+	// fresh history (fresh[100..499]); the replay delivered old[99..198]
+	// and holds old[199..298]; everything above the newest held, up to
+	// fresh[499], is the overflow stretch, which merges with the old
+	// stretch's remainder (floor, old[99]) and the new one (watermark,
+	// fresh[100]) into one.
 	floor := slackTSFromTime(clock.now().Add(-time.Hour))
 	got := l.pendingHistoriesOf("C1")
-	if len(got) != 2 || got[0].From != floor || got[0].Below != old[99].TS || !got[0].FloorCrossed || got[1].From != watermark || got[1].Below != fresh[100].TS {
-		t.Fatalf("pending history = %+v, want two stretches (%s, %s) crossed and (%s, %s)", got, floor, old[99].TS, watermark, fresh[100].TS)
+	if len(got) != 1 || got[0].From != floor || got[0].Below != slackTSAfter(fresh[499].TS) || !got[0].FloorCrossed {
+		t.Fatalf("pending history = %+v, want one merged stretch (%s, just above %s), crossed", got, floor, fresh[499].TS)
+	}
+	if held := l.pendingTSOf("C1"); len(held) != livenessMaxBackfillPerChannel || held[0] != old[199].TS {
+		t.Fatalf("holds = %d from %v, want the oldest hundred left from %s", len(held), held[:min(len(held), 1)], old[199].TS)
 	}
 }
 

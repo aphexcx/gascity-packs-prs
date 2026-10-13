@@ -96,18 +96,27 @@ func TestLivenessTheThirtyThirdPendingThreadIsNeverLostSilently(t *testing.T) {
 	// The reads keep failing through the window.
 	clock.advance(70 * time.Minute)
 	l.tick(context.Background())
-	var listing []inboundDeadLetterRecord
+	// Two records for the thread: the floor passing the hold's cursor
+	// (the lane's codex round 4: the replies above the cursor, below the
+	// floor) and then the window closing on the hold itself.
+	var partial, listing []inboundDeadLetterRecord
 	for _, r := range readDeadLetter(t, cfg) {
-		if r.Inbound.ReplyToMessageID == parent.TS && r.Inbound.ProviderMessageID == reply.TS {
+		switch {
+		case r.Inbound.ReplyToMessageID == parent.TS && r.Inbound.ProviderMessageID == reply.TS:
 			listing = append(listing, r)
+		case r.Inbound.ReplyToMessageID == parent.TS && r.Inbound.ProviderMessageID == parent.TS:
+			partial = append(partial, r)
 		}
 	}
-	if len(listing) != 1 {
-		t.Fatalf("dead letter records for the 33rd thread's listing hold = %d, want one (log: %s)", len(listing), read())
+	if len(listing) != 1 || len(partial) != 1 {
+		t.Fatalf("dead letter records for the 33rd thread = %d listing + %d partial, want one of each (log: %s)", len(listing), len(partial), read())
 	}
-	if r := listing[0]; !strings.Contains(r.Reason, "listing hold") || !strings.Contains(r.Reason, "thread "+parent.TS+" above "+watermarkBefore) ||
+	if r := partial[0]; !strings.Contains(r.Reason, "held by its listing has replies above "+watermarkBefore+" that fell below the backfill window's floor") {
+		t.Fatalf("partial-expiry record = %+v, want the cursor %s in it", r, watermarkBefore)
+	}
+	if r := listing[0]; !strings.Contains(r.Reason, "listing hold") || !strings.Contains(r.Reason, "thread "+parent.TS+" above ") ||
 		r.Inbound.Conversation.ConversationID != "C1" || r.Inbound.Conversation.ScopeID != "citadel" {
-		t.Fatalf("dead letter record = %+v, want the thread, the cursor %s, the channel and the city in it", r, watermarkBefore)
+		t.Fatalf("dead letter record = %+v, want the thread, its cursor, the channel and the city in it", r)
 	}
 	if !strings.Contains(read(), "dead-lettered to ") {
 		t.Errorf("the dead letter is not logged: %s", read())

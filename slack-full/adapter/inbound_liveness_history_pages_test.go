@@ -88,8 +88,10 @@ func TestLivenessBackfillPagesPastTheFirstHistoryPage(t *testing.T) {
 	if envs := rec.all(); len(envs) != livenessMaxBackfillPerChannel {
 		t.Fatalf("delivered %d after the first probe, want the cap %d", len(envs), livenessMaxBackfillPerChannel)
 	}
-	if got := l.pendingHistoryOf("C1"); got != nil {
-		t.Fatalf("pending history = %+v, want none: two pages are within the bound", got)
+	// The one message beyond the hold set (the 201st) is an unread
+	// stretch of its own above the newest held (the lane's codex round 4).
+	if got := l.pendingHistoryOf("C1"); got == nil || got.From != missed[n-2].TS || got.Below != slackTSAfter(missed[n-1].TS) {
+		t.Fatalf("pending history = %+v, want the overflow stretch (%s, just above %s)", got, missed[n-2].TS, missed[n-1].TS)
 	}
 	live := tsAt(base, 20*time.Minute)
 	if got := l.noteInboundEnvelope(liveMessageEnvelope(t, "EvLive", "C1", live, "U1", "live"), ""); got != inboundOriginLive {
