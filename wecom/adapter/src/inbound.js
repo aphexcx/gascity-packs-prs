@@ -137,9 +137,10 @@ function receiptVerdict(receipt) {
   if (status === 'noroute') return 'no_route';
   return 'unsupported';
 }
-async function getReceiptJSON(target) {
+async function getReceiptJSON(target, signal) {
   const response = await fetch(target, {
-    headers: { 'X-GC-Request': 'gc-wecom-adapter' }, signal: AbortSignal.timeout(15000),
+    headers: { 'X-GC-Request': 'gc-wecom-adapter' },
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
   if (!response.ok) throw Object.assign(new Error(`receipt lookup HTTP ${response.status}`), { status: response.status });
   return response.json();
@@ -880,10 +881,10 @@ export function createInboundPipeline(deps) {
       if (typeof id !== 'string' || !id.trim()) return;
       let answer;
       try {
-        answer = receiptMap(await getReceipt(`${delivery.target}/receipts/${encodeURIComponent(id)}`));
+        answer = receiptMap(await getReceipt(`${delivery.target}/receipts/${encodeURIComponent(id)}`, delivery.abort.signal));
       } catch (err) {
         if (!deliveryReservations.has(delivery)) return;
-        if (err.status !== undefined) {
+        if (err.status === 404 || err.status === 405) {
           log(`${delivery.label}: receipt endpoint unavailable (${err.status}); failing open`);
           finishDelivery(delivery, 'unsupported');
           return;
@@ -1242,7 +1243,7 @@ export function createInboundPipeline(deps) {
   }
 
   // flushAll drains every buffered conversation AND awaits the delivery
-  // chains — the normal-shutdown path, so already-received frames are
+  // chains and active receipt follow-ups — the normal-shutdown path, so already-received frames are
   // not lost to a SIGTERM landing inside a window. It also flips the
   // pipeline into draining mode: frames arriving mid-drain bypass the
   // window into chains this loop then observes, instead of opening an
@@ -1257,8 +1258,8 @@ export function createInboundPipeline(deps) {
     }
     // Chains can grow while being awaited (late frames, chained
     // batches); loop until the map empties, bounded defensively.
-    for (let round = 0; round < 32 && convoChains.size > 0; round++) {
-      await Promise.allSettled([...convoChains.values()]);
+    for (let round = 0; round < 32 && (convoChains.size > 0 || receiptFollowUps.size > 0); round++) {
+      await Promise.allSettled([...convoChains.values(), ...receiptFollowUps]);
     }
   }
 

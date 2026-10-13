@@ -61,6 +61,12 @@ function makePipeline(t, overrides = {}) {
   return { pipeline, posts, mediaDir, cfg };
 }
 
+function deferred() {
+  let resolve;
+  const promise = new Promise((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
 function frame(msg) {
   return { body: msg };
 }
@@ -1805,7 +1811,7 @@ for (const status of ['pending', 'partial']) {
 
 test('a replay of one held batch member polls the original envelope', async (t) => {
   let posts = 0, polls = 0;
-  const conclusion = Promise.withResolvers();
+  const conclusion = deferred();
   const { pipeline } = makePipeline(t, { deps: {
     coalesceWindowMs: 10000,
     postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'batch' } }; },
@@ -1815,16 +1821,18 @@ test('a replay of one held batch member polls the original envelope', async (t) 
   } });
   const a = textMessage({ msgid: 'BATCH_A' }), b = textMessage({ msgid: 'BATCH_B' });
   const first = pipeline.enqueueInbound(frame(a)), second = pipeline.enqueueInbound(frame(b));
-  await pipeline.flushAll(); await Promise.all([first, second]);
+  const draining = pipeline.flushAll();
+  await Promise.all([first, second]);
   assert.equal(posts, 1);
   const replay = pipeline.enqueueInbound(frame(a));
-  await pipeline.flushAll(); await replay;
+  await replay;
   assert.equal(posts, 1, 'a changed batch boundary must not bypass the held receipt');
   assert.equal(polls, 1);
   conclusion.resolve();
   await pipeline.waitForReceipts();
   const finalReplay = pipeline.enqueueInbound(frame(b));
-  await pipeline.flushAll(); await finalReplay;
+  await finalReplay;
+  await draining;
   assert.equal(posts, 1);
   assert.equal(pipeline.stats().seen, 2, 'conclusion commits every original batch member');
 });
@@ -1906,7 +1914,7 @@ test('a forgotten held receipt stays unverified without a recovery POST', async 
 
 test('held-envelope capacity allows live POSTs while the original settles', async (t) => {
   let posts = 0;
-  const conclusion = Promise.withResolvers();
+  const conclusion = deferred();
   const logs = [];
   const { pipeline } = makePipeline(t, {
     postInbound: async () => { posts++; return posts === 1
@@ -1939,7 +1947,7 @@ test('held-envelope capacity allows live POSTs while the original settles', asyn
 for (const scenario of ['busy', 'wedged', 'concluded']) {
   test(`3v next live line bypasses a ${scenario} receipt`, async (t) => {
     let posts = 0, polls = 0;
-    const waiting = Promise.withResolvers();
+    const waiting = deferred();
     const { pipeline } = makePipeline(t, { deps: {
       postInbound: async () => ({ delivery: { status: ++posts === 1 ? 'pending' : 'delivered', receipt_id: 'first' } }),
       receiptSleep: () => waiting.promise,
@@ -2025,4 +2033,41 @@ test('3v capacity never refuses a live POST', async (t) => {
   assert.ok(!logs.some((line) => line.startsWith('LOST')));
   if (pipeline.waitForReceipts) await pipeline.waitForReceipts();
   assert.equal(pipeline.stats().held, 1);
+});
+
+for (const status of [429, 503]) {
+  test(`3v transient receipt HTTP ${status} retains recovery`, async (t) => {
+    let posts = 0, polls = 0;
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => ({ delivery: { receipt_id: 'retry', status: ++posts === 1 ? 'pending' : 'delivered' } }),
+      getReceipt: async () => {
+        if (++polls === 1) throw Object.assign(new Error('transient'), { status });
+        return { receipt_id: 'retry', state: 'concluded', delivery: { receipt_id: 'retry', status: 'failed' } };
+      }, receiptSleep: async () => {},
+    } });
+    await pipeline.enqueueInbound(frame(textMessage({ msgid: 'TRANSIENT_' + status })));
+    await pipeline.waitForReceipts();
+    assert.equal(posts, 2, 'a concluded failure after a transient lookup must recover');
+    assert.equal(polls, 2);
+    assert.equal(pipeline.stats().seen, 1);
+  });
+}
+
+test('3v shutdown drain joins background receipt recovery', async (t) => {
+  let conclude;
+  const conclusion = new Promise((resolve) => { conclude = resolve; });
+  const { pipeline } = makePipeline(t, { deps: {
+    postInbound: async () => ({ delivery: { receipt_id: 'drain', status: 'pending' } }),
+    getReceipt: async () => { await conclusion; return { receipt_id: 'drain', state: 'concluded',
+      delivery: { receipt_id: 'drain', status: 'delivered' } }; },
+    receiptSleep: async () => {},
+  } });
+  await pipeline.enqueueInbound(frame(textMessage({ msgid: 'DRAIN' })));
+  let finished = false;
+  const draining = pipeline.flushAll().then(() => { finished = true; });
+  await new Promise(setImmediate);
+  assert.equal(finished, false, 'shutdown must allow the existing grace period for follow-up');
+  conclude();
+  await draining;
+  assert.equal(pipeline.stats().seen, 1);
 });
