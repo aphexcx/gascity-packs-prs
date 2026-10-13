@@ -235,6 +235,11 @@ type livenessPendingHistory struct {
 type livenessPendingThread struct {
 	ParentTS string `json:"parent_ts"`
 	Oldest   string `json:"oldest"` // replies above it are not all delivered yet
+	// FloorCrossed says the backfill window's floor has passed the cursor
+	// while the reads kept failing: the replies between them were
+	// dead-lettered once (gf-d7b finding 3q), and the cursor rides the
+	// floor from then on until the thread is read through or retires.
+	FloorCrossed bool `json:"floor_crossed,omitempty"`
 }
 
 // livenessHeldReplay is one held replay: the message, its attempts, and
@@ -275,12 +280,21 @@ func clipHeldMessage(m slackHistoryMessage) (slackHistoryMessage, int) {
 	return m, files
 }
 
-// livenessRetiredHold is a held replay that aged out, for the dead letter.
+// livenessRetiredHold is a held replay that aged out, for the dead letter —
+// or (gf-d7b finding 3q) a pending thread whose undelivered replies the
+// adapter can no longer read: threadTS names the parent, cursor the ts its
+// replies were not delivered above, and reason says why (the backfill
+// window's floor passed the cursor while its reads kept failing; the
+// thread's parent left the thread scan window and it retired).
 type livenessRetiredHold struct {
 	channel string
 	ts      string
 	held    livenessHeldReplay
 	known   bool // the message itself was recorded with the hold
+	// a pending thread's loss, not a held replay's:
+	threadTS string
+	cursor   string
+	reason   string
 }
 
 // livenessHeldOrigin is one persisted origin of a held channel.
@@ -760,8 +774,29 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 			var retiredThreads []string
 			for _, p := range ch.PendingThreads {
 				if floor == "" || compareSlackTS(p.ParentTS, scanFloor) < 0 {
+					// Retired: the adapter would never list the parent
+					// again. Its replies above the cursor were never
+					// delivered, and Slack never redelivers a missed event:
+					// the thread goes to the inbound dead letter (gf-d7b
+					// finding 3q), logged and posted.
 					retiredThreads = append(retiredThreads, p.ParentTS)
+					why := fmt.Sprintf("inbound liveness: pending thread retired — its parent left the thread scan window (%s) with its replies above %s never delivered to gc (the reads kept failing); Slack does not redeliver a missed event: read the thread from Slack and re-post the replies by hand", livenessThreadScanWindow, p.Oldest)
+					if floor == "" {
+						why = fmt.Sprintf("inbound liveness: pending thread retired — the backfill is disabled, so its replies above %s are never delivered to gc; read the thread from Slack and re-post them by hand", p.Oldest)
+					}
+					out = append(out, livenessRetiredHold{channel: id, threadTS: p.ParentTS, cursor: p.Oldest, reason: why})
 					continue
+				}
+				if !p.FloorCrossed && compareSlackTS(p.Oldest, floor) < 0 {
+					// The window's floor has passed the cursor while the
+					// reads kept failing: the replies between them can no
+					// longer be read (the probe reads above the floor).
+					// Dead-lettered once, with the cursor; the cursor rides
+					// the floor from here (probeChannel's clamp) until the
+					// thread is read through or retires.
+					p.FloorCrossed = true
+					out = append(out, livenessRetiredHold{channel: id, threadTS: p.ParentTS, cursor: p.Oldest, reason: fmt.Sprintf("inbound liveness: pending thread's replies above %s fell below the backfill window's floor (%s) while its reads kept failing — never delivered to gc, and no longer read: read the thread from Slack and re-post them by hand; the thread stays pending above the floor", p.Oldest, l.cfg.backfillMaxWindow)})
+					l.stateDirty = true
 				}
 				keptThreads = append(keptThreads, p)
 			}
@@ -769,7 +804,7 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 				clear(ch.PendingThreads[len(keptThreads):])
 				ch.PendingThreads = keptThreads
 				l.stateDirty = true
-				log.Printf("inbound liveness: channel=%s retired %d pending thread(s) out of the thread scan window (%s) — their undelivered replies are left to a live redelivery",
+				log.Printf("inbound liveness: channel=%s retired %d pending thread(s) out of the thread scan window (%s) — their undelivered replies were NEVER delivered to gc and Slack does not redeliver them: going to the inbound dead letter",
 					id, len(retiredThreads), strings.Join(retiredThreads, " "))
 			}
 		}
@@ -833,6 +868,29 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 	now := l.now().UTC()
 	byChannel := map[string][]inboundDeadLetterRecord{}
 	for _, r := range retired {
+		if r.threadTS != "" {
+			// A pending thread's loss: the record names the parent and the
+			// cursor; there is no message text to carry.
+			byChannel[r.channel] = append(byChannel[r.channel], inboundDeadLetterRecord{
+				DeadLetteredAt: now,
+				Channel:        r.channel,
+				Reason:         r.reason,
+				Inbound: externalInboundMessage{
+					ProviderMessageID: r.threadTS,
+					Conversation: conversationRef{
+						ScopeID:        l.cfg.cityName,
+						Provider:       l.cfg.provider,
+						AccountID:      l.cfg.accountID,
+						ConversationID: r.channel,
+						Kind:           channelTypeFromID(r.channel),
+					},
+					ReplyToMessageID: r.threadTS,
+					DedupKey:         "slack-thread-" + r.threadTS + "-" + r.cursor,
+					ReceivedAt:       now,
+				},
+			})
+			continue
+		}
 		reason := fmt.Sprintf("inbound liveness: held replay aged out of the backfill window (%s) after %d attempt(s) — never delivered to gc; re-post by hand", l.cfg.backfillMaxWindow, r.held.Attempts)
 		switch {
 		case r.held.Listing:
@@ -876,7 +934,7 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 		if dir == "" {
 			log.Printf("inbound liveness: channel=%s %d undelivered inbound record(s) LOST — no inbound dead-letter dir configured (SLACK_INBOUND_DEAD_LETTER_DIR); the lines are logged here and nowhere else", channel, len(records))
 			for _, rec := range records {
-				log.Printf("inbound liveness: LOST channel=%s ts=%s user=%s thread=%s text=%q", channel, rec.Inbound.ProviderMessageID, rec.Inbound.Actor.ID, rec.Inbound.ReplyToMessageID, rec.Inbound.Text)
+				log.Printf("inbound liveness: LOST channel=%s ts=%s user=%s thread=%s text=%q reason=%q", channel, rec.Inbound.ProviderMessageID, rec.Inbound.Actor.ID, rec.Inbound.ReplyToMessageID, rec.Inbound.Text, rec.Reason)
 			}
 			continue
 		}
