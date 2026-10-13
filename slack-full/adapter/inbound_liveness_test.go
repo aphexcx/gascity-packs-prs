@@ -30,6 +30,9 @@ type fakeHistory struct {
 	// counting history calls only) once.
 	failHistoryCall int
 	historyCalls    int
+	// onHistory, when set, runs at the start of every history call (a
+	// test's clock hook).
+	onHistory func(channel string)
 }
 
 func newFakeHistory() *fakeHistory {
@@ -53,6 +56,9 @@ func (f *fakeHistory) history(_ context.Context, channel, oldest, latest string,
 	}
 	f.calls = append(f.calls, call)
 	f.historyCalls++
+	if f.onHistory != nil {
+		f.onHistory(channel)
+	}
 	if f.failHistoryCall > 0 && f.historyCalls == f.failHistoryCall {
 		return nil, false, fmt.Errorf("conversations.history not ok: ratelimited (scripted, call %d)", f.historyCalls)
 	}

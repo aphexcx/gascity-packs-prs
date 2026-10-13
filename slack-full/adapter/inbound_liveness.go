@@ -1644,6 +1644,19 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		if pages > 0 {
 			readFrom, readBelow, readTo, readDone := ph.From, ph.Below, below, done
 			settles = append(settles, func() { l.settleStretchLocked(channel, readFrom, readBelow, readTo, readDone) })
+			if compareSlackTS(from, ph.From) > 0 {
+				// The floor entered the stretch after this probe's retire
+				// pass (earlier channels took that long): the prefix under
+				// the floor was not read, and the settle above must not
+				// drop it as read — it stands, and the next probe's retire
+				// pass reports it (the lane's codex round 9).
+				prefixFrom, prefixBelow := ph.From, slackTSAfter(from)
+				settles = append(settles, func() {
+					if l.channels[channel] != nil {
+						l.addStretchLocked(channel, prefixFrom, prefixBelow, false)
+					}
+				})
+			}
 		}
 		if failed {
 			break
