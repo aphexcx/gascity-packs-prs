@@ -20,7 +20,7 @@ type fakeHistory struct {
 	mu      sync.Mutex
 	byChan  map[string][]slackHistoryMessage // parents, any order
 	threads map[string][]slackHistoryMessage // key channel|threadTS → replies (parent excluded)
-	errs    map[string]error
+	errs    map[string]error                 // key channel → history error; channel|threadTS → replies error
 	calls   []string
 }
 
@@ -54,6 +54,9 @@ func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest strin
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "replies:"+channel+":"+threadTS+":"+oldest)
+	if err := f.errs[channel+"|"+threadTS]; err != nil {
+		return nil, err
+	}
 	var out []slackHistoryMessage
 	for _, m := range f.threads[channel+"|"+threadTS] {
 		if oldest == "" || compareSlackTS(m.TS, oldest) > 0 {
