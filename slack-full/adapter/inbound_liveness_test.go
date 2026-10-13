@@ -50,7 +50,7 @@ func (f *fakeHistory) history(_ context.Context, channel, oldest string, _ int) 
 	return out, nil
 }
 
-func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest string, _ int) ([]slackHistoryMessage, error) {
+func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "replies:"+channel+":"+threadTS+":"+oldest)
@@ -62,6 +62,9 @@ func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest strin
 		if oldest == "" || compareSlackTS(m.TS, oldest) > 0 {
 			out = append(out, m)
 		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit] // one page, oldest first, as the client answers
 	}
 	return out, nil
 }

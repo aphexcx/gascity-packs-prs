@@ -92,37 +92,92 @@ func TestLivenessProbeHoldsTheWatermarkWhileAThreadReadFails(t *testing.T) {
 	if got := l.watermarkOf("C1"); got != watermarkBefore {
 		t.Fatalf("watermark = %s after a live message above a thread hold, want held at %s", got, watermarkBefore)
 	}
-	// The hold survives the state file.
+	// The hold survives the state file — and so do the origins the held
+	// channel knows above its watermark (the channel message it delivered,
+	// the live message it saw): a restart must not replay them (the lane's
+	// codex round 4). The rest of the test runs on the RELOADED tracker.
 	l.statePath = filepath.Join(t.TempDir(), "liveness.json")
 	l.saveState()
-	reloaded := &inboundLiveness{cfg: lcfg, now: clock.now, channels: map[string]*livenessChannel{}, origins: map[string]originEntry{}, statePath: l.statePath}
-	reloaded.loadState()
+	lcfg.livenessStatePath = l.statePath
+	reloaded := newTestLiveness(t, lcfg, hist, clock)
+	reloaded.deliver = rec.deliver
 	if ch := reloaded.channels["C1"]; ch == nil || ch.ThreadHoldTS != watermarkBefore || ch.WatermarkTS != watermarkBefore || ch.HeldMaxTS != live {
 		t.Fatalf("reloaded channel = %+v, want the thread hold at %s, the watermark held there and the live advance remembered (%s)", ch, watermarkBefore, live)
 	}
+	if got := reloaded.originSource("C1", channelMsg.TS); got != inboundOriginBackfilled {
+		t.Fatalf("reloaded origin of the delivered channel message = %v, want backfilled", got)
+	}
+	if got := reloaded.originSource("C1", live); got != inboundOriginLive {
+		t.Fatalf("reloaded origin of the live message = %v, want live", got)
+	}
 
-	// The thread read recovers: the next probe re-reads from the held
-	// watermark, finds the reply, replays it, skips the channel and live
-	// messages by their origins, and releases the watermark to the newest
-	// message seen while held.
+	// The thread read recovers: the next probe of the reloaded tracker
+	// re-reads from the held watermark, finds the reply, replays it, skips
+	// the channel and live messages by their restored origins, and releases
+	// the watermark to the newest message seen while held.
 	delete(hist.errs, "C1|"+parent.TS)
 	hist.byChan["C1"] = append(hist.byChan["C1"], histMsg(live, "U1", "live"))
 	clock.advance(12 * time.Minute)
-	l.tick(context.Background())
+	reloaded.tick(context.Background())
 	envs := rec.all()
 	if len(envs) != 2 {
-		t.Fatalf("delivered %d after the thread read recovered, want 2 (the reply replayed once; calls=%v)", len(envs), hist.calls)
+		t.Fatalf("delivered %d after the thread read recovered on the reloaded tracker, want 2 (the reply replayed once, nothing replayed twice; calls=%v)", len(envs), hist.calls)
 	}
 	var inner map[string]any
 	_ = json.Unmarshal(envs[1].Event, &inner)
 	if inner["thread_ts"] != parent.TS || inner["text"] != "unread reply" {
 		t.Fatalf("second replay = %v, want the unread reply", inner)
 	}
-	if got := l.threadHoldOf("C1"); got != "" {
+	if got := reloaded.threadHoldOf("C1"); got != "" {
 		t.Fatalf("thread hold after a clean probe = %q, want released", got)
 	}
-	if got := l.watermarkOf("C1"); got != live {
+	if got := reloaded.watermarkOf("C1"); got != live {
 		t.Fatalf("watermark after the release = %s, want %s (the newest message seen while held)", got, live)
+	}
+}
+
+// A healthy thread beside a failing one keeps paging: the held watermark
+// re-reads the same range every probe, so a thread with more fresh replies
+// than one page (livenessHistoryLimit) used to have only its first page
+// ever read — the rest unreachable until they aged out (the lane's codex
+// round 4). The replies are paged inside the probe now.
+func TestLivenessThreadRepliesArePagedUnderAHold(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	hist := newFakeHistory()
+	lcfg := livenessTestConfig(t)
+	l := newTestLiveness(t, lcfg, hist, clock)
+	rec := &deliveryRecorder{status: http.StatusOK}
+	l.deliver = rec.deliver
+
+	failing, _ := threadWithReply(base, -2*time.Hour, 2*time.Minute)
+	healthy := histMsg(tsAt(base, -time.Hour), "U1", "busy thread")
+	healthy.ReplyCount = 1
+	n := livenessHistoryLimit + 50
+	var replies []slackHistoryMessage
+	for i := 0; i < n; i++ {
+		r := histMsg(tsAt(base, 2*time.Minute+time.Duration(i)*time.Second), "U2", fmt.Sprintf("reply %d", i))
+		r.ThreadTS = healthy.TS
+		r.Raw, _ = json.Marshal(map[string]any{"type": "message", "ts": r.TS, "user": "U2", "text": r.Text, "thread_ts": healthy.TS})
+		replies = append(replies, r)
+	}
+	healthy.LatestReply = replies[n-1].TS
+	hist.byChan["C1"] = []slackHistoryMessage{failing, healthy}
+	hist.threads["C1|"+healthy.TS] = replies
+	hist.errs["C1|"+failing.TS] = fmt.Errorf("conversations.replies not ok: ratelimited")
+
+	// Three probes under the hold: the per-channel cap delivers 100, 100,
+	// then the last 50 — every reply of the healthy thread, not only the
+	// first page's.
+	for i := 0; i < 3; i++ {
+		clock.advance(12 * time.Minute)
+		l.tick(context.Background())
+	}
+	if envs := rec.all(); len(envs) != n {
+		t.Fatalf("delivered %d replies of the healthy thread over three probes, want all %d (the first page is %d)", len(envs), n, livenessHistoryLimit)
+	}
+	if got := l.threadHoldOf("C1"); got == "" {
+		t.Fatalf("thread hold = %q, want still held: the other thread's read is still failing", got)
 	}
 }
 

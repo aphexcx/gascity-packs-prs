@@ -92,6 +92,13 @@ const (
 	// livenessThreadScanWindow is how far back parents are scanned for
 	// fresh replies (history only returns parents by their own ts).
 	livenessThreadScanWindow = 24 * time.Hour
+	// livenessMaxThreadPages bounds the reply pages one probe reads from one
+	// thread (livenessHistoryLimit replies each). A thread's fresh replies
+	// are paged inside the probe, not across probes by the watermark: while
+	// a hold keeps the watermark still (a failed read of another thread, a
+	// pending replay) the first page would otherwise be the only one ever
+	// read (the lane's codex round 4).
+	livenessMaxThreadPages = 5
 	// livenessFetchTimeout bounds one Slack read.
 	livenessFetchTimeout = 15 * time.Second
 	// livenessMaxBackfillPerChannel caps replayed messages per channel
@@ -167,6 +174,18 @@ type livenessChannel struct {
 	// failing the hold rides the backfill window's floor: what is below the
 	// floor is unreadable anyway, what is above it stays guarded.
 	ThreadHoldTS string `json:"thread_hold_ts,omitempty"`
+	// HeldOrigins is written by saveState and read by loadState only: the
+	// known origins above the watermark while the channel is held (a thread
+	// read hold or a pending replay), so a restart does not replay what a
+	// held channel already delivered or saw (the lane's codex round 4; the
+	// origins are otherwise in memory only).
+	HeldOrigins []livenessHeldOrigin `json:"held_origins,omitempty"`
+}
+
+// livenessHeldOrigin is one persisted origin of a held channel.
+type livenessHeldOrigin struct {
+	TS   string `json:"ts"`
+	Live bool   `json:"live,omitempty"`
 }
 
 // livenessState is the persisted shape.
@@ -437,6 +456,25 @@ func (l *inboundLiveness) releaseThreadHoldLocked(channel string) {
 	ch.ThreadHoldTS = ""
 	ch.releaseHeldAdvanceLocked()
 	l.stateDirty = true
+}
+
+// heldOriginsLocked lists the known origins of channel above the watermark,
+// oldest first, for the state file (saveState). Caller holds l.mu.
+func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenessHeldOrigin {
+	prefix := channel + "|"
+	var out []livenessHeldOrigin
+	for key, e := range l.origins {
+		if e.source == inboundOriginUnknown || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		ts := key[len(prefix):]
+		if watermark != "" && compareSlackTS(ts, watermark) <= 0 {
+			continue
+		}
+		out = append(out, livenessHeldOrigin{TS: ts, Live: e.source == inboundOriginLive})
+	}
+	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
+	return out
 }
 
 // releaseThreadHolds releases the thread-read hold of every channel whose
@@ -860,22 +898,35 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	// watermark). Without backfill nothing replays and nothing advances, so
 	// there is nothing to hold.
 	for _, p := range threads {
-		rctx, rcancel := context.WithTimeout(ctx, livenessFetchTimeout)
-		replies, err := l.fetch.replies(rctx, channel, p.TS, oldest, livenessHistoryLimit)
-		rcancel()
-		if err != nil {
-			threadReadsFailed++
-			log.Printf("inbound liveness: thread read channel=%s ts=%s: %v — its unread replies are unknown; the channel's watermark holds at %s until a probe reads every thread", channel, p.TS, scrubSlackSecrets(err.Error()), ch.WatermarkTS)
-			continue
-		}
-		for _, m := range replies {
-			if m.TS == p.TS || compareSlackTS(m.TS, oldest) <= 0 {
-				continue
+		// A thread's fresh replies are paged here, oldest first, up to
+		// livenessMaxThreadPages: a held watermark re-reads the same range
+		// every probe, so the read itself must get past the first page.
+		pageOldest := oldest
+		for page := 0; page < livenessMaxThreadPages; page++ {
+			rctx, rcancel := context.WithTimeout(ctx, livenessFetchTimeout)
+			replies, err := l.fetch.replies(rctx, channel, p.TS, pageOldest, livenessHistoryLimit)
+			rcancel()
+			if err != nil {
+				threadReadsFailed++
+				log.Printf("inbound liveness: thread read channel=%s ts=%s: %v — its unread replies are unknown; the channel's watermark holds at %s until a probe reads every thread", channel, p.TS, scrubSlackSecrets(err.Error()), ch.WatermarkTS)
+				break
 			}
-			if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
-				continue
+			for _, m := range replies {
+				if m.TS == p.TS || compareSlackTS(m.TS, oldest) <= 0 {
+					continue
+				}
+				if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
+					continue
+				}
+				missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
 			}
-			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
+			if len(replies) < livenessHistoryLimit {
+				break
+			}
+			pageOldest = replies[len(replies)-1].TS
+			if page == livenessMaxThreadPages-1 {
+				log.Printf("inbound liveness: thread read channel=%s ts=%s has more than %d fresh replies; reading the rest next probe", channel, p.TS, livenessMaxThreadPages*livenessHistoryLimit)
+			}
 		}
 	}
 	if threadReadsFailed > 0 && l.cfg.backfillMaxWindow > 0 {
@@ -1196,12 +1247,29 @@ func (l *inboundLiveness) loadState() {
 		return
 	}
 	l.lastInboundAt = st.LastInboundAt
+	now := l.now()
+	restored := 0
 	for id, ch := range st.Channels {
 		if id == "" || ch == nil {
 			continue
 		}
 		ch.Pinned = false // re-derived from config each start
+		for _, o := range ch.HeldOrigins {
+			if o.TS == "" {
+				continue
+			}
+			src := inboundOriginBackfilled
+			if o.Live {
+				src = inboundOriginLive
+			}
+			l.originsPutLocked(originKey(id, o.TS), src, now)
+			restored++
+		}
+		ch.HeldOrigins = nil
 		l.channels[id] = ch
+	}
+	if restored > 0 {
+		log.Printf("inbound liveness: restored %d known origin(s) of held channel(s) from %s", restored, l.statePath)
 	}
 	log.Printf("inbound liveness: loaded state %s (channels=%d last_inbound=%s)", l.statePath, len(l.channels), st.LastInboundAt.UTC().Format(time.RFC3339))
 }
@@ -1224,6 +1292,10 @@ func (l *inboundLiveness) saveState() {
 		// runs outside the lock while the live path and the backfill shift
 		// the same backing array (the lane's codex round 2).
 		c.PendingTS = slices.Clone(ch.PendingTS)
+		c.HeldOrigins = nil
+		if ch.heldLocked() {
+			c.HeldOrigins = l.heldOriginsLocked(id, ch.WatermarkTS)
+		}
 		st.Channels[id] = &c
 	}
 	l.stateDirty = false
