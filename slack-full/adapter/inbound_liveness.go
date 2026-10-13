@@ -558,6 +558,13 @@ func (ch *livenessChannel) originFloorLocked() (string, bool) {
 	return floor, true
 }
 
+// setPendingHistoryLocked replaces channel's unread stretch (nil drops it)
+// and dirties the state. Caller holds l.mu with the channel present.
+func (l *inboundLiveness) setPendingHistoryLocked(channel string, ph *livenessPendingHistory) {
+	l.channels[channel].PendingHistory = ph
+	l.stateDirty = true
+}
+
 // pendingHistoryClone copies the pending-history pointer for a snapshot.
 func (ch *livenessChannel) pendingHistoryClone() *livenessPendingHistory {
 	if ch.PendingHistory == nil {
@@ -970,6 +977,16 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage, attempted bool) {
 	if i, found := slices.BinarySearchFunc(ch.PendingTS, ts, compareSlackTS); !found {
 		if len(ch.PendingTS) < livenessMaxBackfillPerChannel {
 			ch.PendingTS = slices.Insert(ch.PendingTS, i, ts)
+		} else if i < len(ch.PendingTS) {
+			// Full: the set keeps the OLDEST outstanding ts, since the
+			// watermark holds below PendingTS[0] and that guards every
+			// message above it — the newest held gives way, still guarded,
+			// re-read and held again when the set has room (the lane's
+			// codex round 1: a stretch read below the watermark could not
+			// be held behind a full set and the watermark stayed above it).
+			evicted := ch.PendingTS[len(ch.PendingTS)-1]
+			delete(ch.PendingMessages, evicted)
+			ch.PendingTS = slices.Insert(ch.PendingTS[:len(ch.PendingTS)-1], i, ts)
 		}
 	}
 	if slices.Contains(ch.PendingTS, ts) {
@@ -1315,6 +1332,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	// stretch shrinks with every page read and is dropped once Slack has
 	// no more. Its missed messages carry the stretch's floor as the
 	// watermark to go back to, so a hold on one of them re-reads it.
+	var settleStretch []func() // applied in order, under the lock, once every read of this probe succeeded
 	if ph := ch.PendingHistory; ph != nil {
 		from, below := ph.From, ph.Below
 		if floor != "" && compareSlackTS(from, floor) < 0 {
@@ -1333,18 +1351,19 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			}
 			below = msgs[0].TS
 		}
-		l.mu.Lock()
-		if live := l.channels[channel]; live != nil && live.PendingHistory != nil {
+		// Committed only once the read below the watermark succeeded too:
+		// a failed read discards everything this probe collected, the
+		// stretch's messages included, and the stretch must still stand
+		// for the next probe (the lane's codex round 1).
+		settleStretch = append(settleStretch, func() {
 			if done {
-				live.PendingHistory = nil
+				l.setPendingHistoryLocked(channel, nil)
 				log.Printf("inbound liveness: channel=%s read the unread history pages (%s, %s) through; no longer pending", channel, ph.From, ph.Below)
 			} else {
-				live.PendingHistory.Below = below
+				l.setPendingHistoryLocked(channel, &livenessPendingHistory{From: ph.From, Below: below})
 				log.Printf("inbound liveness: channel=%s read %d more page(s) of its unread history; (%s, %s) still pending", channel, livenessMaxHistoryPages, ph.From, below)
 			}
-			l.stateDirty = true
-		}
-		l.mu.Unlock()
+		})
 	}
 	// Then the channel above its watermark, page by page while the pages
 	// are still above it (gf-d7b finding 3o: one page used to be read and
@@ -1372,17 +1391,34 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		}
 		latest = msgs[0].TS // oldest-first: the page below starts under it
 		if page+1 >= livenessMaxHistoryPages {
-			l.mu.Lock()
-			if live := l.channels[channel]; live != nil {
-				if live.PendingHistory == nil || compareSlackTS(latest, live.PendingHistory.Below) < 0 {
-					live.PendingHistory = &livenessPendingHistory{From: oldest, Below: latest}
+			// A stretch still pending from before merges with this one —
+			// the lowest From, the highest Below; the pages between were
+			// read and are known origins — so neither is lost (the lane's
+			// codex round 1).
+			stretch := &livenessPendingHistory{From: oldest, Below: latest}
+			settleStretch = append(settleStretch, func() {
+				if cur := l.channels[channel].PendingHistory; cur != nil {
+					if compareSlackTS(cur.From, stretch.From) < 0 {
+						stretch.From = cur.From
+					}
+					if compareSlackTS(cur.Below, stretch.Below) > 0 {
+						stretch.Below = cur.Below
+					}
 				}
-				l.stateDirty = true
-			}
-			l.mu.Unlock()
+				l.setPendingHistoryLocked(channel, stretch)
+			})
 			log.Printf("inbound liveness: channel=%s has more than %d pages of history above its watermark %s; the pages below %s are pending and the next probe reads them first", channel, livenessMaxHistoryPages, oldest, latest)
 			break
 		}
+	}
+	if len(settleStretch) > 0 {
+		l.mu.Lock()
+		if l.channels[channel] != nil {
+			for _, settle := range settleStretch {
+				settle()
+			}
+		}
+		l.mu.Unlock()
 	}
 	// Most recently active threads first; cap reads per probe.
 	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
@@ -1403,14 +1439,18 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		pending := 0
 		l.mu.Lock()
 		for _, t := range cut {
-			if l.notePendingThreadLocked(channel, ch.TeamID, t.TS, oldest) {
+			from := oldest
+			if c, ok := threadFrom[t.TS]; ok {
+				from = c // a thread listed from the pending stretch: its floor
+			}
+			if l.notePendingThreadLocked(channel, ch.TeamID, t.TS, from) {
 				pending++
 				continue
 			}
 			kept = append(kept, t)
 		}
 		l.mu.Unlock()
-		log.Printf("inbound liveness: channel=%s has %d threads with fresh replies; reading the %d most recent this probe, %d pending from %s for the next, %d read now because the pending set is full", channel, len(threads), livenessMaxThreadsPerChannel, pending, oldest, len(kept)-livenessMaxThreadsPerChannel)
+		log.Printf("inbound liveness: channel=%s has %d threads with fresh replies; reading the %d most recent this probe, %d pending for the next from where this probe read, %d read now because the pending set is full", channel, len(threads), livenessMaxThreadsPerChannel, pending, len(kept)-livenessMaxThreadsPerChannel)
 		threads = kept
 	}
 	// The threads this channel still owes a read (gf-c7n finding 3i) are
@@ -1597,9 +1637,13 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 	for _, m := range missed {
 		if ctx.Err() != nil || perChannel[m.channel] >= livenessMaxBackfillPerChannel {
 			incomplete[m.channel] = true
-			left[m.channel]++
 			l.mu.Lock()
-			l.holdPendingLocked(m, false)
+			// A live copy that landed since the probe read it needs no
+			// hold: nothing would release one (the lane's codex round 1).
+			if e, ok := l.origins[originKey(m.channel, m.msg.TS)]; !ok || e.source == inboundOriginUnknown {
+				left[m.channel]++
+				l.holdPendingLocked(m, false)
+			}
 			l.mu.Unlock()
 			continue
 		}

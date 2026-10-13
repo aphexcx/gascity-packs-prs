@@ -101,7 +101,7 @@ func TestLivenessThreadsTheCapCutsArePendingAndReadByTheNextProbe(t *testing.T) 
 	if wm := l.watermarkOf("C1"); compareSlackTS(wm, replies[cut.TS].TS) <= 0 {
 		t.Fatalf("watermark after the first probe = %s, want past the cut thread's latest reply %s (the replayed replies move it; nothing holds it)", wm, replies[cut.TS].TS)
 	}
-	if !strings.Contains(read(), "1 pending from "+watermarkBefore+" for the next") {
+	if !strings.Contains(read(), "1 pending for the next from where this probe read") {
 		t.Errorf("the cut thread is not logged as pending: %s", read())
 	}
 	// Live traffic moves the watermark further and keeps the watchdog quiet.
