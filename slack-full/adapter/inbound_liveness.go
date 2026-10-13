@@ -959,9 +959,8 @@ func (l *inboundLiveness) settlePendingThreads(reads []threadRead, missed []miss
 // such a message can never be re-read and its hold could never be released
 // by a retry — the watermark would stay frozen for good, and with origins
 // unpersisted every restart would replay the whole window (the lane's codex
-// round 2). A retired message is left to a live redelivery, exactly as every
-// failed replay was before the hold existed; the last hold to go releases
-// the held advance. With backfill disabled (no window) nothing can release a
+// round 2). Retired messages are returned for dead-letter recording; the
+// last hold to go releases the held advance. With backfill disabled (no window) nothing can release a
 // hold, so every one is retired. Caller holds l.mu.
 func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRetiredHold {
 	var out []livenessRetiredHold
@@ -971,8 +970,8 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 	}
 	for id, ch := range l.channels {
 		// A pending thread whose parent has left the thread scan window is
-		// one the adapter would never list again anyway: retired, its
-		// undelivered replies left to a live redelivery. With backfill
+		// one the adapter would never list again anyway: retirement records
+		// its unread reply range for the dead letter. With backfill
 		// disabled nothing replays, so every one is retired.
 		if len(ch.PendingThreads) > 0 {
 			scanFloor := slackTSFromTime(now.Add(-livenessThreadScanWindow))
