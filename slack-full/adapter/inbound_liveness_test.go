@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -37,20 +38,36 @@ func histMsg(ts, user, text string) slackHistoryMessage {
 	return m
 }
 
-func (f *fakeHistory) history(_ context.Context, channel, oldest string, _ int) ([]slackHistoryMessage, error) {
+// history answers as Slack does: the newest `limit` messages in
+// (oldest, latest), has_more when the stretch holds more, oldest-first.
+func (f *fakeHistory) history(_ context.Context, channel, oldest, latest string, limit int) ([]slackHistoryMessage, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, "history:"+channel+":"+oldest)
+	call := "history:" + channel + ":" + oldest
+	if latest != "" {
+		call += ":latest=" + latest
+	}
+	f.calls = append(f.calls, call)
 	if err := f.errs[channel]; err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var out []slackHistoryMessage
 	for _, m := range f.byChan[channel] {
-		if oldest == "" || compareSlackTS(m.TS, oldest) > 0 {
+		if (oldest == "" || compareSlackTS(m.TS, oldest) > 0) && (latest == "" || compareSlackTS(m.TS, latest) < 0) {
 			out = append(out, m)
 		}
 	}
-	return out, nil
+	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
+	page := limit
+	if f.pageSize > 0 && f.pageSize < page {
+		page = f.pageSize
+	}
+	more := false
+	if page > 0 && len(out) > page {
+		out = out[len(out)-page:] // the newest page, as Slack pages newest-first
+		more = true
+	}
+	return out, more, nil
 }
 
 func (f *fakeHistory) replies(_ context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, bool, error) {
@@ -618,7 +635,15 @@ func TestSlackHistoryClient(t *testing.T) {
 			if r.URL.Query().Get("oldest") != "1.000000" || r.URL.Query().Get("channel") != "C1" {
 				t.Errorf("history query = %v", r.URL.Query())
 			}
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","ts":"3.000000","user":"U1","text":"c","reply_count":2,"latest_reply":"9.0"},{"type":"message","ts":"2.000000","user":"U1","text":"b"}]}`))
+			if latest := r.URL.Query().Get("latest"); latest != "" {
+				// The page below 2.000000: exclusive, one older message, no more.
+				if latest != "2.000000" {
+					t.Errorf("history latest = %q", latest)
+				}
+				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","ts":"1.500000","user":"U1","text":"a"}],"has_more":false}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"type":"message","ts":"3.000000","user":"U1","text":"c","reply_count":2,"latest_reply":"9.0"},{"type":"message","ts":"2.000000","user":"U1","text":"b"}],"has_more":true}`))
 		case "/conversations.replies":
 			if r.URL.Query().Get("ts") != "3.000000" {
 				t.Errorf("replies query = %v", r.URL.Query())
@@ -634,15 +659,23 @@ func TestSlackHistoryClient(t *testing.T) {
 	t.Cleanup(func() { slackAPIBase = prev })
 
 	c := newSlackHistoryClient("xoxb-t")
-	msgs, err := c.history(context.Background(), "C1", "1.000000", 50)
+	msgs, more, err := c.history(context.Background(), "C1", "1.000000", "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 2 || msgs[0].TS != "2.000000" || msgs[1].TS != "3.000000" || msgs[1].ReplyCount != 2 || msgs[1].LatestReply != "9.0" {
-		t.Errorf("history = %+v", msgs)
+	if len(msgs) != 2 || msgs[0].TS != "2.000000" || msgs[1].TS != "3.000000" || msgs[1].ReplyCount != 2 || msgs[1].LatestReply != "9.0" || !more {
+		t.Errorf("history = %+v more=%v, want two messages and has_more", msgs, more)
 	}
 	if !strings.Contains(string(msgs[0].Raw), `"text":"b"`) {
 		t.Errorf("raw not retained: %s", msgs[0].Raw)
+	}
+	// The page below the oldest ts read: latest is sent, exclusive.
+	page, more, err := c.history(context.Background(), "C1", "1.000000", msgs[0].TS, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1 || page[0].TS != "1.500000" || more {
+		t.Errorf("history page below %s = %+v more=%v, want the one older message and no more", msgs[0].TS, page, more)
 	}
 	replies, _, err := c.replies(context.Background(), "C1", "3.000000", "", 50)
 	if err != nil {

@@ -99,6 +99,12 @@ const (
 	livenessMaxChannels = 50
 	// livenessHistoryLimit is the per-call conversations.history page.
 	livenessHistoryLimit = 200
+	// livenessMaxHistoryPages bounds the conversations.history pages one
+	// probe reads above one channel's watermark (gf-d7b finding 3o: the
+	// read used to take one page and drop has_more, so the newest 200
+	// messages of a longer gap replayed and the watermark moved past the
+	// rest). Pages a probe cannot finish are carried on the channel
+	// (PendingHistory) and read first by the next probe. A var for tests.
 	// livenessMaxThreadsPerChannel caps thread reads per channel per probe.
 	livenessMaxThreadsPerChannel = 10
 	// livenessThreadScanWindow is how far back parents are scanned for
@@ -108,12 +114,14 @@ const (
 	// pending (a read that failed, or found more than one probe replayed):
 	// each is re-read every probe from its own cursor until drained.
 	livenessMaxPendingThreads = 32
-	// livenessFetchTimeout bounds one Slack read.
+	// livenessFetchTimeout bounds one Slack read (one page).
 	livenessFetchTimeout = 15 * time.Second
 	// livenessMaxBackfillPerChannel caps replayed messages per channel
 	// per pass so a long outage cannot flood sessions in one burst.
 	livenessMaxBackfillPerChannel = 100
 )
+
+var livenessMaxHistoryPages = 5
 
 // inboundOriginSource classifies a known message origin.
 type inboundOriginSource uint8
@@ -150,9 +158,12 @@ type slackHistoryMessage struct {
 // historyFetcher is the Slack read surface the watchdog needs; the
 // production implementation uses the bot token, tests fake it.
 type historyFetcher interface {
-	// history returns messages in channel with ts > oldest (exclusive),
-	// oldest-first, at most limit.
-	history(ctx context.Context, channel, oldest string, limit int) ([]slackHistoryMessage, error)
+	// history returns one page of channel: messages with oldest < ts (and
+	// ts < latest when latest is set — the page below the last one read;
+	// Slack pages newest-first), oldest-first, at most limit, and whether
+	// Slack reports more past this page (has_more): a short page proves
+	// nothing on its own.
+	history(ctx context.Context, channel, oldest, latest string, limit int) ([]slackHistoryMessage, bool, error)
 	// replies returns the thread rooted at threadTS with ts > oldest,
 	// oldest-first (the parent is omitted), at most limit, and whether
 	// Slack reports more past this page (has_more): a short page proves
@@ -203,6 +214,21 @@ type livenessChannel struct {
 	// progress. Capped at livenessMaxPendingThreads, oldest parent first;
 	// a thread whose parent has left the thread scan window retires.
 	PendingThreads []livenessPendingThread `json:"pending_threads,omitempty"`
+	// PendingHistory is the stretch of channel history a probe could not
+	// finish reading (gf-d7b finding 3o): the pages below the ones it read,
+	// above From (the watermark as that probe read it) and below Below (the
+	// oldest ts it did read). The next probe reads it first, page by page
+	// from Below down, and drops it once Slack reports nothing more; the
+	// watermark moves on with what was read, and this is what keeps the
+	// unread pages reachable below it. Capped at livenessMaxHistoryPages
+	// pages per probe; one the backfill window closes on retires.
+	PendingHistory *livenessPendingHistory `json:"pending_history,omitempty"`
+}
+
+// livenessPendingHistory is one stretch of channel history still unread.
+type livenessPendingHistory struct {
+	From  string `json:"from"`  // exclusive: the watermark as the probe read it
+	Below string `json:"below"` // exclusive: the oldest ts the probe did read
 }
 
 // livenessPendingThread is one thread a channel still owes a read.
@@ -501,7 +527,7 @@ func (ch *livenessChannel) heldLocked() bool {
 // the lowest of the watermark and every pending thread's cursor. Caller
 // holds l.mu.
 func (ch *livenessChannel) originFloorLocked() (string, bool) {
-	if len(ch.PendingTS) == 0 && len(ch.PendingThreads) == 0 {
+	if len(ch.PendingTS) == 0 && len(ch.PendingThreads) == 0 && ch.PendingHistory == nil {
 		return "", false
 	}
 	floor := ch.WatermarkTS
@@ -510,7 +536,19 @@ func (ch *livenessChannel) originFloorLocked() (string, bool) {
 			floor = p.Oldest
 		}
 	}
+	if ph := ch.PendingHistory; ph != nil && ph.From != "" && (floor == "" || compareSlackTS(ph.From, floor) < 0) {
+		floor = ph.From
+	}
 	return floor, true
+}
+
+// pendingHistoryClone copies the pending-history pointer for a snapshot.
+func (ch *livenessChannel) pendingHistoryClone() *livenessPendingHistory {
+	if ch.PendingHistory == nil {
+		return nil
+	}
+	c := *ch.PendingHistory
+	return &c
 }
 
 // releaseHeldAdvanceLocked takes the advance the holds refused once the
@@ -728,6 +766,23 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 				l.stateDirty = true
 				log.Printf("inbound liveness: channel=%s retired %d pending thread(s) out of the thread scan window (%s) — their undelivered replies are left to a live redelivery",
 					id, len(retiredThreads), strings.Join(retiredThreads, " "))
+			}
+		}
+		// Unread history pages the backfill window has closed on can never
+		// be read (the probe reads above the window's floor); what is left
+		// above the floor stays pending.
+		if ph := ch.PendingHistory; ph != nil {
+			switch {
+			case floor == "" || compareSlackTS(ph.Below, floor) <= 0:
+				ch.PendingHistory = nil
+				l.stateDirty = true
+				log.Printf("inbound liveness: channel=%s retired the unread history pages (%s, %s) out of the backfill window — NEVER READ: whatever human messages they held were never delivered to gc; read the channel's history for that stretch by hand", id, ph.From, ph.Below)
+				if l.alert != nil {
+					go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: a stretch of <#%s> history (ts %s to %s) was never read within the backfill window (%s) and is lost to the backfill. Read it by hand.", id, ph.From, ph.Below, l.cfg.backfillMaxWindow))
+				}
+			case compareSlackTS(ph.From, floor) < 0:
+				ph.From = floor
+				l.stateDirty = true
 			}
 		}
 		if len(ch.PendingTS) == 0 {
@@ -1021,6 +1076,9 @@ func (l *inboundLiveness) tick(ctx context.Context) {
 	held := 0
 	for _, ch := range l.channels {
 		held += len(ch.PendingTS) + len(ch.PendingThreads)
+		if ch.PendingHistory != nil {
+			held++
+		}
 	}
 	retry := !due && held > 0 && l.cfg.backfillMaxWindow > 0 && now.Sub(l.lastProbeAt) >= livenessHoldRetryInterval
 	l.mu.Unlock()
@@ -1135,6 +1193,7 @@ func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 		c.PendingTS = slices.Clone(ch.PendingTS)
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
 		c.PendingMessages = maps.Clone(ch.PendingMessages)
+		c.PendingHistory = ch.pendingHistoryClone()
 		out = append(out, watchedChannel{id: id, ch: c})
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1161,35 +1220,106 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	} else if oldest == "" {
 		oldest = slackTSFromTime(now.Add(-l.cfg.livenessStallAfter - time.Minute))
 	}
-	// One read covers both questions. Parents newer than the watermark
-	// are candidates themselves; parents from the last
-	// livenessThreadScanWindow whose latest_reply moved past the
-	// watermark point at threads with fresh replies (history only lists
-	// parents by their own ts, so a reply posted during the gap into an
-	// older thread is otherwise invisible). Newest-first paging means a
-	// busy channel still yields the most recent livenessHistoryLimit.
+	// The listed threads' cursors: a thread listed from the pending
+	// history stretch reads from that stretch's floor, the rest from the
+	// watermark.
+	threadFrom := map[string]string{}
+	var threads []slackHistoryMessage
+	// collect takes one stretch of history read above lower: parents
+	// whose latest_reply moved past lower point at threads with fresh
+	// replies (history only lists parents by their own ts, so a reply
+	// posted during the gap into an older thread is otherwise invisible);
+	// messages above lower the adapter never saw are missed.
+	collect := func(msgs []slackHistoryMessage, lower, watermark string) {
+		for _, m := range msgs {
+			if m.ReplyCount > 0 && m.LatestReply != "" && compareSlackTS(m.LatestReply, lower) > 0 {
+				if _, seen := threadFrom[m.TS]; !seen {
+					threadFrom[m.TS] = lower
+					threads = append(threads, m)
+				}
+			}
+			if compareSlackTS(m.TS, lower) <= 0 {
+				continue
+			}
+			if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
+				continue
+			}
+			missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: watermark})
+		}
+	}
+	// The stretch a previous probe could not finish reading comes first
+	// (gf-d7b finding 3o): below Below, page by page, down to From; the
+	// stretch shrinks with every page read and is dropped once Slack has
+	// no more. Its missed messages carry the stretch's floor as the
+	// watermark to go back to, so a hold on one of them re-reads it.
+	if ph := ch.PendingHistory; ph != nil {
+		from, below := ph.From, ph.Below
+		if floor != "" && compareSlackTS(from, floor) < 0 {
+			from = floor
+		}
+		done := false
+		for page := 0; page < livenessMaxHistoryPages; page++ {
+			msgs, more, err := l.fetchHistoryPage(ctx, channel, from, below, livenessHistoryLimit)
+			if err != nil {
+				return nil, nil, err
+			}
+			collect(msgs, from, from)
+			if !more || len(msgs) == 0 {
+				done = true
+				break
+			}
+			below = msgs[0].TS
+		}
+		l.mu.Lock()
+		if live := l.channels[channel]; live != nil && live.PendingHistory != nil {
+			if done {
+				live.PendingHistory = nil
+				log.Printf("inbound liveness: channel=%s read the unread history pages (%s, %s) through; no longer pending", channel, ph.From, ph.Below)
+			} else {
+				live.PendingHistory.Below = below
+				log.Printf("inbound liveness: channel=%s read %d more page(s) of its unread history; (%s, %s) still pending", channel, livenessMaxHistoryPages, ph.From, below)
+			}
+			l.stateDirty = true
+		}
+		l.mu.Unlock()
+	}
+	// Then the channel above its watermark, page by page while the pages
+	// are still above it (gf-d7b finding 3o: one page used to be read and
+	// has_more dropped, so the newest 200 of a longer gap replayed and the
+	// watermark moved past the rest). Pages below the watermark are the
+	// thread scan's: the read reaches back livenessThreadScanWindow for
+	// parents whose latest_reply moved past the watermark, and one page's
+	// worth of that is the best effort, as before. Pages above the
+	// watermark a probe cannot finish are pending on the channel from the
+	// oldest ts it did read down to the watermark, and the next probe
+	// reads them first.
 	fetchFrom := oldest
 	if scanOldest := slackTSFromTime(now.Add(-livenessThreadScanWindow)); compareSlackTS(scanOldest, oldest) < 0 {
 		fetchFrom = scanOldest
 	}
-	fctx, cancel := context.WithTimeout(ctx, livenessFetchTimeout)
-	defer cancel()
-	all, err := l.fetch.history(fctx, channel, fetchFrom, livenessHistoryLimit)
-	if err != nil {
-		return nil, nil, err
-	}
-	var threads []slackHistoryMessage
-	for _, m := range all {
-		if m.ReplyCount > 0 && m.LatestReply != "" && compareSlackTS(m.LatestReply, oldest) > 0 {
-			threads = append(threads, m)
+	latest := ""
+	for page := 0; ; page++ {
+		msgs, more, err := l.fetchHistoryPage(ctx, channel, fetchFrom, latest, livenessHistoryLimit)
+		if err != nil {
+			return nil, nil, err
 		}
-		if compareSlackTS(m.TS, oldest) <= 0 {
-			continue
+		collect(msgs, oldest, ch.WatermarkTS)
+		if !more || len(msgs) == 0 || compareSlackTS(msgs[0].TS, oldest) <= 0 {
+			break
 		}
-		if l.originSource(channel, m.TS) != inboundOriginUnknown || !historyMessageDispatchable(m) {
-			continue
+		latest = msgs[0].TS // oldest-first: the page below starts under it
+		if page+1 >= livenessMaxHistoryPages {
+			l.mu.Lock()
+			if live := l.channels[channel]; live != nil {
+				if live.PendingHistory == nil || compareSlackTS(latest, live.PendingHistory.Below) < 0 {
+					live.PendingHistory = &livenessPendingHistory{From: oldest, Below: latest}
+				}
+				l.stateDirty = true
+			}
+			l.mu.Unlock()
+			log.Printf("inbound liveness: channel=%s has more than %d pages of history above its watermark %s; the pages below %s are pending and the next probe reads them first", channel, livenessMaxHistoryPages, oldest, latest)
+			break
 		}
-		missed = append(missed, missedMessage{channel: channel, teamID: ch.TeamID, msg: m, watermark: ch.WatermarkTS})
 	}
 	// Most recently active threads first; cap reads per probe.
 	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
@@ -1248,6 +1378,9 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		// if that is where its undelivered replies are, never below the
 		// window's floor.
 		from := oldest
+		if c, ok := threadFrom[p.TS]; ok {
+			from = c
+		}
 		if c, ok := cursor[p.TS]; ok {
 			from = c
 			if floor != "" && compareSlackTS(floor, from) > 0 {
@@ -1727,6 +1860,7 @@ func (l *inboundLiveness) saveState() {
 		c.PendingTS = slices.Clone(ch.PendingTS)
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
 		c.PendingMessages = maps.Clone(ch.PendingMessages)
+		c.PendingHistory = ch.pendingHistoryClone()
 		c.HeldOrigins = nil
 		if floor, held := ch.originFloorLocked(); held {
 			var n int
@@ -1854,15 +1988,26 @@ type slackHistoryResp struct {
 	HasMore  bool              `json:"has_more,omitempty"`
 }
 
-func (c *slackHistoryClient) history(ctx context.Context, channel, oldest string, limit int) ([]slackHistoryMessage, error) {
+func (c *slackHistoryClient) history(ctx context.Context, channel, oldest, latest string, limit int) ([]slackHistoryMessage, bool, error) {
 	q := url.Values{}
 	q.Set("channel", channel)
 	q.Set("limit", strconv.Itoa(limit))
 	if oldest != "" {
 		q.Set("oldest", oldest)
 	}
-	out, _, err := c.get(ctx, "/conversations.history", q, "")
-	return out, err
+	if latest != "" {
+		// The page below the last one read: Slack's latest is exclusive
+		// (inclusive defaults to false), so the ts itself is not repeated.
+		q.Set("latest", latest)
+	}
+	return c.get(ctx, "/conversations.history", q, "")
+}
+
+// fetchHistoryPage reads one history page under the per-read timeout.
+func (l *inboundLiveness) fetchHistoryPage(ctx context.Context, channel, oldest, latest string, limit int) ([]slackHistoryMessage, bool, error) {
+	fctx, cancel := context.WithTimeout(ctx, livenessFetchTimeout)
+	defer cancel()
+	return l.fetch.history(fctx, channel, oldest, latest, limit)
 }
 
 func (c *slackHistoryClient) replies(ctx context.Context, channel, threadTS, oldest string, limit int) ([]slackHistoryMessage, bool, error) {
