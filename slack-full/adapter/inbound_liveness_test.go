@@ -148,6 +148,7 @@ func newTestLiveness(t *testing.T, cfg config, fetch historyFetcher, clock *fake
 		now:       clock.now,
 		channels:  make(map[string]*livenessChannel),
 		origins:   make(map[string]originEntry),
+		inFlight:  make(map[string]bool),
 		statePath: cfg.livenessStatePath,
 		teamID:    cfg.accountID,
 	}

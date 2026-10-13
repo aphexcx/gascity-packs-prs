@@ -80,6 +80,10 @@ const (
 	livenessAlertRepeat = 30 * time.Minute
 	// livenessPersistInterval paces state-file writes while dirty.
 	livenessPersistInterval = 60 * time.Second
+	// livenessStateMaxBytes bounds the state file the loader accepts. The
+	// held origins (gf-c7n finding 3l) can run to livenessOriginMax entries
+	// of a few dozen bytes each on top of the channels, well inside it.
+	livenessStateMaxBytes = 8 << 20
 	// livenessOriginTTL / livenessOriginMax bound the origin seen-set.
 	livenessOriginTTL = 3 * time.Hour
 	livenessOriginMax = 16384
@@ -162,6 +166,14 @@ type livenessChannel struct {
 	// pending replay lands.
 	PendingTS []string `json:"pending_ts,omitempty"`
 	HeldMaxTS string   `json:"held_max_ts,omitempty"`
+	// HeldOrigins is written by saveState and read by loadState only: the
+	// origins the channel knows above its held watermark — delivered by a
+	// replay that committed, or seen live — while a replay is pending, so a
+	// restart replays only what was never delivered (gf-c7n finding 3l; the
+	// origins are otherwise in memory only, and the startup probe re-read
+	// everything above the hold). A replay still in flight is never one of
+	// them.
+	HeldOrigins []livenessHeldOrigin `json:"held_origins,omitempty"`
 	// PendingThreads are the threads a probe could not finish reading
 	// (gf-c7n finding 3i): a thread-history read that failed, or one whose
 	// fresh replies outran what one probe read and replayed. Each is re-read
@@ -179,6 +191,12 @@ type livenessChannel struct {
 type livenessPendingThread struct {
 	ParentTS string `json:"parent_ts"`
 	Oldest   string `json:"oldest"` // replies above it are not all delivered yet
+}
+
+// livenessHeldOrigin is one persisted origin of a held channel.
+type livenessHeldOrigin struct {
+	TS   string `json:"ts"`
+	Live bool   `json:"live,omitempty"`
 }
 
 // livenessState is the persisted shape.
@@ -225,12 +243,16 @@ type inboundLiveness struct {
 	alerted       bool
 	channels      map[string]*livenessChannel
 	origins       map[string]originEntry
-	statePath     string
-	stateDirty    bool
-	botUserID     string
-	apiAppID      string
-	teamID        string
-	probing       bool
+	// inFlight marks the origins a replay has claimed (marked backfilled so
+	// a racing live copy drops) but not yet concluded: not delivered, so
+	// never persisted as such (gf-c7n finding 3l).
+	inFlight   map[string]bool
+	statePath  string
+	stateDirty bool
+	botUserID  string
+	apiAppID   string
+	teamID     string
+	probing    bool
 
 	probesTotal     atomic.Uint64
 	missedTotal     atomic.Uint64
@@ -252,6 +274,7 @@ func newInboundLiveness(cfg config, fetch historyFetcher) *inboundLiveness {
 		now:       time.Now,
 		channels:  make(map[string]*livenessChannel),
 		origins:   make(map[string]originEntry),
+		inFlight:  make(map[string]bool),
 		statePath: cfg.livenessStatePath,
 		teamID:    cfg.accountID,
 	}
@@ -1076,11 +1099,16 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 			continue
 		}
 		l.originsPutLocked(key, inboundOriginBackfilled, now)
+		if l.inFlight == nil {
+			l.inFlight = make(map[string]bool)
+		}
+		l.inFlight[key] = true
 		l.mu.Unlock()
 		outcome := l.deliver(ctx, env)
 		if ok, why := l.backfillCommitted(ctx, outcome); !ok {
 			l.mu.Lock()
 			delete(l.origins, key)
+			delete(l.inFlight, key)
 			l.holdPendingLocked(m)
 			l.mu.Unlock()
 			log.Printf("inbound liveness: backfill delivery channel=%s ts=%s %s — left for a live redelivery or the next probe: the origin is unmarked and the channel's watermark holds below it", m.channel, m.msg.TS, why)
@@ -1089,6 +1117,7 @@ func (l *inboundLiveness) backfill(ctx context.Context, missed []missedMessage) 
 		delivered++
 		l.backfilledTotal.Add(1)
 		l.mu.Lock()
+		delete(l.inFlight, key)
 		l.touchChannelLocked(m.channel, m.teamID, m.msg.TS, now)
 		l.mu.Unlock()
 		log.Printf("inbound liveness: backfilled channel=%s ts=%s user=%s thread=%s text=%dch", m.channel, m.msg.TS, m.msg.User, m.msg.ThreadTS, len(m.msg.Text))
@@ -1247,7 +1276,7 @@ func (l *inboundLiveness) loadState() {
 		}
 		return
 	}
-	if len(data) > 1<<20 {
+	if len(data) > livenessStateMaxBytes {
 		log.Printf("inbound liveness: state %s oversized (%d bytes) — starting fresh", l.statePath, len(data))
 		return
 	}
@@ -1257,14 +1286,54 @@ func (l *inboundLiveness) loadState() {
 		return
 	}
 	l.lastInboundAt = st.LastInboundAt
+	now := l.now()
+	restored := 0
 	for id, ch := range st.Channels {
 		if id == "" || ch == nil {
 			continue
 		}
 		ch.Pinned = false // re-derived from config each start
+		// The delivered record of a held channel comes back with the hold,
+		// so the startup probe replays only what was never delivered.
+		for _, o := range ch.HeldOrigins {
+			if o.TS == "" {
+				continue
+			}
+			src := inboundOriginBackfilled
+			if o.Live {
+				src = inboundOriginLive
+			}
+			l.originsPutLocked(originKey(id, o.TS), src, now)
+			restored++
+		}
+		ch.HeldOrigins = nil
 		l.channels[id] = ch
 	}
+	if restored > 0 {
+		log.Printf("inbound liveness: restored %d delivered origin(s) of held channel(s) from %s", restored, l.statePath)
+	}
 	log.Printf("inbound liveness: loaded state %s (channels=%d last_inbound=%s)", l.statePath, len(l.channels), st.LastInboundAt.UTC().Format(time.RFC3339))
+}
+
+// heldOriginsLocked lists the origins channel knows above its watermark —
+// a replay that concluded delivered, or a live message — oldest first, for
+// the state file; a replay still in flight is left out. Caller holds l.mu.
+func (l *inboundLiveness) heldOriginsLocked(channel, watermark string) []livenessHeldOrigin {
+	prefix := channel + "|"
+	now := l.now()
+	var out []livenessHeldOrigin
+	for key, e := range l.origins {
+		if e.source == inboundOriginUnknown || l.inFlight[key] || now.Sub(e.at) > livenessOriginTTL || !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		ts := key[len(prefix):]
+		if watermark != "" && compareSlackTS(ts, watermark) <= 0 {
+			continue
+		}
+		out = append(out, livenessHeldOrigin{TS: ts, Live: e.source == inboundOriginLive})
+	}
+	sort.Slice(out, func(i, j int) bool { return compareSlackTS(out[i].TS, out[j].TS) < 0 })
+	return out
 }
 
 // saveState persists the watermarks if anything changed. Errors are
@@ -1286,6 +1355,10 @@ func (l *inboundLiveness) saveState() {
 		// the same backing array (the lane's codex round 2).
 		c.PendingTS = slices.Clone(ch.PendingTS)
 		c.PendingThreads = slices.Clone(ch.PendingThreads)
+		c.HeldOrigins = nil
+		if ch.heldLocked() {
+			c.HeldOrigins = l.heldOriginsLocked(id, ch.WatermarkTS)
+		}
 		st.Channels[id] = &c
 	}
 	l.stateDirty = false
