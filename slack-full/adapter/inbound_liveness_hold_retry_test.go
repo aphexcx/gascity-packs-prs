@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // Regression coverage for the Opus 5.5 delta read's MINOR beside gf-c7n
@@ -154,5 +155,64 @@ func TestLivenessAHoldThatAgesOutGoesToTheInboundDeadLetter(t *testing.T) {
 	l.mu.Unlock()
 	if pending != 0 || msgs != 0 {
 		t.Fatalf("pending = %d held messages = %d after the retirement, want none", pending, msgs)
+	}
+}
+
+// The lane's codex round 7 (P2): the held replays' payloads could outgrow
+// the state file the loader accepts and lose every watermark and hold. A
+// held replay keeps its text clipped and its files by count, and a state
+// file that would still exceed the loader's limit sheds the texts (the
+// dead letter then says to read them from Slack) and then the held origins
+// until it fits.
+func TestLivenessHeldReplayTextIsClippedAndTheStateFileSheds(t *testing.T) {
+	base := time.Date(2026, 10, 13, 2, 0, 0, 0, time.UTC)
+	clock := &fakeClock{t: base}
+	cfg := livenessTestConfig(t)
+	cfg.livenessStatePath = filepath.Join(t.TempDir(), "liveness.json")
+	hist := newFakeHistory()
+	l := newTestLiveness(t, cfg, hist, clock)
+	big := strings.Repeat("é", 20000) // 40 KB of two-byte runes
+	l.mu.Lock()
+	for i := 0; i < 3; i++ {
+		msg := histMsg(tsAt(base, 2*time.Minute+time.Duration(i)*time.Second), "U1", big)
+		msg.Files = []slackFile{{ID: "F1"}, {ID: "F2"}}
+		l.holdPendingLocked(missedMessage{channel: "C1", msg: msg, watermark: l.channels["C1"].WatermarkTS})
+	}
+	heldMsgs := l.channels["C1"].PendingMessages
+	l.mu.Unlock()
+	for ts, h := range heldMsgs {
+		if n := len(h.Msg.Text); n > livenessHeldTextMax+len("…") || !strings.HasSuffix(h.Msg.Text, "…") || !utf8.ValidString(h.Msg.Text) {
+			t.Fatalf("held text for %s is %d bytes (valid=%v), want clipped to %d on a rune boundary", ts, n, utf8.ValidString(h.Msg.Text), livenessHeldTextMax)
+		}
+		if h.FilesDropped != 2 || len(h.Msg.Files) != 0 {
+			t.Fatalf("held files for %s = %d kept, %d counted; want none kept and 2 counted", ts, len(h.Msg.Files), h.FilesDropped)
+		}
+	}
+	// A limit the clipped texts still exceed: the texts are shed, the file
+	// loads, and the holds survive with their texts marked dropped.
+	prev := livenessStateMaxBytes
+	livenessStateMaxBytes = 4096
+	t.Cleanup(func() { livenessStateMaxBytes = prev })
+	read, cleanup := captureLog(t)
+	t.Cleanup(cleanup)
+	l.saveState()
+	if st, err := os.Stat(cfg.livenessStatePath); err != nil || st.Size() > int64(livenessStateMaxBytes) {
+		t.Fatalf("state file size = %v (err %v), want within %d", st, err, livenessStateMaxBytes)
+	}
+	if !strings.Contains(read(), "shedding the held replays' texts") {
+		t.Errorf("the shedding is not logged: %s", read())
+	}
+	reloaded := newTestLiveness(t, cfg, hist, clock)
+	reloaded.mu.Lock()
+	pending := len(reloaded.channels["C1"].PendingTS)
+	msgs := reloaded.channels["C1"].PendingMessages
+	reloaded.mu.Unlock()
+	if pending != 3 || len(msgs) != 3 {
+		t.Fatalf("reloaded pending = %d held messages = %d, want 3 and 3: the shed state must load whole", pending, len(msgs))
+	}
+	for ts, h := range msgs {
+		if !h.TextDropped || h.Msg.Text != "" || h.Attempts != 1 || h.FilesDropped != 2 {
+			t.Fatalf("reloaded held %s = %+v, want the text dropped and marked, the attempts and the file count kept", ts, h)
+		}
 	}
 }

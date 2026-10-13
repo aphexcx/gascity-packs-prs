@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Inbound-liveness watchdog + history backfill (gp-3og / ci-mk4qj).
@@ -88,10 +89,9 @@ const (
 	// minor beside gf-c7n finding 3l: a held founder line waited for the
 	// next stall, reconnect or restart, and could age out unreplayed).
 	livenessHoldRetryInterval = 2 * time.Minute
-	// livenessStateMaxBytes bounds the state file the loader accepts. The
-	// held origins (gf-c7n finding 3l) can run to livenessOriginMax entries
-	// of a few dozen bytes each on top of the channels, well inside it.
-	livenessStateMaxBytes = 8 << 20
+	// livenessHeldTextMax bounds the text a held replay keeps for its dead
+	// letter (bytes, cut on a rune boundary); files are kept by count only.
+	livenessHeldTextMax = 4096
 	// livenessOriginTTL / livenessOriginMax bound the origin seen-set.
 	livenessOriginTTL = 3 * time.Hour
 	livenessOriginMax = 16384
@@ -212,10 +212,30 @@ type livenessPendingThread struct {
 // livenessHeldReplay is one held replay: the message, its attempts, and
 // when it was first held.
 type livenessHeldReplay struct {
-	Msg      slackHistoryMessage `json:"msg"`
+	Msg      slackHistoryMessage `json:"msg"` // text clipped to livenessHeldTextMax, files dropped
 	TeamID   string              `json:"team_id,omitempty"`
 	Attempts int                 `json:"attempts"`
 	HeldAt   time.Time           `json:"held_at"`
+	// FilesDropped counts the files the message carried; TextDropped says
+	// the text was shed to fit the state file (the dead letter says so).
+	FilesDropped int  `json:"files_dropped,omitempty"`
+	TextDropped  bool `json:"text_dropped,omitempty"`
+}
+
+// clipHeldMessage returns the message as a held replay keeps it: the text
+// cut to livenessHeldTextMax on a rune boundary, the files kept by count.
+func clipHeldMessage(m slackHistoryMessage) (slackHistoryMessage, int) {
+	files := len(m.Files)
+	m.Files = nil
+	m.Raw = nil
+	if len(m.Text) > livenessHeldTextMax {
+		cut := livenessHeldTextMax
+		for cut > 0 && !utf8.RuneStart(m.Text[cut]) {
+			cut--
+		}
+		m.Text = m.Text[:cut] + "…"
+	}
+	return m, files
 }
 
 // livenessRetiredHold is a held replay that aged out, for the dead letter.
@@ -300,6 +320,12 @@ type inboundLiveness struct {
 	alarmsTotal     atomic.Uint64
 	lastMissed      atomic.Int64
 }
+
+// livenessStateMaxBytes bounds the state file the loader accepts; saveState
+// sheds the held replays' texts, then the held origins, until the file
+// fits, so a state the writer produced is one the loader takes (the lane's
+// codex round 7). A variable so tests can lower it.
+var livenessStateMaxBytes = 8 << 20
 
 // livenessHealth is the process-singleton tracker read by handleHealthz.
 var livenessHealth atomic.Pointer[inboundLiveness]
@@ -673,8 +699,14 @@ func (l *inboundLiveness) deadLetterRetiredHolds(retired []livenessRetiredHold) 
 	byChannel := map[string][]inboundDeadLetterRecord{}
 	for _, r := range retired {
 		reason := fmt.Sprintf("inbound liveness: held replay aged out of the backfill window (%s) after %d attempt(s) — never delivered to gc; re-post by hand", l.cfg.backfillMaxWindow, r.held.Attempts)
-		if !r.known {
+		switch {
+		case !r.known:
 			reason += " (the message text was not recorded with the hold; read it from Slack at this ts)"
+		case r.held.TextDropped:
+			reason += " (the text was shed to fit the state file; read it from Slack at this ts)"
+		}
+		if r.held.FilesDropped > 0 {
+			reason += fmt.Sprintf(" (%d file(s) on the message, not recorded)", r.held.FilesDropped)
 		}
 		team := r.held.TeamID
 		if team == "" {
@@ -749,7 +781,8 @@ func (l *inboundLiveness) holdPendingLocked(m missedMessage) {
 		}
 		held, known := ch.PendingMessages[ts]
 		if !known {
-			held = livenessHeldReplay{Msg: m.msg, TeamID: m.teamID, HeldAt: l.now()}
+			msg, files := clipHeldMessage(m.msg)
+			held = livenessHeldReplay{Msg: msg, TeamID: m.teamID, HeldAt: l.now(), FilesDropped: files}
 		}
 		held.Attempts++
 		ch.PendingMessages[ts] = held
@@ -1569,6 +1602,34 @@ func (l *inboundLiveness) saveState() {
 	if err != nil {
 		log.Printf("inbound liveness: encode state: %v", err)
 		return
+	}
+	// The loader refuses a file above livenessStateMaxBytes, and a refused
+	// file loses every watermark and hold: shed the held replays' texts
+	// first (their dead letter then says to read the text from Slack), then
+	// the held origins (a restart then replays delivered lines, a duplicate
+	// over a loss), until it fits.
+	for shed := 0; len(data) > livenessStateMaxBytes && shed < 2; shed++ {
+		for _, ch := range st.Channels {
+			switch shed {
+			case 0:
+				for ts, held := range ch.PendingMessages {
+					held.Msg.Text = ""
+					held.TextDropped = true
+					ch.PendingMessages[ts] = held
+				}
+			case 1:
+				ch.HeldOrigins = nil
+			}
+		}
+		what := "the held replays' texts"
+		if shed == 1 {
+			what = "the held origins"
+		}
+		log.Printf("inbound liveness: state %s would be %d bytes (limit %d) — shedding %s", l.statePath, len(data), livenessStateMaxBytes, what)
+		if data, err = json.MarshalIndent(st, "", "  "); err != nil {
+			log.Printf("inbound liveness: encode state: %v", err)
+			return
+		}
 	}
 	if err := writeFile0600(l.statePath, data); err != nil {
 		log.Printf("inbound liveness: write state %s: %v", l.statePath, err)
