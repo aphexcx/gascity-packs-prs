@@ -99,8 +99,24 @@ function receiptShortfall(receipt) {
   return Number.isSafeInteger(delivered) && delivered >= 0
     && Number.isSafeInteger(expected) && expected > 0 && delivered < expected;
 }
+function landedUnconfirmed(receipt) {
+  if (!['pending', 'partial'].includes(receiptKey(receipt.status))
+    || !Array.isArray(receipt.members) || receipt.members.length === 0) return false;
+  let pending = false;
+  for (const member of receipt.members) {
+    const m = receiptMap(member), status = receiptKey(m.status);
+    if (status === 'delivered' && !receiptShortfall(m)) continue;
+    if (status !== 'pending' || !Number.isSafeInteger(m.expectedbytes) || m.expectedbytes <= 0
+      || !Number.isSafeInteger(m.deliveredbytes) || m.deliveredbytes < m.expectedbytes) return false;
+    pending = true;
+  }
+  return pending;
+}
 function receiptVerdict(receipt) {
   const status = receiptKey(receipt.status);
+  // A whole paste awaiting submit confirmation is held for its conclusion,
+  // including a mixed delivered/pending fan-out summarized as partial.
+  if (landedUnconfirmed(receipt)) return 'pending';
   const members = Array.isArray(receipt.members) ? receipt.members.map(receiptMap) : [];
   if (members.some((m) => ['failed', 'partial'].includes(receiptKey(m.status))
     || (receiptKey(m.status) === 'delivered' && receiptShortfall(m)))) return 'failed';
@@ -122,16 +138,16 @@ async function getReceiptJSON(target) {
 // A negative receipt gets three retries on the transport's existing ladder.
 // Pending is only polled. If its bounded follow-up cannot conclude, keep its
 // id for the next provider replay so that replay polls instead of re-posting.
-async function deliverInbound(target, body, label, log, post, get, pause, holds) {
-  const key = body.message.dedup_key;
-  let receipt = holds.get(key);
+async function deliverInbound(delivery, log, post, get, pause) {
+  const { target, body, label } = delivery;
+  let receipt = delivery.receipt;
   for (let attempt = 0; attempt < 4; attempt++) {
     if (!receipt) receipt = receiptMap(receiptMap(await post(target, body, label, log)).delivery);
     let verdict = receiptVerdict(receipt);
     if (verdict === 'pending') {
       const id = receipt.receiptid;
       if (typeof id !== 'string' || !id.trim()) throw new Error('pending delivery has no receipt id; outcome unverified');
-      holds.set(key, receipt);
+      delivery.receipt = receipt;
       for (let poll = 0; poll < 120; poll++) {
         await pause(5000);
         let answer;
@@ -147,14 +163,14 @@ async function deliverInbound(target, body, label, log, post, get, pause, holds)
         if (state !== 'concluded') throw new Error('receipt lookup returned an unknown state; outcome unverified');
         receipt = receiptMap(answer.delivery);
         if (receipt.receiptid !== id) throw new Error('concluded receipt id does not match; outcome unverified');
-        verdict = receiptVerdict(receipt);
+        verdict = landedUnconfirmed(receipt) ? 'delivered' : receiptVerdict(receipt);
         if (verdict !== 'pending') break;
       }
       if (verdict === 'pending') throw new Error('receipt remained pending after 120 polls; outcome unverified');
     }
-    if (verdict === 'delivered' || verdict === 'no_route') { holds.delete(key); return; }
+    if (verdict === 'delivered' || verdict === 'no_route') { delivery.receipt = undefined; return; }
     if (verdict !== 'failed') throw new Error('gc returned an unsupported or contradictory receipt; outcome unverified');
-    holds.delete(key);
+    delivery.receipt = undefined;
     if (attempt === 3) throw new Error('gc delivery failed after four attempts');
     log(`${label}: gc delivery not confirmed; retry ${attempt + 1}/3`);
     await pause(retryDelaysMs[attempt]);
@@ -432,7 +448,7 @@ export function createInboundPipeline(deps) {
   // would turn a transient gc failure into permanent message loss when the
   // SDK replays the frame. inflightMsgIds suppresses concurrent duplicates
   // of a not-yet-accepted id.
-  const heldReceipts = new Map();
+  const heldDeliveries = new Map(); // every member id points at its original envelope
   const seenMsgIds = new Set();
   // Eviction bookkeeping (codex r5): seenMsgIdOrder is append-only with a
   // cursor (seenHead) marking the logical front — slots behind the cursor
@@ -830,6 +846,27 @@ export function createInboundPipeline(deps) {
     return { promise, owner: false };
   }
 
+  async function settleDelivery(delivery) {
+    const { target, body, label, msgids } = delivery;
+    for (const id of msgids) inflightMsgIds.add(id);
+    try {
+      await deliverInbound(delivery, log, postInbound, getReceipt, receiptSleep);
+      for (const id of msgids) { heldDeliveries.delete(id); markSeen(id); }
+      log(`${label} → gc (${body.message.conversation.kind} ${body.message.conversation.conversation_id})`);
+    } catch (err) {
+      for (const id of msgids) {
+        if (delivery.receipt) heldDeliveries.set(id, delivery);
+        else heldDeliveries.delete(id);
+      }
+      // Pending keeps its original help/context with the held envelope. A
+      // known failed attempt restores that context for a future delivery.
+      if (!delivery.receipt) delivery.onFailure();
+      log(`LOST ${JSON.stringify({ label, error: err.message, target, message: body.message })}`);
+    } finally {
+      for (const id of msgids) inflightMsgIds.delete(id);
+    }
+  }
+
   // bridgeBatch delivers one ordered batch of same-conversation frames as
   // a SINGLE gc POST. The single-frame batch (the only shape when
   // coalescing is disabled) produces an envelope byte-identical to the
@@ -853,6 +890,14 @@ export function createInboundPipeline(deps) {
     // sweep.
     const cleanups = [];
     try {
+      // A replay may have different batch boundaries. Resolve each original
+      // held envelope once, then exclude all its members from this new batch.
+      const followed = new Set();
+      const held = new Set(entries.map((entry) => heldDeliveries.get(entry.frame?.body?.msgid)).filter(Boolean));
+      for (const delivery of held) {
+        for (const id of delivery.msgids) followed.add(id);
+        await settleDelivery(delivery);
+      }
       // Per-member admission + rendering. seenInBatch collapses duplicate
       // msgids WITHIN the batch (an SDK replay landing inside the window
       // buffers a second entry for the same id — the in-batch variant of
@@ -878,7 +923,7 @@ export function createInboundPipeline(deps) {
         // its burst neighbors down with it; that containment must survive
         // batching.
         try {
-          if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid) || seenInBatch.has(msg.msgid))) {
+          if (msg.msgid && (seenMsgIds.has(msg.msgid) || inflightMsgIds.has(msg.msgid) || seenInBatch.has(msg.msgid) || followed.has(msg.msgid))) {
             continue;
           }
           const conversation = conversationForMessage(cfg, msg);
@@ -1028,24 +1073,10 @@ export function createInboundPipeline(deps) {
 
       const target = `${cfg.gcAPIBase}/v0/city/${encodeURIComponent(cfg.cityName)}/extmsg/inbound`;
       const msgids = members.map((m) => m.msg.msgid).filter(Boolean);
-      for (const id of msgids) inflightMsgIds.add(id);
-      try {
-        // Transient gc failures retry indefinitely — WeCom replay after a
-        // reconnect is not guaranteed, so the retry loop is the delivery
-        // mechanism, not a bonus. The in-flight markers hold for the whole
-        // retry so a replay arriving mid-retry can't double-post.
-        await deliverInbound(target, { message }, label, log, postInbound, getReceipt, receiptSleep, heldReceipts);
-        for (const id of msgids) markSeen(id);
-        log(`${label} → gc (${newest.conversation.kind} ${newest.conversation.conversation_id}, ${members.length === 1 ? newest.msg.msgtype : `${members.length} messages`})`);
-      } catch (err) {
-        // No terminal delivery attestation: preserve replay eligibility and
-        // record the full envelope so an operator can recover without replay.
+      await settleDelivery({ target, body: { message }, label, msgids, onFailure: () => {
         if (firstHelp) replyHelpSent.delete(convKey);
         restorePeerContext(convKey, peerCtx);
-        log(`LOST ${JSON.stringify({ label, error: err.message, target, message })}`);
-      } finally {
-        for (const id of msgids) inflightMsgIds.delete(id);
-      }
+      } });
     } finally {
       for (const cleanup of cleanups) cleanup();
     }

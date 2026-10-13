@@ -1779,3 +1779,48 @@ test('a receipt for another fan-out cannot conclude or repost a pending message'
   assert.equal(pipeline.stats().seen, 0);
   assert.equal(posts, 1);
 });
+
+
+for (const status of ['pending', 'partial']) {
+  test(`complete landing with ${status} submit is resolved without repost`, async (t) => {
+    let posts = 0, polls = 0;
+    const members = [{ status: 'pending', delivered_bytes: 12, expected_bytes: 12 }];
+    if (status === 'partial') members.push({ status: 'delivered', delivered_bytes: 4, expected_bytes: 4 });
+    const delivery = { status, receipt_id: 'whole', members };
+    const logs = [];
+    const { pipeline } = makePipeline(t, { deps: {
+      postInbound: async () => { posts++; return { delivery }; },
+      getReceipt: async () => { polls++; return { receipt_id: 'whole', state: 'concluded', delivery }; },
+      receiptSleep: async () => {}, log: (line) => logs.push(line),
+    } });
+    await pipeline.enqueueInbound(frame(textMessage({ msgid: 'WHOLE_' + status })));
+    assert.equal(posts, 1);
+    assert.equal(polls, 1);
+    assert.equal(pipeline.stats().seen, 1);
+    assert.ok(!logs.some((line) => line.includes('LOST')));
+  });
+}
+
+test('a replay of one held batch member polls the original envelope', async (t) => {
+  let posts = 0, polls = 0, resolved = false;
+  const { pipeline } = makePipeline(t, { deps: {
+    coalesceWindowMs: 10000,
+    postInbound: async () => { posts++; return { delivery: { status: 'pending', receipt_id: 'batch' } }; },
+    getReceipt: async () => { polls++; return { receipt_id: 'batch', state: resolved ? 'concluded' : 'pending',
+      delivery: { receipt_id: 'batch', status: resolved ? 'delivered' : 'pending' } }; },
+    receiptSleep: async () => {},
+  } });
+  const a = textMessage({ msgid: 'BATCH_A' }), b = textMessage({ msgid: 'BATCH_B' });
+  const first = pipeline.enqueueInbound(frame(a)), second = pipeline.enqueueInbound(frame(b));
+  await pipeline.flushAll(); await Promise.all([first, second]);
+  assert.equal(posts, 1);
+  const replay = pipeline.enqueueInbound(frame(a));
+  await pipeline.flushAll(); await replay;
+  assert.equal(posts, 1, 'a changed batch boundary must not bypass the held receipt');
+  assert.equal(polls, 240);
+  resolved = true;
+  const finalReplay = pipeline.enqueueInbound(frame(b));
+  await pipeline.flushAll(); await finalReplay;
+  assert.equal(posts, 1);
+  assert.equal(pipeline.stats().seen, 2, 'conclusion commits every original batch member');
+});
