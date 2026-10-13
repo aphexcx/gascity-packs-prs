@@ -229,6 +229,10 @@ type livenessChannel struct {
 type livenessPendingHistory struct {
 	From  string `json:"from"`  // exclusive: the watermark as the probe read it
 	Below string `json:"below"` // exclusive: the oldest ts the probe did read
+	// FloorCrossed says the backfill window's floor has entered the
+	// stretch while it stood unread: its oldest part was lost and said so
+	// once (the lane's codex round 2); From rides the floor from then on.
+	FloorCrossed bool `json:"floor_crossed,omitempty"`
 }
 
 // livenessPendingThread is one thread a channel still owes a read.
@@ -558,6 +562,26 @@ func (ch *livenessChannel) originFloorLocked() (string, bool) {
 	return floor, true
 }
 
+// leaveStretchLocked returns the settle that records (from, below) as
+// channel's unread stretch: a stretch still pending from before merges with
+// it — the lowest From, the highest Below; the pages between were read and
+// are known origins — so neither is lost (the lane's codex round 1). Run
+// under l.mu with the channel present.
+func (l *inboundLiveness) leaveStretchLocked(channel, from, below string) func() {
+	return func() {
+		stretch := &livenessPendingHistory{From: from, Below: below}
+		if cur := l.channels[channel].PendingHistory; cur != nil {
+			if compareSlackTS(cur.From, stretch.From) < 0 {
+				stretch.From = cur.From
+			}
+			if compareSlackTS(cur.Below, stretch.Below) > 0 {
+				stretch.Below = cur.Below
+			}
+		}
+		l.setPendingHistoryLocked(channel, stretch)
+	}
+}
+
 // setPendingHistoryLocked replaces channel's unread stretch (nil drops it)
 // and dirties the state. Caller holds l.mu with the channel present.
 func (l *inboundLiveness) setPendingHistoryLocked(channel string, ph *livenessPendingHistory) {
@@ -828,6 +852,16 @@ func (l *inboundLiveness) retireExpiredPendingLocked(now time.Time) []livenessRe
 					go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: a stretch of <#%s> history (ts %s to %s) was never read within the backfill window (%s) and is lost to the backfill. Read it by hand.", id, ph.From, ph.Below, l.cfg.backfillMaxWindow))
 				}
 			case compareSlackTS(ph.From, floor) < 0:
+				if !ph.FloorCrossed {
+					// Said once: the stretch's oldest part is being lost
+					// as the floor rises while the reads keep failing; the
+					// full expiry below says the rest.
+					ph.FloorCrossed = true
+					log.Printf("inbound liveness: channel=%s the backfill window's floor (%s) has entered the unread history pages (%s, %s) — NEVER READ below the floor: whatever human messages they held are lost to the backfill as the floor rises; read the channel's history for that stretch by hand", id, floor, ph.From, ph.Below)
+					if l.alert != nil {
+						go l.postAlert(fmt.Sprintf(":warning: gc-slack-adapter: a stretch of <#%s> history (ts %s to %s) is still unread as the backfill window (%s) closes on it; what is below the floor is lost to the backfill. Read it by hand.", id, ph.From, ph.Below, l.cfg.backfillMaxWindow))
+					}
+				}
 				ph.From = floor
 				l.stateDirty = true
 			}
@@ -1205,15 +1239,17 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 
 	var missed []missedMessage
 	var skipped []string
-	var reads []threadRead // the thread reads of this probe, settled after the backfill
+	var reads []threadRead           // the thread reads of this probe, settled after the backfill
+	settles := map[string][]func(){} // the unread-stretch updates per channel, applied after the backfill
 	for _, c := range channels {
-		found, threadReads, err := l.probeChannel(ctx, c.id, c.ch)
+		found, threadReads, stretchSettles, err := l.probeChannel(ctx, c.id, c.ch)
 		if err != nil {
 			skipped = append(skipped, c.id+":"+scrubSlackSecrets(err.Error()))
 			continue
 		}
 		missed = append(missed, found...)
 		reads = append(reads, threadReads...)
+		settles[c.id] = stretchSettles
 	}
 	l.lastMissed.Store(int64(len(missed)))
 	if len(skipped) > 0 {
@@ -1221,6 +1257,7 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}
 	if len(missed) == 0 {
 		l.settlePendingThreads(reads, nil, nil)
+		l.settleStretches(settles)
 		log.Printf("inbound liveness: probe (%s) clean — %d channel(s) checked, nothing missed", reason, len(channels))
 		return
 	}
@@ -1242,10 +1279,27 @@ func (l *inboundLiveness) probe(ctx context.Context, mode probeMode, reason stri
 	}
 	delivered, incomplete := l.backfill(ctx, missed)
 	l.settlePendingThreads(reads, missed, incomplete)
+	l.settleStretches(settles)
 	log.Printf("inbound liveness: backfill (%s) replayed %d/%d missed message(s)", reason, delivered, len(missed))
 	if mode == probeModeReconnect && delivered > 0 && l.alert != nil {
 		go l.postAlert(fmt.Sprintf(":arrows_counterclockwise: gc-slack-adapter backfilled %d message(s) that landed while inbound was down (%s; %s).",
 			delivered, reason, summarizeByChannel(byChannel)))
+	}
+}
+
+// settleStretches applies the probe's unread-stretch updates, per channel
+// in order, once the backfill has delivered or held every message read
+// from the stretches (every message a pass leaves is held: finding 3n).
+func (l *inboundLiveness) settleStretches(settles map[string][]func()) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for channel, fs := range settles {
+		if l.channels[channel] == nil {
+			continue
+		}
+		for _, f := range fs {
+			f()
+		}
 	}
 }
 
@@ -1288,7 +1342,7 @@ func (l *inboundLiveness) snapshotChannelsLocked() []watchedChannel {
 // probeChannel reads one channel above its watermark (bounded by the
 // backfill window) and returns the human messages the adapter never
 // saw, including fresh thread replies.
-func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch livenessChannel) (missed []missedMessage, reads []threadRead, err error) {
+func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch livenessChannel) (missed []missedMessage, reads []threadRead, settles []func(), err error) {
 	now := l.now()
 	oldest := ch.WatermarkTS
 	floor := "" // the backfill window's floor: nothing is read below it
@@ -1332,7 +1386,15 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	// stretch shrinks with every page read and is dropped once Slack has
 	// no more. Its missed messages carry the stretch's floor as the
 	// watermark to go back to, so a hold on one of them re-reads it.
-	var settleStretch []func() // applied in order, under the lock, once every read of this probe succeeded
+	// The stretch updates are applied in order, under the lock, by probe
+	// — only once every read of this probe succeeded (a failed first page
+	// discards everything this probe collected, the stretch's messages
+	// included, and the stretch must still stand for the next probe; the
+	// lane's codex round 1) and only after the backfill delivered or held
+	// every message of the stretch (a save between the update and the
+	// delivery, from a reconnect probe beside the watchdog's persist, would
+	// otherwise leave messages below the watermark with no recovery owner
+	// across a restart; the lane's codex round 2).
 	if ph := ch.PendingHistory; ph != nil {
 		from, below := ph.From, ph.Below
 		if floor != "" && compareSlackTS(from, floor) < 0 {
@@ -1342,7 +1404,14 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		for page := 0; page < livenessMaxHistoryPages; page++ {
 			msgs, more, err := l.fetchHistoryPage(ctx, channel, from, below, livenessHistoryLimit)
 			if err != nil {
-				return nil, nil, err
+				if page == 0 {
+					return nil, nil, nil, err
+				}
+				// A later page failed: what was read stands, the stretch
+				// shrinks to it, and the next probe goes on from there
+				// (the lane's codex round 2).
+				log.Printf("inbound liveness: channel=%s unread history page %d below %s: %v — the %d page(s) read stand; the stretch goes on from there", channel, page+1, below, scrubSlackSecrets(err.Error()), page)
+				break
 			}
 			collect(msgs, from, from)
 			if !more || len(msgs) == 0 {
@@ -1351,11 +1420,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 			}
 			below = msgs[0].TS
 		}
-		// Committed only once the read below the watermark succeeded too:
-		// a failed read discards everything this probe collected, the
-		// stretch's messages included, and the stretch must still stand
-		// for the next probe (the lane's codex round 1).
-		settleStretch = append(settleStretch, func() {
+		settles = append(settles, func() {
 			if done {
 				l.setPendingHistoryLocked(channel, nil)
 				log.Printf("inbound liveness: channel=%s read the unread history pages (%s, %s) through; no longer pending", channel, ph.From, ph.Below)
@@ -1383,7 +1448,18 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	for page := 0; ; page++ {
 		msgs, more, err := l.fetchHistoryPage(ctx, channel, fetchFrom, latest, livenessHistoryLimit)
 		if err != nil {
-			return nil, nil, err
+			if page == 0 {
+				return nil, nil, nil, err
+			}
+			// A later page failed: the pages read stand and replay, and
+			// the pages below the oldest ts read are pending — the next
+			// probe reads them first (the lane's codex round 2: a read
+			// that failed whole on any page replayed nothing, and a rate
+			// budget that allowed one page and refused the next starved
+			// the channel until the window closed).
+			settles = append(settles, l.leaveStretchLocked(channel, oldest, latest))
+			log.Printf("inbound liveness: channel=%s history page %d below %s: %v — the %d page(s) read stand; the pages below %s are pending and the next probe reads them first", channel, page+1, latest, scrubSlackSecrets(err.Error()), page, latest)
+			break
 		}
 		collect(msgs, oldest, ch.WatermarkTS)
 		if !more || len(msgs) == 0 || compareSlackTS(msgs[0].TS, oldest) <= 0 {
@@ -1391,35 +1467,12 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		}
 		latest = msgs[0].TS // oldest-first: the page below starts under it
 		if page+1 >= livenessMaxHistoryPages {
-			// A stretch still pending from before merges with this one —
-			// the lowest From, the highest Below; the pages between were
-			// read and are known origins — so neither is lost (the lane's
-			// codex round 1).
-			stretch := &livenessPendingHistory{From: oldest, Below: latest}
-			settleStretch = append(settleStretch, func() {
-				if cur := l.channels[channel].PendingHistory; cur != nil {
-					if compareSlackTS(cur.From, stretch.From) < 0 {
-						stretch.From = cur.From
-					}
-					if compareSlackTS(cur.Below, stretch.Below) > 0 {
-						stretch.Below = cur.Below
-					}
-				}
-				l.setPendingHistoryLocked(channel, stretch)
-			})
+			settles = append(settles, l.leaveStretchLocked(channel, oldest, latest))
 			log.Printf("inbound liveness: channel=%s has more than %d pages of history above its watermark %s; the pages below %s are pending and the next probe reads them first", channel, livenessMaxHistoryPages, oldest, latest)
 			break
 		}
 	}
-	if len(settleStretch) > 0 {
-		l.mu.Lock()
-		if l.channels[channel] != nil {
-			for _, settle := range settleStretch {
-				settle()
-			}
-		}
-		l.mu.Unlock()
-	}
+	// Most recently active threads first; cap reads per probe.
 	// Most recently active threads first; cap reads per probe.
 	sort.Slice(threads, func(i, j int) bool { return compareSlackTS(threads[i].LatestReply, threads[j].LatestReply) > 0 })
 	if len(threads) > livenessMaxThreadsPerChannel {
@@ -1463,6 +1516,18 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 	cursor := map[string]string{}
 	for _, p := range ch.PendingThreads {
 		cursor[p.ParentTS] = p.Oldest
+	}
+	// A thread under a listing hold (finding 3m) reads from the hold's
+	// cursor too: the hold keeps the watermark below the thread's latest
+	// reply, but a replay or a live message below that reply still moves
+	// the watermark past older unread replies (the lane's codex round 2).
+	for _, held := range ch.PendingMessages {
+		if !held.Listing || held.Msg.ThreadTS == "" || held.Cursor == "" {
+			continue
+		}
+		if c, ok := cursor[held.Msg.ThreadTS]; !ok || compareSlackTS(held.Cursor, c) < 0 {
+			cursor[held.Msg.ThreadTS] = held.Cursor
+		}
 	}
 	for _, p := range ch.PendingThreads {
 		listed := false
@@ -1517,7 +1582,7 @@ func (l *inboundLiveness) probeChannel(ctx context.Context, channel string, ch l
 		}
 		reads = append(reads, read)
 	}
-	return missed, reads, nil
+	return missed, reads, settles, nil
 }
 
 // historyMessageDispatchable mirrors processSlackEvent's admission
