@@ -655,6 +655,10 @@ func replayPublishReceipt(
 	if cached.Delivered {
 		return publishReplay{receipt: cached}, true
 	}
+	if cached.readbackTarget.messageTS != "" {
+		// Reverify what this key originally posted, even after an alias reload.
+		target = cached.readbackTarget
+	}
 	target.messageTS = cached.MessageID
 	confirmPublishReceipt(token, &cached, target)
 	if !cached.Delivered && cached.Metadata[receiptMetadataKeyReadback] == slackReadbackUnconfirmed {
