@@ -128,6 +128,45 @@ func TestPublishReceiptPruneByPostedAge(t *testing.T) {
 	}
 }
 
+func TestPublishReceiptPrunesCorruptFiles(t *testing.T) {
+	for _, tc := range []struct{ name, data string }{
+		{"truncated", `{"message_id":`},
+		{"invalid fields", `{}`},
+		{"oversized", strings.Repeat(" ", 64*1024+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testPublishReceiptStore(t, t.TempDir())
+			receipt := publishReceipt{Conversation: conversationRef{ConversationID: "C1"}, MessageID: "1.2"}
+			if err := store.RecordPosted("fresh", receipt, slackPostMessageReq{Text: "fresh"}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(store.path("corrupt"), []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Get("corrupt"); !errors.Is(err, errInvalidPublishReceipt) {
+				t.Fatalf("corrupt lookup = %v", err)
+			}
+			if removed, err := store.Prune(); err != nil || removed != 1 {
+				t.Fatalf("corrupt cleanup = %d, %v", removed, err)
+			}
+			if _, err := os.Stat(store.path("corrupt")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("corrupt file remains: %v", err)
+			}
+			w := httptest.NewRecorder()
+			handlePublishReceipt(store)(w, httptest.NewRequest(http.MethodGet, "/publish-receipt?idempotency_key=corrupt", nil))
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("pruned receipt lookup = %d: %s", w.Code, w.Body)
+			}
+			if removed, err := store.Prune(); err != nil || removed != 0 {
+				t.Fatalf("second cleanup = %d, %v", removed, err)
+			}
+			if _, err := store.Get("fresh"); err != nil {
+				t.Fatalf("fresh receipt lost: %v", err)
+			}
+		})
+	}
+}
+
 func TestPublishReceiptGET(t *testing.T) {
 	store := testPublishReceiptStore(t, t.TempDir())
 	key := "key with ?&=/ reserved characters"
@@ -223,6 +262,12 @@ func TestPublishReceiptRefusesSymlinks(t *testing.T) {
 	}
 	if _, err := store.Get("link"); err == nil || errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("symlink lookup = %v, want a storage error", err)
+	}
+	if removed, err := store.Prune(); err == nil || removed != 0 {
+		t.Fatalf("unsafe-path cleanup = %d, %v, want preserved file and error", removed, err)
+	}
+	if _, err := os.Lstat(store.path("link")); err != nil {
+		t.Fatalf("unreadable receipt path was removed: %v", err)
 	}
 }
 

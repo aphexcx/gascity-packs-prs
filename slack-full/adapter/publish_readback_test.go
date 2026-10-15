@@ -262,6 +262,9 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		wantDelivered        bool
 	}{
 		{"labeled URL", "see https://docs.slack.dev/", "see <https://docs.slack.dev/|https://docs.slack.dev/>", true},
+		{"bare domain auto-link", "see hou.vc", "see <http://hou.vc|hou.vc>", true},
+		{"bare domain HTTPS auto-link", "see wendy.sh/docs", "see <https://wendy.sh/docs|wendy.sh/docs>", true},
+		{"bare domain different destination", "see hou.vc", "see <http://attacker.com|hou.vc>", false},
 		{"www auto-link", "see www.example.com", "see <http://www.example.com|www.example.com>", true},
 		{"legacy documented www auto-link", "see www.example.com", "see <http://example.com|www.example.com>", true},
 		{"different destination", "see www.example.com", "see <http://www.attacker.com|www.example.com>", false},
