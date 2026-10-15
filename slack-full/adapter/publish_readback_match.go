@@ -74,7 +74,6 @@ func slackReadbackTextMatches(expected, stored string) bool {
 		linkStart, expectedStart, storedStart int
 		expectedEnd, storedEnd, limit         int
 		prefix                                string
-		quote                                 byte
 		shortcodes, emoji, markup             bool
 	}
 	var pendingSuffix *suffixCheck
@@ -85,6 +84,12 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			pendingSuffix.expectedEnd = min(expectedEnd, pendingSuffix.limit)
 			pendingSuffix.storedEnd = storedEnd
 			suffixes = append(suffixes, pendingSuffix)
+			if !pendingSuffix.emoji {
+				// A full URI's literal tail remains opaque to formatting even
+				// when Slack wraps only its prefix in link markup.
+				tail := expectedText[pendingSuffix.expectedStart:pendingSuffix.expectedEnd]
+				matchedSpans[len(matchedSpans)-1][1] = pendingSuffix.expectedStart + len(slackURIToken(tail))
+			}
 		}
 	}
 	// A mismatch with many repeated labels must not repeatedly fold growing
@@ -188,16 +193,12 @@ func slackReadbackTextMatches(expected, stored string) bool {
 					if suffixMarkupCursor < len(markup) {
 						limit = markup[suffixMarkupCursor][0]
 					}
-					var quote byte
-					if at > 0 && (expectedText[at-1] == '\'' || expectedText[at-1] == '"') && !slackReadbackEscaped(expectedText, at-1) {
-						quote = expectedText[at-1]
-					}
 					// Check only the suffix before the next aligned link or
 					// original markup span. Each link retains its own rules and
 					// each suffix is scanned once, without a shared range cache.
 					nextSuffix = &suffixCheck{
 						linkStart: at, expectedStart: end, storedStart: link.textEnd,
-						limit: limit, prefix: rendered, quote: quote,
+						limit: limit, prefix: rendered,
 						shortcodes: implicit && hasPath < 0, emoji: implicit, markup: suffixMarkupCursor < len(markup),
 					}
 				}
@@ -230,9 +231,6 @@ func slackReadbackTextMatches(expected, stored string) bool {
 		}
 		atProseBoundary := func(offset int) bool {
 			at := p.expectedStart + offset
-			if p.quote != 0 && expectedText[at] == p.quote && !slackReadbackEscaped(expectedText, at) {
-				return true
-			}
 			return formatting[p.linkStart]&formatting[at]&^formatting[at+1] != 0
 		}
 		if !slackPreservedURLSuffix(expectedText[p.expectedStart:p.expectedEnd], storedText[p.storedStart:p.storedEnd], p.prefix, p.shortcodes, p.emoji, atMarkupEnd, atProseBoundary) {
@@ -246,18 +244,39 @@ func slackReadbackTextMatches(expected, stored string) bool {
 // markers do not change the surrounding formatting state. An opening marker
 // needs a word boundary, so identifiers such as status_value remain literal.
 func slackReadbackFormatting(text string, markup, links [][2]int) []uint8 {
+	// Merge known boundaries, scanning only the intervening text for URI/code
+	// tokens. A URI that Slack leaves unwrapped is just as literal as a link.
+	var opaque [][2]int
+	last := 0
+	appendGap := func(end int) {
+		if end > last {
+			for _, span := range slackVerbatimSpan.FindAllStringIndex(text[last:end], -1) {
+				opaque = append(opaque, [2]int{last + span[0], last + span[1]})
+			}
+		}
+	}
+	for m, l := 0, 0; m < len(markup) || l < len(links); {
+		var span [2]int
+		if l == len(links) || (m < len(markup) && markup[m][0] <= links[l][0]) {
+			span = markup[m]
+			m++
+		} else {
+			span = links[l]
+			l++
+		}
+		appendGap(span[0])
+		opaque = append(opaque, span)
+		last = max(last, span[1])
+	}
+	appendGap(len(text))
 	states := make([]uint8, len(text)+1)
 	var state uint8
-	cursor, linkCursor, skipEnd := 0, 0, 0
+	cursor, skipEnd := 0, 0
 	for i := range len(text) {
 		states[i] = state
-		for cursor < len(markup) && markup[cursor][0] <= i {
-			skipEnd = max(skipEnd, markup[cursor][1])
+		for cursor < len(opaque) && opaque[cursor][0] <= i {
+			skipEnd = max(skipEnd, opaque[cursor][1])
 			cursor++
-		}
-		for linkCursor < len(links) && links[linkCursor][0] <= i {
-			skipEnd = max(skipEnd, links[linkCursor][1])
-			linkCursor++
 		}
 		if i < skipEnd {
 			continue
@@ -336,14 +355,8 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		// Preserve the entire remaining source URI token, using the same
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
 		// literal path/query characters, regardless of Slack's link end.
-		token := func(text string) string {
-			if end := strings.IndexAny(text, " \t\n\f\r<>|"); end >= 0 {
-				return text[:end]
-			}
-			return text
-		}
-		literal := token(expected)
-		return literal == token(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
+		literal := slackURIToken(expected)
+		return literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
 	var depth [3]int
 	for _, r := range urlPrefix {
@@ -409,6 +422,13 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		i, j = i+width, j+width
 	}
 	return j == len(stored) || atMarkupEnd(j)
+}
+
+func slackURIToken(text string) string {
+	if end := strings.IndexAny(text, " \t\n\f\r<>|"); end >= 0 {
+		return text[:end]
+	}
+	return text
 }
 
 // Inputs have already had links/entities normalized exactly once.
