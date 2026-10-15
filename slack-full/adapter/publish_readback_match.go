@@ -5,6 +5,58 @@ import (
 	"unicode/utf8"
 )
 
+// Bare-domain prose has no explicit scheme, so either auto-link scheme may
+// fold to its label. A caller-supplied mrkdwn URL does have a destination:
+// preserve it even when its display label is a bare domain. Align each
+// explicit link by the preceding text, allowing Slack auto-links and emoji
+// conversions there; this also distinguishes repeated identical labels.
+func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
+	type link struct {
+		start, end int
+		target     string
+	}
+	links := func(text string) []link {
+		var result []link
+		for _, span := range slackCodeOrAngleSpan.FindAllStringIndex(text, -1) {
+			if text[span[0]] != '<' {
+				continue
+			}
+			target, _, _ := strings.Cut(text[span[0]+1:span[1]-1], "|")
+			if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+				result = append(result, link{span[0], span[1], slackEntityUnescape.Replace(target)})
+			}
+		}
+		return result
+	}
+	want := links(expected)
+	if len(want) == 0 {
+		return true
+	}
+	got := links(stored)
+	expectedStart, storedStart, next := 0, 0, 0
+	for _, link := range want {
+		matched := false
+		for next < len(got) {
+			candidate := got[next]
+			next++
+			a, b := expected[expectedStart:link.start], stored[storedStart:candidate.start]
+			if slackNormalizeText(a) != slackNormalizeText(b) && !slackEmojiExpansionMatches(a, b) {
+				continue
+			}
+			if link.target != candidate.target {
+				return false
+			}
+			expectedStart, storedStart = link.end, candidate.end
+			matched = true
+			break
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
 // The ordinary symmetric fold cannot resolve overlapping colon tokens:
 // 10:30🎉 becomes 10:30:tada:, where an unknown :30: hides the emoji's opening
 // colon. Reversing the scan instead breaks ✅ok: -> :white_check_mark:ok:.

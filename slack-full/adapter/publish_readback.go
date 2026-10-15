@@ -219,7 +219,7 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // lane's codex rounds 6, 8 and 9). An unclosed backtick is a literal
 // character and opens no span.
 var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+|" +
-	`(?:[\pL\pN-]+\.)+[\pL\pN-]+(?::[0-9]+)?[/?#][^\s<>|]*`)
+	`(?:(?:[\pL\pN-]+\.)+[\pL][\pL\pN-]*|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?[/?#][^\s<>|]*`)
 
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
@@ -607,8 +607,9 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // Both keyed and unkeyed publishes use the same content check after the caller
 // has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
-	if slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
-		!slackEmojiExpansionMatches(target.expectedText, message.Text) {
+	if !slackExplicitLinkDestinationsMatch(target.expectedText, message.Text) ||
+		(slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
+			!slackEmojiExpansionMatches(target.expectedText, message.Text)) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
 			"Slack readback content mismatch for message %s", target.messageTS)
 	}
