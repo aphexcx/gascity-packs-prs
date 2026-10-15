@@ -45,7 +45,6 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
 	expectedLiterals, storedLiterals := slackLiteralPrefixCounts(expectedText), slackLiteralPrefixCounts(storedText)
 	explicit, markup := slackReadbackLinks(expected)
-	formatting := slackReadbackFormatting(expectedText, markup)
 	storedLinks, storedMarkup := slackReadbackLinks(stored)
 	storedMarkupStarts := make(map[int]bool, len(storedMarkup))
 	for _, span := range storedMarkup {
@@ -72,23 +71,21 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	suffixMarkupCursor := 0
 	expectedCursor, storedCursor := 0, 0
 	type suffixCheck struct {
-		expectedStart, storedStart, limit int
-		prefix                            string
-		closing                           string
-		shortcodes, emoji, markup         bool
+		linkStart, expectedStart, storedStart int
+		expectedEnd, storedEnd, limit         int
+		prefix                                string
+		quote                                 byte
+		shortcodes, emoji, markup             bool
 	}
 	var pendingSuffix *suffixCheck
-	verifySuffix := func(expectedEnd, storedEnd int) bool {
-		if pendingSuffix == nil {
-			return true
+	var suffixes []*suffixCheck
+	var matchedSpans [][2]int
+	finishSuffix := func(expectedEnd, storedEnd int) {
+		if pendingSuffix != nil {
+			pendingSuffix.expectedEnd = min(expectedEnd, pendingSuffix.limit)
+			pendingSuffix.storedEnd = storedEnd
+			suffixes = append(suffixes, pendingSuffix)
 		}
-		p := pendingSuffix
-		expectedEnd = min(expectedEnd, p.limit)
-		expected := expectedText[p.expectedStart:expectedEnd]
-		atMarkupEnd := func(offset int) bool {
-			return p.markup && expectedEnd == p.limit && storedMarkupStarts[p.storedStart+offset]
-		}
-		return slackPreservedURLSuffix(expected, storedText[p.storedStart:storedEnd], p.prefix, p.closing, p.shortcodes, p.emoji, atMarkupEnd)
 	}
 	// A mismatch with many repeated labels must not repeatedly fold growing
 	// prefixes. Successful alignment consumes each span once; ambiguous failed
@@ -117,10 +114,9 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			sameLiterals := expectedLiterals[original.textStart]-expectedLiterals[expectedCursor] == storedLiterals[link.textStart]-storedLiterals[storedCursor]
 			if original.target == link.target && sameLiterals && (!exactPrefix || original.textStart == expectedCursor+len(prefix)) &&
 				compare(expectedText[expectedCursor:original.textStart], prefix) && slackExplicitLabelsMatch(original, link) {
-				if !verifySuffix(original.textStart, link.textStart) {
-					return false
-				}
+				finishSuffix(original.textStart, link.textStart)
 				pendingSuffix = nil
+				matchedSpans = append(matchedSpans, [2]int{original.textStart, original.textEnd})
 				expectedCursor, storedCursor = original.textEnd, link.textEnd
 				explicitCursor++
 				continue
@@ -192,24 +188,22 @@ func slackReadbackTextMatches(expected, stored string) bool {
 					if suffixMarkupCursor < len(markup) {
 						limit = markup[suffixMarkupCursor][0]
 					}
-					closing := ""
-					if at > 0 && (expectedText[at-1] == '\'' || expectedText[at-1] == '"') {
-						closing = expectedText[at-1 : at]
-					}
-					for bit, marker := range "*_~" {
-						if formatting[at]&(1<<bit) != 0 {
-							closing += string(marker)
-						}
+					var quote byte
+					if at > 0 && (expectedText[at-1] == '\'' || expectedText[at-1] == '"') && !slackReadbackEscaped(expectedText, at-1) {
+						quote = expectedText[at-1]
 					}
 					// Check only the suffix before the next aligned link or
 					// original markup span. Each link retains its own rules and
 					// each suffix is scanned once, without a shared range cache.
-					nextSuffix = &suffixCheck{end, link.textEnd, limit, rendered, closing, implicit && hasPath < 0, implicit, suffixMarkupCursor < len(markup)}
+					nextSuffix = &suffixCheck{
+						linkStart: at, expectedStart: end, storedStart: link.textEnd,
+						limit: limit, prefix: rendered, quote: quote,
+						shortcodes: implicit && hasPath < 0, emoji: implicit, markup: suffixMarkupCursor < len(markup),
+					}
 				}
-				if !verifySuffix(at, link.textStart) {
-					return false
-				}
+				finishSuffix(at, link.textStart)
 				pendingSuffix = nextSuffix
+				matchedSpans = append(matchedSpans, [2]int{at, end})
 				expectedCursor, storedCursor = end, link.textEnd
 				matched = true
 				break
@@ -220,21 +214,50 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			return false
 		}
 	}
-	return explicitCursor == len(explicit) && compare(expectedText[expectedCursor:], storedText[storedCursor:]) && verifySuffix(len(expectedText), len(storedText))
+	if explicitCursor != len(explicit) || !compare(expectedText[expectedCursor:], storedText[storedCursor:]) {
+		return false
+	}
+	finishSuffix(len(expectedText), len(storedText))
+	if len(suffixes) == 0 {
+		return true
+	}
+	// Formatting is determined after alignment so literal characters inside
+	// every matched URL are excluded, including automatically inserted links.
+	formatting := slackReadbackFormatting(expectedText, markup, matchedSpans)
+	for _, p := range suffixes {
+		atMarkupEnd := func(offset int) bool {
+			return p.markup && p.expectedEnd == p.limit && storedMarkupStarts[p.storedStart+offset]
+		}
+		atProseBoundary := func(offset int) bool {
+			at := p.expectedStart + offset
+			if p.quote != 0 && expectedText[at] == p.quote && !slackReadbackEscaped(expectedText, at) {
+				return true
+			}
+			return formatting[p.linkStart]&formatting[at]&^formatting[at+1] != 0
+		}
+		if !slackPreservedURLSuffix(expectedText[p.expectedStart:p.expectedEnd], storedText[p.storedStart:p.storedEnd], p.prefix, p.shortcodes, p.emoji, atMarkupEnd, atProseBoundary) {
+			return false
+		}
+	}
+	return true
 }
 
 // Track surrounding mrkdwn delimiters in prose. Code/link markup and escaped
 // markers do not change the surrounding formatting state. An opening marker
 // needs a word boundary, so identifiers such as status_value remain literal.
-func slackReadbackFormatting(text string, markup [][2]int) []uint8 {
+func slackReadbackFormatting(text string, markup, links [][2]int) []uint8 {
 	states := make([]uint8, len(text)+1)
 	var state uint8
-	cursor, skipEnd := 0, 0
+	cursor, linkCursor, skipEnd := 0, 0, 0
 	for i := range len(text) {
 		states[i] = state
 		for cursor < len(markup) && markup[cursor][0] <= i {
 			skipEnd = max(skipEnd, markup[cursor][1])
 			cursor++
+		}
+		for linkCursor < len(links) && links[linkCursor][0] <= i {
+			skipEnd = max(skipEnd, links[linkCursor][1])
+			linkCursor++
 		}
 		if i < skipEnd {
 			continue
@@ -247,26 +270,35 @@ func slackReadbackFormatting(text string, markup [][2]int) []uint8 {
 				continue
 			}
 		}
-		bit := strings.IndexByte("*_~", text[i])
+		bit := strings.IndexByte("*_~'\"", text[i])
 		if bit < 0 || (text[i] == '*' && slackEmojiUnitPrefix(text[i:]) > 0) {
 			continue
 		}
-		slashes := 0
-		for j := i - 1; j >= 0 && text[j] == '\\'; j-- {
-			slashes++
-		}
-		if slashes%2 != 0 {
+		if slackReadbackEscaped(text, i) {
 			continue
 		}
 		mask := uint8(1 << bit)
 		before, _ := utf8.DecodeLastRuneInString(text[:i])
 		after, _ := utf8.DecodeRuneInString(text[i+1:])
-		if state&mask != 0 || (!unicode.IsLetter(before) && !unicode.IsNumber(before) && before != '_' && !unicode.IsSpace(after) && i+1 < len(text)) {
+		beforeWord := unicode.IsLetter(before) || unicode.IsNumber(before) || before == '_'
+		afterWord := unicode.IsLetter(after) || unicode.IsNumber(after) || after == '_'
+		if text[i] == '\'' && beforeWord && afterWord {
+			continue // Apostrophes inside words are not quote delimiters.
+		}
+		if state&mask != 0 || ((bit >= 3 || !beforeWord) && !unicode.IsSpace(after) && i+1 < len(text)) {
 			state ^= mask
 		}
 	}
 	states[len(text)] = state
 	return states
+}
+
+func slackReadbackEscaped(text string, at int) bool {
+	slashes := 0
+	for i := at - 1; i >= 0 && text[i] == '\\'; i-- {
+		slashes++
+	}
+	return slashes%2 != 0
 }
 
 func slackLiteralPrefixCounts(text string) []int {
@@ -299,7 +331,7 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 // the ordinary prose fold, emoji may convert but cannot disappear here.
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
 // shortcodes are prose (they cannot be a numeric port).
-func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowShortcodes, allowEmoji bool, atMarkupEnd func(int) bool) bool {
+func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes, allowEmoji bool, atMarkupEnd, atProseBoundary func(int) bool) bool {
 	if !allowEmoji {
 		// Preserve the entire remaining source URI token, using the same
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
@@ -324,7 +356,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowS
 	i, j := 0, 0
 	for i < len(expected) {
 		r, width := utf8.DecodeRuneInString(expected[i:])
-		if unicode.IsSpace(r) || strings.ContainsRune(closing, r) {
+		if unicode.IsSpace(r) || atProseBoundary(i) {
 			return strings.HasPrefix(stored[j:], expected[i:i+width])
 		}
 		if at := strings.IndexRune(")]}", r); at >= 0 {
