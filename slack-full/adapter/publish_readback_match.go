@@ -35,12 +35,10 @@ func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
 	return result, markup
 }
 
-// Slack's returned auto-link supplies the literal URL boundary. Matching its
-// label exactly against the original normalized text prevents emoji folding
-// from erasing URL characters, without guessing whether numeric prose is a
-// hostname or swallowing punctuation/emoji after a URL. Explicit targets are
-// checked separately from their display labels; all intervening and trailing
-// text is compared with the existing prose emoji rules.
+// Align returned links with literal source text, then scan each complete source
+// URL for its end. This separates URL bytes from prose even when Slack returns
+// a link for only part of a URI. Explicit targets retain their identity, while
+// all text after the token uses the existing Unicode/shortcode emoji units.
 func slackReadbackTextMatches(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
 	expectedLiterals, storedLiterals := slackLiteralPrefixCounts(expectedText), slackLiteralPrefixCounts(storedText)
@@ -73,9 +71,9 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	type suffixCheck struct {
 		linkStart, expectedStart, storedStart int
 		expectedEnd, storedEnd, limit         int
-		prefix                                string
-		shortcodes, emoji, markup             bool
-		optional                              bool
+		tokenStart, tokenLimit                int
+		independent                           bool
+		markup, optional                      bool
 	}
 	var pendingSuffix *suffixCheck
 	var suffixes []*suffixCheck
@@ -202,10 +200,13 @@ func slackReadbackTextMatches(expected, stored string) bool {
 					// original markup span. Independent web links retain their
 					// own rules; embedded mailto/reference spans may inherit URI
 					// context during the forward scan. Each suffix is scanned once.
+					tokenStart := at
+					if inVerbatim {
+						tokenStart = verbatim[verbatimCursor][0]
+					}
 					nextSuffix = &suffixCheck{
 						linkStart: at, expectedStart: end, storedStart: link.textEnd,
-						limit: limit, prefix: rendered,
-						shortcodes: implicit && hasPath < 0, emoji: implicit, markup: suffixMarkupCursor < len(markup),
+						limit: limit, tokenStart: tokenStart, independent: implicit || fullURI, markup: suffixMarkupCursor < len(markup),
 						optional: !implicit && !fullURI && !inVerbatim,
 					}
 				}
@@ -232,45 +233,40 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	// Verify each suffix as the prose scan reaches its link. Only the state
 	// before that link can close formatting; literal URL tail characters are
 	// excluded before scanning subsequent prose and links.
+	nextIndependent := len(expectedText)
+	for i := len(suffixes) - 1; i >= 0; i-- {
+		p := suffixes[i]
+		p.tokenLimit = min(p.limit, nextIndependent)
+		if p.independent {
+			nextIndependent = p.linkStart
+		}
+	}
 	suffixCursor := 0
-	carryAt, carryEmoji := -1, false
-	var carryDepth [3]int
-	checkSuffix := func(at int, state uint16) (int, bool) {
+	carryEnd := -1
+	checkSuffix := func(at int, state slackReadbackFormatting) (int, bool) {
 		if suffixCursor == len(suffixes) || suffixes[suffixCursor].linkStart != at {
 			return at, true
 		}
 		p := suffixes[suffixCursor]
 		suffixCursor++
-		inherited := p.optional && carryAt == at
-		if p.optional && !inherited {
-			carryAt = -1
-			return at, true
+		if carryEnd <= at || p.independent {
+			if p.optional {
+				return at, true
+			}
+			// Scan the complete SOURCE token, across any returned link segments.
+			// An embedded mention/email cannot turn a literal URI tail into prose.
+			carryEnd = slackReadbackURLEnd(expectedText, p.tokenStart, p.tokenLimit, state)
 		}
-		emoji := p.emoji
-		var depth [3]int
-		if inherited {
-			emoji, depth = carryEmoji, carryDepth
+		literalEnd := max(p.expectedStart, min(carryEnd, p.expectedEnd))
+		literal := expectedText[p.expectedStart:literalEnd]
+		stored := storedText[p.storedStart:p.storedEnd]
+		if !strings.HasPrefix(stored, literal) {
+			return at, false
 		}
-		depth = slackReadbackDepth(depth, p.prefix)
-		atMarkupEnd := func(offset int) bool {
-			return p.markup && p.expectedEnd == p.limit && storedMarkupStarts[p.storedStart+offset]
-		}
-		atProseBoundary := func(offset int) bool {
-			return slackReadbackClosingMarker(expectedText, p.expectedStart+offset, state)
-		}
-		tail := expectedText[p.expectedStart:p.expectedEnd]
-		// An aligned returned link can split one source URI. Only EOF or
-		// original markup supplies a definite boundary for such a slice;
-		// a delimiter inside tail is handled by slackURIToken itself.
-		complete := p.expectedEnd == len(expectedText) || (p.markup && p.expectedEnd == p.limit)
-		literal, depth, ok := slackPreservedURLSuffix(tail, storedText[p.storedStart:p.storedEnd], depth, p.shortcodes && !inherited, emoji, complete, atMarkupEnd, atProseBoundary)
-		carryAt = -1
-		if ok && literal == len(tail) {
-			// No prose boundary intervened: an embedded email/reference
-			// continues this URI with the same literal and bracket rules.
-			carryAt, carryEmoji, carryDepth = p.expectedEnd, emoji, depth
-		}
-		return p.expectedStart + literal, ok
+		stored = stored[len(literal):]
+		n, ok := slackReadbackProsePrefix(expectedText[literalEnd:p.expectedEnd], stored)
+		return literalEnd, ok && (n == len(stored) ||
+			(p.markup && p.expectedEnd == p.limit && storedMarkupStarts[p.storedStart+len(literal)+n]))
 	}
 	return slackReadbackFormattingMatches(expectedText, markup, matchedSpans, checkSuffix)
 }
@@ -278,7 +274,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 // Track surrounding mrkdwn delimiters in prose. Code/link markup and escaped
 // markers do not change the surrounding formatting state. An opening marker
 // needs a word boundary, so identifiers such as status_value remain literal.
-func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSuffix func(int, uint16) (int, bool)) bool {
+func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSuffix func(int, slackReadbackFormatting) (int, bool)) bool {
 	// Merge known boundaries, scanning only the intervening text for URI/code
 	// tokens. A URI that Slack leaves unwrapped is just as literal as a link.
 	var opaque [][2]int
@@ -308,7 +304,7 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 		last = max(last, span[1])
 	}
 	appendGap(len(text))
-	var state uint16
+	var state slackReadbackFormatting
 	cursor, skipEnd := 0, 0
 	for i := range len(text) {
 		end, ok := checkSuffix(i, state)
@@ -320,13 +316,7 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 			span := opaque[cursor]
 			end := span[1]
 			if rawURI[span[0]] {
-				for end > span[0] {
-					_, width := utf8.DecodeLastRuneInString(text[span[0]:end])
-					if !slackReadbackClosingMarker(text, end-width, state) {
-						break
-					}
-					end -= width
-				}
+				end = slackReadbackURLEnd(text, span[0], end, state)
 			}
 			skipEnd = max(skipEnd, end)
 			cursor++
@@ -342,45 +332,26 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 				continue
 			}
 		}
-		mask := slackReadbackMarker(text, i)
-		if mask == 0 {
+		bit, width := slackReadbackMarker(text, i)
+		if bit < 0 {
 			continue
 		}
-		r, width := utf8.DecodeRuneInString(text[i:])
+		skipEnd = i + width
+		r, _ := utf8.DecodeRuneInString(text[i:])
 		before, _ := utf8.DecodeLastRuneInString(text[:i])
 		after, _ := utf8.DecodeRuneInString(text[i+width:])
 		beforeWord := unicode.IsLetter(before) || unicode.IsNumber(before) || before == '_'
-		quote := mask >= 1<<3
-		if strings.ContainsRune("”’»›", r) {
-			state &^= mask
-			continue
-		}
-		if strings.ContainsRune("“‘«‹", r) {
-			if !unicode.IsSpace(after) && i+width < len(text) {
-				state |= mask
-			}
-			continue
-		}
-		if state&mask != 0 || ((quote || !beforeWord) && !unicode.IsSpace(after) && i+width < len(text)) {
-			state ^= mask
+		if state[bit] == width || strings.ContainsRune("”’»›", r) {
+			state[bit] = 0
+		} else if (bit >= 3 || !beforeWord) && !unicode.IsSpace(after) && i+width < len(text) {
+			state[bit] = width
 		}
 	}
 	return true
 }
 
-func slackReadbackClosingMarker(text string, at int, state uint16) bool {
-	r, _ := utf8.DecodeRuneInString(text[at:])
-	if strings.ContainsRune("“‘«‹", r) || slackReadbackMarker(text, at)&state == 0 {
-		return false
-	}
-	return !slackURIContinuesAfter(text, at)
-}
-
-// Formatting punctuation cannot end a URL before a path/query/fragment.
-func slackURIContinuesAfter(text string, at int) bool {
-	_, width := utf8.DecodeRuneInString(text[at:])
-	return at+width < len(text) && strings.ContainsRune("/?#", rune(text[at+width]))
-}
+// A delimiter RUN is one delimiter: ** and __ must not toggle twice.
+type slackReadbackFormatting [9]int
 
 func slackReadbackSeparatorBefore(prefix string) bool {
 	for len(prefix) > 0 {
@@ -398,7 +369,7 @@ func slackReadbackSeparatorBefore(prefix string) bool {
 
 // Return only actual formatting characters, excluding escapes, keycaps and
 // apostrophes/underscores inside words. Paired quotes retain their own state.
-func slackReadbackMarker(text string, at int) uint16 {
+func slackReadbackMarker(text string, at int) (int, int) {
 	r, width := utf8.DecodeRuneInString(text[at:])
 	bit := strings.IndexRune("*_~'\"", r)
 	if bit < 0 {
@@ -414,17 +385,22 @@ func slackReadbackMarker(text string, at int) uint16 {
 		}
 	}
 	if bit < 0 || (r == '*' && slackEmojiUnitPrefix(text[at:]) > 0) || slackReadbackEscaped(text, at) {
-		return 0
+		return -1, width
+	}
+	if bit < 3 {
+		for at+width < len(text) && text[at+width] == byte(r) {
+			width++
+		}
 	}
 	if r == '_' || r == '\'' || r == '‘' || r == '’' {
 		before, _ := utf8.DecodeLastRuneInString(text[:at])
 		after, _ := utf8.DecodeRuneInString(text[at+width:])
 		word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' }
 		if word(before) && word(after) {
-			return 0
+			return -1, width
 		}
 	}
-	return uint16(1 << bit)
+	return bit, width
 }
 
 func slackReadbackEscaped(text string, at int) bool {
@@ -461,144 +437,142 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 	return slackNormalizedPrefixesMatch(label(expected), label(stored))
 }
 
-// A suffix outside Slack's returned URL span must still be present. Unlike
-// the ordinary prose fold, emoji may convert but cannot disappear here.
-// Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
-// shortcodes are prose (they cannot be a numeric port).
-func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortcodes, allowEmoji, complete bool, atMarkupEnd, atProseBoundary func(int) bool) (int, [3]int, bool) {
-	if !allowEmoji {
-		// Preserve the entire remaining source URI token, using the same
-		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
-		// literal path/query characters, regardless of Slack's link end.
-		literal := slackURIToken(expected)
-		// Only a trailing run of closing formatting markers and emoji
-		// can leave URI protection early. A marker followed by path text
-		// (such as ~user) stays literal. Scan once, retaining the start of
-		// the last qualifying run; shortcode identifiers stay atomic.
-		boundary, markerEnd := -1, 0
-		var seenMarkers uint8
-		ambiguous := false
-		for i := 0; i < len(literal); {
-			if n := slackEmojiUnitPrefix(literal[i:]); n > 0 {
-				i += n
-				continue
-			}
-			if literal[i] == ':' {
-				if end := strings.IndexByte(literal[i+1:], ':'); end >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(literal[i:i+end+2])) {
-					boundary, seenMarkers, ambiguous = -1, 0, false
-					i += end + 2
-					continue
-				}
-			}
-			r, width := utf8.DecodeRuneInString(literal[i:])
-			if strings.ContainsRune("*_~", r) && atProseBoundary(i) {
-				mask := uint8(1 << strings.IndexRune("*_~", r))
-				// One active delimiter can close only once. Keep an
-				// ambiguous repeated-delimiter run entirely literal.
-				ambiguous = ambiguous || seenMarkers&mask != 0
-				seenMarkers |= mask
-				if ambiguous {
-					boundary = -1
-				} else if boundary < 0 {
-					boundary, markerEnd = i, i+width
-				}
-			} else {
-				boundary, seenMarkers, ambiguous = -1, 0, false
-			}
-			i += width
+// Find the source URL token's end once, independently of how many returned
+// <url> / <url|label> segments cover it. The token is literal; everything after
+// it is prose. Balanced path brackets, identifiers, quoted query values and
+// internal/repeated formatting delimiters remain inside the token. Whitespace,
+// original markup, unmatched closing brackets, an enclosing delimiter and
+// trailing sentence punctuation/Unicode emoji end it.
+//
+// Slack documents auto-links and emoji conversion, but does not publish its
+// complete URL lexer. These conservative boundaries pin that contract without
+// treating Slack's returned link end alone as permission to fold URL bytes:
+// https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages
+func slackReadbackURLEnd(text string, start, limit int, state slackReadbackFormatting) int {
+	for i := limit; i > start && limit < len(text); {
+		r, width := utf8.DecodeLastRuneInString(text[start:i])
+		i -= width
+		if strings.ContainsRune(",;", r) {
+			limit = i
+			break
 		}
-		if boundary >= 0 && (complete || len(literal) < len(expected)) {
-			// An intermediate URI segment stays literal across returned
-			// links. At a real end, compare remaining prose with emoji folding.
-			return boundary, depth, strings.HasPrefix(stored, literal[:markerEnd])
+		if !strings.ContainsRune("([{'\"“‘«‹", r) {
+			break
 		}
-		// Other punctuation, including quoted query contents, retains the
-		// original literal rule. Trailing closers still update prose state.
-		opaque := len(literal)
-		for opaque > 0 {
-			_, width := utf8.DecodeLastRuneInString(literal[:opaque])
-			if !atProseBoundary(opaque - width) {
+	}
+	end := start
+	var depth [3]int
+	for end < limit {
+		r, width := utf8.DecodeRuneInString(text[end:limit])
+		if unicode.IsSpace(r) || strings.ContainsRune("<>|", r) {
+			break
+		}
+		if b := strings.IndexRune(")]}", r); b >= 0 {
+			if depth[b] == 0 {
 				break
 			}
-			opaque -= width
+			depth[b]--
+		} else if b := strings.IndexRune("([{", r); b >= 0 {
+			depth[b]++
 		}
-		return opaque, depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
+		end += width
 	}
-	i, j := 0, 0
-	for i < len(expected) {
-		r, width := utf8.DecodeRuneInString(expected[i:])
-		if unicode.IsSpace(r) || strings.ContainsRune("<>|", r) || atProseBoundary(i) {
-			return i, depth, strings.HasPrefix(stored[j:], expected[i:i+width])
-		}
-		if at := strings.IndexRune(")]}", r); at >= 0 {
-			if depth[at] == 0 {
-				return i, depth, strings.HasPrefix(stored[j:], expected[i:i+width])
-			}
-			depth[at]--
-		} else if at := strings.IndexRune("([{", r); at >= 0 {
-			depth[at]++
-		}
-		if allowShortcodes {
-			// These characters end a bare hostname. A slash, query,
-			// fragment, port or continued domain still keeps URL protection.
-			continuedMarker := strings.ContainsRune("*_~'\"“”‘’«»‹›", r) && slackURIContinuesAfter(expected, i)
-			if !continuedMarker && (strings.ContainsRune(",;!([{'\"~=&“”‘’«»‹›", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0)) {
-				return i, depth, strings.HasPrefix(stored[j:], expected[i:i+width])
-			}
-			if r == '.' {
-				next, _ := utf8.DecodeRuneInString(expected[i+width:])
-				if !unicode.IsLetter(next) && !unicode.IsNumber(next) && next != '-' && next != '_' {
-					return i, depth, strings.HasPrefix(stored[j:], expected[i:i+width])
-				}
-			}
-		}
-		if r != ':' || allowShortcodes {
-			if n := slackEmojiUnitPrefix(expected[i:]); n > 0 {
-				if allowShortcodes {
-					n = slackEmojiToneSuffix(expected[i:], n)
-				}
-				m := slackEmojiUnitPrefix(stored[j:])
-				if m == 0 {
-					return 0, depth, false
-				}
-				// A typed tone token in a URL suffix remains literal, even
-				// when Slack appends its own tone token to the preceding emoji.
-				if !allowShortcodes {
-					toneEnd := slackEmojiToneSuffix(expected[i:], n)
-					literalTones := expected[i+n : i+toneEnd]
-					if literalTones != "" && m > len(literalTones) && strings.HasSuffix(stored[j:j+m], literalTones) {
-						m -= len(literalTones)
-					}
-				}
-				i, j = i+n, j+m
-				continue
-			}
-		}
-		allowShortcodes = false
-		if !strings.HasPrefix(stored[j:], expected[i:i+width]) {
-			return 0, depth, false
-		}
-		i, j = i+width, j+width
+	// Tokenize identifiers/emoji atomically before looking for trailing prose.
+	// Otherwise an underscore in :white_check_mark: becomes a false closer.
+	type unit struct {
+		at, end, bit     int
+		emoji, shortcode bool
 	}
-	return i, depth, j == len(stored) || atMarkupEnd(j)
+	var units []unit
+	for i := start; i < end; {
+		u := unit{at: i, bit: -1}
+		if n := slackEmojiUnitPrefix(text[i:end]); n > 0 {
+			u.end, u.emoji, u.shortcode = i+n, true, text[i] == ':'
+		} else if text[i] == ':' {
+			if n := strings.IndexByte(text[i+1:end], ':'); n >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(text[i:i+n+2])) {
+				u.end, u.shortcode = i+n+2, true
+			}
+		}
+		if u.end == 0 {
+			bit, width := slackReadbackMarker(text, i)
+			u.end, u.bit = min(i+width, end), bit
+		}
+		units = append(units, u)
+		i = u.end
+	}
+	boundary, proseTail, pathAfter := end, true, false
+	var later slackReadbackFormatting
+	for i := len(units) - 1; i >= 0; i-- {
+		u := units[i]
+		switch {
+		case u.emoji && !u.shortcode && !pathAfter:
+			boundary, proseTail = u.at, true
+		case u.shortcode:
+			proseTail = proseTail && u.emoji
+		case u.bit >= 0:
+			if state[u.bit] == u.end-u.at && later[u.bit] == 0 && proseTail && !pathAfter {
+				boundary = u.at
+			} else {
+				proseTail = false
+			}
+			later[u.bit]++
+		case strings.ContainsRune(",;.!?", rune(text[u.at])) && proseTail:
+			if text[u.at] != '?' || u.end == end || !units[i+1].shortcode {
+				boundary = u.at
+			}
+		default:
+			proseTail = false
+		}
+		if strings.ContainsRune("/#", rune(text[u.at])) || (text[u.at] == '?' && !proseTail) {
+			pathAfter = true
+		}
+	}
+	// Host-adjacent :name: is prose for BOTH full and implicit URLs. A port
+	// stays numeric; after a slash/query/fragment, typed shortcodes are literal.
+	host := start
+	if scheme := slackAbsoluteLinkScheme.FindString(text[start:end]); scheme != "" {
+		host += len(scheme)
+	}
+	for i := host; i < boundary; i++ {
+		if strings.ContainsRune("/?#", rune(text[i])) {
+			break
+		}
+		if text[i] == ':' && slackEmojiUnitPrefix(text[i:boundary]) > 0 {
+			return i
+		}
+		if strings.ContainsRune(",;!([{'\"~=&", rune(text[i])) && i > host && strings.IndexAny(text[i:boundary], "/?#") < 0 {
+			return i
+		}
+	}
+	return boundary
 }
 
-func slackReadbackDepth(depth [3]int, text string) [3]int {
-	for _, r := range text {
-		if at := strings.IndexRune("([{", r); at >= 0 {
-			depth[at]++
-		} else if at := strings.IndexRune(")]}", r); at >= 0 && depth[at] > 0 {
-			depth[at]--
+// Like the normal prose matcher, use the existing Unicode/shortcode units.
+// At a URL boundary require each unit to be present: dropped/inserted suffixes
+// must not make a changed link read back as delivered.
+func slackReadbackProsePrefix(expected, stored string) (int, bool) {
+	length := len(stored)
+	for expected != "" {
+		n, m := slackEmojiUnitPrefix(expected), slackEmojiUnitPrefix(stored)
+		if n > 0 && m > 0 {
+			// A typed tone after a Unicode unit is still present separately,
+			// even if Slack appends an inherent tone to that unit's shortcode.
+			if expected[0] != ':' {
+				tone := expected[n:slackEmojiToneSuffix(expected, n)]
+				if tone != "" && m > len(tone) && strings.HasSuffix(stored[:m], tone) {
+					m -= len(tone)
+				}
+			}
+			expected, stored = expected[n:], stored[m:]
+			continue
 		}
+		_, width := utf8.DecodeRuneInString(expected)
+		if !strings.HasPrefix(stored, expected[:width]) {
+			return 0, false
+		}
+		expected, stored = expected[width:], stored[width:]
 	}
-	return depth
-}
-
-func slackURIToken(text string) string {
-	if end := strings.IndexAny(text, " \t\n\f\r<>|"); end >= 0 {
-		return text[:end]
-	}
-	return text
+	return length - len(stored), true
 }
 
 // Inputs have already had links/entities normalized exactly once.
