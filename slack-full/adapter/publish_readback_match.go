@@ -145,7 +145,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						spans := slackVerbatimSpan.FindAllStringIndex(prefix, -1)
 						inVerbatim = len(spans) > 0 && spans[len(spans)-1][1] == len(prefix) && prefix[spans[len(spans)-1][0]] != '`'
 					}
-					if err != nil || (implicit && (destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label))) ||
+					if (implicit && (err != nil || destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label))) ||
 						(inVerbatim && (implicit || verbatim[verbatimCursor][0] != at)) {
 						return false
 					}

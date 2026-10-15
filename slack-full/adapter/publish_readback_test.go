@@ -333,6 +333,7 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"other scheme dropped shortcode suffix", "s3://bucket/:id:/x", "<s3://bucket/>/x", false},
 		{"unlabeled URI dropped Unicode suffix", "https://example.com/🎉", "<https://example.com/>", false},
 		{"unlabeled URI retained literal Unicode suffix", "https://example.com/🎉", "<https://example.com/>🎉", true},
+		{"unlabeled URI retains literal percent", "https://example.com/100%", "<https://example.com/100%>", true},
 		{"unlabeled URI changed literal Unicode suffix", "https://example.com/🎉", "<https://example.com/>:tada:", false},
 		{"implicit suffix cache preserves URI strictness", "www.a.co,https://b.co/🎉", "<http://www.a.co|www.a.co>,<https://b.co/>:tada:", false},
 		{"implicit suffix cache accepts literal URI suffix", "www.a.co,https://b.co/🎉", "<http://www.a.co|www.a.co>,<https://b.co/>🎉", true},
