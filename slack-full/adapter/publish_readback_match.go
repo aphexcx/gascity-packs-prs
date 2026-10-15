@@ -354,17 +354,8 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 type slackReadbackFormatting [9]int
 
 func slackReadbackSeparatorBefore(prefix string) bool {
-	for len(prefix) > 0 {
-		r, width := utf8.DecodeLastRuneInString(prefix)
-		if strings.ContainsRune(",;", r) {
-			return true
-		}
-		if !strings.ContainsRune("([{'\"“‘«‹", r) {
-			return false
-		}
-		prefix = prefix[:len(prefix)-width]
-	}
-	return false
+	prefix = strings.TrimRight(prefix, "([{'\"“‘«‹")
+	return strings.HasSuffix(prefix, ",") || strings.HasSuffix(prefix, ";")
 }
 
 // Return only actual formatting characters, excluding escapes, keycaps and
@@ -404,11 +395,7 @@ func slackReadbackMarker(text string, at int) (int, int) {
 }
 
 func slackReadbackEscaped(text string, at int) bool {
-	slashes := 0
-	for i := at - 1; i >= 0 && text[i] == '\\'; i-- {
-		slashes++
-	}
-	return slashes%2 != 0
+	return (at-len(strings.TrimRight(text[:at], `\`)))%2 != 0
 }
 
 func slackLiteralPrefixCounts(text string) []int {
@@ -514,7 +501,6 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 		units = append(units, u)
 		i = u.end
 	}
-	queryAt := start + strings.IndexByte(text[start:end], '?')
 	boundary, proseTail, continuationAfter := end, true, false
 	shortcodeAfter := false
 	var later slackReadbackFormatting
@@ -523,7 +509,7 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 		switch {
 		case u.quoted:
 			proseTail, continuationAfter = false, true
-		case u.emoji && !u.shortcode && !continuationAfter && !shortcodeAfter && (queryAt < start || u.at < queryAt || u.end == boundary):
+		case u.emoji && !u.shortcode && proseTail && !continuationAfter && !shortcodeAfter:
 			boundary, proseTail = u.at, true
 		case u.shortcode:
 			shortcodeAfter = true
@@ -548,7 +534,7 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 		}
 		// A query after an emoji is still URI content. Only a recognized
 		// enclosing delimiter can move that query back into following prose.
-		if strings.ContainsRune("/?#&=", rune(text[u.at])) {
+		if strings.ContainsRune("/?#&=@", rune(text[u.at])) {
 			continuationAfter = true
 		}
 	}
@@ -561,7 +547,17 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 	if strings.IndexAny(text[host:boundary], "/?#") >= 0 {
 		return boundary
 	}
+	// Credentials and bracketed hosts stay literal before adjacent emoji.
+	host += strings.LastIndexByte(text[host:boundary], '@') + 1
 	for i := host; i < boundary; i++ {
+		if i == host && text[i] == '[' {
+			close := strings.IndexByte(text[i:boundary], ']')
+			if close < 0 {
+				return boundary
+			}
+			i += close
+			continue
+		}
 		if text[i] == ':' && slackEmojiUnitPrefix(text[i:boundary]) > 0 {
 			return i
 		}
