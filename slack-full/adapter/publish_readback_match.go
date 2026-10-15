@@ -64,6 +64,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	}
 	appendVerbatim(last, len(expectedText))
 	explicitCursor, verbatimCursor := 0, 0
+	suffixAngleCursor := 0
 	expectedCursor, storedCursor := 0, 0
 	validatedExpected, validatedStored := 0, 0
 	// A mismatch with many repeated labels must not repeatedly fold growing
@@ -78,6 +79,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	for _, link := range storedLinks {
 		implicit := link.label != "" && (link.target == "http://"+link.label || link.target == "https://"+link.label ||
 			(strings.HasPrefix(link.label, "www.") && len(link.label) > len("www.") && link.target == "http://"+strings.TrimPrefix(link.label, "www.")))
+		fullURI := slackAbsoluteLinkScheme.MatchString(link.target) && (!link.labeled || link.label == link.target)
 		prefix := storedText[storedCursor:link.textStart]
 		rendered := storedText[link.textStart:link.textEnd]
 		if rendered == "" {
@@ -127,7 +129,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						return false
 					}
 					explicitCursor++
-				} else if implicit {
+				} else if implicit || fullURI {
 					destination, err := url.Parse(link.target)
 					for verbatimCursor < len(verbatim) && verbatim[verbatimCursor][1] <= at {
 						verbatimCursor++
@@ -142,18 +144,29 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						spans := slackVerbatimSpan.FindAllStringIndex(prefix, -1)
 						inVerbatim = len(spans) > 0 && spans[len(spans)-1][1] == len(prefix) && prefix[spans[len(spans)-1][0]] != '`'
 					}
-					if err != nil || destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label) || inVerbatim {
+					if err != nil || (implicit && (destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label))) ||
+						(inVerbatim && (implicit || verbatim[verbatimCursor][0] != at)) {
 						return false
 					}
-					if at > 0 && !angleEnds[at] {
+					if implicit && at > 0 && !angleEnds[at] {
 						before, _ := utf8.DecodeLastRuneInString(expectedText[:at])
 						if unicode.IsLetter(before) || unicode.IsNumber(before) || strings.ContainsRune(".-/@", before) {
 							return false
 						}
 					}
 					if end >= validatedExpected || link.textEnd >= validatedStored {
-						allowShortcodes := destination.Path == "" && destination.RawQuery == "" && !destination.ForceQuery && !strings.Contains(link.target, "#")
-						a, b, ok := slackPreservedURLSuffix(expectedText[end:], storedText[link.textEnd:], link.label, allowShortcodes)
+						allowShortcodes := implicit && destination.Path == "" && destination.RawQuery == "" && !destination.ForceQuery && !strings.Contains(link.target, "#")
+						for suffixAngleCursor < len(angles) && angles[suffixAngleCursor][0] < end {
+							suffixAngleCursor++
+						}
+						suffixEnd := len(expectedText)
+						if suffixAngleCursor < len(angles) {
+							suffixEnd = angles[suffixAngleCursor][0]
+						}
+						// Neighboring original markup has its own matching rules.
+						// Scheme-bearing URI characters remain literal, including
+						// Unicode emoji; implicit URL boundaries can border prose.
+						a, b, ok := slackPreservedURLSuffix(expectedText[end:suffixEnd], storedText[link.textEnd:], rendered, allowShortcodes, implicit)
 						if !ok {
 							return false
 						}
@@ -204,7 +217,7 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
 // shortcodes are prose (they cannot be a numeric port). Return the verified
 // ranges so adjacent links do not repeatedly scan a comma-separated run.
-func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes bool) (int, int, bool) {
+func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes, allowEmoji bool) (int, int, bool) {
 	var depth [3]int
 	for _, r := range urlPrefix {
 		if at := strings.IndexRune("([{", r); at >= 0 {
@@ -227,7 +240,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		} else if at := strings.IndexRune("([{", r); at >= 0 {
 			depth[at]++
 		}
-		if r != ':' || allowShortcodes {
+		if allowEmoji && (r != ':' || allowShortcodes) {
 			if n := slackEmojiUnitPrefix(expected[i:]); n > 0 {
 				if allowShortcodes {
 					n = slackEmojiToneSuffix(expected[i:], n)
