@@ -403,6 +403,8 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"full URI repeated closing marker unchanged", "*https://a.co/*:id:*", "*<https://a.co/>*:id:*", true},
 		{"full URI formatting before embedded reference stays literal", "*https://a.co/*:id:@U123/x*", "*<https://a.co/>*:ok:<@U123>/x*", false},
 		{"full URI formatting before embedded reference unchanged", "*https://a.co/*:id:@U123/x*:thumbsup:", "*<https://a.co/>*:id:<@U123>/x*:+1:", true},
+		{"round4 full authority shortcode before path stays literal", "https://a.co:id:/x", "<https://a.co>:ok:/x", false},
+		{"round4 implicit authority shortcode before path stays literal", "www.a.co:id:/x", "<http://www.a.co|www.a.co>:ok:/x", false},
 		{"round4 review Unicode before query stays literal", "https://a.co/🎉?:id:", "<https://a.co/>🎉?:ok:", false},
 		{"round4 unformatted path before Unicode", "https://a.co/pr/1🎉", "<https://a.co/pr/1>:tada:", true},
 		{"round4 unformatted host before Unicode", "https://a.co👍", "<https://a.co>:+1:", true},
