@@ -12,25 +12,27 @@ type slackReadbackLink struct {
 	target, label      string
 }
 
-func slackReadbackLinks(text string) []slackReadbackLink {
+func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
 	text = slackEntityUnescape.Replace(text)
 	var result []slackReadbackLink
+	var angles [][2]int
 	rawEnd, textEnd := 0, 0
 	for _, span := range slackCodeOrAngleSpan.FindAllStringIndex(text, -1) {
 		if text[span[0]] != '<' {
 			continue
 		}
 		target, label, labeled := strings.Cut(text[span[0]+1:span[1]-1], "|")
+		textStart := textEnd + len(slackNormalizeUnescapedLinks(text[rawEnd:span[0]]))
+		textEnd = textStart + len(slackNormalizeUnescapedLinks(text[span[0]:span[1]]))
+		rawEnd = span[1]
+		angles = append(angles, [2]int{textStart, textEnd})
 		// A colon in angle-delimited prose is not enough to make a link.
 		if strings.IndexFunc(target, unicode.IsSpace) < 0 && (slackReferenceTarget.MatchString(target) || slackAbsoluteLinkScheme.MatchString(target) ||
 			strings.HasPrefix(target, "mailto:") || (labeled && slackLinkScheme.MatchString(target))) {
-			textStart := textEnd + len(slackNormalizeUnescapedLinks(text[rawEnd:span[0]]))
-			textEnd = textStart + len(slackNormalizeUnescapedLinks(text[span[0]:span[1]]))
-			rawEnd = span[1]
 			result = append(result, slackReadbackLink{textStart, textEnd, target, label})
 		}
 	}
-	return result
+	return result, angles
 }
 
 // Slack's returned auto-link supplies the literal URL boundary. Matching its
@@ -39,7 +41,7 @@ func slackReadbackLinks(text string) []slackReadbackLink {
 // hostname or swallowing punctuation/emoji after a URL.
 func slackAutoLinkLabelsMatch(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
-	explicit := slackReadbackLinks(expected)
+	explicit, angles := slackReadbackLinks(expected)
 	// Removing angle markup must not join an explicit URI to its neighbors.
 	// Scan each original span separately, retaining normalized byte offsets.
 	var verbatim [][]int
@@ -49,10 +51,12 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 		}
 	}
 	last := 0
-	for _, link := range explicit {
-		appendVerbatim(last, link.textStart)
-		appendVerbatim(link.textStart, link.textEnd)
-		last = link.textEnd
+	angleEnds := make(map[int]bool, len(angles))
+	for _, span := range angles {
+		appendVerbatim(last, span[0])
+		appendVerbatim(span[0], span[1])
+		last = span[1]
+		angleEnds[last] = true
 	}
 	appendVerbatim(last, len(expectedText))
 	explicitCursor, verbatimCursor := 0, 0
@@ -66,7 +70,8 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 		budget -= len(a) + len(b) + 1
 		return budget >= 0 && slackNormalizedPrefixesMatch(a, b)
 	}
-	for _, link := range slackReadbackLinks(stored) {
+	storedLinks, _ := slackReadbackLinks(stored)
+	for _, link := range storedLinks {
 		implicit := link.label != "" && (link.target == "http://"+link.label || link.target == "https://"+link.label ||
 			(strings.HasPrefix(link.label, "www.") && len(link.label) > len("www.") && link.target == "http://"+strings.TrimPrefix(link.label, "www.")))
 		prefix := storedText[storedCursor:link.textStart]
@@ -108,12 +113,20 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 					for verbatimCursor < len(verbatim) && verbatim[verbatimCursor][1] <= at {
 						verbatimCursor++
 					}
-					if err != nil || destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label) ||
-						(verbatimCursor < len(verbatim) && verbatim[verbatimCursor][0] <= at) {
+					inVerbatim := verbatimCursor < len(verbatim) && verbatim[verbatimCursor][0] <= at
+					if inVerbatim && verbatim[verbatimCursor][0] < expectedCursor {
+						// A previously matched link supplies its own end, even
+						// when the URI regex extends across adjacent punctuation.
+						// Scan only the unconsumed prefix to retain protection for
+						// any new URI there without rescanning the remaining text.
+						prefix := expectedText[expectedCursor:at]
+						spans := slackVerbatimSpan.FindAllStringIndex(prefix, -1)
+						inVerbatim = len(spans) > 0 && spans[len(spans)-1][1] == len(prefix) && prefix[spans[len(spans)-1][0]] != '`'
+					}
+					if err != nil || destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label) || inVerbatim {
 						return false
 					}
-					followsExplicit := explicitCursor > 0 && explicit[explicitCursor-1].textEnd == at
-					if at > 0 && !followsExplicit {
+					if at > 0 && !angleEnds[at] {
 						before, _ := utf8.DecodeLastRuneInString(expectedText[:at])
 						if unicode.IsLetter(before) || unicode.IsNumber(before) || strings.ContainsRune(".-/@", before) {
 							return false
