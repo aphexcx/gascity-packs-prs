@@ -98,6 +98,18 @@ with a read-only isolated reviewer; the helper replaces native `codex review`
 to enforce a validated final verdict. Subsequent commits contain evidence only.
 The mayor's final gate and Fable review remain separate pre-merge requirements.
 
-Upstream main `520e95cb22992a8a1017f7a60da267f203497c7e` has the readback leg;
-an upstream twin is required. It must be based on upstream main and adapted to
-that older implementation, without pulling the fork's intervening features.
+## Draft handoff
+
+- Fork: https://github.com/aphexcx/gascity-packs-prs/pull/48
+- Upstream twin: https://github.com/gastownhall/gascity-packs/pull/547
+- Upstream base: `520e95cb22992a8a1017f7a60da267f203497c7e`.
+- Upstream reviewed implementation: `9c398030d6945e96a42d829a35b8325b585b002d`.
+- Upstream published head: `3c44e2891263bf0c85e1ed0e824ea8979c87c746` (evidence-only follow-up).
+
+The twin was created from upstream main and cherry-picked/adapted, never based
+on the fork head. Its older implementation needs the mailto fold and retains
+reference markers and full JSON receipt envelopes. See `upstream-README.md` for
+the differences. It passes 1,255 full Go cases, 533 Python tests (2 skips), and
+20 focused race cases. Its independent STANDARD gpt-6-astra review is also CLEAN
+(`upstream-review.txt`). No live Slack matrix, post, deployment, merge or ready
+transition was performed. Both PRs remain draft for the mayor's handoff.
