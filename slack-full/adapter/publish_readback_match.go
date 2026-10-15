@@ -152,7 +152,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						return false
 					}
 					explicitCursor++
-				} else if implicit || fullURI {
+				} else if implicit || fullURI || (candidateVerbatim < len(verbatim) && verbatim[candidateVerbatim][0] <= at) {
 					_, authority, _ := strings.Cut(link.target, "://")
 					hasPath := strings.IndexAny(authority, "/?#")
 					if hasPath >= 0 {
@@ -178,7 +178,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						inVerbatim = false
 					}
 					if (implicit && (strings.Contains(authority, "@") || slackAbsoluteLinkScheme.MatchString(link.label))) ||
-						(inVerbatim && (implicit || verbatim[verbatimCursor][0] != at)) {
+						(inVerbatim && (implicit || fullURI) && (implicit || verbatim[verbatimCursor][0] != at)) {
 						return false
 					}
 					if implicit && at > 0 && !markupEnds[at] {
@@ -197,10 +197,14 @@ func slackReadbackTextMatches(expected, stored string) bool {
 					// Check only the suffix before the next aligned link or
 					// original markup span. Each link retains its own rules and
 					// each suffix is scanned once, without a shared range cache.
-					nextSuffix = &suffixCheck{
-						linkStart: at, expectedStart: end, storedStart: link.textEnd,
-						limit: limit, prefix: rendered,
-						shortcodes: implicit && hasPath < 0, emoji: implicit, markup: suffixMarkupCursor < len(markup),
+					// Mailto/reference markup inside an unwrapped URI must not
+					// turn its remaining literal path into prose.
+					if implicit || fullURI || inVerbatim {
+						nextSuffix = &suffixCheck{
+							linkStart: at, expectedStart: end, storedStart: link.textEnd,
+							limit: limit, prefix: rendered,
+							shortcodes: implicit && hasPath < 0, emoji: implicit, markup: suffixMarkupCursor < len(markup),
+						}
 					}
 				}
 				finishSuffix(at, link.textStart)
@@ -408,7 +412,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		if allowShortcodes {
 			// These characters end a bare hostname. A slash, query,
 			// fragment, port or continued domain still keeps URL protection.
-			if strings.ContainsRune(",;!({'\"~=&", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0) {
+			if strings.ContainsRune(",;!([{'\"~=&", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0) {
 				return i, strings.HasPrefix(stored[j:], expected[i:i+width])
 			}
 			if r == '.' {
