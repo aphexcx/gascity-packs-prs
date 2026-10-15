@@ -269,7 +269,7 @@ an unrelated stub failure is not a passing refusal. No shell assertions are waiv
 ### Validating an upstream twin
 
 1. Read the upstream checkout's CI and run its `python3 -m pytest` command (for a Slack-only twin, `python3 -m pytest slack-full/tests -q`); upstream at `520e95cb` has no `make test` target.
-2. Reuse the cached uv environment offline: find its `pyvenv.cfg` with `rg --files --hidden --no-ignore "$(uv cache dir)" -g pyvenv.cfg`, set `TEST_PYTHON` to that environment's `bin/python3`, verify `"$TEST_PYTHON" -c 'import pytest, yaml, jsonschema'`, and invoke it directly; `GC_NO_INSTALL=1` rejects `uv run --with` even with `--offline`.
+2. Reuse the cached uv environment offline: find its `pyvenv.cfg` with `rg --files --hidden --no-ignore "$(uv cache dir)" -g pyvenv.cfg`, set `TEST_PYTHON` to that environment's `bin/python3`, verify `"$TEST_PYTHON" -c 'import pytest, yaml, jsonschema'`, and `export PATH="${TEST_PYTHON%/*}:$PATH"` so subprocesses also use it; `GC_NO_INSTALL=1` rejects `uv run --with` even with `--offline`.
 3. For older `run.sh` GOPATH tests, use `env -u GC_TEMPLATE GC_NO_INSTALL=1 TMPDIR="${TMPDIR%/}" "$TEST_PYTHON" -m pytest slack-full/tests -q`; after porting the normalization fix, test with and without the trailing slash.
 4. Treat exit 0 from `git apply --cached --3way --check` as applicability only: read and resolve any textual conflict report, then verify the actual applied index has no unmerged entries (`git ls-files -u`) before testing.
 5. Check prerequisites before transplanting: the `gp-obim` twin needed the fork's emoji-normalization helpers, generated standard-name table, and tests from `d1348d0f` before the keyed matching fixes; see its [upstream evidence](assets/pr-evidence/gp-obim/upstream-README.md).

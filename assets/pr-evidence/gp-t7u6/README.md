@@ -7,7 +7,7 @@ Base: ad841a9a65a108a65769cb5bc5b668937611dead (fork main after gp-obim).
 - CI run 38670780842 failed because ripgrep was absent. The shutdown probe assertion used rg and therefore also failed; no shutdown production defect was found. CI now installs and prints the ripgrep version.
 - The canonical-collision and redirected-root stubs rejected the legitimate handoff_stage clear before reaching artifact validation. Their inner `fail` exited nonzero, which the outer test accepted as the expected safety refusal. The full baseline with GNU tools exited 0 while printing both FAIL lines. The fixed fixtures allow only the two preparatory metadata writes, reject every other update, and require the exact intended guard diagnostic. Two mutation probes restoring the old stubs both fail under the strengthened assertions. No baseline list, waived assertions, or skipped shell tests.
 - run.sh removes one trailing slash before joining private GOCACHE/GOPATH paths. The two existing GOPATH tests failed on the base with a trailing slash, then passed unchanged in both full Slack Python runs.
-- README documents the five-line upstream-twin recipe and Linux-equivalent shell prerequisites on macOS. The cached uv interpreter is invoked directly: the current no-install wrapper rejects `uv run --offline --with`.
+- README documents the five-line upstream-twin recipe and Linux-equivalent shell prerequisites on macOS. The cached uv interpreter is invoked directly and its bin directory put on PATH for subprocesses: the current no-install wrapper rejects `uv run --offline --with`.
 
 ## Local verification
 
@@ -16,6 +16,8 @@ Base: ad841a9a65a108a65769cb5bc5b668937611dead (fork main after gp-obim).
 - `python-no-slash.txt` and `python-with-slash.txt`: each 655 passed, 2 skipped, 2 existing os.fork warnings, Python 3.13.13. The cached environment supplies pytest/PyYAML/jsonschema offline. `python-baseline.txt`: the same two unchanged GOPATH tests failed before the run.sh fix.
 - `stub-mutation-check.txt`: 2/2 deliberately broken stubs rejected, proving unrelated setup errors no longer satisfy the safety assertions.
 - `change.diff`: zero-context source delta from the base. CI and Codex review records are added after the runs complete.
+- `python-ci-suites.txt`: wider CI-directory run completed with 2,204 passed, 43 skipped, 10,594 subtests passed, and 10 failures because shell subprocesses selected system Python without PyYAML. With the cached environment bin on PATH, `python-subprocess-recheck.txt` passed all 14 build-artifact checks (including all ten failures); no product changes. The corrected PATH is documented in the twin recipe.
+- `codex-review-r1.txt`: validated QUICK CLEAN at e650c342. A second round covers the subprocess PATH documentation refinement.
 - No Node or pnpm test was used; no unsupported-engine warning.
 
 ## Upstream scope

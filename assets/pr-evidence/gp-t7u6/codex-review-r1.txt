@@ -1,0 +1,31 @@
+# codex-gate review: base ad841a9a65a108a65769cb5bc5b668937611dead (merge base of --base ad841a9a65a108a65769cb5bc5b668937611dead = ad841a9a65a108a65769cb5bc5b668937611dead and the head) head e650c342ff3f1d7259a94edb8a48aba96d7cce8e; 17 file(s); class QUICK; model gpt-6-astra; 2026-10-15T12:04:54Z
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 5 untracked entr(ies) there ignored)
+#  .github/workflows/ci.yml                           |   6 ++
+#  README.md                                          |  17 +++++
+#  assets/pr-evidence/gp-t7u6/README.md               |  23 ++++++
+#  assets/pr-evidence/gp-t7u6/change.diff             |  91 ++++++++++++++++++++++
+#  assets/pr-evidence/gp-t7u6/ci-baseline.txt         |  92 ++++++++++++++++++++++
+#  assets/pr-evidence/gp-t7u6/go-tests.txt            |  11 +++
+#  assets/pr-evidence/gp-t7u6/python-baseline.txt     |  99 ++++++++++++++++++++++++
+#  assets/pr-evidence/gp-t7u6/python-no-slash.txt     |  21 +++++
+#  assets/pr-evidence/gp-t7u6/python-with-slash.txt   |  21 +++++
+#  assets/pr-evidence/gp-t7u6/shell-baseline-gnu.txt  | 253 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-t7u6/shell-baseline.txt      |  30 ++++++++
+#  assets/pr-evidence/gp-t7u6/shell-tests.txt         | 251 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-t7u6/stub-mutation-check.txt |  10 +++
+#  assets/pr-evidence/gp-t7u6/upstream-check.txt      |   5 ++
+#  assets/pr-evidence/gp-t7u6/upstream-run-sh.patch   |  17 +++++
+#  gastown/tests/test_polecat_artifact_dir.sh         |  33 +++++++-
+#  slack-full/adapter/run.sh                          |   5 +-
+#  17 files changed, 979 insertions(+), 6 deletions(-)
+
+No actionable correctness or regression findings in `ad841a9…e650c34`.
+
+Tests: **not run (sandbox)**. Committed evidence under `assets/pr-evidence/gp-t7u6/` reports:
+
+- All 11 shell scripts passed.
+- Python: 655 passed, 2 skipped with and without a trailing TMPDIR slash.
+- Go: 1,349 top-level tests passed.
+- Both mutation probes correctly rejected broken stubs.
+
+VERDICT: CLEAN
