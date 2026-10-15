@@ -162,7 +162,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 						verbatimCursor++
 					}
 					inVerbatim := verbatimCursor < len(verbatim) && verbatim[verbatimCursor][0] <= at
-					if inVerbatim && verbatim[verbatimCursor][0] < expectedCursor {
+					if inVerbatim && (implicit || fullURI) && verbatim[verbatimCursor][0] < expectedCursor {
 						// A previously matched link supplies its own end, even
 						// when the URI regex extends across adjacent punctuation.
 						// Scan only the unconsumed prefix to retain protection for
@@ -174,9 +174,12 @@ func slackReadbackTextMatches(expected, stored string) bool {
 					// Slack can leave an earlier URI unwrapped while linking
 					// the next comma/semicolon-separated URL. Its already
 					// matched prefix retains the earlier URI's literal text.
-					if at > 0 && strings.ContainsRune(",;", rune(expectedText[at-1])) {
+					if (implicit || fullURI) && at > 0 && strings.ContainsRune(",;", rune(expectedText[at-1])) {
 						inVerbatim = false
 					}
+					// Email/reference spans can be embedded in the original
+					// URI across earlier returned spans or punctuation. They
+					// retain that URI's literal tail context.
 					if (implicit && (strings.Contains(authority, "@") || slackAbsoluteLinkScheme.MatchString(link.label))) ||
 						(inVerbatim && (implicit || fullURI) && (implicit || verbatim[verbatimCursor][0] != at)) {
 						return false
@@ -385,7 +388,13 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
 		// literal path/query characters, regardless of Slack's link end.
 		literal := slackURIToken(expected)
-		return len(literal), literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
+		// Validate all literal bytes, then let trailing closing markers
+		// update the surrounding prose state before the next link.
+		opaque := len(literal)
+		for opaque > 0 && atProseBoundary(opaque-1) {
+			opaque--
+		}
+		return opaque, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
 	var depth [3]int
 	for _, r := range urlPrefix {
@@ -412,7 +421,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes
 		if allowShortcodes {
 			// These characters end a bare hostname. A slash, query,
 			// fragment, port or continued domain still keeps URL protection.
-			if strings.ContainsRune(",;!([{'\"~=&", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0) {
+			if strings.ContainsRune(",;!([{'\"~=&“”‘’«»‹›", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0) {
 				return i, strings.HasPrefix(stored[j:], expected[i:i+width])
 			}
 			if r == '.' {
