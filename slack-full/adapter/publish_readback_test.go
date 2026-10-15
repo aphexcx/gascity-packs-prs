@@ -334,6 +334,8 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"unlabeled URI dropped Unicode suffix", "https://example.com/🎉", "<https://example.com/>", false},
 		{"unlabeled URI retained literal Unicode suffix", "https://example.com/🎉", "<https://example.com/>🎉", true},
 		{"unlabeled URI changed literal Unicode suffix", "https://example.com/🎉", "<https://example.com/>:tada:", false},
+		{"implicit suffix cache preserves URI strictness", "www.a.co,https://b.co/🎉", "<http://www.a.co|www.a.co>,<https://b.co/>:tada:", false},
+		{"implicit suffix cache accepts literal URI suffix", "www.a.co,https://b.co/🎉", "<http://www.a.co|www.a.co>,<https://b.co/>🎉", true},
 		{"auto-link before explicit label emoji", "www.a.co,<https://b.co/🎉|b.co/🎉>", "<http://www.a.co|www.a.co>,<https://b.co/🎉|b.co/:tada:>", true},
 		{"auto-link before changed explicit target", "www.a.co,<https://b.co/🎉|b.co/🎉>", "<http://www.a.co|www.a.co>,<https://b.co/other|b.co/:tada:>", false},
 		{"auto-link before angle prose emoji", "www.a.co,<status: done 🎉>", "<http://www.a.co|www.a.co>,&lt;status: done :tada:&gt;", true},
