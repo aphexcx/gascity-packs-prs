@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is sent unchanged after the existing alias rewrite, and `MaxMessageLength`
   again advertises the full 40,000-character ceiling. Every publish readback
   uses exact timestamp and canonicalized text equality, including thread
-  replies via `conversations.replies`.
+  replies via `conversations.replies`. Bare-domain auto-links (for example,
+  `hou.vc` stored by Slack as `<http://hou.vc|hou.vc>`) confirm without reposting.
   Delivery evidence now lives in the adapter's private
   `<GC_CITY_PATH>/.gc/slack/publish-receipts/` store (fallback:
   `/tmp/gc-slack-adapter/publish-receipts/`), keyed by the full SHA-256 digest
@@ -30,7 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes posted. Readback is `pending`, `confirmed`, `readback_unconfirmed`,
   `readback_unavailable`, or `readback_auth`; pending proves acceptance only.
   Receipts survive restarts and expire after 30 days from posting, swept at
-  startup and hourly. A reused key records the newest accepted post. A 404
+  startup and hourly. This later-reader audit window is longer than the
+  company inbound receipt store's seven-day retry window. Corrupt receipts
+  are removed by the sweep with one log line; I/O failures preserve the file.
+  A reused key records the newest accepted post. A 404
   means **unknown**, never undelivered; unkeyed posts, files, and deliveries
   before this change have no stored evidence. Storage errors are 500 on lookup
   and `metadata.receipt_store=unavailable` on publish. This store records past

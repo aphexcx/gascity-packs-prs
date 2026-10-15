@@ -17,7 +17,12 @@ import (
 	"time"
 )
 
+// publishReceiptRetention keeps delivery evidence available to later readers
+// for 30 days, beyond companyReceiptRetention's 7-day inbound retry window.
+// This longer audit window does not extend either store's dedup semantics.
 const publishReceiptRetention = 30 * 24 * time.Hour
+
+var errInvalidPublishReceipt = errors.New("invalid publish receipt")
 
 // publishReceiptStore is the durable delivery-evidence contract for keyed
 // POST /publish calls. It lives at <GC_CITY_PATH>/.gc/slack/publish-receipts
@@ -47,6 +52,8 @@ const publishReceiptRetention = 30 * 24 * time.Hour
 // with an hourly/startup sweep. 404 means UNKNOWN, never undelivered: unkeyed
 // posts, file uploads, older deliveries, expired receipts, and writes lost to a
 // disk failure may have no receipt. I/O/corruption errors return 500, not 404.
+// The sweep removes corrupt receipts with one log line; subsequent lookups
+// return unknown. Read failures caused by I/O leave the file for a later retry.
 // Persistence failures are logged and surfaced as metadata.receipt_store on
 // the publish response without undoing a Slack delivery or inducing a repost.
 // This evidence describes a past observation, not whether Slack still has the
@@ -113,13 +120,13 @@ func (s *publishReceiptStore) read(path string) (storedPublishReceipt, error) {
 		return receipt, err
 	}
 	if len(data) > 64*1024 {
-		return receipt, errors.New("publish receipt too large")
+		return receipt, fmt.Errorf("%w: too large", errInvalidPublishReceipt)
 	}
 	if err := json.Unmarshal(data, &receipt); err != nil {
-		return receipt, err
+		return receipt, fmt.Errorf("%w: %v", errInvalidPublishReceipt, err)
 	}
 	if receipt.MessageID == "" || receipt.ConversationID == "" || receipt.PostedAt.IsZero() || len(receipt.PostedTextSHA256) != 64 || receipt.Readback == "" {
-		return receipt, errors.New("invalid publish receipt")
+		return receipt, errInvalidPublishReceipt
 	}
 	return receipt, nil
 }
@@ -243,17 +250,21 @@ func (s *publishReceiptStore) Prune() (int, error) {
 		}
 		path := filepath.Join(s.dir, entry.Name())
 		receipt, err := s.read(path)
-		if err != nil {
+		invalid := errors.Is(err, errInvalidPublishReceipt)
+		if err != nil && !invalid {
 			errs = append(errs, err)
 			continue
 		}
-		if s.now().Before(receipt.PostedAt.Add(publishReceiptRetention)) {
+		if !invalid && s.now().Before(receipt.PostedAt.Add(publishReceiptRetention)) {
 			continue
 		}
 		if err := os.Remove(path); err != nil {
 			errs = append(errs, err)
 		} else {
 			removed++
+			if invalid {
+				log.Printf("publish receipt prune: removed corrupt receipt %s", entry.Name())
+			}
 		}
 	}
 	if removed > 0 {

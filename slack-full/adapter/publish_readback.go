@@ -257,14 +257,14 @@ func slackNormalizeLinks(text string) string {
 			}
 		}
 		// Slack may label an auto-link with the original URL, including a
-		// www. URL with an implicit http scheme. Fold only redundant labels:
+		// bare domain or www. URL with an implicit scheme. Fold only redundant labels:
 		// arbitrary labels must retain their destination for the comparison.
 		// https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages
 		// Legacy Slack docs also show http://example.com|www.example.com:
 		// https://api.slack.com/docs/attachments#links-in-retrieved-messages
 		if labeled && (strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")) &&
-			(label == target || (strings.HasPrefix(label, "www.") && len(label) > len("www.") &&
-				(target == "http://"+label || target == "http://"+strings.TrimPrefix(label, "www.")))) {
+			(label == target || target == "http://"+label || target == "https://"+label ||
+				(strings.HasPrefix(label, "www.") && len(label) > len("www.") && target == "http://"+strings.TrimPrefix(label, "www."))) {
 			return label
 		}
 		return body
