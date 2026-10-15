@@ -499,6 +499,9 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 			u.end, u.quoted = close, true
 		} else if n := slackEmojiUnitPrefix(text[i:end]); n > 0 {
 			u.end, u.emoji, u.shortcode = i+n, true, text[i] == ':'
+			if !u.shortcode {
+				u.end = i + slackEmojiToneSuffix(text[i:end], n)
+			}
 		} else if text[i] == ':' {
 			if n := strings.IndexByte(text[i+1:end], ':'); n >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(text[i:i+n+2])) {
 				u.end, u.shortcode = i+n+2, true
@@ -511,24 +514,27 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 		units = append(units, u)
 		i = u.end
 	}
-	boundary, proseTail, pathAfter := end, true, false
+	queryAt := start + strings.IndexByte(text[start:end], '?')
+	boundary, proseTail, continuationAfter := end, true, false
+	shortcodeAfter := false
 	var later slackReadbackFormatting
 	for i := len(units) - 1; i >= 0; i-- {
 		u := units[i]
 		switch {
 		case u.quoted:
-			proseTail, pathAfter = false, true
-		case u.emoji && !u.shortcode && !pathAfter:
+			proseTail, continuationAfter = false, true
+		case u.emoji && !u.shortcode && !continuationAfter && !shortcodeAfter && (queryAt < start || u.at < queryAt || u.end == boundary):
 			boundary, proseTail = u.at, true
 		case u.shortcode:
+			shortcodeAfter = true
 			proseTail = proseTail && u.emoji
 		case u.bit >= 0 && !strings.ContainsAny(text[u.at:u.end], "“‘«‹"):
 			// A closer can have attached prose words. A marker that starts
 			// a path segment or query value still belongs to the URI.
 			segmentStart := u.at > start && strings.ContainsRune("/=", rune(text[u.at-1]))
-			wordTail := !pathAfter && !segmentStart
-			if state[u.bit] == u.end-u.at && later[u.bit] == 0 && !(pathAfter && segmentStart) && (proseTail || wordTail) {
-				boundary, pathAfter = u.at, false
+			wordTail := !continuationAfter && !segmentStart
+			if state[u.bit] == u.end-u.at && later[u.bit] == 0 && !(continuationAfter && segmentStart) && (proseTail || wordTail) {
+				boundary, continuationAfter, shortcodeAfter = u.at, false, false
 			} else {
 				proseTail = false
 			}
@@ -542,8 +548,8 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 		}
 		// A query after an emoji is still URI content. Only a recognized
 		// enclosing delimiter can move that query back into following prose.
-		if strings.ContainsRune("/?#", rune(text[u.at])) {
-			pathAfter = true
+		if strings.ContainsRune("/?#&=", rune(text[u.at])) {
+			continuationAfter = true
 		}
 	}
 	// Host-adjacent :name: is prose for BOTH full and implicit URLs. A port
