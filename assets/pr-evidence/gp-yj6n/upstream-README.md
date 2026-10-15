@@ -29,7 +29,7 @@ without reversing acceptance. The real 3,429-character incident now passes.
 
 Validation, GC_NO_INSTALL=1 throughout, no dependency installation or Slack posts:
 
-- Full Go suite: 1,255 cases, 731 top-level, no failures/skips; real recorded
+- Full Go suite: 1,255 cases, 712 top-level, no failures/skips; real recorded
   incident enabled. See `upstream-go.txt` for the exact count and command.
 - Python: 533 passed, 2 skipped, 2 existing os.fork warnings; the upstream base
   has no make test target, so its CI pytest runner was invoked through cached
@@ -38,4 +38,8 @@ Validation, GC_NO_INSTALL=1 throughout, no dependency installation or Slack post
   run passes 20 cases, no failures or skips; `upstream-race.txt`.
 
 The fork's STANDARD Codex review of 8af195fd is CLEAN (`fork-review.txt`).
-This upstream adaptation receives its own STANDARD review before handoff.
+The upstream STANDARD gpt-6-astra review is also CLEAN (`upstream-review.txt`),
+using the installed validated gate helper against upstream/main.
+
+Fork draft PR: https://github.com/aphexcx/gascity-packs-prs/pull/48.
+Upstream implementation reviewed at `9c398030d6945e96a42d829a35b8325b585b002d`; later changes are evidence only.
