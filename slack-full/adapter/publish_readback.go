@@ -255,8 +255,11 @@ func slackNormalizeText(text string) string {
 		// www. URL with an implicit http scheme. Fold only redundant labels:
 		// arbitrary labels must retain their destination for the comparison.
 		// https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages
+		// Legacy Slack docs also show http://example.com|www.example.com:
+		// https://api.slack.com/docs/attachments#links-in-retrieved-messages
 		if labeled && (strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")) &&
-			(label == target || (strings.HasPrefix(label, "www.") && target == "http://"+label)) {
+			(label == target || (strings.HasPrefix(label, "www.") && len(label) > len("www.") &&
+				(target == "http://"+label || target == "http://"+strings.TrimPrefix(label, "www.")))) {
 			return label
 		}
 		return body
