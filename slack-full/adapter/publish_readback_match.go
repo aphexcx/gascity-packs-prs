@@ -259,7 +259,11 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			return slackReadbackClosingMarker(expectedText, p.expectedStart+offset, state)
 		}
 		tail := expectedText[p.expectedStart:p.expectedEnd]
-		literal, depth, ok := slackPreservedURLSuffix(tail, storedText[p.storedStart:p.storedEnd], depth, p.shortcodes && !inherited, emoji, atMarkupEnd, atProseBoundary)
+		// An aligned returned link can split one source URI. Only EOF or
+		// original markup supplies a definite boundary for such a slice;
+		// a delimiter inside tail is handled by slackURIToken itself.
+		complete := p.expectedEnd == len(expectedText) || (p.markup && p.expectedEnd == p.limit)
+		literal, depth, ok := slackPreservedURLSuffix(tail, storedText[p.storedStart:p.storedEnd], depth, p.shortcodes && !inherited, emoji, complete, atMarkupEnd, atProseBoundary)
 		carryAt = -1
 		if ok && literal == len(tail) {
 			// No prose boundary intervened: an embedded email/reference
@@ -461,7 +465,7 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 // the ordinary prose fold, emoji may convert but cannot disappear here.
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
 // shortcodes are prose (they cannot be a numeric port).
-func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortcodes, allowEmoji bool, atMarkupEnd, atProseBoundary func(int) bool) (int, [3]int, bool) {
+func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortcodes, allowEmoji, complete bool, atMarkupEnd, atProseBoundary func(int) bool) (int, [3]int, bool) {
 	if !allowEmoji {
 		// Preserve the entire remaining source URI token, using the same
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
@@ -503,8 +507,9 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 			}
 			i += width
 		}
-		if boundary >= 0 {
-			// The caller compares the remaining prose with emoji folding.
+		if boundary >= 0 && (complete || len(literal) < len(expected)) {
+			// An intermediate URI segment stays literal across returned
+			// links. At a real end, compare remaining prose with emoji folding.
 			return boundary, depth, strings.HasPrefix(stored, literal[:markerEnd])
 		}
 		// Other punctuation, including quoted query contents, retains the

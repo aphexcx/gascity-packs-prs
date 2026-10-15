@@ -401,6 +401,8 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"full URI repeated closing marker stays literal", "*https://a.co/*:id:*", "*<https://a.co/>*:ok:*", false},
 		{"full URI repeated adjacent markers stay literal", "*https://a.co/**:id:", "*<https://a.co/>**:ok:", false},
 		{"full URI repeated closing marker unchanged", "*https://a.co/*:id:*", "*<https://a.co/>*:id:*", true},
+		{"full URI formatting before embedded reference stays literal", "*https://a.co/*:id:@U123/x*", "*<https://a.co/>*:ok:<@U123>/x*", false},
+		{"full URI formatting before embedded reference unchanged", "*https://a.co/*:id:@U123/x*:thumbsup:", "*<https://a.co/>*:id:<@U123>/x*:+1:", true},
 		{"full URI bold before prose alias", "*https://a.co*:thumbsup:", "*<https://a.co>*:+1:", true},
 		{"full URI italic before prose alias", "_https://a.co_:thumbsup:", "_<https://a.co>_:+1:", true},
 		{"full URI strike before prose alias", "~https://a.co~:thumbsup:", "~<https://a.co>~:+1:", true},
