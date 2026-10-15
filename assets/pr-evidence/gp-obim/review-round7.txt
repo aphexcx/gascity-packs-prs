@@ -1,0 +1,2 @@
+No actionable regressions were identified in the publish verification, retry handling, or durable receipt changes. Focused Go tests could not run because the read-only sandbox prevented creation of the temporary build directory.
+No actionable regressions were identified in the publish verification, retry handling, or durable receipt changes. Focused Go tests could not run because the read-only sandbox prevented creation of the temporary build directory.

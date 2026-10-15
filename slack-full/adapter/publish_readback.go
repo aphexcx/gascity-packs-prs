@@ -674,8 +674,8 @@ func replayPublishReceipt(
 	if !ok {
 		return publishReplay{}, false
 	}
-	// Get returns a shallow receipt copy. Keep readback mutations and the
-	// caller's persistence-error metadata private to this replay.
+	// Keep readback mutations and persistence-error metadata private to this
+	// replay, independently of the cache's own copy-on-read/write behavior.
 	cached.Metadata = maps.Clone(cached.Metadata)
 	if cached.Delivered {
 		return publishReplay{receipt: cached}, true

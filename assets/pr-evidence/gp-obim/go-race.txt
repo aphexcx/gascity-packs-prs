@@ -1,8 +1,8 @@
-Source: 27e884fb993a2336cb9fdcb3177b9dee84707789
+Source: be66194aa2cfe637503b417dd4fc9825e6e6326b
 cwd: slack-full/adapter
 env -u GC_TEMPLATE GC_NO_INSTALL=1 CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib go test -race -json ./... -run 'Test(PublishReceipt|HandlePublishKeyed|HandlePublishPersists|HandlePublishPersistence|HandlePublishReplay|PublishReplay|PublishDedup|ReadBackPublishedMessage|SlackNormalize)' -count=1
 go version go1.26.5 darwin/arm64
-129 passed cases (24 top-level); no failures or skipped cases.
+132 passed cases (25 top-level); no failures or skipped cases.
 Transcript retains all result lines; verbose application logs omitted.
 
 --- PASS: TestPublishDedupCache (0.00s)
@@ -113,10 +113,10 @@ Transcript retains all result lines; verbose application logs omitted.
 --- PASS: TestReadBackPublishedMessageFailsClosed/Slack_non-auth_rejection (0.00s)
 --- PASS: TestReadBackPublishedMessageFailsClosed/transport_status (0.00s)
 --- PASS: TestReadBackPublishedMessageFailsClosed/malformed_response (0.00s)
---- PASS: TestReadBackPublishedMessageFailsClosed (0.00s)
+--- PASS: TestReadBackPublishedMessageFailsClosed (0.01s)
 --- PASS: TestReadBackPublishedMessageBoundsAndClassifiesInstrumentFailure (0.00s)
 --- PASS: TestHandlePublishReplaysPostedButUnconfirmedReceipt (0.00s)
---- PASS: TestPublishReceiptSurvivesRestartAndReadbackUpdates (0.06s)
+--- PASS: TestPublishReceiptSurvivesRestartAndReadbackUpdates (0.08s)
 --- PASS: TestPublishReceiptPruneByPostedAge (0.04s)
 --- PASS: TestPublishReceiptGET/key_with_?&=/_reserved_charactersGET (0.00s)
 --- PASS: TestPublishReceiptGET/unknownGET (0.00s)
@@ -129,10 +129,13 @@ Transcript retains all result lines; verbose application logs omitted.
 --- PASS: TestPublishReceiptRefusesSymlinks (0.01s)
 --- PASS: TestHandlePublishPersistsAcceptanceBeforeReadbackAndRetry (0.06s)
 --- PASS: TestHandlePublishPersistenceFailureDoesNotRepost (0.01s)
---- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/threaded_reply_joins_its_thread (0.31s)
---- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/top-level_post_roots_a_thread_under_the_cached_ts (0.32s)
---- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/retry_changed_destination_and_session (0.31s)
+--- PASS: TestHandlePublishPersistenceFailureConcurrentReplays/confirmed (0.01s)
+--- PASS: TestHandlePublishPersistenceFailureConcurrentReplays/readback_unavailable (0.82s)
+--- PASS: TestHandlePublishPersistenceFailureConcurrentReplays (0.84s)
+--- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/threaded_reply_joins_its_thread (0.32s)
+--- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/top-level_post_roots_a_thread_under_the_cached_ts (0.31s)
+--- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping/retry_changed_destination_and_session (0.32s)
 --- PASS: TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping (0.95s)
 --- PASS: TestHandlePublishReplayDoesNotClearABusyMarkNewerThanTheReply (0.30s)
 PASS
-ok  	github.com/sjarmak/gc-slack-adapter	3.003s
+ok  	github.com/sjarmak/gc-slack-adapter	3.837s
