@@ -38,8 +38,9 @@ const publishReceiptRetention = 30 * 24 * time.Hour
 // atomically updated after readback, including retry re-verification. A crash
 // between these steps leaves pending evidence of acceptance, not delivery.
 // Confirmed evidence cannot be downgraded by a slower read of the same post.
-// Reusing a key for a new accepted post replaces its previous receipt; a late
-// readback of the old ts cannot overwrite that replacement.
+// Reusing a key for a newer accepted post replaces its previous receipt;
+// Slack timestamps order acceptance even when HTTP responses arrive out of
+// order. Neither a late acceptance nor a late readback can replace a newer ts.
 //
 // This store does NOT extend the in-memory dedup TTL or prevent reposts after
 // restart. Receipts expire by posted_at after publishReceiptRetention (30 days),
@@ -158,6 +159,9 @@ func (s *publishReceiptStore) RecordPosted(key string, receipt publishReceipt, p
 		return errors.New("publish receipt requires key, conversation and message ts")
 	}
 	if existing, err := s.read(s.path(key)); err == nil {
+		if compareSlackTS(existing.MessageID, receipt.MessageID) > 0 {
+			return nil // Slack accepted this post before the one already stored
+		}
 		if existing.MessageID == receipt.MessageID && existing.ConversationID == receipt.Conversation.ConversationID {
 			return nil // the acceptance write never resets this post's readback
 		}
@@ -195,6 +199,11 @@ func (s *publishReceiptStore) RecordReadback(key string, receipt publishReceipt)
 func (s *publishReceiptStore) Get(key string) (storedPublishReceipt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, err := os.Lstat(s.dir); err != nil {
+		// A missing store is an operational failure, not an unknown key.
+		// Do not wrap ENOENT: the HTTP handler reserves it for missing receipts.
+		return storedPublishReceipt{}, fmt.Errorf("publish receipt directory unavailable: %v", err)
+	}
 	receipt, err := s.read(s.path(key))
 	if err == nil && !s.now().Before(receipt.PostedAt.Add(publishReceiptRetention)) {
 		return storedPublishReceipt{}, os.ErrNotExist
@@ -212,6 +221,23 @@ func (s *publishReceiptStore) Prune() (int, error) {
 	removed := 0
 	var errs []error
 	for _, entry := range entries {
+		// A crash before rename leaves a private temporary copy. The mutex
+		// excludes live writers; age-gating also protects recent crash evidence.
+		if strings.HasPrefix(entry.Name(), "publish-") && strings.HasSuffix(entry.Name(), ".tmp") && !entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if !s.now().Before(info.ModTime().Add(publishReceiptRetention)) {
+				if err := os.Remove(filepath.Join(s.dir, entry.Name())); err != nil {
+					errs = append(errs, err)
+				} else {
+					removed++
+				}
+			}
+			continue
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}

@@ -253,6 +253,67 @@ func TestReadBackPublishedMessageMatchesKeyedPublishByTimestampAndText(t *testin
 	}
 }
 
+// These fixtures use Slack's retrieved link format, not the fake's simpler
+// angle-wrap model. A label may repeat the original URL; a different target or
+// label still must fail. See https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages.
+func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
+	for _, tc := range []struct {
+		name, posted, stored string
+		wantDelivered        bool
+	}{
+		{"labeled URL", "see https://docs.slack.dev/", "see <https://docs.slack.dev/|https://docs.slack.dev/>", true},
+		{"www auto-link", "see www.example.com", "see <http://www.example.com|www.example.com>", true},
+		{"different destination", "see www.example.com", "see <http://www.attacker.com|www.example.com>", false},
+		{"different label", "see www.example.com", "see <http://www.example.com|changed>", false},
+		{"literal inline code", "`www.example.com`", "`<http://www.example.com|www.example.com>`", false},
+		{"literal fenced code", "```www.example.com```", "```<http://www.example.com|www.example.com>```", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			original := slackAPIBase
+			t.Cleanup(func() { slackAPIBase = original })
+			posts := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if r.URL.Path == "/chat.postMessage" {
+					posts++
+					var post slackPostMessageReq
+					if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
+						t.Error(err)
+					}
+					if post.Text != tc.posted {
+						t.Errorf("posted text changed: %q", post.Text)
+					}
+					_, _ = w.Write([]byte(`{"ok":true,"ts":"1700.001"}`))
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "messages": []map[string]string{{"ts": "1700.001", "text": tc.stored}}})
+			}))
+			defer server.Close()
+			slackAPIBase = server.URL
+			body := mustJSON(t, publishRequest{SessionID: "s1", Conversation: conversationRef{ConversationID: "C1"}, Text: tc.posted, IdempotencyKey: "link-key"})
+			handler := handlePublish(config{slackBotToken: "xoxb-test"}, nil, nil, newPublishDedupCache(publishDedupTTL))
+			attempts := 1
+			if tc.wantDelivered {
+				attempts = 2
+			}
+			for range attempts {
+				w := httptest.NewRecorder()
+				handler(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(body)))
+				var receipt publishReceipt
+				if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.Delivered != tc.wantDelivered {
+					t.Fatalf("receipt = %+v, want delivered=%v", receipt, tc.wantDelivered)
+				}
+			}
+			if posts != 1 {
+				t.Fatalf("posts = %d, want one even on a retry", posts)
+			}
+		})
+	}
+}
+
 // TestReadBackPublishedMessageRetriesWhileSlackIndexes pins F5's window.
 //
 // conversations.history offers no read-your-writes guarantee, so a message Slack
