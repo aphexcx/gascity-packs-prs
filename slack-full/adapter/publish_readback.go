@@ -235,6 +235,10 @@ var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9
 // stored either. Divergence that survives the fold is still reported
 // unconfirmed.
 func slackNormalizeText(text string) string {
+	return slackFoldEmoji(slackNormalizeLinks(text))
+}
+
+func slackNormalizeLinks(text string) string {
 	text = slackCodeOrAngleSpan.ReplaceAllStringFunc(slackEntityUnescape.Replace(text), func(span string) string {
 		if strings.HasPrefix(span, "`") {
 			return span
@@ -264,7 +268,7 @@ func slackNormalizeText(text string) string {
 		}
 		return body
 	})
-	return slackFoldEmoji(text)
+	return text
 }
 
 // slackFoldEmoji removes every emoji from text in both of its spellings: the
@@ -600,7 +604,8 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // Both keyed and unkeyed publishes use the same content check after the caller
 // has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
-	if slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) {
+	if slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
+		!slackEmojiExpansionMatches(target.expectedText, message.Text) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
 			"Slack readback content mismatch for message %s", target.messageTS)
 	}
