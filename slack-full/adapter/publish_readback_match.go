@@ -5,34 +5,35 @@ import (
 	"unicode/utf8"
 )
 
-// Bare-domain prose has no explicit scheme, so either auto-link scheme may
-// fold to its label. A caller-supplied mrkdwn URL does have a destination:
-// preserve it even when its display label is a bare domain. Align each
-// explicit link by the preceding text, allowing Slack auto-links and emoji
-// conversions there; this also distinguishes repeated identical labels.
-func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
-	type link struct {
-		start, end int
-		target     string
-	}
-	links := func(text string) []link {
-		var result []link
-		for _, span := range slackCodeOrAngleSpan.FindAllStringIndex(text, -1) {
-			if text[span[0]] != '<' {
-				continue
-			}
-			target, _, _ := strings.Cut(text[span[0]+1:span[1]-1], "|")
-			if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
-				result = append(result, link{span[0], span[1], slackEntityUnescape.Replace(target)})
-			}
+type slackReadbackLink struct {
+	start, end    int
+	target, label string
+}
+
+func slackReadbackLinks(text string) []slackReadbackLink {
+	var result []slackReadbackLink
+	for _, span := range slackCodeOrAngleSpan.FindAllStringIndex(text, -1) {
+		if text[span[0]] != '<' {
+			continue
 		}
-		return result
+		target, label, _ := strings.Cut(text[span[0]+1:span[1]-1], "|")
+		if slackLinkScheme.MatchString(target) {
+			result = append(result, slackReadbackLink{span[0], span[1], slackEntityUnescape.Replace(target), slackEntityUnescape.Replace(label)})
+		}
 	}
-	want := links(expected)
+	return result
+}
+
+// Bare-domain prose has no explicit scheme, so either auto-link scheme may
+// fold to its label. Caller-supplied links (including mailto:) have explicit
+// destinations. Align them by preceding text to preserve those destinations
+// even when their display labels repeat or hide the scheme.
+func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
+	want := slackReadbackLinks(expected)
 	if len(want) == 0 {
 		return true
 	}
-	got := links(stored)
+	got := slackReadbackLinks(stored)
 	expectedStart, storedStart, next := 0, 0, 0
 	for _, link := range want {
 		matched := false
@@ -57,6 +58,59 @@ func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
 	return true
 }
 
+// Slack's returned auto-link supplies the literal URL boundary. Matching its
+// label exactly against the original normalized text prevents emoji folding
+// from erasing URL characters, without guessing whether numeric prose is a
+// hostname or swallowing punctuation/emoji after a URL.
+func slackAutoLinkLabelsMatch(expected, stored string) bool {
+	expectedText := slackNormalizeLinks(expected)
+	explicit := slackReadbackLinks(expected)
+	for _, link := range slackReadbackLinks(stored) {
+		if link.label == "" || (link.target != "http://"+link.label && link.target != "https://"+link.label &&
+			!(strings.HasPrefix(link.label, "www.") && link.target == "http://"+strings.TrimPrefix(link.label, "www."))) {
+			continue
+		}
+		prefix := slackNormalizeLinks(stored[:link.start])
+		matched := false
+		for _, original := range explicit {
+			if original.target == link.target && slackNormalizedPrefixesMatch(slackNormalizeLinks(expected[:original.start]), prefix) {
+				matched = true // the explicit-destination guard checks this link
+				break
+			}
+		}
+		if matched {
+			continue
+		}
+		// A scheme-bearing label was already an explicit URI in the prose;
+		// prefixing another scheme changes its destination.
+		if slackLinkScheme.MatchString(link.label) {
+			return false
+		}
+		for offset := 0; offset <= len(expectedText); {
+			at := strings.Index(expectedText[offset:], link.label)
+			if at < 0 {
+				break
+			}
+			at += offset
+			if slackNormalizedPrefixesMatch(expectedText[:at], prefix) {
+				matched = true
+				break
+			}
+			offset = at + len(link.label)
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+// Inputs have already had links/entities normalized exactly once.
+func slackNormalizedPrefixesMatch(expected, stored string) bool {
+	return expected == stored || slackFoldEmoji(expected) == slackFoldEmoji(stored) ||
+		slackEmojiExpansionMatchesNormalized(expected, stored)
+}
+
 // The ordinary symmetric fold cannot resolve overlapping colon tokens:
 // 10:30🎉 becomes 10:30:tada:, where an unknown :30: hides the emoji's opening
 // colon. Reversing the scan instead breaks ✅ok: -> :white_check_mark:ok:.
@@ -70,7 +124,10 @@ func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
 // state budget bound ambiguous runs. Exhaustion retains the strict mismatch;
 // ordinary symmetric matches never need this fallback.
 func slackEmojiExpansionMatches(expected, stored string) bool {
-	expected, stored = slackNormalizeLinks(expected), slackNormalizeLinks(stored)
+	return slackEmojiExpansionMatchesNormalized(slackNormalizeLinks(expected), slackNormalizeLinks(stored))
+}
+
+func slackEmojiExpansionMatchesNormalized(expected, stored string) bool {
 	type part struct {
 		literal string
 		emoji   bool
