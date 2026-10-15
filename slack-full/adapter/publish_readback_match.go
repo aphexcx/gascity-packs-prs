@@ -460,13 +460,22 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 			break
 		}
 	}
+	hardEnd := limit
+	if n := strings.IndexFunc(text[start:limit], func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune("<>|", r) }); n >= 0 {
+		hardEnd = start + n
+	}
+	quoted := make(map[int]int)
+	for _, span := range slackURIQuotedValue.FindAllStringIndex(text[start:hardEnd], -1) {
+		quoted[start+span[0]+1] = start + span[1]
+	}
 	end := start
 	var depth [3]int
-	for end < limit {
-		r, width := utf8.DecodeRuneInString(text[end:limit])
-		if unicode.IsSpace(r) || strings.ContainsRune("<>|", r) {
-			break
+	for end < hardEnd {
+		if close := quoted[end]; close > 0 {
+			end = close
+			continue
 		}
+		r, width := utf8.DecodeRuneInString(text[end:hardEnd])
 		if b := strings.IndexRune(")]}", r); b >= 0 {
 			if depth[b] == 0 {
 				break
@@ -480,13 +489,15 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 	// Tokenize identifiers/emoji atomically before looking for trailing prose.
 	// Otherwise an underscore in :white_check_mark: becomes a false closer.
 	type unit struct {
-		at, end, bit     int
-		emoji, shortcode bool
+		at, end, bit             int
+		emoji, shortcode, quoted bool
 	}
 	var units []unit
 	for i := start; i < end; {
 		u := unit{at: i, bit: -1}
-		if n := slackEmojiUnitPrefix(text[i:end]); n > 0 {
+		if close := quoted[i]; close > 0 {
+			u.end, u.quoted = close, true
+		} else if n := slackEmojiUnitPrefix(text[i:end]); n > 0 {
 			u.end, u.emoji, u.shortcode = i+n, true, text[i] == ':'
 		} else if text[i] == ':' {
 			if n := strings.IndexByte(text[i+1:end], ':'); n >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(text[i:i+n+2])) {
@@ -505,6 +516,8 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 	for i := len(units) - 1; i >= 0; i-- {
 		u := units[i]
 		switch {
+		case u.quoted:
+			proseTail, pathAfter = false, true
 		case u.emoji && !u.shortcode && !pathAfter:
 			boundary, proseTail = u.at, true
 		case u.shortcode:

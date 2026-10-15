@@ -219,6 +219,11 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // character and opens no span.
 var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+")
 
+// Paired quotes starting a URI path segment or query value are literal units.
+// Their closers cannot close an enclosing prose quote; escaped quotes stay
+// inside the value. RE2 keeps an unmatched or repeated opener scan linear.
+var slackURIQuotedValue = regexp.MustCompile(`[=/?:,(\[{](?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|“[^”]*”|‘[^’]*’|«[^»]*»|‹[^›]*›)`)
+
 var slackLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 var slackAbsoluteLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
