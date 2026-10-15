@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -143,19 +145,29 @@ func TestPublishReceiptPrunesCorruptFiles(t *testing.T) {
 			if err := os.WriteFile(store.path("corrupt"), []byte(tc.data), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.Get("corrupt"); !errors.Is(err, errInvalidPublishReceipt) {
-				t.Fatalf("corrupt lookup = %v", err)
-			}
-			if removed, err := store.Prune(); err != nil || removed != 1 {
-				t.Fatalf("corrupt cleanup = %d, %v", removed, err)
+			var logs bytes.Buffer
+			previousLogOutput := log.Writer()
+			log.SetOutput(&logs)
+			t.Cleanup(func() { log.SetOutput(previousLogOutput) })
+			w := httptest.NewRecorder()
+			handlePublishReceipt(store)(w, httptest.NewRequest(http.MethodGet, "/publish-receipt?idempotency_key=corrupt", nil))
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("first corrupt lookup = %d: %s", w.Code, w.Body)
 			}
 			if _, err := os.Stat(store.path("corrupt")); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("corrupt file remains: %v", err)
 			}
-			w := httptest.NewRecorder()
-			handlePublishReceipt(store)(w, httptest.NewRequest(http.MethodGet, "/publish-receipt?idempotency_key=corrupt", nil))
-			if w.Code != http.StatusNotFound {
-				t.Fatalf("pruned receipt lookup = %d: %s", w.Code, w.Body)
+			if _, err := store.Get("corrupt"); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("second corrupt lookup = %v", err)
+			}
+			if got := strings.Count(logs.String(), "removed corrupt receipt "+filepath.Base(store.path("corrupt"))); got != 1 {
+				t.Fatalf("corrupt lookup logged %d removals, want one: %s", got, &logs)
+			}
+			if err := os.WriteFile(store.path("sweep-corrupt"), []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if removed, err := store.Prune(); err != nil || removed != 1 {
+				t.Fatalf("sweep cleanup = %d, %v", removed, err)
 			}
 			if removed, err := store.Prune(); err != nil || removed != 0 {
 				t.Fatalf("second cleanup = %d, %v", removed, err)
@@ -184,7 +196,7 @@ func TestPublishReceiptGET(t *testing.T) {
 		{key, http.MethodGet, http.StatusOK},
 		{"unknown", http.MethodGet, http.StatusNotFound},
 		{"", http.MethodGet, http.StatusBadRequest},
-		{"corrupt", http.MethodGet, http.StatusInternalServerError},
+		{"corrupt", http.MethodGet, http.StatusNotFound},
 		{key, http.MethodPost, http.StatusMethodNotAllowed},
 	} {
 		t.Run(test.key+test.method, func(t *testing.T) {
