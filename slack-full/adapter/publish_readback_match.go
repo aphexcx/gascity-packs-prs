@@ -341,7 +341,7 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 		before, _ := utf8.DecodeLastRuneInString(text[:i])
 		after, _ := utf8.DecodeRuneInString(text[i+width:])
 		beforeWord := unicode.IsLetter(before) || unicode.IsNumber(before) || before == '_'
-		if state[bit] == width || strings.ContainsRune("”’»›", r) {
+		if (state[bit] == width && !strings.ContainsRune("“‘«‹", r)) || strings.ContainsRune("”’»›", r) {
 			state[bit] = 0
 		} else if (bit >= 3 || !beforeWord) && !unicode.IsSpace(after) && i+width < len(text) {
 			state[bit] = width
@@ -509,8 +509,12 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 			boundary, proseTail = u.at, true
 		case u.shortcode:
 			proseTail = proseTail && u.emoji
-		case u.bit >= 0:
-			if state[u.bit] == u.end-u.at && later[u.bit] == 0 && proseTail {
+		case u.bit >= 0 && !strings.ContainsAny(text[u.at:u.end], "“‘«‹"):
+			// A closer can have attached prose words. A marker that starts
+			// a path segment or query value still belongs to the URI.
+			segmentStart := u.at > start && strings.ContainsRune("/=", rune(text[u.at-1]))
+			wordTail := !pathAfter && !segmentStart
+			if state[u.bit] == u.end-u.at && later[u.bit] == 0 && !(pathAfter && segmentStart) && (proseTail || wordTail) {
 				boundary, pathAfter = u.at, false
 			} else {
 				proseTail = false

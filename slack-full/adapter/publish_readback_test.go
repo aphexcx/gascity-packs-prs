@@ -403,6 +403,12 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"full URI repeated closing marker unchanged", "*https://a.co/*:id:*", "*<https://a.co/>*:id:*", true},
 		{"full URI formatting before embedded reference stays literal", "*https://a.co/*:id:@U123/x*", "*<https://a.co/>*:ok:<@U123>/x*", false},
 		{"full URI formatting before embedded reference unchanged", "*https://a.co/*:id:@U123/x*:thumbsup:", "*<https://a.co/>*:id:<@U123>/x*:+1:", true},
+		{"round4 curly double opening quote stays literal", "“www.a.co/x“:id:", "“<http://www.a.co/x|www.a.co/x>“:ok:", false},
+		{"round4 curly single opening quote stays literal", "‘www.a.co/x‘:id:", "‘<http://www.a.co/x|www.a.co/x>‘:ok:", false},
+		{"round4 guillemet opening quote stays literal", "«www.a.co/x«:id:", "«<http://www.a.co/x|www.a.co/x>«:ok:", false},
+		{"round4 single guillemet opening quote stays literal", "‹www.a.co/x‹:id:", "‹<http://www.a.co/x|www.a.co/x>‹:ok:", false},
+		{"round4 path segment marker before query stays literal", "*https://a.co/*?:id:", "*<https://a.co/>*?:ok:", false},
+		{"round4 prose text after closing marker and emoji", "*www.a.co/x*:thumbsup:now", "*<http://www.a.co/x|www.a.co/x>*:+1:now", true},
 		{"round4 full authority shortcode before path stays literal", "https://a.co:id:/x", "<https://a.co>:ok:/x", false},
 		{"round4 implicit authority shortcode before path stays literal", "www.a.co:id:/x", "<http://www.a.co|www.a.co>:ok:/x", false},
 		{"round4 review Unicode before query stays literal", "https://a.co/🎉?:id:", "<https://a.co/>🎉?:ok:", false},
@@ -1179,6 +1185,8 @@ func TestSlackNormalizeURLSuffixMatrix(t *testing.T) {
 		{"double-quotes", "\"", "\""}, {"single-quotes", "'", "'"},
 		{"angle-less", "See: ", ""}, {"double-bold", "**", "**"},
 		{"double-italic", "__", "__"},
+		{"curly-double", "“", "”"}, {"curly-single", "‘", "’"},
+		{"guillemets", "«", "»"}, {"single-guillemets", "‹", "›"},
 	}
 	suffixes := []struct{ name, posted, stored string }{
 		{"nothing", "", ""}, {"space-text", " then text", " then text"},
@@ -1192,6 +1200,8 @@ func TestSlackNormalizeURLSuffixMatrix(t *testing.T) {
 		{"question-shortcode", "?:thumbsup:", "?:+1:"},
 		{"exclamation-shortcode", "!:thumbsup:", "!:+1:"},
 		{"comma-unicode", ",🎉", ",:tada:"},
+		{"text-shortcode", "done:thumbsup:", "done:+1:"},
+		{"shortcode-text", ":thumbsup:now", ":+1:now"},
 	}
 	cells := 0
 	for _, url := range urls {
@@ -1204,7 +1214,13 @@ func TestSlackNormalizeURLSuffixMatrix(t *testing.T) {
 				posted := enclosure.open + url.posted + enclosure.close + suffix.posted
 				stored := enclosure.open + link + enclosure.close + suffix.stored
 				want := enclosure.close != "" ||
-					((suffix.name != "shortcode" || !url.path) && suffix.name != "question-shortcode")
+					(((suffix.name != "shortcode" && suffix.name != "text-shortcode" && suffix.name != "shortcode-text") || !url.path) && suffix.name != "question-shortcode")
+				// An underscore/apostrophe between word characters is a literal
+				// identifier character, even when an opener appeared earlier.
+				if suffix.name == "text-shortcode" && url.path && !strings.HasSuffix(url.posted, ")") &&
+					(enclosure.name == "italic" || enclosure.name == "double-italic" || (enclosure.name == "single-quotes" || enclosure.name == "curly-single")) {
+					want = false
+				}
 				for _, variant := range []struct {
 					name, stored string
 					want         bool
@@ -1233,8 +1249,8 @@ func TestSlackNormalizeURLSuffixMatrix(t *testing.T) {
 			}
 		}
 	}
-	if cells != 3465 {
-		t.Fatalf("matrix cells = %d, want 7 URL forms x 11 enclosures x 15 suffixes x 3 readbacks = 3465", cells)
+	if cells != 5355 {
+		t.Fatalf("matrix cells = %d, want 7 URL forms x 15 enclosures x 17 suffixes x 3 readbacks = 5355", cells)
 	}
 }
 
