@@ -269,7 +269,7 @@ func slackEmojiUnitPrefix(text string) int {
 	}
 	if text[0] == ':' {
 		if end := strings.IndexByte(text[1:], ':'); end >= 0 && slackIsStandardEmojiName(text[1:1+end]) {
-			return end + 2
+			return slackEmojiToneSuffix(text, end+2)
 		}
 	}
 	r, n := utf8.DecodeRuneInString(text)
@@ -285,12 +285,39 @@ func slackEmojiUnitPrefix(text string) int {
 	if !isSlackEmojiRune(r) {
 		return 0
 	}
+	// Regional indicators form one flag; a ZWJ joins the following emoji
+	// base into the same unit. Slack stores each such sequence as one name.
+	if r >= 0x1F1E6 && r <= 0x1F1FF && n < len(text) {
+		next, width := utf8.DecodeRuneInString(text[n:])
+		if next >= 0x1F1E6 && next <= 0x1F1FF {
+			n += width
+		}
+	}
+	joined := false
 	for n < len(text) {
 		next, width := utf8.DecodeRuneInString(text[n:])
-		if !isEmojiSequenceGlue(next) {
+		if isEmojiSequenceGlue(next) {
+			joined = joined || next == 0x200D
+		} else if next >= 0x1F3FB && next <= 0x1F3FF {
+			// A Unicode skin tone belongs to the preceding emoji base.
+		} else if joined && isSlackEmojiRune(next) {
+			joined = false
+		} else {
 			break
 		}
 		n += width
+	}
+	return slackEmojiToneSuffix(text, n)
+}
+
+// Slack represents a toned emoji with a base shortcode plus a tone shortcode.
+func slackEmojiToneSuffix(text string, n int) int {
+	for strings.HasPrefix(text[n:], ":skin-tone-") {
+		end := strings.IndexByte(text[n+1:], ':')
+		if end < 0 || !slackIsStandardEmojiName(text[n+1:n+1+end]) {
+			break
+		}
+		n += end + 2
 	}
 	return n
 }
