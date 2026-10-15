@@ -169,6 +169,9 @@ var slackEntityUnescape = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;",
 // wraps an auto-linked URL in.
 var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 
+// Code spans are literal: do not interpret link labels inside them.
+var slackCodeOrAngleSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|<[^<>]*>")
+
 // slackEmojiShortcode matches one `:name:` token wherever it stands — glued
 // to a word or not. Whether the token IS an emoji is decided by its name
 // alone (slackIsStandardEmojiName): Slack stores a Unicode emoji as the colon
@@ -229,7 +232,23 @@ var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9
 // stored either. Divergence that survives the fold is still reported
 // unconfirmed.
 func slackNormalizeText(text string) string {
-	return slackFoldEmoji(slackAngleSpan.ReplaceAllString(slackEntityUnescape.Replace(text), "$1"))
+	text = slackCodeOrAngleSpan.ReplaceAllStringFunc(slackEntityUnescape.Replace(text), func(span string) string {
+		if strings.HasPrefix(span, "`") {
+			return span
+		}
+		body := span[1 : len(span)-1]
+		target, label, labeled := strings.Cut(body, "|")
+		// Slack may label an auto-link with the original URL, including a
+		// www. URL with an implicit http scheme. Fold only redundant labels:
+		// arbitrary labels must retain their destination for the comparison.
+		// https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages
+		if labeled && (strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")) &&
+			(label == target || (strings.HasPrefix(label, "www.") && target == "http://"+label)) {
+			return label
+		}
+		return body
+	})
+	return slackFoldEmoji(text)
 }
 
 // slackFoldEmoji removes every emoji from text in both of its spellings: the

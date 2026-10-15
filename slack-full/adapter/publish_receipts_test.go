@@ -84,6 +84,19 @@ func TestPublishReceiptSurvivesRestartAndReadbackUpdates(t *testing.T) {
 	if err != nil || got.MessageID != "1700.003" || got.Readback != "pending" {
 		t.Fatalf("stale read changed replacement: %+v, %v", got, err)
 	}
+	// Slack can return the older post's acceptance response last, after the
+	// newer receipt is already confirmed. It must not roll evidence backward.
+	newPost.Delivered = true
+	if err := store.RecordReadback(key, newPost); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordPosted(key, receipt, post); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.Get(key)
+	if err != nil || got.MessageID != "1700.003" || !got.Delivered {
+		t.Fatalf("late acceptance replaced newer confirmation: %+v, %v", got, err)
+	}
 }
 
 func TestPublishReceiptPruneByPostedAge(t *testing.T) {
@@ -153,6 +166,43 @@ func TestPublishReceiptGET(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPublishReceiptUnavailableStoreIsNotUnknown(t *testing.T) {
+	store := testPublishReceiptStore(t, filepath.Join(t.TempDir(), "receipts"))
+	if err := os.Remove(store.dir); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	handlePublishReceipt(store)(w, httptest.NewRequest(http.MethodGet, "/publish-receipt?idempotency_key=key", nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("missing store returned %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestPublishReceiptPrunesOnlyAgedCrashTemporaryFiles(t *testing.T) {
+	store := testPublishReceiptStore(t, t.TempDir())
+	old := filepath.Join(store.dir, "publish-crashed.tmp")
+	fresh := filepath.Join(store.dir, "publish-recent.tmp")
+	for _, path := range []string{old, fresh} {
+		if err := os.WriteFile(path, []byte("partial receipt"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	aged := time.Now().Add(-31 * 24 * time.Hour)
+	if err := os.Chtimes(old, aged, aged); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.Prune()
+	if err != nil || removed != 1 {
+		t.Fatalf("temporary cleanup = %d, %v", removed, err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old crash file remains: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("recent temporary file was removed: %v", err)
 	}
 }
 
