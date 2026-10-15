@@ -44,6 +44,7 @@ func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
 // text is compared with the existing prose emoji rules.
 func slackReadbackTextMatches(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
+	expectedLiterals, storedLiterals := slackLiteralPrefixCounts(expectedText), slackLiteralPrefixCounts(storedText)
 	explicit, angles := slackReadbackLinks(expected)
 	// Removing angle markup must not join an explicit URI to its neighbors.
 	// Scan each original span separately, retaining normalized byte offsets.
@@ -87,7 +88,10 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			original := explicit[explicitCursor]
 			// Use the known source offset before searching repeated labels.
 			// When the prefix is exact, it already identifies the offset.
-			if original.target == link.target && (!exactPrefix || original.textStart == expectedCursor+len(prefix)) &&
+			// Literal counts reject a far-away same-target link in constant
+			// time, so intervening auto-links do not repeatedly fold its prefix.
+			sameLiterals := expectedLiterals[original.textStart]-expectedLiterals[expectedCursor] == storedLiterals[link.textStart]-storedLiterals[storedCursor]
+			if original.target == link.target && sameLiterals && (!exactPrefix || original.textStart == expectedCursor+len(prefix)) &&
 				compare(expectedText[expectedCursor:original.textStart], prefix) && slackExplicitLabelsMatch(original, link) {
 				expectedCursor, storedCursor = original.textEnd, link.textEnd
 				explicitCursor++
@@ -167,6 +171,19 @@ func slackReadbackTextMatches(expected, stored string) bool {
 		}
 	}
 	return explicitCursor == len(explicit) && compare(expectedText[expectedCursor:], storedText[storedCursor:])
+}
+
+func slackLiteralPrefixCounts(text string) []int {
+	counts := make([]int, len(text)+1)
+	for i := range len(text) {
+		counts[i+1] = counts[i]
+		// Neither shortcode/Unicode emoji folding nor expansion consumes
+		// these ASCII separators; equality of their count is necessary.
+		if strings.ContainsRune(" \t\r\n/@.,;()[]{}<>|=\\!?'\"", rune(text[i])) {
+			counts[i+1]++
+		}
+	}
+	return counts
 }
 
 func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
