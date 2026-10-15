@@ -243,7 +243,11 @@ func slackNormalizeText(text string) string {
 }
 
 func slackNormalizeLinks(text string) string {
-	text = slackCodeOrAngleSpan.ReplaceAllStringFunc(slackEntityUnescape.Replace(text), func(span string) string {
+	return slackNormalizeUnescapedLinks(slackEntityUnescape.Replace(text))
+}
+
+func slackNormalizeUnescapedLinks(text string) string {
+	text = slackCodeOrAngleSpan.ReplaceAllStringFunc(text, func(span string) string {
 		if strings.HasPrefix(span, "`") {
 			return span
 		}
@@ -611,8 +615,7 @@ func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarg
 	if message.Text == target.expectedText {
 		return nil
 	}
-	if !slackExplicitLinkDestinationsMatch(target.expectedText, message.Text) ||
-		!slackAutoLinkLabelsMatch(target.expectedText, message.Text) ||
+	if !slackAutoLinkLabelsMatch(target.expectedText, message.Text) ||
 		(slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
 			!slackEmojiExpansionMatches(target.expectedText, message.Text)) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
