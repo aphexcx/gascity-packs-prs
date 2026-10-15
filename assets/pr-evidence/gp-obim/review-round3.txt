@@ -1,0 +1,14 @@
+Native STANDARD review of b86cdf1ff5503b9d09fef1a83b28ba33ace2eefd
+
+The new keyed readback path can reject successfully delivered messages containing Slack-normalized references, causing false failure receipts and duplicate retries. Go tests could not run because the read-only sandbox prevents creation of the build directory.
+
+Review comment:
+
+- [P2] Normalize Slack reference labels before comparing keyed readback — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:245-249
+  For a keyed message containing `<#C123>`, Slack can return `<#C123|general>`; bare email addresses similarly become `<mailto:address|address>`. This normalization handles only HTTP(S) labels, so these valid transformations fail the newly mandatory text comparison. Previously the marker branch confirmed these keyed posts; now they return permanent `readback_unconfirmed`, and `publishReceiptBlocksRepost` leaves the key uncached, allowing retries to create duplicates. Normalize Slack channel references and email auto-links while preserving their destination, and add keyed publish/retry coverage for these formats.
+The new keyed readback path can reject successfully delivered messages containing Slack-normalized references, causing false failure receipts and duplicate retries. Go tests could not run because the read-only sandbox prevents creation of the build directory.
+
+Review comment:
+
+- [P2] Normalize Slack reference labels before comparing keyed readback — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:245-249
+  For a keyed message containing `<#C123>`, Slack can return `<#C123|general>`; bare email addresses similarly become `<mailto:address|address>`. This normalization handles only HTTP(S) labels, so these valid transformations fail the newly mandatory text comparison. Previously the marker branch confirmed these keyed posts; now they return permanent `readback_unconfirmed`, and `publishReceiptBlocksRepost` leaves the key uncached, allowing retries to create duplicates. Normalize Slack channel references and email auto-links while preserving their destination, and add keyed publish/retry coverage for these formats.

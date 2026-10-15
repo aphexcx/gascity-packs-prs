@@ -1,0 +1,39 @@
+slack-full/adapter/main_test.go:945:	if got := referenceSuffix(key); got != want {
+slack-full/adapter/main_test.go:946:		t.Errorf("referenceSuffix(%q) = %q, want %q (must match the Python-side test vector)", key, got, want)
+slack-full/adapter/main_test.go:951:	if referenceSuffix("a") != referenceSuffix("a") {
+slack-full/adapter/main_test.go:952:		t.Error(`referenceSuffix("a") produced different output on two calls; want deterministic`)
+slack-full/adapter/main_test.go:954:	if referenceSuffix("a") == referenceSuffix("b") {
+slack-full/adapter/main_test.go:955:		t.Error(`referenceSuffix("a") == referenceSuffix("b"); want distinct keys to derive distinct suffixes`)
+slack-full/adapter/main_test.go:983:	const wantText = "hello\n\n_ref:50e90a583c36_"
+slack-full/adapter/main_test.go:1081:	marker := "\n\n" + referenceMarker(key)
+slack-full/adapter/main_test.go:1085:	const atCapability = slackMaxMessageLength - referenceMarkerOverhead
+slack-full/adapter/main_test.go:1318:// referenceMarker tells it to walk conversations.replies as well, and that
+slack-full/adapter/main_test.go:1361:	if !strings.HasSuffix(captured.Text, "\n\n"+referenceMarker(key)) {
+slack-full/adapter/main_test.go:1368:	appended := "\n\n" + referenceMarker("any-key-of-any-length-at-all")
+slack-full/adapter/main_test.go:1369:	if len(appended) != referenceMarkerOverhead {
+slack-full/adapter/main_test.go:1370:		t.Fatalf("referenceMarkerOverhead = %d, but handlePublish appends %d bytes (%q)",
+slack-full/adapter/main_test.go:1371:			referenceMarkerOverhead, len(appended), appended)
+slack-full/adapter/main_test.go:1373:	short := "\n\n" + referenceMarker("k")
+slack-full/adapter/main_test.go:1380:	advertised := slackMaxMessageLength - referenceMarkerOverhead
+slack-full/adapter/main_test.go:1381:	stamped := advertised + len("\n\n"+referenceMarker("dr-3msk6.3-test-vector"))
+slack-full/adapter/main_test.go:1413:		want := slackMaxMessageLength - referenceMarkerOverhead
+slack-full/adapter/company_hydration_test.go:455:		"turn_ref: gct-aaaaaaaaaaaaaaaaaaaa",
+slack-full/adapter/main.go:2380:			MaxMessageLength: slackMaxMessageLength - referenceMarkerOverhead,
+slack-full/adapter/main.go:2562:// referenceSuffix derives the low-visibility marker embedded in outbound
+slack-full/adapter/main.go:2575:func referenceSuffix(idempotencyKey string) string {
+slack-full/adapter/main.go:2583:	// referenceMarkerOverhead is the two-newline separator plus the fixed-width
+slack-full/adapter/main.go:2585:	referenceMarkerOverhead = 2 + len("_ref:") + 12 + len("_")
+slack-full/adapter/main.go:2588:// referenceMarker is appended to outbound text when an idempotency key is
+slack-full/adapter/main.go:2630:func referenceMarker(idempotencyKey string) string {
+slack-full/adapter/main.go:2631:	return "_ref:" + referenceSuffix(idempotencyKey) + "_"
+slack-full/adapter/main.go:2703:		// contract is stated normatively on referenceMarker; this comment only
+slack-full/adapter/main.go:2726:			if len(rewrittenText)+referenceMarkerOverhead <= slackMaxMessageLength {
+slack-full/adapter/main.go:2727:				stampedMarker = referenceMarker(req.IdempotencyKey)
+slack-full/adapter/main.go:2736:					len(rewrittenText), slackMaxMessageLength, referenceMarkerOverhead,
+slack-full/adapter/publish_readback.go:579:	if target.marker != "" {
+slack-full/adapter/publish_readback.go:580:		if strings.HasSuffix(message.Text, target.marker) {
+slack-full/adapter/publish_readback_test.go:234:	const marker = "_ref:50e90a583c12_"
+slack-full/adapter/publish_readback_test.go:243:		{name: "marker truncated away", stored: "shipping the fix\n\n_ref:50e9", wantErr: true},
+slack-full/adapter/publish_readback_test.go:252:			target.marker = marker
+slack-full/adapter/company_hydration.go:451:		fmt.Fprintf(b, "turn_ref: %s\n", neutralizeMarkupBoundaries(turn.TurnRef))
+slack-full/adapter/company_delivery_test.go:130:		"turn_ref: " + ptr.TurnRef,

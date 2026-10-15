@@ -1,0 +1,11 @@
+# codex-gate exec: prompt /tmp/gp-obim-review-ci-wisp-h56lxfv/gate-prompt.txt (1819 bytes) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-15T01:38:28Z
+
+- **Major — Stale acceptance can overwrite newer evidence.** [publish_receipts.go:160](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_receipts.go:160): `RecordPosted` rejects only identical message IDs. With overlapping publishes for one key, an older Slack post’s delayed response can overwrite an already-recorded newer post. The newer post’s subsequent readback update is then discarded by the message-ID guard, leaving durable lookup pointing to the older message. Guard replacement against older posts and test reversed response completion.
+
+- **Minor — Missing storage directory incorrectly returns 404.** [publish_receipts.go:289](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_receipts.go:289): `openBeneath` preserves `ENOENT` for both a missing receipt and a missing store directory. If the directory disappears after startup, every lookup reports unknown instead of the promised storage-error 500. Distinguish missing receipt files from unavailable storage.
+
+- **Minor — Crash leftovers bypass retention.** [publish_receipts.go:215](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_receipts.go:215): A crash between temporary-file creation and rename leaves `publish-*.tmp`; deferred cleanup cannot run, and pruning permanently skips these files. The existing startup sweeper does not cover this directory. Add age-gated orphan cleanup so receipt copies do not survive indefinitely beyond retention.
+
+Reviewed the specified immutable delta. `git diff --check` passed; test suites were not rerun under the read-only gate.
+
+VERDICT: BLOCK

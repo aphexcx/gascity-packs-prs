@@ -1,0 +1,12 @@
+The keyed readback change introduces a false delivery failure that can cause duplicate posts on retry. Go tests could not run because the read-only sandbox prevents creating the test work directory.
+
+Review comment:
+
+- [P2] Normalize colon-adjacent emoji before checking keyed readback — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:600-603
+  For a keyed message such as `Done at 10:30🎉`, Slack returns `Done at 10:30:tada:`. The existing shortcode matcher consumes `:30:` as an unknown token and consequently misses `:tada:`, so the two normalized strings differ. Removing the marker-based check exposes keyed publishes to this false negative: a successfully delivered message now receives a permanent failure, and its uncached idempotency key permits duplicate posts on retry. Handle overlapping colon tokens and add a keyed regression test before relying exclusively on this comparison.
+The keyed readback change introduces a false delivery failure that can cause duplicate posts on retry. Go tests could not run because the read-only sandbox prevents creating the test work directory.
+
+Review comment:
+
+- [P2] Normalize colon-adjacent emoji before checking keyed readback — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:600-603
+  For a keyed message such as `Done at 10:30🎉`, Slack returns `Done at 10:30:tada:`. The existing shortcode matcher consumes `:30:` as an unknown token and consequently misses `:tada:`, so the two normalized strings differ. Removing the marker-based check exposes keyed publishes to this false negative: a successfully delivered message now receives a permanent failure, and its uncached idempotency key permits duplicate posts on retry. Handle overlapping colon tokens and add a keyed regression test before relying exclusively on this comparison.

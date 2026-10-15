@@ -1,0 +1,115 @@
+env -u GC_TEMPLATE $(if python3 -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo 'python3 -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest'; fi) slack-full/tests -q
+Installed 11 packages in 34ms
+............ss..FF...................................................... [ 10%]
+........................................................................ [ 21%]
+........................................................................ [ 32%]
+........................................................................ [ 43%]
+........................................................................ [ 54%]
+........................................................................ [ 65%]
+........................................................................ [ 76%]
+........................................................................ [ 87%]
+........................................................................ [ 98%]
+.........                                                                [100%]
+=================================== FAILURES ===================================
+_______ test_gopath_is_defaulted_whenever_home_is_unset[XDG_CACHE_HOME] ________
+
+harness = (PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defa...unction harness.<locals>.go_invocations at 0x10b051620>, <function harness.<locals>.build_environments at 0x10b052520>)
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defaulted_whene0')
+cache_var = 'XDG_CACHE_HOME'
+
+    @pytest.mark.parametrize("cache_var", ["XDG_CACHE_HOME", "GOCACHE"])
+    def test_gopath_is_defaulted_whenever_home_is_unset(harness, tmp_path, cache_var):
+        """GOPATH must not be gated on the build-cache condition: the module
+        cache is located via GOMODCACHE or GOPATH, and GOPATH derives from
+        HOME *alone*. The operator who partially remediates — reads the cache
+        error, exports GOCACHE, leaves HOME unset — would otherwise still
+        lose a toolchain fetch to ``module cache not found: neither
+        GOMODCACHE nor GOPATH is set``, the same stranding this self-heal
+        exists to remove. An already-usable cache is left alone."""
+        adapter, run, go_invocations, build_environments = harness
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        drop = [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "GOCACHE",
+            "GOPATH",
+            "GOMODCACHE",
+            "GC_SLACK_ADAPTER_ENV",
+        ]
+        drop.remove(cache_var)  # extra_env is applied before drop_env
+        proc = run(extra_env={cache_var: str(cache_dir)}, drop_env=drop)
+        assert proc.returncode == 0, proc.stderr
+        assert "STUB_ADAPTER_RAN" in proc.stdout
+        assert len(go_invocations()) == 1, go_invocations()
+        tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+        expected_gocache = str(cache_dir) if cache_var == "GOCACHE" else "unset"
+>       assert build_environments() == [
+            f"buildenv GOCACHE={expected_gocache} "
+            f"GOPATH={tmp}/gc-slack-adapter-gopath-{os.getuid()}"
+        ], build_environments()
+E       AssertionError: ['buildenv GOCACHE=unset GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T//gc-slack-adapter-gopath-501']
+E       assert ['buildenv GO...r-gopath-501'] == ['buildenv GO...r-gopath-501']
+E
+E         At index 0 diff: 'buildenv GOCACHE=unset GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T//gc-slack-adapter-gopath-501' != 'buildenv GOCACHE=unset GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/gc-slack-adapter-gopath-501'
+E         Use -v to get more diff
+
+slack-full/tests/test_adapter_run_sh.py:376: AssertionError
+___________ test_gopath_is_defaulted_whenever_home_is_unset[GOCACHE] ___________
+
+harness = (PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defa...unction harness.<locals>.go_invocations at 0x10b051580>, <function harness.<locals>.build_environments at 0x10b051760>)
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defaulted_whene1')
+cache_var = 'GOCACHE'
+
+    @pytest.mark.parametrize("cache_var", ["XDG_CACHE_HOME", "GOCACHE"])
+    def test_gopath_is_defaulted_whenever_home_is_unset(harness, tmp_path, cache_var):
+        """GOPATH must not be gated on the build-cache condition: the module
+        cache is located via GOMODCACHE or GOPATH, and GOPATH derives from
+        HOME *alone*. The operator who partially remediates — reads the cache
+        error, exports GOCACHE, leaves HOME unset — would otherwise still
+        lose a toolchain fetch to ``module cache not found: neither
+        GOMODCACHE nor GOPATH is set``, the same stranding this self-heal
+        exists to remove. An already-usable cache is left alone."""
+        adapter, run, go_invocations, build_environments = harness
+        cache_dir = tmp_path / "cache"
+        cache_dir.mkdir()
+        drop = [
+            "HOME",
+            "XDG_CONFIG_HOME",
+            "XDG_CACHE_HOME",
+            "GOCACHE",
+            "GOPATH",
+            "GOMODCACHE",
+            "GC_SLACK_ADAPTER_ENV",
+        ]
+        drop.remove(cache_var)  # extra_env is applied before drop_env
+        proc = run(extra_env={cache_var: str(cache_dir)}, drop_env=drop)
+        assert proc.returncode == 0, proc.stderr
+        assert "STUB_ADAPTER_RAN" in proc.stdout
+        assert len(go_invocations()) == 1, go_invocations()
+        tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+        expected_gocache = str(cache_dir) if cache_var == "GOCACHE" else "unset"
+>       assert build_environments() == [
+            f"buildenv GOCACHE={expected_gocache} "
+            f"GOPATH={tmp}/gc-slack-adapter-gopath-{os.getuid()}"
+        ], build_environments()
+E       AssertionError: ['buildenv GOCACHE=/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defaulted_whene1/cache GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T//gc-slack-adapter-gopath-501']
+E       assert ['buildenv GO...r-gopath-501'] == ['buildenv GO...r-gopath-501']
+E
+E         At index 0 diff: 'buildenv GOCACHE=/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defaulted_whene1/cache GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T//gc-slack-adapter-gopath-501' != 'buildenv GOCACHE=/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-73/test_gopath_is_defaulted_whene1/cache GOPATH=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/gc-slack-adapter-gopath-501'
+E         Use -v to get more diff
+
+slack-full/tests/test_adapter_run_sh.py:376: AssertionError
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=29479) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_adapter_run_sh.py::test_gopath_is_defaulted_whenever_home_is_unset[XDG_CACHE_HOME]
+FAILED slack-full/tests/test_adapter_run_sh.py::test_gopath_is_defaulted_whenever_home_is_unset[GOCACHE]
+2 failed, 653 passed, 2 skipped, 2 warnings in 39.80s
+make: *** [test] Error 1
