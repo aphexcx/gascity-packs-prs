@@ -22,7 +22,7 @@ func slackReadbackLinks(text string) []slackReadbackLink {
 		}
 		target, label, labeled := strings.Cut(text[span[0]+1:span[1]-1], "|")
 		// A colon in angle-delimited prose is not enough to make a link.
-		if strings.IndexFunc(target, unicode.IsSpace) < 0 && (slackAbsoluteLinkScheme.MatchString(target) ||
+		if strings.IndexFunc(target, unicode.IsSpace) < 0 && (slackReferenceTarget.MatchString(target) || slackAbsoluteLinkScheme.MatchString(target) ||
 			strings.HasPrefix(target, "mailto:") || (labeled && slackLinkScheme.MatchString(target))) {
 			textStart := textEnd + len(slackNormalizeUnescapedLinks(text[rawEnd:span[0]]))
 			textEnd = textStart + len(slackNormalizeUnescapedLinks(text[span[0]:span[1]]))
@@ -40,7 +40,21 @@ func slackReadbackLinks(text string) []slackReadbackLink {
 func slackAutoLinkLabelsMatch(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
 	explicit := slackReadbackLinks(expected)
-	verbatim := slackVerbatimSpan.FindAllStringIndex(expectedText, -1)
+	// Removing angle markup must not join an explicit URI to its neighbors.
+	// Scan each original span separately, retaining normalized byte offsets.
+	var verbatim [][]int
+	appendVerbatim := func(start, end int) {
+		for _, span := range slackVerbatimSpan.FindAllStringIndex(expectedText[start:end], -1) {
+			verbatim = append(verbatim, []int{start + span[0], start + span[1]})
+		}
+	}
+	last := 0
+	for _, link := range explicit {
+		appendVerbatim(last, link.textStart)
+		appendVerbatim(link.textStart, link.textEnd)
+		last = link.textEnd
+	}
+	appendVerbatim(last, len(expectedText))
 	explicitCursor, verbatimCursor := 0, 0
 	expectedCursor, storedCursor := 0, 0
 	validatedExpected, validatedStored := 0, 0
@@ -98,14 +112,15 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 						(verbatimCursor < len(verbatim) && verbatim[verbatimCursor][0] <= at) {
 						return false
 					}
-					if at > 0 {
+					followsExplicit := explicitCursor > 0 && explicit[explicitCursor-1].textEnd == at
+					if at > 0 && !followsExplicit {
 						before, _ := utf8.DecodeLastRuneInString(expectedText[:at])
 						if unicode.IsLetter(before) || unicode.IsNumber(before) || strings.ContainsRune(".-/@", before) {
 							return false
 						}
 					}
 					if end >= validatedExpected || link.textEnd >= validatedStored {
-						allowShortcodes := destination.Path == "" && destination.RawQuery == "" && destination.Fragment == ""
+						allowShortcodes := destination.Path == "" && destination.RawQuery == "" && !destination.ForceQuery && !strings.Contains(link.target, "#")
 						a, b, ok := slackPreservedURLSuffix(expectedText[end:], storedText[link.textEnd:], allowShortcodes)
 						if !ok {
 							return false
@@ -152,9 +167,21 @@ func slackPreservedURLSuffix(expected, stored string, allowShortcodes bool) (int
 		}
 		if r != ':' || allowShortcodes {
 			if n := slackEmojiUnitPrefix(expected[i:]); n > 0 {
+				if allowShortcodes {
+					n = slackEmojiToneSuffix(expected[i:], n)
+				}
 				m := slackEmojiUnitPrefix(stored[j:])
 				if m == 0 {
 					return i, j, false
+				}
+				// A typed tone token in a URL suffix remains literal, even
+				// when Slack appends its own tone token to the preceding emoji.
+				if !allowShortcodes {
+					toneEnd := slackEmojiToneSuffix(expected[i:], n)
+					literalTones := expected[i+n : i+toneEnd]
+					if literalTones != "" && m > len(literalTones) && strings.HasSuffix(stored[j:j+m], literalTones) {
+						m -= len(literalTones)
+					}
 				}
 				i, j = i+n, j+m
 				continue
@@ -307,7 +334,7 @@ func slackEmojiUnitPrefix(text string) int {
 		}
 		n += width
 	}
-	return slackEmojiToneSuffix(text, n)
+	return n
 }
 
 // Slack represents a toned emoji with a base shortcode plus a tone shortcode.
