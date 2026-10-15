@@ -20,8 +20,10 @@ func slackReadbackLinks(text string) []slackReadbackLink {
 		if text[span[0]] != '<' {
 			continue
 		}
-		target, label, _ := strings.Cut(text[span[0]+1:span[1]-1], "|")
-		if slackLinkScheme.MatchString(target) {
+		target, label, labeled := strings.Cut(text[span[0]+1:span[1]-1], "|")
+		// A colon in angle-delimited prose is not enough to make a link.
+		if strings.IndexFunc(target, unicode.IsSpace) < 0 && (slackAbsoluteLinkScheme.MatchString(target) ||
+			strings.HasPrefix(target, "mailto:") || (labeled && slackLinkScheme.MatchString(target))) {
 			textStart := textEnd + len(slackNormalizeUnescapedLinks(text[rawEnd:span[0]]))
 			textEnd = textStart + len(slackNormalizeUnescapedLinks(text[span[0]:span[1]]))
 			rawEnd = span[1]
@@ -41,6 +43,7 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 	verbatim := slackVerbatimSpan.FindAllStringIndex(expectedText, -1)
 	explicitCursor, verbatimCursor := 0, 0
 	expectedCursor, storedCursor := 0, 0
+	validatedExpected, validatedStored := 0, 0
 	// A mismatch with many repeated labels must not repeatedly fold growing
 	// prefixes. Successful alignment consumes each span once; ambiguous failed
 	// candidates share this byte budget, like the emoji fallback's state budget.
@@ -61,6 +64,7 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 		// Exact prefixes give the candidate directly, even if a message repeats
 		// a domain many times in prose before Slack links its last occurrence.
 		offset := expectedCursor
+		candidateVerbatim := verbatimCursor
 		if strings.HasPrefix(expectedText[offset:], prefix) {
 			offset += len(prefix)
 		}
@@ -70,6 +74,13 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 				break
 			}
 			at += offset
+			for candidateVerbatim < len(verbatim) && verbatim[candidateVerbatim][1] <= at {
+				candidateVerbatim++
+			}
+			if candidateVerbatim < len(verbatim) && verbatim[candidateVerbatim][0] <= at && expectedText[verbatim[candidateVerbatim][0]] == '`' {
+				offset = verbatim[candidateVerbatim][1]
+				continue
+			}
 			if compare(expectedText[expectedCursor:at], prefix) {
 				end := at + len(rendered)
 				original := explicitCursor < len(explicit) && explicit[explicitCursor].textStart < end
@@ -93,8 +104,13 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 							return false
 						}
 					}
-					if !slackAutoLinkSuffixBoundary(expectedText[end:], destination) {
-						return false
+					if end >= validatedExpected || link.textEnd >= validatedStored {
+						allowShortcodes := destination.Path == "" && destination.RawQuery == "" && destination.Fragment == ""
+						a, b, ok := slackPreservedURLSuffix(expectedText[end:], storedText[link.textEnd:], allowShortcodes)
+						if !ok {
+							return false
+						}
+						validatedExpected, validatedStored = end+a, link.textEnd+b
 					}
 				}
 				expectedCursor, storedCursor = end, link.textEnd
@@ -122,28 +138,35 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 	return explicitCursor == len(explicit)
 }
 
-// Do not let a shortened URL consume only the prefix of its literal path and
-// leave an emoji-shaped path suffix for the prose fold to erase. Whitespace,
-// closing punctuation and trailing sentence punctuation end the URL. A bare
-// hostname may be followed immediately by prose emoji; a path/query may not.
-func slackAutoLinkSuffixBoundary(suffix string, destination *url.URL) bool {
-	if suffix == "" {
-		return true
-	}
-	if destination.Path == "" && destination.RawQuery == "" && destination.Fragment == "" {
-		if slackEmojiUnitPrefix(suffix) > 0 || strings.ContainsRune(",;!*", rune(suffix[0])) {
-			return true
-		}
-	}
-	for _, r := range suffix {
+// A suffix outside Slack's returned URL span must still be present. Unlike
+// the ordinary prose fold, emoji may convert but cannot disappear here.
+// Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
+// shortcodes are prose (they cannot be a numeric port). Return the verified
+// ranges so adjacent links do not repeatedly scan a comma-separated run.
+func slackPreservedURLSuffix(expected, stored string, allowShortcodes bool) (int, int, bool) {
+	i, j := 0, 0
+	for i < len(expected) {
+		r, width := utf8.DecodeRuneInString(expected[i:])
 		if unicode.IsSpace(r) || strings.ContainsRune(")]}`\"'<>", r) {
-			return true
+			return i, j, true
 		}
-		if !strings.ContainsRune(".,!?;:*_-", r) {
-			return false
+		if r != ':' || allowShortcodes {
+			if n := slackEmojiUnitPrefix(expected[i:]); n > 0 {
+				m := slackEmojiUnitPrefix(stored[j:])
+				if m == 0 {
+					return i, j, false
+				}
+				i, j = i+n, j+m
+				continue
+			}
 		}
+		allowShortcodes = false
+		if !strings.HasPrefix(stored[j:], expected[i:i+width]) {
+			return i, j, false
+		}
+		i, j = i+width, j+width
 	}
-	return true
+	return i, j, true
 }
 
 // Inputs have already had links/entities normalized exactly once.
