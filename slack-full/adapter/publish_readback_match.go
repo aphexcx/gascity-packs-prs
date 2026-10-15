@@ -472,6 +472,8 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 		// (such as ~user) stays literal. Scan once, retaining the start of
 		// the last qualifying run; shortcode identifiers stay atomic.
 		boundary, markerEnd := -1, 0
+		var seenMarkers uint8
+		ambiguous := false
 		for i := 0; i < len(literal); {
 			if n := slackEmojiUnitPrefix(literal[i:]); n > 0 {
 				i += n
@@ -479,18 +481,25 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 			}
 			if literal[i] == ':' {
 				if end := strings.IndexByte(literal[i+1:], ':'); end >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(literal[i:i+end+2])) {
-					boundary = -1
+					boundary, seenMarkers, ambiguous = -1, 0, false
 					i += end + 2
 					continue
 				}
 			}
 			r, width := utf8.DecodeRuneInString(literal[i:])
 			if strings.ContainsRune("*_~", r) && atProseBoundary(i) {
-				if boundary < 0 {
+				mask := uint8(1 << strings.IndexRune("*_~", r))
+				// One active delimiter can close only once. Keep an
+				// ambiguous repeated-delimiter run entirely literal.
+				ambiguous = ambiguous || seenMarkers&mask != 0
+				seenMarkers |= mask
+				if ambiguous {
+					boundary = -1
+				} else if boundary < 0 {
 					boundary, markerEnd = i, i+width
 				}
 			} else {
-				boundary = -1
+				boundary, seenMarkers, ambiguous = -1, 0, false
 			}
 			i += width
 		}
