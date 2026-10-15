@@ -67,6 +67,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	suffixAngleCursor := 0
 	expectedCursor, storedCursor := 0, 0
 	validatedExpected, validatedStored := 0, 0
+	validatedLiteral := false
 	// A mismatch with many repeated labels must not repeatedly fold growing
 	// prefixes. Successful alignment consumes each span once; ambiguous failed
 	// candidates share this byte budget, like the emoji fallback's state budget.
@@ -154,7 +155,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 							return false
 						}
 					}
-					if end >= validatedExpected || link.textEnd >= validatedStored {
+					if end >= validatedExpected || link.textEnd >= validatedStored || (fullURI && !validatedLiteral) {
 						allowShortcodes := implicit && destination.Path == "" && destination.RawQuery == "" && !destination.ForceQuery && !strings.Contains(link.target, "#")
 						for suffixAngleCursor < len(angles) && angles[suffixAngleCursor][0] < end {
 							suffixAngleCursor++
@@ -171,6 +172,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 							return false
 						}
 						validatedExpected, validatedStored = end+a, link.textEnd+b
+						validatedLiteral = fullURI
 					}
 				}
 				expectedCursor, storedCursor = end, link.textEnd
