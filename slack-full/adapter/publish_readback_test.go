@@ -407,6 +407,7 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"round4 curly single opening quote stays literal", "‘www.a.co/x‘:id:", "‘<http://www.a.co/x|www.a.co/x>‘:ok:", false},
 		{"round4 guillemet opening quote stays literal", "«www.a.co/x«:id:", "«<http://www.a.co/x|www.a.co/x>«:ok:", false},
 		{"round4 single guillemet opening quote stays literal", "‹www.a.co/x‹:id:", "‹<http://www.a.co/x|www.a.co/x>‹:ok:", false},
+		{"round4 paired query quotes stay literal", "'See https://a.co/?q='abc':id: details'", "'See <https://a.co/?q=>'abc':ok: details'", false},
 		{"round4 path segment marker before query stays literal", "*https://a.co/*?:id:", "*<https://a.co/>*?:ok:", false},
 		{"round4 prose text after closing marker and emoji", "*www.a.co/x*:thumbsup:now", "*<http://www.a.co/x|www.a.co/x>*:+1:now", true},
 		{"round4 full authority shortcode before path stays literal", "https://a.co:id:/x", "<https://a.co>:ok:/x", false},
@@ -1271,6 +1272,11 @@ func TestSlackNormalizeURLLiteralMatrix(t *testing.T) {
 				"~user/:id:/x", "*user/:id:/x", "**:id:/x", "*:id:*", "**:id:",
 				"(x/:id:)/end", "?q=':id:'", "x,:id:/end", "*:id:@U123/x",
 				"🎉?:id:", "👍?:id:", "🎉#:id:", "🎉/:id:",
+				"?q='abc':id:", `?q="abc":id:`, "?q=“abc”:id:", "?q=‘abc’:id:",
+				"?q=«abc»:id:", "?q=‹abc›:id:", "'abc':id:", `"abc":id:`,
+				`?q='a\'b':id:`, `?q="a\"b":id:`,
+				"?q='a)b':id:", "?q='a]b':id:", `?q="a}b":id:`, `?q='a\')b':id:`,
+				"?q:'abc':id:", `?q={"x":"abc"}:id:`,
 			} {
 				for _, suffix := range []struct{ posted, stored string }{
 					{"", ""}, {" :thumbsup:", " :+1:"}, {"🎉", ":tada:"},
