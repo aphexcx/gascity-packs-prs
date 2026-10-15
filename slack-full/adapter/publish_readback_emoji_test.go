@@ -94,8 +94,8 @@ func TestReadBackPublishedMessageAcceptsSlackEmojiConversion(t *testing.T) {
 		// `✅ok:`) share the shape `:a:b:` with the emoji at opposite ends —
 		// and a local rule that folds one symmetrically breaks the other.
 		// These rows pin the pairs the non-overlapping scan folds the same
-		// on both sides; the glued-after-a-colon-word residual
-		// (`Done at 10:30🎉`) stays recorded, fail-closed.
+		// on both sides. matchReadbackMessage also uses the original token
+		// boundaries for the glued-after-a-colon-word case (gp-obim).
 		{name: "an emoji glued after a chain ending in an emoji-named word", posted: "key:value:ok✅", stored: "key:value:ok:white_check_mark:"},
 		{name: "an emoji glued before a colon-suffixed emoji-named word", posted: "✅ok:", stored: ":white_check_mark:ok:"},
 		{name: "two Unicode emoji glued together", posted: "🆗✅", stored: ":ok::white_check_mark:"},

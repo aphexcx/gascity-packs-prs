@@ -1,0 +1,10 @@
+Initial fork draft head: 0d15f72088887a4b86e7aa0f7eea7fd0a4c13e5a
+Run: https://github.com/aphexcx/gascity-packs-prs/actions/runs/38670780842
+Status: Check FAILED; CodeQL checks SUCCESS.
+Git diff origin/main HEAD -- gastown .github/workflows/ci.yml: empty.
+Failure excerpt (unrelated paths; no attempted source change in this bead):
+Check	Run Gastown shell tests	2026-10-15T02:32:58.9438350Z FAIL: canonical collision reached a metadata update
+Check	Run Gastown shell tests	2026-10-15T02:32:59.0543145Z FAIL: redirected artifact root reached a metadata update
+Check	Run Gastown shell tests	2026-10-15T02:33:00.0743902Z gastown/tests/test_polecat_artifact_dir.sh: line 469: rg: command not found
+Check	Run Gastown shell tests	2026-10-15T02:33:00.0746580Z FAIL: shutdown probe did not route the target work query to its rig store
+Check	Run Gastown shell tests	2026-10-15T02:33:00.0764758Z ##[error]Process completed with exit code 1.

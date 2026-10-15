@@ -1,0 +1,2 @@
+No actionable regressions were identified in the diff. Go tests could not run because the read-only sandbox prevents build-directory creation; git diff --check passed.
+No actionable regressions were identified in the diff. Go tests could not run because the read-only sandbox prevents build-directory creation; git diff --check passed.

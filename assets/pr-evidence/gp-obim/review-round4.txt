@@ -1,0 +1,14 @@
+Native STANDARD review of 771263ff9de041aff5afe5a5dde71e964122c59a
+
+The new keyed readback path can misclassify valid Slack auto-links as delivery failures, allowing duplicate posts on retry. Go tests could not run because the read-only sandbox prevents build-directory creation.
+
+Review comment:
+
+- [P2] Normalize Slack's documented www auto-link representation — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:258-260
+  For a keyed message containing `www.example.com`, Slack's documented retrieved form is `<http://example.com|www.example.com>`. This condition only accepts `http://www.example.com`, so the normalized texts differ. With the marker-based check removed, that successful delivery now returns `readback_unconfirmed`, is excluded from deduplication, and can be duplicated on retry. Add the documented representation to the normalization and regression fixtures while continuing to reject unrelated destinations.
+The new keyed readback path can misclassify valid Slack auto-links as delivery failures, allowing duplicate posts on retry. Go tests could not run because the read-only sandbox prevents build-directory creation.
+
+Review comment:
+
+- [P2] Normalize Slack's documented www auto-link representation — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:258-260
+  For a keyed message containing `www.example.com`, Slack's documented retrieved form is `<http://example.com|www.example.com>`. This condition only accepts `http://www.example.com`, so the normalized texts differ. With the marker-based check removed, that successful delivery now returns `readback_unconfirmed`, is excluded from deduplication, and can be duplicated on retry. Add the documented representation to the normalization and regression fixtures while continuing to reject unrelated destinations.

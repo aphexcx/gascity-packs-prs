@@ -1,3 +1,7 @@
+// Publish readback requires exact message timestamp equality and canonicalized
+// text equality for keyed and unkeyed messages alike. Thread replies are read
+// through conversations.replies. The publish receipt store preserves this
+// evidence across restarts; message text contains no delivery bookkeeping.
 package main
 
 import (
@@ -5,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -77,13 +82,8 @@ type slackReadbackTarget struct {
 	// threadTS is set when the message was posted as a thread reply, which
 	// conversations.history does not return.
 	threadTS string
-	// expectedText is what was posted, after the alias rewrite and the
-	// marker stamp — not the caller's original request text.
+	// expectedText is the alias-rewritten text actually posted.
 	expectedText string
-	// marker is the reference marker stamped on this publish, or "" when the
-	// publish is unkeyed or the stamp was skipped. See the compare in
-	// matchReadbackMessage for how the two arms differ.
-	marker string
 }
 
 type slackReadbackMessage struct {
@@ -170,6 +170,12 @@ var slackEntityUnescape = strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;",
 // wraps an auto-linked URL in.
 var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 
+// Code spans are literal: do not interpret link labels inside them.
+var slackCodeOrAngleSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|<[^<>]*>")
+
+// Names on Slack references are display labels; the ID is their destination.
+var slackReferenceTarget = regexp.MustCompile(`^(?:@[UW][A-Z0-9]+|#[CG][A-Z0-9]+|!subteam\^S[A-Z0-9]+)$`)
+
 // slackEmojiShortcode matches one `:name:` token wherever it stands — glued
 // to a word or not. Whether the token IS an emoji is decided by its name
 // alone (slackIsStandardEmojiName): Slack stores a Unicode emoji as the colon
@@ -213,7 +219,16 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // character and opens no span.
 var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+")
 
-// slackNormalizeText folds the transformations Slack applies between
+// Paired quotes starting a URI path segment or query value are literal units.
+// Their closers cannot close an enclosing prose quote; escaped quotes stay
+// inside the value. RE2 keeps an unmatched or repeated opener scan linear.
+var slackURIQuotedValue = regexp.MustCompile(`[=/?:,(\[{](?:'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|“[^”]*”|‘[^’]*’|«[^»]*»|‹[^›]*›)`)
+
+var slackLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+var slackAbsoluteLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
+
+// slackNormalizeText is a test helper; production uses slackReadbackTextMatches.
+// It folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
 // `>` in the stored text, auto-links bare URLs into `<url>` spans, and
 // stores a Unicode emoji as its colon shortcode (`Done 🎉` reads back as
@@ -230,7 +245,44 @@ var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9
 // stored either. Divergence that survives the fold is still reported
 // unconfirmed.
 func slackNormalizeText(text string) string {
-	return slackFoldEmoji(slackAngleSpan.ReplaceAllString(slackEntityUnescape.Replace(text), "$1"))
+	return slackFoldEmoji(slackNormalizeLinks(text))
+}
+
+func slackNormalizeLinks(text string) string {
+	return slackNormalizeUnescapedLinks(slackEntityUnescape.Replace(text))
+}
+
+func slackNormalizeUnescapedLinks(text string) string {
+	text = slackCodeOrAngleSpan.ReplaceAllStringFunc(text, func(span string) string {
+		if strings.HasPrefix(span, "`") {
+			return span
+		}
+		body := span[1 : len(span)-1]
+		target, label, labeled := strings.Cut(body, "|")
+		if labeled && slackReferenceTarget.MatchString(target) {
+			return target
+		}
+		if strings.HasPrefix(target, "mailto:") {
+			address := strings.TrimPrefix(target, "mailto:")
+			local, domain, email := strings.Cut(address, "@")
+			if email && local != "" && domain != "" && (!labeled || label == address) {
+				return address
+			}
+		}
+		// Slack may label an auto-link with the original URL, including a
+		// bare domain or www. URL with an implicit scheme. Fold only redundant labels:
+		// arbitrary labels must retain their destination for the comparison.
+		// https://docs.slack.dev/messaging/formatting-message-text/#links-in-retrieved-messages
+		// Legacy Slack docs also show http://example.com|www.example.com:
+		// https://api.slack.com/docs/attachments#links-in-retrieved-messages
+		if labeled && (strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")) &&
+			(label == target || target == "http://"+label || target == "https://"+label ||
+				(strings.HasPrefix(label, "www.") && len(label) > len("www.") && target == "http://"+strings.TrimPrefix(label, "www."))) {
+			return label
+		}
+		return body
+	})
+	return text
 }
 
 // slackFoldEmoji removes every emoji from text in both of its spellings: the
@@ -563,27 +615,13 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // receipt is not cached (publishReceiptBlocksRepost), the caller's retry
 // re-posts and fails the same deterministic way.
 //
-// Two arms, because neither covers the other:
-//
-//   - Keyed publishes carry the reference marker as the tail of the posted
-//     text. Its characters (`_`, `:`, hex) are outside Slack's escape set and
-//     it is not link-shaped, so it survives ingestion verbatim; a tail match on
-//     it identifies this exact publish by its idempotency key without depending
-//     on any model of Slack's canonicalization. Truncation cannot smuggle a
-//     message past this arm, because Slack truncates from the end — the marker
-//     is the first thing to go — and handlePublish skips the stamp entirely for
-//     text that could not fit under the ceiling with it.
-//   - Everything else — unkeyed publishes, and keyed ones whose stamp was
-//     skipped — is compared on text folded through slackNormalizeText.
+// Both keyed and unkeyed publishes use the same content check after the caller
+// has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
-	if target.marker != "" {
-		if strings.HasSuffix(message.Text, target.marker) {
-			return nil
-		}
-		return readbackFailure(slackReadbackUnconfirmed, false,
-			"Slack readback missing reference marker for message %s", target.messageTS)
+	if message.Text == target.expectedText {
+		return nil
 	}
-	if slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) {
+	if !slackReadbackTextMatches(target.expectedText, message.Text) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
 			"Slack readback content mismatch for message %s", target.messageTS)
 	}
@@ -651,8 +689,15 @@ func replayPublishReceipt(
 	if !ok {
 		return publishReplay{}, false
 	}
+	// Keep readback mutations and persistence-error metadata private to this
+	// replay, independently of the cache's own copy-on-read/write behavior.
+	cached.Metadata = maps.Clone(cached.Metadata)
 	if cached.Delivered {
 		return publishReplay{receipt: cached}, true
+	}
+	if cached.readbackTarget.messageTS != "" {
+		// Reverify what this key originally posted, even after an alias reload.
+		target = cached.readbackTarget
 	}
 	target.messageTS = cached.MessageID
 	confirmPublishReceipt(token, &cached, target)
@@ -660,7 +705,8 @@ func replayPublishReceipt(
 		log.Printf("publish: dedup re-verify idem=%s ts=%s -> Slack does not have the message; releasing the key",
 			key, cached.MessageID)
 		dedup.Delete(key)
-		return publishReplay{}, false
+		// Let the handler persist this readback even if the next post fails.
+		return publishReplay{receipt: cached}, false
 	}
 	if cached.Delivered {
 		// The transition is claimed under the cache's lock: of several

@@ -1,0 +1,20 @@
+$ rg -n _ref: slack-channel slack-mini
+Exit 1; zero matches
+
+$ rg -n reference marker|_ref: slack-full/docs slack-full/README.md
+Exit 1; zero matches
+
+$ rg -n _ref: slack-full/adapter
+slack-full/adapter/main_test.go:961:	if strings.Contains(captured.Text, "_ref:") {
+slack-full/adapter/company_hydration_test.go:455:		"turn_ref: gct-aaaaaaaaaaaaaaaaaaaa",
+slack-full/adapter/company_delivery_test.go:130:		"turn_ref: " + ptr.TurnRef,
+slack-full/adapter/company_hydration.go:451:		fmt.Fprintf(b, "turn_ref: %s\n", neutralizeMarkupBoundaries(turn.TurnRef))
+Exit 0;
+
+The three turn_ref: hits are pre-existing company protocol fields, not visible reference footers. Preserved without edits. pc_8018104dedca records the broad acceptance regex.
+
+Exact broad docs search requested by bead:
+$ rg -n reference marker|_ref slack-full/docs slack-full/README.md
+slack-full/docs/company-rooms.md:389:timestamp, human thread root, receipt id, and an opaque `turn_ref`. The
+slack-full/docs/phase5-ledger-readiness.md:93:- Receipt `event` field becomes a reference: `body_ref` (receipt id)
+The two broad docs matches describe turn_ref/body_ref, not outbound footer evidence. No existing footer contract page requires updating; the store comment and CHANGELOG are normative.

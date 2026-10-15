@@ -1,0 +1,14 @@
+Native STANDARD review of e8c1637bc1291d7a887bdb258ddbd7e0bc583804
+
+The change can duplicate accepted messages when aliases change before a readback retry. Tests could not run because the read-only sandbox prevents Go from creating its build directory.
+
+Review comment:
+
+- [P2] Reverify retries against the originally posted text — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/main.go:2630-2631
+  If a keyed post succeeds but readback is unavailable, then the user-alias map is reloaded before retry, this passes newly rewritten text into `replayPublishReceipt`. For example, changing `@bob` from U111 to U222 makes the existing message fail the new text comparison. The replay then releases the key and posts a duplicate, whereas the previous marker-based comparison confirmed the original message. Cache the original alias-rewritten readback target with the receipt and reuse it for verification.
+The change can duplicate accepted messages when aliases change before a readback retry. Tests could not run because the read-only sandbox prevents Go from creating its build directory.
+
+Review comment:
+
+- [P2] Reverify retries against the originally posted text — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/main.go:2630-2631
+  If a keyed post succeeds but readback is unavailable, then the user-alias map is reloaded before retry, this passes newly rewritten text into `replayPublishReceipt`. For example, changing `@bob` from U111 to U222 makes the existing message fail the new text comparison. The replay then releases the key and posts a duplicate, whereas the previous marker-based comparison confirmed the original message. Cache the original alias-rewritten readback target with the receipt and reuse it for verification.

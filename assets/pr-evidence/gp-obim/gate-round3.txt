@@ -1,0 +1,7 @@
+# codex-gate exec: prompt /tmp/gp-obim-review-ci-wisp-h56lxfv/gate-prompt-round3.txt (2699 bytes) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-15T01:49:28Z
+
+- **Major — Frozen replay destination is not used for delivery bookkeeping.** [publish_readback.go:658](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:658) now re-verifies the original channel/thread, but [main.go:2649](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/main.go:2649) still passes the retry request’s destination to `recordDeliveredPublish`. If an accepted-but-unconfirmed publish is retried after a binding change, or with another thread, it confirms the original post while registering the wrong thread and potentially clearing unrelated busy marks. Subsequent cached successes never repair this. Use the frozen destination for bookkeeping too, and extend the retry regression test to change channel/thread and verify the original thread registration and reaction cleanup.
+
+Static review of the specified committed delta completed; `git diff --check` passed. Tests were not rerun under the read-only gate.
+
+VERDICT: BLOCK

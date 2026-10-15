@@ -69,13 +69,15 @@ func replayBookkeepingStub(t *testing.T, ts string, reads *atomic.Int32, posts *
 func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *testing.T) {
 	fastReadbackTimings(t)
 	cases := []struct {
-		name     string
-		replyTo  string // "" = top-level post
-		markTS   string // the inbound ts carrying the busy mark
-		wantRoot string // the own-thread root the session must be recorded under
+		name           string
+		replyTo        string // "" = top-level post
+		markTS         string // the inbound ts carrying the busy mark
+		wantRoot       string // the own-thread root the session must be recorded under
+		retryElsewhere bool
 	}{
 		{name: "threaded reply joins its thread", replyTo: "100.000001", markTS: "100.000001", wantRoot: "100.000001"},
 		{name: "top-level post roots a thread under the cached ts", replyTo: "", markTS: "100.000010", wantRoot: "1700.001"},
+		{name: "retry changed destination and session", replyTo: "100.000001", markTS: "100.000001", wantRoot: "100.000001", retryElsewhere: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,12 +88,17 @@ func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *
 			marks := newBusyReactionRegistry()
 			done, _ := marks.markBoth("C1", "", tc.markTS)
 			close(done)
+			if tc.retryElsewhere {
+				otherDone, _ := marks.markBoth("C2", "", "900.000001")
+				close(otherDone)
+			}
 			own, err := newOwnThreadRegistry(filepath.Join(t.TempDir(), "own_threads.json"))
 			if err != nil {
 				t.Fatalf("own-thread registry: %v", err)
 			}
 			cfg := config{slackBotToken: "xoxb-test", busyReaction: "hourglass", busyMarks: marks, ownThreads: own}
 			handler := handlePublish(cfg, nil, nil, newPublishDedupCache(publishDedupTTL))
+			calls := 0
 			publish := func() publishReceipt {
 				t.Helper()
 				req := publishRequest{
@@ -101,6 +108,13 @@ func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *
 					ReplyToMessageID: tc.replyTo,
 					IdempotencyKey:   "k-1",
 				}
+				if calls > 0 && tc.retryElsewhere {
+					req.SessionID = "gc-other"
+					req.Conversation.ConversationID = "C2"
+					req.ReplyToMessageID = "900.000001"
+					req.Text = "a changed request cannot replace the accepted post"
+				}
+				calls++
 				raw, _ := json.Marshal(req)
 				rec := httptest.NewRecorder()
 				handler(rec, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(string(raw))))
@@ -137,6 +151,9 @@ func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *
 			}
 			if sessions, known := own.posters("C1", tc.wantRoot); !known || len(sessions) != 1 || sessions[0] != "gc-1" {
 				t.Fatalf("own-thread posters(C1, %s) = (%v, %v), want [gc-1] recorded by the re-verifying replay", tc.wantRoot, sessions, known)
+			}
+			if _, known := own.posters("C2", "900.000001"); known {
+				t.Fatal("retry registered a thread the accepted post did not target")
 			}
 
 			// A replay of the now-delivered receipt runs the bookkeeping

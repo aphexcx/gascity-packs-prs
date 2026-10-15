@@ -1,0 +1,21 @@
+Command: codex -p city -m gpt-6-astra -a never -s read-only review --base origin/main -c sandbox_workspace_write.network_access=true
+Reviewed commit: 136c7780ce1ae4a619003952412d3dcb5b0c929c
+
+The change introduces false delivery failures for keyed messages containing labeled auto-links and permits stale acceptance writes to replace newer delivery evidence. Go tests could not run because the read-only sandbox prevented creation of the build directory.
+
+Full review comments:
+
+- [P2] Normalize labeled auto-links before checking keyed messages — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:565-568
+  Removing the marker branch makes keyed publishes depend on a normalizer that rejects valid Slack auto-linking. For example, Slack stores `www.example.com` as `<http://www.example.com|www.example.com>`, but `slackNormalizeText` only removes the angle brackets, so these compare unequal. A successfully delivered keyed message now reports a permanent failure, is not cached, and produces a duplicate on a same-key retry. Handle this labeled auto-link form and add a regression fixture using Slack's actual returned text.
+
+- [P2] Prevent older acceptance writes from replacing newer receipts — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_receipts.go:160-167
+  Concurrent publishes using the same key can both pass the dedup lookup before either finishes. If Slack accepts A before B but returns A's response last, this check allows A to overwrite B's potentially confirmed receipt; subsequent readback updates for B are then discarded because their timestamp differs. Consequently, lookup can lose confirmed evidence and report an older post despite the newest-accepted-post contract. Serialize same-key publishes or check post ordering before replacing an existing receipt.
+The change introduces false delivery failures for keyed messages containing labeled auto-links and permits stale acceptance writes to replace newer delivery evidence. Go tests could not run because the read-only sandbox prevented creation of the build directory.
+
+Full review comments:
+
+- [P2] Normalize labeled auto-links before checking keyed messages — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_readback.go:565-568
+  Removing the marker branch makes keyed publishes depend on a normalizer that rejects valid Slack auto-linking. For example, Slack stores `www.example.com` as `<http://www.example.com|www.example.com>`, but `slackNormalizeText` only removes the angle brackets, so these compare unequal. A successfully delivered keyed message now reports a permanent failure, is not cached, and produces a duplicate on a same-key retry. Handle this labeled auto-link form and add a regression fixture using Slack's actual returned text.
+
+- [P2] Prevent older acceptance writes from replacing newer receipts — /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/publish_receipts.go:160-167
+  Concurrent publishes using the same key can both pass the dedup lookup before either finishes. If Slack accepts A before B but returns A's response last, this check allows A to overwrite B's potentially confirmed receipt; subsequent readback updates for B are then discarded because their timestamp differs. Consequently, lookup can lose confirmed evidence and report an older post despite the newest-accepted-post contract. Serialize same-key publishes or check post ordering before replacing an existing receipt.
