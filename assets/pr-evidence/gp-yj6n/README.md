@@ -90,7 +90,13 @@ Actual write failures and unknown receipt shapes remain nonzero.
 Focused concurrency/readback validation: 35 cases pass under the race detector,
 including the missing-timestamp control and the public incident shape; see
 `fork-race.txt`. Offline receipt examples are in `receipt-examples.json`.
-The reviewed implementation SHA and final review record accompany the handoff.
+Implementation SHA: `8af195fd57eb22e5b4adf2424c35c55e58f180cc`.
+The STANDARD gpt-6-astra gate reviewed exactly ad841a9a → 8af195fd and returned
+**CLEAN** (`fork-review.txt`). Per the worker's installed gate contract, this
+uses `codex-gate.sh review --base origin/main --class STANDARD --model gpt-6-astra`
+with a read-only isolated reviewer; the helper replaces native `codex review`
+to enforce a validated final verdict. Subsequent commits contain evidence only.
+The mayor's final gate and Fable review remain separate pre-merge requirements.
 
 Upstream main `520e95cb22992a8a1017f7a60da267f203497c7e` has the readback leg;
 an upstream twin is required. It must be based on upstream main and adapted to

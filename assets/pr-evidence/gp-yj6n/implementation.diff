@@ -137,6 +137,131 @@ index a8378d27..22e21917 100644
 +	// warning and the unconfirmed readback without telling callers to repost.
 +	if !receipt.Delivered || receipt.FailureKind != "" {
 +		t.Fatalf("receipt delivered=%t failure_kind=%q, want accepted without a publish failure",
+diff --git a/slack-full/adapter/publish_acceptance_test.go b/slack-full/adapter/publish_acceptance_test.go
+new file mode 100644
+index 00000000..fcae3147
+--- /dev/null
++++ b/slack-full/adapter/publish_acceptance_test.go
+@@ -0,0 +1,119 @@
++package main
++
++import (
++	"encoding/json"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"os"
++	"strings"
++	"testing"
++)
++
++func TestPublishWithoutTimestampRemainsFailure(t *testing.T) {
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		if r.URL.Path != "/chat.postMessage" {
++			t.Errorf("unexpected readback without a timestamp: %s", r.URL.Path)
++		}
++		_, _ = w.Write([]byte(`{"ok":true}`))
++	}))
++	t.Cleanup(server.Close)
++	withSlackAPIStub(t, server)
++	handler := handlePublish(config{slackBotToken: "xoxb-test"}, nil, nil, newPublishDedupCache(publishDedupTTL))
++	w := httptest.NewRecorder()
++	handler(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(
++		`{"session_id":"gc-test","conversation":{"conversation_id":"C123"},"text":"hello"}`)))
++	if w.Code != http.StatusOK {
++		t.Fatalf("publish status = %d: %s", w.Code, w.Body)
++	}
++	var receipt publishReceipt
++	if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
++		t.Fatal(err)
++	}
++	if receipt.Delivered || receipt.MessageID != "" || receipt.FailureKind != "transient" {
++		t.Fatalf("missing timestamp incorrectly accepted: %+v", receipt)
++	}
++}
++
++// The checked-in shape contains no investor data. Set SLACK_READBACK_INCIDENT
++// to the private recorded fixture to run the same comparator on the original
++// 3,429-character digest and the exact conversations.replies response.
++func TestReadBackInvestorDigest(t *testing.T) {
++	posted := "*Investor sweep*\n" + strings.Repeat("• Follow up → waiting…\n", 150) +
++		"Email contact@example.test; contact@example.test is >3d overdue & pending."
++	stored := strings.NewReplacer("contact@example.test", "<mailto:contact@example.test|contact@example.test>",
++		">", "&gt;", "&", "&amp;").Replace(posted)
++	fixture := struct {
++		Posted    string          `json:"posted"`
++		Channel   string          `json:"channel"`
++		MessageTS string          `json:"message_ts"`
++		ThreadTS  string          `json:"thread_ts"`
++		Response  json.RawMessage `json:"response"`
++	}{Posted: posted, Channel: "C123", MessageTS: "1791976711.647429", ThreadTS: "1787962615.345489"}
++	fixture.Response, _ = json.Marshal(map[string]any{"ok": true, "has_more": false, "messages": []map[string]any{
++		{"ts": fixture.ThreadTS, "text": "parent", "reply_count": 113},
++		{"ts": fixture.MessageTS, "text": stored},
++	}})
++	if path := os.Getenv("SLACK_READBACK_INCIDENT"); path != "" {
++		data, err := os.ReadFile(path)
++		if err != nil {
++			t.Fatal(err)
++		}
++		if err := json.Unmarshal(data, &fixture); err != nil {
++			t.Fatal(err)
++		}
++		t.Log("Using private recorded incident fixture (body omitted)")
++	} else {
++		t.Log("Using public synthetic incident shape")
++	}
++	server := newSlackReadbackServer(t, "/conversations.replies", func(query url.Values) {
++		assertSlackReadbackQuery(t, query, fixture.Channel, fixture.MessageTS, "2")
++		if query.Get("ts") != fixture.ThreadTS {
++			t.Errorf("thread timestamp = %q", query.Get("ts"))
++		}
++	}, string(fixture.Response))
++	target := slackReadbackTarget{channel: fixture.Channel, messageTS: fixture.MessageTS,
++		threadTS: fixture.ThreadTS, expectedText: fixture.Posted}
++	if err := readBackPublishedMessageOnce(server.Client(), "xoxb-test", target); err != nil {
++		t.Fatal(err)
++	}
++	var response slackReadbackResponse
++	if err := json.Unmarshal(fixture.Response, &response); err != nil {
++		t.Fatal(err)
++	}
++	for _, message := range response.Messages {
++		if message.TS == fixture.MessageTS && slackNormalizeText(fixture.Posted) != slackNormalizeText(message.Text) {
++			t.Fatal("incident text differs even after normalization")
++		}
++	}
++	// A different body at that timestamp remains an unconfirmed readback.
++	target.expectedText += " changed"
++	if err := readBackPublishedMessageOnce(server.Client(), "xoxb-test", target); err == nil {
++		t.Fatal("changed text was incorrectly confirmed")
++	}
++}
++
++func TestAcceptedPublishSurvivesReadbackFailure(t *testing.T) {
++	fastReadbackTimings(t)
++	for _, tc := range []struct{ name, response, detail string }{
++		{"absent", `{"ok":true,"messages":[]}`, slackReadbackUnconfirmed},
++		{"mismatch", `{"ok":true,"messages":[{"ts":"1700.001","text":"different"}]}`, slackReadbackUnconfirmed},
++		{"auth", `{"ok":false,"error":"missing_scope"}`, slackReadbackAuth},
++		{"unavailable", `{"ok":false,"error":"internal_error"}`, slackReadbackUnavailable},
++		{"malformed", `not JSON`, slackReadbackUnavailable},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			newSlackReadbackServer(t, "/conversations.history", func(query url.Values) {
++				assertSlackReadbackQuery(t, query, "C123", "1700.001", "1")
++			}, tc.response)
++			receipt := publishReceipt{MessageID: "1700.001", Metadata: map[string]string{"truncated": "true"}}
++			confirmPublishReceipt("xoxb-test", &receipt, readbackTarget("expected"))
++			if !receipt.Delivered || receipt.FailureKind != "" {
++				t.Fatalf("accepted post reported as failure: %+v", receipt)
++			}
++			if receipt.Metadata[receiptMetadataKeyReadback] != tc.detail || receipt.Metadata["truncated"] != "true" {
++				t.Fatalf("readback detail or independent metadata lost: %v", receipt.Metadata)
++			}
++		})
++	}
++}
 diff --git a/slack-full/adapter/publish_dedup_metadata_test.go b/slack-full/adapter/publish_dedup_metadata_test.go
 index 558baa26..f93796b1 100644
 --- a/slack-full/adapter/publish_dedup_metadata_test.go
@@ -513,6 +638,75 @@ index 68cbe566..d80f545e 100644
 @@ -275 +275 @@ func TestHandlePublishReplayDoesNotClearABusyMarkNewerThanTheReply(t *testing.T)
 -	if first := publish(); first.Delivered {
 +	if first := publish(); !first.Delivered || publishReadbackConfirmed(first) {
+diff --git a/slack-full/docs/delivery-evidence.md b/slack-full/docs/delivery-evidence.md
+new file mode 100644
+index 00000000..611cb2af
+--- /dev/null
++++ b/slack-full/docs/delivery-evidence.md
+@@ -0,0 +1,63 @@
++# Outbound delivery evidence
++
++For text publishes, Slack's successful `chat.postMessage` response with a
++message timestamp means the message was accepted: `delivered=true`, with no
++`failure_kind`. A subsequent readback cannot turn that accepted write into a
++failed publish. This prevents callers from duplicating posts after a read
++failure. Actual write rejections and responses without a timestamp still fail.
++
++The adapter separately checks the exact timestamp and canonicalized text via
++`conversations.history`, or `conversations.replies` for a threaded reply. The
++thread query selects `oldest=latest=message_id`, `inclusive=true`, and `limit=2`
++to leave room for the parent plus the selected reply. Readback retries remain
++bounded to three attempts, 200 ms apart, with a four-second request timeout.
++
++Successful confirmation omits `metadata.readback` on the publish response.
++Unconfirmed reads retain `delivered=true` and describe the result in metadata:
++
++| `metadata.readback` | Observation |
++| --- | --- |
++| `readback_unconfirmed` | The selected timestamp was absent, or its text did not match. |
++| `readback_unavailable` | The read request, HTTP response, or response decoding failed. |
++| `readback_auth` | Slack rejected the read token or its history scope. |
++
++These are read diagnostics, not new members of gc's closed publish-failure
++vocabulary. A content mismatch can indicate truncation, a later edit, or an
++unrecognized Slack rewrite. `metadata.truncated=true`, when supplied by Slack,
++survives alongside the readback result. Inspect the existing message before
++deciding to send a correction; do not automatically repost it.
++
++`gc slack publish`, `publish-to-channel`, and `reply-current` preserve receipt
++metadata in their default JSON output. They exit zero when the receipt carries
++a message timestamp, including legacy receipts with `delivered=false`. The
++terse output reports that acceptance as `delivered=true` without a failure kind;
++`--verbose` preserves the original envelope. An unconfirmed readback is reported
++on stderr with the message timestamp, including legacy failures whose metadata
++was absent. Unknown responses without acceptance evidence still exit nonzero.
++
++Within the existing in-memory idempotency window, a retry of an accepted but
++unconfirmed post rechecks the original message. It never releases that key
++because of an empty read or content mismatch. Confirmation still claims the
++busy-reaction and own-thread bookkeeping exactly once, independently of the
++acceptance flag. The cache TTL, restart behavior, and unkeyed publishes' lack
++of deduplication are unchanged.
++
++Keyed publishes also persist evidence under
++`<GC_CITY_PATH>/.gc/slack/publish-receipts/` (fallback:
++`/tmp/gc-slack-adapter/publish-receipts/`). Files are named by the full SHA-256
++digest of the idempotency key; neither the key nor the body is stored.
++`GET /publish-receipt?idempotency_key=<URL-encoded key>` on the internal adapter
++server returns the timestamp, conversation/thread identifiers, posted-text
++SHA-256, posting time, and a top-level `readback` state. Newly recorded
++acceptance has `delivered=true, readback=pending`; completed reads record
++`confirmed` or one of the diagnostic states above. Confirmed evidence cannot
++be downgraded by a slower read. Existing receipt files keep their historical
++fields until a fresh read updates them; a stored timestamp is still acceptance
++evidence even if an older adapter wrote `delivered=false`.
++
++The durable store retains evidence for 30 days and does not extend the dedup
++window or prevent reposts after restart. A 404 means unknown, never proof of
++non-delivery. Storage errors remain distinct from delivery and are exposed as
++`metadata.receipt_store` on publish responses. This contract applies to
++slack-full text publishes; file uploads and company-turn reports retain their
++own protocols.
 diff --git a/slack-full/scripts/slack_chat_publish.py b/slack-full/scripts/slack_chat_publish.py
 index 263a6217..4a929ced 100755
 --- a/slack-full/scripts/slack_chat_publish.py
@@ -664,3 +858,82 @@ index 54624907..2c37d056 100755
 +    metadata = receipt.get("Metadata") or receipt.get("metadata")
 +    if isinstance(metadata, dict) and metadata:
 +        summary["metadata"] = metadata
+diff --git a/slack-full/tests/test_publish_receipt_readback.py b/slack-full/tests/test_publish_receipt_readback.py
+new file mode 100644
+index 00000000..76b19f21
+--- /dev/null
++++ b/slack-full/tests/test_publish_receipt_readback.py
+@@ -0,0 +1,73 @@
++"""Accepted Slack posts must survive an unconfirmed readback in every CLI."""
++
++import importlib
++import json
++import pathlib
++import sys
++
++import pytest
++
++sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
++
++
++@pytest.mark.parametrize("script", ["publish", "publish_to_channel", "reply_current"])
++@pytest.mark.parametrize("shape", ["adapter", "lower", "upper"])
++@pytest.mark.parametrize("state", ["legacy", "missing_metadata", "unconfirmed", "unavailable", "auth", "confirmed"])
++@pytest.mark.parametrize("verbose", [False, True])
++def test_accepted_publish_receipt(monkeypatch, capsys, tmp_path, script, shape, state, verbose):
++    monkeypatch.setenv("GC_CITY_NAME", "test-city")
++    monkeypatch.setenv("GC_CITY_PATH", str(tmp_path))
++    monkeypatch.setenv("SLACK_WORKSPACE_ID", "TTEST")
++    common = importlib.import_module("slack_intake_common")
++    cli = importlib.reload(importlib.import_module("slack_chat_" + script))
++    metadata = {"receipt_store": "test-warning"}
++    if state not in ("confirmed", "missing_metadata"):
++        metadata["readback"] = "readback_" + ("unconfirmed" if state == "legacy" else state)
++    receipt = {"delivered": state not in ("legacy", "missing_metadata"), "message_id": "1700.001", "metadata": metadata}
++    if state in ("legacy", "missing_metadata"):
++        receipt["failure_kind"] = "auth"  # must not trigger the mention-only fallback
++    if shape == "upper":
++        keys = {"delivered": "Delivered", "message_id": "MessageID", "metadata": "Metadata", "failure_kind": "FailureKind"}
++        result = {"Receipt": {keys[k]: v for k, v in receipt.items()}}
++    elif shape == "lower":
++        result = {"receipt": receipt}
++    else:
++        result = receipt
++    calls = []
++
++    def publish(**kwargs):
++        calls.append(kwargs)
++        return result
++
++    monkeypatch.setattr(common, "publish_to_channel_via_adapter", publish)
++    monkeypatch.setattr(common, "publish_via_gc_outbound", publish)
++    monkeypatch.setattr(common, "publish_via_adapter", publish)
++    monkeypatch.setattr(common, "look_up_binding", lambda _: {
++        "scope_id": "test-city", "provider": "slack", "account_id": "TTEST",
++        "conversation_id": "C123", "kind": "room"})
++    monkeypatch.setattr(common, "find_latest_inbound_for_session", lambda _: None)
++    monkeypatch.setattr(common, "session_is_mention_only_in", lambda *_: True)
++    if script == "reply_current":
++        monkeypatch.setattr(cli, "_maybe_company_reply", lambda _: None)
++    args = ["--session", "gc-test", "--body", "test body"]
++    if script != "publish":
++        args += ["--conversation-id", "C123"]
++    args += ["--thread-ts" if script == "publish_to_channel" else "--reply-to", "1690.5"]
++    if verbose:
++        args += ["--verbose"]
++    assert cli.main(args) == 0
++    output = capsys.readouterr()
++    printed = json.loads(output.out)
++    if verbose:
++        assert printed["result"] == result
++    else:
++        assert printed["message_id"] == "1700.001"
++        assert printed["metadata"] == metadata
++        assert printed["delivered"] is True
++        assert "failure_kind" not in printed
++    assert len(calls) == 1
++    if state == "confirmed":
++        assert "unconfirmed" not in output.err
++    else:
++        assert "unconfirmed" in output.err
++        assert "1700.001" in output.err
