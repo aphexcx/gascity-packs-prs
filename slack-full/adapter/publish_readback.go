@@ -615,9 +615,7 @@ func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarg
 	if message.Text == target.expectedText {
 		return nil
 	}
-	if !slackAutoLinkLabelsMatch(target.expectedText, message.Text) ||
-		(slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
-			!slackEmojiExpansionMatches(target.expectedText, message.Text)) {
+	if !slackReadbackTextMatches(target.expectedText, message.Text) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
 			"Slack readback content mismatch for message %s", target.messageTS)
 	}

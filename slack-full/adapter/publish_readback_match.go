@@ -10,6 +10,7 @@ import (
 type slackReadbackLink struct {
 	textStart, textEnd int
 	target, label      string
+	labeled            bool
 }
 
 func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
@@ -29,7 +30,7 @@ func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
 		// A colon in angle-delimited prose is not enough to make a link.
 		if strings.IndexFunc(target, unicode.IsSpace) < 0 && (slackReferenceTarget.MatchString(target) || slackAbsoluteLinkScheme.MatchString(target) ||
 			strings.HasPrefix(target, "mailto:") || (labeled && slackLinkScheme.MatchString(target))) {
-			result = append(result, slackReadbackLink{textStart, textEnd, target, label})
+			result = append(result, slackReadbackLink{textStart, textEnd, target, label, labeled})
 		}
 	}
 	return result, angles
@@ -38,8 +39,10 @@ func slackReadbackLinks(text string) ([]slackReadbackLink, [][2]int) {
 // Slack's returned auto-link supplies the literal URL boundary. Matching its
 // label exactly against the original normalized text prevents emoji folding
 // from erasing URL characters, without guessing whether numeric prose is a
-// hostname or swallowing punctuation/emoji after a URL.
-func slackAutoLinkLabelsMatch(expected, stored string) bool {
+// hostname or swallowing punctuation/emoji after a URL. Explicit targets are
+// checked separately from their display labels; all intervening and trailing
+// text is compared with the existing prose emoji rules.
+func slackReadbackTextMatches(expected, stored string) bool {
 	expectedText, storedText := slackNormalizeLinks(expected), slackNormalizeLinks(stored)
 	explicit, angles := slackReadbackLinks(expected)
 	// Removing angle markup must not join an explicit URI to its neighbors.
@@ -79,12 +82,24 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 		if rendered == "" {
 			return false
 		}
+		exactPrefix := strings.HasPrefix(expectedText[expectedCursor:], prefix)
+		if explicitCursor < len(explicit) {
+			original := explicit[explicitCursor]
+			// Use the known source offset before searching repeated labels.
+			// When the prefix is exact, it already identifies the offset.
+			if original.target == link.target && (!exactPrefix || original.textStart == expectedCursor+len(prefix)) &&
+				compare(expectedText[expectedCursor:original.textStart], prefix) && slackExplicitLabelsMatch(original, link) {
+				expectedCursor, storedCursor = original.textEnd, link.textEnd
+				explicitCursor++
+				continue
+			}
+		}
 		matched := false
 		// Exact prefixes give the candidate directly, even if a message repeats
 		// a domain many times in prose before Slack links its last occurrence.
 		offset := expectedCursor
 		candidateVerbatim := verbatimCursor
-		if strings.HasPrefix(expectedText[offset:], prefix) {
+		if exactPrefix {
 			offset += len(prefix)
 		}
 		for offset <= len(expectedText) && budget >= 0 {
@@ -134,7 +149,7 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 					}
 					if end >= validatedExpected || link.textEnd >= validatedStored {
 						allowShortcodes := destination.Path == "" && destination.RawQuery == "" && !destination.ForceQuery && !strings.Contains(link.target, "#")
-						a, b, ok := slackPreservedURLSuffix(expectedText[end:], storedText[link.textEnd:], allowShortcodes)
+						a, b, ok := slackPreservedURLSuffix(expectedText[end:], storedText[link.textEnd:], link.label, allowShortcodes)
 						if !ok {
 							return false
 						}
@@ -147,23 +162,24 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 			}
 			offset = at + len(rendered)
 		}
-		if !matched && explicitCursor < len(explicit) {
-			// Display labels can contain prose emoji. Their destination must
-			// still match exactly, even if their rendered byte lengths differ.
-			original := explicit[explicitCursor]
-			if original.textStart >= expectedCursor && original.target == link.target &&
-				compare(expectedText[expectedCursor:original.textStart], prefix) &&
-				compare(expectedText[original.textStart:original.textEnd], rendered) {
-				expectedCursor, storedCursor = original.textEnd, link.textEnd
-				explicitCursor++
-				matched = true
-			}
-		}
 		if !matched {
 			return false
 		}
 	}
-	return explicitCursor == len(explicit)
+	return explicitCursor == len(explicit) && compare(expectedText[expectedCursor:], storedText[storedCursor:])
+}
+
+func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
+	if slackReferenceTarget.MatchString(expected.target) {
+		return true // Reference identity is its already-verified target.
+	}
+	label := func(link slackReadbackLink) string {
+		if link.labeled {
+			return link.label
+		}
+		return strings.TrimPrefix(link.target, "mailto:")
+	}
+	return slackNormalizedPrefixesMatch(label(expected), label(stored))
 }
 
 // A suffix outside Slack's returned URL span must still be present. Unlike
@@ -171,12 +187,28 @@ func slackAutoLinkLabelsMatch(expected, stored string) bool {
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
 // shortcodes are prose (they cannot be a numeric port). Return the verified
 // ranges so adjacent links do not repeatedly scan a comma-separated run.
-func slackPreservedURLSuffix(expected, stored string, allowShortcodes bool) (int, int, bool) {
+func slackPreservedURLSuffix(expected, stored, urlPrefix string, allowShortcodes bool) (int, int, bool) {
+	var depth [3]int
+	for _, r := range urlPrefix {
+		if at := strings.IndexRune("([{", r); at >= 0 {
+			depth[at]++
+		} else if at := strings.IndexRune(")]}", r); at >= 0 && depth[at] > 0 {
+			depth[at]--
+		}
+	}
 	i, j := 0, 0
 	for i < len(expected) {
 		r, width := utf8.DecodeRuneInString(expected[i:])
-		if unicode.IsSpace(r) || strings.ContainsRune(")]}`\"'<>", r) {
+		if unicode.IsSpace(r) || strings.ContainsRune("`\"'<>", r) {
 			return i, j, true
+		}
+		if at := strings.IndexRune(")]}", r); at >= 0 {
+			if depth[at] == 0 {
+				return i, j, true
+			}
+			depth[at]--
+		} else if at := strings.IndexRune("([{", r); at >= 0 {
+			depth[at]++
 		}
 		if r != ':' || allowShortcodes {
 			if n := slackEmojiUnitPrefix(expected[i:]); n > 0 {
