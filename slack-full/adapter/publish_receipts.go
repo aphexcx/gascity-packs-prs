@@ -282,9 +282,12 @@ func publishReceiptStoreError(receipt *publishReceipt, err error) {
 		return
 	}
 	log.Printf("publish receipt persistence failed: conv=%s ts=%s: %v", receipt.Conversation.ConversationID, receipt.MessageID, err)
-	if receipt.Metadata == nil {
-		receipt.Metadata = make(map[string]string)
+	// Cached receipts and in-flight encoders may still own the old map.
+	metadata := make(map[string]string, len(receipt.Metadata)+1)
+	for key, value := range receipt.Metadata {
+		metadata[key] = value
 	}
+	receipt.Metadata = metadata
 	receipt.Metadata["receipt_store"] = "unavailable"
 }
 

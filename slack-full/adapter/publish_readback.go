@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -673,6 +674,9 @@ func replayPublishReceipt(
 	if !ok {
 		return publishReplay{}, false
 	}
+	// Get returns a shallow receipt copy. Keep readback mutations and the
+	// caller's persistence-error metadata private to this replay.
+	cached.Metadata = maps.Clone(cached.Metadata)
 	if cached.Delivered {
 		return publishReplay{receipt: cached}, true
 	}

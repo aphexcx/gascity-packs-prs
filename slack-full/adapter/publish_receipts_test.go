@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -316,5 +318,61 @@ func TestHandlePublishPersistenceFailureDoesNotRepost(t *testing.T) {
 		if !receipt.Delivered || receipt.Metadata["receipt_store"] != "unavailable" || posts != 1 {
 			t.Fatalf("disk failure receipt=%+v posts=%d", receipt, posts)
 		}
+	}
+}
+
+func TestHandlePublishPersistenceFailureConcurrentReplays(t *testing.T) {
+	for _, confirmed := range []bool{true, false} {
+		name := "confirmed"
+		if !confirmed {
+			name = "readback unavailable"
+		}
+		t.Run(name, func(t *testing.T) {
+			store := testPublishReceiptStore(t, filepath.Join(t.TempDir(), "receipts"))
+			if err := os.Remove(store.dir); err != nil {
+				t.Fatal(err)
+			}
+			original := slackAPIBase
+			t.Cleanup(func() { slackAPIBase = original })
+			var captured slackPostMessageReq
+			var posts atomic.Int32
+			fake := newFakeSlackPublishHandler(t, &captured, "1.2", func() { posts.Add(1) })
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !confirmed && r.URL.Path != "/chat.postMessage" {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				fake.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			slackAPIBase = server.URL
+			handler := handlePublish(config{slackBotToken: "xoxb-test", publishReceipts: store}, nil, nil, newPublishDedupCache(publishDedupTTL))
+			publish := func() {
+				w := httptest.NewRecorder()
+				handler(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(`{"session_id":"s1","conversation":{"conversation_id":"C1"},"text":"hello","idempotency_key":"concurrent-disk-failure"}`)))
+				var receipt publishReceipt
+				if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
+					t.Error(err)
+					return
+				}
+				if receipt.Delivered != confirmed || receipt.MessageID != "1.2" || receipt.Metadata["receipt_store"] != "unavailable" {
+					t.Errorf("disk failure receipt=%+v", receipt)
+				}
+			}
+			publish() // Seed one accepted post before the concurrent retries.
+			start := make(chan struct{})
+			var wg sync.WaitGroup
+			for range 16 {
+				wg.Go(func() {
+					<-start
+					publish()
+				})
+			}
+			close(start)
+			wg.Wait()
+			if got := posts.Load(); got != 1 {
+				t.Fatalf("concurrent retries posted %d messages, want 1", got)
+			}
+		})
 	}
 }
