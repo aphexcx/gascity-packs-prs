@@ -65,8 +65,21 @@ func slackReadbackTextMatches(expected, stored string) bool {
 	explicitCursor, verbatimCursor := 0, 0
 	suffixMarkupCursor := 0
 	expectedCursor, storedCursor := 0, 0
-	validatedExpected, validatedStored := 0, 0
-	validatedLiteral := false
+	type suffixCheck struct {
+		expectedStart, storedStart, limit int
+		prefix                            string
+		quote                             byte
+		shortcodes, emoji                 bool
+	}
+	var pendingSuffix *suffixCheck
+	verifySuffix := func(expectedEnd, storedEnd int) bool {
+		if pendingSuffix == nil {
+			return true
+		}
+		p := pendingSuffix
+		expectedEnd = min(expectedEnd, p.limit)
+		return slackPreservedURLSuffix(expectedText[p.expectedStart:expectedEnd], storedText[p.storedStart:storedEnd], p.prefix, p.quote, p.shortcodes, p.emoji)
+	}
 	// A mismatch with many repeated labels must not repeatedly fold growing
 	// prefixes. Successful alignment consumes each span once; ambiguous failed
 	// candidates share this byte budget, like the emoji fallback's state budget.
@@ -95,6 +108,10 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			sameLiterals := expectedLiterals[original.textStart]-expectedLiterals[expectedCursor] == storedLiterals[link.textStart]-storedLiterals[storedCursor]
 			if original.target == link.target && sameLiterals && (!exactPrefix || original.textStart == expectedCursor+len(prefix)) &&
 				compare(expectedText[expectedCursor:original.textStart], prefix) && slackExplicitLabelsMatch(original, link) {
+				if !verifySuffix(original.textStart, link.textStart) {
+					return false
+				}
+				pendingSuffix = nil
 				expectedCursor, storedCursor = original.textEnd, link.textEnd
 				explicitCursor++
 				continue
@@ -123,6 +140,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			}
 			if compare(expectedText[expectedCursor:at], prefix) {
 				end := at + len(rendered)
+				var nextSuffix *suffixCheck
 				original := explicitCursor < len(explicit) && explicit[explicitCursor].textStart < end
 				if original {
 					if explicit[explicitCursor].textStart != at || explicit[explicitCursor].textEnd != end || explicit[explicitCursor].target != link.target {
@@ -158,30 +176,26 @@ func slackReadbackTextMatches(expected, stored string) bool {
 							return false
 						}
 					}
-					if end >= validatedExpected || link.textEnd >= validatedStored || (fullURI && !validatedLiteral) {
-						allowShortcodes := implicit && hasPath < 0
-						for suffixMarkupCursor < len(markup) && markup[suffixMarkupCursor][0] < end {
-							suffixMarkupCursor++
-						}
-						suffixEnd := len(expectedText)
-						if suffixMarkupCursor < len(markup) {
-							suffixEnd = markup[suffixMarkupCursor][0]
-						}
-						var quote byte
-						if at > 0 && (expectedText[at-1] == '\'' || expectedText[at-1] == '"') {
-							quote = expectedText[at-1]
-						}
-						// Neighboring original markup has its own matching rules.
-						// Scheme-bearing URI characters remain literal, including
-						// Unicode emoji; implicit URL boundaries can border prose.
-						a, b, ok := slackPreservedURLSuffix(expectedText[end:suffixEnd], storedText[link.textEnd:], rendered, quote, allowShortcodes, implicit)
-						if !ok {
-							return false
-						}
-						validatedExpected, validatedStored = end+a, link.textEnd+b
-						validatedLiteral = fullURI
+					for suffixMarkupCursor < len(markup) && markup[suffixMarkupCursor][0] < end {
+						suffixMarkupCursor++
 					}
+					limit := len(expectedText)
+					if suffixMarkupCursor < len(markup) {
+						limit = markup[suffixMarkupCursor][0]
+					}
+					var quote byte
+					if at > 0 && (expectedText[at-1] == '\'' || expectedText[at-1] == '"') {
+						quote = expectedText[at-1]
+					}
+					// Check only the suffix before the next aligned link or
+					// original markup span. Each link retains its own rules and
+					// each suffix is scanned once, without a shared range cache.
+					nextSuffix = &suffixCheck{end, link.textEnd, limit, rendered, quote, implicit && hasPath < 0, implicit}
 				}
+				if !verifySuffix(at, link.textStart) {
+					return false
+				}
+				pendingSuffix = nextSuffix
 				expectedCursor, storedCursor = end, link.textEnd
 				matched = true
 				break
@@ -192,7 +206,7 @@ func slackReadbackTextMatches(expected, stored string) bool {
 			return false
 		}
 	}
-	return explicitCursor == len(explicit) && compare(expectedText[expectedCursor:], storedText[storedCursor:])
+	return explicitCursor == len(explicit) && compare(expectedText[expectedCursor:], storedText[storedCursor:]) && verifySuffix(len(expectedText), len(storedText))
 }
 
 func slackLiteralPrefixCounts(text string) []int {
@@ -224,9 +238,8 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 // A suffix outside Slack's returned URL span must still be present. Unlike
 // the ordinary prose fold, emoji may convert but cannot disappear here.
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
-// shortcodes are prose (they cannot be a numeric port). Return the verified
-// ranges so adjacent links do not repeatedly scan a comma-separated run.
-func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, allowShortcodes, allowEmoji bool) (int, int, bool) {
+// shortcodes are prose (they cannot be a numeric port).
+func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, allowShortcodes, allowEmoji bool) bool {
 	if !allowEmoji {
 		// Preserve the entire remaining source URI token, using the same
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
@@ -235,7 +248,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, all
 		if end < 0 {
 			end = len(expected)
 		}
-		return end, end, strings.HasPrefix(stored, expected[:end])
+		return strings.HasPrefix(stored, expected[:end])
 	}
 	var depth [3]int
 	for _, r := range urlPrefix {
@@ -249,11 +262,11 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, all
 	for i < len(expected) {
 		r, width := utf8.DecodeRuneInString(expected[i:])
 		if unicode.IsSpace(r) || (quote != 0 && r == rune(quote)) {
-			return i, j, true
+			return true
 		}
 		if at := strings.IndexRune(")]}", r); at >= 0 {
 			if depth[at] == 0 {
-				return i, j, true
+				return true
 			}
 			depth[at]--
 		} else if at := strings.IndexRune("([{", r); at >= 0 {
@@ -266,7 +279,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, all
 				}
 				m := slackEmojiUnitPrefix(stored[j:])
 				if m == 0 {
-					return i, j, false
+					return false
 				}
 				// A typed tone token in a URL suffix remains literal, even
 				// when Slack appends its own tone token to the preceding emoji.
@@ -283,11 +296,11 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix string, quote byte, all
 		}
 		allowShortcodes = false
 		if !strings.HasPrefix(stored[j:], expected[i:i+width]) {
-			return i, j, false
+			return false
 		}
 		i, j = i+width, j+width
 	}
-	return i, j, true
+	return true
 }
 
 // Inputs have already had links/entities normalized exactly once.
