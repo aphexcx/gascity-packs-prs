@@ -811,6 +811,11 @@ type publishReceipt struct {
 	// inferred. The request side already uses this idiom
 	// (publishRequest.Metadata).
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// readbackTarget is process-local retry context, never part of the wire
+	// receipt or durable evidence. It freezes the alias-rewritten text and
+	// destination of the accepted post so a later alias reload cannot make
+	// re-verification compare the old message against a newly rewritten body.
+	readbackTarget slackReadbackTarget
 }
 
 type externalActor struct {
@@ -1698,6 +1703,7 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			// can only add another visible partial message.
 			cfg.publishReceipts.recordPosted(req.IdempotencyKey, &receipt, post)
 			target.messageTS = slackResp.TS
+			receipt.readbackTarget = target
 			confirmPublishReceipt(cfg.slackBotToken, &receipt, target)
 			cfg.publishReceipts.recordReadback(req.IdempotencyKey, &receipt)
 		}

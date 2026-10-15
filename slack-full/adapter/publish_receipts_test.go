@@ -265,6 +265,13 @@ func TestHandlePublishPersistsAcceptanceBeforeReadbackAndRetry(t *testing.T) {
 	body := `{"session_id":"s1","conversation":{"conversation_id":"C1"},"reply_to_message_id":"1700.001","text":"hello @bob & welcome","idempotency_key":"integration-key"}`
 	for _, confirmed := range []bool{false, true} {
 		readable = confirmed
+		if confirmed {
+			// Simulate a SIGHUP alias reload between acceptance and retry. The
+			// retry must verify the original U123 text, not repost with U456.
+			aliases.mu.Lock()
+			aliases.byHandle["bob"] = "<@U456>"
+			aliases.mu.Unlock()
+		}
 		w := httptest.NewRecorder()
 		handler(w, httptest.NewRequest(http.MethodPost, "/publish", strings.NewReader(body)))
 		var receipt publishReceipt
