@@ -319,6 +319,7 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"angle prose adjacent to auto-link", "Use <std::vector>www.a.co", "Use &lt;std::vector&gt;<http://www.a.co|www.a.co>", true},
 		{"escaped angle prose adjacent to auto-link", "Use &lt;tag&gt;www.a.co🎉", "Use &lt;tag&gt;<http://www.a.co|www.a.co>:tada:", true},
 		{"repeated IDs before explicit mention", "🎉 " + strings.Repeat("@U123 ", 200) + "<@U123>", ":tada: " + strings.Repeat("@U123 ", 200) + "<@U123|bob>", true},
+		{"same target auto-links before explicit link", strings.Repeat("🎉 www.a.co ", 1000) + "<http://www.a.co|www.a.co>", strings.Repeat(":tada: <http://www.a.co|www.a.co> ", 1000) + "<http://www.a.co|www.a.co>", true},
 		{"redundant label emoji conversion", "<https://example.com/🎉|example.com/🎉>", "<https://example.com/🎉|example.com/:tada:>", true},
 		{"redundant label changed destination", "<https://example.com/🎉|example.com/🎉>", "<https://example.com/other|example.com/:tada:>", false},
 		{"redundant label changed literal text", "<https://example.com/🎉|example.com/🎉>", "<https://example.com/🎉|example.com/other:tada:>", false},
