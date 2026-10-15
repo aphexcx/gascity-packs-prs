@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uses exact timestamp and canonicalized text equality, including thread
   replies via `conversations.replies`. Bare-domain auto-links (for example,
   `hou.vc` stored by Slack as `<http://hou.vc|hou.vc>`) confirm without reposting.
+  URL tokens use one boundary rule for full and implicit links: enclosing
+  punctuation, formatting runs (including `**` and `__`), sentence punctuation
+  and trailing Unicode emoji leave the URL literal and the suffix as prose.
+  Host-adjacent emoji aliases normalize consistently; internal path/query
+  identifiers and embedded returned link segments remain literal.
   Delivery evidence now lives in the adapter's private
   `<GC_CITY_PATH>/.gc/slack/publish-receipts/` store (fallback:
   `/tmp/gc-slack-adapter/publish-receipts/`), keyed by the full SHA-256 digest
