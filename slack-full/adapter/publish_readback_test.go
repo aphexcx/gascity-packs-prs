@@ -224,35 +224,30 @@ func TestReadBackPublishedMessageAcceptsSlackCanonicalizedText(t *testing.T) {
 	}
 }
 
-// TestReadBackPublishedMessageMatchesKeyedPublishByReferenceMarker covers the
-// other arm: a keyed publish carries the reference marker as its tail, whose
-// characters are outside Slack's escape set and are not link-shaped, so a tail
-// match identifies this exact publish without depending on any model of Slack's
-// canonicalization at all. The negative arm pins that the marker is load-bearing
-// — a message at the right ts without it is not this publish.
-func TestReadBackPublishedMessageMatchesKeyedPublishByReferenceMarker(t *testing.T) {
-	const marker = "_ref:50e90a583c12_"
-	posted := "shipping the fix\n\n" + marker
+// Keyed publishes follow the same timestamp + canonicalized text rule.
+func TestReadBackPublishedMessageMatchesKeyedPublishByTimestampAndText(t *testing.T) {
+	fastReadbackTimings(t)
+	const posted = "R&D <b> shipping the fix"
 	tests := []struct {
 		name    string
+		ts      string
 		stored  string
 		wantErr bool
 	}{
-		{name: "marker survives canonicalization", stored: slackCanonicalizeForTest("R&D <b> ship\n\n" + marker)},
-		{name: "marker absent", stored: "shipping the fix", wantErr: true},
-		{name: "marker truncated away", stored: "shipping the fix\n\n_ref:50e9", wantErr: true},
+		{name: "canonicalized text", ts: "1700.001", stored: slackCanonicalizeForTest(posted)},
+		{name: "different text at same ts", ts: "1700.001", stored: "shipping the fix", wantErr: true},
+		{name: "same text at different ts", ts: "1700.002", stored: posted, wantErr: true},
+		{name: "truncated text", ts: "1700.001", stored: "R&D <b> shipping", wantErr: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			newSlackReadbackServer(t, "/conversations.history", func(url.Values) {}, mustJSON(t, map[string]any{
 				"ok":       true,
-				"messages": []map[string]string{{"ts": "1700.001", "text": test.stored}},
+				"messages": []map[string]string{{"ts": test.ts, "text": test.stored}},
 			}))
-			target := readbackTarget(posted)
-			target.marker = marker
-			err := readBackPublishedMessage(nil, "xoxb-test", target)
+			err := readBackPublishedMessage(nil, "xoxb-test", readbackTarget(posted))
 			if (err != nil) != test.wantErr {
-				t.Fatalf("readBackPublishedMessage = %v, wantErr %v (stored %q)", err, test.wantErr, test.stored)
+				t.Fatalf("readBackPublishedMessage = %v, wantErr %v", err, test.wantErr)
 			}
 		})
 	}

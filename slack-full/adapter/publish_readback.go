@@ -1,3 +1,7 @@
+// Publish readback requires exact message timestamp equality and canonicalized
+// text equality for keyed and unkeyed messages alike. Thread replies are read
+// through conversations.replies. The publish receipt store preserves this
+// evidence across restarts; message text contains no delivery bookkeeping.
 package main
 
 import (
@@ -75,13 +79,8 @@ type slackReadbackTarget struct {
 	// threadTS is set when the message was posted as a thread reply, which
 	// conversations.history does not return.
 	threadTS string
-	// expectedText is what was posted, after the alias rewrite and the
-	// marker stamp — not the caller's original request text.
+	// expectedText is the alias-rewritten text actually posted.
 	expectedText string
-	// marker is the reference marker stamped on this publish, or "" when the
-	// publish is unkeyed or the stamp was skipped. See the compare in
-	// matchReadbackMessage for how the two arms differ.
-	marker string
 }
 
 type slackReadbackMessage struct {
@@ -275,26 +274,9 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // receipt is not cached (publishReceiptBlocksRepost), the caller's retry
 // re-posts and fails the same deterministic way.
 //
-// Two arms, because neither covers the other:
-//
-//   - Keyed publishes carry the reference marker as the tail of the posted
-//     text. Its characters (`_`, `:`, hex) are outside Slack's escape set and
-//     it is not link-shaped, so it survives ingestion verbatim; a tail match on
-//     it identifies this exact publish by its idempotency key without depending
-//     on any model of Slack's canonicalization. Truncation cannot smuggle a
-//     message past this arm, because Slack truncates from the end — the marker
-//     is the first thing to go — and handlePublish skips the stamp entirely for
-//     text that could not fit under the ceiling with it.
-//   - Everything else — unkeyed publishes, and keyed ones whose stamp was
-//     skipped — is compared on text folded through slackNormalizeText.
+// Both keyed and unkeyed publishes use the same content check after the caller
+// has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
-	if target.marker != "" {
-		if strings.HasSuffix(message.Text, target.marker) {
-			return nil
-		}
-		return readbackFailure(slackReadbackUnconfirmed, false,
-			"Slack readback missing reference marker for message %s", target.messageTS)
-	}
 	if slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
 			"Slack readback content mismatch for message %s", target.messageTS)
@@ -355,7 +337,8 @@ func replayPublishReceipt(
 		log.Printf("publish: dedup re-verify idem=%s ts=%s -> Slack does not have the message; releasing the key",
 			key, cached.MessageID)
 		dedup.Delete(key)
-		return publishReceipt{}, false
+		// Let the handler persist this readback even if the next post fails.
+		return cached, false
 	}
 	dedup.Put(key, cached)
 	return cached, true
