@@ -535,14 +535,14 @@ func slackReadbackURLEnd(text string, start, limit int, state slackReadbackForma
 	if scheme := slackAbsoluteLinkScheme.FindString(text[start:end]); scheme != "" {
 		host += len(scheme)
 	}
+	if strings.IndexAny(text[host:boundary], "/?#") >= 0 {
+		return boundary
+	}
 	for i := host; i < boundary; i++ {
-		if strings.ContainsRune("/?#", rune(text[i])) {
-			break
-		}
 		if text[i] == ':' && slackEmojiUnitPrefix(text[i:boundary]) > 0 {
 			return i
 		}
-		if strings.ContainsRune(",;!([{'\"~=&", rune(text[i])) && i > host && strings.IndexAny(text[i:boundary], "/?#") < 0 {
+		if strings.ContainsRune(",;!([{'\"~=&", rune(text[i])) && i > host {
 			return i
 		}
 	}
