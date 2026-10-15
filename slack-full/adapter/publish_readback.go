@@ -222,7 +222,8 @@ var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9
 var slackLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 var slackAbsoluteLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
-// slackNormalizeText folds the transformations Slack applies between
+// slackNormalizeText is a test helper; production uses slackReadbackTextMatches.
+// It folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
 // `>` in the stored text, auto-links bare URLs into `<url>` spans, and
 // stores a Unicode emoji as its colon shortcode (`Done 🎉` reads back as

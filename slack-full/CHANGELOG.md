@@ -33,7 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Receipts survive restarts and expire after 30 days from posting, swept at
   startup and hourly. This later-reader audit window is longer than the
   company inbound receipt store's seven-day retry window. Corrupt receipts
-  are removed by the sweep with one log line; I/O failures preserve the file.
+  are removed on lookup or by the sweep with one log line; the first corrupt
+  lookup returns 404 immediately. I/O failures remain operational errors.
   A reused key records the newest accepted post. A 404
   means **unknown**, never undelivered; unkeyed posts, files, and deliveries
   before this change have no stored evidence. Storage errors are 500 on lookup

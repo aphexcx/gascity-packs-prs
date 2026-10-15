@@ -467,17 +467,15 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
 		// literal path/query characters, regardless of Slack's link end.
 		literal := slackURIToken(expected)
-		// Validate all literal bytes, then let trailing closing markers
-		// update the surrounding prose state before the next link.
-		opaque := len(literal)
-		for opaque > 0 {
-			_, width := utf8.DecodeLastRuneInString(literal[:opaque])
-			if !atProseBoundary(opaque - width) {
-				break
+		// A recognized closing marker ends the URI's literal protection.
+		// Require the same prefix and marker in stored text; the caller's
+		// prose comparison handles emoji aliases after that boundary.
+		for i, r := range literal {
+			if atProseBoundary(i) {
+				return i, depth, strings.HasPrefix(stored, literal[:i+utf8.RuneLen(r)])
 			}
-			opaque -= width
 		}
-		return opaque, depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
+		return len(literal), depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
 	i, j := 0, 0
 	for i < len(expected) {
@@ -574,6 +572,7 @@ func slackNormalizedPrefixesMatch(expected, stored string) bool {
 // consumes zero or more Unicode/standard-shortcode units. Memoization and the
 // state budget bound ambiguous runs. Exhaustion retains the strict mismatch;
 // ordinary symmetric matches never need this fallback.
+// Test convenience wrapper; production matching enters slackReadbackTextMatches.
 func slackEmojiExpansionMatches(expected, stored string) bool {
 	return slackEmojiExpansionMatchesNormalized(slackNormalizeLinks(expected), slackNormalizeLinks(stored))
 }

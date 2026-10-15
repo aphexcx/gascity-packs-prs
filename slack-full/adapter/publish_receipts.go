@@ -51,9 +51,9 @@ var errInvalidPublishReceipt = errors.New("invalid publish receipt")
 // restart. Receipts expire by posted_at after publishReceiptRetention (30 days),
 // with an hourly/startup sweep. 404 means UNKNOWN, never undelivered: unkeyed
 // posts, file uploads, older deliveries, expired receipts, and writes lost to a
-// disk failure may have no receipt. I/O/corruption errors return 500, not 404.
-// The sweep removes corrupt receipts with one log line; subsequent lookups
-// return unknown. Read failures caused by I/O leave the file for a later retry.
+// disk failure may have no receipt. A lookup or sweep removes corrupt receipts
+// with one log line; the first corrupt lookup returns 404 unknown immediately.
+// I/O failures (including failed cleanup) return 500 and preserve retryability.
 // Persistence failures are logged and surfaced as metadata.receipt_store on
 // the publish response without undoing a Slack delivery or inducing a repost.
 // This evidence describes a past observation, not whether Slack still has the
@@ -211,7 +211,18 @@ func (s *publishReceiptStore) Get(key string) (storedPublishReceipt, error) {
 		// Do not wrap ENOENT: the HTTP handler reserves it for missing receipts.
 		return storedPublishReceipt{}, fmt.Errorf("publish receipt directory unavailable: %v", err)
 	}
-	receipt, err := s.read(s.path(key))
+	path := s.path(key)
+	receipt, err := s.read(path)
+	if errors.Is(err, errInvalidPublishReceipt) {
+		if err := os.Remove(path); err != nil {
+			return storedPublishReceipt{}, fmt.Errorf("remove corrupt publish receipt: %w", err)
+		}
+		log.Printf("publish receipt prune: removed corrupt receipt %s", filepath.Base(path))
+		if err := fsyncDir(s.dir); err != nil {
+			return storedPublishReceipt{}, err
+		}
+		return storedPublishReceipt{}, os.ErrNotExist
+	}
 	if err == nil && !s.now().Before(receipt.PostedAt.Add(publishReceiptRetention)) {
 		return storedPublishReceipt{}, os.ErrNotExist
 	}
