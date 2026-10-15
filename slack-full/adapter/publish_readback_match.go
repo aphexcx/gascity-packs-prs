@@ -393,7 +393,7 @@ func slackReadbackSeparatorBefore(prefix string) bool {
 }
 
 // Return only actual formatting characters, excluding escapes, keycaps and
-// apostrophes inside words. Paired typographic quotes retain their own state.
+// apostrophes/underscores inside words. Paired quotes retain their own state.
 func slackReadbackMarker(text string, at int) uint16 {
 	r, width := utf8.DecodeRuneInString(text[at:])
 	bit := strings.IndexRune("*_~'\"", r)
@@ -412,7 +412,7 @@ func slackReadbackMarker(text string, at int) uint16 {
 	if bit < 0 || (r == '*' && slackEmojiUnitPrefix(text[at:]) > 0) || slackReadbackEscaped(text, at) {
 		return 0
 	}
-	if r == '\'' || r == '‘' || r == '’' {
+	if r == '_' || r == '\'' || r == '‘' || r == '’' {
 		before, _ := utf8.DecodeLastRuneInString(text[:at])
 		after, _ := utf8.DecodeRuneInString(text[at+width:])
 		word := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' }
@@ -470,10 +470,20 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 		// A recognized closing marker ends the URI's literal protection.
 		// Require the same prefix and marker in stored text; the caller's
 		// prose comparison handles emoji aliases after that boundary.
-		for i, r := range literal {
-			if atProseBoundary(i) {
-				return i, depth, strings.HasPrefix(stored, literal[:i+utf8.RuneLen(r)])
+		for i := 0; i < len(literal); {
+			// Shortcode identifiers are atomic, including custom names
+			// with leading underscores; their markers cannot close prose.
+			if literal[i] == ':' {
+				if end := strings.IndexByte(literal[i+1:], ':'); end >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(literal[i:i+end+2])) {
+					i += end + 2
+					continue
+				}
 			}
+			_, width := utf8.DecodeRuneInString(literal[i:])
+			if atProseBoundary(i) {
+				return i, depth, strings.HasPrefix(stored, literal[:i+width])
+			}
+			i += width
 		}
 		return len(literal), depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
