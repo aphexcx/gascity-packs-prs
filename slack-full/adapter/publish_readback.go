@@ -208,8 +208,7 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // slackVerbatimSpan matches the text Slack stores as typed, which the fold
 // copies through: a closed mrkdwn code span (a fenced block between two
 // triple backticks, or an inline span between two single backticks on one
-// line), a bare URI token of any scheme (`https://…`, `s3://…`), and a
-// scheme-less domain with a path, query or fragment (`hou.vc/:id:/x`). Slack
+// line) and a bare URI token of any scheme (`https://…`, `s3://…`). Slack
 // renders a code span as typed and auto-links a URL without touching its
 // characters, so a shortcode-shaped token in either is code or a path
 // segment, not an emoji — even one whose name Slack does have, such as the
@@ -218,8 +217,9 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 // sides and a changed snippet or URL would read back as delivered (the
 // lane's codex rounds 6, 8 and 9). An unclosed backtick is a literal
 // character and opens no span.
-var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+|" +
-	`(?:(?:[\pL\pN-]+\.)+[\pL][\pL\pN-]*|(?:[0-9]{1,3}\.){3}[0-9]{1,3}|\[[0-9A-Fa-f:]+\])(?::[0-9]+)?[/?#][^\s<>|]*`)
+var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+")
+
+var slackLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
@@ -608,6 +608,7 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
 	if !slackExplicitLinkDestinationsMatch(target.expectedText, message.Text) ||
+		!slackAutoLinkLabelsMatch(target.expectedText, message.Text) ||
 		(slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
 			!slackEmojiExpansionMatches(target.expectedText, message.Text)) {
 		return readbackFailure(slackReadbackUnconfirmed, false,
