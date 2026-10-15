@@ -37,11 +37,12 @@ var errInvalidPublishReceipt = errors.New("invalid publish receipt")
 // digest covers the alias-rewritten UTF-8 bytes sent to chat.postMessage, not
 // Slack's canonicalized readback. readback is pending until the read concludes,
 // then confirmed, readback_unconfirmed, readback_unavailable, or readback_auth.
-// delivered is true only after timestamp + canonicalized text verification.
+// delivered is true once Slack accepts the timestamp; readback separately
+// records timestamp + canonicalized text verification. See docs/delivery-evidence.md.
 //
 // A receipt is written as soon as Slack accepts the post with a ts, then
 // atomically updated after readback, including retry re-verification. A crash
-// between these steps leaves pending evidence of acceptance, not delivery.
+// between these steps leaves delivered=true with readback=pending.
 // Confirmed evidence cannot be downgraded by a slower read of the same post.
 // Reusing a key for a newer accepted post replaces its previous receipt;
 // Slack timestamps order acceptance even when HTTP responses arrive out of
@@ -176,8 +177,8 @@ func (s *publishReceiptStore) RecordPosted(key string, receipt publishReceipt, p
 		return err
 	}
 	return s.write(s.path(key), storedPublishReceipt{
-		ConversationID: receipt.Conversation.ConversationID,
-		MessageID:      receipt.MessageID, ThreadTS: post.ThreadTS, ReplyToMessageID: post.ThreadTS,
+		Delivered: true, ConversationID: receipt.Conversation.ConversationID,
+		MessageID: receipt.MessageID, ThreadTS: post.ThreadTS, ReplyToMessageID: post.ThreadTS,
 		PostedTextSHA256: publishReceiptDigest(post.Text), PostedAt: s.now().UTC(), Readback: "pending",
 	})
 }
@@ -189,12 +190,12 @@ func (s *publishReceiptStore) RecordReadback(key string, receipt publishReceipt)
 	if err != nil {
 		return err
 	}
-	if stored.MessageID != receipt.MessageID || stored.ConversationID != receipt.Conversation.ConversationID || stored.Delivered {
+	if stored.MessageID != receipt.MessageID || stored.ConversationID != receipt.Conversation.ConversationID || stored.Readback == "confirmed" {
 		return nil // stale update, or a faster read already confirmed this post
 	}
 	stored.Delivered, stored.FailureKind = receipt.Delivered, receipt.FailureKind
 	stored.Readback = receipt.Metadata[receiptMetadataKeyReadback]
-	if receipt.Delivered {
+	if publishReadbackConfirmed(receipt) {
 		stored.Readback = "confirmed"
 	}
 	if stored.Readback == "" {

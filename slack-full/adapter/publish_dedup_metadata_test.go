@@ -71,15 +71,15 @@ func TestReplayPublishReceiptConcurrentReVerifiesDoNotRace(t *testing.T) {
 			defer wg.Done()
 			replay, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
 			receipt := replay.receipt
-			if !ok || receipt.Delivered {
-				t.Errorf("replay = %+v, %v; want the remembered undelivered receipt", receipt, ok)
+			if !ok || !receipt.Delivered || publishReadbackConfirmed(receipt) {
+				t.Errorf("replay = %+v, %v; want the accepted but unconfirmed receipt", receipt, ok)
 			}
 		}()
 	}
 	wg.Wait()
 
 	cached, ok := dedup.Get("k-1")
-	if !ok || cached.Delivered || cached.MessageID != "1700.001" || cached.Metadata[receiptMetadataKeyReadback] != slackReadbackUnavailable {
+	if !ok || !cached.Delivered || publishReadbackConfirmed(cached) || cached.MessageID != "1700.001" || cached.Metadata[receiptMetadataKeyReadback] != slackReadbackUnavailable {
 		t.Fatalf("cached receipt after concurrent re-verifies = %+v, %v", cached, ok)
 	}
 }

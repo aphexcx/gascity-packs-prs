@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Accepted text posts no longer fail when readback is unconfirmed** (gp-yj6n).
+  A Slack message timestamp now preserves `delivered=true` with no publish
+  failure kind. Readback absence, text mismatch, transport failure, and auth
+  failures remain visible in receipt metadata and the durable evidence store.
+  Keyed retries recheck the accepted timestamp without reposting; confirmation
+  bookkeeping remains once-only. The three text publish/reply CLIs include
+  metadata in terse JSON, exit zero on a timestamp (including legacy receipts),
+  and report unconfirmed reads on stderr. See [delivery evidence](docs/delivery-evidence.md).
+  The gp-obim normalizer already handles the incident's two mailto wrappers;
+  this change preserves that comparator and adds recorded-incident coverage.
+
 - **Keyed outbound messages no longer carry a visible reference footer**
   (gp-obim). Supersedes the entry "Outbound publishes carrying an idempotency
   key are stamped with a low-visibility reference marker" below. Message text

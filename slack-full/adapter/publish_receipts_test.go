@@ -42,7 +42,7 @@ func TestPublishReceiptSurvivesRestartAndReadbackUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Delivered || got.Readback != "pending" || got.ConversationID != "C1" || got.MessageID != "1700.002" || got.ThreadTS != "1700.001" || got.ReplyToMessageID != got.ThreadTS || !got.PostedAt.Equal(postedAt) {
+	if !got.Delivered || got.Readback != "pending" || got.ConversationID != "C1" || got.MessageID != "1700.002" || got.ThreadTS != "1700.001" || got.ReplyToMessageID != got.ThreadTS || !got.PostedAt.Equal(postedAt) {
 		t.Fatalf("pending receipt = %+v", got)
 	}
 	if got.PostedTextSHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
@@ -66,8 +66,8 @@ func TestPublishReceiptSurvivesRestartAndReadbackUpdates(t *testing.T) {
 		t.Fatalf("confirmed receipt after restart = %+v, %v", got, err)
 	}
 	// A slow failed read cannot downgrade proof, nor overwrite a newer post.
-	receipt.Delivered = false
-	receipt.FailureKind = "transient"
+	receipt.Delivered = true
+	receipt.FailureKind = ""
 	receipt.Metadata = map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}
 	if err := store.RecordReadback(key, receipt); err != nil {
 		t.Fatal(err)
@@ -214,7 +214,7 @@ func TestPublishReceiptGET(t *testing.T) {
 				if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
 					t.Fatal(err)
 				}
-				if got["delivered"] != false || got["conversation_id"] != "C1" || got["message_id"] != "1.2" || got["thread_ts"] != "1.1" || got["reply_to_message_id"] != "1.1" || got["readback"] != "pending" {
+				if got["delivered"] != true || got["conversation_id"] != "C1" || got["message_id"] != "1.2" || got["thread_ts"] != "1.1" || got["reply_to_message_id"] != "1.1" || got["readback"] != "pending" {
 					t.Fatalf("flat receipt shape = %v", got)
 				}
 			}
@@ -337,7 +337,7 @@ func TestHandlePublishPersistsAcceptanceBeforeReadbackAndRetry(t *testing.T) {
 		if err := json.Unmarshal(w.Body.Bytes(), &receipt); err != nil {
 			t.Fatal(err)
 		}
-		if receipt.Delivered != confirmed || captured.Text != posted || posts != 1 {
+		if !receipt.Delivered || publishReadbackConfirmed(receipt) != confirmed || captured.Text != posted || posts != 1 {
 			t.Fatalf("receipt=%+v text=%q posts=%d", receipt, captured.Text, posts)
 		}
 		reopened := testPublishReceiptStore(t, store.dir)
@@ -346,7 +346,7 @@ func TestHandlePublishPersistsAcceptanceBeforeReadbackAndRetry(t *testing.T) {
 		if confirmed {
 			wantState = "confirmed"
 		}
-		if err != nil || got.Delivered != confirmed || got.Readback != wantState || got.FailureKind != receipt.FailureKind {
+		if err != nil || !got.Delivered || got.Readback != wantState || got.FailureKind != receipt.FailureKind {
 			t.Fatalf("persisted readback = %+v, %v", got, err)
 		}
 	}
@@ -412,7 +412,7 @@ func TestHandlePublishPersistenceFailureConcurrentReplays(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				if receipt.Delivered != confirmed || receipt.MessageID != "1.2" || receipt.Metadata["receipt_store"] != "unavailable" {
+				if !receipt.Delivered || publishReadbackConfirmed(receipt) != confirmed || receipt.MessageID != "1.2" || receipt.Metadata["receipt_store"] != "unavailable" {
 					t.Errorf("disk failure receipt=%+v", receipt)
 				}
 			}
