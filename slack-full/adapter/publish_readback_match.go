@@ -85,15 +85,10 @@ func slackReadbackTextMatches(expected, stored string) bool {
 		p := pendingSuffix
 		expectedEnd = min(expectedEnd, p.limit)
 		expected := expectedText[p.expectedStart:expectedEnd]
-		// Original markup supplies a literal URI boundary only when the
-		// corresponding stored markup starts after the same literal bytes.
-		if !p.emoji && p.markup && expectedEnd == p.limit && strings.IndexAny(expected, " \t\n\f\r<>|") < 0 {
-			boundary := p.storedStart + len(expected)
-			if boundary <= storedEnd && storedMarkupStarts[boundary] {
-				storedEnd = boundary
-			}
+		atMarkupEnd := func(offset int) bool {
+			return p.markup && expectedEnd == p.limit && storedMarkupStarts[p.storedStart+offset]
 		}
-		return slackPreservedURLSuffix(expected, storedText[p.storedStart:storedEnd], p.prefix, p.closing, p.shortcodes, p.emoji)
+		return slackPreservedURLSuffix(expected, storedText[p.storedStart:storedEnd], p.prefix, p.closing, p.shortcodes, p.emoji, atMarkupEnd)
 	}
 	// A mismatch with many repeated labels must not repeatedly fold growing
 	// prefixes. Successful alignment consumes each span once; ambiguous failed
@@ -241,8 +236,19 @@ func slackReadbackFormatting(text string, markup [][2]int) []uint8 {
 			skipEnd = max(skipEnd, markup[cursor][1])
 			cursor++
 		}
+		if i < skipEnd {
+			continue
+		}
+		// Shortcode identifiers (including custom names) and Unicode
+		// keycaps are atomic text, not formatting delimiters.
+		if text[i] == ':' {
+			if end := strings.IndexByte(text[i+1:], ':'); end >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(text[i:i+end+2])) {
+				skipEnd = i + end + 2
+				continue
+			}
+		}
 		bit := strings.IndexByte("*_~", text[i])
-		if i < skipEnd || bit < 0 {
+		if bit < 0 || (text[i] == '*' && slackEmojiUnitPrefix(text[i:]) > 0) {
 			continue
 		}
 		slashes := 0
@@ -255,7 +261,7 @@ func slackReadbackFormatting(text string, markup [][2]int) []uint8 {
 		mask := uint8(1 << bit)
 		before, _ := utf8.DecodeLastRuneInString(text[:i])
 		after, _ := utf8.DecodeRuneInString(text[i+1:])
-		if state&mask != 0 || (!unicode.IsLetter(before) && !unicode.IsNumber(before) && !unicode.IsSpace(after) && i+1 < len(text)) {
+		if state&mask != 0 || (!unicode.IsLetter(before) && !unicode.IsNumber(before) && before != '_' && !unicode.IsSpace(after) && i+1 < len(text)) {
 			state ^= mask
 		}
 	}
@@ -293,7 +299,7 @@ func slackExplicitLabelsMatch(expected, stored slackReadbackLink) bool {
 // the ordinary prose fold, emoji may convert but cannot disappear here.
 // Typed shortcode-shaped URL paths stay literal; leading hostname-adjacent
 // shortcodes are prose (they cannot be a numeric port).
-func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowShortcodes, allowEmoji bool) bool {
+func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowShortcodes, allowEmoji bool, atMarkupEnd func(int) bool) bool {
 	if !allowEmoji {
 		// Preserve the entire remaining source URI token, using the same
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
@@ -304,7 +310,8 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowS
 			}
 			return text
 		}
-		return token(expected) == token(stored)
+		literal := token(expected)
+		return literal == token(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
 	var depth [3]int
 	for _, r := range urlPrefix {
@@ -318,11 +325,11 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowS
 	for i < len(expected) {
 		r, width := utf8.DecodeRuneInString(expected[i:])
 		if unicode.IsSpace(r) || strings.ContainsRune(closing, r) {
-			return true
+			return strings.HasPrefix(stored[j:], expected[i:i+width])
 		}
 		if at := strings.IndexRune(")]}", r); at >= 0 {
 			if depth[at] == 0 {
-				return true
+				return strings.HasPrefix(stored[j:], expected[i:i+width])
 			}
 			depth[at]--
 		} else if at := strings.IndexRune("([{", r); at >= 0 {
@@ -332,12 +339,12 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowS
 			// These characters end a bare hostname. A slash, query,
 			// fragment, port or continued domain still keeps URL protection.
 			if strings.ContainsRune(",;!({'\"~=&", r) || (r == '*' && slackEmojiUnitPrefix(expected[i:]) == 0) {
-				return true
+				return strings.HasPrefix(stored[j:], expected[i:i+width])
 			}
 			if r == '.' {
 				next, _ := utf8.DecodeRuneInString(expected[i+width:])
 				if !unicode.IsLetter(next) && !unicode.IsNumber(next) && next != '-' && next != '_' {
-					return true
+					return strings.HasPrefix(stored[j:], expected[i:i+width])
 				}
 			}
 		}
@@ -369,7 +376,7 @@ func slackPreservedURLSuffix(expected, stored, urlPrefix, closing string, allowS
 		}
 		i, j = i+width, j+width
 	}
-	return true
+	return j == len(stored) || atMarkupEnd(j)
 }
 
 // Inputs have already had links/entities normalized exactly once.
