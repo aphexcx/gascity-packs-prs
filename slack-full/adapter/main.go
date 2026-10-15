@@ -1308,7 +1308,8 @@ type publishReceipt struct {
 	// receipt or durable evidence. It freezes the alias-rewritten text and
 	// destination of the accepted post so a later alias reload cannot make
 	// re-verification compare the old message against a newly rewritten body.
-	readbackTarget slackReadbackTarget
+	readbackTarget  slackReadbackTarget
+	sourceSessionID string
 }
 
 type externalActor struct {
@@ -2646,7 +2647,16 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			// already delivered runs nothing: the original delivery
 			// consumed the busy mark and recorded the thread.
 			if replay.reVerified {
-				recordDeliveredPublish(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, cached.MessageID, identitySessionID)
+				// The original post owns the delivery effects even if this retry
+				// arrived after a binding, thread, or session change.
+				bookkeepingTarget, bookkeepingSessionID := target, identitySessionID
+				if cached.readbackTarget.messageTS != "" {
+					bookkeepingTarget = cached.readbackTarget
+				}
+				if cached.sourceSessionID != "" {
+					bookkeepingSessionID = cached.sourceSessionID
+				}
+				recordDeliveredPublish(cfg, bookkeepingTarget.channel, bookkeepingTarget.threadTS, cached.MessageID, bookkeepingSessionID)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(cached)
@@ -2701,6 +2711,7 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 			cfg.publishReceipts.recordPosted(req.IdempotencyKey, &receipt, post)
 			target.messageTS = slackResp.TS
 			receipt.readbackTarget = target
+			receipt.sourceSessionID = identitySessionID
 			confirmPublishReceipt(cfg.slackBotToken, &receipt, target)
 			cfg.publishReceipts.recordReadback(req.IdempotencyKey, &receipt)
 		}

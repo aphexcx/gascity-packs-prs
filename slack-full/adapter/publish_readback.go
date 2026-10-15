@@ -172,6 +172,9 @@ var slackAngleSpan = regexp.MustCompile(`<([^<>]*)>`)
 // Code spans are literal: do not interpret link labels inside them.
 var slackCodeOrAngleSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|<[^<>]*>")
 
+// Names on Slack references are display labels; the ID is their destination.
+var slackReferenceTarget = regexp.MustCompile(`^(?:@[UW][A-Z0-9]+|#[CG][A-Z0-9]+|!subteam\^S[A-Z0-9]+)$`)
+
 // slackEmojiShortcode matches one `:name:` token wherever it stands — glued
 // to a word or not. Whether the token IS an emoji is decided by its name
 // alone (slackIsStandardEmojiName): Slack stores a Unicode emoji as the colon
@@ -238,6 +241,16 @@ func slackNormalizeText(text string) string {
 		}
 		body := span[1 : len(span)-1]
 		target, label, labeled := strings.Cut(body, "|")
+		if labeled && slackReferenceTarget.MatchString(target) {
+			return target
+		}
+		if strings.HasPrefix(target, "mailto:") {
+			address := strings.TrimPrefix(target, "mailto:")
+			local, domain, email := strings.Cut(address, "@")
+			if email && local != "" && domain != "" && (!labeled || label == address) {
+				return address
+			}
+		}
 		// Slack may label an auto-link with the original URL, including a
 		// www. URL with an implicit http scheme. Fold only redundant labels:
 		// arbitrary labels must retain their destination for the comparison.
