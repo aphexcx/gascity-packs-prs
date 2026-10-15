@@ -467,25 +467,48 @@ func slackPreservedURLSuffix(expected, stored string, depth [3]int, allowShortco
 		// delimiters as slackVerbatimSpan. Quotes and punctuation can be
 		// literal path/query characters, regardless of Slack's link end.
 		literal := slackURIToken(expected)
-		// A recognized closing marker ends the URI's literal protection.
-		// Require the same prefix and marker in stored text; the caller's
-		// prose comparison handles emoji aliases after that boundary.
+		// Only a trailing run of closing formatting markers and emoji
+		// can leave URI protection early. A marker followed by path text
+		// (such as ~user) stays literal. Scan once, retaining the start of
+		// the last qualifying run; shortcode identifiers stay atomic.
+		boundary, markerEnd := -1, 0
 		for i := 0; i < len(literal); {
-			// Shortcode identifiers are atomic, including custom names
-			// with leading underscores; their markers cannot close prose.
+			if n := slackEmojiUnitPrefix(literal[i:]); n > 0 {
+				i += n
+				continue
+			}
 			if literal[i] == ':' {
 				if end := strings.IndexByte(literal[i+1:], ':'); end >= 0 && slackEmojiShortcode.MatchString(strings.ToLower(literal[i:i+end+2])) {
+					boundary = -1
 					i += end + 2
 					continue
 				}
 			}
-			_, width := utf8.DecodeRuneInString(literal[i:])
-			if atProseBoundary(i) {
-				return i, depth, strings.HasPrefix(stored, literal[:i+width])
+			r, width := utf8.DecodeRuneInString(literal[i:])
+			if strings.ContainsRune("*_~", r) && atProseBoundary(i) {
+				if boundary < 0 {
+					boundary, markerEnd = i, i+width
+				}
+			} else {
+				boundary = -1
 			}
 			i += width
 		}
-		return len(literal), depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
+		if boundary >= 0 {
+			// The caller compares the remaining prose with emoji folding.
+			return boundary, depth, strings.HasPrefix(stored, literal[:markerEnd])
+		}
+		// Other punctuation, including quoted query contents, retains the
+		// original literal rule. Trailing closers still update prose state.
+		opaque := len(literal)
+		for opaque > 0 {
+			_, width := utf8.DecodeLastRuneInString(literal[:opaque])
+			if !atProseBoundary(opaque - width) {
+				break
+			}
+			opaque -= width
+		}
+		return opaque, depth, literal == slackURIToken(stored) || (literal == expected && strings.HasPrefix(stored, literal) && atMarkupEnd(len(literal)))
 	}
 	i, j := 0, 0
 	for i < len(expected) {
