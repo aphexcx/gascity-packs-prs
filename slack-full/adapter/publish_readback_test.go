@@ -407,6 +407,7 @@ func TestHandlePublishKeyedAutoLinksReadBackWithoutDuplicate(t *testing.T) {
 		{"round4 curly single opening quote stays literal", "‘www.a.co/x‘:id:", "‘<http://www.a.co/x|www.a.co/x>‘:ok:", false},
 		{"round4 guillemet opening quote stays literal", "«www.a.co/x«:id:", "«<http://www.a.co/x|www.a.co/x>«:ok:", false},
 		{"round4 single guillemet opening quote stays literal", "‹www.a.co/x‹:id:", "‹<http://www.a.co/x|www.a.co/x>‹:ok:", false},
+		{"round4 literal underscore run before auto link", "a" + strings.Repeat("_", 39970) + "b www.a.co", "a" + strings.Repeat("_", 39970) + "b <http://www.a.co|www.a.co>", true},
 		{"round4 internal Unicode before path text stays literal", "https://a.co/🎉report", "<https://a.co/>:x:report", false},
 		{"round4 implicit internal Unicode before path text stays literal", "www.a.co/🎉report", "<http://www.a.co/|www.a.co/>:x:report", false},
 		{"round4 userinfo shortcode stays literal", "https://user:id:@example.com", "<https://user>:ok:@example.com", false},

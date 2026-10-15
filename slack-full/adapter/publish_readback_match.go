@@ -333,10 +333,10 @@ func slackReadbackFormattingMatches(text string, markup, links [][2]int, checkSu
 			}
 		}
 		bit, width := slackReadbackMarker(text, i)
+		skipEnd = i + width
 		if bit < 0 {
 			continue
 		}
-		skipEnd = i + width
 		r, _ := utf8.DecodeRuneInString(text[i:])
 		before, _ := utf8.DecodeLastRuneInString(text[:i])
 		after, _ := utf8.DecodeRuneInString(text[i+width:])
