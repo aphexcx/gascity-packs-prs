@@ -1,24 +1,29 @@
 package main
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 )
 
 type slackReadbackLink struct {
-	start, end    int
-	target, label string
+	start, end, textStart int
+	target, label         string
 }
 
 func slackReadbackLinks(text string) []slackReadbackLink {
 	var result []slackReadbackLink
+	rawEnd, textEnd := 0, 0
 	for _, span := range slackCodeOrAngleSpan.FindAllStringIndex(text, -1) {
 		if text[span[0]] != '<' {
 			continue
 		}
 		target, label, _ := strings.Cut(text[span[0]+1:span[1]-1], "|")
 		if slackLinkScheme.MatchString(target) {
-			result = append(result, slackReadbackLink{span[0], span[1], slackEntityUnescape.Replace(target), slackEntityUnescape.Replace(label)})
+			textStart := textEnd + len(slackNormalizeLinks(text[rawEnd:span[0]]))
+			textEnd = textStart + len(slackNormalizeLinks(text[span[0]:span[1]]))
+			rawEnd = span[1]
+			result = append(result, slackReadbackLink{span[0], span[1], textStart, slackEntityUnescape.Replace(target), slackEntityUnescape.Replace(label)})
 		}
 	}
 	return result
@@ -64,36 +69,38 @@ func slackExplicitLinkDestinationsMatch(expected, stored string) bool {
 // hostname or swallowing punctuation/emoji after a URL.
 func slackAutoLinkLabelsMatch(expected, stored string) bool {
 	expectedText := slackNormalizeLinks(expected)
-	explicit := slackReadbackLinks(expected)
+	storedText := slackNormalizeLinks(stored)
+	explicit := make(map[int]string)
+	for _, link := range slackReadbackLinks(expected) {
+		explicit[link.textStart] = link.target
+	}
+	expectedCursor, storedCursor := 0, 0
 	for _, link := range slackReadbackLinks(stored) {
 		if link.label == "" || (link.target != "http://"+link.label && link.target != "https://"+link.label &&
 			!(strings.HasPrefix(link.label, "www.") && link.target == "http://"+strings.TrimPrefix(link.label, "www."))) {
 			continue
 		}
-		prefix := slackNormalizeLinks(stored[:link.start])
+		prefix := storedText[storedCursor:link.textStart]
 		matched := false
-		for _, original := range explicit {
-			if original.target == link.target && slackNormalizedPrefixesMatch(slackNormalizeLinks(expected[:original.start]), prefix) {
-				matched = true // the explicit-destination guard checks this link
-				break
-			}
-		}
-		if matched {
-			continue
-		}
-		// A scheme-bearing label was already an explicit URI in the prose;
-		// prefixing another scheme changes its destination.
-		if slackLinkScheme.MatchString(link.label) {
-			return false
-		}
-		for offset := 0; offset <= len(expectedText); {
+		// Host:port is a bare URL, but a URI scheme or HTTP userinfo needs
+		// an explicit matching link: plain user@host denotes an email address.
+		destination, err := url.Parse(link.target)
+		requiresExplicit := err != nil || destination.User != nil || slackAbsoluteLinkScheme.MatchString(link.label)
+		// Advance both sides after each match. Repeated labels must not
+		// rescan earlier occurrences or re-fold growing message prefixes.
+		for offset := expectedCursor; offset <= len(expectedText); {
 			at := strings.Index(expectedText[offset:], link.label)
 			if at < 0 {
 				break
 			}
 			at += offset
-			if slackNormalizedPrefixesMatch(expectedText[:at], prefix) {
+			if slackNormalizedPrefixesMatch(expectedText[expectedCursor:at], prefix) {
+				if requiresExplicit && explicit[at] != link.target {
+					return false
+				}
 				matched = true
+				expectedCursor = at + len(link.label)
+				storedCursor = link.textStart + len(link.label)
 				break
 			}
 			offset = at + len(link.label)

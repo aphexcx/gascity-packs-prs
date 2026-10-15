@@ -220,6 +220,7 @@ var slackKeycapSequence = regexp.MustCompile(`[0-9#*]\x{FE0F}?\x{20E3}`)
 var slackVerbatimSpan = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`|[a-z][a-z0-9+.-]*://[^\\s<>|]+")
 
 var slackLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
+var slackAbsoluteLinkScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://`)
 
 // slackNormalizeText folds the transformations Slack applies between
 // chat.postMessage and conversations.history: it entity-escapes `&`, `<` and
@@ -607,6 +608,9 @@ func readBackPublishedMessageOnce(client *http.Client, token string, target slac
 // Both keyed and unkeyed publishes use the same content check after the caller
 // has selected the exact message timestamp.
 func matchReadbackMessage(message slackReadbackMessage, target slackReadbackTarget) error {
+	if message.Text == target.expectedText {
+		return nil
+	}
 	if !slackExplicitLinkDestinationsMatch(target.expectedText, message.Text) ||
 		!slackAutoLinkLabelsMatch(target.expectedText, message.Text) ||
 		(slackNormalizeText(message.Text) != slackNormalizeText(target.expectedText) &&
