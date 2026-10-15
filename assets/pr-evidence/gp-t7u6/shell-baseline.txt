@@ -1,0 +1,30 @@
+gastown pack asset tests passed
+gastown theme script tests passed
+ok   leg 1
+ok   leg 1b
+ok   leg 1c
+ok   leg 2
+ok   leg 3
+ok   leg 4
+ok   leg 5
+ok   leg 6
+ok   leg 7
+ok   leg 8
+ok   leg 9
+ok   leg 10
+--- leg summary (formula: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gastown/formulas/mol-refinery-patrol.toml) ---
+PASS leg 1
+PASS leg 1b
+PASS leg 1c
+PASS leg 2
+PASS leg 3
+PASS leg 4
+PASS leg 5
+PASS leg 6
+PASS leg 7
+PASS leg 8
+PASS leg 9
+PASS leg 10
+PASS: mol-refinery-patrol rebase guard (12 legs)
+gastown/tests/test_mol_witness_patrol_orphan_recovery.sh: line 130: syntax error near unexpected token `;;'
+FAIL: valid per-bead legacy worktree was rejected

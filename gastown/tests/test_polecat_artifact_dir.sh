@@ -669,7 +669,7 @@ test_workspace_metadata_reads_fail_closed_without_pipefail() {
 }
 
 test_workspace_collision_fails_closed_without_alternate() {
-    local tmp rig remote city provider canonical setup calls bd_subcommand
+    local tmp rig remote city provider canonical setup calls output bd_subcommand
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
     rig="$tmp/rig"
@@ -679,6 +679,7 @@ test_workspace_collision_fails_closed_without_alternate() {
     canonical="$city/.gc/worktrees/demo/artifacts/worktrees/ac-safe1"
     setup="$tmp/workspace-create.sh"
     calls="$tmp/gc-calls"
+    output="$tmp/output"
     bd_subcommand=$(printf '%s%s' b d)
 
     init_repo "$rig"
@@ -708,6 +709,12 @@ test_workspace_collision_fails_closed_without_alternate() {
                 "runtime drain-ack")
                     return 0
                     ;;
+                # These setup writes precede artifact validation and do not
+                # name a worktree. Reject every other metadata update.
+                "$bd_subcommand update ac-safe1 --unset-metadata handoff_stage" | \
+                "$bd_subcommand update ac-safe1 --set-metadata base_ref=refs/remotes/origin/main")
+                    return 0
+                    ;;
                 "$bd_subcommand update "*)
                     fail "canonical collision reached a metadata update"
                     ;;
@@ -722,10 +729,17 @@ test_workspace_collision_fails_closed_without_alternate() {
         cd "$provider"
         # shellcheck source=/dev/null
         source "$setup"
-    ); then
+    ) >"$output" 2>&1; then
         fail "invalid canonical-path collision did not stop workspace creation"
     fi
 
+    # A stub failure also exits nonzero: require the intended guard's reason
+    # so an unrelated early exit cannot make this safety test pass.
+    grep -qF 'Canonical artifact path already exists but is not this bead' "$output" ||
+        fail "canonical collision did not reach the artifact validation guard: $(cat "$output")"
+    if grep -q '^FAIL:' "$output"; then
+        fail "canonical collision hit an unexpected gc call: $(cat "$output")"
+    fi
     grep -qF 'preserve me' "$canonical/recovery.txt" ||
         fail "canonical collision contents were not preserved"
     if find "$city/.gc/worktrees/demo/artifacts" \
@@ -735,7 +749,7 @@ test_workspace_collision_fails_closed_without_alternate() {
 }
 
 test_workspace_rejects_redirected_artifact_root_before_creation() {
-    local tmp rig remote city provider redirected setup calls bd_subcommand
+    local tmp rig remote city provider redirected setup calls output bd_subcommand
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' RETURN
     rig="$tmp/rig"
@@ -745,6 +759,7 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
     redirected="$tmp/redirected-artifacts"
     setup="$tmp/workspace-create.sh"
     calls="$tmp/gc-calls"
+    output="$tmp/output"
     bd_subcommand=$(printf '%s%s' b d)
 
     init_repo "$rig"
@@ -774,6 +789,11 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
                 "runtime drain-ack")
                     return 0
                     ;;
+                # Same preparatory writes as the collision fixture above.
+                "$bd_subcommand update ac-safe1 --unset-metadata handoff_stage" | \
+                "$bd_subcommand update ac-safe1 --set-metadata base_ref=refs/remotes/origin/main")
+                    return 0
+                    ;;
                 "$bd_subcommand update "*)
                     fail "redirected artifact root reached a metadata update"
                     ;;
@@ -788,10 +808,15 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
         cd "$provider"
         # shellcheck source=/dev/null
         source "$setup"
-    ); then
+    ) >"$output" 2>&1; then
         fail "redirected artifact root did not stop workspace creation"
     fi
 
+    grep -qF 'Task artifact root is redirected or is not a directory:' "$output" ||
+        fail "redirected artifact root did not reach the redirection guard: $(cat "$output")"
+    if grep -q '^FAIL:' "$output"; then
+        fail "redirected artifact root hit an unexpected gc call: $(cat "$output")"
+    fi
     [[ ! -e "$redirected/worktrees" ]] ||
         fail "workspace setup wrote through a redirected artifact root"
 }

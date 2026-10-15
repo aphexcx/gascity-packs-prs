@@ -1,0 +1,5 @@
+Fork base: ad841a9a65a108a65769cb5bc5b668937611dead
+Upstream main: 520e95cb22992a8a1017f7a60da267f203497c7e
+slack-full/adapter/run.sh: byte-identical at both bases (blob 4112acaf45fccc365d5652b3c72b0e27dfd3cea3).
+The run.sh-only transplant is preserved as upstream-run-sh.patch. No upstream push: the bead explicitly excludes publishing there. Mayor can route the twin from this patch.
+Validated the run.sh-only patch with git apply --cached --check against a temporary index seeded from upstream 520e95cb: exit 0, no conflicts (no shared-index or checkout mutation).

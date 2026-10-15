@@ -34,6 +34,12 @@ jobs:
       - name: Install Python test dependencies
         run: python3 -m pip install PyYAML pytest jsonschema
 
+      - name: Install Gastown shell test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ripgrep
+          rg --version
+
       - name: Validate registry
         # --require-git: without git, no commit or content-hash verification runs at
         # all, so a missing worktree must fail rather than silently downgrade this to

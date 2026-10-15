@@ -1,0 +1,253 @@
+GC_NO_INSTALL=1 TMPDIR=/private/tmp PATH="/opt/homebrew/bin:/opt/homebrew/opt/gnu-sed/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH" bash -e -c 'for test_script in gastown/tests/test_*.sh; do bash "$test_script"; done'
+Exit: 0; all 11 shell scripts completed.
+
+gastown pack asset tests passed
+gastown theme script tests passed
+ok   leg 1
+ok   leg 1b
+ok   leg 1c
+ok   leg 2
+ok   leg 3
+ok   leg 4
+ok   leg 5
+ok   leg 6
+ok   leg 7
+ok   leg 8
+ok   leg 9
+ok   leg 10
+--- leg summary (formula: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/gastown/formulas/mol-refinery-patrol.toml) ---
+PASS leg 1
+PASS leg 1b
+PASS leg 1c
+PASS leg 2
+PASS leg 3
+PASS leg 4
+PASS leg 5
+PASS leg 6
+PASS leg 7
+PASS leg 8
+PASS leg 9
+PASS leg 10
+PASS: mol-refinery-patrol rebase guard (12 legs)
+mol-witness-patrol orphan recovery tests passed
+Preparing worktree (detached HEAD aad75b0)
+HEAD is now at aad75b0 fixture
+Could not read work bead metadata for ac-safe1.
+jq: parse error: Unfinished JSON term at EOF at line 1, column 1
+Invalid work bead response for ac-safe1; refusing to create or adopt an artifact.
+jq: error (at <stdin>:0): expected exactly one work bead object
+Invalid work bead response for ac-safe1; refusing to create or adopt an artifact.
+jq: error (at <stdin>:0): expected exactly one work bead object
+Invalid work bead response for ac-safe1; refusing to create or adopt an artifact.
+FAIL: canonical collision reached a metadata update
+FAIL: redirected artifact root reached a metadata update
+Preparing worktree (new branch 'gc-gastown.nux-1a69f734ba74')
+HEAD is now at 6825b99 tracked ignore fixture
+Preparing worktree (new branch 'gc-refinery-3e9bf63c6442')
+HEAD is now at 3c0a3f6 fixture
+From /private/tmp/tmp.uvWLlOwqII/remote
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+Preparing worktree (new branch 'gc-gastown.nux-2323cdc881fb')
+HEAD is now at 3bbc736 fixture
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+Already up to date.
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+Switched to branch 'gc-gastown.nux-2323cdc881fb'
+Updating 3bbc736..6569d30
+Fast-forward
+ main-b.txt | 1 +
+ 1 file changed, 1 insertion(+)
+ create mode 100644 main-b.txt
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+Previous HEAD position was ed54f25 task work
+Switched to branch 'gc-gastown.nux-2323cdc881fb'
+Already up to date.
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+worktree-setup: detached provider HEAD a562fb72273a09e9a3f2afdd06e0ec08d0d77d84 is not ref-reachable; preserving it and refusing sync
+worktree-setup: refusing to sync dirty provider worktree at /private/tmp/tmp.IMLsONTOBS/city/.gc/worktrees/demo/polecats/gastown.nux
+From /private/tmp/tmp.IMLsONTOBS/remote
+ * branch            main       -> FETCH_HEAD
+worktree-setup: stable provider branch gc-gastown.nux-2323cdc881fb has unique or diverged work; preserving it and refusing sync
+worktree-setup: refusing existing path that is not a worktree of /private/tmp/tmp.IMLsONTOBS/rig: /private/tmp/tmp.IMLsONTOBS/city/.gc/worktrees/demo/polecats/gastown.foreign
+ARTIFACT_CLEANUP_DEFERRED work=ac-safe1 status=blocked result=pull_request
+ARTIFACT_CLEANUP_COMPLETE work=ac-safe1 artifact=absent
+ARTIFACT_CLEANUP_COMPLETE work=ac-safe1 artifact=absent
+ARTIFACT_CLEANUP_COMPLETE work=ac-sweep artifact=absent
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-safe1: /private/tmp/tmp.oQj6e5L674/city-b/.gc/worktrees/demo/artifacts/worktrees/ac-safe1
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-cross-rig: /private/tmp/tmp.oQj6e5L674/city-a/.gc/worktrees/other/artifacts/worktrees/ac-cross-rig
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-namespace: /private/tmp/tmp.oQj6e5L674/city-a/.gc/worktrees/demo/refinery/worktrees/ac-namespace
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-wrong: /private/tmp/tmp.oQj6e5L674/city-a/.gc/worktrees/demo/artifacts/worktrees/ac-other
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-link: /private/tmp/tmp.oQj6e5L674/city-a/.gc/worktrees/demo/artifacts/worktrees/ac-link
+ARTIFACT_CLEANUP_BLOCKED unsafe artifact path for ac-foreign: /private/tmp/tmp.oQj6e5L674/city-a/.gc/worktrees/demo/artifacts/worktrees/ac-foreign
+ARTIFACT_CLEANUP_BLOCKED artifact is dirty for ac-dirty
+ARTIFACT_CLEANUP_COMPLETE work=ac-legacy artifact=absent
+ARTIFACT_CLEANUP_COMPLETE work=ac-unrelated artifact=absent
+ARTIFACT_CLEANUP_BLOCKED could not read origin/polecat/ac-unreachable for ac-unreachable; cleanup remains pending
+ARTIFACT_CLEANUP_BLOCKED merged SHA is not durable on origin/main for ac-bad-target
+ARTIFACT_CLEANUP_BLOCKED could not read origin/polecat/ac-pr or its PR head ref for ac-pr; cleanup remains pending
+ARTIFACT_CLEANUP_BLOCKED origin/polecat/ac-pr (or refs/pull//head) does not match the merged PR head for ac-pr
+ARTIFACT_CLEANUP_COMPLETE work=ac-pr artifact=absent
+ARTIFACT_CLEANUP_COMPLETE work=ac-mr artifact=absent
+ARTIFACT_CLEANUP_BLOCKED work bead changed before artifact removal for ac-race
+jq: error (at <stdin>:0): expected exactly the requested work bead object
+ARTIFACT_CLEANUP_BLOCKED invalid work bead response for ac-race
+Preparing worktree (new branch 'gc-gastown.nux-0c67e1c33363')
+HEAD is now at c75fd04 fixture
+injected git status failure
+worktree-setup: could not inspect provider worktree status at /private/tmp/tmp.criVCQr7wA/city/.gc/worktrees/demo/polecats/gastown.nux; refusing sync
+injected git status failure
+ARTIFACT_CLEANUP_BLOCKED could not inspect artifact status for ac-status
+injected git status failure
+ARTIFACT_CLEANUP_BLOCKED could not re-inspect artifact status for ac-status
+polecat artifact_dir tests passed
+polecat churn watcher tests passed
+polecat push gate tests passed
+ARTIFACT_CLEANUP_DEFERRED work=it-1 status=blocked result=pull_request_pending
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+ARTIFACT_CLEANUP_COMPLETE work=it-1 artifact=absent
+MERGED: closed it-1 and retired its artifact after verifying 96ad09021a1a32d7b5f065335e6c5bc80e00cc5c on origin/main.
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+Automatic merge went well; stopped before committing as requested
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+Automatic merge went well; stopped before committing as requested
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+Automatic merge went well; stopped before committing as requested
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+pr-merge-reconcile: artifact cleanup failed; pending marker retained for closed-bead retry
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+ARTIFACT_CLEANUP_COMPLETE work=it-1 artifact=absent
+MERGED: closed it-1 and retired its artifact after verifying 3c7eec64e60e908339df1b22b8c8a66fac0b8b8b on origin/main.
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+pr-merge-reconcile: merge verified but bead close failed; pending marker retained for retry
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+ARTIFACT_CLEANUP_COMPLETE work=it-1 artifact=absent
+MERGED: closed it-1 and retired its artifact after verifying c7d1db700900ecc0eeddf39c7251b5b52454c59a on origin/main.
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+pr-merge-reconcile: artifact cleanup failed; pending marker retained for closed-bead retry
+hint: Support for <GIT_DIR>/info/grafts is deprecated
+hint: and will be removed in a future Git version.
+hint:
+hint: Please use "git replace --convert-graft-file"
+hint: to convert the grafts into replace refs.
+hint:
+hint: Turn this message off by running
+hint: "git config set advice.graftFileDeprecated false"
+ARTIFACT_CLEANUP_COMPLETE work=it-1 artifact=absent
+MERGED: closed it-1 and retired its artifact after verifying 0185c4d7e1fdbb352795feba8936bc77e19a0aaa on origin/main.
+REVALIDATE: it-1 — PR head changed after refinery validation (bf8e75e74973ea48d402c3dd042e76d26db6506f -> cccccccccccccccccccccccccccccccccccccccc); quality gates must run again
+PR/artifact lifecycle integration tests passed
+pr-merge-reconcile: pull request repository example/repo does not match origin example/other
+PENDING: tr-92a — https://github.com/example/repo/pull/181 is still open.
+REVALIDATE: tr-92a — Interrupted PR handoff record is incomplete; full refinery validation is required
+PENDING: tr-92a — https://github.com/example/repo/pull/181 is still open.
+REVALIDATE: tr-92a — changed PR head already awaits quality-gate validation.
+PENDING: tr-92a — https://github.com/example/repo/pull/181 is still open.
+REVALIDATE: tr-92a — PR head changed after refinery validation (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -> cccccccccccccccccccccccccccccccccccccccc); quality gates must run again
+MERGED: closed tr-92a and retired its artifact after verifying bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb on origin/main.
+pr-merge-reconcile: merge verified but bead close failed; pending marker retained for retry
+MERGED: closed tr-92a and retired its artifact after verifying bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb on origin/main.
+pr-merge-reconcile: artifact cleanup failed; pending marker retained for closed-bead retry
+MERGED: closed tr-92a and retired its artifact after verifying bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb on origin/main.
+PENDING: tr-92a — https://github.com/example/repo/pull/181 is still open.
+PR merge reconciliation tests passed
+witness heartbeat check tests passed
+From /private/tmp/tmp.Z4pN0EvVYY/upstream
+ * branch            main       -> FETCH_HEAD
+   7cdeca7..e60ab5e  main       -> origin/main
+Updating 7cdeca7..e60ab5e
+Fast-forward
+From /private/tmp/tmp.Z4pN0EvVYY/upstream
+ * branch            main       -> FETCH_HEAD
+   e60ab5e..3a0960f  main       -> origin/main
+Updating e60ab5e..3a0960f
+Fast-forward
+worktree-setup sync tests passed
