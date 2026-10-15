@@ -15,9 +15,9 @@ Base: ad841a9a65a108a65769cb5bc5b668937611dead (fork main after gp-obim).
 - `go-tests.txt`: Go 1.26.5, prescribed full adapter command with GOFLAGS=-json for counting, 12,574 cases passed (1,349 top-level), 0 failures/skips. No Go source or Go test changed.
 - `python-no-slash.txt` and `python-with-slash.txt`: each 655 passed, 2 skipped, 2 existing os.fork warnings, Python 3.13.13. The cached environment supplies pytest/PyYAML/jsonschema offline. `python-baseline.txt`: the same two unchanged GOPATH tests failed before the run.sh fix.
 - `stub-mutation-check.txt`: 2/2 deliberately broken stubs rejected, proving unrelated setup errors no longer satisfy the safety assertions.
-- `change.diff`: zero-context source delta from the base. CI and Codex review records are added after the runs complete.
+- `change.diff`: zero-context source delta from the base. `ci-run.txt` and `ci-run.json` record Ubuntu CI run 38732073337 at e650c342: ripgrep installation, Python, role composition, maintained pack checks, lint baseline, and all Gastown shell tests passed. READY supplies final-head check status.
 - `python-ci-suites.txt`: wider CI-directory run completed with 2,204 passed, 43 skipped, 10,594 subtests passed, and 10 failures because shell subprocesses selected system Python without PyYAML. With the cached environment bin on PATH, `python-subprocess-recheck.txt` passed all 14 build-artifact checks (including all ten failures); no product changes. The corrected PATH is documented in the twin recipe.
-- `codex-review-r1.txt`: validated QUICK CLEAN at e650c342. A second round covers the subprocess PATH documentation refinement.
+- `codex-review-r1.txt`: validated QUICK CLEAN at e650c342. `codex-review-r2.txt`: validated QUICK CLEAN at 77336a4f, including the subprocess PATH documentation refinement. Subsequent changes add evidence only.
 - No Node or pnpm test was used; no unsupported-engine warning.
 
 ## Upstream scope

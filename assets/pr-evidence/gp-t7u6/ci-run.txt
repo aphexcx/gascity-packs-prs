@@ -1,0 +1,32 @@
+# CI run record
+
+https://github.com/aphexcx/gascity-packs-prs/actions/runs/38732073337
+Head: e650c342ff3f1d7259a94edb8a48aba96d7cce8e
+Captured using: gh run view 38732073337 --repo aphexcx/gascity-packs-prs --json url,headSha,status,conclusion,jobs
+
+Ripgrep installation and the Gastown shell step both passed. No shell assertions are waived.
+The snapshot below records the job state at capture. The final PR head adds only the reviewed Python PATH documentation and evidence; READY records its current check state.
+
+Job: Check — in_progress / pending
+- Set up job: success
+- Check out repository: success
+- Set up Python: success
+- Set up Go: success
+- Install Python test dependencies: success
+- Install Gastown shell test dependencies: success
+- Validate registry: success
+- Run Python pack tests: success
+- Lint and exercise shared role prompt composition: success
+- Stand each maintained pack up against gc: success
+- Check gastown lint findings against the pinned set: success
+- Run Gastown shell tests: success
+- Run root module embed tests: success
+- Run Slack full adapter tests: success
+- Run Slack full CLI tests: success
+- Run Slack channel adapter tests: success
+- Run Slack mini adapter tests: success
+- Run runtime-cloudflare module tests: success
+- Run runtime-cloudflare RPP conformance: in_progress
+- Post Set up Go: pending
+- Post Set up Python: pending
+- Post Check out repository: pending
