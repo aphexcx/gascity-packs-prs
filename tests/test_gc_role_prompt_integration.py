@@ -496,7 +496,7 @@ def test_provenance_record_and_summary_preserve_explicit_scope(
     env.update({
         'GC_HOME': ambient.env['GC_HOME'], 'GC_CITY': str(ambient.city_dir),
         'GC_CITY_PATH': str(ambient.city_dir), 'GC_CITY_ROOT': str(ambient.city_dir),
-        'GC_RIG': 'other', 'GC_BEADS': 'bd', 'BD_BIN': str(store),
+        'GC_RIG': 'other', 'GC_BEADS': 'bd',
         'GC_BIN': str(gc_test_bin), 'GC_NO_API': '1',
         'PATH': str(binary_dir) + os.pathsep + os.environ['PATH'],
         'PROVENANCE_TEST_STATE': str(state),
