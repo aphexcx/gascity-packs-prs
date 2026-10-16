@@ -146,6 +146,8 @@ const providerErrorShapes = [
     'the upload frame acknowledgement timed out'],
   [/^media upload returned no upload_id$/,
     'the upload init completed without an upload_id'],
+  [/^media upload exceeded its \d+ms budget$/,
+    'the media upload exceeded its time budget'],
 ];
 
 // The adapter uploader's failure (src/upload.js UploadStageError) is

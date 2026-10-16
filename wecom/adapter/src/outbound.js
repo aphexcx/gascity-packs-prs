@@ -623,6 +623,10 @@ const mediaKindSpecs = {
   },
 };
 
+// isMediaKind admits exactly the kinds above — own string keys, never an
+// inherited Object.prototype name.
+const isMediaKind = (kind) => typeof kind === 'string' && Object.hasOwn(mediaKindSpecs, kind);
+
 class ClientError extends Error {}
 class ForbiddenError extends Error {}
 
@@ -1687,7 +1691,10 @@ export function createOutboundPublisher(deps) {
       fail400('conversation.conversation_id and file_path are required');
       return;
     }
-    if (!(mediaKind in mediaKindSpecs)) {
+    // Own properties only (codex jg-bw5gsw r1): `in` admits inherited
+    // names — "constructor" / "__proto__" resolve to a spec with no size
+    // cap or format gate.
+    if (!isMediaKind(mediaKind)) {
       fail400(`media_kind must be one of: ${Object.keys(mediaKindSpecs).join(', ')}`);
       return;
     }
@@ -2335,7 +2342,7 @@ export function createOutboundPublisher(deps) {
       reply(400, { uploaded: false, failure_kind: 'invalid_request', error: 'file_path must be an absolute path' });
       return;
     }
-    if (!(mediaKind in mediaKindSpecs)) {
+    if (!isMediaKind(mediaKind)) {
       reply(400, {
         uploaded: false,
         failure_kind: 'invalid_request',

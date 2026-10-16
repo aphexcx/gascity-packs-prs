@@ -4,9 +4,10 @@
 // Pins the contract that fixes the 10/12–10/15 upload failures: one frame
 // outstanding across all uploads, size-scaled per-frame deadlines,
 // bounded retries (init and finish included) where any attempt's
-// acknowledgement completes the frame, reconnect-aware restarts from
-// init, the 100-chunk plan, allowlist-renderable failures, and a summary
-// log line that never carries the filename or provider ids.
+// acknowledgement completes the frame, reconnect-aware resumes of the
+// upload session (init again only when the server refuses it), the
+// overall budget, the 100-chunk plan, allowlist-renderable failures, and
+// a summary log line that never carries the filename or provider ids.
 
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -239,7 +240,7 @@ test('a negative acknowledgement keeps its errcode, never its errmsg', async () 
 
 // --- the connection ------------------------------------------------------------
 
-test('a dropped connection waits for re-authentication and restarts from init', async () => {
+test('a dropped connection waits for re-authentication and resumes the session at the first unacknowledged chunk', async () => {
   let dropped = false;
   const t = makeTransport((f) => {
     if (!dropped && f.cmd === UPLOAD_CMD.chunk && f.body.chunk_index === 1) {
@@ -252,9 +253,48 @@ test('a dropped connection waits for re-authentication and restarts from init', 
   });
   const { uploader, logs } = makeUploader(t, { chunkBytes: 64 * KiB });
   const out = await uploader.upload(bytes(150 * KiB), { type: 'file', filename: 'a.bin' });
-  assert.equal(out.media_id, 'MEDIA-UP-2', 'the second run used the new connection’s upload');
-  assert.deepEqual(cmds(t), ['init', 'chunk0', 'chunk1', 'init', 'chunk0', 'chunk1', 'chunk2', 'finish']);
-  assert.match(logs.at(-1), /1 restarts/);
+  // WeCom documents that an unexpired session survives a reconnect
+  // (101463 「断线重传」): same upload_id, no second init, chunk 0 not resent.
+  assert.equal(out.media_id, 'MEDIA-UP-1');
+  assert.deepEqual(cmds(t), ['init', 'chunk0', 'chunk1', 'chunk1', 'chunk2', 'finish']);
+  assert.ok(t.frames.filter((f) => f.cmd !== UPLOAD_CMD.init).every((f) => f.body.upload_id === 'UP-1'));
+  assert.match(logs.at(-1), /1 restarts \(1 resumed\)/);
+});
+
+test('a resumed session the server refuses starts over from init, without retrying the refused frame', async () => {
+  let dropped = false;
+  const t = makeTransport((f) => {
+    if (!dropped && f.cmd === UPLOAD_CMD.chunk && f.body.chunk_index === 1) {
+      dropped = true;
+      t.drop();
+      setTimeout(() => t.reconnect(), 5);
+      return { reject: new Error('WebSocket connection closed (code: 1006), reply for reqId: r cancelled') };
+    }
+    if (f.cmd === UPLOAD_CMD.chunk && f.body.upload_id === 'UP-1' && dropped) {
+      return { reject: { headers: {}, errcode: 846611, errmsg: 'invalid upload_id' } };
+    }
+    return null;
+  });
+  const { uploader, sleeps } = makeUploader(t, { chunkBytes: 64 * KiB });
+  const out = await uploader.upload(bytes(150 * KiB), { type: 'file', filename: 'a.bin' });
+  assert.equal(out.media_id, 'MEDIA-UP-2');
+  assert.deepEqual(cmds(t), ['init', 'chunk0', 'chunk1', 'chunk1', 'init', 'chunk0', 'chunk1', 'chunk2', 'finish']);
+  assert.deepEqual(sleeps, [], 'the refused resume frame is not retried with backoff');
+});
+
+test('an upload that outlives its budget stops before the next frame', async () => {
+  let clock = 0;
+  const t = makeTransport(() => { clock += 400; return null; });
+  const uploader = createMediaUploader({
+    transport: t,
+    options: { ackBaseMs: 40, floorBytesPerSec: 1e12, chunkBytes: 64 * KiB, maxUploadMs: 1000 },
+    now: () => clock,
+    sleep: async () => {},
+  });
+  const err = await uploader.upload(bytes(300 * KiB), { type: 'file', filename: 'a.bin' }).catch((e) => e);
+  assert.ok(err instanceof UploadStageError);
+  assert.match(describeProviderError(err), /^media upload failed at chunk \d+\/5 after 0 attempts: the media upload exceeded its time budget$/);
+  assert.ok(t.frames.length < 7, 'stopped before sending every frame');
 });
 
 test('restarts after connection loss are bounded', async () => {
@@ -267,7 +307,8 @@ test('restarts after connection loss are bounded', async () => {
   const { uploader } = makeUploader(t);
   const err = await uploader.upload(bytes(10 * KiB), { type: 'file', filename: 'a.bin' }).catch((e) => e);
   assert.ok(err instanceof UploadStageError);
-  assert.equal(t.frames.filter((f) => f.cmd === UPLOAD_CMD.init).length, uploadDefaults.restarts + 1);
+  assert.equal(t.frames.filter((f) => f.cmd === UPLOAD_CMD.init).length, 1, 'each reconnect resumed the session');
+  assert.equal(chunkFrames(t, 0).length, uploadDefaults.restarts + 1);
   assert.equal(describeProviderError(err),
     'media upload failed at chunk 1/1 after 3 attempts: the connection dropped before the acknowledgement arrived');
 });
@@ -296,7 +337,7 @@ test('the summary line carries sizes and timings, never the filename or provider
   const { uploader, logs } = makeUploader(t);
   await uploader.upload(bytes(10 * KiB), { type: 'file', filename: 'quarterly-secret.pdf' });
   const all = logs.join('\n');
-  assert.match(all, /^media upload ok: 10240 bytes, 1×512KiB chunks, 3 frames, 0 retries, 0 restarts, /);
+  assert.match(all, /^media upload ok: 10240 bytes, 1×512KiB chunks, 3 frames, 0 retries, 0 restarts \(0 resumed\), /);
   assert.ok(!all.includes('quarterly-secret'));
   assert.ok(!all.includes('UP-1'));
   assert.ok(!all.includes('MEDIA-'));

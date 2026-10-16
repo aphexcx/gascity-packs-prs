@@ -138,8 +138,11 @@
 //	WECOM_UPLOAD_RECONNECT_WAIT_MS
 //	                       How long an upload waits for the connection to
 //	                       re-authenticate before failing (default 30000);
-//	                       a reconnect mid-upload restarts it from init,
-//	                       at most twice.
+//	                       a reconnect mid-upload resumes the same WeCom
+//	                       upload session at the first unacknowledged
+//	                       chunk (sessions live 30 min across reconnects),
+//	                       or starts over from init if the server refuses
+//	                       it — at most twice per upload.
 //	WECOM_UPLOAD_MAX_QUEUE Requests allowed to WAIT for an upload slot
 //	                       (default 8); beyond it /publish-media answers
 //	                       429 before reading the file.

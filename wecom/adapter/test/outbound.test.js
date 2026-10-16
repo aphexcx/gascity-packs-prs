@@ -3808,3 +3808,20 @@ test('a failed probe answers 502 with the rendered provider error', async (t) =>
   assert.equal(out.media_kind, 'file', 'media_kind defaults to file');
   assert.equal(out.error, 'media upload failed at chunk 1/1 after 4 attempts: the upload frame acknowledgement timed out');
 });
+
+test('inherited Object.prototype names are not media kinds (codex jg-bw5gsw r1)', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'probe.png', pngBytes);
+  const { publisher, calls } = makePublisher({ kindStore: { lookup: () => 'dm', observe() {} } });
+  for (const kind of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    assert.equal((await uploadProbe(publisher, { file_path: file, media_kind: kind })).statusCode, 400, kind);
+    const res = await publishMedia(publisher, {
+      conversation: { conversation_id: 'zhang_san' },
+      file_path: file,
+      media_kind: kind,
+    });
+    assert.equal(res.statusCode, 400, kind);
+    assert.match(res.json().error, /^media_kind must be one of: image, video, file$/);
+  }
+  assert.equal(calls.length, 0);
+});

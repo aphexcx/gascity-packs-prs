@@ -36,9 +36,17 @@
 //     FIRST acknowledgement from any attempt of a frame completes it — the
 //     late ack the SDK used to drop as "Received unknown frame".
 //   - A dropped connection does not fail the upload outright: the
-//     uploader waits (bounded) for re-authentication and restarts from
-//     init on the new connection (whether an upload_id survives a
-//     reconnect is undocumented), at most `restarts` times.
+//     uploader waits (bounded) for re-authentication and RESUMES the same
+//     upload session from the first unacknowledged chunk — WeCom documents
+//     that an unexpired session (30 min, scoped to the bot, not the
+//     connection) survives a reconnect (「断线重传：…只要上传会话未过期，
+//     可以继续上传未完成的分片」). If the first frame after a resume is
+//     refused (an errcode, e.g. 846611 illegal upload_id), the session is
+//     dropped and the upload starts over from init. At most `restarts`
+//     reconnects/resets per upload.
+//   - An overall budget (maxUploadMs, 20 min — inside the 30-minute
+//     session lifetime) bounds how long one upload may hold its admission
+//     slot when every frame limps through on late retries.
 //   - Configurable chunk size (≤ 512 KiB, the protocol cap), raised
 //     automatically so a file never needs more than 100 chunks.
 //   - Failures carry a stable shape (stage, attempts, cause) that
@@ -71,6 +79,9 @@ export const uploadDefaults = {
   backoffMaxMs: 8_000,
   reconnectWaitMs: 30_000,
   restarts: 2,
+  // Wall-clock budget for one upload, checked before every frame; it
+  // stays inside WeCom's 30-minute upload-session lifetime.
+  maxUploadMs: 20 * 60 * 1000,
   // How long an attempt keeps listening for a late acknowledgement after
   // its own deadline passed (the transport's SDK-level timer). The SDK
   // retains the frame (its base64 chunk) until then; the 10/15 incident's
@@ -101,10 +112,20 @@ export class UploadStageError extends Error {
 }
 
 // Thrown inside one upload run when the connection it started on is gone;
-// the outer loop restarts from init (bounded) or surfaces `cause`.
+// the outer loop resumes the session (bounded) or surfaces `cause`.
 class ConnectionReplaced extends Error {
   constructor(stage, cause) {
     super('connection replaced during upload');
+    this.stage = stage;
+    this.cause = cause;
+  }
+}
+
+// Thrown when the first frame after a resume is refused: the server no
+// longer knows the session, so the next run starts over from init.
+class SessionRefused extends Error {
+  constructor(stage, cause) {
+    super('upload session refused after resume');
     this.stage = stage;
     this.cause = cause;
   }
@@ -207,10 +228,16 @@ export function createMediaUploader({
 
   // sendFrame sends one frame through the lane with retries; any
   // attempt's acknowledgement completes it. A connection that changed (or
-  // dropped) since the run's init raises ConnectionReplaced so the run
-  // restarts from init.
-  async function sendFrame(stage, cmd, body, frameBytes, epoch, stats) {
+  // dropped) since the run started raises ConnectionReplaced so the next
+  // run resumes on the new connection. probeSession: this is the first
+  // frame after a resume — a negative acknowledgement means the server
+  // dropped the session (SessionRefused, start over), not a retryable
+  // failure. The budget is checked before every frame.
+  async function sendFrame(stage, cmd, body, frameBytes, epoch, stats, { probeSession = false } = {}) {
     const ackTimeoutMs = ackTimeoutFor(frameBytes, o);
+    if (now() - stats.startedAt > o.maxUploadMs) {
+      throw new UploadStageError(stage, 0, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
+    }
     const attempts = [];
     let lateAck = null; // an earlier attempt acknowledged during a backoff
     let lastErr;
@@ -241,6 +268,7 @@ export function createMediaUploader({
       } catch (err) {
         lastErr = err;
         if (isConnectionLoss(err)) throw new ConnectionReplaced(stage, err);
+        if (probeSession && typeof err?.errcode === 'number') throw new SessionRefused(stage, err);
         if (attempt < o.frameAttempts) {
           stats.retries += 1;
           await sleep(backoff(attempt));
@@ -250,30 +278,43 @@ export function createMediaUploader({
     throw new UploadStageError(stage, o.frameAttempts, lastErr);
   }
 
-  async function uploadOnce(buffer, type, filename, plan, md5, stats) {
-    await ensureConnected('init');
+  // uploadRun drives one connection's worth of an upload. `session`
+  // persists across runs: { uploadId, nextChunk, resumed } — a run after a
+  // reconnect continues at nextChunk under the same upload_id, and its
+  // first frame doubles as the check that the server still knows it.
+  async function uploadRun(buffer, type, filename, plan, md5, stats, session) {
+    await ensureConnected(session.uploadId ? `chunk ${session.nextChunk + 1}/${plan.totalChunks}` : 'init');
     const epoch = transport.connectionEpoch();
-    const init = await sendFrame('init', UPLOAD_CMD.init, {
-      type,
-      filename,
-      total_size: buffer.length,
-      total_chunks: plan.totalChunks,
-      md5,
-    }, FRAME_OVERHEAD_BYTES + Buffer.byteLength(filename ?? ''), epoch, stats);
-    const uploadId = init?.body?.upload_id;
-    if (!uploadId) throw new UploadStageError('init', 1, new Error('media upload returned no upload_id'));
+    let probeSession = session.resumed;
+    if (!session.uploadId) {
+      const init = await sendFrame('init', UPLOAD_CMD.init, {
+        type,
+        filename,
+        total_size: buffer.length,
+        total_chunks: plan.totalChunks,
+        md5,
+      }, FRAME_OVERHEAD_BYTES + Buffer.byteLength(filename ?? ''), epoch, stats);
+      const uploadId = init?.body?.upload_id;
+      if (!uploadId) throw new UploadStageError('init', 1, new Error('media upload returned no upload_id'));
+      session.uploadId = uploadId;
+      session.nextChunk = 0;
+      probeSession = false;
+    }
 
-    for (let i = 0; i < plan.totalChunks; i++) {
+    for (let i = session.nextChunk; i < plan.totalChunks; i++) {
       const start = i * plan.chunkBytes;
       const data = buffer.subarray(start, Math.min(start + plan.chunkBytes, buffer.length)).toString('base64');
       await sendFrame(`chunk ${i + 1}/${plan.totalChunks}`, UPLOAD_CMD.chunk, {
-        upload_id: uploadId,
+        upload_id: session.uploadId,
         chunk_index: i,
         base64_data: data,
-      }, FRAME_OVERHEAD_BYTES + data.length, epoch, stats);
+      }, FRAME_OVERHEAD_BYTES + data.length, epoch, stats, { probeSession });
+      probeSession = false;
+      session.nextChunk = i + 1;
     }
 
-    const fin = await sendFrame('finish', UPLOAD_CMD.finish, { upload_id: uploadId }, FRAME_OVERHEAD_BYTES, epoch, stats);
+    const fin = await sendFrame('finish', UPLOAD_CMD.finish, { upload_id: session.uploadId },
+      FRAME_OVERHEAD_BYTES, epoch, stats, { probeSession });
     const mediaId = fin?.body?.media_id;
     if (!mediaId) throw new UploadStageError('finish', 1, new Error('media upload returned no media_id'));
     return {
@@ -287,7 +328,7 @@ export function createMediaUploader({
     const elapsedMs = now() - stats.startedAt;
     const rate = elapsedMs > 0 ? Math.round((stats.bytes / 1024) / (elapsedMs / 1000)) : 0;
     return `media upload ${outcome}: ${stats.bytes} bytes, ${stats.chunks}×${Math.round(stats.chunkBytes / 1024)}KiB chunks, `
-      + `${stats.frames} frames, ${stats.retries} retries, ${stats.restarts} restarts, `
+      + `${stats.frames} frames, ${stats.retries} retries, ${stats.restarts} restarts (${stats.resumes} resumed), `
       + `${(elapsedMs / 1000).toFixed(1)}s (${rate} KiB/s), slowest ack ${(stats.slowestAckMs / 1000).toFixed(1)}s`;
   }
 
@@ -301,22 +342,33 @@ export function createMediaUploader({
       frames: 0,
       retries: 0,
       restarts: 0,
+      resumes: 0,
       slowestAckMs: 0,
       startedAt: now(),
     };
+    const session = { uploadId: null, nextChunk: 0, resumed: false };
     active += 1;
     try {
       for (;;) {
         try {
-          const result = await uploadOnce(buffer, type, filename, plan, md5, stats);
+          const result = await uploadRun(buffer, type, filename, plan, md5, stats, session);
           log(summary(stats, 'ok'));
           return result;
         } catch (err) {
-          if (err instanceof ConnectionReplaced && stats.restarts < o.restarts) {
+          const again = err instanceof ConnectionReplaced || err instanceof SessionRefused;
+          if (again && stats.restarts < o.restarts) {
             stats.restarts += 1;
+            if (err instanceof SessionRefused || !session.uploadId) {
+              session.uploadId = null; // start over from init
+              session.nextChunk = 0;
+              session.resumed = false;
+            } else {
+              session.resumed = true; // continue the documented resumable session
+              stats.resumes += 1;
+            }
             continue; // the next run waits for re-authentication itself
           }
-          const failure = err instanceof ConnectionReplaced
+          const failure = again
             ? new UploadStageError(err.stage, stats.restarts + 1, err.cause)
             : err;
           const where = failure instanceof UploadStageError ? ` at ${failure.uploadStage}` : '';
