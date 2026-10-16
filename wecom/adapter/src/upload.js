@@ -226,29 +226,35 @@ export function createMediaUploader({
     throw new UploadStageError(stage, 0, new Error('WebSocket not connected, unable to send data'));
   }
 
+  function checkBudget(stage, stats) {
+    if (now() - stats.startedAt > o.maxUploadMs) {
+      throw new UploadStageError(stage, 0, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
+    }
+  }
+
   // sendFrame sends one frame through the lane with retries; any
   // attempt's acknowledgement completes it. A connection that changed (or
   // dropped) since the run started raises ConnectionReplaced so the next
   // run resumes on the new connection. probeSession: this is the first
   // frame after a resume — a negative acknowledgement means the server
   // dropped the session (SessionRefused, start over), not a retryable
-  // failure. The budget is checked before every frame.
+  // failure. Check the budget on every attempt and again inside the lane:
+  // neither retry backoff nor queueing may admit a transmission after expiry.
   async function sendFrame(stage, cmd, body, frameBytes, epoch, stats, { probeSession = false } = {}) {
     const ackTimeoutMs = ackTimeoutFor(frameBytes, o);
-    if (now() - stats.startedAt > o.maxUploadMs) {
-      throw new UploadStageError(stage, 0, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
-    }
     const attempts = [];
     let lateAck = null; // an earlier attempt acknowledged during a backoff
     let lastErr;
     for (let attempt = 1; attempt <= o.frameAttempts; attempt++) {
       if (lateAck) return lateAck.ack;
+      checkBudget(stage, stats);
       if (!transport.isConnected() || transport.connectionEpoch() !== epoch) {
         throw new ConnectionReplaced(stage, lastErr ?? new Error('WebSocket not connected, unable to send data'));
       }
       try {
         return await lane.run(async () => {
           if (lateAck) return lateAck.ack; // acknowledged while queued for the lane
+          checkBudget(stage, stats);
           const t0 = now();
           let sent;
           try {
@@ -266,6 +272,7 @@ export function createMediaUploader({
           }
         });
       } catch (err) {
+        if (err instanceof UploadStageError) throw err; // budget failure is terminal, not retryable
         lastErr = err;
         if (isConnectionLoss(err)) throw new ConnectionReplaced(stage, err);
         if (probeSession && typeof err?.errcode === 'number') throw new SessionRefused(stage, err);
