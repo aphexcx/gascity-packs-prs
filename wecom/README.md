@@ -135,6 +135,53 @@ interleave between media and caption). Uploads count against WeCom's
 robot quota (30/min, 1000/hour); `media_id`s stay valid 3 days but are
 not reused across sends.
 
+**Upload engine (jg-bw5gsw).** `WECOM_UPLOAD_ENGINE=adapter` (the default)
+uploads with the adapter's serial uploader (`adapter/src/upload.js`).
+The SDK writes up to four 512 KiB chunks at once and starts each frame's 5 s
+acknowledgement clock when the frame is queued, so on an uplink below
+~560 KB/s its chunks time out, its duplicate retries pile onto the same
+socket, and the backlog times out the next init, text sends and
+heartbeats (10/12–10/15: 195 of 275 attempts failed; all but three timed-out
+frames were acknowledged late). The adapter's uploader keeps one frame in
+flight across all uploads, gives each frame a deadline scaled to its
+bytes (`WECOM_UPLOAD_ACK_BASE_MS` + ceil(frame bytes × 1000 /
+`WECOM_UPLOAD_FLOOR_BYTES_PER_SEC`) milliseconds, defaults 10000 ms and
+65536 bytes/s; about 21 s for a 512 KiB chunk after base64 encoding),
+retries init, chunks and finish (`WECOM_UPLOAD_FRAME_ATTEMPTS`, default 4:
+one attempt plus three retries with 1/2/4 s backoff; any attempt's late
+acknowledgement completes the frame — WeCom ignores a duplicate chunk),
+waits up to `WECOM_UPLOAD_RECONNECT_WAIT_MS` (default 30000 ms) for
+re-authentication after a dropped connection, and resumes the same upload
+session at the first unacknowledged chunk. If the server refuses the
+resumed session, it starts over from init; reconnects and session resets
+share a limit of two per upload. It logs one
+`media upload ok|FAILED …` line with sizes, retries and the effective
+rate. `WECOM_UPLOAD_CHUNK_BYTES` (default 524288 bytes before base64)
+is clamped to 65536–524288 and raised automatically to stay within 100
+chunks; 262144 halves the frame a text send can wait behind.
+Two time limits still apply: the request's upload deadline
+`WECOM_UPLOAD_TIMEOUT_MS` (default 300000 ms, or 300 s) and the serial
+uploader's fixed 20-minute budget (checked before each frame, with no
+configuration knob). At 64 KiB/s, a 20 MiB file becomes about 27 MiB of
+base64 and takes about 427 s to transmit, so the request times out at
+300 s while the upload continues to hold its admission slot until it settles.
+Only the exact lowercase value `sdk` for `WECOM_UPLOAD_ENGINE` selects
+rollback to the SDK's uploader; confirm it with the startup log line
+`upload engine: sdk`. The adapter also logs and falls back to it if the
+required SDK internals are missing.
+While a serial upload runs, the liveness watchdog defers its forced
+reconnect cycle.
+
+**Upload probe.** `POST /upload-probe {"file_path": "/abs/…", "media_kind":
+"file"}` (via gc: `…/v0/city/<city>/svc/wecom/upload-probe`) uploads a
+file from the outbound media root and answers `{uploaded, media_kind,
+bytes, elapsed_ms}` on success — it sends NOTHING to any chat and never
+returns the `media_id`, so it measures the upload path without a human
+in the loop.
+Same confinement, caps and admission gate as `/publish-media`; it counts
+against the upload quota. `media_kind` defaults to `file`; each retry
+starts a new probe upload (no idempotency key or journal).
+
 **Transcript recording.** gc's outbound wire (`PublishRequest`) is
 text-only, so gc cannot deliver media itself; the adapter therefore sends
 first and then POSTs gc `/extmsg/outbound` with the SAME idempotency key

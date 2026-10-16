@@ -155,3 +155,43 @@ test('start()/stop() arm and clear the interval without leaking a live timer', a
   tracker.stop();
   tracker.stop(); // idempotent
 });
+
+// jg-bw5gsw: a forced cycle tears down any media upload in flight, and a
+// quiet chat is exactly when files get sent — so the hook can be deferred.
+test('a deferred reconnect waits for the deferral to clear, logs once, and keeps the rate-limit window', () => {
+  let cycles = 0;
+  let uploading = 'one media upload in flight';
+  const { tracker, clock, logs } = makeTracker({
+    opts: {
+      reconnect: () => { cycles++; },
+      reconnectDeferral: () => uploading,
+      reconnectMinIntervalMs: 40_000,
+    },
+  });
+  tracker.noteInbound();
+  clock.advance(10_001);
+  tracker.tick();
+  clock.advance(30_000);
+  tracker.tick();
+  assert.equal(cycles, 0);
+  assert.equal(logs.filter((l) => l.includes('reconnect cycle deferred — one media upload in flight')).length, 1);
+  assert.equal(tracker.state().reconnectsDeferredTotal, 1);
+
+  uploading = null;
+  clock.advance(1_000);
+  tracker.tick();
+  assert.equal(cycles, 1, 'fires on the first tick after the deferral clears');
+  assert.equal(tracker.state().reconnectsTotal, 1);
+});
+
+test('a throwing deferral check never blocks the remediation', () => {
+  let cycles = 0;
+  const { tracker, clock, logs } = makeTracker({
+    opts: { reconnect: () => { cycles++; }, reconnectDeferral: () => { throw new Error('nope'); } },
+  });
+  tracker.noteInbound();
+  clock.advance(10_001);
+  tracker.tick();
+  assert.equal(cycles, 1);
+  assert.equal(logs.filter((l) => l.includes('reconnect deferral check failed (cycling anyway): nope')).length, 1);
+});

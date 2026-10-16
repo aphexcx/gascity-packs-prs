@@ -58,11 +58,18 @@ export const livenessReconnectMinIntervalMs = 30 * 60 * 1000;
 //                  0 (default) disables the watchdog entirely.
 //   reconnect      optional () => void; called (rate-limited) while
 //                  stalled to force-cycle the WS. null = detection only.
+//   reconnectDeferral optional () => string|null; a non-empty reason
+//                  postpones a due cycle to a later tick (jg-bw5gsw: a
+//                  cycle tears down any media upload in flight, and a
+//                  quiet chat is exactly when the mayor sends files).
+//                  Logged once per deferral run; does not consume the
+//                  rate-limit window.
 //   alarmRepeatMs / reconnectMinIntervalMs / now / log — test knobs.
 export function createInboundLiveness(opts = {}) {
   const {
     stallAfterMs = 0,
     reconnect = null,
+    reconnectDeferral = null,
     alarmRepeatMs = livenessAlarmRepeatMs,
     reconnectMinIntervalMs = Math.max(stallAfterMs, livenessReconnectMinIntervalMs),
     now = Date.now,
@@ -77,6 +84,8 @@ export function createInboundLiveness(opts = {}) {
   let framesTotal = 0;
   let alarmsTotal = 0;
   let reconnectsTotal = 0;
+  let reconnectsDeferredTotal = 0;
+  let deferralLogged = false;
   let timer = null;
 
   function noteInbound() {
@@ -114,6 +123,21 @@ export function createInboundLiveness(opts = {}) {
         + `history API, so anything sent during a real stall is NOT recoverable; ${remediation}`);
     }
     if (reconnect && (lastReconnectAt === null || t - lastReconnectAt >= reconnectMinIntervalMs)) {
+      let deferral = null;
+      try {
+        deferral = reconnectDeferral?.() || null;
+      } catch (err) {
+        log(`inbound liveness: reconnect deferral check failed (cycling anyway): ${err.message}`);
+      }
+      if (deferral) {
+        if (!deferralLogged) {
+          deferralLogged = true;
+          reconnectsDeferredTotal++;
+          log(`inbound liveness: reconnect cycle deferred — ${deferral}`);
+        }
+        return;
+      }
+      deferralLogged = false;
       lastReconnectAt = t;
       reconnectsTotal++;
       log('inbound liveness: forcing a WS reconnect cycle (stall remediation)');
@@ -145,6 +169,7 @@ export function createInboundLiveness(opts = {}) {
       framesTotal,
       alarmsTotal,
       reconnectsTotal,
+      reconnectsDeferredTotal,
     };
   }
 

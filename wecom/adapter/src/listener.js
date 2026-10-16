@@ -66,6 +66,7 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
 
   const publish = handle(publisher.handlePublish, 'publish');
   const publishMedia = handle(publisher.handlePublishMedia, 'publish-media');
+  const uploadProbe = publisher.handleUploadProbe ? handle(publisher.handleUploadProbe, 'upload-probe') : null;
 
   return (req, res) => {
     let pathname;
@@ -89,6 +90,10 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     }
     if (req.method === 'POST' && pathname === '/publish-media') {
       publishMedia(req, res);
+      return;
+    }
+    if (req.method === 'POST' && pathname === '/upload-probe' && uploadProbe) {
+      uploadProbe(req, res);
       return;
     }
     if (req.method === 'POST' && pathname === '/publish') {

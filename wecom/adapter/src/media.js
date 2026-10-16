@@ -112,6 +112,17 @@ export function scrubSdkLogLine(m) {
 // reason, byte counts) the label replaces the whole message, so embedded
 // identifiers and provider-controlled tails never survive into a sink.
 const providerErrorShapes = [
+  // SDK 1.0.7 uploadMedia's own wrappers (the WECOM_UPLOAD_ENGINE=sdk
+  // path) — FIRST, because the generic "cancelled" shape below is not
+  // anchored at the start and would swallow them. Before these shapes
+  // every exhausted chunk retry logged as "Error (unrecognized …)" — 43
+  // of the 10/12–10/15 media failures.
+  [/^(Upload failed: \d+ chunk\(s\) failed\. First error: )?Chunk \d+ upload failed after \d+ attempts: Reply ack timeout \(\d+ms\) for reqId: /,
+    'a media chunk acknowledgement timed out (SDK chunk retries exhausted)'],
+  [/^(Upload failed: \d+ chunk\(s\) failed\. First error: )?Chunk \d+ upload failed after \d+ attempts: .+, reply for reqId: .+ cancelled$/,
+    'the connection dropped during a media chunk upload (SDK chunk retries exhausted)'],
+  [/^(Upload failed: \d+ chunk\(s\) failed\. First error: )?Chunk \d+ upload failed after \d+ attempts: WebSocket not connected, unable to send data$/,
+    'the WebSocket was not connected during a media chunk upload (SDK chunk retries exhausted)'],
   [/^WebSocket not connected, unable to send data$/,
     'the WebSocket is not connected (nothing was written)'],
   [/^Reply queue for reqId .+ exceeds max size \(\d+\)$/,
@@ -130,9 +141,27 @@ const providerErrorShapes = [
     'the upload completed without a media_id'],
   [/^gc accepted the publish but recorded no transcript entry$/,
     'gc accepted the publish but recorded no transcript entry'],
+  // src/upload.js's own per-frame deadline.
+  [/^upload frame acknowledgement timed out after \d+ms$/,
+    'the upload frame acknowledgement timed out'],
+  [/^media upload returned no upload_id$/,
+    'the upload init completed without an upload_id'],
+  [/^media upload exceeded its \d+ms budget$/,
+    'the media upload exceeded its time budget'],
 ];
 
-export function describeProviderError(err) {
+// The adapter uploader's failure (src/upload.js UploadStageError) is
+// rendered from its structured fields: a stage from a fixed vocabulary,
+// an attempt count, and the cause — itself rendered by this allowlist.
+const uploadStageShape = /^(plan|init|chunk \d+\/\d+|finish)$/;
+
+export function describeProviderError(err, depth = 0) {
+  if (depth === 0 && err && typeof err.uploadStage === 'string' && uploadStageShape.test(err.uploadStage)
+    && Number.isInteger(err.uploadAttempts)) {
+    const n = err.uploadAttempts;
+    return `media upload failed at ${err.uploadStage} after ${n} attempt${n === 1 ? '' : 's'}: `
+      + describeProviderError(err.cause, 1);
+  }
   if (err && typeof err.errcode === 'number') {
     // A provider ack frame: the numeric errcode is kept; the free-text
     // errmsg is provider-controlled and dropped.

@@ -114,6 +114,35 @@
 //	WECOM_UPLOAD_MAX_CONCURRENT
 //	                       Global outbound-upload admission bound (default
 //	                       2); media buffer memory ≤ this × the media cap.
+//	WECOM_UPLOAD_ENGINE    "adapter" (default) uploads media with the
+//	                       adapter's serial uploader (src/upload.js: one
+//	                       frame in flight, size-scaled ack timeouts,
+//	                       bounded retries, reconnect-aware); "sdk" is the
+//	                       rollback to @wecom/aibot-node-sdk's uploadMedia
+//	                       (4 parallel chunks, 5 s acks — jg-bw5gsw).
+//	WECOM_UPLOAD_CHUNK_BYTES
+//	                       Upload chunk size before base64 (default
+//	                       524288, the protocol cap and the SDK's wire
+//	                       format; 65536–524288, raised automatically to
+//	                       stay within 100 chunks). 262144 halves the
+//	                       frame a text send can queue behind.
+//	WECOM_UPLOAD_ACK_BASE_MS / WECOM_UPLOAD_FLOOR_BYTES_PER_SEC
+//	                       Per-frame acknowledgement deadline = base +
+//	                       frame bytes / floor rate (defaults 10000 and
+//	                       65536: ~21 s for a 512 KiB chunk frame, ~10 s
+//	                       for init/finish). The SDK's 5000 ms stays in
+//	                       force for every other send.
+//	WECOM_UPLOAD_FRAME_ATTEMPTS
+//	                       Tries per upload frame (default 4: one + three
+//	                       retries, backoff 1/2/4 s).
+//	WECOM_UPLOAD_RECONNECT_WAIT_MS
+//	                       How long an upload waits for the connection to
+//	                       re-authenticate before failing (default 30000);
+//	                       a reconnect mid-upload resumes the same WeCom
+//	                       upload session at the first unacknowledged
+//	                       chunk (sessions live 30 min across reconnects),
+//	                       or starts over from init if the server refuses
+//	                       it — at most twice per upload.
 //	WECOM_UPLOAD_MAX_QUEUE Requests allowed to WAIT for an upload slot
 //	                       (default 8); beyond it /publish-media answers
 //	                       429 before reading the file.
@@ -171,6 +200,7 @@ import {
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
 import { createInboundLiveness } from './liveness.js';
 import { createRequestListener, hardenServer } from './listener.js';
+import { createMediaUploader, createSdkUploadTransport } from './upload.js';
 import {
   createAttemptJournal,
   createConversationKindStore,
@@ -258,6 +288,14 @@ function loadConfig() {
     // uploadMaxQueue are answered 429 before any file I/O.
     uploadMaxConcurrent: intEnv('WECOM_UPLOAD_MAX_CONCURRENT', 2),
     uploadMaxQueue: intEnv('WECOM_UPLOAD_MAX_QUEUE', 8),
+    // Media upload engine (src/upload.js, jg-bw5gsw): the adapter's serial
+    // uploader unless explicitly rolled back to the SDK's.
+    uploadEngine: getenv('WECOM_UPLOAD_ENGINE', 'adapter') === 'sdk' ? 'sdk' : 'adapter',
+    uploadChunkBytes: intEnv('WECOM_UPLOAD_CHUNK_BYTES', 512 * 1024),
+    uploadAckBaseMs: intEnv('WECOM_UPLOAD_ACK_BASE_MS', 10000),
+    uploadFloorBytesPerSec: intEnv('WECOM_UPLOAD_FLOOR_BYTES_PER_SEC', 64 * 1024),
+    uploadFrameAttempts: intEnv('WECOM_UPLOAD_FRAME_ATTEMPTS', 4),
+    uploadReconnectWaitMs: intEnv('WECOM_UPLOAD_RECONNECT_WAIT_MS', 30000),
     // Internal-listener body cap: publish bodies are small JSON (media
     // travels by path, not in the body); over-cap requests answer 413.
     publishMaxBodyBytes: intEnv('WECOM_PUBLISH_MAX_BODY_BYTES', 1024 * 1024),
@@ -343,12 +381,12 @@ function startInternalListener(cfg, publisher, healthDetail = null) {
     // leave a stale socket file behind; listen() would EADDRINUSE on it.
     try { fs.unlinkSync(cfg.serviceSocket); } catch { /* ENOENT is fine */ }
     server.listen(cfg.serviceSocket, () => {
-      log(`internal listener on UDS ${cfg.serviceSocket} (/publish, /publish-media, /healthz)`);
+      log(`internal listener on UDS ${cfg.serviceSocket} (/publish, /publish-media, /upload-probe, /healthz)`);
     });
   } else {
     const [host, port] = cfg.listenInternal.split(':');
     server.listen(Number(port), host, () => {
-      log(`internal listener on ${cfg.listenInternal} (/publish, /publish-media, /healthz)`);
+      log(`internal listener on ${cfg.listenInternal} (/publish, /publish-media, /upload-probe, /healthz)`);
     });
   }
   return server;
@@ -440,6 +478,33 @@ async function main() {
   if (cfg.wsURL) wsOptions.wsUrl = cfg.wsURL;
   const wsClient = new WSClient(wsOptions);
 
+  // Outbound media upload engine (src/upload.js, jg-bw5gsw). Built before
+  // wsClient.connect() so the transport counts the first authentication.
+  // SDK internals missing (a different SDK build) → the SDK's own
+  // uploadMedia, logged, never a startup failure.
+  let uploader = null;
+  if (cfg.uploadEngine === 'adapter') {
+    const transport = createSdkUploadTransport(wsClient, { generateReqId: AiBot.generateReqId });
+    if (transport) {
+      uploader = createMediaUploader({
+        transport,
+        options: {
+          chunkBytes: cfg.uploadChunkBytes,
+          ackBaseMs: cfg.uploadAckBaseMs,
+          floorBytesPerSec: cfg.uploadFloorBytesPerSec,
+          frameAttempts: cfg.uploadFrameAttempts,
+          reconnectWaitMs: cfg.uploadReconnectWaitMs,
+        },
+        log,
+      });
+    } else {
+      log('upload engine: SDK internals (wsManager.sendReply / replyAckTimeout) not found — falling back to the SDK uploader');
+    }
+  }
+  log(uploader
+    ? `upload engine: adapter (serial; chunk ${cfg.uploadChunkBytes} bytes, ack ${cfg.uploadAckBaseMs} ms + bytes/${cfg.uploadFloorBytesPerSec} B/s, ${cfg.uploadFrameAttempts} tries per frame)`
+    : 'upload engine: sdk');
+
   // Size cap, enforced WHILE streaming (axios aborts the response once the
   // byte count crosses maxContentLength) — the belt-and-braces post-hoc
   // check in media.js can't protect memory on a multi-GB body by itself.
@@ -481,7 +546,9 @@ async function main() {
     cfg,
     journal,
     sendMessage: (chatid, body) => wsClient.sendMessage(chatid, body),
-    uploadMedia: (buffer, options) => wsClient.uploadMedia(buffer, options),
+    uploadMedia: uploader
+      ? (buffer, options) => uploader.upload(buffer, options)
+      : (buffer, options) => wsClient.uploadMedia(buffer, options),
     sendMediaMessage: (chatid, type, mediaId) => wsClient.sendMediaMessage(chatid, type, mediaId),
     // One wall-clock bound on the whole chunked upload: each WS chunk has
     // the SDK's reply-ack timeout, but 20 chunks × retries can still
@@ -523,6 +590,10 @@ async function main() {
   const liveness = createInboundLiveness({
     stallAfterMs: cfg.livenessStallAfterMs,
     reconnect: cfg.livenessReconnect ? cycleConnection : null,
+    // A cycle tears down any upload in flight (jg-bw5gsw): wait for it.
+    reconnectDeferral: uploader
+      ? () => (uploader.inFlight() > 0 ? `${uploader.inFlight()} media upload(s) in flight` : null)
+      : null,
     log,
   });
 
