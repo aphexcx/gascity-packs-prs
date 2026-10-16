@@ -3747,3 +3747,64 @@ test('a non-string idempotency_key is rejected 400 — it cannot crash the feedb
   assert.equal(ok.statusCode, 200);
   assert.equal(calls.length, 1);
 });
+
+// --- upload probe (jg-bw5gsw) -----------------------------------------------
+
+async function uploadProbe(publisher, body) {
+  const res = fakeRes();
+  await publisher.handleUploadProbe({}, res, JSON.stringify(body));
+  return res;
+}
+
+test('the upload probe uploads a confined file and sends nothing to any chat', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'probe.png', pngBytes);
+  const logs = [];
+  const { publisher, calls, outboundPosts } = makePublisher({ log: (l) => logs.push(l) });
+
+  const res = await uploadProbe(publisher, { file_path: file, media_kind: 'image' });
+  assert.equal(res.statusCode, 200);
+  const out = res.json();
+  assert.equal(out.uploaded, true);
+  assert.equal(out.bytes, pngBytes.length);
+  assert.equal(out.media_id, undefined, 'the media_id is never handed out');
+  assert.deepEqual(calls.map((c) => c.op), ['uploadMedia'], 'no aibot_send_msg, no caption');
+  assert.equal(calls[0].options.filename, 'upload-probe.png');
+  assert.equal(outboundPosts.length, 0, 'nothing recorded in any transcript');
+  assert.ok(logs.some((l) => /^upload-probe: image \d+ bytes uploaded in \d+ ms \(nothing sent\)$/.test(l)));
+});
+
+test('the upload probe keeps the outbound-root confinement and size/format gates', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'probe.png', pngBytes);
+  const confined = makePublisher({ cfg: { outboundMediaRoot: path.join(dir, 'elsewhere') } });
+  fs.mkdirSync(path.join(dir, 'elsewhere'));
+  assert.equal((await uploadProbe(confined.publisher, { file_path: file, media_kind: 'image' })).statusCode, 403);
+
+  const { publisher, calls } = makePublisher();
+  const notPng = writeFixture(dir, 'probe.txt', Buffer.from('plain text'));
+  assert.equal((await uploadProbe(publisher, { file_path: notPng, media_kind: 'image' })).statusCode, 400);
+  assert.equal((await uploadProbe(publisher, { file_path: 'relative.png', media_kind: 'image' })).statusCode, 400);
+  assert.equal((await uploadProbe(publisher, { file_path: file, media_kind: 'voice' })).statusCode, 400);
+  assert.equal(calls.length, 0);
+});
+
+test('a failed probe answers 502 with the rendered provider error', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'probe.bin', Buffer.from('some file bytes'));
+  const { publisher } = makePublisher({
+    uploadMedia: async () => {
+      throw Object.assign(new Error('raw'), {
+        uploadStage: 'chunk 1/1',
+        uploadAttempts: 4,
+        cause: new Error('upload frame acknowledgement timed out after 21000ms'),
+      });
+    },
+  });
+  const res = await uploadProbe(publisher, { file_path: file });
+  assert.equal(res.statusCode, 502);
+  const out = res.json();
+  assert.equal(out.uploaded, false);
+  assert.equal(out.media_kind, 'file', 'media_kind defaults to file');
+  assert.equal(out.error, 'media upload failed at chunk 1/1 after 4 attempts: the upload frame acknowledgement timed out');
+});

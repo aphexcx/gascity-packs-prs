@@ -23,6 +23,11 @@ function startServer(t, { maxBodyBytes, healthDetail } = {}) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true, endpoint: 'publish-media' }));
     },
+    handleUploadProbe: async (req, res, body) => {
+      seen.push({ endpoint: 'upload-probe', body });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, endpoint: 'upload-probe' }));
+    },
   };
   const server = hardenServer(http.createServer(createRequestListener({
     publisher,
@@ -149,4 +154,14 @@ test('a throwing health detail hook degrades to the bare ok, still 200', async (
   const r = await request(port, { method: 'GET', path: '/healthz' });
   assert.equal(r.status, 200);
   assert.equal(r.text, 'ok');
+});
+
+test('POST /upload-probe reaches the probe handler; other methods do not (jg-bw5gsw)', async (t) => {
+  const { seen, port } = await startServer(t);
+  const ok = await request(port, { path: '/upload-probe', chunks: ['{"file_path":"/x"}'] });
+  assert.equal(ok.status, 200);
+  assert.equal(JSON.parse(ok.text).endpoint, 'upload-probe');
+  assert.equal((await request(port, { method: 'GET', path: '/upload-probe' })).status, 404);
+  assert.equal((await request(port, { path: '/upload-probe/x', chunks: ['{}'] })).status, 404);
+  assert.deepEqual(seen.map((s) => s.endpoint), ['upload-probe']);
 });

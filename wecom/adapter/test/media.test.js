@@ -1005,3 +1005,44 @@ test('the SDK logger drops varargs — raw objects never persist', () => {
   assert.equal(lines[0].length, 2, 'only the prefix and the scrubbed first message');
   assert.ok(!JSON.stringify(lines).includes('BOT_SECRET'));
 });
+
+// jg-bw5gsw: the SDK's upload wrappers used to render as "Error
+// (unrecognized …)" — 43 of the 10/12–10/15 media failures — hiding that
+// they were chunk acknowledgement timeouts. The adapter uploader's own
+// failures render from structured fields; an unexpected stage is not
+// echoed.
+test('describeProviderError names SDK upload wrapper failures and adapter upload stages', () => {
+  assert.equal(
+    describeProviderError(new Error('Upload failed: 2 chunk(s) failed. First error: Chunk 0 upload failed after 3 attempts: Reply ack timeout (5000ms) for reqId: aibot_upload_media_chunk_1_x')),
+    'a media chunk acknowledgement timed out (SDK chunk retries exhausted)',
+  );
+  assert.equal(
+    describeProviderError(new Error('Chunk 3 upload failed after 3 attempts: Reply ack timeout (5000ms) for reqId: aibot_upload_media_chunk_1_x')),
+    'a media chunk acknowledgement timed out (SDK chunk retries exhausted)',
+  );
+  assert.equal(
+    describeProviderError(new Error('Chunk 1 upload failed after 3 attempts: WebSocket connection closed (code: 1006), reply for reqId: r cancelled')),
+    'the connection dropped during a media chunk upload (SDK chunk retries exhausted)',
+  );
+  assert.equal(
+    describeProviderError(new Error('Upload failed: 1 chunk(s) failed. First error: Chunk 0 upload failed after 3 attempts: WebSocket not connected, unable to send data')),
+    'the WebSocket was not connected during a media chunk upload (SDK chunk retries exhausted)',
+  );
+  // A free-text tail after a recognised prefix is still withheld.
+  assert.match(
+    describeProviderError(new Error('Chunk 0 upload failed after 3 attempts: payroll-secret.png rejected')),
+    /unrecognized error text withheld/,
+  );
+
+  const staged = Object.assign(new Error('raw text secret-plan.pdf'), {
+    uploadStage: 'chunk 2/3',
+    uploadAttempts: 4,
+    cause: new Error('upload frame acknowledgement timed out after 21000ms'),
+  });
+  assert.equal(describeProviderError(staged),
+    'media upload failed at chunk 2/3 after 4 attempts: the upload frame acknowledgement timed out');
+  const nack = Object.assign(new Error('x'), { uploadStage: 'init', uploadAttempts: 1, cause: { errcode: 45009, errmsg: 'secret' } });
+  assert.equal(describeProviderError(nack), 'media upload failed at init after 1 attempt: provider rejected the message: errcode 45009');
+  const forged = Object.assign(new Error('x'), { uploadStage: 'chunk 1/2: payroll-secret.png', uploadAttempts: 1, cause: new Error('y') });
+  assert.doesNotMatch(describeProviderError(forged), /payroll/);
+});

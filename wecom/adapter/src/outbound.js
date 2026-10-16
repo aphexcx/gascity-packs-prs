@@ -2309,9 +2309,95 @@ export function createOutboundPublisher(deps) {
     }
   }
 
+  // handleUploadProbe (jg-bw5gsw) uploads one file from the outbound
+  // media root and reports how the upload went. It NEVER sends a message:
+  // the media_id is discarded unread (WeCom expires it after 3 days), so
+  // it is the way to measure the upload path without a human chat. Same
+  // confinement, format sniffing, size caps, and admission gate as
+  // /publish-media; it counts against WeCom's upload rate limit (30/min
+  // per robot) like any upload. No idempotency key, no journal — a
+  // retried probe is just another probe.
+  async function handleUploadProbe(req, res, body) {
+    const reply = (status, payload) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    };
+    let pub;
+    try {
+      pub = JSON.parse(body);
+    } catch {
+      res.writeHead(400).end('invalid JSON');
+      return;
+    }
+    const filePath = pub.file_path;
+    const mediaKind = pub.media_kind ?? 'file';
+    if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+      reply(400, { uploaded: false, failure_kind: 'invalid_request', error: 'file_path must be an absolute path' });
+      return;
+    }
+    if (!(mediaKind in mediaKindSpecs)) {
+      reply(400, {
+        uploaded: false,
+        failure_kind: 'invalid_request',
+        error: `media_kind must be one of: ${Object.keys(mediaKindSpecs).join(', ')}`,
+      });
+      return;
+    }
+    let release;
+    try {
+      release = await uploadGate.acquire();
+    } catch (err) {
+      reply(429, { uploaded: false, failure_kind: 'overloaded', error: err.message });
+      return;
+    }
+    let media;
+    try {
+      const opened = openConfinedMediaFile(filePath, cfg.outboundMediaRoot);
+      media = await readMediaFile({ fd: opened.fd, filePath, mediaKind, maxBytes: cfg[mediaKindSpecs[mediaKind].capCfgKey] });
+    } catch (err) {
+      release();
+      if (err instanceof ForbiddenError) {
+        reply(403, { uploaded: false, failure_kind: 'forbidden', error: err.message });
+        return;
+      }
+      if (err instanceof ClientError) {
+        reply(400, { uploaded: false, failure_kind: 'invalid_request', error: err.message });
+        return;
+      }
+      throw err;
+    }
+    // As in /publish-media, the slot belongs to the upload until IT
+    // settles — a deadline only stops this request from waiting.
+    const startedAt = Date.now();
+    const run = Promise.resolve().then(() => uploadMedia(media.buffer, {
+      type: mediaKindSpecs[mediaKind].wecomType,
+      filename: `upload-probe${media.detectedExtension || '.bin'}`,
+    }));
+    run.then(release, release);
+    try {
+      const uploaded = await withUploadDeadline(run);
+      if (!uploaded?.media_id) throw new Error('media upload returned no media_id');
+      const elapsedMs = Date.now() - startedAt;
+      log(`upload-probe: ${mediaKind} ${media.size} bytes uploaded in ${elapsedMs} ms (nothing sent)`);
+      reply(200, { uploaded: true, media_kind: mediaKind, bytes: media.size, elapsed_ms: elapsedMs });
+    } catch (err) {
+      const elapsedMs = Date.now() - startedAt;
+      log(`upload-probe: ${mediaKind} ${media.size} bytes failed after ${elapsedMs} ms: ${describeProviderError(err)}`);
+      reply(502, {
+        uploaded: false,
+        media_kind: mediaKind,
+        bytes: media.size,
+        elapsed_ms: elapsedMs,
+        failure_kind: 'provider_error',
+        error: describeProviderError(err),
+      });
+    }
+  }
+
   return {
     handlePublish,
     handlePublishMedia,
+    handleUploadProbe,
     // Introspection for tests and diagnostics only — not a public surface.
     stats: () => ({
       publishStates: publishStates.size,
