@@ -406,6 +406,87 @@ Two related core behaviors complete the picture:
   role prompt does not install package managers; the wrappers this pack
   ships for that directory are the next section.
 
+## Worker close provenance
+
+Workers require Beads **1.3.1+** and the city-level Gas City pack import. The
+command follows the import alias: `gc gc provenance` below becomes
+`gc gascity provenance` for `[imports.gascity]`. It calls `gc bd` to retain rig
+routing. No city-side helper installation is needed.
+
+Before close, append the facts you actually have (the command does not close,
+detach, send READY, or change `gc.outcome` / `gc.work_branch`):
+
+```sh
+# reviews.json lives in the city's evidence directory, outside the PR branch.
+# [] is valid when no review has happened yet.
+gc gc provenance record "$CLAIMED_BEAD_ID" \
+  --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
+  --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR"
+gc gc provenance summary "$CLAIMED_BEAD_ID"
+# PR 123 at <full SHA>, gate CLEAN, read CLEAN
+```
+
+Reviews are a JSON array, one object per known round/record:
+
+```json
+[{
+  "stage": "codex",
+  "round": 1,
+  "verdict": "CLEAN",
+  "sha": "0123456789abcdef0123456789abcdef01234567",
+  "ref": "/city/evidence/example/codex-round-1.txt"
+}]
+```
+
+Use `gate` or `read` for those records. Preserve the exact verdict; each record
+names its reviewed full SHA and an immutable evidence path or URL. Earlier
+rounds can name earlier commits. A worker cannot record the mayor's future
+gate/read: those columns remain `unknown` until real records are appended.
+Omit unavailable optional flags (empty PR/evidence values are also accepted).
+Use `--outcome no-op`, `blocked`, or `abandoned` without manufacturing a SHA.
+This helper covers normal code-work closes; workflow-control beads retain
+their formula result contracts.
+
+The underlying Beads API is `gc bd provenance record` and
+`gc bd provenance log BEAD --json` (not `add`/`list`). It is separate from
+close. The event envelope contains `id`, `issue_id`, `kind`, `source`, `ref`,
+`ref_kind`, `occurred_at`, `created_at`, and an opaque JSON-string `payload`.
+The payload schema is `gc.worker-close.v1`:
+
+| Fact | kind / ref_kind | Reference | Payload fields beyond schema/fact |
+| --- | --- | --- | --- |
+| commit | commit / git-sha | full 40-digit lowercase SHA | sha |
+| PR | handoff / pr | canonical GitHub PR URL | number, url |
+| review | used / transcript | record path or URL | stage, round, verdict, sha |
+| evidence | used / transcript | absolute evidence directory | none |
+| outcome | handoff / work-id | worker-close:OUTCOME | outcome, sha, pr, previous (prior outcome event id) |
+
+The source starts with `gc-worker-close/v1/` and ends with the URL-safe base64 SHA-256 of the
+canonical payload (62 characters total, within Beads' 64-character source column). Beads deduplicates source/issue/kind/ref; this preserves changed
+verdicts while making exact retries harmless. The writer first reads the typed
+trail: a changed outcome links to its predecessor event id, so shipped → blocked
+→ shipped and A → B → A commits retain each transition. An unchanged outcome
+is skipped on retry. Like the worker lane, this protocol assumes one writer
+per bead; it is not a concurrent close coordinator. All input is validated before
+any writes. Partial append failures leave the bead open and are safe to retry.
+The outcome record is appended last, then compatibility keys are written.
+Beads stores event timestamps at whole-second precision. The reader follows
+the outcome predecessor chain to its sole tip, failing on a broken or forked
+chain. Review rounds, not timestamp/id order, determine the latest verdict;
+contradictory verdicts in the same round display `conflicting`.
+The reader uses that typed outcome and matching typed commit/PR facts;
+it ignores other producers, metadata-only legacy records, and review verdicts
+for other SHAs. Empty/legacy trails show `PR unknown at unknown, gate unknown,
+read unknown`. A failed read is an error, never a clean verdict.
+
+For **gascity pack 0.1.x**, dual-write `gc.work_commit`, `gc.work_outcome`, and
+`gc.pr` (canonical URL) for existing boards, merge chains, consolidators and
+the core close gate. Their removal is scheduled for **0.2.0**, after those
+consumers and the core gate migrate. `gc.outcome` and `gc.work_branch` retain
+their separate contracts. No pack/binary version is bumped here. A packs roll
+requires one `gc import` per city on its mayor's word; this change performs
+no live-city rollout. City board/READY adoption is a separate change.
+
 ## Worker toolchain
 
 The directory a provider shim puts first on PATH (`CODEX_SHIM_PATH_PREPEND`,

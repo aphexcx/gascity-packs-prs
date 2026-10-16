@@ -1,0 +1,257 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+PACK = ROOT / "gascity"
+SCRIPT = PACK / "assets/scripts/worker_provenance.py"
+RUN = PACK / "commands/provenance/run.sh"
+SPEC = importlib.util.spec_from_file_location("worker_provenance", SCRIPT)
+module = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(module)
+SHA = "a" * 40
+OLD_SHA = "b" * 40
+PR = "https://github.com/owner/repo/pull/123"
+
+
+@pytest.fixture
+def fixture(tmp_path):
+    """Exercise argv and durable append/dedup against a fake bd; no live store."""
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps(dict(events=[], metadata={}, calls=[], closed=False)))
+    gc = binary / "gc"
+    gc.write_text(f"#!{sys.executable}\n" + r'''
+import hashlib, json, os, subprocess, sys, uuid
+from pathlib import Path
+args = sys.argv[1:]
+if args[:2] == ['custom', 'provenance']:
+    sys.exit(subprocess.call([os.environ['PROVENANCE_RUN'], *args[2:]]))
+p = Path(os.environ['FIXTURE_STATE'])
+s = json.loads(p.read_text())
+s['calls'].append(args)
+p.write_text(json.dumps(s))
+if args[:3] == ['bd', 'provenance', 'record']:
+    options = dict(zip(args[3::2], args[4::2]))
+    if os.environ.get('FAIL_FACT') == json.loads(options['--payload'])['fact']:
+        sys.exit(7)
+    assert options['--issue'] == 'fixture-1'
+    event = {k: options['--' + k.replace('_', '-')] for k in ['kind','ref','ref_kind','source','payload']}
+    assert event['kind'] in ['cut','claim','suspend','resume','handoff','commit','land','used']
+    assert event['ref_kind'] in ['git-sha','pr','work-id','transcript','branch']
+    event['issue_id'] = options['--issue']
+    event['occurred_at'] = os.environ.get('FIXTURE_AT', options['--at'].split('.')[0] + 'Z')
+    event['created_at'] = event['occurred_at']
+    assert len(event['source']) <= 64
+    assert len(event['ref']) <= 255
+    event['id'] = str(uuid.UUID(bytes=hashlib.sha256(':'.join([event['source'],event['issue_id'],event['kind'],event['ref']]).encode()).digest()[:16]))
+    if not any(x['id'] == event['id'] for x in s['events']):
+        s['events'].append(event)
+elif args[:3] == ['bd', 'provenance', 'log']:
+    assert args[3:] == ['fixture-1', '--json']
+    print(json.dumps(s['events']))
+elif args[:2] == ['bd', 'update']:
+    if os.environ.get('FAIL_FACT') == 'metadata':
+        sys.exit(9)
+    assert args[2] == 'fixture-1'
+    for i in range(3, len(args), 2):
+        assert args[i] == '--set-metadata'
+        key, value = args[i+1].split('=', 1)
+        s['metadata'][key] = value
+elif args[:2] == ['bd', 'close']:
+    assert args[2] == 'fixture-1'
+    assert args[3] == '--reason'
+    s['closed'] = True
+else:
+    sys.exit('unexpected gc argv: ' + repr(args))
+p.write_text(json.dumps(s))
+''')
+    gc.chmod(0o755)
+    git = binary / "git"
+    git.write_text(f"#!{sys.executable}\n" + r'''
+import os, sys
+from pathlib import Path
+state = Path(os.environ['FIXTURE_STATE'] + '.detached')
+args = sys.argv[1:]
+if 'rev-parse' in args:
+    print('a' * 40)
+elif 'branch' in args:
+    print('' if state.exists() else 'fixture-1')
+elif 'switch' in args:
+    state.touch()
+else:
+    sys.exit(8)
+''')
+    git.chmod(0o755)
+    reviews = tmp_path / "reviews.json"
+    reviews.write_text(json.dumps([
+        dict(stage="codex", round=1, verdict="BLOCK", sha=OLD_SHA, ref="/evidence/codex-1"),
+        dict(stage="codex", round=2, verdict="CLEAN", sha=SHA, ref="/evidence/codex-2"),
+        dict(stage="gate", verdict="CLEAN", sha=SHA, ref="/evidence/gate-1"),
+        dict(stage="read", verdict="CLEAN", sha=SHA, ref="/evidence/read-1"),
+    ]))
+    env = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ['PATH'],
+           "FIXTURE_STATE": str(state), "FIXTURE_AT": "2026-10-16T08:00:00Z", "PROVENANCE_RUN": str(RUN), "GC_PACK_DIR": str(PACK),
+           "CLAIMED_BEAD_ID": "fixture-1", "PROVENANCE_PACK_ALIAS": "custom",
+           "GC_DIR": str(tmp_path), "PR_URL": PR, "EVIDENCE_DIR": "/evidence",
+           "REVIEW_RECORDS": str(reviews)}
+    return state, reviews, env
+
+
+def run(fixture, *args):
+    return subprocess.run([str(RUN), *args], env=fixture[2], text=True, capture_output=True)
+
+
+def record(fixture, *extra):
+    return run(fixture, "record", "fixture-1", "--outcome", "shipped", "--commit", SHA,
+               "--pr", PR, "--reviews", str(fixture[1]), "--evidence-dir", "/evidence", *extra)
+
+
+def data(fixture):
+    return json.loads(fixture[0].read_text())
+
+
+def close_script():
+    text = (PACK / "template-fragments/gc-role-worker.template.md").read_text()
+    return 'WORK_COMMIT=' + text.split('```bash\nWORK_COMMIT=', 1)[1].split('```', 1)[0]
+
+
+def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
+    result = subprocess.run(['sh', '-c', close_script()], env=fixture[2], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    s = data(fixture)
+    assert s['closed']
+    assert len(s['events']) == 8
+    assert s['metadata'] == {'gc.outcome': 'pass', 'gc.work_outcome': 'shipped',
+                             'gc.work_commit': SHA, 'gc.work_branch': 'fixture-1', 'gc.pr': PR}
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
+    assert all(c[3:5] == ['--issue', 'fixture-1'] for c in s['calls'] if c[:3] == ['bd','provenance','record'])
+
+
+def test_retry_is_idempotent_and_changed_verdict_is_preserved(fixture):
+    assert record(fixture).returncode == 0
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == 8
+    reviews = json.loads(fixture[1].read_text())
+    reviews[-1].update(verdict='CHANGES_REQUIRED', round=2, ref='/evidence/read-2')
+    fixture[1].write_text(json.dumps(reviews))
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == 9
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith('read CHANGES_REQUIRED')
+
+
+def test_previous_head_reviews_are_not_clean_for_new_head(fixture):
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'shipped', '--commit', OLD_SHA, '--pr', PR).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {OLD_SHA}, gate unknown, read unknown'
+
+
+@pytest.mark.parametrize('fail', ['review', 'outcome'])
+def test_record_failure_prevents_close_and_can_be_retried(fixture, fail):
+    env = {**fixture[2], 'FAIL_FACT': fail}
+    result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert not data(fixture)['closed']
+    assert not data(fixture)['metadata']
+    assert not Path(fixture[2]['FIXTURE_STATE'] + '.detached').exists()
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == 8
+
+
+@pytest.mark.parametrize('extra', [('--commit', 'abc'), ('--pr', '123'), ('--evidence-dir', 'relative')])
+def test_invalid_input_causes_no_partial_writes(fixture, extra):
+    assert record(fixture, *extra).returncode != 0
+    assert data(fixture)['calls'] == []
+
+
+def test_invalid_late_review_causes_no_writes(fixture):
+    fixture[1].write_text('[{"stage":"gate","sha":"short"}]')
+    assert record(fixture).returncode != 0
+    assert data(fixture)['calls'] == []
+
+
+@pytest.mark.parametrize('bead', ['', '-x', 'fixture-1 fixture-2'])
+def test_requires_one_explicit_id(fixture, bead):
+    assert run(fixture, 'record', bead, '--outcome', 'no-op').returncode != 0
+    assert data(fixture)['calls'] == []
+
+
+def test_legacy_and_noop_do_not_invent_facts(fixture):
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == 'PR unknown at unknown, gate unknown, read unknown'
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'no-op').returncode == 0
+    assert data(fixture)['metadata'] == {'gc.work_outcome': 'no-op'}
+    assert len(data(fixture)['events']) == 1
+    assert run(fixture, 'summary', 'fixture-1').stdout.startswith('no-op; PR unknown')
+
+
+def test_reader_ignores_other_producers_and_wrong_types(fixture):
+    assert record(fixture).returncode == 0
+    events = data(fixture)['events']
+    for event in events:
+        payload = json.loads(event['payload'])
+        if payload['fact'] == 'review':
+            event['kind'] = 'land'
+    assert module.summary(events).endswith('gate unknown, read unknown')
+    assert module.summary([{**e, 'source': 'ingest-backfill'} for e in events]) == 'PR unknown at unknown, gate unknown, read unknown'
+
+
+def test_review_round_order_wins_when_recorded_together_or_replayed(fixture):
+    fixture[1].write_text(json.dumps([
+        dict(stage='gate', round=3, verdict='CLEAN', sha=SHA, ref='/evidence/gate-3'),
+        dict(stage='gate', round=1, verdict='BLOCK', sha=SHA, ref='/evidence/gate-1'),
+        dict(stage='gate', round=2, verdict='BLOCK', sha=SHA, ref='/evidence/gate-2'),
+    ]))
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith('gate CLEAN, read unknown')
+    fixture[1].write_text(json.dumps([
+        dict(stage='gate', round=1, verdict='BLOCK', sha=SHA, ref='/evidence/late-old-round'),
+    ]))
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith('gate CLEAN, read unknown')
+
+
+@pytest.mark.parametrize('middle', ['blocked', 'new-head'])
+def test_repeated_outcome_is_a_new_transition_but_immediate_retry_is_not(fixture, middle):
+    assert record(fixture).returncode == 0
+    args = ['--outcome', 'blocked'] if middle == 'blocked' else ['--outcome', 'shipped', '--commit', OLD_SHA, '--pr', PR]
+    assert run(fixture, 'record', 'fixture-1', *args).returncode == 0
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
+    outcomes = [e for e in data(fixture)['events'] if json.loads(e['payload'])['fact'] == 'outcome']
+    assert len(outcomes) == 3
+    assert json.loads(outcomes[-1]['payload'])['previous'] == outcomes[-2]['id']
+    count = len(data(fixture)['events'])
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == count
+
+
+def test_metadata_failure_after_outcome_append_is_retryable(fixture):
+    result = subprocess.run(['sh', '-c', close_script()], env={**fixture[2], 'FAIL_FACT': 'metadata'},
+                            text=True, capture_output=True)
+    assert result.returncode != 0
+    assert not data(fixture)['closed']
+    assert len(data(fixture)['events']) == 8
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == 8
+    assert data(fixture)['metadata']['gc.work_outcome'] == 'shipped'
+
+
+def test_reader_rejects_forked_outcomes_and_conflicting_same_round_reviews(fixture):
+    assert record(fixture).returncode == 0
+    reviews = json.loads(fixture[1].read_text())
+    reviews[-1].update(verdict='BLOCK', ref='/evidence/conflicting-read')
+    fixture[1].write_text(json.dumps(reviews))
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith('read conflicting')
+    events = data(fixture)['events']
+    outcome = next(e for e in events if json.loads(e['payload'])['fact'] == 'outcome')
+    with pytest.raises(ValueError, match='ambiguous'):
+        module.summary(events + [{**outcome, 'id': 'a-different-root'}])
