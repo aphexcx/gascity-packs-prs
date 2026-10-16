@@ -46,6 +46,8 @@ p = Path(os.environ['FIXTURE_STATE'])
 s = json.loads(p.read_text())
 s['calls'].append(args)
 p.write_text(json.dumps(s))
+while args[:1] in (['--city'], ['--rig']):
+    args = args[2:]
 read_command = 'show' if args[:2] == ['b' + 'd', 'show'] else (
     'log' if args[:3] == ['b' + 'd', 'provenance', 'log'] else '')
 if read_command and os.environ.get('FAIL_READ') == read_command:
@@ -136,6 +138,50 @@ def record(fixture, *extra):
 
 def data(fixture):
     return json.loads(fixture[0].read_text())
+
+
+@pytest.mark.parametrize('prefix, expected', [
+    ([], []),
+    (['gc', 'provenance'], []),
+    (['gascity', 'provenance'], []),
+    (['--city', '/selected city'], ['--city', '/selected city']),
+    (['--city=/selected city'], ['--city', '/selected city']),
+    (['--rig', 'selected-rig'], ['--rig', 'selected-rig']),
+    (['--rig=selected-rig'], ['--rig', 'selected-rig']),
+    (['gascity', '--city=/selected city', 'provenance', '--rig', 'selected-rig'],
+     ['--city', '/selected city', '--rig', 'selected-rig']),
+])
+def test_dispatch_prefix_preserves_scope_for_every_record_and_summary_call(fixture, prefix, expected):
+    result = run(fixture, *prefix, 'record', 'fixture-1', '--outcome', 'shipped',
+                 '--commit', SHA, '--pr', PR)
+    assert result.returncode == 0, result.stderr
+    result = run(fixture, *prefix, 'summary', 'fixture-1')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f'PR 123 at {SHA}, gate unknown, read unknown'
+    calls = data(fixture)['calls']
+    assert len(calls) == 8  # show/log, three appends, metadata, summary show/log
+    assert all(call[:len(expected)] == expected for call in calls)
+    assert all(call[len(expected)] == 'b' + 'd' for call in calls)
+
+
+@pytest.mark.parametrize('prefix, option', [
+    (['--city'], '--city'), (['--rig'], '--rig'),
+    (['--city='], '--city'), (['--rig='], '--rig'),
+    (['--city', '--rig=fixture'], '--city'),
+    (['gascity', 'provenance', '--rig'], '--rig'),
+])
+def test_dispatch_scope_requires_value_before_any_nested_call(fixture, prefix, option):
+    result = run(fixture, *prefix)
+    assert result.returncode == 2
+    assert f'missing value for {option}' in result.stderr
+    assert not data(fixture)['calls']
+
+
+def test_dispatch_stops_at_subcommand_and_preserves_scope_looking_values(fixture):
+    result = run(fixture, 'record', 'fixture-1', '--outcome', 'no-op', '--reviews=--city')
+    assert result.returncode == 1
+    assert "'--city'" in result.stderr  # treated as the reviews filename
+    assert not data(fixture)['calls']
 
 
 def close_script(*, include_discovery=True):

@@ -19,6 +19,34 @@ OUTCOMES = ("shipped", "no-op", "blocked", "abandoned")
 GC_BIN = os.environ.get("GC_BIN") or "gc"
 
 
+def dispatch_arguments(argv: list[str], parser) -> tuple[list[str], list[str]]:
+    """Consume the pack dispatch prefix; preserve explicit scope on every call.
+
+    PackRuntimeEnv pins GC_CITY/GC_CITY_PATH, but post-leaf scope flags belong
+    to us and GC_RIG may still name the caller's rig. Forward flags explicitly
+    rather than relying on that ambient context. Stop at the subcommand so its
+    values (including scope-looking refs) remain untouched.
+    """
+    command = [GC_BIN]
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in ("gc", "gascity", "provenance"):
+            index += 1
+            continue
+        option, separator, value = token.partition("=")
+        if option not in ("--city", "--rig"):
+            break
+        if not separator:
+            index += 1
+            value = argv[index] if index < len(argv) else ""
+        if not value or value.startswith("--"):
+            parser.error(f"missing value for {option}")
+        command.extend([option, value])
+        index += 1
+    return argv[index:], command
+
+
 def nonempty(value: str) -> str:
     if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
         raise ValueError("expected nonempty text without control characters")
@@ -85,7 +113,7 @@ def record(args) -> None:
     # Reusable facts deduplicate forever; outcome transitions must also retain
     # A -> B -> A. Link each changed outcome to its predecessor. An immediate
     # retry after append/metadata failure sees the same outcome and skips it.
-    prior = latest_outcome(typed_facts(read_events(args.bead)))
+    prior = latest_outcome(typed_facts(read_events(args.bead, args.gc_command)))
     outcome = records[-1]["payload"]
     if prior and {k: v for k, v in prior[3].items() if k != "previous"} == outcome:
         records.pop()
@@ -95,13 +123,13 @@ def record(args) -> None:
     for item in records:
         payload = json.dumps(item["payload"], sort_keys=True, separators=(",", ":"))
         source = SOURCE + base64.urlsafe_b64encode(hashlib.sha256(payload.encode()).digest()).decode().rstrip("=")
-        subprocess.run([GC_BIN, "bd", "provenance", "record", "--issue", args.bead,
+        subprocess.run([*args.gc_command, "bd", "provenance", "record", "--issue", args.bead,
                         "--kind", item["kind"], "--ref-kind", item["ref_kind"],
                         "--ref", item["ref"], "--source", source, "--at", at,
                         "--payload", payload], check=True)
     # Compatibility for gascity pack 0.1.x. Remove in 0.2.0 after readers AND
     # the core work-record close gate migrate; do not drop these independently.
-    command = [GC_BIN, "bd", "update", args.bead,
+    command = [*args.gc_command, "bd", "update", args.bead,
                "--set-metadata", "gc.work_outcome=" + args.outcome]
     for key, value in (("gc.work_commit", args.commit), ("gc.pr", args.pr)):
         if value:
@@ -111,16 +139,16 @@ def record(args) -> None:
     subprocess.run(command, check=True)
 
 
-def read_events(bead: str) -> list[dict]:
+def read_events(bead: str, gc_command: list[str]) -> list[dict]:
     # Beads accepts abbreviated IDs, including for immutable provenance appends.
     # Resolve read-only and reject aliases before reading the trail or writing.
-    result = subprocess.run([GC_BIN, "bd", "show", bead, "--json"],
+    result = subprocess.run([*gc_command, "bd", "show", bead, "--json"],
                             text=True, capture_output=True, check=True)
     resolved = json.loads(result.stdout)
     if (not isinstance(resolved, list) or len(resolved) != 1
             or not isinstance(resolved[0], dict) or resolved[0].get("id") != bead):
         raise ValueError(f"expected exact bead id {bead!r}; show resolved a different or invalid result")
-    result = subprocess.run([GC_BIN, "bd", "provenance", "log", bead, "--json"],
+    result = subprocess.run([*gc_command, "bd", "provenance", "log", bead, "--json"],
                             text=True, capture_output=True, check=True)
     events = json.loads(result.stdout)
     if not isinstance(events, list):
@@ -221,7 +249,9 @@ def main() -> int:
     writer.add_argument("--evidence-dir", default="")
     reader = commands.add_parser("summary", help="render typed provenance; no metadata fallback")
     reader.add_argument("bead")
-    args = parser.parse_args()
+    argv, gc_command = dispatch_arguments(sys.argv[1:], parser)
+    args = parser.parse_args(argv)
+    args.gc_command = gc_command
     try:
         nonempty(args.bead)
         if args.bead.startswith("-") or any(c.isspace() for c in args.bead):
@@ -229,7 +259,7 @@ def main() -> int:
         if args.command == "record":
             record(args)
         else:
-            print(summary(read_events(args.bead)))
+            print(summary(read_events(args.bead, args.gc_command)))
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         print(f"worker provenance: {exc}", file=sys.stderr)

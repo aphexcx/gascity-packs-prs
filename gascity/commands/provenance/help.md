@@ -6,6 +6,8 @@ Usage:
   gc <binding> provenance summary BEAD
 
 Use the binding the worker close discovery selects (README, Worker close provenance).
+Optional --city PATH / --city=PATH and --rig NAME / --rig=NAME go before
+record or summary and are preserved for every nested gc call.
 Reviews are a JSON file containing an array of objects with stage (codex|gate|read), positive
 round, verdict, full reviewed sha, and ref (immutable record path or URL).
 For no reviews, supply a file containing []. BEAD must match its resolved ID exactly.

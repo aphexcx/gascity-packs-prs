@@ -422,6 +422,14 @@ contains the command's description: generic help can exit successfully for a
 missing command. The command calls `gc bd` to retain rig routing. No city-side
 helper installation is needed.
 
+To select scope explicitly, place `--city PATH` / `--city=PATH` and
+`--rig NAME` / `--rig=NAME` before `record` or `summary`, for example
+`gc <binding> provenance --city /path/to/city --rig repo summary BEAD`.
+The Python entry point consumes the dispatch prefix and forwards these flags
+to every nested `gc bd` call. Without explicit flags, the dispatcher's city
+environment and normal rig routing still apply. This command never detaches;
+the worker close recipe detaches its verified `GC_DIR` only after recording.
+
 Before close, append the facts you actually have (the command does not close,
 detach, send READY, or change `gc.outcome` / `gc.work_branch`):
 
