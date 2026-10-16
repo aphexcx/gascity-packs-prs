@@ -1292,7 +1292,7 @@ type publishReceipt struct {
 	Delivered    bool            `json:"delivered"`
 	FailureKind  string          `json:"failure_kind,omitempty"`
 	// Metadata carries out-of-band facts about a delivery that the four
-	// named fields above cannot express — currently only "truncated". gc
+	// named fields above cannot express — truncation, readback and storage. gc
 	// does not decode this body into its public PublishReceipt directly: it
 	// unmarshals into a fixed intermediate shim, wirePublishReceipt
 	// (gascity internal/extmsg/http_adapter.go:140-157), whose six fields
@@ -2472,37 +2472,19 @@ func (r publishReceipt) clone() publishReceipt {
 	return out
 }
 
-// publishReceiptBlocksRepost reports whether a retry on the same idempotency
-// key must be answered from this receipt instead of posting again.
-//
-// A delivered receipt replays outright. The harder case is a write Slack
-// accepted — ok:true with a real ts — whose readback then failed. If the read
-// leg itself was unavailable, or the token cannot read history at all, nothing
-// is known about the message except that Slack took it, so re-posting would
-// duplicate a message that is very probably in the channel. Those receipts are
-// remembered and re-verified (replayPublishReceipt) rather than replayed as-is.
-//
-// readback_unconfirmed stays strict and is never remembered: there the read
-// path answered and the message was not in the channel, so the key must be
-// free to post again.
+// publishReceiptBlocksRepost keeps every accepted timestamp in the dedup
+// cache. A readback miss cannot authorize posting an accepted message again.
 func publishReceiptBlocksRepost(receipt publishReceipt) bool {
-	if receipt.Delivered {
-		return true
-	}
-	switch receipt.Metadata[receiptMetadataKeyReadback] {
-	case slackReadbackUnavailable, slackReadbackAuth:
-		return receipt.MessageID != ""
-	}
-	return false
+	return receipt.Delivered || receipt.MessageID != ""
 }
 
 // Put records a receipt a retry must not re-post (publishReceiptBlocksRepost)
 // under key and sweeps expired entries so the map stays bounded under churn.
 // Empty keys and receipts that leave the key free to post again are ignored.
-// A delivered receipt is never replaced by an undelivered one: a slower retry
+// A confirmed receipt is never replaced by an unconfirmed one: a slower retry
 // whose own readback stayed down writes back the unconfirmed copy it took
 // BEFORE a faster retry proved delivery, and that write must not reopen the
-// unconfirmed-to-delivered transition commitReVerified claims once (the
+// unconfirmed-to-confirmed transition commitReVerified claims once (the
 // lane's codex round 2 on gf-xid finding 3f).
 func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	if key == "" || !publishReceiptBlocksRepost(receipt) {
@@ -2511,7 +2493,7 @@ func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	if e, ok := c.entries[key]; !ok || receipt.Delivered || !e.receipt.Delivered {
+	if e, ok := c.entries[key]; !ok || publishReadbackConfirmed(receipt) || !publishReadbackConfirmed(e.receipt) {
 		c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: now.Add(c.ttl)}
 	}
 	for k, e := range c.entries {
@@ -2522,31 +2504,29 @@ func (c *publishDedupCache) Put(key string, receipt publishReceipt) {
 }
 
 // commitReVerified records receipt — a posted-but-unconfirmed receipt a replay
-// has just re-verified as delivered — under key, and reports whether THIS
-// caller made the unconfirmed-to-delivered transition. Two retries of one key
+// has just confirmed by readback — under key, and reports whether THIS
+// caller made the unconfirmed-to-confirmed transition. Two retries of one key
 // can both Get the unconfirmed receipt and both read the message back; only
 // the first to commit here is the delivery proof, and only it may run the
 // delivery-success bookkeeping (the lane's codex round 1 on gf-xid finding
 // 3f: the slower retry's clearBusyReaction would otherwise take a mark a NEWER
 // inbound registered in between). A key whose cached receipt is already
-// delivered keeps that receipt and answers false; a key no longer cached
+// confirmed keeps that receipt and answers false; a key no longer cached
 // (expired or released between Get and here) is recorded and answers true.
 func (c *publishDedupCache) commitReVerified(key string, receipt publishReceipt) bool {
-	if key == "" || !receipt.Delivered {
+	if key == "" || !publishReadbackConfirmed(receipt) {
 		return false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if e, ok := c.entries[key]; ok && e.receipt.Delivered {
+	if e, ok := c.entries[key]; ok && publishReadbackConfirmed(e.receipt) {
 		return false
 	}
 	c.entries[key] = publishDedupEntry{receipt: receipt.clone(), expiresAt: c.now().Add(c.ttl)}
 	return true
 }
 
-// Delete forgets key. It is how a remembered posted-but-unconfirmed receipt is
-// released once a later readback proves the message is not in the channel: the
-// key has to be free to post again at that point.
+// Delete explicitly forgets key. Readback failures never release a key.
 func (c *publishDedupCache) Delete(key string) {
 	if key == "" {
 		return
@@ -2698,16 +2678,9 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 				}
 				receipt.Metadata["truncated"] = "true"
 			}
-			// The truncation warning is recorded before the readback so the
-			// wire fact survives either outcome: it is what Slack reported
-			// about this write, while Delivered below is what the read API can
-			// confirm. Truncation also fails the readback, so a truncated
-			// publish now reports Delivered:false with FailureKind "permanent"
-			// (metadata["readback"]="readback_unconfirmed") *and*
-			// metadata["truncated"] — strictly more than either half could say
-			// alone. Permanent is the honest kind there: the same oversized
-			// payload truncates identically on every retry, so re-sending it
-			// can only add another visible partial message.
+			// Slack accepted this timestamp even if it truncated the body.
+			// Preserve the warning and report readback separately; re-posting
+			// would only create another partial message.
 			cfg.publishReceipts.recordPosted(req.IdempotencyKey, &receipt, post)
 			target.messageTS = slackResp.TS
 			receipt.readbackTarget = target
@@ -2724,12 +2697,12 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 		// for a confirmed post here, and for a posted-but-unconfirmed one
 		// on the dedup replay that re-verifies it above — once per
 		// delivered message either way.
-		if receipt.Delivered {
+		if publishReadbackConfirmed(receipt) {
 			recordDeliveredPublish(cfg, req.Conversation.ConversationID, req.ReplyToMessageID, slackResp.TS, identitySessionID)
 		}
-		// Remember delivered receipts so a subsequent retry with the same
-		// idempotency key replays this receipt instead of re-posting. Put
-		// ignores empty keys and non-delivered receipts.
+		// Remember accepted receipts so a retry replays or re-verifies the
+		// original timestamp instead of re-posting. Put ignores empty keys
+		// and receipts without acceptance evidence.
 		dedup.Put(req.IdempotencyKey, receipt)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(receipt)
@@ -2751,8 +2724,8 @@ func handlePublish(cfg config, reg *identityRegistry, userAliases *userAliasMap,
 // The identity lookup still happens for log parity with /publish.
 //
 // Delivery evidence here is weaker than /publish's, deliberately and for now:
-// /publish reads its message back and only then sets Delivered (see
-// confirmPublishReceipt), while this path still reports Delivered on Slack's
+// /publish also records a separate readback result (see confirmPublishReceipt),
+// while this path reports Delivered on Slack's
 // accepted write. The two emit the same receipt schema, so a consumer cannot
 // tell verified delivery from accepted delivery by the receipt alone — treat a
 // delivered /publish-file receipt as "Slack accepted the upload". Closing the

@@ -265,8 +265,8 @@ def publish_via_gc_outbound(
     """Publish through gc so peer fanout + transcript recording fire.
 
     Returns the raw receipt JSON from the adapter. HTTP-200 with
-    `delivered: false` is a real failure (slack auth/channel/rate-limit
-    rejection); callers MUST pass the result through
+    `delivered: false` without a message timestamp is a real failure
+    (Slack auth/channel/rate-limit rejection); callers MUST pass the result through
     :func:`interpret_publish_receipt` and fail loudly on non-delivery,
     or stamp loop-close on a silently-lost post.
     """
@@ -327,44 +327,54 @@ def publish_via_adapter(
         raise AdapterError(str(exc)) from exc
 
 
+def _publish_receipt(result: Any) -> dict[str, Any]:
+    """Unwrap adapter and both gc receipt shapes without reading transcript IDs."""
+    if not isinstance(result, dict):
+        return {}
+    if "delivered" in result or "message_id" in result:
+        return result
+    for key in ("Receipt", "receipt"):
+        if isinstance(result.get(key), dict):
+            return result[key]
+    return {}
+
+
 def interpret_publish_receipt(result: Any) -> tuple[bool, str]:
-    """Inspect a publish-receipt JSON and return (delivered, failure_kind).
+    """Return acceptance and publish failure for adapter or gc receipt JSON.
 
-    The HTTP layer can succeed (200) while the receipt's `delivered`
-    field is false — slack rejected for auth, channel, rate-limit, etc.
-    Without this inspection, callers stamp loop_close_posted_at based on
-    a 200 alone and the post is silently lost.
-
-    Handles three shapes seen in the wild:
-      - Adapter-direct (lowercase keys, per adapter/main.go publishReceipt
-        JSON tags): {"delivered": bool, "failure_kind": "...", ...}
-      - gc-wrapped, capitalized (Go struct fields without json tags):
-        {"Receipt": {"Delivered": bool, "FailureKind": "...", ...}}
-      - gc-wrapped, lowercase: {"receipt": {"delivered": bool, ...}}
-
-    Fail-closed semantics: if no recognizable `delivered` key is found,
-    returns (False, "schema_mismatch") — better to noisily fail an
-    unknown response than silently mask one.
+    A message timestamp proves Slack accepted the post, including legacy
+    receipts that incorrectly reported a readback miss as delivered=false.
+    Unknown shapes without acceptance evidence still fail closed.
     """
     if not isinstance(result, dict):
         return False, "non_dict_response"
-    if "delivered" in result:
-        delivered = bool(result.get("delivered"))
-        kind = str(result.get("failure_kind", "")) if not delivered else ""
-        return delivered, kind
-    receipt = result.get("Receipt") if isinstance(result.get("Receipt"), dict) else None
-    if receipt is None:
-        receipt = result.get("receipt") if isinstance(result.get("receipt"), dict) else None
-    if isinstance(receipt, dict):
-        if "Delivered" in receipt:
-            delivered = bool(receipt.get("Delivered"))
-            kind = str(receipt.get("FailureKind", "")) if not delivered else ""
-            return delivered, kind
-        if "delivered" in receipt:
-            delivered = bool(receipt.get("delivered"))
-            kind = str(receipt.get("failure_kind", "")) if not delivered else ""
-            return delivered, kind
+    receipt = _publish_receipt(result)
+    message_id = receipt.get("MessageID") or receipt.get("message_id")
+    if isinstance(message_id, str) and message_id.strip():
+        return True, ""
+    for delivered_key, failure_key in (("Delivered", "FailureKind"), ("delivered", "failure_kind")):
+        if delivered_key in receipt:
+            delivered = bool(receipt[delivered_key])
+            return delivered, str(receipt.get(failure_key, "")) if not delivered else ""
     return False, "schema_mismatch"
+
+
+def publish_receipt_exit_code(result: Any) -> int:
+    """Report readback uncertainty on stderr without inducing a duplicate post."""
+    delivered, failure_kind = interpret_publish_receipt(result)
+    if not delivered:
+        print(f"slack publish failed: delivered=false failure_kind={failure_kind or 'unknown'}",
+              file=sys.stderr)
+        return 1
+    receipt = _publish_receipt(result)
+    metadata = receipt.get("Metadata") or receipt.get("metadata") or {}
+    readback = metadata.get("readback", "") if isinstance(metadata, dict) else ""
+    reported_delivered = receipt.get("Delivered", receipt.get("delivered", False))
+    if (readback and readback != "confirmed") or not reported_delivered:
+        message_id = receipt.get("MessageID") or receipt.get("message_id") or ""
+        print(f"slack publish accepted: message_id={message_id}; readback unconfirmed "
+              f"({readback or 'legacy receipt'}); do not repost", file=sys.stderr)
+    return 0
 
 
 def summarize_publish_receipt(
@@ -381,7 +391,8 @@ def summarize_publish_receipt(
     every outbound message. The default receipt is now just the fields
     a sender can act on: the delivered flag, the provider message id
     (or file id for uploads), the conversation id, and the thread ts
-    when the send was threaded. Failures additionally carry
+    when the send was threaded. Receipt metadata preserves readback and
+    storage diagnostics. Failures additionally carry
     failure_kind and the receipt's error message so a delivered=false
     stays diagnosable without --verbose.
 
@@ -392,16 +403,7 @@ def summarize_publish_receipt(
     like the interpreter.
     """
     delivered, failure_kind = interpret_publish_receipt(result)
-    receipt: dict[str, Any] = {}
-    if isinstance(result, dict):
-        if "delivered" in result:
-            receipt = result
-        else:
-            for key in ("Receipt", "receipt"):
-                candidate = result.get(key)
-                if isinstance(candidate, dict):
-                    receipt = candidate
-                    break
+    receipt = _publish_receipt(result)
     summary: dict[str, Any] = {
         "delivered": delivered,
         "conversation_id": conversation_id,
@@ -419,6 +421,9 @@ def summarize_publish_receipt(
         summary["file_id"] = str(file_id)
     if thread_ts:
         summary["thread_ts"] = thread_ts
+    metadata = receipt.get("Metadata") or receipt.get("metadata")
+    if isinstance(metadata, dict) and metadata:
+        summary["metadata"] = metadata
     if not delivered:
         if failure_kind:
             summary["failure_kind"] = failure_kind

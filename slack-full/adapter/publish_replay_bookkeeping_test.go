@@ -128,7 +128,7 @@ func TestHandlePublishReplayThatReVerifiesDeliveryRunsTheDeliveryBookkeeping(t *
 			// First publish: Slack took the message, the read leg was down.
 			// Nothing is proven, so nothing is cleared or recorded.
 			first := publish()
-			if first.Delivered || first.MessageID != "1700.001" {
+			if !first.Delivered || publishReadbackConfirmed(first) || first.MessageID != "1700.001" {
 				t.Fatalf("first receipt = %+v, want posted but unconfirmed", first)
 			}
 			reactions.assertNoCall(t, 150*time.Millisecond)
@@ -183,7 +183,7 @@ func TestReplayPublishReceiptReportsTheReVerificationExactlyOnce(t *testing.T) {
 	withSlackAPIStub(t, server)
 
 	dedup := newPublishDedupCache(publishDedupTTL)
-	dedup.Put("k-1", publishReceipt{MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}})
+	dedup.Put("k-1", publishReceipt{Delivered: true, MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}})
 	var reVerified atomic.Int32
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
@@ -203,7 +203,7 @@ func TestReplayPublishReceiptReportsTheReVerificationExactlyOnce(t *testing.T) {
 	if got := reVerified.Load(); got != 1 {
 		t.Fatalf("%d of 8 concurrent replays reported the re-verification, want exactly 1", got)
 	}
-	if cached, ok := dedup.Get("k-1"); !ok || !cached.Delivered {
+	if cached, ok := dedup.Get("k-1"); !ok || !publishReadbackConfirmed(cached) {
 		t.Fatalf("cached receipt after the concurrent re-verifies = %+v, %v; want delivered", cached, ok)
 	}
 }
@@ -221,7 +221,7 @@ func TestReplayPublishReceiptStaleUnconfirmedWriteCannotReopenTheTransition(t *t
 	withSlackAPIStub(t, server)
 
 	dedup := newPublishDedupCache(publishDedupTTL)
-	unconfirmed := publishReceipt{MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}}
+	unconfirmed := publishReceipt{Delivered: true, MessageID: "1700.001", Metadata: map[string]string{receiptMetadataKeyReadback: slackReadbackUnavailable}}
 	dedup.Put("k-1", unconfirmed)
 
 	first, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
@@ -230,7 +230,7 @@ func TestReplayPublishReceiptStaleUnconfirmedWriteCannotReopenTheTransition(t *t
 	}
 	// The slower retry's stale write: the unconfirmed copy it took before.
 	dedup.Put("k-1", unconfirmed)
-	if cached, ok := dedup.Get("k-1"); !ok || !cached.Delivered {
+	if cached, ok := dedup.Get("k-1"); !ok || !publishReadbackConfirmed(cached) {
 		t.Fatalf("cached receipt after a stale unconfirmed write = %+v, %v; want the delivered receipt kept", cached, ok)
 	}
 	third, ok := replayPublishReceipt("xoxb-test", dedup, "k-1", readbackTarget("hello"))
@@ -272,7 +272,7 @@ func TestHandlePublishReplayDoesNotClearABusyMarkNewerThanTheReply(t *testing.T)
 		return receipt
 	}
 
-	if first := publish(); first.Delivered {
+	if first := publish(); !first.Delivered || publishReadbackConfirmed(first) {
 		t.Fatalf("first receipt = %+v, want posted but unconfirmed", first)
 	}
 	// A newer inbound in the same thread, after the reply was posted
