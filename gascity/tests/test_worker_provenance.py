@@ -33,7 +33,11 @@ def fixture(tmp_path):
 import hashlib, json, os, subprocess, sys, uuid
 from pathlib import Path
 args = sys.argv[1:]
-if args[:2] == ['custom', 'provenance']:
+if args == ['import', 'list']:
+    print(os.environ.get('IMPORT_LIST', 'custom\t/packs/gascity\t\tlocal'))
+    sys.exit(0)
+bindings = os.environ.get('HELP_BINDINGS', 'custom').split(',')
+if args[0] in bindings and args[1:2] == ['provenance']:
     sys.exit(subprocess.call([os.environ['PROVENANCE_RUN'], *args[2:]]))
 if args[1:] == ['provenance', '--help']:
     print('Gas City CLI - generic root help')
@@ -115,7 +119,7 @@ else:
     ]))
     env = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ['PATH'], "GC_BIN": str(gc),
            "FIXTURE_STATE": str(state), "FIXTURE_AT": "2026-10-16T08:00:00Z", "PROVENANCE_RUN": str(RUN), "GC_PACK_DIR": str(PACK),
-           "CLAIMED_BEAD_ID": "fixture-1", "PROVENANCE_PACK_ALIAS": "custom",
+           "CLAIMED_BEAD_ID": "fixture-1",
            "GC_DIR": str(tmp_path), "PR_URL": PR, "EVIDENCE_DIR": "/evidence",
            "REVIEW_RECORDS": str(reviews)}
     return state, reviews, env
@@ -136,7 +140,9 @@ def data(fixture):
 
 def close_script():
     text = (PACK / "template-fragments/gc-role-worker.template.md").read_text()
-    return 'WORK_COMMIT=' + text.split('```bash\nWORK_COMMIT=', 1)[1].split('```', 1)[0]
+    discovery = 'PROVENANCE_PACK_ALIAS=' + text.split('```bash\nPROVENANCE_PACK_ALIAS=', 1)[1].split('```', 1)[0]
+    close = 'WORK_COMMIT=' + text.split('```bash\nWORK_COMMIT=', 1)[1].split('```', 1)[0]
+    return discovery + '\n' + close
 
 
 def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
@@ -153,13 +159,27 @@ def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
 
 
 @pytest.mark.parametrize('help_exit', ['0', '3'])
-def test_wrong_alias_help_stops_close_before_writes(fixture, help_exit):
-    env = {**fixture[2], 'PROVENANCE_PACK_ALIAS': 'wrong', 'HELP_EXIT': help_exit}
+def test_no_provenance_binding_stops_close_before_writes(fixture, help_exit):
+    env = {**fixture[2], 'HELP_BINDINGS': '', 'HELP_EXIT': help_exit}
     result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
     assert result.returncode != 0
-    assert 'Unavailable provenance command for import alias: wrong' in result.stderr
+    assert 'No gc binding serves provenance: check gc import list and the Gas City pack pin.' in result.stderr
     assert data(fixture) == dict(events=[], metadata={}, calls=[], closed=False)
     assert not Path(fixture[2]['FIXTURE_STATE'] + '.detached').exists()
+
+
+@pytest.mark.parametrize('imports', [
+    'stale\t/packs/gascity\t\told',
+    '(transitive)\thttps://github.com/owner/packs//gascity\t\tsha:abc',
+    'roles\t/packs/gascity/roles\t\tlocal',
+    '',
+])
+def test_nested_gc_binding_closes_when_direct_binding_is_unavailable(fixture, imports):
+    env = {**fixture[2], 'IMPORT_LIST': imports, 'HELP_BINDINGS': 'gc'}
+    result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert data(fixture)['closed']
+    assert len(data(fixture)['events']) == 8
 
 
 @pytest.mark.parametrize('command', ['record', 'summary'])

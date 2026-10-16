@@ -182,6 +182,24 @@ def run_gc(
     )
 
 
+def discover_provenance_binding(
+    gc_test_bin: Path, workspace: PromptWorkspace, prompt: str, tmp_path: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run the rendered close discovery with real gc, without touching a store."""
+    script = "PROVENANCE_PACK_ALIAS=" + prompt.split(
+        "```bash\nPROVENANCE_PACK_ALIAS=", 1
+    )[1].split("```", 1)[0]
+    binary_dir = tmp_path / "real-gc-bin"
+    binary_dir.mkdir()
+    (binary_dir / "gc").symlink_to(gc_test_bin)
+    return subprocess.run(
+        ["sh", "-c", script + '\nprintf "%s\\n" "$PROVENANCE_PACK_ALIAS"'],
+        cwd=workspace.rig_dir,
+        env={**workspace.env, "PATH": str(binary_dir) + os.pathsep + os.environ["PATH"]},
+        text=True, capture_output=True, timeout=30,
+    )
+
+
 def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert persona_heading in prompt
     assert prompt.count("# GC Role Worker") == 1
@@ -312,6 +330,32 @@ def test_role_prompts_render_public_worker_fragment(
     assert help_result.returncode == 0, help_result.stderr
     assert "--claim" in help_result.stdout
     assert "--drain-ack" in help_result.stdout
+
+    discovery = discover_provenance_binding(gc_test_bin, workspace, result.stdout, tmp_path)
+    assert discovery.returncode == 0, discovery.stderr
+    expected_binding = city_binding if pack_path == "gascity" else "gc"
+    assert discovery.stdout.strip() == expected_binding
+    provenance_help = run_gc(gc_test_bin, workspace, expected_binding, "provenance", "--help")
+    assert provenance_help.returncode == 0, provenance_help.stderr
+    assert "Record or summarize a normal worker's typed close trail" in provenance_help.stdout
+
+
+def test_worker_provenance_discovery_fails_without_city_command_import(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    workspace = write_prompt_workspace(
+        tmp_path, city_binding="gc", city_pack=REPO_ROOT / "gascity",
+    )
+    # Keep the rig roles, as when their pin moves before the city command pin.
+    (workspace.city_dir / "pack.toml").write_text(
+        '[pack]\nname = "no-command-import"\nschema = 2\n', encoding="utf-8",
+    )
+    prompt = run_gc(gc_test_bin, workspace, "prime", "--strict", "fixture/gc.implementation-worker")
+    assert prompt.returncode == 0, prompt.stderr
+    discovery = discover_provenance_binding(gc_test_bin, workspace, prompt.stdout, tmp_path)
+    assert discovery.returncode != 0
+    assert "No gc binding serves provenance: check gc import list and the Gas City pack pin." in discovery.stderr
+    assert not discovery.stdout
 
 
 def test_registered_claim_command_dispatches_store_aware_show_and_normalizes_json(

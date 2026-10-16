@@ -216,7 +216,8 @@ def main() -> int:
     writer.add_argument("--commit", default="")
     writer.add_argument("--pr", default="")
     writer.add_argument("--reviews", metavar="FILE",
-                        help="path to a JSON array file: stage, round, verdict, sha, ref; [] for no reviews")
+                        help="path to a JSON array file: stage, round, verdict, sha, ref; "
+                             "a file containing [] for no reviews")
     writer.add_argument("--evidence-dir", default="")
     reader = commands.add_parser("summary", help="render typed provenance; no metadata fallback")
     reader.add_argument("bead")

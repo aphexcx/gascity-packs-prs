@@ -39,10 +39,13 @@ and your project added as a rig (`gc rig add .` inside the repo). See the
 
    Both imports are required for the full workflow. The rig-scoped roles pack
    supplies agents but, by design, rig imports do not register city commands.
-   Worker prompts use the built-in `gc hook --claim --drain-ack --json`, which
-   works with any import alias. Keep the top-level Gas City pack imported at
-   city scope for formulas, the mayor skill, and the optional claim wrapper
-   (`gc <alias> claim`, here `gc gc claim`).
+   Worker claims use the built-in `gc hook --claim --drain-ack --json`, which
+   works with any import alias. Normal closes discover the provenance command
+   through direct Gas City bindings, then the nested `gc` binding used by
+   derived packs, verifying the command's help content. Keep the top-level
+   Gas City pack imported at city scope for formulas, the mayor skill,
+   provenance, and the optional claim wrapper (`gc <alias> claim`, here
+   `gc gc claim`). See Worker close provenance for discovery and rollout order.
 
    (Contributors hacking on packs can point this source at a local clone.)
 
@@ -408,27 +411,37 @@ Two related core behaviors complete the picture:
 
 ## Worker close provenance
 
-Workers require Beads **1.3.1+** and the city-level Gas City pack import. Run
-`gc import list` and set `PROVENANCE_PACK_ALIAS` to the first column of the row
-whose source ends in `/gascity` (for example `gascity`). Imports ending in
-`/gascity/roles` supply rig roles, not command aliases. Probe provenance help
-before writing: some gc versions return generic help with success for unknown
-bindings, so the probe also checks for the command's description. The command
-calls `gc bd` to retain rig routing. No city-side helper installation is needed.
+Workers require Beads **1.3.1+** and the Gas City pack at city scope, directly
+or through a derived pack. Before any normal close (shipped, no-op, blocked,
+or abandoned), discover `PROVENANCE_PACK_ALIAS` using direct `/gascity` rows
+from `gc import list`, then the nested `gc` binding used by bmad, superpowers,
+gstack, compound-engineering, and profiler. Transitive imports may have no row
+or be labelled `(transitive)` without a binding. `/gascity/roles` imports
+supply rig roles, not command aliases. Keep the first candidate whose help
+contains the command's description: generic help can exit successfully for a
+missing command. The command calls `gc bd` to retain rig routing. No city-side
+helper installation is needed.
 
 Before close, append the facts you actually have (the command does not close,
 detach, send READY, or change `gc.outcome` / `gc.work_branch`):
 
 ```sh
+PROVENANCE_PACK_ALIAS=
+for candidate in $(gc import list |
+    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?$/ { print $1 }') gc; do
+  if gc "$candidate" provenance --help 2>/dev/null |
+     grep -Fq "Record or summarize a normal worker's typed close trail"; then
+    PROVENANCE_PACK_ALIAS=$candidate
+    break
+  fi
+done
+[ -n "$PROVENANCE_PACK_ALIAS" ] || {
+  printf '%s\n' \
+    'No gc binding serves provenance: check gc import list and the Gas City pack pin.' >&2
+  exit 1
+}
 # REVIEW_RECORDS is the absolute path to reviews.json outside the PR branch.
 # When no review has happened, the file's content is []; keep its path here.
-if ! PROVENANCE_HELP=$(gc "$PROVENANCE_PACK_ALIAS" provenance --help) ||
-   ! printf '%s\n' "$PROVENANCE_HELP" |
-     grep -Fq "Record or summarize a normal worker's typed close trail"; then
-  printf 'Unavailable provenance command for import alias: %s\n' \
-    "$PROVENANCE_PACK_ALIAS" >&2
-  exit 1
-fi
 gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
   --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
   --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR" || exit 1
@@ -503,9 +516,19 @@ the core close gate. Each outcome clears an omitted commit or PR key with
 `--unset-metadata`, keeping compatibility readers aligned with the typed trail.
 Their removal is scheduled for **0.2.0**, after those
 consumers and the core gate migrate. `gc.outcome` and `gc.work_branch` retain
-their separate contracts. No pack/binary version is bumped here. A packs roll
-requires one `gc import` per city on its mayor's word; this change performs
-no live-city rollout. City board/READY adoption is a separate change.
+their separate contracts. No pack/binary version is bumped here.
+
+For the three-city rollout, each mayor first checks `gc bd version` (1.3.1+)
+and `gc import list` on that city. Update the city-level import supplying
+the Gas City command **first**, or in the same reload as the role imports;
+then move every `gascity/roles` pin to the same SHA. A city can have several
+role pins in `city.toml` as well as its city-level command pin in `pack.toml`.
+For a derived pack, update the city import that supplies its nested Gas City
+command before the roles. A new close template with an old command pin fails
+the discovery probe. Roll back **role pins first**, then the city command pin;
+already appended provenance is retained. Roll one city at a time on Afik's
+word through its mayor. This change performs no live-city rollout.
+City board/READY adoption is a separate change.
 
 ## Worker toolchain
 

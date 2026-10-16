@@ -179,12 +179,32 @@ record unrecoverable failure as `gc.outcome=fail` plus concise
 `gc.failure_class` and reason.
 
 Before closing a normal work bead, record every known fact using the pack's
-`provenance record` command (Beads 1.3.1 or later). Set `PROVENANCE_PACK_ALIAS`
-to this pack's **city-level** binding from `gc import list`: the first column
-of the row whose source ends in `/gascity` (for example `gascity`). Rig role
-imports ending in `/gascity/roles` are not command aliases. Probe the binding's
-provenance help as below before any close write. The command writes
-one typed record per commit, PR, review, evidence directory, and work outcome.
+`provenance record` command (Beads 1.3.1 or later). Discover its binding once
+before any close write for **all four outcomes**: shipped, no-op, blocked,
+and abandoned. Try direct `/gascity` imports first, then `gc`, the nested
+binding used by derived packs. Transitive rows have no usable alias, and
+`/gascity/roles` imports supply roles, not commands. Select by help content:
+generic help can exit successfully even when the command is unavailable.
+
+```bash
+PROVENANCE_PACK_ALIAS=
+for candidate in $(gc import list |
+    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?$/ { print $1 }') gc; do
+  if gc "$candidate" provenance --help 2>/dev/null |
+     grep -Fq "Record or summarize a normal worker's typed close trail"; then
+    PROVENANCE_PACK_ALIAS=$candidate
+    break
+  fi
+done
+[ -n "$PROVENANCE_PACK_ALIAS" ] || {
+  printf '%s\n' \
+    'No gc binding serves provenance: check gc import list and the Gas City pack pin.' >&2
+  exit 1
+}
+```
+
+The command writes one typed record per commit, PR, review, evidence directory,
+and work outcome.
 It also writes compatibility metadata and never closes the bead. A recording
 failure stops the close; retry safely after resolving it, or record the
 bead's failure contract. Do not silently close with metadata alone.
@@ -224,13 +244,6 @@ WORK_BRANCH=$(git branch --show-current) || exit 1
   printf '%s\n' 'Refusing to write an empty gc.work_branch.' >&2
   exit 1
 }
-if ! PROVENANCE_HELP=$(gc "$PROVENANCE_PACK_ALIAS" provenance --help) ||
-   ! printf '%s\n' "$PROVENANCE_HELP" |
-     grep -Fq "Record or summarize a normal worker's typed close trail"; then
-  printf 'Unavailable provenance command for import alias: %s\n' \
-    "$PROVENANCE_PACK_ALIAS" >&2
-  exit 1
-fi
 gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
   --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
   --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR" || exit 1
