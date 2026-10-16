@@ -185,11 +185,15 @@ and abandoned. Try direct `/gascity` imports first, then `gc`, the nested
 binding used by derived packs. Transitive rows have no usable alias, and
 `/gascity/roles` imports supply roles, not commands. Select by help content:
 generic help can exit successfully even when the command is unavailable.
+Run discovery in the same shell call as the record, or save the printed binding
+and substitute it in the record call. Never use an empty binding. If shell
+variables do not persist, set `PROVENANCE_PACK_ALIAS` to that saved binding
+before running the close recipe.
 
 ```bash
 PROVENANCE_PACK_ALIAS=
 for candidate in $(gc import list |
-    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?$/ { print $1 }') gc; do
+    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?(#.*)?$/ { print $1 }') gc; do
   if gc "$candidate" provenance --help 2>/dev/null |
      grep -Fq "Record or summarize a normal worker's typed close trail"; then
     PROVENANCE_PACK_ALIAS=$candidate
@@ -201,6 +205,7 @@ done
     'No gc binding serves provenance: check gc import list and the Gas City pack pin.' >&2
   exit 1
 }
+printf 'Provenance binding: %s\n' "$PROVENANCE_PACK_ALIAS"
 ```
 
 The command writes one typed record per commit, PR, review, evidence directory,
@@ -238,6 +243,10 @@ Workspace rules above and the workflow formula, verify the release, and close
 with `--reason` last:
 
 ```bash
+[ -n "${PROVENANCE_PACK_ALIAS:-}" ] || {
+  printf '%s\n' 'Run the provenance discovery first (or substitute its printed binding).' >&2
+  exit 1
+}
 WORK_COMMIT=$(git rev-parse HEAD) || exit 1
 WORK_BRANCH=$(git branch --show-current) || exit 1
 [ -n "$WORK_BRANCH" ] || {
@@ -259,15 +268,18 @@ RELEASED_BRANCH=$(git -C "$GC_DIR" branch --show-current) || exit 1
 gc bd close "$CLAIMED_BEAD_ID" --reason "Shipped $WORK_COMMIT."
 ```
 
-For work that needed no change, first run
+For work that needed no change, first run the same non-empty binding guard
+that opens the shipped recipe, then run
 `gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" --outcome no-op`
 (add known PR/review/evidence flags), then use
 `--set-metadata 'gc.outcome=pass'` and `--set-metadata 'gc.work_outcome=no-op'`
 on the update instead.
 
-For blocked or abandoned work, record that outcome with the same command and
-known facts before its failure close. Preserve that work outcome and the bead's
-failure contract (`gc.outcome=fail` unless its contract specifies otherwise).
+For blocked or abandoned work, first run that same non-empty binding guard,
+then record the outcome with the same command and known facts before its
+failure close. An unset binding means rerun discovery or restore its printed
+value; it does not change the work outcome. Preserve that work outcome and the
+bead's failure contract (`gc.outcome=fail` unless its contract specifies otherwise).
 Do not manufacture a commit or PR. Workflow-control beads use their step result
 contract; do not invent a shipped work record for them. These workflow-control
 closes do not require this normal-work provenance command.

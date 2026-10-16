@@ -138,16 +138,18 @@ def data(fixture):
     return json.loads(fixture[0].read_text())
 
 
-def close_script():
+def close_script(*, include_discovery=True):
     text = (PACK / "template-fragments/gc-role-worker.template.md").read_text()
     discovery = 'PROVENANCE_PACK_ALIAS=' + text.split('```bash\nPROVENANCE_PACK_ALIAS=', 1)[1].split('```', 1)[0]
-    close = 'WORK_COMMIT=' + text.split('```bash\nWORK_COMMIT=', 1)[1].split('```', 1)[0]
-    return discovery + '\n' + close
+    guard = '[ -n "${PROVENANCE_PACK_ALIAS:-}" ]'
+    close = guard + text.split('```bash\n' + guard, 1)[1].split('```', 1)[0]
+    return discovery + '\n' + close if include_discovery else close
 
 
 def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
     result = subprocess.run(['sh', '-c', close_script()], env=fixture[2], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+    assert 'Provenance binding: custom\n' in result.stdout
     s = data(fixture)
     assert s['closed']
     assert len(s['events']) == 8
@@ -156,6 +158,47 @@ def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
     assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
     assert all(c[3:5] == ['--issue', 'fixture-1'] for c in s['calls']
                if c[:3] == ['b' + 'd', 'provenance', 'record'])
+
+
+@pytest.mark.parametrize('binding', [None, ''])
+@pytest.mark.parametrize('shell_flags', ['-c', '-euc'])
+def test_close_without_discovery_names_missing_binding_before_writes(fixture, binding, shell_flags):
+    env = {**fixture[2]}
+    env.pop('PROVENANCE_PACK_ALIAS', None)
+    if binding is not None:
+        env['PROVENANCE_PACK_ALIAS'] = binding
+    result = subprocess.run(['sh', shell_flags, close_script(include_discovery=False)],
+                            env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert result.stderr.strip() == 'Run the provenance discovery first (or substitute its printed binding).'
+    assert data(fixture) == dict(events=[], metadata={}, calls=[], closed=False)
+    assert not Path(fixture[2]['FIXTURE_STATE'] + '.detached').exists()
+
+
+def test_close_in_new_shell_uses_printed_discovery_binding(fixture):
+    discovery = close_script().split('[ -n "${PROVENANCE_PACK_ALIAS:-}" ]', 1)[0]
+    result = subprocess.run(['sh', '-c', discovery], env=fixture[2], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'Provenance binding: custom'
+    env = {**fixture[2], 'PROVENANCE_PACK_ALIAS': result.stdout.strip().split(': ', 1)[1]}
+    result = subprocess.run(['sh', '-euc', close_script(include_discovery=False)],
+                            env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert data(fixture)['closed']
+    assert len(data(fixture)['events']) == 8
+
+
+@pytest.mark.parametrize('source', [
+    'https://github.com/owner/packs//gascity#main',
+    'https://github.com/owner/packs//gascity/#sha:abc',
+])
+def test_direct_binding_with_source_ref_closes(fixture, source):
+    env = {**fixture[2], 'IMPORT_LIST': f'custom\t{source}\t\tsha:abc'}
+    result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert 'Provenance binding: custom\n' in result.stdout
+    assert data(fixture)['closed']
+    assert len(data(fixture)['events']) == 8
 
 
 @pytest.mark.parametrize('help_exit', ['0', '3'])

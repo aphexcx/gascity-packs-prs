@@ -428,7 +428,7 @@ detach, send READY, or change `gc.outcome` / `gc.work_branch`):
 ```sh
 PROVENANCE_PACK_ALIAS=
 for candidate in $(gc import list |
-    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?$/ { print $1 }') gc; do
+    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?(#.*)?$/ { print $1 }') gc; do
   if gc "$candidate" provenance --help 2>/dev/null |
      grep -Fq "Record or summarize a normal worker's typed close trail"; then
     PROVENANCE_PACK_ALIAS=$candidate
@@ -440,6 +440,7 @@ done
     'No gc binding serves provenance: check gc import list and the Gas City pack pin.' >&2
   exit 1
 }
+printf 'Provenance binding: %s\n' "$PROVENANCE_PACK_ALIAS"
 # REVIEW_RECORDS is the absolute path to reviews.json outside the PR branch.
 # When no review has happened, the file's content is []; keep its path here.
 gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
@@ -518,7 +519,7 @@ Their removal is scheduled for **0.2.0**, after those
 consumers and the core gate migrate. `gc.outcome` and `gc.work_branch` retain
 their separate contracts. No pack/binary version is bumped here.
 
-For the three-city rollout, each mayor first checks `gc bd version` (1.3.1+)
+For rollout, each city's operator first checks `gc bd version` (1.3.1+)
 and `gc import list` on that city. Update the city-level import supplying
 the Gas City command **first**, or in the same reload as the role imports;
 then move every `gascity/roles` pin to the same SHA. A city can have several
@@ -526,8 +527,8 @@ role pins in `city.toml` as well as its city-level command pin in `pack.toml`.
 For a derived pack, update the city import that supplies its nested Gas City
 command before the roles. A new close template with an old command pin fails
 the discovery probe. Roll back **role pins first**, then the city command pin;
-already appended provenance is retained. Roll one city at a time on Afik's
-word through its mayor. This change performs no live-city rollout.
+already appended provenance is retained. Roll one city at a time.
+This change performs no live-city rollout.
 City board/READY adoption is a separate change.
 
 ## Worker toolchain

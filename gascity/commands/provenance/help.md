@@ -5,7 +5,7 @@ Usage:
   gc <binding> provenance record BEAD --outcome no-op|blocked|abandoned
   gc <binding> provenance summary BEAD
 
-Use the city-level Gas City pack binding from gc import list (for example gascity).
+Use the binding the worker close discovery selects (README, Worker close provenance).
 Reviews are a JSON file containing an array of objects with stage (codex|gate|read), positive
 round, verdict, full reviewed sha, and ref (immutable record path or URL).
 For no reviews, supply a file containing []. BEAD must match its resolved ID exactly.

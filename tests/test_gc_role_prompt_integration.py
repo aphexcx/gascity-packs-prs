@@ -193,7 +193,7 @@ def discover_provenance_binding(
     binary_dir.mkdir()
     (binary_dir / "gc").symlink_to(gc_test_bin)
     return subprocess.run(
-        ["sh", "-c", script + '\nprintf "%s\\n" "$PROVENANCE_PACK_ALIAS"'],
+        ["sh", "-c", script],
         cwd=workspace.rig_dir,
         env={**workspace.env, "PATH": str(binary_dir) + os.pathsep + os.environ["PATH"]},
         text=True, capture_output=True, timeout=30,
@@ -334,7 +334,7 @@ def test_role_prompts_render_public_worker_fragment(
     discovery = discover_provenance_binding(gc_test_bin, workspace, result.stdout, tmp_path)
     assert discovery.returncode == 0, discovery.stderr
     expected_binding = city_binding if pack_path == "gascity" else "gc"
-    assert discovery.stdout.strip() == expected_binding
+    assert discovery.stdout.strip() == f"Provenance binding: {expected_binding}"
     provenance_help = run_gc(gc_test_bin, workspace, expected_binding, "provenance", "--help")
     assert provenance_help.returncode == 0, provenance_help.stderr
     assert "Record or summarize a normal worker's typed close trail" in provenance_help.stdout
@@ -346,7 +346,7 @@ def test_worker_provenance_discovery_fails_without_city_command_import(
     workspace = write_prompt_workspace(
         tmp_path, city_binding="gc", city_pack=REPO_ROOT / "gascity",
     )
-    # Keep the rig roles, as when their pin moves before the city command pin.
+    # Keep the rig roles while removing the city command import entirely.
     (workspace.city_dir / "pack.toml").write_text(
         '[pack]\nname = "no-command-import"\nschema = 2\n', encoding="utf-8",
     )
