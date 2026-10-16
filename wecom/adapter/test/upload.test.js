@@ -412,10 +412,14 @@ test('the SDK transport declines a client without the 1.0.7 internals', () => {
   assert.equal(createSdkUploadTransport(client), null);
 });
 
-test('waitForConnection gives up after its window', async () => {
+test('waitForConnection gives up after its window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const { client } = sdkClient();
   const transport = createSdkUploadTransport(client);
-  assert.equal(await transport.waitForConnection(5), false);
+  const waiting = transport.waitForConnection(5);
+  // The socket stub cannot keep the unref'd deadline alive; drive it explicitly.
+  t.mock.timers.tick(6);
+  assert.equal(await waiting, false);
 });
 
 // Guard: node:test's mock must not leak real-timer state between files.
