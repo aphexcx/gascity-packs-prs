@@ -434,6 +434,14 @@ Without explicit flags, the dispatcher's city environment and normal rig
 routing still apply. This command never detaches;
 the worker close recipe detaches its verified `GC_DIR` only after recording.
 
+Beads 1.3.1 retains provenance only for rows of its `issues` table; wisps and
+no-history beads are stored separately. The writer checks JSON acknowledgements
+and re-reads the trail before writing compatibility metadata. A missing record
+fails with `store did not retain provenance for BEAD`, explains the storage
+constraint, and directs the worker to close such work by its workflow-control
+contract or promote it first. The close recipe stops before metadata updates,
+branch release, and close; a successful CLI exit alone is not proof of retention.
+
 Before close, append the facts you actually have (the command does not close,
 detach, send READY, or change `gc.outcome` / `gc.work_branch`):
 
@@ -509,7 +517,10 @@ any writes. The writer and reader resolve `gc bd show BEAD --json` and require
 the returned ID to equal the supplied ID exactly; abbreviations are rejected
 before any append. They honor `GC_BIN` when set, otherwise PATH's `gc`.
 Partial append failures leave the bead open and are safe to retry.
-The outcome record is appended last, then compatibility keys are written.
+The outcome record is appended last. Every intended fact, including an unchanged
+outcome reused on retry, must be present in the final log before compatibility
+keys are written. An `inserted: false` acknowledgement is accepted only for an
+ID in the initial trail; repeated identical inputs are written once per run.
 Beads stores event timestamps at whole-second precision. The reader follows
 the outcome predecessor chain to its sole tip, failing on a broken or forked
 chain. A broken or forked chain also stops the writer: do not retry it forever

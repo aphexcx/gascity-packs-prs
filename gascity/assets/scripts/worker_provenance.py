@@ -108,25 +108,62 @@ def close_facts(args) -> list[dict]:
     return records
 
 
+def event_signature(event: dict) -> tuple:
+    return tuple(event.get(key) for key in ("source", "kind", "ref_kind", "ref", "payload"))
+
+
+def retention_failure(bead: str) -> ValueError:
+    return ValueError(
+        f"store did not retain provenance for {bead}: "
+        "Beads 1.3.1 keeps provenance only for rows of the issues table; "
+        "a wisp or no-history bead has none; "
+        "close such work by its workflow-control contract or promote it first"
+    )
+
+
 def record(args) -> None:
     records = close_facts(args)
     # Reusable facts deduplicate forever; outcome transitions must also retain
     # A -> B -> A. Link each changed outcome to its predecessor. An immediate
     # retry after append/metadata failure sees the same outcome and skips it.
-    prior = latest_outcome(typed_facts(read_events(args.bead, args.gc_command)))
+    events = read_events(args.bead, args.gc_command)
+    prior_ids = {event["id"] for event in events}
+    prior = latest_outcome(typed_facts(events))
+    required = {}
     outcome = records[-1]["payload"]
     if prior and {k: v for k, v in prior[3].items() if k != "previous"} == outcome:
         records.pop()
+        required[event_signature(prior[2])] = prior[2]["id"]
     else:
         outcome["previous"] = prior[2]["id"] if prior else ""
     at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     for item in records:
         payload = json.dumps(item["payload"], sort_keys=True, separators=(",", ":"))
         source = SOURCE + base64.urlsafe_b64encode(hashlib.sha256(payload.encode()).digest()).decode().rstrip("=")
-        subprocess.run([*args.gc_command, "bd", "provenance", "record", "--issue", args.bead,
-                        "--kind", item["kind"], "--ref-kind", item["ref_kind"],
-                        "--ref", item["ref"], "--source", source, "--at", at,
-                        "--payload", payload], check=True)
+        signature = event_signature({**item, "source": source, "payload": payload})
+        if signature in required:
+            continue  # Repeated identical input is one fact, even on a first run.
+        result = subprocess.run(
+            [*args.gc_command, "bd", "provenance", "record", "--issue", args.bead,
+             "--kind", item["kind"], "--ref-kind", item["ref_kind"],
+             "--ref", item["ref"], "--source", source, "--at", at,
+             "--payload", payload, "--json"], text=True, capture_output=True, check=True)
+        acknowledgement = json.loads(result.stdout)
+        if (not isinstance(acknowledgement, dict)
+                or not isinstance(acknowledgement.get("id"), str)
+                or not acknowledgement["id"].strip()
+                or type(acknowledgement.get("inserted")) is not bool):
+            raise ValueError("invalid provenance record acknowledgement: expected id and inserted")
+        event_id = acknowledgement["id"]
+        # INSERT IGNORE can report a successful no-op without retaining a row.
+        # Only an ID already observed in the initial trail is a known duplicate.
+        if not acknowledgement["inserted"] and event_id not in prior_ids:
+            raise retention_failure(args.bead)
+        required[signature] = event_id
+    retained = {event["id"]: event_signature(event)
+                for event in read_events(args.bead, args.gc_command)}
+    if any(retained.get(event_id) != signature for signature, event_id in required.items()):
+        raise retention_failure(args.bead)
     # Compatibility for gascity pack 0.1.x. Remove in 0.2.0 after readers AND
     # the core work-record close gate migrate; do not drop these independently.
     command = [*args.gc_command, "bd", "update", args.bead,

@@ -71,11 +71,19 @@ elif args[:3] == ['b' + 'd', 'provenance', 'record']:
     assert len(event['source']) <= 64
     assert len(event['ref']) <= 255
     event['id'] = str(uuid.UUID(bytes=hashlib.sha256(':'.join([event['source'],event['issue_id'],event['kind'],event['ref']]).encode()).digest()[:16]))
-    if not any(x['id'] == event['id'] for x in s['events']):
+    inserted = not any(x['id'] == event['id'] for x in s['events'])
+    drop = os.environ.get('DROP_FACT') == json.loads(event['payload'])['fact']
+    if inserted and not drop:
         s['events'].append(event)
+    if '--json' in args:
+        print(json.dumps(dict(id=event['id'], inserted=inserted and (
+            not drop or os.environ.get('REPORT_DROPPED_AS_INSERTED') == '1'))))
 elif args[:3] == ['b' + 'd', 'provenance', 'log']:
     assert args[3:] == ['fixture-1', '--json']
-    print(json.dumps(s['events']))
+    events = s['events']
+    if any(c[:3] == ['b' + 'd', 'provenance', 'record'] for c in s['calls']):
+        events = [e for e in events if json.loads(e['payload'])['fact'] != os.environ.get('HIDE_FACT')]
+    print(json.dumps(events))
 elif args[:2] == ['b' + 'd', 'update']:
     if os.environ.get('FAIL_FACT') == 'metadata':
         sys.exit(9)
@@ -159,7 +167,8 @@ def test_dispatch_prefix_preserves_scope_for_every_record_and_summary_call(fixtu
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f'PR 123 at {SHA}, gate unknown, read unknown'
     calls = data(fixture)['calls']
-    assert len(calls) == 8  # show/log, three appends, metadata, summary show/log
+    # Initial show/log, three appends, verification show/log, metadata, summary show/log.
+    assert len(calls) == 10
     assert all(call[:len(expected)] == expected for call in calls)
     assert all(call[len(expected)] == 'b' + 'd' for call in calls)
 
@@ -360,6 +369,53 @@ def test_retry_is_idempotent_and_changed_verdict_is_preserved(fixture):
     assert record(fixture).returncode == 0
     assert len(data(fixture)['events']) == 9
     assert run(fixture, 'summary', 'fixture-1').stdout.strip().endswith('read CHANGES_REQUIRED')
+
+
+@pytest.mark.parametrize('fact', ['commit', 'review', 'outcome'])
+@pytest.mark.parametrize('reported_inserted', ['0', '1'])
+def test_unretained_provenance_blocks_metadata_and_close(fixture, fact, reported_inserted):
+    env = {**fixture[2], 'DROP_FACT': fact,
+           'REPORT_DROPPED_AS_INSERTED': reported_inserted}
+    result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'store did not retain provenance for fixture-1' in result.stderr
+    assert 'Beads 1.3.1 keeps provenance only for rows of the issues table' in result.stderr
+    assert 'close such work by its workflow-control contract or promote it first' in result.stderr
+    assert not data(fixture)['metadata']
+    assert not data(fixture)['closed']
+    assert not Path(fixture[2]['FIXTURE_STATE'] + '.detached').exists()
+
+
+def test_readback_verifies_earlier_facts_not_only_the_outcome(fixture):
+    fixture[2]['HIDE_FACT'] = 'commit'
+    result = record(fixture)
+    assert result.returncode != 0
+    assert 'store did not retain provenance for fixture-1' in result.stderr
+    assert len(data(fixture)['events']) == 8  # all writes claimed success
+    assert not data(fixture)['metadata']
+
+
+def test_duplicate_acknowledgements_require_retained_prior_ids(fixture):
+    fixture[2]['FAIL_FACT'] = 'metadata'
+    assert record(fixture).returncode != 0
+    before = data(fixture)['events']
+    assert len(before) == 8
+    assert not data(fixture)['metadata']
+    del fixture[2]['FAIL_FACT']
+    result = record(fixture)  # every append now reports inserted=false
+    assert result.returncode == 0, result.stderr
+    assert data(fixture)['events'] == before
+    assert data(fixture)['metadata']['gc.work_outcome'] == 'shipped'
+    assert all('--json' in c for c in data(fixture)['calls']
+               if c[:3] == ['b' + 'd', 'provenance', 'record'])
+
+
+def test_identical_review_inputs_are_idempotent_within_one_run(fixture):
+    reviews = json.loads(fixture[1].read_text())
+    fixture[1].write_text(json.dumps(reviews + [reviews[-1]]))
+    result = record(fixture)
+    assert result.returncode == 0, result.stderr
+    assert len(data(fixture)['events']) == 8
 
 
 def test_previous_head_reviews_are_not_clean_for_new_head(fixture):

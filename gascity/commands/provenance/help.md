@@ -19,5 +19,11 @@ For no reviews, supply a file containing []. BEAD must match its resolved ID exa
 Record validates inputs, appends known facts, and writes compatibility keys,
 clearing omitted commit/PR keys. GC_BIN overrides the default gc executable.
 It does not close the bead, detach the work branch, or send a handoff.
+Beads 1.3.1 retains provenance only for rows of the issues table, not wisps or
+no-history beads. Record checks JSON acknowledgements and re-reads every intended
+fact before writing compatibility keys. Missing records fail with "store did not
+retain provenance for BEAD" and explain the constraint: close such work by its
+workflow-control contract or promote it first. The close recipe stops before
+metadata updates, branch release, and close.
 Summary reads typed records only; missing facts and stale reviews are unknown.
 See the pack README, Worker close provenance, for the schema and close recipe.

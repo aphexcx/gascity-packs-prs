@@ -422,15 +422,17 @@ def test_provenance_command_is_available_under_city_import_alias(tmp_path: Path,
     assert 'commit must be a full' in result.stderr
 
 
-@pytest.mark.parametrize(('binding', 'pack_path'), [
+@pytest.mark.parametrize(('binding', 'pack_path', 'scope_form'), [
+    (binding, pack_path, scope_form)
+    for binding, pack_path in [
     ('gc', 'gascity'), ('gascity', 'gascity'), ('custom', 'gascity'),
     ('bmad', 'bmad'), ('superpowers', 'superpowers'), ('gstack', 'gstack'),
     ('compound-engineering', 'compound-engineering'), ('profiler', 'profiler'),
-])
-@pytest.mark.parametrize('scope_form', [
+    ] for scope_form in [
     'environment', 'post-city', 'post-city-equals', 'post-rig',
     'post-rig-equals', 'pre-city', 'pre-city-rig', 'post-city-rig',
-])
+    ]
+] + [('custom', 'gascity', 'dropped-recipe')])
 def test_provenance_record_and_summary_preserve_explicit_scope(
     tmp_path: Path, gc_test_bin: Path, binding: str, pack_path: str, scope_form: str,
 ) -> None:
@@ -483,7 +485,13 @@ def test_provenance_record_and_summary_preserve_explicit_scope(
             event = {key: options['--' + key.replace('_', '-')]
                      for key in ['kind', 'source', 'ref', 'ref_kind', 'payload']}
             event.update(id=str(len(state['events'])), occurred_at=options['--at'])
-            state['events'].append(event)
+            inserted = os.environ.get('DROP_PROVENANCE') != '1'
+            if inserted:
+                state['events'].append(event)
+            if '--json' in args:
+                print(json.dumps({'id': event['id'], 'inserted': inserted}))
+        elif args[:2] == ['close', 'work-1']:
+            state['closed'] = True
         elif args[:2] != ['update', 'work-1']:
             sys.exit('unexpected store argv: ' + repr(args))
         path.write_text(json.dumps(state))
@@ -501,6 +509,37 @@ def test_provenance_record_and_summary_preserve_explicit_scope(
         'PATH': str(binary_dir) + os.pathsep + os.environ['PATH'],
         'PROVENANCE_TEST_STATE': str(state),
     })
+    if scope_form == 'dropped-recipe':
+        # Execute the shipped recipe through the real gc dispatcher. Only bd
+        # storage is fake: a successful-but-unretained append must prevent
+        # compatibility updates, branch release, and close.
+        subprocess.run(['git', 'init', '-b', 'work-1', str(workspace.rig_dir)], check=True,
+                       capture_output=True)
+        subprocess.run(['git', '-C', str(workspace.rig_dir), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty',
+                        '-m', 'fixture'], check=True, capture_output=True)
+        reviews = tmp_path / 'reviews.json'
+        reviews.write_text('[]')
+        env.update(DROP_PROVENANCE='1', CLAIMED_BEAD_ID='work-1',
+                   GC_DIR=str(workspace.rig_dir), GC_RIG='fixture',
+                   PR_URL='https://github.com/owner/repo/pull/123',
+                   REVIEW_RECORDS=str(reviews), EVIDENCE_DIR=str(tmp_path))
+        template = (REPO_ROOT / 'gascity/template-fragments/gc-role-worker.template.md').read_text()
+        discovery = 'PROVENANCE_PACK_ALIAS=' + template.split(
+            '```bash\nPROVENANCE_PACK_ALIAS=', 1)[1].split('```', 1)[0]
+        guard = '[ -n "${PROVENANCE_PACK_ALIAS:-}" ]'
+        close = guard + template.split('```bash\n' + guard, 1)[1].split('```', 1)[0]
+        result = subprocess.run(['sh', '-c', discovery + '\n' + close],
+                                cwd=workspace.rig_dir, env=env, text=True, capture_output=True)
+        assert result.returncode != 0
+        assert 'store did not retain provenance for work-1' in result.stderr
+        stored = json.loads(state.read_text())
+        assert not stored['events']
+        assert not stored.get('closed')
+        assert not any(call['args'][0] in ('update', 'close') for call in stored['calls'])
+        assert subprocess.check_output(['git', '-C', str(workspace.rig_dir), 'branch',
+                                        '--show-current'], text=True).strip() == 'work-1'
+        return
     city_flags = ['--city', str(workspace.city_dir)]
     command_binding = binding if pack_path == 'gascity' else 'gc'
     prefix = [command_binding, 'provenance']
@@ -529,7 +568,7 @@ def test_provenance_record_and_summary_preserve_explicit_scope(
         assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == f'PR 123 at {commit}, gate unknown, read unknown'
     calls = json.loads(state.read_text())['calls']
-    assert len(calls) == 8
+    assert len(calls) == 10
     expected_scope = (workspace.rig_dir if 'rig' in scope_form else
                       workspace.city_dir if 'city' in scope_form else other_rig)
     assert all(Path(call['cwd']) == expected_scope.resolve() for call in calls)
