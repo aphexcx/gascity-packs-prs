@@ -1,0 +1,21 @@
+cwd: repository root
+env -u GC_TEMPLATE GC_NO_INSTALL=1 TMPDIR="${TMPDIR%/}/" /Users/tailor512/.cache/uv/archive-v0/RlYJmX3mQTnmwiTKE-TaG/bin/python3 -m pytest slack-full/tests -q
+
+............ss.......................................................... [ 10%]
+........................................................................ [ 21%]
+........................................................................ [ 32%]
+........................................................................ [ 43%]
+........................................................................ [ 54%]
+........................................................................ [ 65%]
+........................................................................ [ 76%]
+........................................................................ [ 87%]
+........................................................................ [ 98%]
+.........                                                                [100%]
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=43257) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+655 passed, 2 skipped, 2 warnings in 36.20s

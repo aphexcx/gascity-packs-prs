@@ -1,0 +1,4 @@
+env -u GC_TEMPLATE GC_NO_INSTALL=1 PATH="/Users/tailor512/.cache/uv/archive-v0/RlYJmX3mQTnmwiTKE-TaG/bin:$PATH" /Users/tailor512/.cache/uv/archive-v0/RlYJmX3mQTnmwiTKE-TaG/bin/python3 -m pytest gascity/tests -q -k build_artifact_check
+
+..............                                                           [100%]
+14 passed, 419 deselected in 3.25s

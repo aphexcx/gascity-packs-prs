@@ -1,0 +1,418 @@
+cwd: repository root
+env -u GC_TEMPLATE GC_NO_INSTALL=1 /Users/tailor512/.cache/uv/archive-v0/RlYJmX3mQTnmwiTKE-TaG/bin/python3 -m pytest tests contributing-to-gascity/tests gascity/tests discord/tests github/tests oversight-rig/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests -q
+Environment caveat: cached interpreter bin was not yet on PATH; 10 shell-subprocess tests used system Python without PyYAML. All 10 failures resolved in python-subprocess-recheck.txt with cached bin on PATH.
+
+.................. [  0%]
+....................................... [  2%]
+........................................................................ [  5%]
+..........sssssssssss..................sssssssssssssssssssss....ssssss [  8%]
+ss...................................................................... [ 12%]
+................................................................................................................. [ 17%]
+....................................................................................FFF..FFFFF.F.F.............................................................................................. [ 25%]
+.......................................................... [ 28%]
+........................................................................ [ 31%]
+................................... [ 32%]
+............................................................. [ 35%]
+........................................................................ [ 38%]
+........................................................................ [ 41%]
+........................................................................ [ 45%]
+........................................................................ [ 48%]
+........................................................................ [ 51%]
+...................................................................... [ 54%]
+...................................................................... [ 57%]
+...................................................s............ss...... [ 60%]
+........................................................................ [ 64%]
+........................................................................ [ 67%]
+........................................................................ [ 70%]
+........................................................................ [ 73%]
+........................................................................ [ 76%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 86%]
+........................................................................ [ 89%]
+........................................................ [ 92%]
+........................................................................ [ 95%]
+........................................................................ [ 98%]
+...................................                                      [100%]
+=================================== FAILURES ===================================
+_ FormulaAssetTests.test_build_artifact_check_blocks_invalid_artifact_with_repair_context _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_blocks_invalid_artifact_with_repair_context>
+
+    def test_build_artifact_check_blocks_invalid_artifact_with_repair_context(self) -> None:
+        with tempfile.TemporaryDirectory() as artifact_dir:
+            artifact = pathlib.Path(artifact_dir) / "requirements.md"
+            artifact.write_text(
+                self._valid_requirements_artifact().replace("status: approved", "status: bogus"),
+                encoding="utf-8",
+            )
+    
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path,gc.var.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                f'"gc.build.requirements_path": "{artifact}"'
+                "}}]"
+            )
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead}, "loop"
+            )
+    
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("failed validation", result.stderr)
+        self.assertIn("error:", result.stderr)
+>       self.assertIn("status", result.stderr)
+E       AssertionError: 'status' not found in 'build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmpnch_mv_3/requirements.md failed validation\nerror: PyYAML is required to parse build artifacts\n'
+
+gascity/tests/test_formula_assets.py:6353: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_derives_rig_root_from_installed_script_when_env_is_unset _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_derives_rig_root_from_installed_script_when_env_is_unset>
+
+    def test_build_artifact_check_derives_rig_root_from_installed_script_when_env_is_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            rig_root = tmp / "rig"
+            artifact = rig_root / ".gc" / "inference-gate" / "requirements.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            per_bead_worktree = tmp / "per-bead-worktree"
+            per_bead_worktree.mkdir()
+            source_root = pathlib.Path(__file__).resolve().parents[1]
+            validator = source_root / "assets" / "scripts" / "validate_build_artifact.py"
+            worktree_validator = per_bead_worktree / "gascity" / "assets" / "scripts" / validator.name
+            worktree_validator.parent.mkdir(parents=True)
+            worktree_validator.write_text(validator.read_text(encoding="utf-8"), encoding="utf-8")
+            for schema in (source_root / "schemas" / "build").glob("*.yaml"):
+                destination = per_bead_worktree / "gascity" / "schemas" / "build" / schema.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(schema.read_text(encoding="utf-8"), encoding="utf-8")
+    
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                '"gc.build.requirements_path": ".gc/inference-gate/requirements.md"'
+                '}}]'
+            )
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead},
+                "loop",
+                extra_env={
+                    "GC_RIG_ROOT": "",
+                    "GC_BEADS_SCOPE_ROOT": "",
+                    "GC_DIR": "",
+                    "GC_WORK_DIR": str(per_bead_worktree),
+                },
+                script_root=rig_root,
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmpob4mg565/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6130: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_does_not_treat_a_pack_tree_as_an_installed_rig _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_does_not_treat_a_pack_tree_as_an_installed_rig>
+
+    def test_build_artifact_check_does_not_treat_a_pack_tree_as_an_installed_rig(self) -> None:
+        # A pack checkout can itself contain a .gc directory (a city or rig
+        # rooted at the pack). Only an installed <rig>/.gc/scripts/checks copy
+        # may derive the rig root from its own location.
+        source_root = pathlib.Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            pack = tmp / "gascity"
+            checks = pack / "assets" / "scripts" / "checks"
+            checks.mkdir(parents=True)
+            check = checks / "build-artifact-valid.sh"
+            check.write_text(
+                (source_root / "assets" / "scripts" / "checks" / check.name).read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            check.chmod(0o755)
+            validator = source_root / "assets" / "scripts" / "validate_build_artifact.py"
+            (checks.parent / validator.name).write_text(
+                validator.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+            for schema in (source_root / "schemas" / "build").glob("*.yaml"):
+                destination = pack / "schemas" / "build" / schema.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(schema.read_text(encoding="utf-8"), encoding="utf-8")
+            # An invalid artifact under the pack tree would be picked by the
+            # old "<script>/../../.. has .gc" heuristic.
+            decoy = self._write_requirements(pack, valid=False)
+            rig_root = tmp / "rig"
+            artifact = self._write_requirements(rig_root)
+    
+            result = self._run_build_artifact_check(
+                self._relative_requirements_beads(),
+                "loop",
+                extra_env={**self._CONTROLLER_ENV_CLEARED, "GC_STORE_PATH": str(rig_root)},
+                script=check,
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmpmyzn9gfd/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6287: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_falls_back_to_work_dir_when_store_lacks_artifact _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_falls_back_to_work_dir_when_store_lacks_artifact>
+
+    def test_build_artifact_check_falls_back_to_work_dir_when_store_lacks_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            store_root = tmp / "city"
+            store_root.mkdir()
+            work_dir = tmp / "rig"
+            artifact = self._write_requirements(work_dir)
+    
+            result = self._run_build_artifact_check(
+                self._relative_requirements_beads(),
+                "loop",
+                extra_env={
+                    **self._CONTROLLER_ENV_CLEARED,
+                    "GC_STORE_PATH": str(store_root),
+                    "GC_WORK_DIR": str(work_dir),
+                },
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmp2l_9zh9i/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6224: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_from_pack_assets_resolves_relative_path_from_store_path _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_from_pack_assets_resolves_relative_path_from_store_path>
+
+    def test_build_artifact_check_from_pack_assets_resolves_relative_path_from_store_path(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            rig_root = tmp / "rig"
+            artifact = self._write_requirements(rig_root)
+            per_bead_worktree = tmp / "per-bead-worktree"
+            per_bead_worktree.mkdir()
+    
+            result = self._run_build_artifact_check(
+                self._relative_requirements_beads(),
+                "loop",
+                extra_env={
+                    **self._CONTROLLER_ENV_CLEARED,
+                    "GC_STORE_PATH": str(rig_root),
+                    "GC_WORK_DIR": str(per_bead_worktree),
+                },
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmp8wzwbwv1/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6181: AssertionError
+__ FormulaAssetTests.test_build_artifact_check_passes_valid_recorded_artifact __
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_passes_valid_recorded_artifact>
+
+    def test_build_artifact_check_passes_valid_recorded_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as artifact_dir:
+            artifact = pathlib.Path(artifact_dir) / "requirements.md"
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+    
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path,gc.var.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                f'"gc.build.requirements_path": "{artifact}"'
+                "}}]"
+            )
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead}, "loop"
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmp92fwvhja/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6018: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_prefers_its_own_pack_validator_over_work_dir_checkout _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_prefers_its_own_pack_validator_over_work_dir_checkout>
+
+    def test_build_artifact_check_prefers_its_own_pack_validator_over_work_dir_checkout(self) -> None:
+        # GC_WORK_DIR may be a checkout of this repository on another branch.
+        # A gate resolved from pack assets must validate with the validator and
+        # schemas of the same pack layer, not that checkout's copy.
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            artifact = tmp / "requirements.md"
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            work_dir = tmp / "checkout"
+            stale_validator = work_dir / "gascity" / "assets" / "scripts" / "validate_build_artifact.py"
+            stale_validator.parent.mkdir(parents=True)
+            stale_validator.write_text(
+                "import sys\nprint('stale checkout validator', file=sys.stderr)\nsys.exit(1)\n",
+                encoding="utf-8",
+            )
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                f'"gc.build.requirements_path": "{artifact}"'
+                "}}]"
+            )
+    
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead},
+                "loop",
+                extra_env={"GC_WORK_DIR": str(work_dir)},
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmpgqevtsa9/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6324: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_prefers_store_path_over_work_dir _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_prefers_store_path_over_work_dir>
+
+    def test_build_artifact_check_prefers_store_path_over_work_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            rig_root = tmp / "rig"
+            artifact = self._write_requirements(rig_root)
+            per_bead_worktree = tmp / "per-bead-worktree"
+            stale = self._write_requirements(per_bead_worktree, valid=False)
+    
+            result = self._run_build_artifact_check(
+                self._relative_requirements_beads(),
+                "loop",
+                extra_env={
+                    **self._CONTROLLER_ENV_CLEARED,
+                    "GC_STORE_PATH": str(rig_root),
+                    "GC_WORK_DIR": str(per_bead_worktree),
+                },
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmplj0hg9wz/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6202: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_resolves_relative_path_from_rig_root _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_resolves_relative_path_from_rig_root>
+
+    def test_build_artifact_check_resolves_relative_path_from_rig_root(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            rig_root = tmp / "rig"
+            artifact = rig_root / ".gc" / "inference-gate" / "requirements.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            per_bead_worktree = tmp / "per-bead-worktree"
+            per_bead_worktree.mkdir()
+    
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                '"gc.build.requirements_path": ".gc/inference-gate/requirements.md"'
+                '}}]'
+            )
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead},
+                "loop",
+                extra_env={
+                    "GC_RIG_ROOT": str(rig_root),
+                    "GC_WORK_DIR": str(per_bead_worktree),
+                },
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmp479gv442/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6051: AssertionError
+_ FormulaAssetTests.test_build_artifact_check_uses_beads_scope_root_when_rig_root_is_unset _
+
+self = <test_formula_assets.FormulaAssetTests testMethod=test_build_artifact_check_uses_beads_scope_root_when_rig_root_is_unset>
+
+    def test_build_artifact_check_uses_beads_scope_root_when_rig_root_is_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = pathlib.Path(td)
+            rig_root = tmp / "rig"
+            artifact = rig_root / ".gc" / "inference-gate" / "requirements.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text(self._valid_requirements_artifact(), encoding="utf-8")
+            per_bead_worktree = tmp / "per-bead-worktree"
+            per_bead_worktree.mkdir()
+    
+            control = (
+                '[{"id": "loop", "metadata": {'
+                '"gc.root_bead_id": "root", '
+                '"gc.build.artifact_schema": "gc.build.requirements.v1", '
+                '"gc.build.artifact_path_keys": "gc.build.requirements_path"}}]'
+            )
+            root_bead = (
+                '[{"id": "root", "metadata": {'
+                '"gc.build.requirements_path": ".gc/inference-gate/requirements.md"'
+                '}}]'
+            )
+            result = self._run_build_artifact_check(
+                {"loop": control, "root": root_bead},
+                "loop",
+                extra_env={
+                    "GC_RIG_ROOT": "",
+                    "GC_BEADS_SCOPE_ROOT": str(rig_root),
+                    "GC_WORK_DIR": str(per_bead_worktree),
+                },
+            )
+    
+>       self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+E       AssertionError: 1 != 0 : build-artifact-check: schema=gc.build.requirements.v1 path=/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/tmpj_3gr85r/rig/.gc/inference-gate/requirements.md failed validation
+E       error: PyYAML is required to parse build artifacts
+
+gascity/tests/test_formula_assets.py:6085: AssertionError
+=============================== warnings summary ===============================
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+slack-full/tests/test_slack_company_outbound.py::test_two_process_flock_race
+  /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/tests/test_slack_company_outbound.py:698: DeprecationWarning: This process (pid=58744) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    pid = os.fork()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_blocks_invalid_artifact_with_repair_context
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_derives_rig_root_from_installed_script_when_env_is_unset
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_does_not_treat_a_pack_tree_as_an_installed_rig
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_falls_back_to_work_dir_when_store_lacks_artifact
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_from_pack_assets_resolves_relative_path_from_store_path
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_passes_valid_recorded_artifact
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_prefers_its_own_pack_validator_over_work_dir_checkout
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_prefers_store_path_over_work_dir
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_resolves_relative_path_from_rig_root
+FAILED gascity/tests/test_formula_assets.py::FormulaAssetTests::test_build_artifact_check_uses_beads_scope_root_when_rig_root_is_unset
+10 failed, 2204 passed, 43 skipped, 2 warnings, 10594 subtests passed in 346.02s (0:05:46)

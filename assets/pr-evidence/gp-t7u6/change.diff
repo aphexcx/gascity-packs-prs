@@ -1,0 +1,91 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 12b617ed..ba62972d 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -36,0 +37,6 @@ jobs:
++      - name: Install Gastown shell test dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y ripgrep
++          rg --version
++
+diff --git a/README.md b/README.md
+index ddd74165..9520a628 100644
+--- a/README.md
++++ b/README.md
+@@ -259,0 +260,17 @@ pick the interpreter and `PYTEST_ARGS=` to pass options.
++Gastown's shell suite uses Bash 5, GNU sed/coreutils, Python 3.11+, jq,
++and ripgrep (CI installs ripgrep explicitly). Run the same loop as CI:
++`GC_NO_INSTALL=1 bash -e -c 'for test_script in gastown/tests/test_*.sh; do bash "$test_script"; done'`.
++On macOS, put Homebrew Bash and the GNU tools' `libexec/gnubin` directories
++first on PATH and use a physical temporary path, such as `TMPDIR=/private/tmp`,
++because the artifact safety checks deliberately reject redirected roots.
++The collision and redirected-root tests must reach their named safety guards;
++an unrelated stub failure is not a passing refusal. No shell assertions are waived.
++
++### Validating an upstream twin
++
++1. Read the upstream checkout's CI and run its `python3 -m pytest` command (for a Slack-only twin, `python3 -m pytest slack-full/tests -q`); upstream at `520e95cb` has no `make test` target.
++2. Reuse the cached uv environment offline: find its `pyvenv.cfg` with `rg --files --hidden --no-ignore "$(uv cache dir)" -g pyvenv.cfg`, set `TEST_PYTHON` to that environment's `bin/python3`, verify `"$TEST_PYTHON" -c 'import pytest, yaml, jsonschema'`, and `export PATH="${TEST_PYTHON%/*}:$PATH"` so subprocesses also use it; `GC_NO_INSTALL=1` rejects `uv run --with` even with `--offline`.
++3. For older `run.sh` GOPATH tests, use `env -u GC_TEMPLATE GC_NO_INSTALL=1 TMPDIR="${TMPDIR%/}" "$TEST_PYTHON" -m pytest slack-full/tests -q`; after porting the normalization fix, test with and without the trailing slash.
++4. Treat exit 0 from `git apply --cached --3way --check` as applicability only: read and resolve any textual conflict report, then verify the actual applied index has no unmerged entries (`git ls-files -u`) before testing.
++5. Check prerequisites before transplanting: the `gp-obim` twin needed the fork's emoji-normalization helpers, generated standard-name table, and tests from `d1348d0f` before the keyed matching fixes; see its [upstream evidence](assets/pr-evidence/gp-obim/upstream-README.md).
++
+diff --git a/gastown/tests/test_polecat_artifact_dir.sh b/gastown/tests/test_polecat_artifact_dir.sh
+index 1653dc81..98fdb0be 100755
+--- a/gastown/tests/test_polecat_artifact_dir.sh
++++ b/gastown/tests/test_polecat_artifact_dir.sh
+@@ -672 +672 @@ test_workspace_collision_fails_closed_without_alternate() {
+-    local tmp rig remote city provider canonical setup calls bd_subcommand
++    local tmp rig remote city provider canonical setup calls output bd_subcommand
+@@ -681,0 +682 @@ test_workspace_collision_fails_closed_without_alternate() {
++    output="$tmp/output"
+@@ -710,0 +712,6 @@ test_workspace_collision_fails_closed_without_alternate() {
++                # These setup writes precede artifact validation and do not
++                # name a worktree. Reject every other metadata update.
++                "$bd_subcommand update ac-safe1 --unset-metadata handoff_stage" | \
++                "$bd_subcommand update ac-safe1 --set-metadata base_ref=refs/remotes/origin/main")
++                    return 0
++                    ;;
+@@ -725 +732 @@ test_workspace_collision_fails_closed_without_alternate() {
+-    ); then
++    ) >"$output" 2>&1; then
+@@ -728,0 +736,7 @@ test_workspace_collision_fails_closed_without_alternate() {
++    # A stub failure also exits nonzero: require the intended guard's reason
++    # so an unrelated early exit cannot make this safety test pass.
++    grep -qF 'Canonical artifact path already exists but is not this bead' "$output" ||
++        fail "canonical collision did not reach the artifact validation guard: $(cat "$output")"
++    if grep -q '^FAIL:' "$output"; then
++        fail "canonical collision hit an unexpected gc call: $(cat "$output")"
++    fi
+@@ -738 +752 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
+-    local tmp rig remote city provider redirected setup calls bd_subcommand
++    local tmp rig remote city provider redirected setup calls output bd_subcommand
+@@ -747,0 +762 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
++    output="$tmp/output"
+@@ -776,0 +792,5 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
++                # Same preparatory writes as the collision fixture above.
++                "$bd_subcommand update ac-safe1 --unset-metadata handoff_stage" | \
++                "$bd_subcommand update ac-safe1 --set-metadata base_ref=refs/remotes/origin/main")
++                    return 0
++                    ;;
+@@ -791 +811 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
+-    ); then
++    ) >"$output" 2>&1; then
+@@ -794,0 +815,5 @@ test_workspace_rejects_redirected_artifact_root_before_creation() {
++    grep -qF 'Task artifact root is redirected or is not a directory:' "$output" ||
++        fail "redirected artifact root did not reach the redirection guard: $(cat "$output")"
++    if grep -q '^FAIL:' "$output"; then
++        fail "redirected artifact root hit an unexpected gc call: $(cat "$output")"
++    fi
+diff --git a/slack-full/adapter/run.sh b/slack-full/adapter/run.sh
+index 4112acaf..387de68b 100755
+--- a/slack-full/adapter/run.sh
++++ b/slack-full/adapter/run.sh
+@@ -184 +184 @@ private_build_dir() {
+-  local uid dir
++  local uid dir tmp_root
+@@ -186 +186,2 @@ private_build_dir() {
+-  dir="${TMPDIR:-/tmp}/$1-$uid"
++  tmp_root="${TMPDIR:-/tmp}"
++  dir="${tmp_root%/}/$1-$uid"

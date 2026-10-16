@@ -1,0 +1,11 @@
+cwd: slack-full/adapter
+env -u GC_TEMPLATE GC_NO_INSTALL=1 CGO_CPPFLAGS=-I/opt/homebrew/opt/icu4c@78/include CGO_LDFLAGS=-L/opt/homebrew/opt/icu4c@78/lib GOFLAGS=-json go test ./... -count=1
+GOFLAGS=-json only selects machine-readable output for counts.
+12574 passing test cases (1349 top-level), 0 failed events, 0 skipped events.
+Go version: go1.26.5 darwin/arm64
+Raw JSONL sha256: d13ca442bb0b91e276d452d67e7407537986b9a7e98525bbe88c2b687a091d1d
+Raw local transcript: /tmp/gp-t7u6-go.jsonl
+No Go source/tests changed from base; counts include subtests.
+
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	71.913s

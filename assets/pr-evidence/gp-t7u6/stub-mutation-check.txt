@@ -1,0 +1,10 @@
+Mutation check: restore the old overbroad metadata stubs in a temporary test harness.
+The strengthened tests must fail rather than accept those unrelated early exits.
+test_workspace_collision_fails_closed_without_alternate: exit 1 (expected 1)
+
+FAIL: canonical collision did not reach the artifact validation guard: FAIL: canonical collision reached a metadata update
+
+test_workspace_rejects_redirected_artifact_root_before_creation: exit 1 (expected 1)
+
+FAIL: redirected artifact root did not reach the redirection guard: FAIL: redirected artifact root reached a metadata update
+

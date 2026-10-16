@@ -257,6 +257,23 @@ import, and otherwise `uv run --with pytest --with pyyaml --with jsonschema
 python3 -m pytest` (a Homebrew python3 ships no pytest). Set `PYTHON=` to
 pick the interpreter and `PYTEST_ARGS=` to pass options.
 
+Gastown's shell suite uses Bash 5, GNU sed/coreutils, Python 3.11+, jq,
+and ripgrep (CI installs ripgrep explicitly). Run the same loop as CI:
+`GC_NO_INSTALL=1 bash -e -c 'for test_script in gastown/tests/test_*.sh; do bash "$test_script"; done'`.
+On macOS, put Homebrew Bash and the GNU tools' `libexec/gnubin` directories
+first on PATH and use a physical temporary path, such as `TMPDIR=/private/tmp`,
+because the artifact safety checks deliberately reject redirected roots.
+The collision and redirected-root tests must reach their named safety guards;
+an unrelated stub failure is not a passing refusal. No shell assertions are waived.
+
+### Validating an upstream twin
+
+1. Read the upstream checkout's CI and run its `python3 -m pytest` command (for a Slack-only twin, `python3 -m pytest slack-full/tests -q`); upstream at `520e95cb` has no `make test` target.
+2. Reuse the cached uv environment offline: find its `pyvenv.cfg` with `rg --files --hidden --no-ignore "$(uv cache dir)" -g pyvenv.cfg`, set `TEST_PYTHON` to that environment's `bin/python3`, verify `"$TEST_PYTHON" -c 'import pytest, yaml, jsonschema'`, and `export PATH="${TEST_PYTHON%/*}:$PATH"` so subprocesses also use it; `GC_NO_INSTALL=1` rejects `uv run --with` even with `--offline`.
+3. For older `run.sh` GOPATH tests, use `env -u GC_TEMPLATE GC_NO_INSTALL=1 TMPDIR="${TMPDIR%/}" "$TEST_PYTHON" -m pytest slack-full/tests -q`; after porting the normalization fix, test with and without the trailing slash.
+4. Treat exit 0 from `git apply --cached --3way --check` as applicability only: read and resolve any textual conflict report, then verify the actual applied index has no unmerged entries (`git ls-files -u`) before testing.
+5. Check prerequisites before transplanting: the `gp-obim` twin needed the fork's emoji-normalization helpers, generated standard-name table, and tests from `d1348d0f` before the keyed matching fixes; see its [upstream evidence](assets/pr-evidence/gp-obim/upstream-README.md).
+
 ### Publishing registry releases
 
 Registry releases are content-addressed. Use the Make targets so the release
