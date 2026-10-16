@@ -7,8 +7,9 @@
   one frame in flight across all uploads, per-frame deadlines scaled to frame
   bytes, retries for init/chunk/finish where any attempt's late
   acknowledgement completes the frame, session resume after reconnect
-  (restart from init if the server refuses the session), and a summary
-  log line per upload. New knobs
+  (restart from init if the server refuses the session), a fixed 20-minute
+  upload budget checked before each frame, and a summary log line per
+  upload. New knobs
   `WECOM_UPLOAD_ENGINE` (`adapter` by default; `sdk` = rollback),
   `WECOM_UPLOAD_CHUNK_BYTES`, `WECOM_UPLOAD_ACK_BASE_MS`,
   `WECOM_UPLOAD_FLOOR_BYTES_PER_SEC`,
@@ -16,7 +17,9 @@
   `POST /upload-probe` uploads without sending anything. The liveness
   watchdog defers a forced reconnect while an upload runs. The SDK's
   chunk-retry wrapper errors now render as named failures instead of
-  "Error (unrecognized …)".
+  "Error (unrecognized …)". `media_kind` validation now checks only own
+  keys (`Object.hasOwn` via `isMediaKind`), so `/publish-media` returns
+  HTTP 400 for inherited names such as `"constructor"` or `"__proto__"`.
 - Text send failure kinds (jg-qx7fek, 10/5): text `/publish` no longer
   answers every send failure with `502 provider_error`.
   - A pre-write refusal (`WebSocket not connected`, full SDK reply

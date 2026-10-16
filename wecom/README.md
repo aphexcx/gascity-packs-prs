@@ -141,8 +141,8 @@ The SDK writes up to four 512 KiB chunks at once and starts each frame's 5 s
 acknowledgement clock when the frame is queued, so on an uplink below
 ~560 KB/s its chunks time out, its duplicate retries pile onto the same
 socket, and the backlog times out the next init, text sends and
-heartbeats (10/12–10/15: 195 of 275 attempts failed; every timed-out
-frame was acknowledged late). The adapter's uploader keeps one frame in
+heartbeats (10/12–10/15: 195 of 275 attempts failed; all but three timed-out
+frames were acknowledged late). The adapter's uploader keeps one frame in
 flight across all uploads, gives each frame a deadline scaled to its
 bytes (`WECOM_UPLOAD_ACK_BASE_MS` + ceil(frame bytes × 1000 /
 `WECOM_UPLOAD_FLOOR_BYTES_PER_SEC`) milliseconds, defaults 10000 ms and
@@ -159,8 +159,16 @@ share a limit of two per upload. It logs one
 rate. `WECOM_UPLOAD_CHUNK_BYTES` (default 524288 bytes before base64)
 is clamped to 65536–524288 and raised automatically to stay within 100
 chunks; 262144 halves the frame a text send can wait behind.
-`WECOM_UPLOAD_ENGINE=sdk` rolls back to the SDK's uploader; the adapter
-also logs and falls back to it if the required SDK internals are missing.
+Two time limits still apply: the request's upload deadline
+`WECOM_UPLOAD_TIMEOUT_MS` (default 300000 ms, or 300 s) and the serial
+uploader's fixed 20-minute budget (checked before each frame, with no
+configuration knob). At 64 KiB/s, a 20 MiB file becomes about 27 MiB of
+base64 and takes about 427 s to transmit, so the request times out at
+300 s while the upload continues to hold its admission slot until it settles.
+Only the exact lowercase value `sdk` for `WECOM_UPLOAD_ENGINE` selects
+rollback to the SDK's uploader; confirm it with the startup log line
+`upload engine: sdk`. The adapter also logs and falls back to it if the
+required SDK internals are missing.
 While a serial upload runs, the liveness watchdog defers its forced
 reconnect cycle.
 
