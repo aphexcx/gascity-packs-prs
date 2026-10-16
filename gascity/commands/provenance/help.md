@@ -7,7 +7,12 @@ Usage:
 
 Use the binding the worker close discovery selects (README, Worker close provenance).
 Optional --city PATH / --city=PATH and --rig NAME / --rig=NAME go before
-record or summary and are preserved for every nested gc call.
+record or summary and are preserved for every nested gc bd call.
+An explicit --city alone selects that city's own store, as gc --city PATH bd
+does, disabling rig auto-detection by bead prefix, GC_RIG, and working directory.
+A rig bead also needs --rig NAME; for example, for a bead in the repo rig:
+  gc <binding> provenance --city /path/to/city --rig repo summary BEAD
+Without explicit flags, the dispatcher's city environment and normal rig routing apply.
 Reviews are a JSON file containing an array of objects with stage (codex|gate|read), positive
 round, verdict, full reviewed sha, and ref (immutable record path or URL).
 For no reviews, supply a file containing []. BEAD must match its resolved ID exactly.

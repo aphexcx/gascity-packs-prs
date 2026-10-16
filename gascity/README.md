@@ -419,15 +419,19 @@ gstack, compound-engineering, and profiler. Transitive imports may have no row
 or be labelled `(transitive)` without a binding. `/gascity/roles` imports
 supply rig roles, not command aliases. Keep the first candidate whose help
 contains the command's description: generic help can exit successfully for a
-missing command. The command calls `gc bd` to retain rig routing. No city-side
-helper installation is needed.
+missing command. The command delegates store selection to `gc bd`. No
+city-side helper installation is needed.
 
 To select scope explicitly, place `--city PATH` / `--city=PATH` and
-`--rig NAME` / `--rig=NAME` before `record` or `summary`, for example
-`gc <binding> provenance --city /path/to/city --rig repo summary BEAD`.
+`--rig NAME` / `--rig=NAME` before `record` or `summary`.
 The Python entry point consumes the dispatch prefix and forwards these flags
-to every nested `gc bd` call. Without explicit flags, the dispatcher's city
-environment and normal rig routing still apply. This command never detaches;
+to every nested `gc bd` call. An explicit `--city` alone selects that city's
+own store, just as `gc --city PATH bd` does: rig auto-detection by bead prefix,
+`GC_RIG`, and working directory is disabled. A rig bead also needs
+`--rig NAME`; for example, to summarize a bead in the `repo` rig:
+`gc <binding> provenance --city /path/to/city --rig repo summary BEAD`.
+Without explicit flags, the dispatcher's city environment and normal rig
+routing still apply. This command never detaches;
 the worker close recipe detaches its verified `GC_DIR` only after recording.
 
 Before close, append the facts you actually have (the command does not close,

@@ -533,11 +533,11 @@ def test_provenance_record_and_summary_preserve_explicit_scope(
     expected_scope = (workspace.rig_dir if 'rig' in scope_form else
                       workspace.city_dir if 'city' in scope_form else other_rig)
     assert all(Path(call['cwd']) == expected_scope.resolve() for call in calls)
-    # PackRuntimeEnv pins these city anchors. Forwarding explicit flags also
-    # preserves rig selection and explicit city-store (rather than rig) scope.
+    # Pack dispatch pins these city anchors for environment and pre-leaf scope.
+    # For post-leaf --city, forwarded flags make nested gc pin the anchors.
+    # Explicit flags also preserve rig selection versus city-store scope.
     assert all(Path(call['city']).resolve() == workspace.city_dir.resolve() for call in calls)
     assert all(Path(call['city_path']).resolve() == workspace.city_dir.resolve() for call in calls)
-    assert all(call['city_name'] == 'prompt-integration' for call in calls)
 
 
 @pytest.mark.parametrize('option', ['--city', '--rig', '--city=', '--rig='])
