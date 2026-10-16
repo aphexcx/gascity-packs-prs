@@ -408,21 +408,31 @@ Two related core behaviors complete the picture:
 
 ## Worker close provenance
 
-Workers require Beads **1.3.1+** and the city-level Gas City pack import. The
-command follows the import alias: `gc gc provenance` below becomes
-`gc gascity provenance` for `[imports.gascity]`. It calls `gc bd` to retain rig
-routing. No city-side helper installation is needed.
+Workers require Beads **1.3.1+** and the city-level Gas City pack import. Run
+`gc import list` and set `PROVENANCE_PACK_ALIAS` to the first column of the row
+whose source ends in `/gascity` (for example `gascity`). Imports ending in
+`/gascity/roles` supply rig roles, not command aliases. Probe provenance help
+before writing: some gc versions return generic help with success for unknown
+bindings, so the probe also checks for the command's description. The command
+calls `gc bd` to retain rig routing. No city-side helper installation is needed.
 
 Before close, append the facts you actually have (the command does not close,
 detach, send READY, or change `gc.outcome` / `gc.work_branch`):
 
 ```sh
-# reviews.json lives in the city's evidence directory, outside the PR branch.
-# [] is valid when no review has happened yet.
-gc gc provenance record "$CLAIMED_BEAD_ID" \
+# REVIEW_RECORDS is the absolute path to reviews.json outside the PR branch.
+# When no review has happened, the file's content is []; keep its path here.
+if ! PROVENANCE_HELP=$(gc "$PROVENANCE_PACK_ALIAS" provenance --help) ||
+   ! printf '%s\n' "$PROVENANCE_HELP" |
+     grep -Fq "Record or summarize a normal worker's typed close trail"; then
+  printf 'Unavailable provenance command for import alias: %s\n' \
+    "$PROVENANCE_PACK_ALIAS" >&2
+  exit 1
+fi
+gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
   --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
-  --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR"
-gc gc provenance summary "$CLAIMED_BEAD_ID"
+  --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR" || exit 1
+gc "$PROVENANCE_PACK_ALIAS" provenance summary "$CLAIMED_BEAD_ID"
 # PR 123 at <full SHA>, gate CLEAN, read CLEAN
 ```
 
@@ -461,18 +471,26 @@ The payload schema is `gc.worker-close.v1`:
 | evidence | used / transcript | absolute evidence directory | none |
 | outcome | handoff / work-id | worker-close:OUTCOME | outcome, sha, pr, previous (prior outcome event id) |
 
-The source starts with `gc-worker-close/v1/` and ends with the URL-safe base64 SHA-256 of the
-canonical payload (62 characters total, within Beads' 64-character source column). Beads deduplicates source/issue/kind/ref; this preserves changed
+The source starts with `gc-worker-close/v1/` and ends with the URL-safe base64
+SHA-256 of the canonical payload (62 characters total, within Beads' 64-character
+source column). Beads deduplicates source/issue/kind/ref; this preserves changed
 verdicts while making exact retries harmless. The writer first reads the typed
 trail: a changed outcome links to its predecessor event id, so shipped → blocked
 → shipped and A → B → A commits retain each transition. An unchanged outcome
 is skipped on retry. Like the worker lane, this protocol assumes one writer
 per bead; it is not a concurrent close coordinator. All input is validated before
-any writes. Partial append failures leave the bead open and are safe to retry.
+any writes. The writer and reader resolve `gc bd show BEAD --json` and require
+the returned ID to equal the supplied ID exactly; abbreviations are rejected
+before any append. They honor `GC_BIN` when set, otherwise PATH's `gc`.
+Partial append failures leave the bead open and are safe to retry.
 The outcome record is appended last, then compatibility keys are written.
 Beads stores event timestamps at whole-second precision. The reader follows
 the outcome predecessor chain to its sole tip, failing on a broken or forked
-chain. Review rounds, not timestamp/id order, determine the latest verdict;
+chain. A broken or forked chain also stops the writer: do not retry it forever
+or invent a repair event. Record the bead's failure contract, notify the named
+handoff recipient (the mayor where configured), and close as failed; the mayor
+coordinates recovery of the immutable trail.
+Review rounds, not timestamp/id order, determine the latest verdict;
 contradictory verdicts in the same round display `conflicting`.
 The reader uses that typed outcome and matching typed commit/PR facts;
 it ignores other producers, metadata-only legacy records, and review verdicts
@@ -481,7 +499,9 @@ read unknown`. A failed read is an error, never a clean verdict.
 
 For **gascity pack 0.1.x**, dual-write `gc.work_commit`, `gc.work_outcome`, and
 `gc.pr` (canonical URL) for existing boards, merge chains, consolidators and
-the core close gate. Their removal is scheduled for **0.2.0**, after those
+the core close gate. Each outcome clears an omitted commit or PR key with
+`--unset-metadata`, keeping compatibility readers aligned with the typed trail.
+Their removal is scheduled for **0.2.0**, after those
 consumers and the core gate migrate. `gc.outcome` and `gc.work_branch` retain
 their separate contracts. No pack/binary version is bumped here. A packs roll
 requires one `gc import` per city on its mayor's word; this change performs

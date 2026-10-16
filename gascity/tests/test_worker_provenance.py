@@ -35,11 +35,17 @@ from pathlib import Path
 args = sys.argv[1:]
 if args[:2] == ['custom', 'provenance']:
     sys.exit(subprocess.call([os.environ['PROVENANCE_RUN'], *args[2:]]))
+if args[1:] == ['provenance', '--help']:
+    print('Gas City CLI - generic root help')
+    sys.exit(int(os.environ.get('HELP_EXIT', '0')))
 p = Path(os.environ['FIXTURE_STATE'])
 s = json.loads(p.read_text())
 s['calls'].append(args)
 p.write_text(json.dumps(s))
-if args[:3] == ['bd', 'provenance', 'record']:
+if args[:2] == ['b' + 'd', 'show']:
+    assert args[3:] == ['--json']
+    print(os.environ.get('RESOLVED_JSON', '[{"id":"fixture-1"}]'))
+elif args[:3] == ['b' + 'd', 'provenance', 'record']:
     options = dict(zip(args[3::2], args[4::2]))
     if os.environ.get('FAIL_FACT') == json.loads(options['--payload'])['fact']:
         sys.exit(7)
@@ -55,18 +61,21 @@ if args[:3] == ['bd', 'provenance', 'record']:
     event['id'] = str(uuid.UUID(bytes=hashlib.sha256(':'.join([event['source'],event['issue_id'],event['kind'],event['ref']]).encode()).digest()[:16]))
     if not any(x['id'] == event['id'] for x in s['events']):
         s['events'].append(event)
-elif args[:3] == ['bd', 'provenance', 'log']:
+elif args[:3] == ['b' + 'd', 'provenance', 'log']:
     assert args[3:] == ['fixture-1', '--json']
     print(json.dumps(s['events']))
-elif args[:2] == ['bd', 'update']:
+elif args[:2] == ['b' + 'd', 'update']:
     if os.environ.get('FAIL_FACT') == 'metadata':
         sys.exit(9)
     assert args[2] == 'fixture-1'
     for i in range(3, len(args), 2):
-        assert args[i] == '--set-metadata'
-        key, value = args[i+1].split('=', 1)
-        s['metadata'][key] = value
-elif args[:2] == ['bd', 'close']:
+        if args[i] == '--unset-metadata':
+            s['metadata'].pop(args[i+1], None)
+        else:
+            assert args[i] == '--set-metadata'
+            key, value = args[i+1].split('=', 1)
+            s['metadata'][key] = value
+elif args[:2] == ['b' + 'd', 'close']:
     assert args[2] == 'fixture-1'
     assert args[3] == '--reason'
     s['closed'] = True
@@ -98,7 +107,7 @@ else:
         dict(stage="gate", verdict="CLEAN", sha=SHA, ref="/evidence/gate-1"),
         dict(stage="read", verdict="CLEAN", sha=SHA, ref="/evidence/read-1"),
     ]))
-    env = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ['PATH'],
+    env = {**os.environ, "PATH": str(binary) + os.pathsep + os.environ['PATH'], "GC_BIN": str(gc),
            "FIXTURE_STATE": str(state), "FIXTURE_AT": "2026-10-16T08:00:00Z", "PROVENANCE_RUN": str(RUN), "GC_PACK_DIR": str(PACK),
            "CLAIMED_BEAD_ID": "fixture-1", "PROVENANCE_PACK_ALIAS": "custom",
            "GC_DIR": str(tmp_path), "PR_URL": PR, "EVIDENCE_DIR": "/evidence",
@@ -133,7 +142,85 @@ def test_fixture_close_records_facts_keys_then_releases_and_closes(fixture):
     assert s['metadata'] == {'gc.outcome': 'pass', 'gc.work_outcome': 'shipped',
                              'gc.work_commit': SHA, 'gc.work_branch': 'fixture-1', 'gc.pr': PR}
     assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
-    assert all(c[3:5] == ['--issue', 'fixture-1'] for c in s['calls'] if c[:3] == ['bd','provenance','record'])
+    assert all(c[3:5] == ['--issue', 'fixture-1'] for c in s['calls']
+               if c[:3] == ['b' + 'd', 'provenance', 'record'])
+
+
+@pytest.mark.parametrize('help_exit', ['0', '3'])
+def test_wrong_alias_help_stops_close_before_writes(fixture, help_exit):
+    env = {**fixture[2], 'PROVENANCE_PACK_ALIAS': 'wrong', 'HELP_EXIT': help_exit}
+    result = subprocess.run(['sh', '-c', close_script()], env=env, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'Unavailable provenance command for import alias: wrong' in result.stderr
+    assert data(fixture) == dict(events=[], metadata={}, calls=[], closed=False)
+    assert not Path(fixture[2]['FIXTURE_STATE'] + '.detached').exists()
+
+
+@pytest.mark.parametrize('command', ['record', 'summary'])
+def test_abbreviated_id_is_rejected_before_trail_access_or_mutation(fixture, command):
+    args = ['--outcome', 'no-op'] if command == 'record' else []
+    result = run(fixture, command, 'fixture', *args)
+    assert result.returncode != 0
+    assert 'expected exact bead id' in result.stderr
+    assert data(fixture) == dict(events=[], metadata={}, closed=False,
+                                calls=[['b' + 'd', 'show', 'fixture', '--json']])
+
+
+@pytest.mark.parametrize('resolved', ['null', '{}', '[]', '[null]',
+                                     '[{"id":"fixture-1"},{"id":"fixture-2"}]'])
+def test_invalid_id_resolution_is_rejected_before_writes(fixture, resolved):
+    fixture[2]['RESOLVED_JSON'] = resolved
+    result = record(fixture)
+    assert result.returncode != 0
+    assert 'expected exact bead id' in result.stderr
+    assert data(fixture) == dict(events=[], metadata={}, closed=False,
+                                calls=[['b' + 'd', 'show', 'fixture-1', '--json']])
+
+
+def test_explicit_gc_binary_handles_every_subcommand(fixture):
+    default = Path(fixture[2]['GC_BIN'])
+    selected = default.with_name('selected-gc')
+    default.rename(selected)
+    default.write_text('#!/bin/sh\nexit 99\n')
+    default.chmod(0o755)
+    fixture[2]['GC_BIN'] = str(selected)
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
+    assert {c[1] for c in data(fixture)['calls']} == {'show', 'provenance', 'update'}
+
+
+def test_gc_binary_defaults_to_path(fixture):
+    fixture[2].pop('GC_BIN')
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate CLEAN, read CLEAN'
+
+
+def test_empty_review_array_file_records_no_review_facts(fixture):
+    fixture[1].write_text('[]')
+    assert record(fixture).returncode == 0
+    assert len(data(fixture)['events']) == 4
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR 123 at {SHA}, gate unknown, read unknown'
+
+
+def test_literal_review_array_is_not_a_file_and_cannot_write(fixture):
+    assert record(fixture, '--reviews', '[]').returncode != 0
+    assert data(fixture)['calls'] == []
+
+
+def test_new_commit_without_pr_clears_old_compatibility_pr(fixture):
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'shipped', '--commit', OLD_SHA).returncode == 0
+    assert data(fixture)['metadata'] == {'gc.work_outcome': 'shipped', 'gc.work_commit': OLD_SHA}
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == f'PR unknown at {OLD_SHA}, gate unknown, read unknown'
+
+
+def test_blocked_without_commit_clears_old_compatibility_facts(fixture):
+    assert record(fixture).returncode == 0
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'blocked').returncode == 0
+    assert data(fixture)['metadata'] == {'gc.work_outcome': 'blocked'}
+    assert run(fixture, 'summary', 'fixture-1').stdout.strip() == 'blocked; PR unknown at unknown, gate unknown, read unknown'
+    # Unsetting already absent keys must also succeed on an immediate retry.
+    assert run(fixture, 'record', 'fixture-1', '--outcome', 'blocked').returncode == 0
 
 
 def test_retry_is_idempotent_and_changed_verdict_is_preserved(fixture):

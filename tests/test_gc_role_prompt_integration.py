@@ -369,6 +369,9 @@ def test_registered_claim_command_dispatches_store_aware_show_and_normalizes_jso
 @pytest.mark.parametrize('binding', ['gc', 'gascity', 'custom'])
 def test_provenance_command_is_available_under_city_import_alias(tmp_path: Path, gc_test_bin: Path, binding: str) -> None:
     workspace = write_prompt_workspace(tmp_path, city_binding=binding, city_pack=REPO_ROOT / 'gascity')
+    help_result = run_gc(gc_test_bin, workspace, binding, 'provenance', '--help')
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Record or summarize a normal worker's typed close trail" in help_result.stdout
     result = run_gc(gc_test_bin, workspace, binding, 'provenance', 'record', 'fixture-1', '--outcome', 'shipped', '--commit', 'invalid')
     assert result.returncode != 0
     assert 'commit must be a full' in result.stderr

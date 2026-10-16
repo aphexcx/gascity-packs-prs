@@ -180,8 +180,10 @@ record unrecoverable failure as `gc.outcome=fail` plus concise
 
 Before closing a normal work bead, record every known fact using the pack's
 `provenance record` command (Beads 1.3.1 or later). Set `PROVENANCE_PACK_ALIAS`
-to this pack's **city-level** import alias in city.toml (`gc`, `gascity`, or
-another binding); rig role names are not command aliases. The command writes
+to this pack's **city-level** binding from `gc import list`: the first column
+of the row whose source ends in `/gascity` (for example `gascity`). Rig role
+imports ending in `/gascity/roles` are not command aliases. Probe the binding's
+provenance help as below before any close write. The command writes
 one typed record per commit, PR, review, evidence directory, and work outcome.
 It also writes compatibility metadata and never closes the bead. A recording
 failure stops the close; retry safely after resolving it, or record the
@@ -189,9 +191,15 @@ bead's failure contract. Do not silently close with metadata alone.
 
 For code delivery, set `PR_URL` to the canonical PR URL when one exists (empty
 otherwise), `EVIDENCE_DIR` to the absolute evidence directory when available,
-and `REVIEW_RECORDS` to an absolute JSON file outside the PR branch. Use `[]`
-when there were no reviews. Each known Codex round, gate, or read is an object:
-`{"stage":"codex","round":1,"verdict":"CLEAN","sha":"<full reviewed SHA>","ref":"<review record path or URL>"}`.
+and `REVIEW_RECORDS` to the absolute path of a JSON file outside the PR branch.
+When there were no reviews, that file's content is `[]`; the variable still
+holds its file path. Each known Codex round, gate, or read is an object:
+
+```json
+{"stage":"codex", "round":1, "verdict":"CLEAN",
+ "sha":"<full reviewed SHA>", "ref":"<review record path or URL>"}
+```
+
 Stages are `codex`, `gate`, and `read`. Include earlier rounds with their own
 SHAs and verdicts; never invent a pending gate's verdict. Use a distinct round
 number and immutable record per review. The summary only uses gate/read
@@ -216,6 +224,13 @@ WORK_BRANCH=$(git branch --show-current) || exit 1
   printf '%s\n' 'Refusing to write an empty gc.work_branch.' >&2
   exit 1
 }
+if ! PROVENANCE_HELP=$(gc "$PROVENANCE_PACK_ALIAS" provenance --help) ||
+   ! printf '%s\n' "$PROVENANCE_HELP" |
+     grep -Fq "Record or summarize a normal worker's typed close trail"; then
+  printf 'Unavailable provenance command for import alias: %s\n' \
+    "$PROVENANCE_PACK_ALIAS" >&2
+  exit 1
+fi
 gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
   --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
   --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR" || exit 1

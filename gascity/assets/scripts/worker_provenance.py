@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record worker close facts and render the Beads 1.3.1 provenance trail."""
+"""Record or summarize a normal worker's typed close trail (Beads 1.3.1+)."""
 from __future__ import annotations
 
 import argparse
@@ -7,6 +7,7 @@ import base64
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -15,6 +16,7 @@ import sys
 SCHEMA = "gc.worker-close.v1"
 SOURCE = "gc-worker-close/v1/"
 OUTCOMES = ("shipped", "no-op", "blocked", "abandoned")
+GC_BIN = os.environ.get("GC_BIN") or "gc"
 
 
 def nonempty(value: str) -> str:
@@ -93,25 +95,32 @@ def record(args) -> None:
     for item in records:
         payload = json.dumps(item["payload"], sort_keys=True, separators=(",", ":"))
         source = SOURCE + base64.urlsafe_b64encode(hashlib.sha256(payload.encode()).digest()).decode().rstrip("=")
-        subprocess.run(["gc", "bd", "provenance", "record", "--issue", args.bead,
+        subprocess.run([GC_BIN, "bd", "provenance", "record", "--issue", args.bead,
                         "--kind", item["kind"], "--ref-kind", item["ref_kind"],
                         "--ref", item["ref"], "--source", source, "--at", at,
                         "--payload", payload], check=True)
     # Compatibility for gascity pack 0.1.x. Remove in 0.2.0 after readers AND
     # the core work-record close gate migrate; do not drop these independently.
-    metadata = ["gc.work_outcome=" + args.outcome]
-    if args.commit:
-        metadata.append("gc.work_commit=" + args.commit)
-    if args.pr:
-        metadata.append("gc.pr=" + args.pr)
-    command = ["gc", "bd", "update", args.bead]
-    for value in metadata:
-        command.extend(["--set-metadata", value])
+    command = [GC_BIN, "bd", "update", args.bead,
+               "--set-metadata", "gc.work_outcome=" + args.outcome]
+    for key, value in (("gc.work_commit", args.commit), ("gc.pr", args.pr)):
+        if value:
+            command.extend(["--set-metadata", key + "=" + value])
+        else:
+            command.extend(["--unset-metadata", key])
     subprocess.run(command, check=True)
 
 
 def read_events(bead: str) -> list[dict]:
-    result = subprocess.run(["gc", "bd", "provenance", "log", bead, "--json"],
+    # Beads accepts abbreviated IDs, including for immutable provenance appends.
+    # Resolve read-only and reject aliases before reading the trail or writing.
+    result = subprocess.run([GC_BIN, "bd", "show", bead, "--json"],
+                            text=True, capture_output=True, check=True)
+    resolved = json.loads(result.stdout)
+    if (not isinstance(resolved, list) or len(resolved) != 1
+            or not isinstance(resolved[0], dict) or resolved[0].get("id") != bead):
+        raise ValueError(f"expected exact bead id {bead!r}; show resolved a different or invalid result")
+    result = subprocess.run([GC_BIN, "bd", "provenance", "log", bead, "--json"],
                             text=True, capture_output=True, check=True)
     events = json.loads(result.stdout)
     if not isinstance(events, list):
@@ -206,7 +215,8 @@ def main() -> int:
     writer.add_argument("--outcome", required=True, choices=OUTCOMES)
     writer.add_argument("--commit", default="")
     writer.add_argument("--pr", default="")
-    writer.add_argument("--reviews", help="JSON array: stage, round, verdict, sha, ref")
+    writer.add_argument("--reviews", metavar="FILE",
+                        help="path to a JSON array file: stage, round, verdict, sha, ref; [] for no reviews")
     writer.add_argument("--evidence-dir", default="")
     reader = commands.add_parser("summary", help="render typed provenance; no metadata fallback")
     reader.add_argument("bead")
