@@ -232,6 +232,10 @@ def main() -> int:
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         print(f"worker provenance: {exc}", file=sys.stderr)
+        if isinstance(exc, subprocess.CalledProcessError):
+            for diagnostic in (exc.stdout, exc.stderr):
+                if diagnostic:
+                    print(diagnostic.rstrip(), file=sys.stderr)
         return 1
 
 

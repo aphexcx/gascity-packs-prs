@@ -42,6 +42,12 @@ p = Path(os.environ['FIXTURE_STATE'])
 s = json.loads(p.read_text())
 s['calls'].append(args)
 p.write_text(json.dumps(s))
+read_command = 'show' if args[:2] == ['b' + 'd', 'show'] else (
+    'log' if args[:3] == ['b' + 'd', 'provenance', 'log'] else '')
+if read_command and os.environ.get('FAIL_READ') == read_command:
+    stream = sys.stdout if os.environ.get('DIAGNOSTIC_STREAM') == 'stdout' else sys.stderr
+    print('fixture storage unavailable', file=stream)
+    sys.exit(6)
 if args[:2] == ['b' + 'd', 'show']:
     assert args[3:] == ['--json']
     print(os.environ.get('RESOLVED_JSON', '[{"id":"fixture-1"}]'))
@@ -175,6 +181,18 @@ def test_invalid_id_resolution_is_rejected_before_writes(fixture, resolved):
     assert 'expected exact bead id' in result.stderr
     assert data(fixture) == dict(events=[], metadata={}, closed=False,
                                 calls=[['b' + 'd', 'show', 'fixture-1', '--json']])
+
+
+@pytest.mark.parametrize('command', ['show', 'log'])
+@pytest.mark.parametrize('stream', ['stdout', 'stderr'])
+def test_read_failure_preserves_diagnostic_without_writes(fixture, command, stream):
+    fixture[2].update(FAIL_READ=command, DIAGNOSTIC_STREAM=stream)
+    result = record(fixture)
+    assert result.returncode != 0
+    assert 'fixture storage unavailable' in result.stderr
+    assert not data(fixture)['events']
+    assert not data(fixture)['metadata']
+    assert not data(fixture)['closed']
 
 
 def test_explicit_gc_binary_handles_every_subcommand(fixture):
