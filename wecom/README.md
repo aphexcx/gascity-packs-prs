@@ -218,9 +218,10 @@ unlike slack-full there is no probe to distinguish quiet-chat from
 dead-push and no backfill — a real stall's messages are unrecoverable,
 which is why surfacing matters. `WECOM_LIVENESS_RECONNECT=true`
 additionally force-cycles the connection while stalled — the only
-remediation available for a ready-but-dead WS. The stall clock starts at
-first authentication; reconnects do not reset inbound silence. Cycles are
-rate-limited by `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (default the
+remediation available for a ready-but-dead WS. The watchdog starts at boot,
+so a process that never authenticates still reports a stall. First
+authentication resets the stall clock; reconnects do not reset inbound
+silence. Cycles are rate-limited by `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (default the
 larger of the stall threshold and 30min). A recent outbound acknowledgement
 suppresses a new cycle for `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (default
 10min; **0 disables suppression**), but only until inbound silence reaches
@@ -237,14 +238,14 @@ retained after an HTTP timeout and either upload engine; the drain deadline
 and ack-suppression ceiling do not interrupt progressing upload chunks.
 On SIGTERM/SIGINT the HTTP listener stops accepting new publishes first.
 Outbound draining is capped at **1500 ms** (or the configured drain timeout,
-if shorter); inbound buffers flush concurrently, and the process exits
-within the supervisor's 2-second shutdown budget.
+if shorter); inbound buffers flush concurrently, then a final flush after
+the SDK/socket stops awaits any messages received during the drain. A
+1900 ms hard exit keeps shutdown within the supervisor's 2-second budget.
 
 Message sends retain the SDK's request IDs and are **never automatically
 retried after a socket closes before acknowledgement**. Such a publish
 returns HTTP `502 delivery_unknown`; a repeat with the same idempotency key
 is refused (`409`). Check the chat before resending with a fresh key.
-`WECOM_PUBLISH_RECONNECT_WAIT_MS` has been removed.
 
 **Empty-payload surfacing** (`src/inbound.js`). The 8/22 22:53 case: a
 voice frame arrived with no server transcript and no media, and the

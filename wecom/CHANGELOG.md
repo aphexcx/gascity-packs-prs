@@ -8,16 +8,18 @@
   remediation until settled, including both engines, uploads retained
   after HTTP deadlines, and uploads admitted during a publish drain.
   SIGTERM/SIGINT closes HTTP admission first, drains outbound work for at
-  most 1500 ms, and flushes inbound buffers concurrently within the
-  supervisor's 2-second budget. A send interrupted before acknowledgement
-  returns `502 delivery_unknown` with same-key refusal; automatic replay
-  and custom hashed request IDs were removed in round two. Sends use the
-  SDK's original wire format. `WECOM_PUBLISH_RECONNECT_WAIT_MS` is removed.
+  most 1500 ms, and flushes inbound buffers concurrently. A final flush
+  after the SDK/socket stops awaits late inbound deliveries, bounded by a
+  1900 ms hard exit within the supervisor's 2-second budget. A send
+  interrupted before acknowledgement returns `502 delivery_unknown` with
+  same-key refusal and no automatic replay. Sends use the SDK's original
+  wire format and request IDs.
   Recent outbound acknowledgements suppress new liveness reconnects for
   `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (600000; **0 disables suppression**),
   but never beyond **3× `WECOM_LIVENESS_STALL_AFTER_MS`** of inbound silence.
   Alarms remain because outbound acks do not prove inbound push delivery.
-  The initial stall clock starts at authentication; reconnects do not reset
+  The watchdog starts at boot, including when authentication never succeeds;
+  first authentication resets the stall clock, and reconnects do not reset
   it. Other knobs (milliseconds): `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS`
   (the greater of the stall threshold and 1800000),
   `WECOM_LIVENESS_TICK_MS` (30000), and

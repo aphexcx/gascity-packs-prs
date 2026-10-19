@@ -167,11 +167,16 @@ export function createInboundLiveness(opts = {}) {
     }
   }
 
+  // First authentication grants a fresh inbound grace period, even if boot
+  // already stalled. Keep the watchdog running and preserve reconnect limits.
+  function resetClock() {
+    startedAt = now();
+    stalledSince = null;
+    lastAlarmAt = null;
+  }
+
   function start(tickMs = livenessTickMs) {
     if (timer || stallAfterMs <= 0) return;
-    // Production starts on the first authentication, so slow startup
-    // cannot consume the inbound grace period. Reconnects do not reset it.
-    startedAt = now();
     timer = setInterval(tick, tickMs);
     timer.unref?.();
   }
@@ -204,5 +209,5 @@ export function createInboundLiveness(opts = {}) {
     return line;
   }
 
-  return { noteInbound, tick, start, stop, state, healthzDetail };
+  return { noteInbound, tick, start, stop, resetClock, state, healthzDetail };
 }

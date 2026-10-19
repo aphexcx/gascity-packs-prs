@@ -642,6 +642,7 @@ async function main() {
     alarmRepeatMs: cfg.livenessAlarmRepeatMs,
     log,
   });
+  liveness.start(cfg.livenessTickMs);
 
   let shuttingDown = false;
   const server = startInternalListener(cfg, publisher, () => liveness.healthzDetail(), () => shuttingDown);
@@ -652,7 +653,7 @@ async function main() {
   wsClient.on('message', () => liveness.noteInbound());
   wsClient.on('event', () => liveness.noteInbound());
 
-  wsClient.once('authenticated', () => liveness.start(cfg.livenessTickMs));
+  wsClient.once('authenticated', () => liveness.resetClock());
   wsClient.on('authenticated', () => log('wecom long connection authenticated'));
   wsClient.on('reconnecting', (attempt) => log(`wecom reconnecting (attempt ${attempt})`));
   wsClient.on('error', (err) => {
@@ -742,10 +743,13 @@ async function main() {
     // Close admission before draining; existing requests can still receive
     // their receipts (including delivery_unknown at the drain deadline).
     const listenerClosed = new Promise((resolve) => server.close(resolve));
-    // gc kills proxy processes after 2 s. Drain inbound and outbound work
-    // concurrently, leaving time for a forced close to flush its HTTP 502.
+    // gc kills proxy processes after 2 s. Start flushing inbound now, then
+    // flush again after the outbound drain stops the SDK/socket (<=1500 ms).
+    // The first flush can finish while the socket still accepts late frames;
+    // only the final flush can account for all remaining delivery chains.
     const exitTimer = setTimeout(() => process.exit(0), 1900);
-    Promise.all([connection.close(), pipeline.flushAll(), listenerClosed]).then(() => {
+    const inboundDrained = connection.close().then(() => pipeline.flushAll());
+    Promise.all([inboundDrained, pipeline.flushAll(), listenerClosed]).then(() => {
       clearTimeout(exitTimer);
       process.exit(0);
     }, (err) => {

@@ -92,6 +92,7 @@ export function createOutboundConnection(wsClient, {
       const deferredConnect = () => setTimeout(connectOnce, 0);
       wsClient.once('disconnected', deferredConnect);
       const fallback = setTimeout(connectOnce, 3000);
+      fallback.unref?.();
       authenticated = false;
       lastAckAt = null;
       wsClient.disconnect();
