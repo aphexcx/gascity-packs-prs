@@ -1314,6 +1314,26 @@ export function createOutboundPublisher(deps) {
 
   // --- /publish: text/markdown --------------------------------------------
 
+  // During shutdown only gc's matching media transcript callback may use
+  // /publish. Answer directly from receipts: never claim a key, wait on its
+  // owner, or fall through to a fresh send while the owner drains.
+  function handlePublishReceipt(req, res, body) {
+    let pub;
+    try { pub = JSON.parse(body); } catch { return false; }
+    if (!pub || typeof pub.idempotency_key !== 'string' || !pub.idempotency_key
+      || typeof pub.text !== 'string') return false;
+    const key = pub.idempotency_key;
+    const state = publishStates.get(key) ?? journal.get?.(key);
+    const expected = state?.expectedTranscript;
+    const receipt = transcriptSeeds.get(key) ?? state?.callbackReceipt ?? state?.receipt;
+    if (!receipt || !expected
+      || expected.conversation_id !== pub.conversation?.conversation_id
+      || expected.text_sha256 !== sha256Hex(pub.text)) return false;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(receipt));
+    return true;
+  }
+
   async function handlePublish(req, res, body) {
     let pub;
     try {
@@ -2409,6 +2429,7 @@ export function createOutboundPublisher(deps) {
   }
 
   return {
+    handlePublishReceipt,
     handlePublish: (...args) => trackActivity(() => handlePublish(...args)),
     handlePublishMedia: (...args) => trackActivity(() => handlePublishMedia(...args)),
     handleUploadProbe: (...args) => trackActivity(() => handleUploadProbe(...args)),

@@ -107,11 +107,27 @@ export function createOutboundConnection(wsClient, {
 
   function close() {
     stopping = true; // also cancels a reconnect already waiting for idle
-    return whenIdle(() => {
+    return whenIdle(() => new Promise((resolve, reject) => {
       authenticated = false;
       lastAckAt = null;
-      wsClient.disconnect();
-    }, Math.min(drainTimeoutMs, 1500));
+      // terminate() can leave the receiver finishing a compressed frame.
+      // Only disconnected proves intake has stopped; a missing event (e.g.
+      // no socket at startup) must still fit gc's shutdown deadline.
+      const finish = () => {
+        clearTimeout(fallback);
+        wsClient.off('disconnected', finish);
+        resolve();
+      };
+      const fallback = setTimeout(finish, 100);
+      wsClient.once('disconnected', finish);
+      try {
+        wsClient.disconnect();
+      } catch (err) {
+        clearTimeout(fallback);
+        wsClient.off('disconnected', finish);
+        reject(err);
+      }
+    }), Math.min(drainTimeoutMs, 1500));
   }
 
   return {

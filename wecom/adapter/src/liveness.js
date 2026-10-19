@@ -171,6 +171,10 @@ export function createInboundLiveness(opts = {}) {
   // already stalled. Keep the watchdog running and preserve reconnect limits.
   function resetClock() {
     startedAt = now();
+    if (stalledSince !== null) {
+      const stallSeconds = Math.round((startedAt - stalledSince) / 1000);
+      log(`inbound liveness: RECOVERED — first authentication cleared a ${stallSeconds}s startup stall; inbound grace period reset`);
+    }
     stalledSince = null;
     lastAlarmAt = null;
   }

@@ -11,8 +11,10 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { createOutboundConnection } from '../src/connection.js';
 
 const require = createRequire(import.meta.url);
+const { WSClient } = require('@wecom/aibot-node-sdk');
 const { WebSocketServer } = createRequire(require.resolve('@wecom/aibot-node-sdk'))('ws');
 const entrypoint = fileURLToPath(new URL('../src/index.js', import.meta.url));
 const remediationEnv = {
@@ -42,8 +44,8 @@ async function waitFor(predicate, label) {
   }
 }
 
-async function stubServer(t, onFrame = () => true) {
-  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+async function stubServer(t, onFrame = () => true, options = {}) {
+  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1', ...options });
   const connections = [];
   wss.on('connection', (socket) => {
     const connection = { socket, frames: [] };
@@ -174,6 +176,7 @@ test('first authentication clears a startup stall and grants a full inbound grac
   const acknowledgedAt = Date.now();
   acknowledge(subscription.connection, subscription.frame);
   await adapter.waitForLog('wecom long connection authenticated');
+  assert.match(adapter.logs(), /RECOVERED — first authentication cleared a .* startup stall/);
   assert.match((await adapter.health()).body, /inbound_liveness=ok/);
   await delay(700); // 300 ms margin below the new grace period
   assert.match((await adapter.health()).body, /inbound_liveness=ok/);
@@ -318,6 +321,51 @@ test('the drain deadline closes a hung send with 502 delivery_unknown and no ret
   assert.equal(sends(server).length, 1);
 });
 
+test('close waits for the SDK receiver to finish a compressed inbound frame', async (t) => {
+  const server = await stubServer(t, undefined, { perMessageDeflate: true });
+  const client = new WSClient({
+    botId: 'local-test-bot', secret: 'local-test-placeholder',
+    wsUrl: `ws://127.0.0.1:${server.port}`,
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+  });
+  const connection = createOutboundConnection(client);
+  t.after(() => client.disconnect());
+  const authenticated = once(client, 'authenticated');
+  client.connect();
+  await authenticated;
+
+  // Hold the real inflater's completion at the async boundary. terminate()
+  // closes TCP here, but ws must still deliver this frame before close.
+  const extension = client.wsManager.ws._extensions['permessage-deflate'];
+  assert.ok(extension, 'the local peer negotiated compression');
+  const decompress = extension.decompress.bind(extension);
+  let release;
+  const inflating = new Promise((resolve) => {
+    extension.decompress = (data, fin, callback) => decompress(data, fin, (...args) => {
+      release = () => { release = null; callback(...args); };
+      resolve();
+    });
+  });
+  t.after(() => release?.());
+  const events = [];
+  client.on('message.text', (frame) => events.push(frame.body.text.content));
+  client.on('disconnected', () => events.push('disconnected'));
+  server.connections[0].socket.send(JSON.stringify({
+    cmd: 'aibot_msg_callback', headers: { req_id: 'compressed-inbound' }, body: {
+      msgid: 'compressed-inbound', chattype: 'single', from: { userid: 'local-user' },
+      msgtype: 'text', text: { content: 'received before close' },
+    },
+  }), { compress: true });
+  await inflating;
+  let closed = false;
+  const closing = connection.close().then(() => { closed = true; events.push('drained'); });
+  await delay(20);
+  assert.equal(closed, false, 'terminate alone does not prove intake is drained');
+  release();
+  await closing;
+  assert.deepEqual(events, ['received before close', 'disconnected', 'drained']);
+});
+
 test('SIGTERM stops admission, drains an acknowledged publish, and exits cleanly', async (t) => {
   const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
   const adapter = startAdapter(t, server);
@@ -333,7 +381,10 @@ test('SIGTERM stops admission, drains an acknowledged publish, and exits cleanly
   partial.req.write('{');
   adapter.child.kill('SIGTERM');
   await adapter.waitForLog('waiting up to 1500 ms');
-  await assert.rejects(adapter.request('/publish', textPublish('late')), /ENOENT|ECONNREFUSED|ECONNRESET/);
+  const late = await adapter.request('/publish', textPublish('late'));
+  assert.equal(late.status, 503);
+  assert.equal(late.body.failure_kind, 'not_sent');
+  assert.equal((await adapter.health()).status, 200);
   partial.req.end(JSON.stringify(textPublish('partial')).slice(1));
   const refused = await partial.result;
   assert.equal(refused.status, 503);
@@ -345,6 +396,78 @@ test('SIGTERM stops admission, drains an acknowledged publish, and exits cleanly
   assert.equal(sends(server).length, 1);
 });
 
+test('SIGTERM keeps gc media receipt callbacks open while refusing new publishes', async (t) => {
+  let transcriptRequest;
+  let transcriptResponse;
+  const gc = http.createServer((req, res) => {
+    assert.match(req.url, /\/extmsg\/outbound$/);
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', (data) => { body += data; });
+    req.on('end', () => {
+      transcriptRequest = JSON.parse(body);
+      transcriptResponse = res;
+    });
+  });
+  gc.listen(0, '127.0.0.1');
+  await once(gc, 'listening');
+  t.after(async () => {
+    gc.closeAllConnections();
+    await new Promise((resolve) => gc.close(resolve));
+  });
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
+  const adapter = startAdapter(t, { ...server, extraEnv: {
+    GC_API_BASE_URL: `http://127.0.0.1:${gc.address().port}`,
+    WECOM_MEDIA_ALLOW_UNSEEN_CONVERSATIONS: 'true',
+  } });
+  await adapter.waitForLog('wecom long connection authenticated');
+  const filePath = path.join(adapter.dir, 'shutdown.bin');
+  fs.writeFileSync(filePath, 'media delivered during shutdown');
+  const request = { conversation: { conversation_id: 'local-user' },
+    session_id: 'local-session', file_path: filePath, media_kind: 'file', idempotency_key: 'shutdown-media' };
+  const publish = adapter.request('/publish-media', request);
+  await waitFor(() => sends(server).length === 1, 'media send');
+  const shutdownAt = Date.now();
+  adapter.child.kill('SIGTERM');
+  await adapter.waitForLog('waiting up to 1500 ms');
+  assert.equal((await adapter.health()).status, 200);
+  for (const [endpoint, body] of [
+    ['/publish', textPublish('late')],
+    ['/publish-media', { ...request, idempotency_key: 'late-media' }],
+  ]) {
+    const refused = await adapter.request(endpoint, body);
+    assert.equal(refused.status, 503);
+    assert.equal(refused.body.delivered, false);
+    assert.equal(refused.body.failure_kind, 'not_sent');
+  }
+  acknowledge(server.connections[0], sends(server)[0]);
+  await waitFor(() => transcriptRequest, 'media transcript request to gc');
+  // A known key alone cannot admit an ordinary text publish during drain.
+  for (const mismatch of [
+    { ...transcriptRequest, text: 'new text with a media key' },
+    { ...transcriptRequest, conversation: { conversation_id: 'another-user' } },
+    { ...transcriptRequest, idempotency_key: 'another-key' },
+  ]) {
+    const refused = await adapter.request('/publish', mismatch);
+    assert.equal(refused.status, 503);
+    assert.equal(refused.body.failure_kind, 'not_sent');
+  }
+  const callback = await adapter.request('/publish', transcriptRequest);
+  assert.equal(callback.status, 200);
+  assert.equal(callback.body.delivered, true);
+  transcriptResponse.writeHead(200, { 'Content-Type': 'application/json' })
+    .end(JSON.stringify({ TranscriptEntry: { message_id: callback.body.message_id } }));
+  const result = await publish;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.delivered, true);
+  assert.equal(result.body.transcript_recorded, true);
+  assert.deepEqual(await adapter.exited, [0, null]);
+  assert.ok(Date.now() - shutdownAt < 1800, 'media receipt drain must beat gc SIGKILL with margin');
+  assert.equal(sends(server).length, 1, 'receipt callbacks never send transcript text to WeCom');
+  assert.equal(frames(server, 'aibot_upload_media_init').length, 1);
+  assert.equal(server.connections.length, 1, 'shutdown must not reconnect');
+});
+
 test('SIGTERM with an unacked publish returns 502 and exits after the bounded drain', async (t) => {
   const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_send_msg');
   const adapter = startAdapter(t, server);
@@ -354,13 +477,15 @@ test('SIGTERM with an unacked publish returns 502 and exits after the bounded dr
   const shutdownAt = Date.now();
   adapter.child.kill('SIGTERM');
   await adapter.waitForLog('waiting up to 1500 ms');
-  await assert.rejects(adapter.request('/publish', textPublish('late')), /ENOENT|ECONNREFUSED|ECONNRESET/);
+  const late = await adapter.request('/publish', textPublish('late'));
+  assert.equal(late.status, 503);
+  assert.equal(late.body.failure_kind, 'not_sent');
   const response = await result;
   assert.equal(response.status, 502);
   assert.equal(response.body.failure_kind, 'delivery_unknown');
   assert.deepEqual(await adapter.exited, [0, null]);
   const elapsed = Date.now() - shutdownAt;
-  assert.ok(elapsed >= 1200 && elapsed < 2200, `shutdown took ${elapsed} ms`);
+  assert.ok(elapsed >= 1200 && elapsed < 1800, `shutdown took ${elapsed} ms`);
   assert.equal(sends(server).length, 1);
 });
 
@@ -404,9 +529,11 @@ test('shutdown awaits a late inbound delivery after the outbound drain stops the
   await socketClosed;
   await delay(300);
   assert.equal(adapter.child.exitCode, null, 'exit must await gc accepting the late inbound');
+  const acceptedAt = Date.now();
   inboundResponse.writeHead(200, { 'Content-Type': 'application/json' })
     .end(JSON.stringify({ delivery: { status: 'delivered' } }));
   assert.deepEqual(await adapter.exited, [0, null]);
+  assert.ok(Date.now() - acceptedAt < 300, 'exit must follow the gc response, not the hard exit timer');
   assert.equal(server.connections.length, 1, 'shutdown must not reconnect');
 });
 
@@ -456,6 +583,15 @@ for (const respond of [true, false]) {
     const elapsed = Date.now() - shutdownAt;
     // Allow 300 ms for scheduling around the production 1900 ms hard exit.
     assert.ok(elapsed < 2200, `shutdown took ${elapsed} ms`);
+    if (respond) {
+      assert.doesNotMatch(adapter.logs(), /shutdown hard exit/);
+    } else {
+      const pendingLog = adapter.logs().split('\n').filter((line) => line.includes('shutdown hard exit with pending inbound work: '));
+      assert.equal(pendingLog.length, 1);
+      const stats = JSON.parse(pendingLog[0].split('pending inbound work: ')[1]);
+      assert.ok(stats.chains > 0);
+      assert.ok(stats.pending > 0);
+    }
   });
 }
 

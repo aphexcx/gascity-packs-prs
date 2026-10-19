@@ -29,8 +29,8 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     res.writeHead(413, { Connection: 'close' }).end('request body too large');
   };
 
-  // server.close() stops new connections. Also refuse publishes arriving
-  // on an existing connection or finishing their request body during drain.
+  // Keep receipt callbacks reachable during drain, but refuse new work,
+  // including request bodies that finish after shutdown starts.
   const refuseDraining = (res) => {
     if (!isDraining()) return false;
     res.writeHead(503, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({
@@ -38,8 +38,8 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     }));
     return true;
   };
-  const handle = (handler, label) => (req, res) => {
-    if (refuseDraining(res)) return;
+  const handle = (handler, label, receiptHandler = null) => (req, res) => {
+    if (!receiptHandler && refuseDraining(res)) return;
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > maxBodyBytes) {
       log(`${label}: Content-Length ${declared} exceeds the ${maxBodyBytes}-byte body cap; refused`);
@@ -66,7 +66,11 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     });
     req.on('error', () => { /* severed mid-body; the 413 (if any) is already out */ });
     req.on('end', () => {
-      if (refused || refuseDraining(res)) return;
+      if (refused) return;
+      if (isDraining()) {
+        if (!receiptHandler?.(req, res, body)) refuseDraining(res);
+        return;
+      }
       handler(req, res, body).catch((err) => {
         log(`${label} handler error: ${err.message}`);
         if (!res.headersSent) res.writeHead(500).end();
@@ -74,7 +78,7 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     });
   };
 
-  const publish = handle(publisher.handlePublish, 'publish');
+  const publish = handle(publisher.handlePublish, 'publish', publisher.handlePublishReceipt);
   const publishMedia = handle(publisher.handlePublishMedia, 'publish-media');
   const uploadProbe = publisher.handleUploadProbe ? handle(publisher.handleUploadProbe, 'upload-probe') : null;
 

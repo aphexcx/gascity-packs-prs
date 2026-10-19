@@ -740,16 +740,24 @@ async function main() {
     shuttingDown = true;
     log(`${signal} received; shutting down`);
     liveness.stop();
-    // Close admission before draining; existing requests can still receive
-    // their receipts (including delivery_unknown at the drain deadline).
-    const listenerClosed = new Promise((resolve) => server.close(resolve));
+    // shuttingDown closes admission, while HTTP remains open for gc's
+    // receipt-only /publish callbacks during the active media drain.
     // gc kills proxy processes after 2 s. Start flushing inbound now, then
-    // flush again after the outbound drain stops the SDK/socket (<=1500 ms).
+    // flush again after the capped outbound drain and socket disconnection.
     // The first flush can finish while the socket still accepts late frames;
     // only the final flush can account for all remaining delivery chains.
-    const exitTimer = setTimeout(() => process.exit(0), 1900);
-    const inboundDrained = connection.close().then(() => pipeline.flushAll());
-    Promise.all([inboundDrained, pipeline.flushAll(), listenerClosed]).then(() => {
+    const exitTimer = setTimeout(() => {
+      const stats = pipeline.stats();
+      if (stats.held || stats.hydrations || stats.inflight || stats.chains || stats.pending || stats.buffered) {
+        log(`shutdown hard exit with pending inbound work: ${JSON.stringify(stats)}`);
+      }
+      process.exit(0);
+    }, 1900);
+    const inboundDrained = connection.close().then(() => {
+      const listenerClosed = new Promise((resolve) => server.close(resolve));
+      return Promise.all([pipeline.flushAll(), listenerClosed]);
+    });
+    Promise.all([inboundDrained, pipeline.flushAll()]).then(() => {
       clearTimeout(exitTimer);
       process.exit(0);
     }, (err) => {
