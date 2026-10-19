@@ -2,26 +2,29 @@
 
 ## 0.0.1 (unreleased)
 
-- Reconnect/publish coordination (jp-rwh, 10/19): adapter-initiated closes,
-  including shutdown, wait for active publishes and media uploads for up
-  to 30 seconds, logging once when they wait. Both upload engines and
-  uploads retained after an HTTP deadline are covered. A message frame
-  interrupted by socket loss retries once after authentication with the
-  identical `req_id` and body; caller idempotency keys map to distinct
-  wire IDs per text chunk, media send, and caption chunk. Exhaustion keeps
-  the existing delivery-unknown response and same-key refusal. Ack
-  timeouts, pre-write failures and provider refusals are not retried by
-  this mechanism. Recent outbound acknowledgements suppress new liveness
-  reconnects; inbound-stall alarms remain because an outbound ack cannot
-  prove inbound push delivery. Environment knobs (milliseconds):
-  `WECOM_RECONNECT_DRAIN_TIMEOUT_MS` (30000),
-  `WECOM_PUBLISH_RECONNECT_WAIT_MS` (30000),
-  `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (600000),
-  `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (the greater of the stall
-  threshold and 1800000), `WECOM_LIVENESS_TICK_MS` (30000), and
+- Reconnect/publish coordination (jp-rwh / jp-dq1, 10/19): remediation
+  waits for active publishes up to `WECOM_RECONNECT_DRAIN_TIMEOUT_MS`
+  (default 30000), with one wait log line. In-flight uploads defer
+  remediation until settled, including both engines, uploads retained
+  after HTTP deadlines, and uploads admitted during a publish drain.
+  SIGTERM/SIGINT closes HTTP admission first, drains outbound work for at
+  most 1500 ms, and flushes inbound buffers concurrently within the
+  supervisor's 2-second budget. A send interrupted before acknowledgement
+  returns `502 delivery_unknown` with same-key refusal; automatic replay
+  and custom hashed request IDs were removed in round two. Sends use the
+  SDK's original wire format. `WECOM_PUBLISH_RECONNECT_WAIT_MS` is removed.
+  Recent outbound acknowledgements suppress new liveness reconnects for
+  `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (600000; **0 disables suppression**),
+  but never beyond **3× `WECOM_LIVENESS_STALL_AFTER_MS`** of inbound silence.
+  Alarms remain because outbound acks do not prove inbound push delivery.
+  The initial stall clock starts at authentication; reconnects do not reset
+  it. Other knobs (milliseconds): `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS`
+  (the greater of the stall threshold and 1800000),
+  `WECOM_LIVENESS_TICK_MS` (30000), and
   `WECOM_LIVENESS_ALARM_REPEAT_MS` (1800000). Existing
-  `WECOM_LIVENESS_STALL_AFTER_MS` (600000; 0 disables) and opt-in
-  `WECOM_LIVENESS_RECONNECT` retain their defaults.
+  `WECOM_LIVENESS_STALL_AFTER_MS` (600000; 0 disables the watchdog) and
+  opt-in `WECOM_LIVENESS_RECONNECT` retain their defaults. Real HTTP/SDK
+  regression flows now live in `test/liveness-reconnect.test.js`.
 - WebSocket connect address (jp-93l, 10/19):
   `WECOM_WS_CONNECT_ADDRESS` pins `openws.work.weixin.qq.com` to an IPv4
   address through the SDK's WebSocket lookup option, keeping the URL,

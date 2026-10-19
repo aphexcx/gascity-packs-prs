@@ -21,7 +21,7 @@
 
 export const defaultMaxBodyBytes = 1024 * 1024; // 1MiB
 
-export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes, healthDetail = null }) {
+export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes, healthDetail = null, isDraining = () => false }) {
   const refuse413 = (req, res) => {
     // Flush the 413 before severing: destroy() alone could race the
     // response bytes out of existence.
@@ -29,7 +29,17 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     res.writeHead(413, { Connection: 'close' }).end('request body too large');
   };
 
+  // server.close() stops new connections. Also refuse publishes arriving
+  // on an existing connection or finishing their request body during drain.
+  const refuseDraining = (res) => {
+    if (!isDraining()) return false;
+    res.writeHead(503, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({
+      delivered: false, failure_kind: 'not_sent', error: 'adapter is shutting down',
+    }));
+    return true;
+  };
   const handle = (handler, label) => (req, res) => {
+    if (refuseDraining(res)) return;
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > maxBodyBytes) {
       log(`${label}: Content-Length ${declared} exceeds the ${maxBodyBytes}-byte body cap; refused`);
@@ -56,7 +66,7 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     });
     req.on('error', () => { /* severed mid-body; the 413 (if any) is already out */ });
     req.on('end', () => {
-      if (refused) return;
+      if (refused || refuseDraining(res)) return;
       handler(req, res, body).catch((err) => {
         log(`${label} handler error: ${err.message}`);
         if (!res.headersSent) res.writeHead(500).end();

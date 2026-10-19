@@ -1280,7 +1280,7 @@ export function createInboundPipeline(deps) {
   // window into chains this loop then observes, instead of opening an
   // unobserved buffer that outlives the snapshot (codex r2 finding 4).
   // A chain wedged in gc-outage retries never settles — the CALLER
-  // bounds the wait (index.js shutdown caps it at 5s).
+  // bounds the wait (index.js keeps shutdown within gc's 2-second budget).
   let draining = false;
   async function flushAll() {
     draining = true;

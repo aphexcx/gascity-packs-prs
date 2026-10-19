@@ -26,7 +26,9 @@
 //   - Optional remediation: WECOM_LIVENESS_RECONNECT=true wires a
 //     reconnect hook that force-cycles the WS on stall (rate-limited).
 //     Recent outbound acknowledgements suppress a new cycle: quiet
-//     inbound alone is insufficient reason to tear down a live socket.
+//     inbound alone is insufficient reason to tear down a live socket
+//     until silence reaches 3× the stall threshold (acks cannot mask a
+//     half-dead socket indefinitely).
 //     The inbound alarm remains, since acks do not prove push delivery.
 //
 // What deliberately does NOT port from slack-full: the history probe
@@ -59,7 +61,8 @@ export const livenessReconnectMinIntervalMs = 30 * 60 * 1000;
 //   reconnect      optional () => void; called (rate-limited) while
 //                  stalled to force-cycle the WS. null = detection only.
 //   lastOutboundAck optional () => timestamp|null for this socket's last ack
-//   outboundAckFreshMs how long that ack suppresses a new reconnect
+//   outboundAckFreshMs how long that ack suppresses a new reconnect;
+//                  0 disables suppression, as does idle >= 3× stallAfterMs
 //   reconnectDeferral optional () => string|null; a non-empty reason
 //                  postpones a due cycle to a later tick (jg-bw5gsw: a
 //                  cycle tears down any media upload in flight, and a
@@ -80,7 +83,7 @@ export function createInboundLiveness(opts = {}) {
     log = () => {},
   } = opts;
 
-  const startedAt = now();
+  let startedAt = now();
   let lastInboundAt = null;
   let stalledSince = null;
   let lastAlarmAt = null;
@@ -120,7 +123,7 @@ export function createInboundLiveness(opts = {}) {
       lastAlarmAt = t;
       alarmsTotal++;
       const remediation = reconnect
-        ? 'reconnect remediation is enabled; recent outbound acknowledgements suppress a new cycle'
+        ? 'reconnect remediation is enabled; recent outbound acknowledgements suppress a new cycle only below 3× the stall threshold'
         : 'set WECOM_LIVENESS_RECONNECT=true to force a reconnect cycle on stall';
       log(`INBOUND LIVENESS ALARM: no inbound WeCom frame for ${Math.round(idle / 1000)}s `
         + `(threshold ${Math.round(stallAfterMs / 1000)}s) — either the chat is quiet or the long connection `
@@ -128,7 +131,8 @@ export function createInboundLiveness(opts = {}) {
         + `history API, so anything sent during a real stall is NOT recoverable; ${remediation}`);
     }
     const ackAt = lastOutboundAck();
-    if (ackAt !== null && t - ackAt < outboundAckFreshMs) return;
+    if (idle < 3 * stallAfterMs && outboundAckFreshMs > 0
+      && ackAt !== null && t - ackAt < outboundAckFreshMs) return;
     if (reconnectPending) return;
     if (reconnect && (lastReconnectAt === null || t - lastReconnectAt >= reconnectMinIntervalMs)) {
       let deferral = null;
@@ -165,6 +169,9 @@ export function createInboundLiveness(opts = {}) {
 
   function start(tickMs = livenessTickMs) {
     if (timer || stallAfterMs <= 0) return;
+    // Production starts on the first authentication, so slow startup
+    // cannot consume the inbound grace period. Reconnects do not reset it.
+    startedAt = now();
     timer = setInterval(tick, tickMs);
     timer.unref?.();
   }
