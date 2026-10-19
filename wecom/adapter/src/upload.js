@@ -220,16 +220,20 @@ export function createMediaUploader({
 
   const backoff = (attempt) => Math.min(o.backoffBaseMs * 2 ** (attempt - 1), o.backoffMaxMs);
 
-  async function ensureConnected(stage) {
+  async function ensureConnected(stage, stats) {
     if (transport.isConnected()) return;
-    if (await transport.waitForConnection(o.reconnectWaitMs)) return;
+    const connected = await transport.waitForConnection(Math.min(o.reconnectWaitMs, checkBudget(stage, stats)));
+    checkBudget(stage, stats);
+    if (connected) return;
     throw new UploadStageError(stage, 0, new Error('WebSocket not connected, unable to send data'));
   }
 
   function checkBudget(stage, stats, attempts = 0) {
-    if (now() - stats.startedAt > o.maxUploadMs) {
+    const remaining = o.maxUploadMs - (now() - stats.startedAt);
+    if (remaining <= 0) {
       throw new UploadStageError(stage, attempts, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
     }
+    return remaining;
   }
 
   // sendFrame sends one frame through the lane with retries; any
@@ -263,6 +267,7 @@ export function createMediaUploader({
             sent = Promise.reject(err);
           }
           sent.then((ack) => { lateAck ??= { ack }; }, () => {}); // also: never an unhandled rejection
+          if (attempts.length > 0) stats.retries += 1;
           attempts.push(sent);
           stats.frames += 1;
           try {
@@ -277,9 +282,7 @@ export function createMediaUploader({
         if (isConnectionLoss(err)) throw new ConnectionReplaced(stage, err);
         if (probeSession && typeof err?.errcode === 'number') throw new SessionRefused(stage, err);
         if (attempt < o.frameAttempts) {
-          checkBudget(stage, stats, attempts.length);
-          stats.retries += 1;
-          await sleep(backoff(attempt));
+          await sleep(Math.min(backoff(attempt), checkBudget(stage, stats, attempts.length)));
         }
       }
     }
@@ -291,9 +294,10 @@ export function createMediaUploader({
   // reconnect continues at nextChunk under the same upload_id, and its
   // first frame doubles as the check that the server still knows it.
   async function uploadRun(buffer, type, filename, plan, md5, stats, session) {
-    const stage = session.uploadId ? `chunk ${session.nextChunk + 1}/${plan.totalChunks}` : 'init';
+    const stage = !session.uploadId ? 'init'
+      : session.nextChunk >= plan.totalChunks ? 'finish' : `chunk ${session.nextChunk + 1}/${plan.totalChunks}`;
     checkBudget(stage, stats);
-    await ensureConnected(stage);
+    await ensureConnected(stage, stats);
     const epoch = transport.connectionEpoch();
     let probeSession = session.resumed;
     if (!session.uploadId) {

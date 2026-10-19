@@ -407,7 +407,8 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
       await advance(t, 40); // acknowledgement deadline starts the real backoff
       assert.equal(uploader.inFlight(), 1, 'the backoff is still within budget');
     }
-    await advance(t, 1000); // backoff wakes, acknowledgement times out, or connection drops after expiry
+    // Backoff must release at the budget boundary, even when its full delay is longer.
+    await advance(t, boundary === 'during retry backoff' ? 2000 - Date.now() : 1000);
     assert.deepEqual(cmds(transport), ['init', 'chunk0'], 'no retry is transmitted after expiry');
     assert.equal(transport.waiters.length, 0, 'an expired upload never waits for reconnection');
     assert.equal(uploader.inFlight(), 0, 'an expired upload never starts another backoff');
@@ -416,9 +417,8 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
     const attempts = boundary === 'before reconnect' ? '0 attempts' : '1 attempt';
     assert.equal(first.response.body.error,
       `media upload failed at chunk 1/1 after ${attempts}: the media upload exceeded its time budget`);
-    const retries = boundary === 'during retry backoff' ? 1 : 0;
     assert.ok(logs.at(-1).startsWith(
-      `media upload FAILED at chunk 1/1: 10 bytes, 1×512KiB chunks, 2 frames, ${retries} retries, `));
+      'media upload FAILED at chunk 1/1: 10 bytes, 1×512KiB chunks, 2 frames, 0 retries, '));
     liveness.tick();
     assert.equal(reconnects, 1, 'budget failure releases the liveness deferral');
 
@@ -432,34 +432,47 @@ for (const boundary of ['during retry backoff', 'before retry backoff', 'before 
   });
 }
 
-for (const stage of ['init', 'chunk']) {
-  test(`budget expiry during reconnect prevents a resumed ${stage} transmission`, async (t) => {
-    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
-    const transport = makeTransport((f) => {
-      if (f.cmd !== UPLOAD_CMD[stage]) return null;
-      transport.drop();
-      return { reject: new Error('WebSocket connection closed (code: 1006), reply for reqId: x cancelled') };
+for (const stage of ['init', 'chunk', 'finish']) {
+  for (const boundary of ['before reconnect', 'during reconnect']) {
+    test(`budget expiry ${boundary} prevents a resumed ${stage} transmission`, async (t) => {
+      t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+      const transport = makeTransport((f) => {
+        if (f.cmd !== UPLOAD_CMD[stage]) return null;
+        transport.drop();
+        return {
+          reject: new Error('WebSocket connection closed (code: 1006), reply for reqId: x cancelled'),
+          lateAckMs: boundary === 'before reconnect' ? 1000 : 1,
+        };
+      });
+      const { uploader, logs, sleeps } = makeUploader(transport, {
+        maxUploadMs: 1000, reconnectWaitMs: 2000, ackBaseMs: 2000,
+      });
+      const running = uploader.upload(bytes(10), { type: 'file', filename: 'a.bin' }).catch((err) => err);
+      await advance(t, 0);
+      if (stage !== 'init') await advance(t, 1); // init acknowledged
+      if (stage === 'finish') await advance(t, 1); // chunk acknowledged
+      await advance(t, boundary === 'before reconnect' ? 1000 : 1); // connection loss reported
+      const beforeReconnect = cmds(transport);
+      if (boundary === 'during reconnect') {
+        assert.equal(transport.waiters.length, 1, 'the upload is waiting for re-authentication');
+        await advance(t, 2000 - Date.now()); // the remaining budget, shorter than reconnectWaitMs
+      } else {
+        assert.equal(transport.waiters.length, 0, 'an expired upload never starts a reconnect wait');
+      }
+      assert.equal(uploader.inFlight(), 0, 'reconnection cannot hold the upload past its budget');
+      transport.reconnect();
+      await advance(t, 0);
+      assert.deepEqual(cmds(transport), beforeReconnect);
+      const err = await running;
+      assert.ok(err instanceof UploadStageError);
+      assert.equal(err.uploadStage, stage === 'chunk' ? 'chunk 1/1' : stage);
+      assert.equal(err.uploadAttempts, 0);
+      assert.match(describeProviderError(err), /the media upload exceeded its time budget$/);
+      assert.match(logs.at(-1), /^media upload FAILED at /);
+      assert.deepEqual(sleeps, []);
+      assert.equal(uploader.inFlight(), 0);
     });
-    const { uploader, logs, sleeps } = makeUploader(transport, { maxUploadMs: 1000, reconnectWaitMs: 2000 });
-    const running = uploader.upload(bytes(10), { type: 'file', filename: 'a.bin' }).catch((err) => err);
-    await advance(t, 0);
-    await advance(t, 1);
-    if (stage === 'chunk') await advance(t, 1);
-    const beforeReconnect = cmds(transport);
-    assert.equal(transport.waiters.length, 1, 'the upload is waiting for re-authentication');
-    await advance(t, 1000);
-    transport.reconnect();
-    await advance(t, 0);
-    assert.deepEqual(cmds(transport), beforeReconnect);
-    const err = await running;
-    assert.ok(err instanceof UploadStageError);
-    assert.equal(err.uploadStage, stage === 'init' ? 'init' : 'chunk 1/1');
-    assert.equal(err.uploadAttempts, 0);
-    assert.match(describeProviderError(err), /the media upload exceeded its time budget$/);
-    assert.match(logs.at(-1), /^media upload FAILED at /);
-    assert.deepEqual(sleeps, []);
-    assert.equal(uploader.inFlight(), 0);
-  });
+  }
 }
 
 test('restarts after connection loss are bounded', async () => {
