@@ -90,7 +90,8 @@ class GitHubAppTokenFlowTests(unittest.TestCase):
                     now = int(time.time())
                     test.assertLessEqual(abs(payload['iat'] - (now - 60)), 5)
                     test.assertGreater(payload['exp'], now)
-                    test.assertLessEqual(payload['exp'], now + 600)
+                    test.assertLessEqual(abs(payload['exp'] - (now + 540)), 5)
+                    test.assertEqual(payload['exp'] - payload['iat'], 600)
                     # RSASSA-PKCS1-v1_5 verification, independent of the signer:
                     # 00 01 FF... 00 || SHA-256 DigestInfo || SHA-256(message).
                     signed = (header + '.' + claims).encode()
@@ -133,6 +134,7 @@ class GitHubAppTokenFlowTests(unittest.TestCase):
         self.addCleanup(self.stop_server)
         self.env = {
             'HOME': str(self.root), 'PATH': str(self.bin),
+            'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0',
             'GITHUB_APP_API_URL': f'http://127.0.0.1:{self.server.server_port}',
             'JADEGATE_GITHUB_APP_ID': self.expected_app,
             'JADEGATE_GITHUB_APP_PRIVATE_KEY': self.pem,
@@ -144,10 +146,10 @@ class GitHubAppTokenFlowTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
 
-    def invoke(self, *args, stdin='', env=None, command=None):
+    def invoke(self, *args, stdin='', env=None, command=None, timeout=20):
         proc = subprocess.run(command or [str(SCRIPT), *args], input=stdin,
                               env=self.env if env is None else env, cwd=self.root,
-                              capture_output=True, text=True, timeout=20)
+                              capture_output=True, text=True, timeout=timeout)
         self.assertFalse(self.server_errors, 'HTTP stub rejected the real request')
         self.assertNotIn(self.pem, proc.stderr)
         self.assertNotIn(TOKEN, proc.stderr)
@@ -160,16 +162,20 @@ class GitHubAppTokenFlowTests(unittest.TestCase):
         self.assertEqual(proc.stderr, '')
         return proc.stdout
 
-    def fake_infisical(self, values, *, exit_code=0):
+    def fake_infisical(self, values, *, exit_code=0, export_format='dotenv'):
         # All values, including the ephemeral key, are passed in memory.
         self.env.update(INFISICAL_PROJECT_ID='offline-project', INFISICAL_TOKEN='offline-identity',
-                        FLOW_DOTENV=values)
+                        FLOW_EXPORT=values)
         fake = self.bin / 'infisical'
         fake.write_text(f'''#!{sys.executable}
 import os, sys
-assert sys.argv[1:] == ['export', '--env', 'agents', '--projectId', 'offline-project', '--format', 'dotenv']
+assert sys.argv[1:-1] == ['export', '--env', 'agents', '--projectId', 'offline-project', '--format']
 assert os.environ['INFISICAL_TOKEN'] == 'offline-identity'
-sys.stdout.write(os.environ['FLOW_DOTENV'])
+with open(os.path.join(os.environ['HOME'], 'export-formats'), 'a') as log:
+    log.write(sys.argv[-1] + '\\n')
+if sys.argv[-1] != {export_format!r}:
+    sys.exit(2)
+sys.stdout.write(os.environ['FLOW_EXPORT'])
 sys.exit({exit_code})
 ''')
         fake.chmod(0o755)
@@ -178,6 +184,44 @@ sys.exit({exit_code})
         self.assertEqual(self.success(), TOKEN + '\n')
         self.assertEqual(json.loads(self.success('--json')), self.mint_payload)
         self.assertEqual(len(self.requests), 2)
+
+    def test_cwd_and_pythonpath_modules_cannot_run(self):
+        poison = self.root / 'pythonpath'
+        poison.mkdir()
+        self.env['PYTHONPATH'] = str(poison)
+        for directory in (self.root, poison):
+            for name in ('json', 'base64', 'sitecustomize'):
+                (directory / (name + '.py')).write_text(
+                    f"open({str(self.root / 'module-ran')!r}, 'w').close()\n"
+                    "raise RuntimeError('untrusted module executed')\n")
+        self.assertEqual(self.success(), TOKEN + '\n')
+        self.assertFalse((self.root / 'module-ran').exists())
+        self.assertEqual(len(self.requests), 1)
+
+    def test_openssl_and_curl_receive_only_scrubbed_environment(self):
+        self.env.update(INFISICAL_TOKEN='offline-identity', LANG='C.UTF-8',
+                        UNRELATED_SECRET='offline-private-value')
+        for name in ('openssl', 'curl'):
+            wrapper = self.bin / name
+            wrapper.unlink()
+            wrapper.write_text(f'''#!{sys.executable} -I
+import json, os, sys
+with open(os.path.join(os.environ['HOME'], 'child-env-names'), 'a') as log:
+    log.write(json.dumps([sys.argv[0], sorted(os.environ)]) + '\\n')
+os.execv({self.programs[name]!r}, [{self.programs[name]!r}, *sys.argv[1:]])
+''')
+            wrapper.chmod(0o755)
+        self.assertEqual(self.success('--check').splitlines(), ['expires_at=' + EXPIRY, *self.repo_names])
+        children = [json.loads(line) for line in (self.root / 'child-env-names').read_text().splitlines()]
+        self.assertEqual([Path(name).name for name, _ in children], ['openssl', 'openssl', 'curl', 'curl'])
+        for name, variables in children:
+            with self.subTest(program=Path(name).name):
+                # Framework Python on macOS adds this during wrapper startup;
+                # it is not inherited from the helper's subprocess environment.
+                observed = set(variables)
+                if sys.platform == 'darwin':
+                    observed.discard('__CF_USER_TEXT_ENCODING')
+                self.assertEqual(observed, {'PATH', 'HOME', 'LANG'})
 
     def test_prefix_and_www_target(self):
         self.env = {key: value for key, value in self.env.items() if not key.startswith('JADEGATE_')}
@@ -200,6 +244,38 @@ sys.exit({exit_code})
         result = self.success(command=command, stdin=query)
         self.assertIn('username=x-access-token\npassword=' + TOKEN, result)
         self.assertEqual(len(self.requests), 2)
+
+    def test_readme_helper_chain_reset_prevents_global_get_and_store(self):
+        competitor = self.root / 'competing-helper'
+        operations = self.root / 'competing-operations'
+        competitor.write_text(f'''#!{sys.executable} -I
+import sys
+with open({str(operations)!r}, 'a') as log:
+    log.write(sys.argv[1] + '\\n')
+sys.stdin.read()
+if sys.argv[1] == 'get':
+    print('username=competing\\npassword=competing\\n')
+''')
+        competitor.chmod(0o755)
+        git = [self.programs['git']]
+        self.success(command=[*git, 'init', '--quiet'])
+        self.success(command=[*git, 'config', '--global', 'credential.helper',
+                              '!' + shlex.quote(str(competitor))])
+        query = 'protocol=https\nhost=github.com\npath=aphexcx/gascity-packs-prs.git\n\n'
+        baseline = self.success(command=[*git, 'credential', 'fill'], stdin=query)
+        self.assertIn('username=competing', baseline)
+        self.assertEqual(operations.read_text(), 'get\n')
+        operations.unlink()
+        # Run the README's local URL-scoped reset followed by --add verbatim.
+        key = 'credential.https://github.com.helper'
+        self.success(command=[*git, 'config', key, ''])
+        self.success(command=[*git, 'config', '--add', key,
+                              '!' + shlex.quote(str(SCRIPT)) + ' --git-credential --target PACKS'])
+        credential = self.success(command=[*git, 'credential', 'fill'], stdin=query)
+        self.assertIn('username=x-access-token\npassword=' + TOKEN, credential)
+        self.success(command=[*git, 'credential', 'approve'], stdin=credential + '\n')
+        self.assertFalse(operations.exists(), 'inherited helper received get or store')
+        self.assertEqual(len(self.requests), 1)
 
     def test_credential_store_erase_and_other_hosts_do_not_mint(self):
         self.env.pop('JADEGATE_GITHUB_APP_PRIVATE_KEY')
@@ -230,6 +306,30 @@ sys.exit({exit_code})
                 self.fake_infisical('JADEGATE_GITHUB_APP_ID=999\nJADEGATE_GITHUB_APP_PRIVATE_KEY=' + encoded + '\n')
                 self.assertEqual(self.success(), TOKEN + '\n')
         self.assertEqual(len(self.requests), 3)
+        self.assertEqual((self.root / 'export-formats').read_text().splitlines(), ['json', 'dotenv'] * 3)
+
+    def test_infisical_json_handles_multiline_quotes_and_preserves_environment(self):
+        self.env.pop('JADEGATE_GITHUB_APP_PRIVATE_KEY')
+        marker = self.root / 'must-not-exist'
+        values = {'JADEGATE_GITHUB_APP_ID': '999', 'JADEGATE_GITHUB_APP_PRIVATE_KEY': self.pem,
+                  'UNRELATED_SECRET': "first line's quote\nsecond line\n$(touch " + str(marker) + ')'}
+        for data in ([{'key': key, 'value': value, 'type': 'shared'} for key, value in values.items()], values):
+            with self.subTest(shape=type(data).__name__):
+                self.fake_infisical(json.dumps(data), export_format='json')
+                self.assertEqual(self.success(), TOKEN + '\n')
+        self.assertEqual((self.root / 'export-formats').read_text().splitlines(), ['json', 'json'])
+        self.assertFalse(marker.exists())
+        self.assertEqual(len(self.requests), 2)
+
+    def test_malformed_infisical_json_fails_without_dump_or_fallback(self):
+        self.env.pop('JADEGATE_GITHUB_APP_PRIVATE_KEY')
+        self.fake_infisical('invalid-json-' + self.pem, export_format='json')
+        proc = self.invoke()
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('invalid Infisical JSON export', proc.stderr)
+        self.assertEqual(proc.stdout, '')
+        self.assertEqual((self.root / 'export-formats').read_text().splitlines(), ['json'])
+        self.assertEqual(self.requests, [])
 
     def test_environment_complete_skips_infisical(self):
         self.fake_infisical('not dotenv', exit_code=1)
@@ -259,6 +359,7 @@ sys.exit({exit_code})
         helper = self.root / '.config/infisical-agent/token.sh'
         helper.parent.mkdir(parents=True)
         helper.write_text('''set -x
+if IFS= read -r unexpected; then exit 9; fi
 export INFISICAL_TOKEN=offline-identity
 echo must-not-leak
 echo must-not-leak >&2
@@ -267,6 +368,23 @@ set -- replaced-argv
 PATH=/dev/null
 ''')
         self.assertEqual(self.success(), TOKEN + '\n')
+
+    def test_hung_token_helper_times_out_with_descendants(self):
+        self.env.pop('JADEGATE_GITHUB_APP_PRIVATE_KEY')
+        self.fake_infisical('unused')
+        self.env.pop('INFISICAL_TOKEN')
+        helper = self.root / '.config/infisical-agent/token.sh'
+        helper.parent.mkdir(parents=True)
+        helper.write_text('python3 -I -c "import time; time.sleep(60)"\n')
+        started = time.monotonic()
+        proc = self.invoke(timeout=30)
+        self.assertLess(time.monotonic() - started, 25)
+        self.assertGreaterEqual(time.monotonic() - started, 19)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn('login timed out after 20 seconds', proc.stderr)
+        self.assertEqual(proc.stdout, '')
+        self.assertFalse((self.root / 'export-formats').exists())
+        self.assertEqual(self.requests, [])
 
     def test_failed_token_helper_fails_closed(self):
         self.env.pop('JADEGATE_GITHUB_APP_PRIVATE_KEY')
@@ -287,6 +405,7 @@ PATH=/dev/null
         proc = self.invoke()
         self.assertEqual(proc.returncode, 1)
         self.assertIn('Infisical export failed (exit 8)', proc.stderr)
+        self.assertIn('stale INFISICAL_TOKEN? unset it and retry', proc.stderr)
         self.assertIn('JADEGATE_GITHUB_APP_PRIVATE_KEY', proc.stderr)
         self.env.pop('INFISICAL_PROJECT_ID')
         self.assertIn('missing INFISICAL_PROJECT_ID', self.invoke().stderr)

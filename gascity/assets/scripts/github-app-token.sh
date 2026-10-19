@@ -47,36 +47,18 @@ fi
 
 gat_prefix=${GITHUB_APP_PREFIX:-JADEGATE_GITHUB_APP}
 [[ "$gat_prefix" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || gat_die 'invalid GITHUB_APP_PREFIX'
-gat_missing=0
-for gat_name in "${gat_prefix}_ID" "${gat_prefix}_PRIVATE_KEY" "${gat_prefix}_INSTALLATION_ID_${gat_target}"; do
-  [ -n "${!gat_name:-}" ] || gat_missing=1
-done
-
-# Same isolated token.sh sourcing pattern as codex-infisical-shim.sh. Only
-# INFISICAL_TOKEN crosses the subshell boundary; helper output/traps stay quiet.
-if [ "$gat_missing" = 1 ] && command -v infisical >/dev/null 2>&1; then
-  gat_token_sh="${HOME:-}/.config/infisical-agent/token.sh"
-  if [ -z "${INFISICAL_TOKEN:-}" ] && [ -n "${HOME:-}" ] && [ -r "$gat_token_sh" ]; then
-    if gat_token=$( ( exec 3>&1 >/dev/null 2>&1; . "$gat_token_sh" && set +x && builtin printf '%s' "${INFISICAL_TOKEN-}" >&3 ) ) \
-       && [ -n "$gat_token" ]; then
-      export INFISICAL_TOKEN=$gat_token
-    else
-      gat_die 'Infisical machine-identity login failed; INFISICAL_TOKEN unavailable'
-    fi
-    unset gat_token
-  fi
-fi
 command -v python3 >/dev/null 2>&1 || gat_die 'missing dependency: python3'
 
 # JSON, dotenv parsing, base64url, and pipe management use the Python stdlib.
 # This heredoc contains code only. Keys, JWTs and tokens travel through memory
 # and anonymous pipes, never temporary files or subprocess argument lists.
-exec python3 - "$gat_prefix" "$gat_target" "$gat_mode" <<'PY'
+exec python3 -I - "$gat_prefix" "$gat_target" "$gat_mode" <<'PY'
 import base64
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -87,9 +69,50 @@ class TokenError(Exception):
     pass
 
 
+child_env = {name: os.environ[name] for name in ('PATH', 'HOME', 'LANG') if name in os.environ}
+
+
 def run(args, **kwargs):
+    kwargs.setdefault('env', child_env)
     return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                           timeout=45, check=False, **kwargs)
+
+
+def load_identity_token():
+    helper = os.path.join(os.environ.get('HOME', ''), '.config/infisical-agent/token.sh')
+    if not os.environ.get('HOME') or not os.access(helper, os.R_OK):
+        return ''
+    # Only the token crosses the shell boundary. Close stdin, silence helper
+    # output/traps, and bound the entire process group (including descendants).
+    command = ('exec 3>&1 >/dev/null 2>&1; . "$1" && set +x && '
+               'builtin printf \'%s\' "${INFISICAL_TOKEN-}" >&3')
+    with subprocess.Popen(['/bin/bash', '-c', command, 'github-app-token', helper],
+                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, start_new_session=True) as proc:
+        try:
+            token, _ = proc.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise TokenError('Infisical machine-identity login timed out after 20 seconds') from None
+        if proc.returncode or not token:
+            raise TokenError('Infisical machine-identity login failed; INFISICAL_TOKEN unavailable')
+        return token.decode('utf-8')
+
+
+def json_export(text):
+    try:
+        data = json.loads(text)
+    except (ValueError, UnicodeError):
+        raise TokenError('invalid Infisical JSON export') from None
+    if isinstance(data, list):
+        if any(not isinstance(item, dict) or not isinstance(item.get('key'), str)
+               or not isinstance(item.get('value'), str) for item in data):
+            raise TokenError('invalid Infisical JSON export')
+        return {item['key']: item['value'] for item in data}
+    if isinstance(data, dict) and all(isinstance(value, str) for value in data.values()):
+        return data
+    raise TokenError('invalid Infisical JSON export')
 
 
 def dotenv(text):
@@ -139,7 +162,7 @@ def sign(pem, message):
         with subprocess.Popen(['openssl', 'dgst', '-sha256', '-sign',
                                f'/dev/fd/{read_fd}', '-passin', 'pass:'],
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                              stderr=subprocess.DEVNULL, pass_fds=(read_fd,)) as proc:
+                              stderr=subprocess.DEVNULL, pass_fds=(read_fd,), env=child_env) as proc:
             os.close(read_fd)
             read_fd = None
             with os.fdopen(write_fd, 'wb') as key_pipe:
@@ -204,14 +227,26 @@ try:
     secrets = [values[key_name], os.environ.get('INFISICAL_TOKEN', '')]
     missing = [name for name in names if not values[name]]
     if missing and shutil.which('infisical'):
+        inherited_token = bool(os.environ.get('INFISICAL_TOKEN'))
+        if not inherited_token:
+            os.environ['INFISICAL_TOKEN'] = load_identity_token()
+            secrets.append(os.environ['INFISICAL_TOKEN'])
         for name in ('INFISICAL_PROJECT_ID', 'INFISICAL_TOKEN'):
             if not os.environ.get(name):
                 raise TokenError('missing ' + name + '; needed to load ' + ', '.join(missing))
-        exported = run(['infisical', 'export', '--env', 'agents', '--projectId',
-                        os.environ['INFISICAL_PROJECT_ID'], '--format', 'dotenv'])
+        export_args = ['infisical', 'export', '--env', 'agents', '--projectId',
+                       os.environ['INFISICAL_PROJECT_ID'], '--format']
+        exported = run([*export_args, 'json'], env=os.environ)
+        parser = json_export
         if exported.returncode:
-            raise TokenError(f'Infisical export failed (exit {exported.returncode}); missing ' + ', '.join(missing))
-        loaded = dotenv(exported.stdout.decode('utf-8'))
+            # Older CLIs may not support JSON; dotenv is compatibility only.
+            exported = run([*export_args, 'dotenv'], env=os.environ)
+            parser = dotenv
+        if exported.returncode:
+            hint = '; stale INFISICAL_TOKEN? unset it and retry' if inherited_token else ''
+            raise TokenError(f'Infisical export failed (exit {exported.returncode}); missing '
+                             + ', '.join(missing) + hint)
+        loaded = parser(exported.stdout.decode('utf-8'))
         for name in missing:
             values[name] = loaded.get(name, '')
         del loaded, exported
@@ -239,7 +274,7 @@ try:
     secrets += [pem, *pem.splitlines()]
     now = int(time.time())
     header = b64url(b'{"alg":"RS256","typ":"JWT"}')
-    claims = b64url(json.dumps({'iss': values[id_name], 'iat': now - 60, 'exp': now + 600}).encode())
+    claims = b64url(json.dumps({'iss': values[id_name], 'iat': now - 60, 'exp': now + 540}).encode())
     unsigned = header + '.' + claims
     jwt = unsigned + '.' + sign(pem, unsigned)
     secrets.append(jwt)
