@@ -342,72 +342,95 @@ test('an upload whose budget expires in the lane queue fails without transmittin
   assert.ok((await next).media_id, 'the failed queued upload releases the lane');
 });
 
-test('budget expiry during retry backoff releases publisher admission and liveness deferral', async (t) => {
-  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
-  let initSent;
-  const transport = makeTransport((f) => {
-    if (f.cmd === UPLOAD_CMD.init) initSent?.();
-    return f.cmd === UPLOAD_CMD.chunk && f.attempt === 1 ? 'silent' : null;
-  });
-  const logs = [];
-  const uploader = createMediaUploader({
-    transport,
-    options: { maxUploadMs: 1000, ackBaseMs: 40, floorBytesPerSec: 1e12 },
-    log: (line) => logs.push(line),
-  }); // use the real retry sleep, driven by mock timers
-  let reconnects = 0;
-  const liveness = createInboundLiveness({
-    stallAfterMs: 1,
-    reconnect: () => { reconnects += 1; },
-    reconnectDeferral: () => (uploader.inFlight() > 0 ? 'upload in flight' : null),
-  });
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-upload-budget-')));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const file = path.join(dir, 'a.bin');
-  fs.writeFileSync(file, bytes(10));
-  const publisher = createOutboundPublisher({
-    cfg: { outboundMediaRoot: dir, fileMaxBytes: 1024, uploadMaxConcurrent: 1, uploadMaxQueue: 0 },
-    uploadMedia: uploader.upload,
-  });
-  function probe() {
-    const response = {};
-    const started = new Promise((resolve) => { initSent = resolve; });
-    const result = publisher.handleUploadProbe({}, {
-      writeHead(status) { response.status = status; },
-      end(body) { response.body = JSON.parse(body); },
-    }, JSON.stringify({ file_path: file, media_kind: 'file' }));
-    return { response, result, started };
-  }
+for (const boundary of ['during retry backoff', 'before retry backoff', 'before reconnect']) {
+  test(`budget expiry ${boundary} releases publisher admission and liveness deferral`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 });
+    let initSent;
+    const transport = makeTransport((f) => {
+      if (f.cmd === UPLOAD_CMD.init) initSent?.();
+      if (f.cmd !== UPLOAD_CMD.chunk || f.attempt !== 1) return null;
+      if (boundary === 'before reconnect') {
+        setTimeout(() => transport.drop(), 1001);
+        return {
+          reject: new Error('WebSocket connection closed (code: 1006), reply for reqId: x cancelled'),
+          lateAckMs: 1001,
+        };
+      }
+      return 'silent';
+    });
+    const logs = [];
+    const uploader = createMediaUploader({
+      transport,
+      options: {
+        maxUploadMs: 1000,
+        ackBaseMs: boundary === 'during retry backoff' ? 40 : boundary === 'before retry backoff' ? 1000 : 2000,
+        floorBytesPerSec: 1e12,
+      },
+      log: (line) => logs.push(line),
+    }); // use the real retry sleep, driven by mock timers
+    let reconnects = 0;
+    const liveness = createInboundLiveness({
+      stallAfterMs: 1,
+      reconnect: () => { reconnects += 1; },
+      reconnectDeferral: () => (uploader.inFlight() > 0 ? 'upload in flight' : null),
+    });
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-upload-budget-')));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const file = path.join(dir, 'a.bin');
+    fs.writeFileSync(file, bytes(10));
+    const publisher = createOutboundPublisher({
+      cfg: { outboundMediaRoot: dir, fileMaxBytes: 1024, uploadMaxConcurrent: 1, uploadMaxQueue: 0 },
+      uploadMedia: uploader.upload,
+    });
+    function probe() {
+      const response = {};
+      const started = new Promise((resolve) => { initSent = resolve; });
+      const result = publisher.handleUploadProbe({}, {
+        writeHead(status) { response.status = status; },
+        end(body) { response.body = JSON.parse(body); },
+      }, JSON.stringify({ file_path: file, media_kind: 'file' }));
+      return { response, result, started };
+    }
 
-  const first = probe();
-  await first.started; // real file I/O completes before advancing upload timers
-  await advance(t, 1); // init acknowledged; chunk goes unanswered
-  await advance(t, 41); // acknowledgement deadline starts the real backoff
-  assert.deepEqual(cmds(transport), ['init', 'chunk0']);
-  liveness.tick();
-  assert.equal(reconnects, 0, 'the running upload defers a reconnect');
-  const busy = probe();
-  await busy.result;
-  assert.equal(busy.response.status, 429, 'the backoff still owns the admission slot');
+    const first = probe();
+    await first.started; // real file I/O completes before advancing upload timers
+    await advance(t, 1); // init acknowledged; chunk goes unanswered
+    await advance(t, 1); // pending chunk still owns the slot and liveness deferral
+    assert.deepEqual(cmds(transport), ['init', 'chunk0']);
+    liveness.tick();
+    assert.equal(reconnects, 0, 'the running upload defers a reconnect');
+    const busy = probe();
+    await busy.result;
+    assert.equal(busy.response.status, 429, 'the pending upload still owns the admission slot');
 
-  await advance(t, 1000); // retry wakes after the upload budget
-  assert.deepEqual(cmds(transport), ['init', 'chunk0'], 'no retry is transmitted after expiry');
-  await first.result;
-  assert.equal(first.response.status, 502);
-  assert.equal(first.response.body.error,
-    'media upload failed at chunk 1/1 after 0 attempts: the media upload exceeded its time budget');
-  assert.match(logs.at(-1), /^media upload FAILED at chunk 1\/1: 10 bytes, 1×512KiB chunks, 2 frames, 1 retries, /);
-  assert.equal(uploader.inFlight(), 0);
-  liveness.tick();
-  assert.equal(reconnects, 1, 'budget failure releases the liveness deferral');
+    if (boundary === 'during retry backoff') {
+      await advance(t, 40); // acknowledgement deadline starts the real backoff
+      assert.equal(uploader.inFlight(), 1, 'the backoff is still within budget');
+    }
+    await advance(t, 1000); // backoff wakes, acknowledgement times out, or connection drops after expiry
+    assert.deepEqual(cmds(transport), ['init', 'chunk0'], 'no retry is transmitted after expiry');
+    assert.equal(transport.waiters.length, 0, 'an expired upload never waits for reconnection');
+    assert.equal(uploader.inFlight(), 0, 'an expired upload never starts another backoff');
+    await first.result;
+    assert.equal(first.response.status, 502);
+    const attempts = boundary === 'before reconnect' ? '0 attempts' : '1 attempt';
+    assert.equal(first.response.body.error,
+      `media upload failed at chunk 1/1 after ${attempts}: the media upload exceeded its time budget`);
+    const retries = boundary === 'during retry backoff' ? 1 : 0;
+    assert.ok(logs.at(-1).startsWith(
+      `media upload FAILED at chunk 1/1: 10 bytes, 1×512KiB chunks, 2 frames, ${retries} retries, `));
+    liveness.tick();
+    assert.equal(reconnects, 1, 'budget failure releases the liveness deferral');
 
-  const next = probe();
-  await next.started;
-  for (let i = 0; i < 3; i++) await advance(t, 1);
-  await next.result;
-  assert.equal(next.response.status, 200, 'a fresh upload can acquire the released admission slot');
-  assert.equal(next.response.body.uploaded, true);
-});
+    if (boundary === 'before reconnect') transport.reconnect();
+    const next = probe();
+    await next.started;
+    for (let i = 0; i < 3; i++) await advance(t, 1);
+    await next.result;
+    assert.equal(next.response.status, 200, 'a fresh upload can acquire the released admission slot');
+    assert.equal(next.response.body.uploaded, true);
+  });
+}
 
 for (const stage of ['init', 'chunk']) {
   test(`budget expiry during reconnect prevents a resumed ${stage} transmission`, async (t) => {

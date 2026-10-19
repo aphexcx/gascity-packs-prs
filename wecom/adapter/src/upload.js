@@ -226,9 +226,9 @@ export function createMediaUploader({
     throw new UploadStageError(stage, 0, new Error('WebSocket not connected, unable to send data'));
   }
 
-  function checkBudget(stage, stats) {
+  function checkBudget(stage, stats, attempts = 0) {
     if (now() - stats.startedAt > o.maxUploadMs) {
-      throw new UploadStageError(stage, 0, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
+      throw new UploadStageError(stage, attempts, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
     }
   }
 
@@ -247,14 +247,14 @@ export function createMediaUploader({
     let lastErr;
     for (let attempt = 1; attempt <= o.frameAttempts; attempt++) {
       if (lateAck) return lateAck.ack;
-      checkBudget(stage, stats);
+      checkBudget(stage, stats, attempts.length);
       if (!transport.isConnected() || transport.connectionEpoch() !== epoch) {
         throw new ConnectionReplaced(stage, lastErr ?? new Error('WebSocket not connected, unable to send data'));
       }
       try {
         return await lane.run(async () => {
           if (lateAck) return lateAck.ack; // acknowledged while queued for the lane
-          checkBudget(stage, stats);
+          checkBudget(stage, stats, attempts.length);
           const t0 = now();
           let sent;
           try {
@@ -277,6 +277,7 @@ export function createMediaUploader({
         if (isConnectionLoss(err)) throw new ConnectionReplaced(stage, err);
         if (probeSession && typeof err?.errcode === 'number') throw new SessionRefused(stage, err);
         if (attempt < o.frameAttempts) {
+          checkBudget(stage, stats, attempts.length);
           stats.retries += 1;
           await sleep(backoff(attempt));
         }
@@ -290,7 +291,9 @@ export function createMediaUploader({
   // reconnect continues at nextChunk under the same upload_id, and its
   // first frame doubles as the check that the server still knows it.
   async function uploadRun(buffer, type, filename, plan, md5, stats, session) {
-    await ensureConnected(session.uploadId ? `chunk ${session.nextChunk + 1}/${plan.totalChunks}` : 'init');
+    const stage = session.uploadId ? `chunk ${session.nextChunk + 1}/${plan.totalChunks}` : 'init';
+    checkBudget(stage, stats);
+    await ensureConnected(stage);
     const epoch = transport.connectionEpoch();
     let probeSession = session.resumed;
     if (!session.uploadId) {
