@@ -220,10 +220,20 @@ export function createMediaUploader({
 
   const backoff = (attempt) => Math.min(o.backoffBaseMs * 2 ** (attempt - 1), o.backoffMaxMs);
 
-  async function ensureConnected(stage) {
+  async function ensureConnected(stage, stats) {
     if (transport.isConnected()) return;
-    if (await transport.waitForConnection(o.reconnectWaitMs)) return;
+    const connected = await transport.waitForConnection(Math.min(o.reconnectWaitMs, checkBudget(stage, stats)));
+    checkBudget(stage, stats);
+    if (connected) return;
     throw new UploadStageError(stage, 0, new Error('WebSocket not connected, unable to send data'));
+  }
+
+  function checkBudget(stage, stats, attempts = 0) {
+    const remaining = o.maxUploadMs - (now() - stats.startedAt);
+    if (remaining <= 0) {
+      throw new UploadStageError(stage, attempts, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
+    }
+    return remaining;
   }
 
   // sendFrame sends one frame through the lane with retries; any
@@ -232,23 +242,23 @@ export function createMediaUploader({
   // run resumes on the new connection. probeSession: this is the first
   // frame after a resume — a negative acknowledgement means the server
   // dropped the session (SessionRefused, start over), not a retryable
-  // failure. The budget is checked before every frame.
+  // failure. Check the budget on every attempt and again inside the lane:
+  // neither retry backoff nor queueing may admit a transmission after expiry.
   async function sendFrame(stage, cmd, body, frameBytes, epoch, stats, { probeSession = false } = {}) {
     const ackTimeoutMs = ackTimeoutFor(frameBytes, o);
-    if (now() - stats.startedAt > o.maxUploadMs) {
-      throw new UploadStageError(stage, 0, new Error(`media upload exceeded its ${o.maxUploadMs}ms budget`));
-    }
     const attempts = [];
     let lateAck = null; // an earlier attempt acknowledged during a backoff
     let lastErr;
     for (let attempt = 1; attempt <= o.frameAttempts; attempt++) {
       if (lateAck) return lateAck.ack;
+      checkBudget(stage, stats, attempts.length);
       if (!transport.isConnected() || transport.connectionEpoch() !== epoch) {
         throw new ConnectionReplaced(stage, lastErr ?? new Error('WebSocket not connected, unable to send data'));
       }
       try {
         return await lane.run(async () => {
           if (lateAck) return lateAck.ack; // acknowledged while queued for the lane
+          checkBudget(stage, stats, attempts.length);
           const t0 = now();
           let sent;
           try {
@@ -257,6 +267,7 @@ export function createMediaUploader({
             sent = Promise.reject(err);
           }
           sent.then((ack) => { lateAck ??= { ack }; }, () => {}); // also: never an unhandled rejection
+          if (attempts.length > 0) stats.retries += 1;
           attempts.push(sent);
           stats.frames += 1;
           try {
@@ -266,12 +277,12 @@ export function createMediaUploader({
           }
         });
       } catch (err) {
+        if (err instanceof UploadStageError) throw err; // budget failure is terminal, not retryable
         lastErr = err;
         if (isConnectionLoss(err)) throw new ConnectionReplaced(stage, err);
         if (probeSession && typeof err?.errcode === 'number') throw new SessionRefused(stage, err);
         if (attempt < o.frameAttempts) {
-          stats.retries += 1;
-          await sleep(backoff(attempt));
+          await sleep(Math.min(backoff(attempt), checkBudget(stage, stats, attempts.length)));
         }
       }
     }
@@ -283,7 +294,10 @@ export function createMediaUploader({
   // reconnect continues at nextChunk under the same upload_id, and its
   // first frame doubles as the check that the server still knows it.
   async function uploadRun(buffer, type, filename, plan, md5, stats, session) {
-    await ensureConnected(session.uploadId ? `chunk ${session.nextChunk + 1}/${plan.totalChunks}` : 'init');
+    const stage = !session.uploadId ? 'init'
+      : session.nextChunk >= plan.totalChunks ? 'finish' : `chunk ${session.nextChunk + 1}/${plan.totalChunks}`;
+    checkBudget(stage, stats);
+    await ensureConnected(stage, stats);
     const epoch = transport.connectionEpoch();
     let probeSession = session.resumed;
     if (!session.uploadId) {
