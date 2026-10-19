@@ -21,6 +21,8 @@
 #   LISTEN_INTERNAL         # default 127.0.0.1:8790 (localhost-only; /publish)
 #   WECOM_WELCOME_TEXT      # optional enter_chat welcome message
 #   WECOM_WS_URL            # override long-connection endpoint (private deploys)
+#   WECOM_WS_CONNECT_ADDRESS # optional IPv4 pin for openws.work.weixin.qq.com
+#                           # only; invalid values warn and use normal DNS
 #   REGISTER_ON_START       # default true; set false to skip self-registration
 #   WECOM_MEDIA_DIR         # durable inbound media store; default
 #                           # <city>/.gc/wecom-media/inbound (supervised) or

@@ -2,6 +2,14 @@
 
 ## 0.0.1 (unreleased)
 
+- WebSocket connect address (jp-93l, 10/19):
+  `WECOM_WS_CONNECT_ADDRESS` pins `openws.work.weixin.qq.com` to an IPv4
+  address through the SDK's WebSocket lookup option, keeping the URL,
+  TLS SNI and certificate hostname verification unchanged. Default unset
+  (or empty) uses normal DNS; other hostnames still use normal DNS.
+  Invalid values log one startup warning with the quoted value (limited
+  to 64 characters) and are ignored. Rollback: unset the value in the
+  adapter's environment file, then run one `gc service restart wecom`.
 - Serial media uploader (jg-bw5gsw, 10/16): `/publish-media` uploads
   through `adapter/src/upload.js` instead of the SDK's `uploadMedia` —
   one frame in flight across all uploads, per-frame deadlines scaled to frame
