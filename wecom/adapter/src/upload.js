@@ -418,7 +418,7 @@ export function createMediaUploader({
 // long window just keeps a late acknowledgement matchable instead of an
 // "unknown frame". test/upload.test.js pins this against the real
 // WsConnectionManager so an SDK upgrade that breaks it fails loudly.
-export function createSdkUploadTransport(wsClient, { generateReqId } = {}) {
+export function createSdkUploadTransport(wsClient, { generateReqId, onAck = () => {} } = {}) {
   const manager = wsClient?.wsManager;
   if (!manager || typeof manager.sendReply !== 'function' || typeof manager.replyAckTimeout !== 'number') {
     return null;
@@ -447,7 +447,13 @@ export function createSdkUploadTransport(wsClient, { generateReqId } = {}) {
       const previous = manager.replyAckTimeout;
       manager.replyAckTimeout = listenMs;
       try {
-        return manager.sendReply(reqId(cmd), body, cmd);
+        return manager.sendReply(reqId(cmd), body, cmd).then((ack) => {
+          onAck();
+          return ack;
+        }, (err) => {
+          if (typeof err?.errcode === 'number') onAck();
+          throw err;
+        });
       } finally {
         manager.replyAckTimeout = previous;
       }

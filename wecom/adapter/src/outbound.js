@@ -954,21 +954,25 @@ export function createUploadGate({ slots, maxQueue }) {
 //                    /extmsg/outbound; defaults to postJSONParsed above
 //                    (tests inject a fake)
 //   log              adapter logger
+//   trackActivity    wraps publishes and the actual upload lifetime so a
+//                    manual close can wait, including after HTTP timeout
 //   publishStatesCap test knob (default 512)
 export function createOutboundPublisher(deps) {
   const {
     cfg,
     sendMessage,
-    uploadMedia,
+    uploadMedia: upload,
     sendMediaMessage,
     withUploadDeadline = (p) => p,
     kindStore = null,
     journal = createAttemptJournal(),
     postOutbound = postJSONParsed,
     log = () => {},
+    trackActivity = (operation) => operation(),
     publishStatesCap = 512,
     textStatesCap = 512,
   } = deps;
+  const uploadMedia = (...args) => trackActivity(() => upload(...args));
 
   // Two independent in-memory pools (codex jg-d0xr round-2 finding 8): a
   // media outage that stranded 512 unsettled MEDIA keys used to wedge the
@@ -1502,7 +1506,7 @@ export function createOutboundPublisher(deps) {
               content: chunks[i],
               ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
             },
-          });
+          }, { idempotencyKey: key, frameKey: `text:${i}` });
         } catch (err) {
           if (isDefiniteSendFailure(err)) {
             // Nothing from this chunk is in the chat: keep the key retryable.
@@ -2068,7 +2072,8 @@ export function createOutboundPublisher(deps) {
         journal.record(key, { sendAttempted: true });
         let frame;
         try {
-          frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId);
+          frame = await sendMediaMessage(chatid, spec.wecomType, state.mediaId,
+            { idempotencyKey: key, frameKey: 'media' });
         } catch (err) {
           if (isDefiniteSendFailure(err)) {
             // Provably pre-write, or an explicit provider rejection:
@@ -2097,7 +2102,7 @@ export function createOutboundPublisher(deps) {
             frame = await sendMessage(chatid, {
               msgtype: 'markdown',
               markdown: { content: chunks[i] },
-            });
+            }, { idempotencyKey: key, frameKey: `caption:${i}` });
           } catch (err) {
             if (isDefiniteSendFailure(err)) {
               journal.record(key, { chunksAttempted: state.chunksDelivered }, { critical: false });
@@ -2402,9 +2407,9 @@ export function createOutboundPublisher(deps) {
   }
 
   return {
-    handlePublish,
-    handlePublishMedia,
-    handleUploadProbe,
+    handlePublish: (...args) => trackActivity(() => handlePublish(...args)),
+    handlePublishMedia: (...args) => trackActivity(() => handlePublishMedia(...args)),
+    handleUploadProbe: (...args) => trackActivity(() => handleUploadProbe(...args)),
     // Introspection for tests and diagnostics only — not a public surface.
     stats: () => ({
       publishStates: publishStates.size,

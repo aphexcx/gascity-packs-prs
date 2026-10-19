@@ -2,6 +2,26 @@
 
 ## 0.0.1 (unreleased)
 
+- Reconnect/publish coordination (jp-rwh, 10/19): adapter-initiated closes,
+  including shutdown, wait for active publishes and media uploads for up
+  to 30 seconds, logging once when they wait. Both upload engines and
+  uploads retained after an HTTP deadline are covered. A message frame
+  interrupted by socket loss retries once after authentication with the
+  identical `req_id` and body; caller idempotency keys map to distinct
+  wire IDs per text chunk, media send, and caption chunk. Exhaustion keeps
+  the existing delivery-unknown response and same-key refusal. Ack
+  timeouts, pre-write failures and provider refusals are not retried by
+  this mechanism. Recent outbound acknowledgements suppress new liveness
+  reconnects; inbound-stall alarms remain because an outbound ack cannot
+  prove inbound push delivery. Environment knobs (milliseconds):
+  `WECOM_RECONNECT_DRAIN_TIMEOUT_MS` (30000),
+  `WECOM_PUBLISH_RECONNECT_WAIT_MS` (30000),
+  `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (600000),
+  `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (the greater of the stall
+  threshold and 1800000), `WECOM_LIVENESS_TICK_MS` (30000), and
+  `WECOM_LIVENESS_ALARM_REPEAT_MS` (1800000). Existing
+  `WECOM_LIVENESS_STALL_AFTER_MS` (600000; 0 disables) and opt-in
+  `WECOM_LIVENESS_RECONNECT` retain their defaults.
 - WebSocket connect address (jp-93l, 10/19):
   `WECOM_WS_CONNECT_ADDRESS` pins `openws.work.weixin.qq.com` to an IPv4
   address through the SDK's WebSocket lookup option, keeping the URL,
