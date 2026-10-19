@@ -49,6 +49,9 @@
 //	WECOM_WS_URL           Override the long-connection endpoint (private
 //	                       deployments publish their own; default is the
 //	                       SDK's built-in wss://openws.work.weixin.qq.com).
+//	WECOM_WS_CONNECT_ADDRESS
+//	                       Optional IPv4 lookup override for the WeCom WS
+//	                       host only; URL, TLS hostname and SNI stay intact.
 //	WECOM_MEDIA_DIR        Durable store for decrypted inbound media.
 //	                       Default: <city>/.gc/wecom-media/inbound derived
 //	                       from GC_SERVICE_SECRETS_DIR in supervised mode;
@@ -183,6 +186,8 @@
 //	                       (default) disables.
 
 import http from 'node:http';
+import { lookup } from 'node:dns';
+import { isIPv4 } from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -244,6 +249,7 @@ function loadConfig() {
     provider: 'wecom',
     welcomeText: getenv('WECOM_WELCOME_TEXT'),
     wsURL: getenv('WECOM_WS_URL'),
+    wsConnectAddress: getenv('WECOM_WS_CONNECT_ADDRESS'),
     serviceSocket: getenv('GC_SERVICE_SOCKET'),
     serviceURLPrefix: getenv('GC_SERVICE_URL_PREFIX').replace(/\/+$/, ''),
     listenInternal: getenv('LISTEN_INTERNAL', '127.0.0.1:8790'),
@@ -326,6 +332,11 @@ function loadConfig() {
   if (!cfg.cityName) missing.push('GC_CITY_NAME');
   if (missing.length > 0) {
     throw new Error(`missing required env vars: ${missing.join(', ')}`);
+  }
+
+  if (cfg.wsConnectAddress && !isIPv4(cfg.wsConnectAddress)) {
+    log('WARNING: WECOM_WS_CONNECT_ADDRESS must be an IPv4 address; ignoring');
+    cfg.wsConnectAddress = '';
   }
 
   if (cfg.serviceSocket) {
@@ -476,6 +487,23 @@ async function main() {
     logger: sdkLogger,
   };
   if (cfg.wsURL) wsOptions.wsUrl = cfg.wsURL;
+  if (cfg.wsConnectAddress) {
+    wsOptions.wsOptions = {
+      lookup(hostname, options, callback) {
+        if (hostname !== 'openws.work.weixin.qq.com') {
+          return lookup(hostname, options, callback);
+        }
+        log(`ws connect address pinned to ${cfg.wsConnectAddress}`);
+        // Node's family autoselection requests all addresses. Keep both
+        // dns.lookup callback shapes and its asynchronous delivery; only
+        // the resolved address changes, never the URL or TLS identity.
+        queueMicrotask(() => {
+          if (options?.all) callback(null, [{ address: cfg.wsConnectAddress, family: 4 }]);
+          else callback(null, cfg.wsConnectAddress, 4);
+        });
+      },
+    };
+  }
   const wsClient = new WSClient(wsOptions);
 
   // Outbound media upload engine (src/upload.js, jg-bw5gsw). Built before
