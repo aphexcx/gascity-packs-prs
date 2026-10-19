@@ -335,7 +335,7 @@ function loadConfig() {
   }
 
   if (cfg.wsConnectAddress && !isIPv4(cfg.wsConnectAddress)) {
-    log('WARNING: WECOM_WS_CONNECT_ADDRESS must be an IPv4 address; ignoring');
+    log(`WARNING: WECOM_WS_CONNECT_ADDRESS ${JSON.stringify(cfg.wsConnectAddress.slice(0, 64))} must be an IPv4 address; ignoring`);
     cfg.wsConnectAddress = '';
   }
 

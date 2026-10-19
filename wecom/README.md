@@ -282,6 +282,9 @@ turns by construction.
 cd wecom/adapter && pnpm install && pnpm test   # node --test, no test deps
 ```
 
+`test/ws-connect-address.test.js` requires `openssl` on `PATH` to generate
+temporary certificates for its local TLS WebSocket connection tests.
+
 `test/media.test.js` covers the WeCom media crypto scheme against
 generated fixtures (encrypt per spec → SDK `decryptFile`), the real SDK
 download path over a local HTTP server, filename/path sanitization,
@@ -320,6 +323,9 @@ GC_API_BASE_URL=http://127.0.0.1:8372
 `GC_CITY_NAME` and `GC_API_BASE_URL` are both required — the controller
 injects the service socket and URL prefix but neither of these (check the
 city's actual API port with `gc status`).
+
+For optional `WECOM_WS_URL` and `WECOM_WS_CONNECT_ADDRESS` settings,
+defaults and rollback, see the [adapter connection settings](adapter/README.md).
 
 ## Setup
 

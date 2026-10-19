@@ -159,14 +159,19 @@ for (const [label, address] of [['unset', undefined], ['empty', '']]) {
   });
 }
 
-for (const address of ['::1', 'localhost', '256.1.2.3', '127.1', '127.0.0.1:443', ' 127.0.0.1 ', ' ']) {
+for (const [address, loggedValue] of [
+  ...['::1', 'localhost', '256.1.2.3', '127.1', '127.0.0.1:443', ' 127.0.0.1 ', ' ']
+    .map((address) => [address, JSON.stringify(address)]),
+  ['127.0.0.1"\n', '"127.0.0.1\\"\\n"'],
+  ['x'.repeat(65), `"${'x'.repeat(64)}"`],
+]) {
   test(`invalid address ${JSON.stringify(address)} warns once and uses DNS across reconnects`, async (t) => {
     const server = await stubServer(t);
     const adapter = startAdapter(t, { ...server, hostname: 'localhost', address });
     await adapter.waitForLog('wecom long connection authenticated');
     server.connections[0].socket.terminate();
     await adapter.waitForLog('wecom long connection authenticated', 2);
-    assert.equal(adapter.logs().split('WARNING: WECOM_WS_CONNECT_ADDRESS must be an IPv4 address; ignoring').length - 1, 1);
+    assert.equal(adapter.logs().split(`WARNING: WECOM_WS_CONNECT_ADDRESS ${loggedValue} must be an IPv4 address; ignoring`).length - 1, 1);
     assert.equal(server.connections.length, 2);
     assert.doesNotMatch(adapter.logs(), /ws connect address pinned/);
   });
