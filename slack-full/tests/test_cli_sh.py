@@ -24,7 +24,13 @@ set -eu
 printf '%s\\n' "$PWD" "$@" > "$GO_STUB_LOG"
 [ -f go.mod ] && [ -f main.go ]
 [ "$1" = build ] && [ "$2" = -o ] && [ "$4" = . ]
+# Go accepts an empty mktemp output, but refuses to overwrite a script.
+if [ -s "$3" ] && [ "$(head -c 2 "$3")" = '#!' ]; then
+  echo "$3 already exists and is not an object file" >&2
+  exit 1
+fi
 if [ "${GO_STUB_FAIL:-}" = 1 ]; then
+  printf 'partial build output' > "$3"
   echo 'simulated compile failure' >&2
   exit 23
 fi
@@ -44,7 +50,7 @@ def harness(tmp_path):
     stub_bin = tmp_path / "stubbin"
     stub_bin.mkdir()
     # A controlled PATH makes "Go absent" independent of the host toolchain.
-    for name in ("head", "chmod"):
+    for name in ("head", "chmod", "mktemp", "mv", "rm"):
         (stub_bin / name).symlink_to(shutil.which(name))
     go = stub_bin / "go"
     go.write_text(GO_STUB)
@@ -70,15 +76,27 @@ def harness(tmp_path):
     return pack, stub_bin, go_log, run
 
 
+def assert_temporary_build(pack, go_log):
+    cwd, command, output_flag, output, package = go_log.read_text().splitlines()
+    assert (cwd, command, output_flag, package) == (
+        str(pack / "cli"), "build", "-o", "."
+    )
+    target = pathlib.Path(output)
+    if not target.is_absolute():
+        target = pathlib.Path(cwd) / target
+    assert target.parent == pack / "cli"
+    assert target.name.startswith(".gc-slack-cli.build.")
+    assert not target.exists()
+    assert not list((pack / "cli").glob(".gc-slack-cli.build.*"))
+
+
 @pytest.mark.parametrize("verb", VERBS)
 def test_cli_missing_binary_builds_and_execs(harness, verb):
     pack, _, go_log, run = harness
     proc = run(verb, {"CLI_STUB_EXIT": "17"})
     assert proc.returncode == 17, proc.stderr
     assert proc.stdout.splitlines() == [f"<{arg}>" for arg in (verb, *ARGS)]
-    assert go_log.read_text().splitlines() == [
-        str(pack / "cli"), "build", "-o", "gc-slack-cli", "."
-    ]
+    assert_temporary_build(pack, go_log)
     assert os.access(pack / "cli" / "gc-slack-cli", os.X_OK)
     assert "binary missing at " in proc.stderr
     assert "rebuilding from source" in proc.stderr
@@ -107,6 +125,7 @@ def test_cli_legacy_env_wrapper_is_rebuilt(harness):
     assert "LEGACY_WRAPPER_RAN" not in proc.stdout
     assert proc.stdout.splitlines() == [f"<{arg}>" for arg in ("post-message", *ARGS)]
     assert go_log.exists()
+    assert_temporary_build(pack, go_log)
     assert "rebuilding from source" in proc.stderr
 
 
@@ -118,7 +137,8 @@ def test_cli_missing_go_names_manual_build(harness):
     assert "no Go toolchain found" in proc.stderr
     assert "manual fix:" in proc.stderr
     assert str(pack / "cli") in proc.stderr
-    assert "go build -o gc-slack-cli ." in proc.stderr
+    assert "mktemp .gc-slack-cli.build.XXXXXX" in proc.stderr
+    assert 'go build -o "$tmp" . && mv -f "$tmp" gc-slack-cli' in proc.stderr
     assert not go_log.exists()
     assert proc.stdout == ""
 
@@ -138,16 +158,52 @@ def test_cli_failed_binary_inspection_never_execs_legacy_wrapper(harness):
     assert not go_log.exists()
 
 
-def test_cli_build_failure_names_manual_build(harness):
-    pack, _, _, run = harness
+@pytest.mark.parametrize("legacy_wrapper", (False, True), ids=("missing", "legacy"))
+def test_cli_build_failure_cleans_temp_and_preserves_wrapper(harness, legacy_wrapper):
+    pack, _, go_log, run = harness
+    binary = pack / "cli" / "gc-slack-cli"
+    original = b"#!/bin/sh\necho LEGACY_WRAPPER_RAN\nexit 99\n"
+    if legacy_wrapper:
+        binary.write_bytes(original)
+        binary.chmod(0o755)
     proc = run(extra_env={"GO_STUB_FAIL": "1"})
     assert proc.returncode != 0
     assert "simulated compile failure" in proc.stderr
     assert "go build failed" in proc.stderr
     assert "manual fix:" in proc.stderr
-    assert "go build -o gc-slack-cli ." in proc.stderr
-    assert not (pack / "cli" / "gc-slack-cli").exists()
+    assert 'go build -o "$tmp" . && mv -f "$tmp" gc-slack-cli' in proc.stderr
+    assert_temporary_build(pack, go_log)
+    if legacy_wrapper:
+        assert binary.read_bytes() == original
+        assert binary.stat().st_mode & 0o777 == 0o755
+    else:
+        assert not binary.exists()
     assert proc.stdout == ""
+
+
+def test_cli_manual_build_replaces_legacy_wrapper(harness):
+    pack, stub_bin, go_log, run = harness
+    binary = pack / "cli" / "gc-slack-cli"
+    original = b"#!/bin/sh\necho LEGACY_WRAPPER_RAN\nexit 99\n"
+    binary.write_bytes(original)
+    binary.chmod(0o755)
+    failed = run(extra_env={"GO_STUB_FAIL": "1"})
+    assert failed.returncode != 0
+    remedy = failed.stderr.split("manual fix: ", 1)[1].splitlines()[0]
+    repaired = subprocess.run(
+        ["/bin/sh", "-c", remedy],
+        env={
+            "PATH": str(stub_bin),
+            "GO_STUB_LOG": str(go_log),
+        },
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert repaired.returncode == 0, repaired.stderr
+    assert binary.read_bytes() != original
+    assert os.access(binary, os.X_OK)
+    assert_temporary_build(pack, go_log)
 
 
 def test_cli_go_on_relative_path_survives_build_cd(harness):
