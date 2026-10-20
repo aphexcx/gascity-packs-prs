@@ -13,4 +13,6 @@ adapter/gc-slack-adapter.build.*
 
 # Built operator CLI binary — produced by `go build` in cli/ and exec'd
 # by the commands/<cmd>.sh wrappers via $GC_PACK_DIR/cli/gc-slack-cli.
+# Ignore sibling temporary outputs left by an interrupted launcher build.
 cli/gc-slack-cli
+cli/.gc-slack-cli.build.*
