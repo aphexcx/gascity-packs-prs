@@ -123,6 +123,21 @@ def test_cli_missing_go_names_manual_build(harness):
     assert proc.stdout == ""
 
 
+def test_cli_failed_binary_inspection_never_execs_legacy_wrapper(harness):
+    pack, stub_bin, go_log, run = harness
+    binary = pack / "cli" / "gc-slack-cli"
+    binary.write_text("#!/bin/sh\necho LEGACY_WRAPPER_RAN\nexit 99\n")
+    binary.chmod(0o755)
+    (stub_bin / "head").unlink()
+    (stub_bin / "go").unlink()
+    proc = run()
+    assert proc.returncode != 0
+    assert "LEGACY_WRAPPER_RAN" not in proc.stdout
+    assert "no Go toolchain found" in proc.stderr
+    assert "manual fix:" in proc.stderr
+    assert not go_log.exists()
+
+
 def test_cli_build_failure_names_manual_build(harness):
     pack, _, _, run = harness
     proc = run(extra_env={"GO_STUB_FAIL": "1"})
