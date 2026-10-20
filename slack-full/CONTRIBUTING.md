@@ -41,9 +41,18 @@ cd slack-full/cli
 go build -o gc-slack-cli .
 ```
 
-The pack's `commands/<cmd>.sh` wrappers exec `$GC_PACK_DIR/cli/gc-slack-cli`,
-so the CLI binary must live at that path — i.e. inside the installed pack's
-`cli/` subdirectory — when operators invoke `gc slack <cmd>`.
+The six CLI wrappers exec `commands/_cli.sh` with their verb and arguments.
+This shared launcher builds `$GC_PACK_DIR/cli/gc-slack-cli` from the adjacent
+sources when it is missing or still a legacy `#!` env wrapper, then execs it.
+An existing compiled binary runs immediately. Go must be on `PATH` for a
+rebuild; a missing toolchain or failed build prints a manual build command
+on stderr and exits nonzero.
+
+`gc slack <cmd> --help` is rendered by gc from the pack's `help.md`, so it
+does not run the launcher or trigger a build. To build without changing
+configuration, run `gc slack map-channel` with no arguments: it builds the
+CLI, then reports its missing required argument. The doctor's binaries check
+continues to report missing executables until they have been built.
 
 ## Test flow
 

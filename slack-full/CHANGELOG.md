@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   JWT matching requires an `eyJ` header prefix to preserve ordinary dotted
   identifiers; pre-upgrade held replay text is scrubbed on state load.
 
+- The six operator CLI verbs now rebuild `cli/gc-slack-cli` on first use
+  after a git-only pack materialization, including when a legacy env wrapper
+  occupies the binary path. Missing Go or a failed build reports a manual
+  remedy; the doctor hint explains how to trigger the build.
+
 - **Accepted text posts no longer fail when readback is unconfirmed** (gp-yj6n).
   A Slack message timestamp now preserves `delivered=true` with no publish
   failure kind. Readback absence, text mismatch, transport failure, and auth

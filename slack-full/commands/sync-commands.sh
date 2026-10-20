@@ -1,9 +1,2 @@
 #!/bin/sh
-set -eu
-
-if [ -z "${GC_PACK_DIR:-}" ]; then
-  echo "gc slack sync-commands: missing Gas City pack context" >&2
-  exit 1
-fi
-
-exec "$GC_PACK_DIR/cli/gc-slack-cli" sync-commands "$@"
+exec "${GC_PACK_DIR:?gc slack sync-commands: missing Gas City pack context}/commands/_cli.sh" sync-commands "$@"

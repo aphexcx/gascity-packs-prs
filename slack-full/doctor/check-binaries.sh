@@ -12,7 +12,7 @@ done
 
 if [ -n "$missing" ]; then
   echo "pack binaries not built:$missing"
-  echo "Build them in place: (cd adapter && go build -o gc-slack-adapter) and (cd cli && go build -o gc-slack-cli .) — see CONTRIBUTING.md."
+  echo "The CLI builds itself on the next gc slack CLI verb (e.g. gc slack map-channel with no arguments; --help only renders help). Or build in place: (cd adapter && go build -o gc-slack-adapter) and (cd cli && go build -o gc-slack-cli .) — see CONTRIBUTING.md."
   exit 2
 fi
 
