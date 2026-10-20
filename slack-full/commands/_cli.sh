@@ -8,7 +8,8 @@ cli_dir="${GC_PACK_DIR:?missing Gas City pack context}/cli"
 cli_bin="$cli_dir/gc-slack-cli"
 
 # A legacy env-wrapper script at this path is not the compiled CLI.
-if [ -x "$cli_bin" ] && [ "$(head -c 2 "$cli_bin")" != '#!' ]; then
+# Only trust the fast path when reading the signature succeeds.
+if [ -x "$cli_bin" ] && magic="$(head -c 2 "$cli_bin")" && [ "$magic" != '#!' ]; then
   exec "$cli_bin" "$@"
 fi
 
