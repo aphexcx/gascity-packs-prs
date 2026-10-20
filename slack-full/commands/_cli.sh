@@ -4,7 +4,8 @@ set -eu
 
 log() { printf 'gc-slack-cli _cli.sh: %s\n' "$*" >&2; }
 
-cli_dir="${GC_PACK_DIR:?missing Gas City pack context}/cli"
+pack_dir="$(CDPATH= cd -- "${GC_PACK_DIR:?missing Gas City pack context}" && pwd -P)"
+cli_dir="$pack_dir/cli"
 cli_bin="$cli_dir/gc-slack-cli"
 
 manual_fix() {
