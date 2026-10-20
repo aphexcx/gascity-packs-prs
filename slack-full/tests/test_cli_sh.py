@@ -29,6 +29,10 @@ if [ -s "$3" ] && [ "$(head -c 2 "$3")" = '#!' ]; then
   echo "$3 already exists and is not an object file" >&2
   exit 1
 fi
+# Like Go, create missing output parents, including for a relative -o path.
+case "$3" in
+  */*) /bin/mkdir -p "${3%/*}" ;;
+esac
 if [ "${GO_STUB_FAIL:-}" = 1 ]; then
   printf 'partial build output' > "$3"
   echo 'simulated compile failure' >&2
@@ -213,6 +217,24 @@ def test_cli_go_on_relative_path_survives_build_cd(harness):
     assert go_log.exists()
 
 
+def test_cli_relative_pack_dir_builds_without_stray_output(harness):
+    pack, _, go_log, run = harness
+    before = set(pack.rglob("*"))
+    # The harness runs from pack.parent, outside both the pack and cli/.
+    proc = run(extra_env={"GC_PACK_DIR": pack.name})
+    outputs = {
+        str(path.relative_to(pack)): path.stat().st_size
+        for path in (pack / "cli").rglob("*") if path.is_file()
+    }
+    assert proc.returncode == 0, f"{proc.stderr}\nCLI files: {outputs}"
+    assert proc.stdout.splitlines() == [f"<{arg}>" for arg in ("post-message", *ARGS)]
+    binary = pack / "cli" / "gc-slack-cli"
+    assert os.access(binary, os.X_OK)
+    assert binary.stat().st_size > 0
+    assert_temporary_build(pack, go_log)
+    assert set(pack.rglob("*")) == before | {binary}
+
+
 @pytest.mark.parametrize("verb", VERBS)
 def test_cli_wrapper_requires_pack_context(harness, verb):
     _, _, go_log, run = harness
@@ -241,6 +263,8 @@ def test_cli_build_heals_doctor_binaries_row(harness):
     assert "pack binaries not built: cli/gc-slack-cli" in before.stdout
     assert "gc slack" in before.stdout
     assert "builds itself" in before.stdout
+    assert "gc slack map-channel with no arguments" in before.stdout
+    assert "go build -o gc-slack-cli ." not in before.stdout
     assert run().returncode == 0
     after = doctor()
     assert after.returncode == 0
