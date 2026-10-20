@@ -11,8 +11,9 @@
 # - Operator CLI (./cli/gc-slack-cli, built from cli/main.go +
 #   cli/cmd/). Backs the `gc slack <cmd>` verb surface (import-app,
 #   map-channel, map-rig, sync-commands, enable-room-launch,
-#   post-message). The pack's commands/<cmd>.sh wrappers exec that
-#   binary at $GC_PACK_DIR/cli/gc-slack-cli.
+#   post-message). The commands/<cmd>.sh wrappers exec commands/_cli.sh,
+#   which builds $GC_PACK_DIR/cli/gc-slack-cli on missing (or a legacy
+#   env wrapper) before exec'ing it. Go must be on PATH for the build.
 #
 # Both binaries are independent Go modules so they can travel intact
 # alongside the pack. Build flow lives in CONTRIBUTING.md; the
