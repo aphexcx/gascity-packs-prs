@@ -123,9 +123,7 @@ func TestThreadContext_BotRootIncludedOnFirstReply(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("captured %d inbound messages, want 1", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Text, "[slack thread_ts="+rootTS+"]") {
-		t.Errorf("inbound missing root ts marker; got %q", msgs[0].Text)
-	}
+	assertThreadTSWithoutMarker(t, msgs[0].Text, rootTS)
 	if !strings.Contains(msgs[0].Text, rootText) {
 		t.Errorf("inbound missing bot-authored root; got %q", msgs[0].Text)
 	}
@@ -169,9 +167,7 @@ func TestThreadContext_BotRootIncludedAfterSinceTS(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("captured %d inbound messages, want 2", len(msgs))
 	}
-	if !strings.Contains(msgs[1].Text, "[slack thread_ts="+rootTS+"]") {
-		t.Errorf("second inbound missing root ts marker; got %q", msgs[1].Text)
-	}
+	assertThreadTSWithoutMarker(t, msgs[1].Text, rootTS)
 	if !strings.Contains(msgs[1].Text, rootText) {
 		t.Errorf("second inbound missing root after sinceTS advanced; got %q", msgs[1].Text)
 	}
@@ -209,9 +205,7 @@ func TestThreadContext_FetchFailureMarksThread(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("captured %d inbound messages, want 1", len(msgs))
 	}
-	if !strings.Contains(msgs[0].Text, "[slack thread_ts="+rootTS+"]") {
-		t.Errorf("inbound missing root ts marker; got %q", msgs[0].Text)
-	}
+	assertThreadTSWithoutMarker(t, msgs[0].Text, rootTS)
 	if !strings.Contains(msgs[0].Text, "Thread parent could not be fetched.") {
 		t.Errorf("inbound missing fetch-failure line; got %q", msgs[0].Text)
 	}
@@ -266,7 +260,7 @@ func TestThreadContext_FirstMentionPrependsPreamble(t *testing.T) {
 	if !strings.HasPrefix(body, wantAnchor) {
 		t.Errorf("body missing thread-reply anchor; got %q", body)
 	}
-	if !strings.HasPrefix(strings.TrimPrefix(body, wantAnchor), "[slack thread_ts=100.000001]\nThread context (2 earlier messages):\n") {
+	if !strings.HasPrefix(strings.TrimPrefix(body, wantAnchor), "Thread context (2 earlier messages):\n") {
 		t.Errorf("body missing preamble; got %q", body)
 	}
 	if !strings.Contains(body, "@U_ALICE: should we ship this?") {
@@ -357,15 +351,15 @@ func TestThreadContext_SecondMentionRepeatsRootWithoutNewActivity(t *testing.T) 
 	// Both thread replies lead with the protected anchor (gp-0qw item
 	// 2); only the first carries the preamble.
 	wantAnchor := "[thread reply — reply with --thread-ts 200.000001; parent @U_ALICE: \"context line\"]\n"
-	if !strings.HasPrefix(msgs[0].Text, wantAnchor+"[slack thread_ts=200.000001]\nThread context (1 earlier message):\n") {
+	if !strings.HasPrefix(msgs[0].Text, wantAnchor+"Thread context (1 earlier message):\n") {
 		t.Errorf("first inbound missing anchor+preamble; got %q", msgs[0].Text)
 	}
 	if !strings.Contains(msgs[1].Text, "@U_ALICE: context line") {
 		t.Errorf("second inbound missing thread root; got %q", msgs[1].Text)
 	}
 	// Upstream #491 keeps the thread root in every threaded reply, so the
-	// second inbound carries the marker and the root quote too.
-	if !strings.HasPrefix(msgs[1].Text, wantAnchor+"[slack thread_ts=200.000001]\n") || !strings.Contains(msgs[1].Text, "follow-up question") {
+	// second inbound carries the anchor and the root quote too.
+	if !strings.HasPrefix(msgs[1].Text, wantAnchor) || !strings.Contains(msgs[1].Text, "follow-up question") {
 		t.Errorf("second inbound text unexpected; got %q", msgs[1].Text)
 	}
 }
@@ -1155,5 +1149,20 @@ func TestFetchThreadReplies_NotOK(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "missing_scope") {
 		t.Errorf("error %v missing slack error code", err)
+	}
+}
+
+// assertThreadTSWithoutMarker checks a thread reply names its thread
+// through the protected anchor alone: the "[slack thread_ts=…]" marker
+// line was a redundant copy of the anchor's ts and is gone (jg-fc1csv).
+func assertThreadTSWithoutMarker(t *testing.T, text, rootTS string) {
+	t.Helper()
+	// The bare anchor minus its closing bracket: a parent excerpt may follow.
+	anchorHead := strings.TrimSuffix(formatThreadReplyAnchor(rootTS, "", ""), "]")
+	if !strings.HasPrefix(text, anchorHead) {
+		t.Errorf("inbound missing thread-reply anchor for %s; got %q", rootTS, text)
+	}
+	if strings.Contains(text, "[slack thread_ts=") {
+		t.Errorf("inbound still carries the redundant thread_ts marker; got %q", text)
 	}
 }

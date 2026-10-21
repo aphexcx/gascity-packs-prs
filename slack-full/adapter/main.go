@@ -4218,8 +4218,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	}
 	var threadReplies []slackThreadMessage
 	threadRepliesFetched := false
+	// The preamble carries no "[slack thread_ts=…]" marker line any more
+	// (jg-fc1csv): the thread ts already rides the protected anchor at the
+	// head of the delivery and gc's "Message id: … (in thread …)" line at
+	// its tail, and the alias copy names the thread itself, so the marker
+	// was a third copy of the same ts on every thread reply.
 	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
-		threadMarker := fmt.Sprintf("[slack thread_ts=%s]\n", msg.ThreadTS)
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
 		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
@@ -4229,7 +4233,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 		if err != nil {
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
-			preamble = threadMarker + "Thread parent could not be fetched.\n\n"
+			preamble = "Thread parent could not be fetched.\n\n"
 		} else {
 			resolveName := func(id string) string { return resolveUserDisplayName(cfg, id) }
 			// Parent context for the thread-reply anchor (gp-0qw item 2):
@@ -4266,8 +4270,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// still drop (jg-ure5r8). Self identity comes from the
 			// same sources the peer-bot path trusts.
 			botAuthor := newThreadBotClassifier(cfg, env).classify
-			preamble = threadMarker + formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor)
-			preambleLean = threadMarker + formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil)
+			preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor)
+			preambleLean = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil)
 			threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}

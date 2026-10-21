@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker
+  line** (jg-fc1csv). The protected `[thread reply …]` anchor already names
+  the thread ts at the head of every thread-reply delivery and gc's
+  `Message id: … (in thread …)` line repeats it at the tail, so the marker
+  was a third copy (~13 tokens per thread reply). Nothing parses it: the
+  reply/react/upload helpers read the transcript's structured fields.
+
 ### Fixed
 
 - Redact secret-shaped inbound Slack text before durable admission, gc journal
