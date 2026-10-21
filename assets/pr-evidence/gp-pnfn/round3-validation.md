@@ -103,3 +103,10 @@ committed summaries above are from this final source; raw output is retained
 in `adapter-tests-overlap-fixed.jsonl` and `python-tests-overlap-fixed.txt`
 under `.tasks/gp-pnfn-round3/`. Self-review covered the final overlap sweep,
 including invalidation by same-rule crossings at either boundary.
+
+The final lane gpt-6-astra gate returned CLEAN with no actionable findings
+(helper exit 0, anchored verdict) on source commit
+`3cd318b8c03a2bd43bb15c563538535670b2ff61`, reviewing the complete delta from
+`a9fe2d9641503ecddc4e4027faeece9bb848046f`. See
+`round3-codex-gate-final.txt`. The following evidence commit changes no pack
+source. Final snapshot `12afd72318adbafc` matches that committed source.
