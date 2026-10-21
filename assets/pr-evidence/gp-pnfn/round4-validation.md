@@ -70,3 +70,9 @@ remain in place; see `round4-snapshot.txt`. No adapter rollout was performed.
 
 The mayor owns the whole-delta round-4 gate, the cross-model delta read, and
 the subsequent founder approval. PR 58 remains draft.
+
+The lane's gpt-6-astra STANDARD delta gate returned CLEAN with no actionable
+findings on source commit `48f610da3269036c3f798a03a73e9be1c939e18c`, reviewing
+from `a8ecf813c5b561d23a95e64c753ffaeb65066478`. The installed helper exited 0
+and validated the anchored verdict; see `round4-codex-gate.txt` and its `.rc`
+and `.reason` sidecars. The following evidence commit changes no pack source.
