@@ -76,9 +76,12 @@ var syncFile = func(f *os.File) error { return f.Sync() }
 // whether it was a no-wake reaction entry, and the ready-to-post
 // envelope (final per-message text, attachments, dedup key).
 type spooledInbound struct {
-	Channel  string                 `json:"channel"`
-	Reaction bool                   `json:"reaction,omitempty"`
-	Inbound  externalInboundMessage `json:"inbound"`
+	// Adapter-authored provenance survives stripped retries without adding
+	// rejected attachments back to the gc wire envelope.
+	TrustedFilePaths []string               `json:"trusted_file_paths,omitempty"`
+	Channel          string                 `json:"channel"`
+	Reaction         bool                   `json:"reaction,omitempty"`
+	Inbound          externalInboundMessage `json:"inbound"`
 	// Message-unit parts for head-protected re-composition on replay
 	// (gp-0qw); absent on lines written before they existed, which
 	// then replay with the folded Inbound.Text as the body.
@@ -790,6 +793,7 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 				})
 			case recordsOnly:
 			default:
+				e.Inbound.trustedFilePaths = append([]string(nil), e.TrustedFilePaths...)
 				if e.Inbound.Text == "" {
 					if p := (pendingChannelInbound{preamble: e.Preamble, body: e.Body, files: e.Files}); p.hasReminderParts() {
 						e.Inbound.Text = p.foldedText()

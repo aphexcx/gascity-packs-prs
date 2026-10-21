@@ -178,8 +178,12 @@ func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInb
 	if len(p.inbound.Attachments) == 0 {
 		return p
 	}
+	p.inbound.trustedFilePaths = append([]string(nil), p.inbound.trustedFilePaths...)
 	paths := make([]string, 0, len(p.inbound.Attachments))
 	for _, a := range p.inbound.Attachments {
+		if strings.HasPrefix(a.URL, "file:///") {
+			p.inbound.trustedFilePaths = append(p.inbound.trustedFilePaths, a.URL)
+		}
 		paths = append(paths, neutralizeMarkupBoundaries(strings.TrimPrefix(a.URL, "file://")))
 	}
 	noun := "attachments"
@@ -678,7 +682,7 @@ func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLet
 	enc := json.NewEncoder(f)
 	for _, rec := range records {
 		rec.Inbound = redactInboundMessage(rec.Inbound)
-		rec.AliasBody = redactAttachmentText(rec.AliasBody, rec.Inbound.Attachments)
+		rec.AliasBody = redactAttachmentText(rec.AliasBody, rec.Inbound)
 		rec.Reason = truncateReason(rec.Reason)
 		if err := enc.Encode(rec); err != nil {
 			_ = f.Close()

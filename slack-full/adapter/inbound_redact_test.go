@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func redactionDM(t *testing.T) ([]byte, string) {
@@ -301,5 +302,78 @@ func TestInboundRedactionReplaysOldCompanyReceipt(t *testing.T) {
 		"mpim": renderCompanyMpimReminder("agent", secret, origin.TS, origin.TS, hydration, nil),
 	} {
 		t.Run(name, func(t *testing.T) { assertInboundRedacted(t, body, secret) })
+	}
+}
+
+func TestInboundRedactionReplaysOldMentionOnlyReceipt(t *testing.T) {
+	_, secret := redactionDM(t)
+	gc := newFakeGC(t)
+	df, bf := baseDirectoryFile(), baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+	h.gw.mentionOnlyLaneStart = func() bool { return false }
+	ev := humanMessage("1700000000.002600", "<@"+companyMOBotUserID+"> "+secret)
+	ev.Files = []slackFile{{ID: "F123", Name: secret + ".txt"}}
+	// Admission bypasses the HTTP scrub to represent a pre-upgrade receipt.
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	if outsiderPostCount(gc) != 0 {
+		t.Fatal("mention-only lane ran before restart")
+	}
+	h.gw.mentionOnlyLaneStart = nil
+	h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+	h.gw.cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+	h.gw.replayMentionOnlyPending()
+	h.wait()
+	if outsiderPostCount(gc) != 1 {
+		t.Fatal("mention-only receipt was not replayed exactly once")
+	}
+	for _, call := range gc.sessionCalls() {
+		assertInboundRedacted(t, call.body, secret)
+	}
+}
+
+func TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool(t *testing.T) {
+	_, secret := redactionDM(t)
+	const path = "/tmp/gc-slack-adapter/inbound/C1234567890/1792436306.401379-image.png"
+	msg := externalInboundMessage{ProviderMessageID: "1792436306.401379", Text: secret,
+		Attachments: []externalAttachment{{URL: "file://" + path}}}
+	p := withholdAttachments(pendingChannelInbound{inbound: msg}, permanent422())
+	capture := &inboundCapture{}
+	server := httptest.NewServer(capture.handler())
+	defer server.Close()
+	cfg := config{gcAPIBase: server.URL, cityName: "test-city"}
+	if err := postInbound(cfg, p.inbound); err != nil {
+		t.Fatal(err)
+	}
+	spool := newInboundSpool(filepath.Join(t.TempDir(), "spool.jsonl"))
+	if !spool.spillBatch("C1234567890", []pendingChannelInbound{p}) {
+		t.Fatal("spill failed")
+	}
+	entries, done, err := spool.consume()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	if len(entries) != 1 {
+		t.Fatalf("spool replay returned %d entries", len(entries))
+	}
+	if err := postInbound(cfg, entries[0].Inbound); err != nil {
+		t.Fatal(err)
+	}
+	got := capture.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("gc received %d messages", len(got))
+	}
+	for _, delivered := range got {
+		assertInboundRedacted(t, delivered.Text, secret)
+		if !strings.Contains(delivered.Text, path) || len(delivered.Attachments) != 0 {
+			t.Fatalf("withheld attachment path was lost or attachment was reintroduced: %+v", delivered)
+		}
+	}
+	// A matching path supplied only as untrusted text gets no exemption.
+	if clean := redactInboundMessage(externalInboundMessage{Text: path}); clean.Text == path {
+		t.Fatal("untrusted text gained the generated-path exemption")
 	}
 }

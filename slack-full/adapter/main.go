@@ -1335,6 +1335,9 @@ type externalAttachment struct {
 }
 
 type externalInboundMessage struct {
+	// Adapter-only provenance for paths retained after gc rejects attachments.
+	// Never accepted from or serialized to the gc wire message.
+	trustedFilePaths  []string
 	ProviderMessageID string               `json:"provider_message_id"`
 	Conversation      conversationRef      `json:"conversation"`
 	Actor             externalActor        `json:"actor"`

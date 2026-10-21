@@ -2,12 +2,12 @@
 
 Toolchains: Go 1.26.5 darwin/arm64; Python 3.13.13 via `uv run --with pytest`; `pnpm exec node --version` reports v24.21.0 (no Node tests apply). No unsupported-engine warnings.
 
-- `go test -race -json ./...` in `slack-full/adapter`: 12,613 test/subtest passes, 0 failures, 0 skips, both packages pass, no race reports; main package 102.823s. See `adapter-tests.json`.
+- `go test -race -json ./...` in `slack-full/adapter`: 12,615 test/subtest passes, 0 failures, 0 skips, both packages pass, no race reports; main package 98.316s. See `adapter-tests.json`.
 - The same command in `slack-full/cli`: 237 test/subtest passes across 8 packages, 0 failures. See `cli-tests.json`.
 - `uv run --with pytest python -m pytest slack-full/tests/ -q`: 788 passed, 2 skipped; two existing `os.fork()` deprecation warnings. See `python-tests.txt`.
 - Installed `.gc/184th-slack-tail.py`: synthetic DM and Unicode Bearer fixtures emit markers without original tokens. Invoking it from outside the city still uses the city working directory. Installed source files match the pinned pack snapshot byte for byte.
 
-Review round 1 returned BLOCK for overlapping JWT/base64 spans in URLs, unredacted nested receipt content, and Python Unicode word boundaries. All three have shared/persistence regressions and fixes. Round 2 ended with provider capacity (helper exit 4, no valid verdict); its partial findings led to regressions and fixes for attachment filename collisions and pre-upgrade receipt recovery. The required gpt-6-astra gate is being retried on the final source revision.
+Review round 1 returned BLOCK for overlapping JWT/base64 spans in URLs, unredacted nested receipt content, and Python Unicode word boundaries. All three have shared/persistence regressions and fixes. Round 2 ended with provider capacity (helper exit 4, no valid verdict); its partial findings led to regressions and fixes for attachment filename collisions and pre-upgrade receipt recovery. Round 3 found mention-only replay bypassing the scrub and stripped-attachment retries losing usable paths. Both now have delivery/restart regressions and fixes, with the full race suite rerun. The required gpt-6-astra gate is being retried on the final source revision.
 
 Budget fixtures retain their exact lengths but contain punctuation so they exercise budgeting rather than intentionally matching the secret rules. A pre-existing global-log assertion now uses the repository's synchronized buffer after the race suite exposed its unsafe bytes.Buffer. One synthetic Slack fixture was changed to an unmistakably fake suffix after GitHub push protection flagged its original shape; no protection bypass was used.
 

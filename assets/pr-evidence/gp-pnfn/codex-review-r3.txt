@@ -1,0 +1,21 @@
+# codex-gate exec: prompt /tmp/gp-pnfn-review-prompt-r3.txt (2546 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-21T15:25:32Z
+
+Two major findings remain in `cd677510`:
+
+1. **Major — Old receipts still leak through mention-only replay.** [company_mention_only.go:406](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/company_mention_only.go:406) decodes historical receipt bodies directly, bypassing `decodeCompanyMessage`’s new redaction. Pending mention-only deliveries carry raw text and filenames through `runMentionOnlyTargets` and `postMentionOnlyReminder` to gc. Scrub the in-memory replay event before rendering and add a pre-upgrade mention-only regression; immutable sidecars can remain unchanged.
+
+2. **Major — Attachment rejection retries destroy usable file paths.** [inbound_redact.go:60](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/inbound_redact.go:60) preserves paths only while they appear in `msg.Attachments`. `withholdAttachments` clears that list before retrying, leaving paths solely in text. A normal default-store path such as `/tmp/gc-slack-adapter/inbound/C1234567890/1792436306.401379-image.png` then matches the base64 rule and is redacted during forwarding or spooling, breaking fallback file access. Retain trusted path metadata across stripped retries and test preservation through gc delivery and spool replay.
+
+The prior JWT overlap, nested-content, ASCII Bearer parity, and filename-collision cases have fixes and regressions. Ordinary company receipt/frozen-hydration replay is covered, but the mention-only route above remains open. DM fixtures, README changes, and pinned city helper/memory integration evidence are present.
+
+Suites were **not run (sandbox)**. Committed [validation evidence](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-pnfn/validation.md:5) records:
+
+| Required suite | Recorded result |
+|---|---|
+| Full adapter, race enabled | 12,613 test/subtest passes; 0 failures/skips; no race reports |
+| Full CLI, race enabled | 237 test/subtest passes; 8 packages; 0 failures |
+| Full Python | 788 passed; 2 skipped; 2 deprecation warnings |
+
+No files were changed or real Slack records or credentials read.
+
+VERDICT: BLOCK

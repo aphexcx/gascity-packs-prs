@@ -57,7 +57,7 @@ func redactEventContent(raw json.RawMessage) (json.RawMessage, error) {
 }
 
 func redactInboundMessage(msg externalInboundMessage) externalInboundMessage {
-	msg.Text = redactAttachmentText(msg.Text, msg.Attachments)
+	msg.Text = redactAttachmentText(msg.Text, msg)
 	msg.Actor.DisplayName = redactInboundText(msg.Actor.DisplayName)
 	return msg
 }
@@ -65,11 +65,15 @@ func redactInboundMessage(msg externalInboundMessage) externalInboundMessage {
 // Keep only the adapter's structured local attachment paths usable in its
 // generated prose. Absolute paths can themselves look like base64. Incoming
 // Slack text/file names were already redacted before these paths were built.
-func redactAttachmentText(text string, attachments []externalAttachment) string {
+func redactAttachmentText(text string, msg externalInboundMessage) string {
+	urls := append([]string(nil), msg.trustedFilePaths...)
+	for _, att := range msg.Attachments {
+		urls = append(urls, att.URL)
+	}
 	var paths []string
-	for _, att := range attachments {
-		if strings.HasPrefix(att.URL, "file:///") {
-			paths = append(paths, att.URL, strings.TrimPrefix(att.URL, "file://"))
+	for _, url := range urls {
+		if strings.HasPrefix(url, "file:///") {
+			paths = append(paths, url, strings.TrimPrefix(url, "file://"))
 		}
 	}
 	var out strings.Builder
@@ -88,12 +92,16 @@ func redactAttachmentText(text string, attachments []externalAttachment) string 
 }
 
 func redactSpooledInbound(e spooledInbound) spooledInbound {
+	if len(e.Inbound.trustedFilePaths) == 0 {
+		e.Inbound.trustedFilePaths = e.TrustedFilePaths
+	}
+	e.TrustedFilePaths = append([]string(nil), e.Inbound.trustedFilePaths...)
 	e.Inbound = redactInboundMessage(e.Inbound)
 	e.ThreadAnchor = redactInboundText(e.ThreadAnchor)
 	e.Preamble = redactInboundText(e.Preamble)
 	e.PreambleLean = redactInboundText(e.PreambleLean)
-	e.Body = redactAttachmentText(e.Body, e.Inbound.Attachments)
-	e.Files = redactAttachmentText(e.Files, e.Inbound.Attachments)
+	e.Body = redactAttachmentText(e.Body, e.Inbound)
+	e.Files = redactAttachmentText(e.Files, e.Inbound)
 	e.Refused = redactInboundText(e.Refused)
 	e.Stripped = redactInboundText(e.Stripped)
 	e.Verdict = redactInboundText(e.Verdict)

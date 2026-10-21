@@ -403,7 +403,8 @@ func (g *companyGateway) replayMentionOnlyPending() {
 			continue
 		}
 		var ev slackMessageEvent
-		if err := json.Unmarshal(store.receiptBody(r), &ev); err != nil || ev.Channel == "" || ev.TS == "" {
+		body, _ := redactEventContent(store.receiptBody(r))
+		if err := json.Unmarshal(body, &ev); err != nil || ev.Channel == "" || ev.TS == "" {
 			log.Printf("company: mention-only replay %s: event body unavailable — %d pending injection(s) left (unsettled admission intent: %t)",
 				r.ID, len(r.MentionOnlyPending), r.MentionOnlyLane != nil)
 			continue
