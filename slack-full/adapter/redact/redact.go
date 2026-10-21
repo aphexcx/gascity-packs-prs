@@ -74,9 +74,9 @@ func Text(s string) string {
 				// credential. Keep the separating whitespace in view.
 				offset = start + len("Bearer")
 			} else if token >= 0 {
-				// JWTs can overlap: settings.jwt.<header> is itself
-				// a candidate that covers the real JWT's header. Resume
-				// at its first separator so no candidate is skipped.
+				// JWTs can overlap when a later segment is another eyJ
+				// header. Resume at the first separator so no candidate
+				// is skipped.
 				if dot := strings.IndexByte(s[start:stop], '.'); dot >= 0 {
 					offset = start + dot
 				}

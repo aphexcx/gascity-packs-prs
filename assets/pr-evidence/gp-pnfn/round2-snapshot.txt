@@ -1,0 +1,1 @@
+Snapshot 4ee953c5843e63bf: 3 installed files byte-identical; 36 shared fixtures (including idempotence) pass; actual city wrapper from /tmp with fake gc passes all 36 fixtures and synthetic DM; prior snapshot and wrapper backup retained. No live Slack reads.

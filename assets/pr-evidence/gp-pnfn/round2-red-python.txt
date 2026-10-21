@@ -1,0 +1,110 @@
+........................FF...FF.FFF                                      [100%]
+=================================== FAILURES ===================================
+_________________ test_shared_patterns[jwt-overlapping-prefix] _________________
+
+case = {'name': 'jwt-overlapping-prefix', 'text': 'settings.jwt.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56', 'want': 'settings.jwt.[REDACTED:jwt:...Ef56]'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert '[REDACTED:jwt:...Ef56]' == 'settings.jwt...:jwt:...Ef56]'
+E         
+E         - settings.jwt.[REDACTED:jwt:...Ef56]
+E         ? -------------
+E         + [REDACTED:jwt:...Ef56]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+_________________ test_shared_patterns[jwt-overlapping-chain] __________________
+
+case = {'name': 'jwt-overlapping-chain', 'text': 'settings.settings.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56', 'want': 'settings.settings.[REDACTED:jwt:...Ef56]'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert '[REDACTED:jwt:...Ef56]' == 'settings.set...:jwt:...Ef56]'
+E         
+E         - settings.settings.[REDACTED:jwt:...Ef56]
+E         + [REDACTED:jwt:...Ef56]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+_________________ test_shared_patterns[ordinary-launchd-label] _________________
+
+case = {'name': 'ordinary-launchd-label', 'text': 'com.houmanoids.citadel.tunnel-512g1', 'want': 'com.houmanoids.citadel.tunnel-512g1'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert 'com.[REDACTED:jwt:...12g1]' == 'com.houmanoi....tunnel-512g1'
+E         
+E         - com.houmanoids.citadel.tunnel-512g1
+E         + com.[REDACTED:jwt:...12g1]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+_________________ test_shared_patterns[ordinary-python-module] _________________
+
+case = {'name': 'ordinary-python-module', 'text': 'application.services.credentials', 'want': 'application.services.credentials'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert '[REDACTED:jwt:...ials]' == 'application....s.credentials'
+E         
+E         - application.services.credentials
+E         + [REDACTED:jwt:...ials]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+_______________ test_shared_patterns[ordinary-internal-hostname] _______________
+
+case = {'name': 'ordinary-internal-hostname', 'text': 'services.internal.houmanoids', 'want': 'services.internal.houmanoids'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert '[REDACTED:jwt:...oids]' == 'services.internal.houmanoids'
+E         
+E         - services.internal.houmanoids
+E         + [REDACTED:jwt:...oids]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+________________ test_shared_patterns[ordinary-slack-permalink] ________________
+
+case = {'name': 'ordinary-slack-permalink', 'text': 'https://example.slack.com/archives/C01234567/p1792436306401379', 'want': 'https://example.slack.com/archives/C01234567/p1792436306401379'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert 'https://exam...se64:...1379]' == 'https://exam...2436306401379'
+E         
+E         - https://example.slack.com/archives/C01234567/p1792436306401379
+E         + https://example.slack.[REDACTED:base64:...1379]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+_________________ test_shared_patterns[ordinary-semver-suffix] _________________
+
+case = {'name': 'ordinary-semver-suffix', 'text': '1.2.3-release.candidate.20261021', 'want': '1.2.3-release.candidate.20261021'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+>       assert redact_text(case["text"]) == case["want"]
+E       AssertionError: assert '1.2.[REDACTED:jwt:...1021]' == '1.2.3-releas...date.20261021'
+E         
+E         - 1.2.3-release.candidate.20261021
+E         + 1.2.[REDACTED:jwt:...1021]
+
+slack-full/tests/test_slack_redact.py:20: AssertionError
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-overlapping-prefix]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-overlapping-chain]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-launchd-label]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-python-module]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-internal-hostname]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink]
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-semver-suffix]
+7 failed, 28 passed, 766 deselected in 0.16s

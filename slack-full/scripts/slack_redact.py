@@ -20,7 +20,7 @@ def redact_text(text: str) -> str:
             stop = m.end("token") if token else m.end()
             matches.append((start, -stop, priority))
             # Resume at a JWT's first separator to include overlapping
-            # candidates such as settings.jwt.<actual JWT>.
+            # candidates with another eyJ header in a later segment.
             if _RULES[priority]["kind"] == "bearer":
                 offset = start + len("Bearer")
             else:

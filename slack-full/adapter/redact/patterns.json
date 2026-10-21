@@ -29,7 +29,7 @@
   },
   {
     "kind": "jwt",
-    "pattern": "(?:^|[^A-Za-z0-9_-])(?P<token>(?:eyJ[A-Za-z0-9_-]*|[A-Za-z0-9_-]{8,})\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{8,})"
+    "pattern": "(?:^|[^A-Za-z0-9_-])(?P<token>eyJ[A-Za-z0-9_-]*\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{8,})"
   },
   {
     "kind": "hex",

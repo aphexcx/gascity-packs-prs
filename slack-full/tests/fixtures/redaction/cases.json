@@ -122,12 +122,12 @@
   {
     "name": "jwt-overlapping-prefix",
     "text": "settings.jwt.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
-    "want": "[REDACTED:jwt:...Ef56]"
+    "want": "settings.jwt.[REDACTED:jwt:...Ef56]"
   },
   {
     "name": "jwt-overlapping-chain",
     "text": "settings.settings.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
-    "want": "[REDACTED:jwt:...Ef56]"
+    "want": "settings.settings.[REDACTED:jwt:...Ef56]"
   },
   {
     "name": "aws-overlapping-prefix",
@@ -143,5 +143,40 @@
     "name": "bearer-overlapping-chain",
     "text": "漢Bearer bEaReR Bearer short.token-42",
     "want": "漢[REDACTED:bearer:...n-42]"
+  },
+  {
+    "name": "ordinary-launchd-label",
+    "text": "com.houmanoids.citadel.tunnel-512g1",
+    "want": "com.houmanoids.citadel.tunnel-512g1"
+  },
+  {
+    "name": "ordinary-python-module",
+    "text": "application.services.credentials",
+    "want": "application.services.credentials"
+  },
+  {
+    "name": "ordinary-local-hostname",
+    "text": "tailor512g1s-mac-studio.local",
+    "want": "tailor512g1s-mac-studio.local"
+  },
+  {
+    "name": "ordinary-internal-hostname",
+    "text": "services.internal.houmanoids",
+    "want": "services.internal.houmanoids"
+  },
+  {
+    "name": "ordinary-slack-permalink",
+    "text": "https://example.slack.com/archives/C01234567/p1792436306401379",
+    "want": "https://example.slack.[REDACTED:base64:...1379]"
+  },
+  {
+    "name": "ordinary-short-slack-permalink",
+    "text": "https://example.slack.com/archives/C123/p1792436306401379",
+    "want": "https://example.slack.com/archives/C123/p1792436306401379"
+  },
+  {
+    "name": "ordinary-semver-suffix",
+    "text": "1.2.3-release.candidate.20261021",
+    "want": "1.2.3-release.candidate.20261021"
   }
 ]

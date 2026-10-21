@@ -1,0 +1,41 @@
+{
+  "command": "go test -race -json ./... -count=1",
+  "workdir": "slack-full/cli",
+  "test_subtest_passes": 237,
+  "test_subtest_skips": 0,
+  "package_passes": [
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/blockkit",
+      "elapsed": 1.116
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli",
+      "elapsed": 1.158
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/apps",
+      "elapsed": 1.234
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/rooms",
+      "elapsed": 1.242
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/workspace",
+      "elapsed": 1.2469999999999999
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/rigs",
+      "elapsed": 1.248
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/channels",
+      "elapsed": 1.309
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/cmd",
+      "elapsed": 1.569
+    }
+  ],
+  "failures": []
+}

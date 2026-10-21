@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redact secret-shaped inbound Slack text before durable admission, gc journal
   and mail delivery, shutdown spooling, and dead letters (gp-pnfn). The pack's
   tail helper imports the same rules and redacts before truncating output.
+  JWT matching requires an `eyJ` header prefix to preserve ordinary dotted
+  identifiers; pre-upgrade held replay text is scrubbed on state load.
 
 - **Accepted text posts no longer fail when readback is unconfirmed** (gp-yj6n).
   A Slack message timestamp now preserves `delivered=true` with no publish
