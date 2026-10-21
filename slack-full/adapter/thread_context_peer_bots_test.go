@@ -345,7 +345,7 @@ func TestPreamblePeerBotHonoursDeliveredCollapse(t *testing.T) {
 	}
 	got := formatThreadContextPreamble(replies, "", "3.0", "", nil,
 		func(ts string) bool { return ts == "1.0" }, tcSelfClassifier().classify)
-	if !strings.Contains(got, "1 earlier message already delivered (newest ts 1.0) — not re-quoted.") {
+	if !strings.Contains(got, "1 earlier message already delivered.") {
 		t.Fatalf("delivered peer post must collapse:\n%s", got)
 	}
 	if strings.Contains(got, "already delivered peer post") {
@@ -436,7 +436,7 @@ func TestComposeChannelReminder_ShedsBotQuotesBeforePreamble(t *testing.T) {
 	full := "Thread context (5 earlier messages):\n" + humanLine + botLines + "\n---\n\n"
 	lean := "Thread context (1 earlier message):\n" + humanLine + "\n---\n\n"
 	parts := channelReminderParts{
-		anchor:       "[thread reply — reply with --thread-ts 99.1]",
+		anchor:       "[reply in thread 99.1]",
 		preamble:     full,
 		preambleLean: lean,
 		botQuotes:    true,
@@ -492,11 +492,11 @@ func TestComposeChannelReminder_ShedsBotQuotesBeforePreamble(t *testing.T) {
 	// and then the notice yield and the body arrives intact, untrimmed —
 	// exactly the pre-fix delivery.
 	botOnly := channelReminderParts{
-		anchor:       "[thread reply — reply with --thread-ts 99.1]",
+		anchor:       "[reply in thread 99.1]",
 		preamble:     "Thread context (1 earlier message):\n@Citadel Mayor (bot): report\n\n---\n\n",
 		preambleLean: "",
 		botQuotes:    true,
-		body:         strings.Repeat("b", defaultReminderTextBudget-len("[thread reply — reply with --thread-ts 99.1]")-1-10),
+		body:         strings.Repeat("b", defaultReminderTextBudget-len("[reply in thread 99.1]")-1-10),
 		ts:           "100.000001",
 		channelID:    "C1",
 	}

@@ -645,13 +645,9 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 	}
 	var quoted []slackThreadMessage
 	deliveredCount := 0
-	deliveredNewest := ""
 	for _, m := range prior {
 		if alreadyDelivered != nil && alreadyDelivered(m.TS) {
 			deliveredCount++
-			if m.TS > deliveredNewest {
-				deliveredNewest = m.TS
-			}
 			continue
 		}
 		quoted = append(quoted, m)
@@ -691,7 +687,9 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		if deliveredCount != 1 {
 			b.WriteByte('s')
 		}
-		fmt.Fprintf(&b, " already delivered (newest ts %s) — not re-quoted.\n", deliveredNewest)
+		// The count alone (jg-fc1csv): the old "(newest ts …) — not
+		// re-quoted" tail restated what "already delivered" says.
+		b.WriteString(" already delivered.\n")
 	}
 	if len(quoted) == 0 && botOmitted == 0 {
 		b.WriteString("\n---\n\n")

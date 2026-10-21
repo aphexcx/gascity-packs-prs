@@ -256,7 +256,7 @@ func TestThreadContext_FirstMentionPrependsPreamble(t *testing.T) {
 	body := msgs[0].Text
 	// The protected thread-reply anchor leads (gp-0qw item 2), then the
 	// preamble.
-	wantAnchor := "[thread reply — reply with --thread-ts 100.000001; parent @U_ALICE: \"should we ship this?\"]\n"
+	wantAnchor := "[reply in thread 100.000001; parent @U_ALICE: \"should we ship this?\"]\n"
 	if !strings.HasPrefix(body, wantAnchor) {
 		t.Errorf("body missing thread-reply anchor; got %q", body)
 	}
@@ -350,7 +350,7 @@ func TestThreadContext_SecondMentionRepeatsRootWithoutNewActivity(t *testing.T) 
 	}
 	// Both thread replies lead with the protected anchor (gp-0qw item
 	// 2); only the first carries the preamble.
-	wantAnchor := "[thread reply — reply with --thread-ts 200.000001; parent @U_ALICE: \"context line\"]\n"
+	wantAnchor := "[reply in thread 200.000001; parent @U_ALICE: \"context line\"]\n"
 	if !strings.HasPrefix(msgs[0].Text, wantAnchor+"Thread context (1 earlier message):\n") {
 		t.Errorf("first inbound missing anchor+preamble; got %q", msgs[0].Text)
 	}

@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Message id: … (in thread …)` line repeats it at the tail, so the marker
   was a third copy (~13 tokens per thread reply). Nothing parses it: the
   reply/react/upload helpers read the transcript's structured fields.
+- **Shorter thread-reply anchor and collapsed-priors line** (jg-fc1csv). The
+  anchor reads `[reply in thread <ts>; parent @<name>: "…"]` instead of
+  `[thread reply — reply with --thread-ts <ts>; …]` — `--thread-ts` is not a
+  `reply-current` flag, and the per-message reply line already spells the
+  command. Already-delivered priors collapse to `Thread context: N earlier
+  messages already delivered.` without the `(newest ts …) — not re-quoted`
+  tail.
 
 ### Fixed
 

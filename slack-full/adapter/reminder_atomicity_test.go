@@ -187,7 +187,7 @@ func TestUrgentThreadReply_CarriesAnchorWithoutContextCache(t *testing.T) {
 	}
 	// The once-per-channel how-to may follow; the anchor + body prefix
 	// is the contract under test.
-	want := "[thread reply — reply with --thread-ts 100.000001]\nthreaded answer"
+	want := "[reply in thread 100.000001]\nthreaded answer"
 	if !strings.HasPrefix(got[0].Text, want) {
 		t.Fatalf("thread reply text = %q, want prefix %q", got[0].Text, want)
 	}
@@ -209,7 +209,7 @@ func TestSingleBufferedThreadReply_CarriesAnchor(t *testing.T) {
 		}), func() {})
 	waitFor(t, "buffered flush", func() bool { return len(stub.snapshotInbounds()) == 1 })
 	text := stub.snapshotInbounds()[0].Text
-	if !strings.HasPrefix(text, "[thread reply — reply with --thread-ts 100.000001]\n") {
+	if !strings.HasPrefix(text, "[reply in thread 100.000001]\n") {
 		t.Fatalf("single buffered thread reply must lead with the anchor:\n%s", text)
 	}
 	if !strings.Contains(text, "buffered thread reply") {
