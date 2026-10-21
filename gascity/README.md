@@ -764,6 +764,81 @@ codex; the settings file never evaluated; the install recipe above run from
 a fresh directory, the md5 recording refusing a bad pin and the check failing
 on a missing file.
 
+## GitHub App installation tokens
+
+`assets/scripts/github-app-token.sh` mints an installation token using Bash,
+Python 3 (stdlib only), OpenSSL and curl. Set `GITHUB_APP_PREFIX` (default
+`JADEGATE_GITHUB_APP`) and provide these environment variables:
+
+- `${PREFIX}_ID`: numeric GitHub App ID.
+- `${PREFIX}_PRIVATE_KEY`: RSA PEM with real newlines.
+- `${PREFIX}_INSTALLATION_ID_PACKS` or `${PREFIX}_INSTALLATION_ID_WWW`,
+  selected by `--target PACKS|WWW` (default `PACKS`).
+
+If a required value is unset or empty and `infisical` is on PATH, the helper
+loads missing values with `infisical export --env agents --projectId
+"$INFISICAL_PROJECT_ID" --format json`. Existing nonempty values win.
+JSON preserves multiline values and embedded quotes, including unrelated
+secrets in the export. If the JSON export command fails, the helper retries
+with `--format dotenv` for older CLIs; malformed JSON fails closed.
+Set `INFISICAL_PROJECT_ID` and `INFISICAL_TOKEN`; when the token is missing,
+the helper sources `$HOME/.config/infisical-agent/token.sh` in a quiet,
+isolated shell with stdin from `/dev/null` and a 20-second timeout, including
+its child processes. Exported values are parsed as data and never executed as
+shell code. An export failure with an inherited token suggests unsetting
+`INFISICAL_TOKEN` and retrying so the machine identity can log in again.
+
+Install a copy in the city's shim directory (pack assets are not auto-synced):
+
+```sh
+install -m 0755 path/to/gascity/assets/scripts/github-app-token.sh "$CITY/.gc/shims/github-app-token.sh"
+```
+
+Jadegate wiring, run from the relevant checkout with the variables above
+available to each invocation:
+
+```sh
+git config credential.https://github.com.helper ''
+git config --add credential.https://github.com.helper '!/Users/tailor64s-macbook-pro/city/.gc/shims/github-app-token.sh --git-credential --target PACKS'
+export GIT_TERMINAL_PROMPT=0
+GH_TOKEN="$(/Users/tailor64s-macbook-pro/city/.gc/shims/github-app-token.sh --target PACKS)" gh repo view aphexcx/gascity-packs-prs
+```
+
+The empty URL-scoped helper resets Git's inherited helper chain for GitHub.
+Keep it before the App helper: system or global helpers such as `osxkeychain`
+could otherwise answer first or store the installation token on disk when
+Git approves the credential. `GIT_TERMINAL_PROMPT=0` disables terminal prompts
+when authentication fails.
+
+Use `--target WWW` for that installation. The Git helper answers only HTTPS
+credentials for `github.com`; `get` mints a token, and `store`/`erase` are
+no-ops. `gh` reads `GH_TOKEN` for the call; no `gh auth login` is needed.
+The default output is only the token. `--json` prints `token`, `expires_at`
+and `permissions`; `--check` lists accessible repository names and expiry,
+returning 0 on success and 1 on failure. Errors go to stderr with the missing
+variable names or HTTP status and GitHub message, with credentials redacted.
+
+Tokens normally expire after one hour. Each invocation mints once and reuses
+the token in memory for all `--check` pages; there is no cache across processes
+and no credential file. The PEM and authorization headers are sent through
+pipes, and the helper disables tracing and ignores `.curlrc`. Python runs in
+isolated mode (`-I`), ignoring working-directory modules, user site packages
+and `PYTHON*` settings. OpenSSL and curl inherit only `PATH`, `HOME` and `LANG`,
+so neither receives the private key or Infisical token in its environment.
+The JWT backdates `iat` by 60 seconds and sets `exp` 540 seconds ahead,
+keeping the claim interval at 10 minutes.
+
+Script changes are recorded in this pack's new [CHANGELOG.md](CHANGELOG.md),
+whose first entry introduces the GitHub App token helper.
+
+Run `bash gascity/tests/test_github_app_token.sh` from the repository root.
+The same flow tests run under `make test-gascity`: a loopback HTTP server
+verifies a real RSA signature and JWT claims, exercises all output modes and
+Git's credential protocol, and covers Infisical and failure paths. No external
+network or real secrets are used. `GITHUB_APP_API_URL` is a test override;
+only the normal `https://api.github.com` endpoint or an HTTP loopback URL with
+an explicit port is accepted.
+
 ## Build Methodology Contract
 
 `build-base` is the virtual full-lifecycle workflow contract. It defines the
