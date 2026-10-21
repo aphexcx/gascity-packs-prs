@@ -1,0 +1,48 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run 'TestInboundRedaction.*(Filename|WithheldPaths)|TestDownloadSlackFiles|TestFileMessageSpoolsAndForwardsLocalPath|TestMentionOnlyInbound_' -count=1
+=== RUN   TestDownloadSlackFilesDerivesMIMETypeForVoiceClip
+--- PASS: TestDownloadSlackFilesDerivesMIMETypeForVoiceClip (0.00s)
+=== RUN   TestFileMessageSpoolsAndForwardsLocalPath
+2026/10/21 13:25:45 inbound: chan=C1 user=U1 ts=1.0 thread= target="" bot_mention=false files=1 spooled=1 text=0ch posted=231ch receipt=unsupported
+--- PASS: TestFileMessageSpoolsAndForwardsLocalPath (0.00s)
+=== RUN   TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool
+--- PASS: TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool (0.01s)
+=== RUN   TestInboundRedactionMarkupFilenamePathsRemainUsable
+--- PASS: TestInboundRedactionMarkupFilenamePathsRemainUsable (0.00s)
+=== RUN   TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles
+--- PASS: TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles (0.00s)
+=== RUN   TestDownloadSlackFiles
+=== RUN   TestDownloadSlackFiles/single_file_downloaded
+=== RUN   TestDownloadSlackFiles/two_files
+=== RUN   TestDownloadSlackFiles/no_files_returns_nil
+=== RUN   TestDownloadSlackFiles/missing_url_private_dropped
+2026/10/21 13:25:45 inbound file F2: url_private empty, dropped
+=== RUN   TestDownloadSlackFiles/404_from_slack_drops_file_but_other_succeeds
+2026/10/21 13:25:45 inbound file F2 download failed: GET http://127.0.0.1:60157/files/F2: 404 Not Found — boom
+=== RUN   TestDownloadSlackFiles/empty_store_path_returns_nil
+2026/10/21 13:25:45 inbound file download skipped: INBOUND_FILE_STORE empty (1 files dropped)
+=== RUN   TestDownloadSlackFiles/path_traversal_in_name_sanitized
+=== RUN   TestDownloadSlackFiles/malformed_channel_and_ts_sanitized
+--- PASS: TestDownloadSlackFiles (0.01s)
+    --- PASS: TestDownloadSlackFiles/single_file_downloaded (0.00s)
+    --- PASS: TestDownloadSlackFiles/two_files (0.00s)
+    --- PASS: TestDownloadSlackFiles/no_files_returns_nil (0.00s)
+    --- PASS: TestDownloadSlackFiles/missing_url_private_dropped (0.00s)
+    --- PASS: TestDownloadSlackFiles/404_from_slack_drops_file_but_other_succeeds (0.00s)
+    --- PASS: TestDownloadSlackFiles/empty_store_path_returns_nil (0.00s)
+    --- PASS: TestDownloadSlackFiles/path_traversal_in_name_sanitized (0.00s)
+    --- PASS: TestDownloadSlackFiles/malformed_channel_and_ts_sanitized (0.00s)
+=== RUN   TestDownloadSlackFilesPermissions
+--- PASS: TestDownloadSlackFilesPermissions (0.00s)
+=== RUN   TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded
+--- PASS: TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded (0.00s)
+=== RUN   TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath
+2026/10/21 13:25:45 inbound file F2 download failed: GET http://127.0.0.1:60166/failed: 404 Not Found — 404 page not found
+2026/10/21 13:25:45 mention-only: delivered session=mayor-session chan=C1 ts=1792436306.401379 thread= reason=bot_mention receipt=unsupported
+--- PASS: TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath (0.01s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	1.440s
+testing: warning: no tests to run
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.113s [no tests to run]
+
+Exit: 0

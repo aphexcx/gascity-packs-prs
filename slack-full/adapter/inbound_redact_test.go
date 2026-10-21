@@ -446,6 +446,31 @@ func TestInboundRedactionMarkupFilenamePathsRemainUsable(t *testing.T) {
 	}
 }
 
+func TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles(t *testing.T) {
+	testAllowAnyURL(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.URL.Path))
+	}))
+	t.Cleanup(server.Close)
+	files := []slackFile{
+		{ID: "F1", Name: "a<b.txt", URLPrivate: server.URL + "/first"},
+		{ID: "F2", Name: "a_b.txt", URLPrivate: server.URL + "/second"},
+	}
+	attachments := downloadSlackFiles(config{inboundFileStore: t.TempDir()}, "C1", "1.0", files)
+	if len(attachments) != 2 {
+		t.Fatalf("got %d attachments, want 2", len(attachments))
+	}
+	if attachments[0].URL == attachments[1].URL {
+		t.Fatal("distinct filenames share a download destination")
+	}
+	for i, want := range []string{"/first", "/second"} {
+		path := strings.TrimPrefix(attachments[i].URL, "file://")
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Fatalf("attachment %d bytes=%q err=%v, want %q", i, data, err, want)
+		}
+	}
+}
+
 func TestInboundRedactionOldSpoolBeforeBudgeting(t *testing.T) {
 	const secret = "0123456789abcdef0123456789abcdef"
 	// The protected 200-rune head used to expose 31 of these 32 hex

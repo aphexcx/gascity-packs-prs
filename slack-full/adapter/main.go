@@ -212,7 +212,7 @@
 //   - INBOUND_FILE_STORE           Default "/tmp/gc-slack-adapter/inbound".
 //     Directory for downloaded inbound Slack
 //     file attachments. Files are organized as
-//     <store>/<channel>/<ts>-<safe-filename>
+//     <store>/<channel>/<ts>-<file-index>-<safe-filename>
 //     and exposed to gc as file:// URLs.
 //
 //   - INBOUND_FILE_TTL             Default "168h" (7 days). Maximum age
@@ -481,7 +481,7 @@ type config struct {
 	// inboundFileStore is the local directory where inbound Slack file
 	// attachments are written so bound sessions can read them directly
 	// (no bot-token leak). Files are organized as
-	// <store>/<channel>/<ts>-<safe-filename>.
+	// <store>/<channel>/<ts>-<file-index>-<safe-filename>.
 	inboundFileStore string
 	// inboundDeadLetterDir receives coalesced inbounds gc rejected as
 	// payload (400/413/415/422) maxCoalesceDeliveryAttempts times — one
@@ -5251,7 +5251,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 
 // downloadSlackFiles fetches each file's bytes from Slack (Bearer-auth
 // against url_private), writes them to
-// $INBOUND_FILE_STORE/<channel>/<ts>-<safe-filename>, and returns
+// $INBOUND_FILE_STORE/<channel>/<ts>-<file-index>-<safe-filename>, and returns
 // externalAttachment records pointing at the local file:// path. Any file
 // that fails to download is dropped from the returned slice and a
 // warning is logged — the inbound is still posted with whatever files
@@ -5286,12 +5286,10 @@ func downloadSlackFiles(cfg config, channel, ts string, files []slackFile) []ext
 		if name == "" {
 			name = f.ID
 		}
-		filename := safeFilename(name)
-		if strings.Contains(name, "[REDACTED:") {
-			// Redaction deliberately loses most of the name. Distinct keys
-			// with the same suffix must not overwrite one another's files.
-			filename = fmt.Sprintf("%s-%d-%s", safePathComponent(f.ID), i, filename)
-		}
+		// Sanitization and redaction can collapse distinct names. Prefix every
+		// file with its message-local index so even a literal name resembling
+		// another file's generated name cannot overwrite it.
+		filename := fmt.Sprintf("%d-%s", i, safeFilename(name))
 		dest := filepath.Join(channelDir, tsPrefix+"-"+filename)
 		if err := slackDownloadToFile(cfg.slackBotToken, f.URLPrivate, dest); err != nil {
 			log.Printf("inbound file %s download failed: %v", f.ID, err)

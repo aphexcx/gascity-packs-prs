@@ -139,7 +139,7 @@ Implemented:
       protocol
 - [x] `gc slack upload` — bidirectional file attachments
       (`/publish-file` outbound + auto-download of inbound files into
-      `$INBOUND_FILE_STORE/<channel>/<ts>-<filename>`, scrubbed by an
+      `$INBOUND_FILE_STORE/<channel>/<ts>-<file-index>-<filename>`, scrubbed by an
       in-process retention janitor)
 - [x] `template-fragments/slack-v0.template.md` — composable prompt
       fragment for any agent in a slack-bound session

@@ -19,9 +19,10 @@ trusted candidates now use `renderedLocalAttachmentPath`. Matching only the
 neutralized candidate would leave a U+200B in the printed path but not on
 disk, so `safeFilename` also replaces `<` with `_` before the download creates
 the file. This keeps newly downloaded filenames stable under reminder
-neutralization and preserves the existing filename length bound. Existing
-files are not renamed. Raw URL and raw absolute-path candidates remain for
-other renderers; the neutralized candidate additionally matches old notices.
+neutralization and preserves the existing filename length bound. Every new
+download also receives its message-local file index before the sanitized filename, preventing distinct names from colliding after sanitization
+or redaction. Existing files are not renamed. Raw URL and raw absolute-path
+candidates remain for other renderers; the neutralized candidate additionally matches old notices.
 
 `TestInboundRedactionMarkupFilenamePathsRemainUsable` downloads a file with
 `<` in its name, sends channel, partial-download fallback, and withheld copies
@@ -52,8 +53,18 @@ re-run; both rounds' green evidence includes commands, filters, and test names.
   downloads or a conversion that clears downloaded attachments. Their source
   is unchanged. The company mention-only path also does not download files.
 
-No other actionable issue found in the round-5 delta. This addresses the
-filename note locally; no follow-up bead is needed.
+The first STANDARD gate BLOCKED source `7e7d8a2b`: replacing `<` with `_`
+allowed `a<b.txt` and `a_b.txt` in one message to overwrite each other. The
+follow-up change prefixes **every** downloaded filename with its message-local
+index, replacing the previous redacted-name-only prefix. The index is before
+the user-derived name, so distinct indices cannot collide even when a literal
+filename resembles a generated one. Existing files and replayed stored URLs
+remain untouched. `TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles`
+fails before this fix and passes after it, checking distinct URLs and each
+file's own contents. The existing download permission, confinement, redacted-name,
+and channel-delivery tests cover the resulting destinations. This remains a
+small change to the download naming and its single fixed-path assertion;
+no follow-up bead is needed. Final self-review found no further issue.
 
 ## Snapshot and rollout
 
@@ -69,7 +80,7 @@ Adapter rollout awaits the mayor after merge; PR 58 remains draft.
 ## Validation
 
 - Adapter: `go test -race -json ./... -count=1` in `slack-full/adapter`:
-  12,656 test/subtest passes, both packages pass, no failures/skips/race reports.
+  12,657 test/subtest passes, both packages pass, no failures/skips/race reports.
 - CLI: the same command in `slack-full/cli`: 237 test/subtest passes across
   eight packages, no failures/skips/race reports.
 - Python: `uv run --with pytest python -m pytest slack-full/tests -q`:
@@ -83,3 +94,7 @@ red/green transcripts include the exact filters and test names.
 Toolchains: Go 1.26.5 darwin/arm64; Python 3.13.13 through uv;
 `/Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version` reports
 v24.21.0. No Node tests apply; no unsupported-engine warning occurred.
+
+The initial adapter run before the gate finding is retained separately as
+`round5-adapter-initial-tests.json` (12,656 passes). The final adapter run adds
+the collision regression. CLI/Python source is unchanged after their full runs.
