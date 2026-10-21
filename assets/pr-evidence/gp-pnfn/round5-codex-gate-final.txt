@@ -1,0 +1,39 @@
+# codex-gate review: base f4fb6efbea84379cf7157a64ac77bb1a8f31dade (merge base of --base f4fb6efbea84379cf7157a64ac77bb1a8f31dade = f4fb6efbea84379cf7157a64ac77bb1a8f31dade and the head) head 3cea39d225663d0d6df3444d5e54b87be4075b17; 26 file(s); class STANDARD; model gpt-6-astra; 2026-10-21T18:28:24Z
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 16 untracked entr(ies) there ignored)
+#  assets/pr-evidence/gp-pnfn/city-helper-wrapper.py             |   2 +-
+#  assets/pr-evidence/gp-pnfn/city-integration.md                |   9 +++-
+#  assets/pr-evidence/gp-pnfn/round4-regression-green.txt        |  17 +++++-
+#  assets/pr-evidence/gp-pnfn/round5-adapter-initial-tests.json  |  19 +++++++
+#  assets/pr-evidence/gp-pnfn/round5-adapter-tests.json          |  19 +++++++
+#  assets/pr-evidence/gp-pnfn/round5-cli-tests.json              |  43 ++++++++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-codex-gate.txt              |  29 +++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-codex-gate.txt.rc           |   1 +
+#  assets/pr-evidence/gp-pnfn/round5-codex-gate.txt.reason       |   1 +
+#  assets/pr-evidence/gp-pnfn/round5-collision-green.txt         |  48 +++++++++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-collision-red.txt           |  12 +++++
+#  assets/pr-evidence/gp-pnfn/round5-python-tests.txt            |  23 +++++++++
+#  assets/pr-evidence/gp-pnfn/round5-regression-green-python.txt |  62 ++++++++++++++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-regression-green.txt        | 139 ++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-regression-red-go.txt       |  16 ++++++
+#  assets/pr-evidence/gp-pnfn/round5-regression-red-python.txt   |  31 +++++++++++
+#  assets/pr-evidence/gp-pnfn/round5-snapshot.txt                |   1 +
+#  assets/pr-evidence/gp-pnfn/round5-validation.md               | 100 ++++++++++++++++++++++++++++++++++++
+#  slack-full/README.md                                          |   2 +-
+#  slack-full/adapter/file_share_gate_test.go                    |   2 +-
+#  slack-full/adapter/inbound_dead_letter.go                     |   2 +-
+#  slack-full/adapter/inbound_redact.go                          |   7 ++-
+#  slack-full/adapter/inbound_redact_test.go                     |  82 +++++++++++++++++++++++++++++
+#  slack-full/adapter/main.go                                    |  25 +++++----
+#  slack-full/adapter/redact/patterns.json                       |   2 +-
+#  slack-full/tests/fixtures/redaction/cases.json                |   5 ++
+#  26 files changed, 677 insertions(+), 22 deletions(-)
+
+**Major — CLI downloads can overwrite another attachment** at [slack-full/adapter/main.go:5292](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.xX4ytD/tree/slack-full/adapter/main.go:5292).
+
+The adapter now prefixes filenames with their index, but `slack_chat_read.py:381` still writes `<ts>-<filename>` into the same `INBOUND_FILE_STORE`. For a message containing `report.txt` followed by `0-report.txt`, the adapter saves the first attachment as `<ts>-0-report.txt`. Running `gc slack read --download` subsequently overwrites that path with the second attachment’s bytes. Previously delivered attachment URLs then silently reference the wrong content. This pair did not collide at the base commit.
+
+Coordinate the naming across both writers or separate their directories, and add a regression exercising both downloads against one store.
+
+Tests: **not run (sandbox)**. Committed final worker evidence reports passing adapter and CLI race suites, and Python **815 passed, 2 skipped**.
+
+VERDICT: BLOCK

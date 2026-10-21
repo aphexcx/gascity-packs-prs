@@ -56,15 +56,35 @@ re-run; both rounds' green evidence includes commands, filters, and test names.
 The first STANDARD gate BLOCKED source `7e7d8a2b`: replacing `<` with `_`
 allowed `a<b.txt` and `a_b.txt` in one message to overwrite each other. The
 follow-up change prefixes **every** downloaded filename with its message-local
-index, replacing the previous redacted-name-only prefix. The index is before
+index, extending disambiguation beyond redacted names. Redacted names also
+retain the Slack file ID so their identity survives updates. The index is before
 the user-derived name, so distinct indices cannot collide even when a literal
 filename resembles a generated one. Existing files and replayed stored URLs
 remain untouched. `TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles`
 fails before this fix and passes after it, checking distinct URLs and each
 file's own contents. The existing download permission, confinement, redacted-name,
 and channel-delivery tests cover the resulting destinations. This remains a
-small change to the download naming and its single fixed-path assertion;
-no follow-up bead is needed. Final self-review found no further issue.
+small change to download naming. The second STANDARD gate BLOCKED source
+`3cea39d2`: the CLI reader still used `<channel>/<ts>-<filename>`, so its
+`0-report.txt` could overwrite the adapter's indexed `report.txt`.
+
+Adapter downloads now use `<store>/<channel>.adapter/<ts>-<index>-<filename>`;
+the CLI and legacy downloads keep `<store>/<channel>/`. This separates the
+writers without changing CLI behavior or adding a directory depth. The
+existing janitor and permission tightening inspect all directories at that
+depth, so both namespaces remain managed. Only the two fixed-path assertions
+and documentation needed adjustment. Existing stored paths are not migrated.
+
+`TestInboundRedactionDownloadsShareStoreWithCLI` runs the actual Go downloader
+and actual Python `spool_files` against one HTTP stub and one store, including
+`report.txt` and `0-report.txt`. Only CDN-host checks are
+replaced for localhost. It requires two successful CLI downloads, checks both
+adapter paths still contain their original bytes, then runs the janitor
+and verifies all four files and both directories are removed. It fails before
+the directory separation and passes after it. The test requires Python 3;
+this run executed it (zero skips), while Go-only hosts can skip this integration.
+The runtime fix remains local to the downloader; no follow-up bead is needed.
+Final self-review found no further issue.
 
 ## Snapshot and rollout
 
@@ -80,7 +100,7 @@ Adapter rollout awaits the mayor after merge; PR 58 remains draft.
 ## Validation
 
 - Adapter: `go test -race -json ./... -count=1` in `slack-full/adapter`:
-  12,657 test/subtest passes, both packages pass, no failures/skips/race reports.
+  12,658 test/subtest passes, both packages pass, no failures/skips/race reports.
 - CLI: the same command in `slack-full/cli`: 237 test/subtest passes across
   eight packages, no failures/skips/race reports.
 - Python: `uv run --with pytest python -m pytest slack-full/tests -q`:
@@ -91,10 +111,13 @@ Raw Go JSONL remains in `.tasks/gp-pnfn-round5/`; committed summaries include
 commands, working directories, exit codes and package/test counts. The focused
 red/green transcripts include the exact filters and test names.
 
-Toolchains: Go 1.26.5 darwin/arm64; Python 3.13.13 through uv;
+Toolchains: Go 1.26.5 darwin/arm64; Python suite 3.13.13 through uv;
+the Go/Python shared-store regression invokes system Python 3.14.6;
 `/Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --version` reports
 v24.21.0. No Node tests apply; no unsupported-engine warning occurred.
 
 The initial adapter run before the gate finding is retained separately as
 `round5-adapter-initial-tests.json` (12,656 passes). The final adapter run adds
-the collision regression. CLI/Python source is unchanged after their full runs.
+the collision and shared-store regressions. The intermediate 12,657-pass run
+is retained as `round5-adapter-second-tests.json`. CLI/Python source is
+unchanged after their full runs.

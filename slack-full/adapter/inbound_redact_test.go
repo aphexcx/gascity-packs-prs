@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -468,6 +469,57 @@ func TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles(t *testing.T) {
 		if data, err := os.ReadFile(path); err != nil || string(data) != want {
 			t.Fatalf("attachment %d bytes=%q err=%v, want %q", i, data, err, want)
 		}
+	}
+}
+
+func TestInboundRedactionDownloadsShareStoreWithCLI(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is required for the Go/Python shared-store regression")
+	}
+	testAllowAnyURL(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.URL.Path))
+	}))
+	t.Cleanup(server.Close)
+	files := []slackFile{
+		{ID: "F1", Name: "report.txt", URLPrivate: server.URL + "/first"},
+		{ID: "F2", Name: "0-report.txt", URLPrivate: server.URL + "/second"},
+	}
+	store := t.TempDir()
+	attachments := downloadSlackFiles(config{inboundFileStore: store}, "C1", "1.0", files)
+	if len(attachments) != len(files) {
+		t.Fatalf("got %d attachments, want %d", len(attachments), len(files))
+	}
+	messages, err := json.Marshal([]slackMessageEvent{{TS: "1.0", Files: files}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the actual CLI spooler against the same store and HTTP server.
+	// Only the CDN-host check is replaced, as in testAllowAnyURL above.
+	cmd := exec.Command(python, "-c", `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import slack_chat_read as read
+read._is_slack_file_url = lambda url: True
+paths = read.spool_files(json.load(sys.stdin), "C1", sys.argv[2], "fixture")
+assert len(paths) == 2, "CLI must successfully download every fixture"
+`, "../scripts", store)
+	cmd.Env = append(os.Environ(), "GC_SLACK_ADAPTER_ENV="+filepath.Join(store, "missing.env"), "PYTHONDONTWRITEBYTECODE=1")
+	cmd.Stdin = strings.NewReader(string(messages))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("CLI spooler failed: %v: %s", err, output)
+	}
+	for i, want := range []string{"/first", "/second"} {
+		path := strings.TrimPrefix(attachments[i].URL, "file://")
+		if data, err := os.ReadFile(path); err != nil || string(data) != want {
+			t.Fatalf("CLI changed adapter attachment %d: data=%q err=%v, want %q", i, data, err, want)
+		}
+	}
+	// Both namespaces retain the janitor's existing two-level store layout.
+	result := sweepInboundStore(store, time.Hour, time.Now().Add(2*time.Hour))
+	if result.FilesRemoved != 4 || result.DirsRemoved != 2 || len(result.Errors) != 0 {
+		t.Fatalf("shared-store cleanup = %+v, want four files and two directories", result)
 	}
 }
 

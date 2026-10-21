@@ -212,7 +212,7 @@
 //   - INBOUND_FILE_STORE           Default "/tmp/gc-slack-adapter/inbound".
 //     Directory for downloaded inbound Slack
 //     file attachments. Files are organized as
-//     <store>/<channel>/<ts>-<file-index>-<safe-filename>
+//     <store>/<channel>.adapter/<ts>-<file-index>-<safe-filename>
 //     and exposed to gc as file:// URLs.
 //
 //   - INBOUND_FILE_TTL             Default "168h" (7 days). Maximum age
@@ -481,7 +481,7 @@ type config struct {
 	// inboundFileStore is the local directory where inbound Slack file
 	// attachments are written so bound sessions can read them directly
 	// (no bot-token leak). Files are organized as
-	// <store>/<channel>/<ts>-<file-index>-<safe-filename>.
+	// <store>/<channel>.adapter/<ts>-<file-index>-<safe-filename>.
 	inboundFileStore string
 	// inboundDeadLetterDir receives coalesced inbounds gc rejected as
 	// payload (400/413/415/422) maxCoalesceDeliveryAttempts times — one
@@ -5251,7 +5251,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 
 // downloadSlackFiles fetches each file's bytes from Slack (Bearer-auth
 // against url_private), writes them to
-// $INBOUND_FILE_STORE/<channel>/<ts>-<file-index>-<safe-filename>, and returns
+// $INBOUND_FILE_STORE/<channel>.adapter/<ts>-<file-index>-<safe-filename>, and returns
 // externalAttachment records pointing at the local file:// path. Any file
 // that fails to download is dropped from the returned slice and a
 // warning is logged — the inbound is still posted with whatever files
@@ -5266,7 +5266,10 @@ func downloadSlackFiles(cfg config, channel, ts string, files []slackFile) []ext
 	// like "../etc" would still escape inboundFileStore. safePathComponent is
 	// stricter than safeFilename — Slack channel IDs and ts strings are
 	// ID-like, so a strict allowlist is appropriate. gc-ywe.7.
-	channelDir := filepath.Join(cfg.inboundFileStore, safePathComponent(channel))
+	// Keep adapter paths separate from the CLI reader's <channel>/ directory
+	// and legacy downloads, whose filenames have no message-local index.
+	// The same two-level layout remains compatible with the store janitor.
+	channelDir := filepath.Join(cfg.inboundFileStore, safePathComponent(channel)+".adapter")
 	// 0o700: store may contain DM file content; not world-readable. gc-ywe.6.
 	if err := os.MkdirAll(channelDir, 0o700); err != nil {
 		log.Printf("inbound file download: mkdir %s: %v", channelDir, err)
@@ -5289,7 +5292,12 @@ func downloadSlackFiles(cfg config, channel, ts string, files []slackFile) []ext
 		// Sanitization and redaction can collapse distinct names. Prefix every
 		// file with its message-local index so even a literal name resembling
 		// another file's generated name cannot overwrite it.
-		filename := fmt.Sprintf("%d-%s", i, safeFilename(name))
+		filename := safeFilename(name)
+		if strings.Contains(name, "[REDACTED:") {
+			// Keep file identity when redaction collapses names across updates.
+			filename = safePathComponent(f.ID) + "-" + filename
+		}
+		filename = fmt.Sprintf("%d-%s", i, filename)
 		dest := filepath.Join(channelDir, tsPrefix+"-"+filename)
 		if err := slackDownloadToFile(cfg.slackBotToken, f.URLPrivate, dest); err != nil {
 			log.Printf("inbound file %s download failed: %v", f.ID, err)
