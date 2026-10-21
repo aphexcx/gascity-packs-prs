@@ -24,11 +24,14 @@ func redactEventContent(raw json.RawMessage) (json.RawMessage, error) {
 	if err := dec.Decode(&value); err != nil {
 		return nil, err
 	}
+	changed := false
 	var walk func(any, string) any
 	walk = func(v any, context string) any {
 		switch v := v.(type) {
 		case string:
-			return redactInboundText(v)
+			clean := redactInboundText(v)
+			changed = changed || clean != v
+			return clean
 		case map[string]any:
 			for key, child := range v {
 				// These fields are consumed as protocol data, not as prose.
@@ -47,6 +50,9 @@ func redactEventContent(raw json.RawMessage) (json.RawMessage, error) {
 		return v
 	}
 	value = walk(value, "")
+	if !changed {
+		return raw, nil
+	} // preserve frozen bytes/digests for ordinary content
 	return json.Marshal(value)
 }
 
@@ -92,4 +98,21 @@ func redactSpooledInbound(e spooledInbound) spooledInbound {
 	e.Stripped = redactInboundText(e.Stripped)
 	e.Verdict = redactInboundText(e.Verdict)
 	return e
+}
+
+// Old frozen hydration is scrubbed at rendering as well as before a receipt
+// update. The JSON round trip copies its nested pointers/slices and applies
+// the same content-field policy without changing routing/turn identifiers.
+func redactCompanyHydration(h companyHydration) companyHydration {
+	raw, err := json.Marshal(h)
+	if err != nil {
+		return companyHydration{}
+	}
+	raw, err = redactEventContent(raw)
+	if err != nil {
+		return companyHydration{}
+	}
+	var clean companyHydration
+	_ = json.Unmarshal(raw, &clean)
+	return clean
 }

@@ -71,7 +71,11 @@ limit). It preserves the mayor helper's ALLOW/WITHHOLD/TOKENS behavior. Install
 that script as the implementation behind `.gc/184th-slack-tail.py`, with the
 pack's scripts on `sys.path`; keep `slack_redact.py` and
 `adapter/redact/patterns.json` together in the installed pack. Missing rules
-fail closed at import/startup. Existing journal records are not rewritten.
+fail closed at import/startup. Pending company receipts also scrub old text and
+frozen context before delivery; receipt updates sanitize that context. Historical
+receipt body sidecars and existing journal records are not rewritten. Redacted
+attachment names include a file identity/index so matching suffixes cannot
+overwrite another attachment.
 
 ## Status
 

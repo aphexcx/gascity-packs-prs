@@ -1986,6 +1986,9 @@ func (g *companyGateway) sessionAsleepNow(city, session string) bool {
 // decoded event supplies the routing fields (subtype, author, text,
 // blocks, thread, app/metadata for the bot legs).
 func decodeCompanyMessage(origin ReceiptOrigin, event json.RawMessage) CompanyMessage {
+	// Pending receipts from older builds bypass the live admission hook.
+	// Scrub the in-memory view; keep immutable historical body sidecars intact.
+	event, _ = redactEventContent(event)
 	var ev slackMessageEvent
 	_ = json.Unmarshal(event, &ev)
 	return CompanyMessage{
@@ -2128,6 +2131,19 @@ func (g *companyGateway) commitReceipt(r *IngressReceipt, apply func(cur *Ingres
 	}
 	for retry := 0; ; retry++ {
 		apply(r)
+		// Frozen context can predate ingest redaction. Never write its raw
+		// text again while advancing an old receipt's delivery state.
+		var scrubErr error
+		r.Hydration, scrubErr = redactEventContent(r.Hydration)
+		if scrubErr != nil {
+			return fmt.Errorf("company: invalid frozen hydration: %w", scrubErr)
+		}
+		if r.BodyRef == "" {
+			r.Event, scrubErr = redactEventContent(r.Event)
+			if scrubErr != nil {
+				return fmt.Errorf("company: invalid legacy event: %w", scrubErr)
+			}
+		}
 		if g.beforeReceiptUpdate != nil {
 			g.beforeReceiptUpdate()
 		}

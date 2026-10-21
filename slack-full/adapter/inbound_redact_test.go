@@ -227,3 +227,79 @@ func TestInboundRedactionPreservesProtocolFields(t *testing.T) {
 		}
 	}
 }
+
+func TestInboundRedactionDistinctFilesWithSameSuffix(t *testing.T) {
+	testAllowAnyURL(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, r.URL.Path)
+	}))
+	defer srv.Close()
+	files := []slackFile{
+		{ID: "F1", Name: "sk-one-AAAAAAAA7z9Q.txt", URLPrivate: srv.URL + "/one"},
+		{ID: "F2", Name: "sk-two-BBBBBBBB7z9Q.txt", URLPrivate: srv.URL + "/two"},
+	}
+	raw, _ := json.Marshal(slackMessageEvent{Files: files})
+	clean, err := redactEventContent(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg slackMessageEvent
+	if err := json.Unmarshal(clean, &msg); err != nil {
+		t.Fatal(err)
+	}
+	if msg.Files[0].Name != msg.Files[1].Name {
+		t.Fatal("fixture must collide after redaction")
+	}
+	atts := downloadSlackFiles(config{inboundFileStore: t.TempDir(), slackBotToken: "fixture"}, "D1", "1.0", msg.Files)
+	if len(atts) != 2 || atts[0].URL == atts[1].URL {
+		t.Fatal("distinct files share a destination")
+	}
+	for i, want := range []string{"/one", "/two"} {
+		data, err := os.ReadFile(strings.TrimPrefix(atts[i].URL, "file://"))
+		if err != nil || string(data) != want {
+			t.Fatalf("attachment %d overwritten: %q, %v", i, data, err)
+		}
+	}
+}
+
+func TestInboundRedactionReplaysOldCompanyReceipt(t *testing.T) {
+	_, secret := redactionDM(t)
+	gc := newFakeGC(t)
+	df, bf := baseDirectoryFile(), baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	origin := baseOrigin()
+	raw, _ := json.Marshal(humanMessage(origin.TS, secret))
+	hydration := companyHydration{
+		Root:    &companyHydrationRoot{TS: origin.TS, User: "U1", Text: secret},
+		Excerpt: []companyExcerptLine{{TS: origin.TS, User: "U1", Text: secret}},
+		Files:   []companyHydrationFile{{Name: secret, Content: secret, Status: companyFileStatusIncluded}},
+	}
+	frozen, _ := json.Marshal(hydration)
+	// Seed the pre-upgrade on-disk form, bypassing the new ingress hook.
+	_, _, err := h.receipts.Admit(&IngressReceipt{Origin: origin, Event: raw, Hydration: frozen, Status: ingressStatusReceived})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.reopen(t, gc.server.URL, 4)
+	if err := h.gw.recoverPending(); err != nil {
+		t.Fatal(err)
+	}
+	h.wait()
+	calls := gc.sessionCalls()
+	if len(calls) != 1 {
+		t.Fatalf("replay deliveries: %d", len(calls))
+	}
+	assertInboundRedacted(t, calls[0].body, secret)
+	receipt, err := h.receipts.Get(origin)
+	if err != nil || receipt == nil {
+		t.Fatalf("receipt: %v", err)
+	}
+	assertInboundRedacted(t, string(receipt.Hydration), secret)
+	// The DM and group-DM renderers also consume frozen pre-upgrade bundles.
+	for name, body := range map[string]string{
+		"dm":   renderCompanyDMReminder("agent", secret, origin.TS, origin.TS, hydration, nil),
+		"mpim": renderCompanyMpimReminder("agent", secret, origin.TS, origin.TS, hydration, nil),
+	} {
+		t.Run(name, func(t *testing.T) { assertInboundRedacted(t, body, secret) })
+	}
+}

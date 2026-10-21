@@ -383,6 +383,8 @@ func slackHydrationGet(token string, client *http.Client, pathAndQuery string) (
 // synthesis bytes are rendered as the S10-normalized synthesis block (a
 // malformed blob renders the unavailable shape rather than failing delivery).
 func renderCompanyReminder(room *CompanyRoom, authorClass, kind, text, originTS, threadRootTS string, h companyHydration, synthesis json.RawMessage, turn *companyCurrentTurn) string {
+	text = redactInboundText(text)
+	h = redactCompanyHydration(h)
 	roomName := ""
 	if room != nil {
 		roomName = room.Name

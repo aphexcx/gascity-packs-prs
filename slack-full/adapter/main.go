@@ -5271,7 +5271,7 @@ func downloadSlackFiles(cfg config, channel, ts string, files []slackFile) []ext
 	}
 	tsPrefix := safePathComponent(ts)
 	out := make([]externalAttachment, 0, len(files))
-	for _, f := range files {
+	for i, f := range files {
 		if f.URLPrivate == "" {
 			log.Printf("inbound file %s: url_private empty, dropped", f.ID)
 			continue
@@ -5283,7 +5283,13 @@ func downloadSlackFiles(cfg config, channel, ts string, files []slackFile) []ext
 		if name == "" {
 			name = f.ID
 		}
-		dest := filepath.Join(channelDir, tsPrefix+"-"+safeFilename(name))
+		filename := safeFilename(name)
+		if strings.Contains(name, "[REDACTED:") {
+			// Redaction deliberately loses most of the name. Distinct keys
+			// with the same suffix must not overwrite one another's files.
+			filename = fmt.Sprintf("%s-%d-%s", safePathComponent(f.ID), i, filename)
+		}
+		dest := filepath.Join(channelDir, tsPrefix+"-"+filename)
 		if err := slackDownloadToFile(cfg.slackBotToken, f.URLPrivate, dest); err != nil {
 			log.Printf("inbound file %s download failed: %v", f.ID, err)
 			continue
