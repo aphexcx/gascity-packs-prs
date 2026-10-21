@@ -1,0 +1,21 @@
+# codex-gate exec: prompt /tmp/gp-pnfn-review-prompt-r5.txt (2533 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-21T15:50:50Z
+
+Two **major** findings remain in `fffc1dfe`:
+
+1. **Overlapping JWT matches leave payloads exposed.** [redact.go:61](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/redact/redact.go:61) and [slack_redact.py:18](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/scripts/slack_redact.py:18) enumerate non-overlapping matches within each rule. Prepending `settings.jwt.` to the existing JWT fixture makes the first match consume the actual JWT’s header, leaving its payload `eyJzdWIiOiJmaXh0dXJlIn0` visible. A read-only synthetic probe reproduced this in committed Python code; Go uses the same matching strategy. Collect overlapping JWT candidates before merging spans, and add a shared regression.
+
+2. **Mention expansion introduces unsanitized content after ingress redaction.** [company_mention_only.go:643](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/company_mention_only.go:643) resolves mentions after the scrub. A `<@U123>` whose `users.info` display name contains a synthetic credential becomes raw credential text, which [mention_only.go:805](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/mention_only.go:805) forwards to gc without redaction. The sender’s resolved name has the same gap. Scrub resolved names before composition/clipping and add live/replay regressions with name resolution enabled.
+
+The reported round-3/4 fixes and regressions are present. DM coverage, README changes, and pinned city helper/memory integration evidence are also present.
+
+Required suites were **not run (sandbox)**. Committed [worker evidence](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-pnfn/validation.md:5) records:
+
+| Full suite | Recorded result |
+|---|---|
+| Adapter, race enabled | 12,621 test/subtest passes; 2 packages; 0 failures/skips; no race reports |
+| CLI, race enabled | 237 test/subtest passes; 8 packages; 0 failures |
+| Python | 788 passed; 2 skipped; 2 deprecation warnings |
+
+The worker lane remains unchanged. No real Slack records or credentials were read.
+
+VERDICT: BLOCK

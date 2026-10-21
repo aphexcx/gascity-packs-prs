@@ -3039,6 +3039,7 @@ func TestRefusalPayloadIsSpooledBeforeTheSink(t *testing.T) {
 func TestDeletionOfASpooledParkedPayloadIsPersisted(t *testing.T) {
 	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
 	c := newInboundCoalescer(time.Hour, nil) // the write retry is an hour out: the park outlives the deletion
+	t.Cleanup(c.flushAll)
 	c.spill = spool.spillBatch
 	c.recordVerdict = spool.recordVerdict
 	c.recordDeletion = spool.recordDeletion
@@ -3051,6 +3052,7 @@ func TestDeletionOfASpooledParkedPayloadIsPersisted(t *testing.T) {
 	var mu sync.Mutex
 	var written []string
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	t.Cleanup(c2.flushAll)
 	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
@@ -3226,6 +3228,7 @@ func TestStrippedDispositionIsDurableWhenDecided(t *testing.T) {
 func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
 	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
 	c := newInboundCoalescer(time.Hour, nil)
+	t.Cleanup(c.flushAll)
 	c.spill = spool.spillBatch
 	c.recordVerdict = spool.recordVerdict
 	c.recordDeletion = spool.recordDeletion
@@ -3247,6 +3250,7 @@ func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
 	var mu sync.Mutex
 	var written []string
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	t.Cleanup(c2.flushAll)
 	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {

@@ -21,7 +21,7 @@
   },
   {
     "kind": "aws",
-    "pattern": "AKIA[A-Z0-9]{16}"
+    "pattern": "AKIA[A-Z0-9]{16,}"
   },
   {
     "kind": "google",

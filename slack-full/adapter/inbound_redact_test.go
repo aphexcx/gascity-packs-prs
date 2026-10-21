@@ -468,3 +468,71 @@ func TestInboundRedactionOldRigModalMetadata(t *testing.T) {
 	}
 	assertInboundRedacted(t, meta.OriginalCommandText, secret)
 }
+
+func TestInboundRedactionResolvedNamesInMentionOnlyDelivery(t *testing.T) {
+	_, secret := redactionDM(t)
+	for _, replay := range []bool{false, true} {
+		name := "live"
+		if replay {
+			name = "replay"
+		}
+		t.Run(name, func(t *testing.T) {
+			slack := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "/users.info") {
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "user": map[string]any{"profile": map[string]string{"display_name": secret}}})
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/conversations.info") {
+					_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channel": map[string]string{"name": secret}})
+					return
+				}
+				_, _ = io.WriteString(w, `{"ok":true,"messages":[]}`)
+			}))
+			defer slack.Close()
+			withSlackAPIStub(t, slack)
+			gc := newFakeGC(t)
+			df, bf := baseDirectoryFile(), baseBindingsFile()
+			h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+			h.openBarrier()
+			withMentionOnlyLane(t, h, outsiderBinding())
+			h.gw.cfg.userNames = newUserNameCache()
+			h.gw.cfg.channelNames = newChannelNameCache()
+			h.gw.cfg.slackBotToken = "fixture"
+			if replay {
+				h.gw.mentionOnlyLaneStart = func() bool { return false }
+			}
+			ev := humanMessage("1700000000.002600", "<@"+companyMOBotUserID+"> please ask <@U123>")
+			admitCompanyRoomMessage(t, h, ev)
+			h.wait()
+			if replay {
+				h.gw.mentionOnlyLaneStart = nil
+				h.gw.cfg.channelClaims = newEventDedupCache(time.Minute)
+				h.gw.cfg.mentionOnlyDeliveries = newMentionOnlyDeliveryLog()
+				h.gw.replayMentionOnlyPending()
+				h.wait()
+			}
+			if outsiderPostCount(gc) != 1 {
+				t.Fatal("mention-only name-resolution delivery missing")
+			}
+			for _, call := range gc.sessionCalls() {
+				if strings.Contains(call.path, "/session/outsider-session/") {
+					assertInboundRedacted(t, call.body, secret)
+					if strings.Count(call.body, "[REDACTED:openai:...7z9Q]") < 3 {
+						t.Fatal("sender, expanded mentions, and channel name were not all redacted")
+					}
+				}
+			}
+			cached, ok := h.gw.cfg.userNames.get("U123", time.Now())
+			if !ok {
+				t.Fatal("users.info resolution was not exercised")
+			}
+			assertInboundRedacted(t, cached, secret)
+			channel, ok := h.gw.cfg.channelNames.get(ev.Channel, time.Now())
+			if !ok {
+				t.Fatal("conversations.info resolution was not exercised")
+			}
+			assertInboundRedacted(t, channel, secret)
+		})
+	}
+}

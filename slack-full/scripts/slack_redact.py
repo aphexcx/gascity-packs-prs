@@ -11,12 +11,20 @@ _PATTERNS = [re.compile(rule["pattern"], re.ASCII) for rule in _RULES]
 
 def redact_text(text: str) -> str:
     """Remove secret-shaped tokens before any truncation, storage or printing."""
-    matches = sorted(
-        (m.start("token") if "token" in pattern.groupindex else m.start(),
-         -(m.end("token") if "token" in pattern.groupindex else m.end()), priority)
-        for priority, pattern in enumerate(_PATTERNS)
-        for m in pattern.finditer(text)
-    )
+    matches = []
+    for priority, pattern in enumerate(_PATTERNS):
+        token = "token" in pattern.groupindex
+        offset = 0
+        while m := pattern.search(text, offset):
+            start = m.start("token") if token else m.start()
+            stop = m.end("token") if token else m.end()
+            matches.append((start, -stop, priority))
+            # Resume at a JWT's first separator to include overlapping
+            # candidates such as settings.jwt.<actual JWT>.
+            offset = text.find(".", start, stop) if token else stop
+            if offset < 0:
+                offset = stop
+    matches.sort()
     out, end, i = [], 0, 0
     while i < len(matches):
         start, neg_end, priority = matches[i]

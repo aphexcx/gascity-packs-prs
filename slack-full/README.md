@@ -55,7 +55,7 @@ for the full rationale.
 ## Inbound secret redaction
 
 Inbound message text (including nested Block Kit content, fetched thread
-context, slash commands, action values, and modal inputs) is redacted before
+context, resolved display names, slash commands, action values, and modal inputs) is redacted before
 adapter receipts/spools/dead letters and before gc
 receives it for its events journal or mail. Matches become
 `[REDACTED:<kind>:...<last-four>]`; the original text is not retained in those

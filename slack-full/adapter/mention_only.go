@@ -751,6 +751,7 @@ func mentionOnlyReasonLine(reason, handle string) string {
 // forge a </system-reminder> boundary (cby.33 contract, same as the
 // alias dispatcher). Exposed for tests.
 func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, handle string) string {
+	msg = redactInboundMessage(msg)
 	attachmentsBlock := ""
 	if len(msg.Attachments) > 0 {
 		var ab strings.Builder

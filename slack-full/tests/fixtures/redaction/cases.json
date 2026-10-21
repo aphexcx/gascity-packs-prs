@@ -118,5 +118,20 @@
     "name": "latin-unicode-bearer",
     "text": "éBearer short.token-42",
     "want": "é[REDACTED:bearer:...n-42]"
+  },
+  {
+    "name": "jwt-overlapping-prefix",
+    "text": "settings.jwt.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "[REDACTED:jwt:...Ef56]"
+  },
+  {
+    "name": "jwt-overlapping-chain",
+    "text": "settings.settings.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "[REDACTED:jwt:...Ef56]"
+  },
+  {
+    "name": "aws-overlapping-prefix",
+    "text": "AKIAAAAAAKIAAAAAAAAAAAAA1234",
+    "want": "[REDACTED:aws:...1234]"
   }
 ]

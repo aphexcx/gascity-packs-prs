@@ -58,12 +58,25 @@ func Text(s string) string {
 	var matches []match
 	for priority, rule := range rules {
 		token := rule.pattern.SubexpIndex("token")
-		for _, loc := range rule.pattern.FindAllStringSubmatchIndex(s, -1) {
-			start := loc[0]
-			if token >= 0 {
-				start = loc[2*token]
+		for offset := 0; offset < len(s); {
+			loc := rule.pattern.FindStringSubmatchIndex(s[offset:])
+			if loc == nil {
+				break
 			}
-			matches = append(matches, match{start, loc[1], priority})
+			start, stop := offset+loc[0], offset+loc[1]
+			if token >= 0 {
+				start = offset + loc[2*token]
+			}
+			matches = append(matches, match{start, stop, priority})
+			offset = stop
+			if token >= 0 {
+				// JWTs can overlap: settings.jwt.<header> is itself
+				// a candidate that covers the real JWT's header. Resume
+				// at its first separator so no candidate is skipped.
+				if dot := strings.IndexByte(s[start:stop], '.'); dot >= 0 {
+					offset = start + dot
+				}
+			}
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
