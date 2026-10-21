@@ -49,6 +49,9 @@ is recorded as papercut `pc_4fe82b567b32` for the mayor. The red-phase permalink
 failure was an expectation mismatch with this unchanged rule; its fixture now
 records the existing behavior explicitly.
 
-The lane's required gpt-6-astra delta gate is recorded separately after the
-source commit. The mayor owns the subsequent delta gate and Fable delta read;
-the prior Fable read was CLEAN at the base above (three minors addressed here).
+The lane's required gpt-6-astra delta gate returned CLEAN (helper exit 0,
+anchored verdict) on source commit `6117dd298d5d57abbfd98c880d025f2b04ca34ad`,
+using the city helper's `review --base 03525ec56127dbe6e6301b9b5c71556b60d5c083`
+mode. See `round2-codex-gate.txt`. The following evidence commit changes no pack
+source. The mayor owns the subsequent delta gate and Fable delta read; the
+prior Fable read was CLEAN at the base above (three minors addressed here).
