@@ -772,7 +772,13 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 		}
 		if len(line) > 0 {
 			var e spooledInbound
-			switch perr := json.Unmarshal(line, &e); {
+			perr := json.Unmarshal(line, &e)
+			if perr == nil {
+				// Old spools may predate ingest redaction. Scrub before
+				// composition/clipping can turn a token into a non-match.
+				e = redactSpooledInbound(e)
+			}
+			switch {
 			case perr != nil || e.Channel == "":
 				if !recordsOnly {
 					log.Printf("inbound spool: CORRUPT LINE (%d bytes) DROPPED — LOSS: this can only be a crash mid-spill of that batch (parse err: %v)", len(line), perr)
@@ -793,7 +799,6 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 				})
 			case recordsOnly:
 			default:
-				e.Inbound.trustedFilePaths = append([]string(nil), e.TrustedFilePaths...)
 				if e.Inbound.Text == "" {
 					if p := (pendingChannelInbound{preamble: e.Preamble, body: e.Body, files: e.Files}); p.hasReminderParts() {
 						e.Inbound.Text = p.foldedText()

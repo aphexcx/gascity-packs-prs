@@ -54,8 +54,9 @@ for the full rationale.
 
 ## Inbound secret redaction
 
-Inbound message text (including nested Block Kit content and fetched thread
-context) is redacted before adapter receipts/spools/dead letters and before gc
+Inbound message text (including nested Block Kit content, fetched thread
+context, slash commands, action values, and modal inputs) is redacted before
+adapter receipts/spools/dead letters and before gc
 receives it for its events journal or mail. Matches become
 `[REDACTED:<kind>:...<last-four>]`; the original text is not retained in those
 records. The shared rules in `adapter/redact/patterns.json` cover provider keys
@@ -73,7 +74,8 @@ pack's scripts on `sys.path`; keep `slack_redact.py` and
 `adapter/redact/patterns.json` together in the installed pack. Missing rules
 fail closed at import/startup. Pending company receipts, including mention-only
 replay, also scrub old text and frozen context before delivery; receipt updates
-sanitize that context. Historical
+sanitize that context. Old shutdown spools are scrubbed before reminder clipping.
+Historical
 receipt body sidecars and existing journal records are not rewritten. Redacted
 attachment names include a file identity/index so matching suffixes cannot
 overwrite another attachment. Generated local file paths remain usable after

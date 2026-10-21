@@ -68,7 +68,7 @@ const rigFixModalSummaryMaxLen = 150
 // re-resolves them from the registry to defeat metadata staleness if
 // the rig was remapped between open and submit.
 //
-// OriginalCommandText is the slash command's `text` argument verbatim —
+// OriginalCommandText is the slash command's redacted `text` argument —
 // surfaced to the agent (via system-reminder or --var context) so the
 // model has the user's original phrasing alongside the modal-captured
 // summary.
@@ -94,6 +94,7 @@ const maxRigDispatchMetadataLen = 2500
 // suitable for view.private_metadata. Returns the encoded length so
 // callers can refuse to call views.open with an oversized payload.
 func encodeRigDispatchMetadata(meta slackRigDispatchMetadata) (string, error) {
+	meta.OriginalCommandText = redactInboundText(meta.OriginalCommandText)
 	if meta.Kind == "" {
 		meta.Kind = metadataKindRigFix
 	}
@@ -134,6 +135,8 @@ func decodeRigDispatchMetadata(raw string) (slackRigDispatchMetadata, bool) {
 	if meta.RigName == "" || meta.WorkspaceID == "" {
 		return slackRigDispatchMetadata{}, false
 	}
+	// A modal opened before the upgrade may still carry raw command text.
+	meta.OriginalCommandText = redactInboundText(meta.OriginalCommandText)
 	return meta, true
 }
 

@@ -2348,7 +2348,8 @@ func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
 		prefix := `{"channel":"C1","inbound":{"provider_message_id":"` + ts + `","text":"`
 		suffix := `"}}`
 		pad := maxInboundSpoolLineBytes - len(prefix) - len(suffix) + extra
-		return append(append(append([]byte(prefix), bytes.Repeat([]byte("p"), pad)...), suffix...), '\n')
+		padding := bytes.Repeat([]byte("p."), (pad+1)/2)[:pad]
+		return append(append(append([]byte(prefix), padding...), suffix...), '\n')
 	}
 	edge := dir + "/edge.jsonl"
 	if err := os.WriteFile(edge, append(line("4.0", 0), line("5.0", 1)...), 0o600); err != nil {

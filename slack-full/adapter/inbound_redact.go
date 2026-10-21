@@ -62,6 +62,28 @@ func redactInboundMessage(msg externalInboundMessage) externalInboundMessage {
 	return msg
 }
 
+// Interaction routing metadata and transport capabilities stay intact. Only
+// decoded user content is scrubbed, before session rendering or rig intake.
+func redactInteractionContent(p *slackInteractionPayload) {
+	for i := range p.Actions {
+		a := &p.Actions[i]
+		a.Value = redactInboundText(a.Value)
+		if a.SelectedOption != nil {
+			a.SelectedOption.Value = redactInboundText(a.SelectedOption.Value)
+		}
+		a.SelectedDate = redactInboundText(a.SelectedDate)
+	}
+	for _, actions := range p.View.State.Values {
+		for id, raw := range actions {
+			clean, err := redactEventContent(raw)
+			if err != nil {
+				clean = json.RawMessage(`null`)
+			}
+			actions[id] = clean
+		}
+	}
+}
+
 // Keep only the adapter's structured local attachment paths usable in its
 // generated prose. Absolute paths can themselves look like base64. Incoming
 // Slack text/file names were already redacted before these paths were built.

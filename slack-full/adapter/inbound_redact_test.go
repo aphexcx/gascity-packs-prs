@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -376,4 +377,94 @@ func TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool(t *testing.T) {
 	if clean := redactInboundMessage(externalInboundMessage{Text: path}); clean.Text == path {
 		t.Fatal("untrusted text gained the generated-path exemption")
 	}
+}
+
+func TestInboundRedactionOldSpoolBeforeBudgeting(t *testing.T) {
+	const secret = "0123456789abcdef0123456789abcdef"
+	// The protected 200-rune head used to expose 31 of these 32 hex
+	// characters, leaving a fragment that the delivery scrub cannot match.
+	text := strings.Repeat(".", 169) + secret + strings.Repeat(". ", 1000)
+	entry := spooledInbound{Channel: "C1", Inbound: externalInboundMessage{ProviderMessageID: "1.0", Text: text}}
+	raw, _ := json.Marshal(entry)
+	path := filepath.Join(t.TempDir(), "spool.jsonl")
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, done, err := newInboundSpool(path).consume()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer done()
+	if len(entries) != 1 {
+		t.Fatalf("old spool entries: %d", len(entries))
+	}
+	capture := &inboundCapture{}
+	server := httptest.NewServer(capture.handler())
+	defer server.Close()
+	cfg := config{gcAPIBase: server.URL, cityName: "test-city", reminderTextBudget: 200}
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{{inbound: entries[0].Inbound}}); err != nil {
+		t.Fatal(err)
+	}
+	got := capture.snapshot()
+	if len(got) != 1 || strings.Contains(got[0].Text, secret[:20]) || !strings.Contains(got[0].Text, "[REDACTED:hex:...cdef]") {
+		t.Fatalf("old spool leaked a clipped secret or lost its marker: %+v", got)
+	}
+}
+
+func TestInboundRedactionInteractionIngress(t *testing.T) {
+	_, secret := redactionDM(t)
+	for _, kind := range []string{"slash", "block_actions", "view_submission"} {
+		t.Run(kind, func(t *testing.T) {
+			bodies := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				raw, _ := io.ReadAll(r.Body)
+				bodies <- string(raw)
+				w.WriteHeader(http.StatusAccepted)
+			}))
+			defer server.Close()
+			cfg := config{slackSigningKey: "test-signing-secret", accountID: "T1", cityName: "test-city",
+				gcAPIBase: server.URL, dispatchSem: defaultTestDispatchSem}
+			registry := newTestChannelMappingRegistry(t)
+			if err := registry.Set(channelMappingDiskRecord{WorkspaceID: "T1", ChannelID: "C1", TargetKind: "session", TargetID: "test-session"}); err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{"team_id": {"T1"}, "channel_id": {"C1"}, "command": {"/gc"}, "text": {secret}, "user_id": {"U1"}}
+			if kind != "slash" {
+				payload := map[string]any{"type": kind, "team": map[string]string{"id": "T1"},
+					"channel": map[string]string{"id": "C1"}, "user": map[string]string{"id": "U1"}, "trigger_id": "123.456.trigger"}
+				if kind == "block_actions" {
+					payload["actions"] = []any{map[string]any{"action_id": "test-action", "type": "button", "value": secret,
+						"selected_option": map[string]string{"value": secret}}}
+				} else {
+					payload["view"] = map[string]any{"callback_id": "test-callback", "private_metadata": `{"session_id":"test-session"}`,
+						"state": map[string]any{"values": map[string]any{"block": map[string]any{"input": map[string]string{"type": "plain_text_input", "value": secret}}}}}
+				}
+				raw, _ := json.Marshal(payload)
+				// Exercise decoded JSON redaction, not a raw-text replacement.
+				form = url.Values{"payload": {strings.ReplaceAll(string(raw), "sk-test-", `\u0073k-test-`)}}
+			}
+			w := httptest.NewRecorder()
+			handleSlackInteractions(cfg, registry, nil)(w, signedSlackInteractionRequest(t, cfg.slackSigningKey, []byte(form.Encode())))
+			if w.Code != http.StatusOK {
+				t.Fatalf("interaction returned %d: %s", w.Code, w.Body.String())
+			}
+			select {
+			case body := <-bodies:
+				assertInboundRedacted(t, body, secret)
+			case <-time.After(2 * time.Second):
+				t.Fatal("interaction was not delivered")
+			}
+			dispatchInflightWG.Wait()
+		})
+	}
+}
+
+func TestInboundRedactionOldRigModalMetadata(t *testing.T) {
+	_, secret := redactionDM(t)
+	raw, _ := json.Marshal(slackRigDispatchMetadata{Kind: metadataKindRigFix, WorkspaceID: "T1", RigName: "test-rig", OriginalCommandText: secret})
+	meta, ok := decodeRigDispatchMetadata(string(raw))
+	if !ok || meta.RigName != "test-rig" {
+		t.Fatal("redaction changed modal routing")
+	}
+	assertInboundRedacted(t, meta.OriginalCommandText, secret)
 }
