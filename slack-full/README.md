@@ -634,6 +634,7 @@ package docstring at the top of that file. Summary:
 | `GC_API_BASE_URL`              | `http://127.0.0.1:9443`                          | Base URL for gc's HTTP API.                                                     |
 | `ADAPTER_PROVIDER`             | `slack`                                          | Provider name in conversation refs + adapter registration.                      |
 | `REGISTER_ON_START`            | `true`                                           | Set `false` to skip `/extmsg/adapters` registration (tests, diagnostics).       |
+| `SLACK_COMPACT_ALERTS`         | `off`                                            | Opt-in compact reply IDs, peer-context label, and batch directions. `on` enables; unset/`off` preserves legacy bytes. Enable only after review for sessions whose profile already carries the `gc slack reply-current` contract. Requires adapter registration to update the per-message reply template. See [measurements and recommendations](docs/injection-format-recommendations-20261021.md). |
 | `HANDLE_PREFIX`                | `@`                                              | Leading address token for keyword routing. Empty disables routing.              |
 | `IDENTITY_STORE_PATH`          | `/tmp/gc-slack-adapter/identities.json`          | JSON file backing the per-session `chat:write.customize` identity registry.    |
 | `HANDLE_ALIAS_STORE_PATH`      | `/tmp/gc-slack-adapter/handle-aliases.json`      | JSON file backing the cross-channel handle → session-id alias registry.        |
@@ -674,6 +675,30 @@ the adapter runs as a `[[service]]`; do not set them by hand):
 `GC_SERVICE_NAME`, `GC_SERVICE_SOCKET`, `GC_SERVICE_URL_PREFIX`,
 `GC_SERVICE_STATE_ROOT`, `GC_SERVICE_RUN_ROOT`. See
 "What gc injects vs. what stays in the env file" above.
+
+### Compact injected alerts (opt-in)
+
+`SLACK_COMPACT_ALERTS=on` registers `Reply IDs: channel=… thread=…`
+instead of repeating a shell command in every shared-conversation alert.
+The channel ID and effective reply thread remain explicit; for a top-level
+message gc substitutes its own timestamp as the thread ID. Peer context keeps
+its read-only instruction and closing boundary. Batches keep every message,
+author, timestamp, and thread, with shorter reply directions.
+
+The flag defaults to **off**. It does not change Slack posts, thread-context
+selection, direct alias/mention-only/company reminders, or gc's outer
+`system-reminder` framing. The existing full help block is once per channel
+per **adapter lifetime**, not once per agent session: a fresh session must get
+the reply contract from its profile before compact mode is enabled. Recover
+thread context with `gc slack read --conversation-id <channel> --thread-ts <root>`.
+This flag is read at startup, not SIGHUP; changing the registered template
+requires registration (`REGISTER_ON_START=true`) on an approved rollout or
+rollback. Older gc versions that reject `reply_instructions` use the existing
+compatibility fallback and may not realize the reply-line saving.
+
+The draft implementation leaves the running adapter unchanged. Activation and
+any broader format cuts await Afik's read relayed by the mayor; see the linked
+measurement note for the projected savings and limitations.
 
 ### SIGHUP-driven reload
 

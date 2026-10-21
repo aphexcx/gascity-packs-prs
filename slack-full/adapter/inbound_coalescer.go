@@ -3131,8 +3131,13 @@ func formatCoalescedBlock(cfg config, channel string, batch []pendingChannelInbo
 	if replyTo == "" {
 		replyTo = anchor.ProviderMessageID
 	}
-	fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --reply-to %s to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]\n",
-		len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(replyTo))
+	if cfg.compactAlerts {
+		fmt.Fprintf(&b, "[%d messages in %s; reply-to=%s; older: thread ts or own ts]\n",
+			len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(replyTo))
+	} else {
+		fmt.Fprintf(&b, "[%d messages in %s, coalesced. Reply with --reply-to %s to answer the newest; to answer an older one use --reply-to <its thread ts, else its own ts>]\n",
+			len(batch), neutralizeMarkupBoundaries(channelDisplay(cfg, channel)), neutralizeMarkupBoundaries(replyTo))
+	}
 	for _, p := range batch {
 		m := p.inbound
 		sender := m.Actor.DisplayName
@@ -3228,7 +3233,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	}
 	env := batch[len(batch)-1].inbound
 	peerItems, peerDropped := cfg.peerContext.flush(channel)
-	peerBlock := formatPeerContextBlock(peerItems, peerDropped)
+	peerBlock := formatPeerContextBlockForConfig(cfg, peerItems, peerDropped)
 	firstHelp := cfg.replyHelp.first(channel)
 	helpBlock := ""
 	if firstHelp {

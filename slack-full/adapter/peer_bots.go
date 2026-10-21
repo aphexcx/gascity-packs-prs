@@ -606,7 +606,7 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 			DisplayName: peerActorPrefix + entry.Label,
 			IsBot:       true,
 		},
-		Text:             formatPeerContextBlock([]peerContextItem{item}, 0),
+		Text:             formatPeerContextBlockForConfig(cfg, []peerContextItem{item}, 0),
 		ReplyToMessageID: msg.ThreadTS,
 		DedupKey:         "slack-" + msg.TS,
 		ReceivedAt:       time.Now().UTC(),
