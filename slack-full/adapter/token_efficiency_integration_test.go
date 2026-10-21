@@ -440,3 +440,54 @@ func TestRegisterAdapterSendsReplyInstructionsTemplate(t *testing.T) {
 		t.Error("registered reply template must not carry --turn-ts")
 	}
 }
+
+func TestRegisterAdapterSendsCompactReplyInstructions(t *testing.T) {
+	bodyCh := make(chan adapterRegisterRequest, 1)
+	gcSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req adapterRegisterRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		bodyCh <- req
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(gcSrv.Close)
+
+	env := baseSlackEnv()
+	env[replyInstructionsModeEnv] = "compact"
+	cfg, err := loadConfigFromEnv(stubEnv(env))
+	if err != nil {
+		t.Fatalf("loadConfigFromEnv: %v", err)
+	}
+	cfg.gcAPIBase = gcSrv.URL
+	if err := registerAdapter(cfg); err != nil {
+		t.Fatalf("registerAdapter: %v", err)
+	}
+	// jg-fc1csv: the compact line keeps only the ts to reply to; the
+	// conversation id is in the reminder header gc renders around it.
+	if got := (<-bodyCh).ReplyInstructions; got != "reply-to {thread_ts}" {
+		t.Errorf("reply_instructions = %q, want the compact template", got)
+	}
+}
+
+func TestReplyInstructionsModeConfig(t *testing.T) {
+	for in, want := range map[string]string{
+		"":          slackReplyInstructionsTemplate,
+		"full":      slackReplyInstructionsTemplate,
+		" Compact ": slackReplyInstructionsCompactTemplate,
+	} {
+		env := baseSlackEnv()
+		env[replyInstructionsModeEnv] = in
+		cfg, err := loadConfigFromEnv(stubEnv(env))
+		if err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		if cfg.replyInstructions != want {
+			t.Errorf("%q: replyInstructions = %q, want %q", in, cfg.replyInstructions, want)
+		}
+	}
+	env := baseSlackEnv()
+	env[replyInstructionsModeEnv] = "terse"
+	if _, err := loadConfigFromEnv(stubEnv(env)); err == nil {
+		t.Error("unknown SLACK_REPLY_INSTRUCTIONS value must be a config error")
+	}
+}

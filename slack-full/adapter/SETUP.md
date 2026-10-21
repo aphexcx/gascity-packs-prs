@@ -400,6 +400,19 @@ On top of that (gp-9e7):
 
 Knobs:
 
+- `SLACK_REPLY_INSTRUCTIONS` — the per-message reply line gc renders into
+  every inbound reminder (jg-fc1csv). `full` (default) registers
+  `Reply: gc slack reply-current --conversation-id <C> --reply-to <ts>
+  --body-file <file>`; `compact` registers `reply-to <ts>` (~22 fewer
+  tokens per message) and leaves the command shape to the once-per-channel
+  how-to and the agent's prompt. The how-to arrives once per channel per
+  ADAPTER lifetime, so a restarted or compacted agent session may not have
+  it: before setting `compact`, add a standing note to every bound agent's
+  prompt, e.g. "Slack reminders end with `reply-to <ts>`. To answer one,
+  write the reply to a file and run `gc slack reply-current
+  --conversation-id <the C… id in the reminder's slack/<id> header>
+  --reply-to <ts> --body-file <file>`." Takes effect at the next adapter
+  start (the template is registered once); unknown values fail startup.
 - `SLACK_COALESCE_WINDOW` — burst debounce for untargeted inbounds
   (Go duration, default `8s`; `0` restores per-message immediate
   forwarding). Targeted / bot-mentioned messages always deliver

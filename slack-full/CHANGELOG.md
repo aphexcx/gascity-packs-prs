@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`SLACK_REPLY_INSTRUCTIONS=compact`** (jg-fc1csv) registers an ids-only
+  per-message reply line, `reply-to <ts>`, instead of the full
+  `Reply: gc slack reply-current --conversation-id … --reply-to … --body-file
+  <file>` command (~22 fewer tokens on every inbound reminder). Opt-in, default
+  `full`: the command then has to live in each bound agent's prompt, because
+  the once-per-channel how-to is per adapter lifetime, not per agent session.
+  See SETUP.md.
+
 ### Changed
 
 - **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker

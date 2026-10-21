@@ -836,6 +836,11 @@ type config struct {
 	// directly-constructed test configs get, keeping the legacy
 	// layout byte-for-byte).
 	reminderTextBudget int
+	// replyInstructions is the per-message reply template registered
+	// with gc (SLACK_REPLY_INSTRUCTIONS: full | compact, jg-fc1csv).
+	// Empty — directly-constructed test configs — registers the full
+	// template.
+	replyInstructions string
 	// deliveryReceiptGate arms the same-ts claim's delivery-receipt gate
 	// (gp-32q): a claim concludes only on a receipt that vouches the
 	// complete payload reached the session. SLACK_DELIVERY_RECEIPT_GATE
@@ -1018,6 +1023,12 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.reminderTextBudget = n
 	} else {
 		return cfg, fmt.Errorf("SLACK_REMINDER_TEXT_BUDGET %q invalid (want a non-negative integer; 0 disables the reminder budget)", getenv("SLACK_REMINDER_TEXT_BUDGET"))
+	}
+
+	if tmpl, err := replyInstructionsTemplateFor(getenv(replyInstructionsModeEnv)); err == nil {
+		cfg.replyInstructions = tmpl
+	} else {
+		return cfg, err
 	}
 
 	// Same-ts delivery-receipt gate (gp-32q). Armed by default: against
@@ -2359,7 +2370,11 @@ func listenUDS(path string) (net.Listener, error) {
 }
 
 func registerAdapter(cfg config) error {
-	return registerAdapterRequest(cfg, slackReplyInstructionsTemplate)
+	tmpl := cfg.replyInstructions
+	if tmpl == "" {
+		tmpl = slackReplyInstructionsTemplate
+	}
+	return registerAdapterRequest(cfg, tmpl)
 }
 
 // registerAdapterWithoutReplyInstructions is the compatibility retry for

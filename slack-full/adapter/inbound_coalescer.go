@@ -3467,3 +3467,31 @@ func replyHelpBlock(cfg config, channel string) string {
 // in the existing thread or starts one under the top-level inbound,
 // without depending on the latest inbound at send time (gp-gu49).
 const slackReplyInstructionsTemplate = "Reply: gc slack reply-current --conversation-id {conversation_id} --reply-to {thread_ts} --body-file <file>"
+
+// slackReplyInstructionsCompactTemplate is the ids-only per-message
+// reply line SLACK_REPLY_INSTRUCTIONS=compact registers instead
+// (jg-fc1csv): the reminder's own header already names the
+// conversation, so the line keeps only the ts to reply to and the
+// command shape moves out of every message — into the bound agent's
+// prompt, which the operator must update before opting in, plus the
+// once-per-channel replyHelpBlock. It must render non-empty for every
+// inbound (gc substitutes the long generic fallback for an empty
+// render) and carry no [ ] (gc's optional-segment syntax);
+// tests/test_reply_template_contract.py pins both.
+const slackReplyInstructionsCompactTemplate = "reply-to {thread_ts}"
+
+// replyInstructionsModeEnv selects the registered per-message reply line.
+const replyInstructionsModeEnv = "SLACK_REPLY_INSTRUCTIONS"
+
+// replyInstructionsTemplateFor maps a SLACK_REPLY_INSTRUCTIONS value to
+// the template registered with gc: "full" (default) or "compact".
+func replyInstructionsTemplateFor(mode string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "full":
+		return slackReplyInstructionsTemplate, nil
+	case "compact":
+		return slackReplyInstructionsCompactTemplate, nil
+	default:
+		return "", fmt.Errorf("%s %q invalid (want full or compact)", replyInstructionsModeEnv, mode)
+	}
+}
