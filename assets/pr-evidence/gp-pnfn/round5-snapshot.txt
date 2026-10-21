@@ -1,0 +1,1 @@
+Snapshot 7e3a7ea9044e70b7: three files byte-identical; 51 shared fixtures and idempotence checks pass; actual wrapper from /tmp with fake gc passes synthetic DM, overlong host, and canonical permalink. Prior 8 snapshot directories retained; wrapper backup 184th-slack-tail.py.pre-gp-pnfn-round5 retained.

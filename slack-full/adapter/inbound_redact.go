@@ -84,6 +84,11 @@ func redactInteractionContent(p *slackInteractionPayload) {
 	}
 }
 
+// Use the same printed form in file notices and their redaction exemption.
+func renderedLocalAttachmentPath(url string) string {
+	return neutralizeMarkupBoundaries(strings.TrimPrefix(url, "file://"))
+}
+
 // Keep only the adapter's structured local attachment paths usable in its
 // generated prose. Absolute paths can themselves look like base64. Incoming
 // Slack text/file names were already redacted before these paths were built.
@@ -95,7 +100,7 @@ func redactAttachmentText(text string, msg externalInboundMessage) string {
 	var paths []string
 	for _, url := range urls {
 		if strings.HasPrefix(url, "file:///") {
-			paths = append(paths, url, strings.TrimPrefix(url, "file://"))
+			paths = append(paths, url, strings.TrimPrefix(url, "file://"), renderedLocalAttachmentPath(url))
 		}
 	}
 	var out strings.Builder

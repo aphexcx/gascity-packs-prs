@@ -1,0 +1,19 @@
+{
+  "command": "go test -race -json ./... -count=1",
+  "workdir": "slack-full/adapter",
+  "exit_code": 0,
+  "test_subtest_passes": 12656,
+  "test_subtest_skips": 0,
+  "package_passes": [
+    {
+      "package": "github.com/sjarmak/gc-slack-adapter/redact",
+      "elapsed": 1.11
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-adapter",
+      "elapsed": 130.256
+    }
+  ],
+  "failures": [],
+  "race_reports": 0
+}

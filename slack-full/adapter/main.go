@@ -5326,7 +5326,7 @@ func formatInboundFilesBlock(files []slackFile, downloaded []externalAttachment)
 	}
 	localPath := make(map[string]string, len(downloaded))
 	for _, att := range downloaded {
-		localPath[att.ProviderID] = strings.TrimPrefix(att.URL, "file://")
+		localPath[att.ProviderID] = renderedLocalAttachmentPath(att.URL)
 	}
 	noun := "files"
 	if len(files) == 1 {
@@ -5351,7 +5351,7 @@ func formatInboundFilesBlock(files []slackFile, downloaded []externalAttachment)
 			neutralizeMarkupBoundaries(mime),
 			neutralizeMarkupBoundaries(f.ID))
 		if p, ok := localPath[f.ID]; ok {
-			fmt.Fprintf(&b, " — saved to %s; Read that path to view it", neutralizeMarkupBoundaries(p))
+			fmt.Fprintf(&b, " — saved to %s; Read that path to view it", p)
 		} else {
 			b.WriteString(" — bytes not spooled locally; fetch via Slack API files.info + url_private with the adapter bot token")
 		}
@@ -5410,7 +5410,8 @@ func safePathComponent(s string) string {
 // directory. More permissive than safePathComponent: keeps spaces and
 // non-ASCII characters that humans expect in filenames. Length is capped
 // at 200 chars (well under the typical 255 filename limit) to leave room
-// for the leading ts prefix.
+// for the leading ts prefix. Replace '<' before creating the file so reminder
+// markup neutralization cannot later change its on-disk path.
 func safeFilename(name string) string {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -5420,7 +5421,7 @@ func safeFilename(name string) string {
 	b.Grow(len(name))
 	for _, r := range name {
 		switch {
-		case r == '/' || r == '\\' || r == 0:
+		case r == '/' || r == '\\' || r == '<' || r == 0:
 			b.WriteRune('_')
 		case r < 0x20:
 			b.WriteRune('_')

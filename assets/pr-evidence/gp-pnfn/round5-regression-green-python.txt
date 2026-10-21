@@ -1,0 +1,62 @@
+Command (cwd=.): uv run --with pytest python -m pytest slack-full/tests -k shared_patterns -v
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-9.1.1, pluggy-1.7.0 -- /Users/tailor512/.cache/uv/builds-v0/.tmpcCzwR2/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex
+collecting ... collected 817 items / 766 deselected / 51 selected
+
+slack-full/tests/test_slack_redact.py::test_shared_patterns[openai-0] PASSED [  1%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[anthropic-1] PASSED [  3%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-2] PASSED [  5%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-3] PASSED [  7%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-4] PASSED [  9%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[github-5] PASSED [ 11%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[github-6] PASSED [ 13%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[github-7] PASSED [ 15%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[aws-8] PASSED [ 17%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[google-9] PASSED [ 19%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[bearer-10] PASSED [ 21%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[bearer-11] PASSED [ 23%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-12] PASSED [ 25%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[hex-13] PASSED [ 27%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[hex-14] PASSED [ 29%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[base64-15] PASSED [ 31%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[base64-16] PASSED [ 33%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary] PASSED [ 35%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[short-runs] PASSED [ 37%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[adjacent] PASSED [ 39%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[hex-prefix-base64] PASSED [ 41%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-in-url] PASSED [ 43%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[unicode-bearer] PASSED [ 45%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[latin-unicode-bearer] PASSED [ 47%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-overlapping-prefix] PASSED [ 49%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[jwt-overlapping-chain] PASSED [ 50%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[aws-overlapping-prefix] PASSED [ 52%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[bearer-overlapping-prefix] PASSED [ 54%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[bearer-overlapping-chain] PASSED [ 56%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-launchd-label] PASSED [ 58%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-python-module] PASSED [ 60%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-local-hostname] PASSED [ 62%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-internal-hostname] PASSED [ 64%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink] PASSED [ 66%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink-thread] PASSED [ 68%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-semver-suffix] PASSED [ 70%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink-D-9] PASSED [ 72%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink-G-9] PASSED [ 74%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink-D-11] PASSED [ 76%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[ordinary-slack-permalink-G-11] PASSED [ 78%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-webhook] PASSED [ 80%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[aws-secret-with-slash] PASSED [ 82%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-adjacent-key] PASSED [ 84%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-query-key] PASSED [ 86%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-appended-token] PASSED [ 88%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-lookalike-host] PASSED [ 90%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-bearer] PASSED [ 92%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-markdown-pair] PASSED [ 94%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-secret-host] PASSED [ 96%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-prepended-base64] PASSED [ 98%]
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-base64-host] PASSED [100%]
+
+====================== 51 passed, 766 deselected in 0.10s ======================
+
+Exit: 0

@@ -1,0 +1,16 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run 'TestSharedFixtures/slack-permalink-base64-host|TestInboundRedactionMarkupFilenamePathsRemainUsable' -count=1
+=== RUN   TestInboundRedactionMarkupFilenamePathsRemainUsable
+    inbound_redact_test.go:441: delivery 0 printed path "[REDACTED:base64:...6306].[REDACTED:base64:...port]<\u200bdraft.txt" differs from on-disk path "/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/TestInboundRedactionMarkupFilenamePathsRemainUsable459967834/001/C1/1792436306.401379-reportreportreportreportreportreportreportreport<draft.txt"
+--- FAIL: TestInboundRedactionMarkupFilenamePathsRemainUsable (0.01s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.353s
+=== RUN   TestSharedFixtures
+=== RUN   TestSharedFixtures/slack-permalink-base64-host
+    redact_test.go:31: got "https://AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AB.slack.com/archives/C0123456789/p1792436306401379"; want "https:[REDACTED:base64:...89AB].slack.[REDACTED:base64:...1379]"
+--- FAIL: TestSharedFixtures (0.01s)
+    --- FAIL: TestSharedFixtures/slack-permalink-base64-host (0.00s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/redact	0.191s
+FAIL
+
+Exit: 1

@@ -184,7 +184,7 @@ func withholdAttachments(p pendingChannelInbound, cause error) pendingChannelInb
 		if strings.HasPrefix(a.URL, "file:///") {
 			p.inbound.trustedFilePaths = append(p.inbound.trustedFilePaths, a.URL)
 		}
-		paths = append(paths, neutralizeMarkupBoundaries(strings.TrimPrefix(a.URL, "file://")))
+		paths = append(paths, renderedLocalAttachmentPath(a.URL))
 	}
 	noun := "attachments"
 	if len(paths) == 1 {

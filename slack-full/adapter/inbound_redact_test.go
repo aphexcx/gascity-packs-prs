@@ -389,6 +389,63 @@ func TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool(t *testing.T) {
 	}
 }
 
+func TestInboundRedactionMarkupFilenamePathsRemainUsable(t *testing.T) {
+	testAllowAnyURL(t)
+	fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("downloaded contents"))
+	}))
+	t.Cleanup(fileServer.Close)
+	capture := &inboundCapture{}
+	gcServer := httptest.NewServer(capture.handler())
+	t.Cleanup(gcServer.Close)
+	cfg := config{gcAPIBase: gcServer.URL, cityName: "test-city", inboundFileStore: t.TempDir()}
+	files := []slackFile{{ID: "F1", Name: strings.Repeat("report", 8) + "<draft.txt", URLPrivate: fileServer.URL, MIMEType: "text/plain"}}
+	attachments := downloadSlackFiles(cfg, "C1", "1792436306.401379", files)
+	if len(attachments) != 1 {
+		t.Fatalf("downloaded %d files, want 1", len(attachments))
+	}
+	path := strings.TrimPrefix(attachments[0].URL, "file://")
+	if redactInboundText(path) == path {
+		t.Fatal("fixture path must require the trusted-path exemption")
+	}
+	_, secret := redactionDM(t)
+	msg := externalInboundMessage{ProviderMessageID: "1792436306.401379", Text: secret, Attachments: attachments}
+	block := formatInboundFilesBlock(files, attachments)
+	channel := msg
+	channel.Text += "\n" + block
+	// A failed second attachment forces the mention-only fallback files block.
+	partialFiles := append(append([]slackFile(nil), files...), slackFile{ID: "F2", Name: "failed.txt"})
+	partial := mentionOnlyInbound(msg, partialFiles, formatInboundFilesBlock(partialFiles, attachments))
+	withheld := withholdAttachments(pendingChannelInbound{inbound: msg}, permanent422()).inbound
+	for _, delivery := range []externalInboundMessage{channel, partial, withheld} {
+		if err := postInbound(cfg, delivery); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deliveries := capture.snapshot()
+	if len(deliveries) != 3 {
+		t.Fatalf("got %d deliveries, want 3", len(deliveries))
+	}
+	for i, delivered := range deliveries {
+		assertInboundRedacted(t, delivered.Text, secret)
+		prefix, suffix := "saved to ", "; Read that path to view it"
+		if i == 2 {
+			prefix, suffix = "the files remain at ", "]"
+		}
+		_, printed, ok := strings.Cut(delivered.Text, prefix)
+		if !ok {
+			t.Fatalf("delivery %d missing path notice: %s", i, delivered.Text)
+		}
+		printed, _, ok = strings.Cut(printed, suffix)
+		if !ok || printed != path {
+			t.Fatalf("delivery %d printed path %q differs from on-disk path %q", i, printed, path)
+		}
+		if data, err := os.ReadFile(printed); err != nil || string(data) != "downloaded contents" {
+			t.Fatalf("delivery %d path unusable: data=%q err=%v", i, data, err)
+		}
+	}
+}
+
 func TestInboundRedactionOldSpoolBeforeBudgeting(t *testing.T) {
 	const secret = "0123456789abcdef0123456789abcdef"
 	// The protected 200-rune head used to expose 31 of these 32 hex

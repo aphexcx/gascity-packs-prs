@@ -6,7 +6,7 @@ import os
 import runpy
 import sys
 
-scripts = Path(__file__).resolve().parent / "slack-tail-redaction" / "12afd72318adbafc" / "slack-full/scripts"
+scripts = Path(__file__).resolve().parent / "slack-tail-redaction" / "7e3a7ea9044e70b7" / "slack-full/scripts"
 os.environ.setdefault("GC_CITY_PATH", str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(scripts))
 runpy.run_path(str(scripts / "slack_tail.py"), run_name="__main__")

@@ -39,7 +39,7 @@
     "kind": "base64",
     "pattern": "[A-Za-z0-9_+/-]{40,}=*",
     "allowlist": [
-      "https://[A-Za-z0-9-]+\\.slack\\.com/archives/[CDG](?:[A-Z0-9]{8}|[A-Z0-9]{10})/p[0-9]{16}"
+      "https://[A-Za-z0-9-]{1,37}\\.slack\\.com/archives/[CDG](?:[A-Z0-9]{8}|[A-Z0-9]{10})/p[0-9]{16}"
     ]
   }
 ]
