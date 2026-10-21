@@ -491,7 +491,7 @@ func rejectionReasonText(cause error) string {
 	if cause == nil {
 		return "refused"
 	}
-	return cause.Error()
+	return redactInboundText(cause.Error())
 }
 
 func plural(n int, one, many string) string {
@@ -572,6 +572,7 @@ const deadLetterTruncMarker = "…(truncated)"
 // truncateReason bounds s to maxDeadLetterReasonBytes without splitting
 // a multi-byte rune, reserving room for the marker (codex r1 finding 6).
 func truncateReason(s string) string {
+	s = redactInboundText(s)
 	if len(s) <= maxDeadLetterReasonBytes {
 		return s
 	}
@@ -676,6 +677,9 @@ func writeInboundDeadLetterRecords(dir, channel string, records []inboundDeadLet
 	}
 	enc := json.NewEncoder(f)
 	for _, rec := range records {
+		rec.Inbound = redactInboundMessage(rec.Inbound)
+		rec.AliasBody = redactAttachmentText(rec.AliasBody, rec.Inbound.Attachments)
+		rec.Reason = truncateReason(rec.Reason)
 		if err := enc.Encode(rec); err != nil {
 			_ = f.Close()
 			return path, err

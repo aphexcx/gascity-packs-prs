@@ -573,6 +573,9 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 	if !sr.OK {
 		return nil, fmt.Errorf("conversations.replies not ok: %s", sr.Error)
 	}
+	for i := range sr.Messages {
+		sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
+	}
 	return sr.Messages, nil
 }
 
@@ -710,7 +713,7 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		if _, labeled := botLabels[m.TS]; m.BotID != "" && !labeled {
 			// A bot root kept without a classifier label (upstream #491
 			// rendering): the bot id is the only name available.
-			text := strings.ReplaceAll(strings.TrimSpace(m.Text), "\n", " | ")
+			text := strings.ReplaceAll(strings.TrimSpace(redactInboundText(m.Text)), "\n", " | ")
 			fmt.Fprintf(&b, "[bot %s]: %s\n", m.BotID, text)
 			continue
 		}
@@ -737,6 +740,7 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 // message stays on a single line — the preamble is meant to be
 // scannable, not a verbatim transcript reproduction.
 func collapseThreadText(s string) string {
+	s = redactInboundText(s)
 	return strings.ReplaceAll(strings.TrimSpace(s), "\n", " | ")
 }
 
@@ -753,6 +757,7 @@ func clipBotPost(s string, maxBytes int) string {
 // error message. Slack error bodies are typically tiny; the cap is
 // defensive against an unexpectedly large response.
 func clipBodyForLog(body []byte) string {
+	body = []byte(redactInboundText(string(body)))
 	const maxLen = 256
 	if len(body) <= maxLen {
 		return string(body)

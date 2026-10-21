@@ -2326,9 +2326,10 @@ func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
 		t.Fatal("the replayed entry must carry its text intact")
 	}
 	// Over the cap: refused where durability is promised, batch-mates kept.
+	// Punctuation keeps size fixtures from looking like one giant secret.
 	read, cleanup := captureLog(t)
 	defer cleanup()
-	huge := testPending("C1", "2.0", strings.Repeat("x", maxInboundSpoolLineBytes))
+	huge := testPending("C1", "2.0", strings.Repeat("x.", maxInboundSpoolLineBytes/2))
 	if spool.spillBatch("C1", []pendingChannelInbound{huge, testPending("C1", "3.0", "batch-mate")}) {
 		t.Fatal("spillBatch must not confirm a batch the replay cannot fully read")
 	}
@@ -3829,7 +3830,7 @@ func TestUnfinishedDeadLetterVerdictNeverExpires(t *testing.T) {
 func TestInPlaceCompactionKeepsLinesReadable(t *testing.T) {
 	spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
 	refused := testPending("C1", "1.0", "")
-	refused.body = strings.Repeat("x", 34<<20)
+	refused.body = strings.Repeat("x.", 17<<20)
 	refused.inbound.Text = refused.foldedText()
 	refused.refused, refused.attempts = "422 Unprocessable Entity", 2
 	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {

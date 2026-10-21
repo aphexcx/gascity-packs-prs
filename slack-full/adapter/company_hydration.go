@@ -285,7 +285,7 @@ func fetchSlackFileContent(token, rawURL string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return string(body), true
+	return redactInboundText(string(body)), true
 }
 
 // fetchVerifiedRoot fetches the thread root and grants verification only when
@@ -369,6 +369,9 @@ func slackHydrationGet(token string, client *http.Client, pathAndQuery string) (
 	var sr slackHydrationResp
 	if err := json.Unmarshal(body, &sr); err != nil || !sr.OK {
 		return slackHydrationResp{}, false
+	}
+	for i := range sr.Messages {
+		sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
 	}
 	return sr, true
 }

@@ -376,7 +376,7 @@ func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 	var refused []string
 	lines := make([][]byte, 0, len(entries))
 	for _, entry := range entries {
-		line, err := json.Marshal(entry)
+		line, err := json.Marshal(redactSpooledInbound(entry))
 		if err != nil {
 			return fmt.Errorf("encode spool entry chan=%s ts=%s: %w", entry.Channel, entry.Inbound.ProviderMessageID, err)
 		}
@@ -669,7 +669,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			// next restart dropped the only payload (codex r28 finding 2).
 			e.Inbound.Text = ""
 		}
-		line, merr := json.Marshal(e)
+		line, merr := json.Marshal(redactSpooledInbound(e))
 		if merr != nil {
 			log.Printf("inbound spool: compacting %s: a record could not be encoded and is dropped: %v", s.path, merr)
 			continue

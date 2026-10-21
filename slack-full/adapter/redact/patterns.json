@@ -1,0 +1,42 @@
+[
+  {
+    "kind": "bearer",
+    "pattern": "(?i:\\bBearer[ \\t]+)[A-Za-z0-9._~+/-]+=*"
+  },
+  {
+    "kind": "anthropic",
+    "pattern": "sk-ant-[A-Za-z0-9_-]{8,}"
+  },
+  {
+    "kind": "openai",
+    "pattern": "sk-[A-Za-z0-9_-]{8,}"
+  },
+  {
+    "kind": "slack",
+    "pattern": "(?:xoxb-|xoxp-|xapp-)[A-Za-z0-9_-]{8,}"
+  },
+  {
+    "kind": "github",
+    "pattern": "(?:ghp_|gho_|github_pat_)[A-Za-z0-9_]{8,}"
+  },
+  {
+    "kind": "aws",
+    "pattern": "AKIA[A-Z0-9]{16}"
+  },
+  {
+    "kind": "google",
+    "pattern": "AIza[A-Za-z0-9_-]{8,}"
+  },
+  {
+    "kind": "jwt",
+    "pattern": "(?:^|[^A-Za-z0-9_-])(?P<token>(?:eyJ[A-Za-z0-9_-]*|[A-Za-z0-9_-]{8,})\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]{8,})"
+  },
+  {
+    "kind": "hex",
+    "pattern": "[A-Fa-f0-9]{32,}"
+  },
+  {
+    "kind": "base64",
+    "pattern": "[A-Za-z0-9_+/-]{40,}=*"
+  }
+]

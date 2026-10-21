@@ -52,6 +52,27 @@ for the full rationale.
 > (see "Not yet implemented" below). If you need parity today, use
 > the discord pack.
 
+## Inbound secret redaction
+
+Inbound message text (including nested Block Kit content and fetched thread
+context) is redacted before adapter receipts/spools/dead letters and before gc
+receives it for its events journal or mail. Matches become
+`[REDACTED:<kind>:...<last-four>]`; the original text is not retained in those
+records. The shared rules in `adapter/redact/patterns.json` cover provider keys
+(`sk-`, `sk-ant-`, Slack `xoxb-`/`xoxp-`/`xapp-`, GitHub, AWS `AKIA`, Google
+`AIza`), Bearer tokens, JWT-shaped strings, 32+ hex and 40+ base64/base64url
+runs. This is a conservative shape filter: long hashes/identifiers in prose
+can be redacted too. Protocol routing IDs and attachment download URLs stay
+intact; attachment bytes and outbound posts are outside this text filter.
+
+`scripts/slack_tail.py` imports `slack_redact.redact_text` from this pack and
+redacts before its 420-character display limit (including errors before their
+limit). It preserves the mayor helper's ALLOW/WITHHOLD/TOKENS behavior. Install
+that script as the implementation behind `.gc/184th-slack-tail.py`, with the
+pack's scripts on `sys.path`; keep `slack_redact.py` and
+`adapter/redact/patterns.json` together in the installed pack. Missing rules
+fail closed at import/startup. Existing journal records are not rewritten.
+
 ## Status
 
 Implemented:

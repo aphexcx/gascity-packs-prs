@@ -3467,6 +3467,14 @@ func handleSlackEvents(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			return
 		}
 
+		// Sanitize decoded content before company receipt persistence, legacy
+		// dispatch, or any gc journal/mail write. HMAC verified the original bytes.
+		env.Event, err = redactEventContent(env.Event)
+		if err != nil {
+			http.Error(w, "invalid event content", http.StatusBadRequest)
+			return
+		}
+
 		// Inbound-liveness bookkeeping (gp-3og): every verified
 		// event_callback, on either transport, refreshes the "last
 		// inbound" clock and records the message origin so the
@@ -3914,6 +3922,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		log.Printf("decode slack event: %v", err)
 		return
 	}
+	msg.Text = redactInboundText(msg.Text)
 	// Human emoji reactions forward to the bound session as tagged
 	// notifications (gp-by3); the branch terminates here — a reaction
 	// is never an ask. Requires the reaction_added/reaction_removed
@@ -6515,6 +6524,7 @@ func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundM
 // name, which is a cache lookup that can change between attempts
 // (codex r1 P2 #4).
 func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) string {
+	msg = redactInboundMessage(msg)
 	// Every interpolated string is run through neutralizeMarkupBoundaries
 	// to prevent a Slack workspace member from forging </system-reminder>
 	// boundaries inside the dispatched body and injecting arbitrary
@@ -6780,6 +6790,7 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 // see delivery_receipt.go. A receipt-less gc yields the zero receipt
 // (present=false), which every gate treats as the legacy 2xx verdict.
 func postInboundWithReceipt(cfg config, msg externalInboundMessage) (deliveryReceipt, error) {
+	msg = redactInboundMessage(msg)
 	body, _ := json.Marshal(map[string]any{
 		"message": msg,
 	})

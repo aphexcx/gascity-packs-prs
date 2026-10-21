@@ -1,0 +1,122 @@
+[
+  {
+    "name": "openai-0",
+    "text": "key is sk-test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaQ9z7 please keep private.",
+    "want": "key is [REDACTED:openai:...Q9z7] please keep private."
+  },
+  {
+    "name": "anthropic-1",
+    "text": "key is sk-ant-test-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbW8y6 please keep private.",
+    "want": "key is [REDACTED:anthropic:...W8y6] please keep private."
+  },
+  {
+    "name": "slack-2",
+    "text": "key is xoxb-fixture-only-not-a-live-token-TEST please keep private.",
+    "want": "key is [REDACTED:slack:...TEST] please keep private."
+  },
+  {
+    "name": "slack-3",
+    "text": "key is xoxp-222222222222222222222222 please keep private.",
+    "want": "key is [REDACTED:slack:...2222] please keep private."
+  },
+  {
+    "name": "slack-4",
+    "text": "key is xapp-333333333333333333333333 please keep private.",
+    "want": "key is [REDACTED:slack:...3333] please keep private."
+  },
+  {
+    "name": "github-5",
+    "text": "key is ghp_dddddddddddddddddddddddddddddddddddd please keep private.",
+    "want": "key is [REDACTED:github:...dddd] please keep private."
+  },
+  {
+    "name": "github-6",
+    "text": "key is gho_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee please keep private.",
+    "want": "key is [REDACTED:github:...eeee] please keep private."
+  },
+  {
+    "name": "github-7",
+    "text": "key is github_pat_ffffffffffffffffffffffffffffffffffffffffffff please keep private.",
+    "want": "key is [REDACTED:github:...ffff] please keep private."
+  },
+  {
+    "name": "aws-8",
+    "text": "key is AKIAAAAAAAAAAAAA1234 please keep private.",
+    "want": "key is [REDACTED:aws:...1234] please keep private."
+  },
+  {
+    "name": "google-9",
+    "text": "key is AIzagggggggggggggggggggggggggggggggAB12 please keep private.",
+    "want": "key is [REDACTED:google:...AB12] please keep private."
+  },
+  {
+    "name": "bearer-10",
+    "text": "key is Bearer hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhcD34 please keep private.",
+    "want": "key is [REDACTED:bearer:...cD34] please keep private."
+  },
+  {
+    "name": "bearer-11",
+    "text": "key is bEaReR\tshort.token-42 please keep private.",
+    "want": "key is [REDACTED:bearer:...n-42] please keep private."
+  },
+  {
+    "name": "jwt-12",
+    "text": "key is eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56 please keep private.",
+    "want": "key is [REDACTED:jwt:...Ef56] please keep private."
+  },
+  {
+    "name": "hex-13",
+    "text": "key is 0123456789abcdef0123456789abcdef please keep private.",
+    "want": "key is [REDACTED:hex:...cdef] please keep private."
+  },
+  {
+    "name": "hex-14",
+    "text": "key is ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789 please keep private.",
+    "want": "key is [REDACTED:hex:...6789] please keep private."
+  },
+  {
+    "name": "base64-15",
+    "text": "key is qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X please keep private.",
+    "want": "key is [REDACTED:base64:...ab9X] please keep private."
+  },
+  {
+    "name": "base64-16",
+    "text": "key is qR_-ab9XqR_-ab9XqR_-ab9XqR_-ab9XqR_-ab9X== please keep private.",
+    "want": "key is [REDACTED:base64:...9X==] please keep private."
+  },
+  {
+    "name": "ordinary",
+    "text": "Hello <@U123>, version 1.2.3 at https://example.com; ts=1792436306.401379",
+    "want": "Hello <@U123>, version 1.2.3 at https://example.com; ts=1792436306.401379"
+  },
+  {
+    "name": "short-runs",
+    "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "want": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+  },
+  {
+    "name": "adjacent",
+    "text": "ghp_abcdefgh sk-ant-abcdefgh",
+    "want": "[REDACTED:github:...efgh] [REDACTED:anthropic:...efgh]"
+  },
+  {
+    "name": "hex-prefix-base64",
+    "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaQ9ZxQ9ZxQ9ZxQ9Zx",
+    "want": "[REDACTED:base64:...Q9Zx]"
+  },
+  {
+    "name": "jwt-in-url",
+    "text": "https://example.com/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "https://example.[REDACTED:base64:...Ef56]"
+  },
+  {
+    "name": "unicode-bearer",
+    "text": "令牌Bearer short.token-42",
+    "want": "令牌[REDACTED:bearer:...n-42]"
+  },
+  {
+    "name": "latin-unicode-bearer",
+    "text": "éBearer short.token-42",
+    "want": "é[REDACTED:bearer:...n-42]"
+  }
+]

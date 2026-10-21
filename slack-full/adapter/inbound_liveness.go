@@ -286,6 +286,7 @@ type livenessHeldReplay struct {
 // clipHeldMessage returns the message as a held replay keeps it: the text
 // cut to livenessHeldTextMax on a rune boundary, the files kept by count.
 func clipHeldMessage(m slackHistoryMessage) (slackHistoryMessage, int) {
+	m.Text = redactInboundText(m.Text)
 	files := len(m.Files)
 	m.Files = nil
 	m.Raw = nil
