@@ -1,0 +1,31 @@
+2026/10/21 12:44:47 inbound file F2 download failed: GET http://127.0.0.1:54354/failed: 404 Not Found — 404 page not found 
+2026/10/21 12:44:47 mention-only: delivered session=mayor-session chan=C1 ts=1792436306.401379 thread= reason=bot_mention receipt=unsupported
+--- FAIL: TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath (0.02s)
+    mention_only_test.go:721: delivered reminder lost the usable downloaded path: <system-reminder>
+        Slack mention-only room delivery: you were @mentioned in channel C1 (Slack ts 1792436306.401379) by user .
+        
+        Message text:
+        review these files [REDACTED:openai:...7z9Q]
+        
+        [2 Slack files attached]
+          1. downloaded.txt (text/plain, id F1) — saved to [REDACTED:base64:...6306].401379-downloaded.txt; Read that path to view it
+          2. failed.txt (text/plain, id F2) — bytes not spooled locally; fetch via Slack API files.info + url_private with the adapter bot token
+        
+        You are bound to this room in mention-only mode: only @mentions of your bot user, messages addressed to your handle, and replies in threads you posted in reach you. Read the rest of the room on demand:
+          gc slack read --conversation-id C1
+        
+        React to this message with writing_hand to signal you are actively working on it:
+          gc slack react --conversation-id C1 --message-id 1792436306.401379 --emoji writing_hand
+        
+        To reply in that thread, write your reply to a tmpfile and run:
+          gc slack publish-to-channel \
+            --conversation-id C1 \
+            --thread-ts 1792436306.401379 \
+            --body-file <tmpfile>
+        
+        This posts directly through the slack adapter with your registered identity (you hold no channel binding here, and it is unaffected by any company-room pointer your session may carry). `gc slack react`, `reply-current --thread-current` and `upload --thread-current` resolve this delivery on their own once gc has confirmed it (moments after it reaches you); the explicit --conversation-id/--thread-ts form above always works.
+        </system-reminder>
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.301s
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.165s [no tests to run]
+FAIL

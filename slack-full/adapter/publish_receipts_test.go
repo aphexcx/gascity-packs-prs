@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"log"
@@ -145,7 +144,7 @@ func TestPublishReceiptPrunesCorruptFiles(t *testing.T) {
 			if err := os.WriteFile(store.path("corrupt"), []byte(tc.data), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			var logs bytes.Buffer
+			var logs lockedLogBuffer
 			previousLogOutput := log.Writer()
 			log.SetOutput(&logs)
 			t.Cleanup(func() { log.SetOutput(previousLogOutput) })

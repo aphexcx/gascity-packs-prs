@@ -184,7 +184,7 @@ func TestFileMessageSpoolsAndForwardsLocalPath(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("captured %d inbound messages, want 1", len(got))
 	}
-	wantPath := filepath.Join(store, "C1", "1.0-screenshot.png")
+	wantPath := filepath.Join(store, "C1.adapter", "1.0-0-screenshot.png")
 	data, err := os.ReadFile(wantPath)
 	if err != nil || string(data) != "png-bytes" {
 		t.Fatalf("spooled file at %s: err=%v data=%q", wantPath, err, data)

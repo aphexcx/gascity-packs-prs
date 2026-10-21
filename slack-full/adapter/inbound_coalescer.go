@@ -1085,6 +1085,7 @@ func (c *inboundCoalescer) applyDeletionTombstones(channel string, batch []pendi
 func applyDeletion(p *pendingChannelInbound) {
 	p.inbound.Text = deletedBySenderNotice
 	p.inbound.Attachments = nil
+	p.inbound.trustedFilePaths = nil
 	p.threadAnchor, p.preamble, p.preambleLean, p.body, p.files = "", "", "", "", ""
 	p.botQuotes = false
 }
@@ -3285,10 +3286,13 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		// the how-to re-arms and rides a later, smaller delivery.
 		text = formatCoalescedBlock(cfg, channel, batch)
 		var attachments []externalAttachment
+		var trustedPaths []string
 		for _, p := range batch {
 			attachments = append(attachments, p.inbound.Attachments...)
+			trustedPaths = append(trustedPaths, p.inbound.trustedFilePaths...)
 		}
 		env.Attachments = attachments
+		env.trustedFilePaths = trustedPaths
 		env.DedupKey = coalesceBatchDedupKey(batch)
 		if peerBlock != "" {
 			text = peerBlock + "\n\n" + text

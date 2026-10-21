@@ -374,7 +374,7 @@ func handleSlackInteractions(cfg config, mapReg *channelMappingRegistry, rigReg 
 		// Slack changes — patterns are then inert.
 		channelName := form.Get("channel_name")
 		command := form.Get("command")
-		text := form.Get("text")
+		text := redactInboundText(form.Get("text"))
 		userID := form.Get("user_id")
 		triggerID := form.Get("trigger_id")
 
@@ -575,6 +575,7 @@ func handleInteractionPayload(w http.ResponseWriter, cfg config, mapReg *channel
 			p.Team.ID)
 	}
 
+	redactInteractionContent(&p)
 	switch p.Type {
 	case interactionTypeBlockActions:
 		handleBlockActionsPayload(w, cfg, mapReg, rigReg, &p)

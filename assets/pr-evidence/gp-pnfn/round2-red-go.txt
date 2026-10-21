@@ -1,0 +1,29 @@
+--- FAIL: TestLivenessRestoredHeldReplayRedactsBeforeSaveAndLostLog (0.00s)
+    --- FAIL: TestLivenessRestoredHeldReplayRedactsBeforeSaveAndLostLog/no-dead-letter-dir (0.00s)
+        inbound_liveness_hold_restart_test.go:51: restored held text is not redacted
+        inbound_liveness_hold_restart_test.go:62: saved state is not redacted
+        inbound_liveness_hold_restart_test.go:74: LOST log is missing or contains unredacted held text
+    --- FAIL: TestLivenessRestoredHeldReplayRedactsBeforeSaveAndLostLog/dead-letter-write-fails (0.00s)
+        inbound_liveness_hold_restart_test.go:51: restored held text is not redacted
+        inbound_liveness_hold_restart_test.go:62: saved state is not redacted
+        inbound_liveness_hold_restart_test.go:74: LOST log is missing or contains unredacted held text
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.278s
+--- FAIL: TestSharedFixtures (0.00s)
+    --- FAIL: TestSharedFixtures/jwt-overlapping-prefix (0.00s)
+        redact_test.go:22: got "[REDACTED:jwt:...Ef56]"; want "settings.jwt.[REDACTED:jwt:...Ef56]"
+    --- FAIL: TestSharedFixtures/jwt-overlapping-chain (0.00s)
+        redact_test.go:22: got "[REDACTED:jwt:...Ef56]"; want "settings.settings.[REDACTED:jwt:...Ef56]"
+    --- FAIL: TestSharedFixtures/ordinary-launchd-label (0.00s)
+        redact_test.go:22: got "com.[REDACTED:jwt:...12g1]"; want "com.houmanoids.citadel.tunnel-512g1"
+    --- FAIL: TestSharedFixtures/ordinary-python-module (0.00s)
+        redact_test.go:22: got "[REDACTED:jwt:...ials]"; want "application.services.credentials"
+    --- FAIL: TestSharedFixtures/ordinary-internal-hostname (0.00s)
+        redact_test.go:22: got "[REDACTED:jwt:...oids]"; want "services.internal.houmanoids"
+    --- FAIL: TestSharedFixtures/ordinary-slack-permalink (0.00s)
+        redact_test.go:22: got "https://example.slack.[REDACTED:base64:...1379]"; want "https://example.slack.com/archives/C01234567/p1792436306401379"
+    --- FAIL: TestSharedFixtures/ordinary-semver-suffix (0.00s)
+        redact_test.go:22: got "1.2.[REDACTED:jwt:...1021]"; want "1.2.3-release.candidate.20261021"
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter/redact	0.170s
+FAIL

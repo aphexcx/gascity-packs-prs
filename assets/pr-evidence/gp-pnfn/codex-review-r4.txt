@@ -1,0 +1,19 @@
+# codex-gate exec: prompt /tmp/gp-pnfn-review-prompt-r4.txt (2324 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-21T15:38:50Z
+
+The round-3 fixes are present with regressions, but two major gaps remain in `b6705211`:
+
+1. **Major — Interaction text bypasses redaction.** [interactions.go:467](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/interactions.go:467) forwards slash-command text through `postSessionMessage`, which performs no redaction. Block-action values and modal submissions use the same unsanitized route. A credential submitted through these paths reaches gc intact. Redact decoded content before rendering, preserve routing fields, and add interaction ingress regressions.
+
+2. **Major — Pre-upgrade spool replay can leak credential fragments.** [inbound_spool.go:796](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/inbound_spool.go:796) restores old payloads without scrubbing their text. Single-message delivery then truncates the body before `postInboundWithReceipt` redacts it. A 32-character hex secret crossing that boundary can become 31 exposed characters, escaping every rule. Apply `redactSpooledInbound` when loading entries, before budgeting, and add a raw pre-upgrade spool regression covering this boundary.
+
+Suites were **not run (sandbox)**. Committed [validation evidence](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-pnfn/validation.md:5) records:
+
+| Required suite | Recorded result |
+|---|---|
+| Full adapter, race enabled | 12,615 test/subtest passes; 0 failures/skips; no race reports |
+| Full CLI, race enabled | 237 test/subtest passes across 8 packages; 0 failures |
+| Full Python | 788 passed; 2 skipped; 2 deprecation warnings |
+
+Shared Go/Python fixtures, DM coverage, README changes, and pinned city helper/memory integration evidence are present. The worker lane remains unchanged; no real Slack records or credentials were read.
+
+VERDICT: BLOCK

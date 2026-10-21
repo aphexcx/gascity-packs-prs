@@ -751,6 +751,7 @@ func mentionOnlyReasonLine(reason, handle string) string {
 // forge a </system-reminder> boundary (cby.33 contract, same as the
 // alias dispatcher). Exposed for tests.
 func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, handle string) string {
+	msg = redactInboundMessage(msg)
 	attachmentsBlock := ""
 	if len(msg.Attachments) > 0 {
 		var ab strings.Builder
@@ -820,6 +821,15 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 func mentionOnlyInbound(inbound externalInboundMessage, files []slackFile, filesBlock string) externalInboundMessage {
 	if filesBlock == "" || len(inbound.Attachments) == len(files) {
 		return inbound
+	}
+	// The files block retains successful downloads even when another file
+	// failed. Preserve their provenance before removing the structured list
+	// so reminder redaction keeps those local paths usable.
+	inbound.trustedFilePaths = append([]string(nil), inbound.trustedFilePaths...)
+	for _, att := range inbound.Attachments {
+		if strings.HasPrefix(att.URL, "file:///") {
+			inbound.trustedFilePaths = append(inbound.trustedFilePaths, att.URL)
+		}
 	}
 	inbound.Attachments = nil
 	if strings.TrimSpace(inbound.Text) == "" {

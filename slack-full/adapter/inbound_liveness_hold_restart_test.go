@@ -5,10 +5,77 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestLivenessRestoredHeldReplayRedactsBeforeSaveAndLostLog(t *testing.T) {
+	for _, sink := range []string{"no-dead-letter-dir", "dead-letter-write-fails"} {
+		t.Run(sink, func(t *testing.T) {
+			base := time.Date(2026, 10, 21, 16, 0, 0, 0, time.UTC)
+			clock := &fakeClock{t: base}
+			cfg := livenessTestConfig(t)
+			cfg.livenessStatePath = filepath.Join(t.TempDir(), "liveness.json")
+			if sink == "dead-letter-write-fails" {
+				cfg.inboundDeadLetterDir = filepath.Join(t.TempDir(), "not-a-directory")
+				if err := os.WriteFile(cfg.inboundDeadLetterDir, []byte("blocked"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, secret := redactionDM(t)
+			ts := tsAt(base, -time.Minute)
+			// Write a pre-upgrade state directly, bypassing the current ingest scrub.
+			st := livenessState{Channels: map[string]*livenessChannel{
+				"C1": {TeamID: "T1", WatermarkTS: tsAt(base, -2*time.Minute),
+					PendingTS: []string{ts}, PendingMessages: map[string]livenessHeldReplay{
+						ts: {Msg: slackHistoryMessage{TS: ts, User: "U1", Text: "gateway key is " + secret},
+							TeamID: "T1", Attempts: 2, HeldAt: base.Add(-time.Minute), FilesDropped: 1},
+					}},
+			}}
+			data, err := json.Marshal(st)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(cfg.livenessStatePath, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			readLog, cleanup := captureLog(t)
+			defer cleanup()
+			l := newTestLiveness(t, cfg, newFakeHistory(), clock)
+			held := l.channels["C1"].PendingMessages[ts]
+			want := "gateway key is [REDACTED:openai:...7z9Q]"
+			if held.Msg.Text != want {
+				t.Error("restored held text is not redacted")
+			}
+			if held.Attempts != 2 || held.FilesDropped != 1 || held.Msg.TS != ts || held.TeamID != "T1" || !held.HeldAt.Equal(base.Add(-time.Minute)) {
+				t.Error("restored replay bookkeeping changed")
+			}
+			l.saveState()
+			saved, err := os.ReadFile(cfg.livenessStatePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(saved), secret) || !strings.Contains(string(saved), want) {
+				t.Error("saved state is not redacted")
+			}
+			clock.advance(2 * time.Hour)
+			l.mu.Lock()
+			retired := l.retireExpiredPendingLocked(clock.now())
+			l.mu.Unlock()
+			if len(retired) != 1 {
+				t.Fatalf("retired %d holds, want 1", len(retired))
+			}
+			l.deadLetterRetiredHolds(retired)
+			logs := readLog()
+			if !strings.Contains(logs, "LOST channel=C1") || !strings.Contains(logs, want) || strings.Contains(logs, secret) {
+				t.Error("LOST log is missing or contains unredacted held text")
+			}
+		})
+	}
+}
 
 // Regression coverage for gf-c7n finding 3l (the Opus 5.5 delta read's MAJOR
 // on PR 46 at e8b760cf, introduced by round 4's 3g): the hold on a failed

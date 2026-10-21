@@ -1,0 +1,19 @@
+# codex-gate exec: prompt /tmp/gp-pnfn-review-prompt-r6.txt (3203 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-21T16:11:33Z
+
+**Major — Overlapping Bearer candidates still expose tokens.** [redact.go:71](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/redact/redact.go:71) and [slack_redact.py:24](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/scripts/slack_redact.py:24) resume inside matches only for JWTs. By inspection, `Bearer Bearer short.token-42` becomes `[REDACTED:bearer:...arer] short.token-42`: the second Bearer candidate is skipped, and its token matches no other rule. Repeated sanitization cannot recover it, allowing disclosure through receipts, gc journal/mail, and tail output.
+
+Collect overlapping Bearer candidates before merging spans. Add shared Go/Python fixtures and DM/tail regressions, then refresh the installed helper snapshot.
+
+The prior fixes, DM coverage, README, and city helper/memory integration evidence are present. No additional major or critical findings identified.
+
+Tests were **not run (sandbox)**. Committed [worker evidence](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-pnfn/validation.md:5) records:
+
+| Full suite | Recorded result |
+|---|---|
+| Adapter, race enabled | 12,627 test/subtest passes; 2 packages; 0 failures/skips; no race reports |
+| CLI, race enabled | 237 test/subtest passes; 8 packages; 0 failures |
+| Python | 791 passed; 2 skipped; 2 deprecation warnings |
+
+Worker lane unchanged. No real Slack records or credentials read.
+
+VERDICT: BLOCK

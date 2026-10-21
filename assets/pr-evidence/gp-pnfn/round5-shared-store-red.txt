@@ -1,0 +1,12 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run TestInboundRedactionDownloadsShareStoreWithCLI -count=1
+=== RUN   TestInboundRedactionDownloadsShareStoreWithCLI
+    inbound_redact_test.go:517: CLI changed adapter attachment 0: data="/second" err=<nil>, want "/first"
+--- FAIL: TestInboundRedactionDownloadsShareStoreWithCLI (0.10s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.408s
+testing: warning: no tests to run
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.189s [no tests to run]
+FAIL
+
+Exit: 1

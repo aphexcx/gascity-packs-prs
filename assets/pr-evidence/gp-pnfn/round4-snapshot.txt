@@ -1,0 +1,1 @@
+Snapshot 12afd72318adbafc: three source files byte-identical; 50 shared fixtures and idempotence checks pass; actual city wrapper synthetic DM passes. Existing pin already matches round-4 source; all older snapshots retained.

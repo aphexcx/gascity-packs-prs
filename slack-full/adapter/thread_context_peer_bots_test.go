@@ -237,7 +237,7 @@ func TestPreambleClipsLongPeerBotPosts(t *testing.T) {
 	// push the preamble over the channel reminder budget, where it is
 	// shed whole: bot posts clip per post, human posts do not.
 	long := strings.Repeat("报告 report line. ", 60) // ~1.3 KB, CJK + ASCII
-	humanLong := strings.Repeat("h", 400)
+	humanLong := strings.Repeat("h.", 200)
 	replies := []slackThreadMessage{
 		citadelShape("1.0", long),
 		{User: "U_AFIK", Text: humanLong, TS: "2.0"},
@@ -512,7 +512,7 @@ func TestThreadContext_BotQuotesShedBeforeHumanContext(t *testing.T) {
 	// Before the shed step the composer dropped the whole preamble; now
 	// the human prior survives and only the bot quotes are shed.
 	currentTS := "100.000009"
-	humanPrior := strings.Repeat("h", 2200)
+	humanPrior := strings.Repeat("h.", 1100)
 	prior := []slackThreadMessage{
 		{User: "U_AFIK", Text: humanPrior, TS: "100.000001"},
 	}

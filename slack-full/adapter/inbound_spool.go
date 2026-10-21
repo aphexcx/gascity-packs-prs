@@ -76,9 +76,12 @@ var syncFile = func(f *os.File) error { return f.Sync() }
 // whether it was a no-wake reaction entry, and the ready-to-post
 // envelope (final per-message text, attachments, dedup key).
 type spooledInbound struct {
-	Channel  string                 `json:"channel"`
-	Reaction bool                   `json:"reaction,omitempty"`
-	Inbound  externalInboundMessage `json:"inbound"`
+	// Adapter-authored provenance survives stripped retries without adding
+	// rejected attachments back to the gc wire envelope.
+	TrustedFilePaths []string               `json:"trusted_file_paths,omitempty"`
+	Channel          string                 `json:"channel"`
+	Reaction         bool                   `json:"reaction,omitempty"`
+	Inbound          externalInboundMessage `json:"inbound"`
 	// Message-unit parts for head-protected re-composition on replay
 	// (gp-0qw); absent on lines written before they existed, which
 	// then replay with the folded Inbound.Text as the body.
@@ -376,7 +379,7 @@ func (s *inboundSpool) appendLinesLocked(entries []spooledInbound) error {
 	var refused []string
 	lines := make([][]byte, 0, len(entries))
 	for _, entry := range entries {
-		line, err := json.Marshal(entry)
+		line, err := json.Marshal(redactSpooledInbound(entry))
 		if err != nil {
 			return fmt.Errorf("encode spool entry chan=%s ts=%s: %w", entry.Channel, entry.Inbound.ProviderMessageID, err)
 		}
@@ -669,7 +672,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			// next restart dropped the only payload (codex r28 finding 2).
 			e.Inbound.Text = ""
 		}
-		line, merr := json.Marshal(e)
+		line, merr := json.Marshal(redactSpooledInbound(e))
 		if merr != nil {
 			log.Printf("inbound spool: compacting %s: a record could not be encoded and is dropped: %v", s.path, merr)
 			continue
@@ -769,7 +772,13 @@ func readSpoolLines(path string, recordsOnly bool) ([]spooledInbound, error) {
 		}
 		if len(line) > 0 {
 			var e spooledInbound
-			switch perr := json.Unmarshal(line, &e); {
+			perr := json.Unmarshal(line, &e)
+			if perr == nil {
+				// Old spools may predate ingest redaction. Scrub before
+				// composition/clipping can turn a token into a non-match.
+				e = redactSpooledInbound(e)
+			}
+			switch {
 			case perr != nil || e.Channel == "":
 				if !recordsOnly {
 					log.Printf("inbound spool: CORRUPT LINE (%d bytes) DROPPED — LOSS: this can only be a crash mid-spill of that batch (parse err: %v)", len(line), perr)

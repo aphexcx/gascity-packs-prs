@@ -87,7 +87,7 @@ func resolveChannelName(cfg config, channelID string) string {
 	}
 	now := time.Now()
 	if name, ok := cfg.channelNames.get(channelID, now); ok {
-		return name
+		return redactInboundText(name)
 	}
 	name := fetchChannelName(cfg, channelID)
 	if name == "" {
@@ -146,5 +146,5 @@ func fetchChannelName(cfg config, channelID string) string {
 		log.Printf("channel name lookup: conversations.info %s not ok: %s", channelID, ci.Error)
 		return ""
 	}
-	return ci.Channel.Name
+	return redactInboundText(ci.Channel.Name)
 }

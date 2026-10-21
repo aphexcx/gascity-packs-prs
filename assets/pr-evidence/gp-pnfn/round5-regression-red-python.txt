@@ -1,0 +1,31 @@
+Command (cwd=.): uv run --with pytest python -m pytest slack-full/tests -k slack-permalink-base64-host -v
+============================= test session starts ==============================
+platform darwin -- Python 3.13.13, pytest-9.1.1, pluggy-1.7.0 -- /Users/tailor512/.cache/uv/builds-v0/.tmpgi9gzs/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex
+collecting ... collected 817 items / 816 deselected / 1 selected
+
+slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-base64-host] FAILED [100%]
+
+=================================== FAILURES ===================================
+______________ test_shared_patterns[slack-permalink-base64-host] _______________
+
+case = {'name': 'slack-permalink-base64-host', 'text': 'https://AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AB.slack.com/archives/C0123456789/p1792436306401379', 'want': 'https:[REDACTED:base64:...89AB].slack.[REDACTED:base64:...1379]'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert 'https://AbCd...2436306401379' == 'https:[REDAC...se64:...1379]'
+E
+E         - https:[REDACTED:base64:...89AB].slack.[REDACTED:base64:...1379]
+E         + https://AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AB.slack.com/archives/C0123456789/p1792436306401379
+
+slack-full/tests/test_slack_redact.py:22: AssertionError
+=========================== short test summary info ============================
+FAILED slack-full/tests/test_slack_redact.py::test_shared_patterns[slack-permalink-base64-host]
+====================== 1 failed, 816 deselected in 0.11s =======================
+
+Exit: 1

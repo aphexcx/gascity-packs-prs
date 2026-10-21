@@ -1,0 +1,70 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run 'TestInboundRedaction.*(Filename|WithheldPaths|DownloadsShareStore)|TestDownloadSlackFiles|TestFileMessageSpoolsAndForwardsLocalPath|TestMentionOnlyInbound_|TestSweepInboundStore' -count=1
+=== RUN   TestDownloadSlackFilesDerivesMIMETypeForVoiceClip
+--- PASS: TestDownloadSlackFilesDerivesMIMETypeForVoiceClip (0.00s)
+=== RUN   TestFileMessageSpoolsAndForwardsLocalPath
+2026/10/21 13:36:38 inbound: chan=C1 user=U1 ts=1.0 thread= target="" bot_mention=false files=1 spooled=1 text=0ch posted=239ch receipt=unsupported
+--- PASS: TestFileMessageSpoolsAndForwardsLocalPath (0.00s)
+=== RUN   TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool
+--- PASS: TestInboundRedactionWithheldPathsSurviveDeliveryAndSpool (0.01s)
+=== RUN   TestInboundRedactionMarkupFilenamePathsRemainUsable
+--- PASS: TestInboundRedactionMarkupFilenamePathsRemainUsable (0.00s)
+=== RUN   TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles
+--- PASS: TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles (0.00s)
+=== RUN   TestInboundRedactionDownloadsShareStoreWithCLI
+--- PASS: TestInboundRedactionDownloadsShareStoreWithCLI (0.09s)
+=== RUN   TestDownloadSlackFiles
+=== RUN   TestDownloadSlackFiles/single_file_downloaded
+=== RUN   TestDownloadSlackFiles/two_files
+=== RUN   TestDownloadSlackFiles/no_files_returns_nil
+=== RUN   TestDownloadSlackFiles/missing_url_private_dropped
+2026/10/21 13:36:38 inbound file F2: url_private empty, dropped
+=== RUN   TestDownloadSlackFiles/404_from_slack_drops_file_but_other_succeeds
+2026/10/21 13:36:38 inbound file F2 download failed: GET http://127.0.0.1:55147/files/F2: 404 Not Found — boom
+=== RUN   TestDownloadSlackFiles/empty_store_path_returns_nil
+2026/10/21 13:36:38 inbound file download skipped: INBOUND_FILE_STORE empty (1 files dropped)
+=== RUN   TestDownloadSlackFiles/path_traversal_in_name_sanitized
+=== RUN   TestDownloadSlackFiles/malformed_channel_and_ts_sanitized
+--- PASS: TestDownloadSlackFiles (0.01s)
+    --- PASS: TestDownloadSlackFiles/single_file_downloaded (0.00s)
+    --- PASS: TestDownloadSlackFiles/two_files (0.00s)
+    --- PASS: TestDownloadSlackFiles/no_files_returns_nil (0.00s)
+    --- PASS: TestDownloadSlackFiles/missing_url_private_dropped (0.00s)
+    --- PASS: TestDownloadSlackFiles/404_from_slack_drops_file_but_other_succeeds (0.00s)
+    --- PASS: TestDownloadSlackFiles/empty_store_path_returns_nil (0.00s)
+    --- PASS: TestDownloadSlackFiles/path_traversal_in_name_sanitized (0.00s)
+    --- PASS: TestDownloadSlackFiles/malformed_channel_and_ts_sanitized (0.00s)
+=== RUN   TestSweepInboundStore
+=== RUN   TestSweepInboundStore/missing_root_is_no-op
+=== RUN   TestSweepInboundStore/empty_root_is_no-op
+=== RUN   TestSweepInboundStore/removes_old_files_keeps_fresh
+=== RUN   TestSweepInboundStore/removes_empty_channel_dir_after_sweep
+=== RUN   TestSweepInboundStore/multiple_channels_processed_independently
+=== RUN   TestSweepInboundStore/non-positive_ttl_disables
+=== RUN   TestSweepInboundStore/empty_root_path_disables
+=== RUN   TestSweepInboundStore/files_at_root_level_skipped
+=== RUN   TestSweepInboundStore/non-regular_files_skipped
+--- PASS: TestSweepInboundStore (0.01s)
+    --- PASS: TestSweepInboundStore/missing_root_is_no-op (0.00s)
+    --- PASS: TestSweepInboundStore/empty_root_is_no-op (0.00s)
+    --- PASS: TestSweepInboundStore/removes_old_files_keeps_fresh (0.00s)
+    --- PASS: TestSweepInboundStore/removes_empty_channel_dir_after_sweep (0.00s)
+    --- PASS: TestSweepInboundStore/multiple_channels_processed_independently (0.00s)
+    --- PASS: TestSweepInboundStore/non-positive_ttl_disables (0.00s)
+    --- PASS: TestSweepInboundStore/empty_root_path_disables (0.00s)
+    --- PASS: TestSweepInboundStore/files_at_root_level_skipped (0.00s)
+    --- PASS: TestSweepInboundStore/non-regular_files_skipped (0.00s)
+=== RUN   TestDownloadSlackFilesPermissions
+--- PASS: TestDownloadSlackFilesPermissions (0.00s)
+=== RUN   TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded
+--- PASS: TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded (0.00s)
+=== RUN   TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath
+2026/10/21 13:36:38 inbound file F2 download failed: GET http://127.0.0.1:55156/failed: 404 Not Found — 404 page not found
+2026/10/21 13:36:38 mention-only: delivered session=mayor-session chan=C1 ts=1792436306.401379 thread= reason=bot_mention receipt=unsupported
+--- PASS: TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath (0.01s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	1.718s
+testing: warning: no tests to run
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.204s [no tests to run]
+
+Exit: 0

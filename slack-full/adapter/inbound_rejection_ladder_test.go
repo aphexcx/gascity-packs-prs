@@ -2326,9 +2326,10 @@ func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
 		t.Fatal("the replayed entry must carry its text intact")
 	}
 	// Over the cap: refused where durability is promised, batch-mates kept.
+	// Punctuation keeps size fixtures from looking like one giant secret.
 	read, cleanup := captureLog(t)
 	defer cleanup()
-	huge := testPending("C1", "2.0", strings.Repeat("x", maxInboundSpoolLineBytes))
+	huge := testPending("C1", "2.0", strings.Repeat("x.", maxInboundSpoolLineBytes/2))
 	if spool.spillBatch("C1", []pendingChannelInbound{huge, testPending("C1", "3.0", "batch-mate")}) {
 		t.Fatal("spillBatch must not confirm a batch the replay cannot fully read")
 	}
@@ -2347,7 +2348,8 @@ func TestSpoolLineCapIsTheProducersBound(t *testing.T) {
 		prefix := `{"channel":"C1","inbound":{"provider_message_id":"` + ts + `","text":"`
 		suffix := `"}}`
 		pad := maxInboundSpoolLineBytes - len(prefix) - len(suffix) + extra
-		return append(append(append([]byte(prefix), bytes.Repeat([]byte("p"), pad)...), suffix...), '\n')
+		padding := bytes.Repeat([]byte("p."), (pad+1)/2)[:pad]
+		return append(append(append([]byte(prefix), padding...), suffix...), '\n')
 	}
 	edge := dir + "/edge.jsonl"
 	if err := os.WriteFile(edge, append(line("4.0", 0), line("5.0", 1)...), 0o600); err != nil {
@@ -3037,6 +3039,7 @@ func TestRefusalPayloadIsSpooledBeforeTheSink(t *testing.T) {
 func TestDeletionOfASpooledParkedPayloadIsPersisted(t *testing.T) {
 	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
 	c := newInboundCoalescer(time.Hour, nil) // the write retry is an hour out: the park outlives the deletion
+	t.Cleanup(c.flushAll)
 	c.spill = spool.spillBatch
 	c.recordVerdict = spool.recordVerdict
 	c.recordDeletion = spool.recordDeletion
@@ -3049,6 +3052,7 @@ func TestDeletionOfASpooledParkedPayloadIsPersisted(t *testing.T) {
 	var mu sync.Mutex
 	var written []string
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	t.Cleanup(c2.flushAll)
 	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
@@ -3224,6 +3228,7 @@ func TestStrippedDispositionIsDurableWhenDecided(t *testing.T) {
 func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
 	spool := newInboundSpool(t.TempDir() + "/spool.jsonl")
 	c := newInboundCoalescer(time.Hour, nil)
+	t.Cleanup(c.flushAll)
 	c.spill = spool.spillBatch
 	c.recordVerdict = spool.recordVerdict
 	c.recordDeletion = spool.recordDeletion
@@ -3245,6 +3250,7 @@ func TestDeletionDuringTheSinkIsRecorded(t *testing.T) {
 	var mu sync.Mutex
 	var written []string
 	c2 := newInboundCoalescer(20*time.Millisecond, nil)
+	t.Cleanup(c2.flushAll)
 	c2.spill = spool.spillBatch
 	c2.recordVerdict = spool.recordVerdict
 	c2.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
@@ -3829,7 +3835,7 @@ func TestUnfinishedDeadLetterVerdictNeverExpires(t *testing.T) {
 func TestInPlaceCompactionKeepsLinesReadable(t *testing.T) {
 	spool := newInboundSpool(filepath.Join(t.TempDir(), strings.Repeat("s", 250))) // forces the in-place fallback
 	refused := testPending("C1", "1.0", "")
-	refused.body = strings.Repeat("x", 34<<20)
+	refused.body = strings.Repeat("x.", 17<<20)
 	refused.inbound.Text = refused.foldedText()
 	refused.refused, refused.attempts = "422 Unprocessable Entity", 2
 	if !spool.spillBatch("C1", []pendingChannelInbound{refused}) {

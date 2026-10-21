@@ -1,0 +1,21 @@
+# codex-gate exec: prompt /tmp/gp-pnfn-review-prompt.txt (1734 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; model gpt-6-astra; 2026-10-21T15:00:31Z
+
+Three major findings in committed HEAD `9207d651`:
+
+1. **Major — JWT payloads survive Go redaction inside URLs.** [redact.go:54](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/redact/redact.go:54) uses non-overlapping matches. For `https://example.com/<JWT>` with a standard 36-character header, base64 matching consumes `com/` plus the header before the overlapping JWT match. A short payload such as `eyJzdWIiOiJmaXh0dXJlIn0` remains visible between markers and reaches persistence. Python merges overlapping matches and removes it. Merge overlapping spans consistently in Go and add this shared regression fixture.
+
+2. **Major — Nested message content remains plaintext in durable receipts.** [inbound_redact.go:33](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter/inbound_redact.go:33) only sanitizes six field names. A credential in a rich-text link’s `url`, attachment `pretext`, or attachment field `value` survives, even when its top-level text copy is redacted. Company admission persists the complete event in receipt body sidecars. Cover these content fields while preserving routing metadata and attachment download paths; test the persisted event.
+
+3. **Major — Python leaks Bearer tokens following Unicode text.** [slack_redact.py:9](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/scripts/slack_redact.py:9) compiles the shared `\bBearer` rule with Python’s Unicode boundary semantics. The synthetic input `令牌Bearer short.token-42` remains unchanged; Go’s ASCII boundary matches it. The tail therefore prints the token. Align boundary semantics, add shared Unicode fixtures, and update the pinned helper snapshot.
+
+Suites were **not run (sandbox)**. Committed [worker evidence](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-pnfn/validation.md:5) reports:
+
+| Required suite | Recorded result |
+|---|---|
+| Full adapter, race enabled | 12,605 test/subtest passes; 0 skips; both packages pass |
+| Full CLI, race enabled | 237 test/subtest passes; all 8 packages pass |
+| Full Python | 785 passed; 2 skipped; 2 deprecation warnings |
+
+DM fixtures, README documentation, and pinned city helper/memory integration evidence are present. Existing fixtures miss the cases above. No files were changed or real Slack records accessed.
+
+VERDICT: BLOCK

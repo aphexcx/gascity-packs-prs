@@ -286,6 +286,7 @@ type livenessHeldReplay struct {
 // clipHeldMessage returns the message as a held replay keeps it: the text
 // cut to livenessHeldTextMax on a rune boundary, the files kept by count.
 func clipHeldMessage(m slackHistoryMessage) (slackHistoryMessage, int) {
+	m.Text = redactInboundText(m.Text)
 	files := len(m.Files)
 	m.Files = nil
 	m.Raw = nil
@@ -2288,6 +2289,15 @@ func (l *inboundLiveness) loadState() {
 			continue
 		}
 		ch.Pinned = false // re-derived from config each start
+		// Pre-upgrade holds may contain raw text. Scrub before installing
+		// them for replay, persistence, or expiry's LOST-log fallback.
+		for ts, held := range ch.PendingMessages {
+			if text := redactInboundText(held.Msg.Text); text != held.Msg.Text {
+				held.Msg.Text = text
+				ch.PendingMessages[ts] = held
+				l.stateDirty = true
+			}
+		}
 		// The delivered record of a held channel comes back with the hold,
 		// so the startup probe replays only what was never delivered.
 		for _, o := range ch.HeldOrigins {

@@ -597,6 +597,8 @@ func mpimExcerptAuthorIsBot(dir *CompanyDirectory, user string) bool {
 // any allowlist downgrade already applied) at hydration-freeze time — exactly like
 // the DM worker — so it is never recomputed from the live directory per attempt.
 func renderCompanyMpimReminder(agent, text, originTS, threadRootTS string, h companyHydration, turn *companyCurrentTurn) string {
+	text = redactInboundText(text)
+	h = redactCompanyHydration(h)
 	var b strings.Builder
 	b.WriteString("<system-reminder>\n")
 	fmt.Fprintf(&b, "Slack group direct message to agent %q: a human mentioned you in a multi-party DM (mpim delivery).\n",

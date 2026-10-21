@@ -285,7 +285,7 @@ func fetchSlackFileContent(token, rawURL string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return string(body), true
+	return redactInboundText(string(body)), true
 }
 
 // fetchVerifiedRoot fetches the thread root and grants verification only when
@@ -370,6 +370,9 @@ func slackHydrationGet(token string, client *http.Client, pathAndQuery string) (
 	if err := json.Unmarshal(body, &sr); err != nil || !sr.OK {
 		return slackHydrationResp{}, false
 	}
+	for i := range sr.Messages {
+		sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
+	}
 	return sr, true
 }
 
@@ -380,6 +383,8 @@ func slackHydrationGet(token string, client *http.Client, pathAndQuery string) (
 // synthesis bytes are rendered as the S10-normalized synthesis block (a
 // malformed blob renders the unavailable shape rather than failing delivery).
 func renderCompanyReminder(room *CompanyRoom, authorClass, kind, text, originTS, threadRootTS string, h companyHydration, synthesis json.RawMessage, turn *companyCurrentTurn) string {
+	text = redactInboundText(text)
+	h = redactCompanyHydration(h)
 	roomName := ""
 	if room != nil {
 		roomName = room.Name

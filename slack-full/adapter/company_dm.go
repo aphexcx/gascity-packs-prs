@@ -569,6 +569,8 @@ func (g *companyGateway) sessionGuardBlock(city, session string) sessionGuardOut
 // (no room, no peer authority, no delegation). Deterministic in its inputs so
 // redrives re-render byte-identical bodies.
 func renderCompanyDMReminder(agent, text, originTS, threadRootTS string, h companyHydration, turn *companyCurrentTurn) string {
+	text = redactInboundText(text)
+	h = redactCompanyHydration(h)
 	var b strings.Builder
 	b.WriteString("<system-reminder>\n")
 	fmt.Fprintf(&b, "Slack direct message to agent %q: a human sent you a direct message (dm delivery).\n",

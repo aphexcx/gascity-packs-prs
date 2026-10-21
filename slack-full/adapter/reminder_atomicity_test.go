@@ -112,7 +112,7 @@ func TestCoalescedBatch_HelpWithheldOverBudgetThenReArms(t *testing.T) {
 
 	// First delivery: body big enough that body+help overflows the
 	// budget — the how-to must be withheld, never the body.
-	bigBody := strings.Repeat("x", 200)
+	bigBody := strings.Repeat("x.", 100)
 	processSlackEvent(cfg, aliasReg, nil, nil, nil, nil,
 		humanEnvelope(t, "Ev1", "C1", "100.000001", bigBody), func() {})
 	waitFor(t, "first flush", func() bool { return len(stub.snapshotInbounds()) == 1 })
@@ -140,8 +140,8 @@ func TestUrgent_HelpWithheldAndBodyTrimmedHeadPreserved(t *testing.T) {
 	t.Cleanup(gcSrv.Close)
 
 	cfg := budgetedTestConfig(gcSrv.URL, time.Hour, 700)
-	head := strings.Repeat("H", 250)
-	body := head + strings.Repeat("T", 5000)
+	head := strings.Repeat("H.", 125)
+	body := head + strings.Repeat("T.", 2500)
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
 		rawEnvelope(t, "Ev1", slackMessageEvent{
 			Type: "app_mention", Channel: "C1", User: "U_ALICE", TS: "100.000001", Text: body,
@@ -266,9 +266,9 @@ func TestSingleBufferedMessage_BudgetMatchesImmediatePath(t *testing.T) {
 	t.Cleanup(gcSrv.Close)
 
 	cfg := budgetedTestConfig(gcSrv.URL, 40*time.Millisecond, 700)
-	head := strings.Repeat("H", 250)
+	head := strings.Repeat("H.", 125)
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
-		humanEnvelope(t, "Ev1", "C1", "100.000001", head+strings.Repeat("T", 5000)), func() {})
+		humanEnvelope(t, "Ev1", "C1", "100.000001", head+strings.Repeat("T.", 2500)), func() {})
 	waitFor(t, "buffered flush", func() bool { return len(stub.snapshotInbounds()) == 1 })
 	text := stub.snapshotInbounds()[0].Text
 	if !strings.HasPrefix(text, head) {
@@ -536,7 +536,7 @@ func TestSpool_StoresPartsWithoutDuplicatingText(t *testing.T) {
 	// codex round-3 finding 4: the folded Text is rebuilt from the parts
 	// on replay instead of being persisted twice.
 	path := t.TempDir() + "/spool.jsonl"
-	body := strings.Repeat("b", 2000)
+	body := strings.Repeat("b.", 1000)
 	preamble := "Thread context (1 earlier message):\n@alice: hi\n\n---\n\n"
 	files := "[file: photo.jpg]"
 	folded := preamble + body + "\n\n" + files

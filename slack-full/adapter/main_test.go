@@ -3028,7 +3028,7 @@ func TestDownloadSlackFiles(t *testing.T) {
 			if len(got) != tc.wantCount {
 				t.Fatalf("got %d attachments, want %d (%+v)", len(got), tc.wantCount, got)
 			}
-			// File must live under inboundFileStore/<sanitized-channel>/, not
+			// File must live under inboundFileStore/<sanitized-channel>.adapter/, not
 			// escape via path traversal in channel or ts. Use EvalSymlinks
 			// so a hostile symlink can't defeat the prefix check by yielding
 			// a path that lexically lives under the store but resolves
@@ -3370,7 +3370,7 @@ func TestDownloadSlackFilesPermissions(t *testing.T) {
 		t.Fatalf("got %d attachments, want 1", len(got))
 	}
 
-	channelDir := filepath.Join(cfg.inboundFileStore, "C123")
+	channelDir := filepath.Join(cfg.inboundFileStore, "C123.adapter")
 	dirInfo, err := os.Stat(channelDir)
 	if err != nil {
 		t.Fatalf("stat channel dir: %v", err)

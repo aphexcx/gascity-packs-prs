@@ -1,0 +1,12 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles -count=1
+=== RUN   TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles
+    inbound_redact_test.go:464: distinct filenames share a download destination
+--- FAIL: TestInboundRedactionMarkupFilenameCollisionKeepsBothFiles (0.00s)
+FAIL
+FAIL	github.com/sjarmak/gc-slack-adapter	0.281s
+testing: warning: no tests to run
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.203s [no tests to run]
+FAIL
+
+Exit: 1

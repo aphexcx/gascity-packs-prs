@@ -98,14 +98,14 @@ func resolveUserDisplayName(cfg config, userID string) string {
 		return userID
 	}
 	if handle, ok := cfg.userAliases.handleForUserID(userID); ok {
-		return handle
+		return redactInboundText(handle)
 	}
 	if cfg.userNames == nil || cfg.slackBotToken == "" {
 		return userID
 	}
 	now := time.Now()
 	if name, ok := cfg.userNames.get(userID, now); ok {
-		return name
+		return redactInboundText(name)
 	}
 	name := fetchUserDisplayName(cfg, userID)
 	if name == "" {
@@ -143,8 +143,10 @@ func fetchUserDisplayName(cfg config, userID string) string {
 		log.Printf("users.info %s: ok=false error=%q (using raw id)", userID, info.Error)
 		return ""
 	}
-	return firstNonEmptyName(info.User.Profile.DisplayName, info.User.Profile.RealName,
-		info.User.RealName, info.User.Name)
+	// Names enter message text and thread context after event ingestion.
+	// Scrub before caching/composition so later clipping cannot expose fragments.
+	return redactInboundText(firstNonEmptyName(info.User.Profile.DisplayName, info.User.Profile.RealName,
+		info.User.RealName, info.User.Name))
 }
 
 func firstNonEmptyName(values ...string) string {
@@ -198,7 +200,7 @@ func rewriteSlackUserMentions(cfg config, text string) string {
 			return "@" + name
 		}
 		if label != "" {
-			return "@" + label
+			return "@" + redactInboundText(label)
 		}
 		return tok
 	})

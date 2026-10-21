@@ -1,0 +1,15 @@
+Command (cwd=slack-full/adapter): go test -race -v ./... -run TestMentionOnlyInbound_ -count=1
+Round 5 re-run of the round-4 filter, adding explicit command and test names.
+=== RUN   TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded
+--- PASS: TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded (0.00s)
+=== RUN   TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath
+2026/10/21 13:18:00 inbound file F2 download failed: GET http://127.0.0.1:52001/failed: 404 Not Found — 404 page not found
+2026/10/21 13:18:00 mention-only: delivered session=mayor-session chan=C1 ts=1792436306.401379 thread= reason=bot_mention receipt=unsupported
+--- PASS: TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath (0.02s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	1.316s
+testing: warning: no tests to run
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.185s [no tests to run]
+
+Exit: 0

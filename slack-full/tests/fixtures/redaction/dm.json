@@ -1,0 +1,22 @@
+{
+  "type": "event_callback",
+  "event_id": "EvRedactionFixture",
+  "team_id": "T1",
+  "event": {
+    "type": "message",
+    "channel_type": "im",
+    "channel": "D0DM",
+    "user": "U1",
+    "ts": "1792436306.401379",
+    "text": "Synthetic gateway key: sk-test-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7z9Q",
+    "blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "copy sk-test-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF7z9Q"
+        }
+      }
+    ]
+  }
+}

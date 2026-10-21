@@ -52,6 +52,38 @@ for the full rationale.
 > (see "Not yet implemented" below). If you need parity today, use
 > the discord pack.
 
+## Inbound secret redaction
+
+Inbound message text (including nested Block Kit content, fetched thread
+context, resolved display names, slash commands, action values, and modal inputs) is redacted before
+adapter receipts/spools/dead letters and before gc
+receives it for its events journal or mail. Matches become
+`[REDACTED:<kind>:...<last-four>]`; the original text is not retained in those
+records. The shared rules in `adapter/redact/patterns.json` cover provider keys
+(`sk-`, `sk-ant-`, Slack `xoxb-`/`xoxp-`/`xapp-`, GitHub, AWS `AKIA`, Google
+`AIza`), Bearer tokens, JWT-shaped strings, 32+ hex and 40+ base64/base64url
+runs. This is a conservative shape filter: long hashes/identifiers in prose
+can be redacted too. Canonical Slack permalinks are exempt from the base64 rule
+through its shared allowlist; webhook URLs and slash-containing keys still redact.
+Protocol routing IDs and attachment download URLs stay
+intact; attachment bytes and outbound posts are outside this text filter.
+
+`scripts/slack_tail.py` imports `slack_redact.redact_text` from this pack and
+redacts before its 420-character display limit (including errors before their
+limit). It preserves the mayor helper's ALLOW/WITHHOLD/TOKENS behavior. Install
+that script as the implementation behind `.gc/184th-slack-tail.py`, with the
+pack's scripts on `sys.path`; keep `slack_redact.py` and
+`adapter/redact/patterns.json` together in the installed pack. Missing rules
+fail closed at import/startup. Pending company receipts, including mention-only
+replay, also scrub old text and frozen context before delivery; receipt updates
+sanitize that context. Old shutdown spools are scrubbed before reminder clipping.
+Restored held replay text is scrubbed on state load before it can be saved or
+logged on expiry. Historical receipt body sidecars and existing journal records
+are not rewritten. Redacted
+attachment names include a file identity/index so matching suffixes cannot
+overwrite another attachment. Generated local file paths remain usable after
+attachment rejection and spool replay; their provenance stays in adapter state.
+
 ## Status
 
 Implemented:
@@ -107,7 +139,7 @@ Implemented:
       protocol
 - [x] `gc slack upload` — bidirectional file attachments
       (`/publish-file` outbound + auto-download of inbound files into
-      `$INBOUND_FILE_STORE/<channel>/<ts>-<filename>`, scrubbed by an
+      `$INBOUND_FILE_STORE/<channel>.adapter/<ts>-<file-index>-<filename>`, scrubbed by an
       in-process retention janitor)
 - [x] `template-fragments/slack-v0.template.md` — composable prompt
       fragment for any agent in a slack-bound session

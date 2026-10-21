@@ -1,0 +1,16 @@
+{
+  "command": "go test -race -json ./...",
+  "workdir": "slack-full/cli",
+  "test_subtest_passes": 237,
+  "package_passes": [
+    "github.com/sjarmak/gc-slack-cli",
+    "github.com/sjarmak/gc-slack-cli/cmd",
+    "github.com/sjarmak/gc-slack-cli/internal/state/apps",
+    "github.com/sjarmak/gc-slack-cli/internal/state/rooms",
+    "github.com/sjarmak/gc-slack-cli/internal/state/workspace",
+    "github.com/sjarmak/gc-slack-cli/internal/state/channels",
+    "github.com/sjarmak/gc-slack-cli/internal/state/rigs",
+    "github.com/sjarmak/gc-slack-cli/internal/state/blockkit"
+  ],
+  "failures": []
+}

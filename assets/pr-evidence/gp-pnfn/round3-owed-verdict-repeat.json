@@ -1,0 +1,7 @@
+{
+  "command": "go test -race -json ./... -run '^TestOwedVerdictRecordsAreRetried$' -count=20",
+  "workdir": "slack-full/adapter",
+  "test_passes": 20,
+  "failures": [],
+  "race_reports": 0
+}
