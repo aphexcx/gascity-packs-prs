@@ -133,5 +133,15 @@
     "name": "aws-overlapping-prefix",
     "text": "AKIAAAAAAKIAAAAAAAAAAAAA1234",
     "want": "[REDACTED:aws:...1234]"
+  },
+  {
+    "name": "bearer-overlapping-prefix",
+    "text": "Bearer Bearer short.token-42",
+    "want": "[REDACTED:bearer:...n-42]"
+  },
+  {
+    "name": "bearer-overlapping-chain",
+    "text": "漢Bearer bEaReR Bearer short.token-42",
+    "want": "漢[REDACTED:bearer:...n-42]"
   }
 ]

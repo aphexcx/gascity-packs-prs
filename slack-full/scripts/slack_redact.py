@@ -21,7 +21,10 @@ def redact_text(text: str) -> str:
             matches.append((start, -stop, priority))
             # Resume at a JWT's first separator to include overlapping
             # candidates such as settings.jwt.<actual JWT>.
-            offset = text.find(".", start, stop) if token else stop
+            if _RULES[priority]["kind"] == "bearer":
+                offset = start + len("Bearer")
+            else:
+                offset = text.find(".", start, stop) if token else stop
             if offset < 0:
                 offset = stop
     matches.sort()

@@ -69,7 +69,11 @@ func Text(s string) string {
 			}
 			matches = append(matches, match{start, stop, priority})
 			offset = stop
-			if token >= 0 {
+			if rule.kind == "bearer" {
+				// A token can itself be "Bearer", starting another
+				// credential. Keep the separating whitespace in view.
+				offset = start + len("Bearer")
+			} else if token >= 0 {
 				// JWTs can overlap: settings.jwt.<header> is itself
 				// a candidate that covers the real JWT's header. Resume
 				// at its first separator so no candidate is skipped.

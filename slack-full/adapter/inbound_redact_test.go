@@ -47,6 +47,13 @@ func assertInboundRedacted(t *testing.T, text, secret string) {
 // Python suite runs the same DM fixture through the tail helper independently.
 func TestInboundRedactionDMJournalMailAndDeadLetter(t *testing.T) {
 	body, secret := redactionDM(t)
+	var dm map[string]any
+	if err := json.Unmarshal(body, &dm); err != nil {
+		t.Fatal(err)
+	}
+	event := dm["event"].(map[string]any)
+	event["text"] = event["text"].(string) + " Bearer Bearer short.token-42"
+	body, _ = json.Marshal(dm)
 	dir := t.TempDir()
 	journal := filepath.Join(dir, "events.jsonl")
 	mail := filepath.Join(dir, "mail.txt")
@@ -89,6 +96,9 @@ func TestInboundRedactionDMJournalMailAndDeadLetter(t *testing.T) {
 			t.Fatal(err)
 		}
 		assertInboundRedacted(t, string(data), secret)
+		if strings.Contains(string(data), "short.token-42") || !strings.Contains(string(data), "[REDACTED:bearer:...n-42]") {
+			t.Fatal("overlapping Bearer token reached journal or mail")
+		}
 	}
 	// The dead-letter and shutdown-spool backstops also protect older/replayed
 	// payloads that did not traverse today's ingest hook.
