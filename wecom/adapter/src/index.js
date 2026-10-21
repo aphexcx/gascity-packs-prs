@@ -166,6 +166,20 @@
 //	                       only remediation available for a
 //	                       ready-but-dead WS, since WeCom has no history
 //	                       API to probe or backfill from.
+//	WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS
+//	                       Suppress a new forced reconnect after a provider
+//	                       outbound acknowledgement (default 600000 = 10min;
+//	                       0 disables suppression). At 3× the stall threshold,
+//	                       acks no longer suppress remediation.
+//	WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS
+//	                       Minimum time between cycles (default the greater
+//	                       of the stall threshold and 1800000 = 30min).
+//	WECOM_LIVENESS_TICK_MS / WECOM_LIVENESS_ALARM_REPEAT_MS
+//	                       Watchdog polling/alarm cadence (30000 / 1800000).
+//	WECOM_RECONNECT_DRAIN_TIMEOUT_MS
+//	                       Wait for publishes before remediation (default
+//	                       30000); active uploads defer it until settled.
+//	                       Shutdown caps the wait at 1500 ms.
 //	WECOM_COALESCE_WINDOW_MS
 //	                       Per-conversation inbound burst-coalescing
 //	                       window (default 8000; 0 disables): same-chat
@@ -204,6 +218,7 @@ import {
 } from './media.js';
 import { createInboundPipeline, postJSON, sleep } from './inbound.js';
 import { createInboundLiveness } from './liveness.js';
+import { createOutboundConnection } from './connection.js';
 import { createRequestListener, hardenServer } from './listener.js';
 import { createMediaUploader, createSdkUploadTransport } from './upload.js';
 import {
@@ -309,6 +324,12 @@ function loadConfig() {
     // 8/19 ready-but-dead WS sat silent 40 minutes with /healthz green.
     livenessStallAfterMs: intEnv0('WECOM_LIVENESS_STALL_AFTER_MS', 10 * 60 * 1000),
     livenessReconnect: getenv('WECOM_LIVENESS_RECONNECT') === 'true',
+    livenessOutboundAckFreshMs: intEnv0('WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS', 10 * 60 * 1000),
+    livenessReconnectMinIntervalMs: intEnv('WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS',
+      Math.max(intEnv0('WECOM_LIVENESS_STALL_AFTER_MS', 10 * 60 * 1000), 30 * 60 * 1000)),
+    livenessTickMs: intEnv('WECOM_LIVENESS_TICK_MS', 30 * 1000),
+    livenessAlarmRepeatMs: intEnv('WECOM_LIVENESS_ALARM_REPEAT_MS', 30 * 60 * 1000),
+    reconnectDrainTimeoutMs: intEnv('WECOM_RECONNECT_DRAIN_TIMEOUT_MS', 30 * 1000),
     // Inbound burst coalescing (jg-p1mk item 3; src/inbound.js): rapid
     // same-chat bursts deliver as one combined inbound.
     coalesceWindowMs: intEnv0('WECOM_COALESCE_WINDOW_MS', 8000),
@@ -376,7 +397,7 @@ function log(...args) {
 // as a testable publisher; main() below instantiates it with the real SDK
 // client, and startInternalListener routes both endpoints to it.
 
-function startInternalListener(cfg, publisher, healthDetail = null) {
+function startInternalListener(cfg, publisher, healthDetail = null, isDraining = () => false) {
   // Route matching, the body byte cap, and multibyte-safe decoding live
   // in src/listener.js (testable); socket-level header/request deadlines
   // come from hardenServer (codex jg-d0xr finding 10).
@@ -385,6 +406,7 @@ function startInternalListener(cfg, publisher, healthDetail = null) {
     log,
     maxBodyBytes: cfg.publishMaxBodyBytes,
     healthDetail,
+    isDraining,
   })));
 
   if (cfg.serviceSocket) {
@@ -505,6 +527,10 @@ async function main() {
     };
   }
   const wsClient = new WSClient(wsOptions);
+  const connection = createOutboundConnection(wsClient, {
+    drainTimeoutMs: cfg.reconnectDrainTimeoutMs,
+    log,
+  });
 
   // Outbound media upload engine (src/upload.js, jg-bw5gsw). Built before
   // wsClient.connect() so the transport counts the first authentication.
@@ -512,7 +538,10 @@ async function main() {
   // uploadMedia, logged, never a startup failure.
   let uploader = null;
   if (cfg.uploadEngine === 'adapter') {
-    const transport = createSdkUploadTransport(wsClient, { generateReqId: AiBot.generateReqId });
+    const transport = createSdkUploadTransport(wsClient, {
+      generateReqId: AiBot.generateReqId,
+      onAck: connection.noteAck,
+    });
     if (transport) {
       uploader = createMediaUploader({
         transport,
@@ -573,11 +602,24 @@ async function main() {
   const publisher = createOutboundPublisher({
     cfg,
     journal,
-    sendMessage: (chatid, body) => wsClient.sendMessage(chatid, body),
+    sendMessage: connection.sendMessage,
+    trackActivity: connection.trackActivity,
+    trackUpload: connection.trackUpload,
     uploadMedia: uploader
       ? (buffer, options) => uploader.upload(buffer, options)
-      : (buffer, options) => wsClient.uploadMedia(buffer, options),
-    sendMediaMessage: (chatid, type, mediaId) => wsClient.sendMediaMessage(chatid, type, mediaId),
+      : async (buffer, options) => {
+        try {
+          const result = await wsClient.uploadMedia(buffer, options);
+          connection.noteAck();
+          return result;
+        } catch (err) {
+          if (typeof err?.errcode === 'number') connection.noteAck();
+          throw err;
+        }
+      },
+    sendMediaMessage: (chatid, type, mediaId) => connection.sendMessage(chatid, {
+      msgtype: type, [type]: { media_id: mediaId },
+    }),
     // One wall-clock bound on the whole chunked upload: each WS chunk has
     // the SDK's reply-ack timeout, but 20 chunks × retries can still
     // stretch; the /publish-media HTTP response must unblock eventually.
@@ -586,46 +628,24 @@ async function main() {
     log,
   });
 
-  // Inbound-liveness watchdog (src/liveness.js): the SDK's missed-pong
-  // detection only catches transport death; this catches the 8/19
-  // ready-but-dead shape — socket healthy, zero pushes. The optional
-  // remediation cycles the connection: disconnect() suppresses the SDK's
-  // auto-reconnect (manual close), connect() re-arms it and re-auths.
-  // connect() must not run until the old socket's close handler has
-  // FULLY completed (codex jg-p1mk r1 finding 4, r2 finding 3): SDK
-  // 1.0.7 emits 'disconnected' MID-handler, then nulls the shared ws
-  // reference and re-checks isManualClose — so connecting synchronously
-  // inside the event callback still loses the fresh socket to the
-  // handler's tail and re-arms a duplicate auto-reconnect. Defer one
-  // macrotask past the event; keep a timer fallback for an already-dead
-  // socket that emits nothing, and remove the listener on whichever
-  // path fires first so repeated cycles never accumulate listeners.
-  const cycleConnection = () => {
-    let cycled = false;
-    const connectOnce = () => {
-      if (cycled) return;
-      cycled = true;
-      wsClient.off('disconnected', deferredConnect);
-      wsClient.connect();
-    };
-    const deferredConnect = () => {
-      setTimeout(connectOnce, 0);
-    };
-    wsClient.once('disconnected', deferredConnect);
-    setTimeout(connectOnce, 3000).unref?.();
-    wsClient.disconnect();
-  };
+  // A due cycle waits for the whole publish and any retained upload.
+  // Uploads defer remediation until settled. Outbound acks suppress new
+  // cycles only below the hard ceiling of 3× the inbound stall threshold;
+  // inbound alarms remain useful because acks cannot prove push delivery.
   const liveness = createInboundLiveness({
     stallAfterMs: cfg.livenessStallAfterMs,
-    reconnect: cfg.livenessReconnect ? cycleConnection : null,
-    // A cycle tears down any upload in flight (jg-bw5gsw): wait for it.
-    reconnectDeferral: uploader
-      ? () => (uploader.inFlight() > 0 ? `${uploader.inFlight()} media upload(s) in flight` : null)
-      : null,
+    reconnect: cfg.livenessReconnect ? connection.reconnect : null,
+    reconnectDeferral: connection.reconnectDeferral,
+    lastOutboundAck: connection.lastAckAt,
+    outboundAckFreshMs: cfg.livenessOutboundAckFreshMs,
+    reconnectMinIntervalMs: cfg.livenessReconnectMinIntervalMs,
+    alarmRepeatMs: cfg.livenessAlarmRepeatMs,
     log,
   });
+  liveness.start(cfg.livenessTickMs);
 
-  const server = startInternalListener(cfg, publisher, () => liveness.healthzDetail());
+  let shuttingDown = false;
+  const server = startInternalListener(cfg, publisher, () => liveness.healthzDetail(), () => shuttingDown);
 
   // Every server push — messages of any type AND event callbacks — is
   // inbound-liveness evidence. Connection lifecycle (authenticated,
@@ -633,6 +653,7 @@ async function main() {
   wsClient.on('message', () => liveness.noteInbound());
   wsClient.on('event', () => liveness.noteInbound());
 
+  wsClient.once('authenticated', () => liveness.resetClock());
   wsClient.on('authenticated', () => log('wecom long connection authenticated'));
   wsClient.on('reconnecting', (attempt) => log(`wecom reconnecting (attempt ${attempt})`));
   wsClient.on('error', (err) => {
@@ -708,38 +729,41 @@ async function main() {
   }
 
   wsClient.connect();
-  liveness.start();
 
   if (cfg.registerOnStart) {
     // Runs concurrently with the WS connection; retries until gc accepts.
     registerAdapterUntilDone(cfg);
   }
 
-  let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`${signal} received; shutting down`);
     liveness.stop();
-    const finish = () => {
-      wsClient.disconnect();
-      server.close(() => process.exit(0));
-      setTimeout(() => process.exit(0), 2000).unref();
-    };
-    // Drain coalescing buffers first and WAIT for the flushed deliveries
-    // to settle (codex jg-p1mk r1 finding 5 — an unawaited drain let the
-    // process exit mid-POST, losing the buffered frames the drain
-    // exists to save). A delivery wedged in gc-outage retries must not
-    // wedge shutdown: the deadline below caps the wait, accepting that
-    // an unreachable gc loses the window's frames either way.
-    let finished = false;
-    const finishOnce = () => {
-      if (finished) return;
-      finished = true;
-      finish();
-    };
-    pipeline.flushAll().then(finishOnce, finishOnce);
-    setTimeout(finishOnce, 5000).unref();
+    // shuttingDown closes admission, while HTTP remains open for gc's
+    // receipt-only /publish callbacks during the active media drain.
+    // gc kills proxy processes after 2 s. Start flushing inbound now, then
+    // flush again after the capped outbound drain and socket disconnection.
+    // The first flush can finish while the socket still accepts late frames;
+    // only the final flush can account for all remaining delivery chains.
+    const exitTimer = setTimeout(() => {
+      const stats = pipeline.stats();
+      if (stats.held || stats.hydrations || stats.inflight || stats.chains || stats.pending || stats.buffered) {
+        log(`shutdown hard exit with pending inbound work: ${JSON.stringify(stats)}`);
+      }
+      process.exit(0);
+    }, 1900);
+    const inboundDrained = connection.close().then(() => {
+      const listenerClosed = new Promise((resolve) => server.close(resolve));
+      return Promise.all([pipeline.flushAll(), listenerClosed]);
+    });
+    Promise.all([inboundDrained, pipeline.flushAll()]).then(() => {
+      clearTimeout(exitTimer);
+      process.exit(0);
+    }, (err) => {
+      log(`shutdown failed: ${err.message}`);
+      process.exit(1);
+    });
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));

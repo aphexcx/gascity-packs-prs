@@ -954,21 +954,28 @@ export function createUploadGate({ slots, maxQueue }) {
 //                    /extmsg/outbound; defaults to postJSONParsed above
 //                    (tests inject a fake)
 //   log              adapter logger
+//   trackActivity    wraps publishes and the actual upload lifetime so a
+//                    manual close can wait, including after HTTP timeout
+//   trackUpload      tracks uploads separately to defer remediation while
+//                    their chunks are still progressing
 //   publishStatesCap test knob (default 512)
 export function createOutboundPublisher(deps) {
   const {
     cfg,
     sendMessage,
-    uploadMedia,
+    uploadMedia: upload,
     sendMediaMessage,
     withUploadDeadline = (p) => p,
     kindStore = null,
     journal = createAttemptJournal(),
     postOutbound = postJSONParsed,
     log = () => {},
+    trackActivity = (operation) => operation(),
+    trackUpload = trackActivity,
     publishStatesCap = 512,
     textStatesCap = 512,
   } = deps;
+  const uploadMedia = (...args) => trackUpload(() => upload(...args));
 
   // Two independent in-memory pools (codex jg-d0xr round-2 finding 8): a
   // media outage that stranded 512 unsettled MEDIA keys used to wedge the
@@ -1306,6 +1313,26 @@ export function createOutboundPublisher(deps) {
   }
 
   // --- /publish: text/markdown --------------------------------------------
+
+  // During shutdown only gc's matching media transcript callback may use
+  // /publish. Answer directly from receipts: never claim a key, wait on its
+  // owner, or fall through to a fresh send while the owner drains.
+  function handlePublishReceipt(req, res, body) {
+    let pub;
+    try { pub = JSON.parse(body); } catch { return false; }
+    if (!pub || typeof pub.idempotency_key !== 'string' || !pub.idempotency_key
+      || typeof pub.text !== 'string') return false;
+    const key = pub.idempotency_key;
+    const state = publishStates.get(key) ?? journal.get?.(key);
+    const expected = state?.expectedTranscript;
+    const receipt = transcriptSeeds.get(key) ?? state?.callbackReceipt ?? state?.receipt;
+    if (!receipt || !expected
+      || expected.conversation_id !== pub.conversation?.conversation_id
+      || expected.text_sha256 !== sha256Hex(pub.text)) return false;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(receipt));
+    return true;
+  }
 
   async function handlePublish(req, res, body) {
     let pub;
@@ -2402,9 +2429,10 @@ export function createOutboundPublisher(deps) {
   }
 
   return {
-    handlePublish,
-    handlePublishMedia,
-    handleUploadProbe,
+    handlePublishReceipt,
+    handlePublish: (...args) => trackActivity(() => handlePublish(...args)),
+    handlePublishMedia: (...args) => trackActivity(() => handlePublishMedia(...args)),
+    handleUploadProbe: (...args) => trackActivity(() => handleUploadProbe(...args)),
     // Introspection for tests and diagnostics only — not a public surface.
     stats: () => ({
       publishStates: publishStates.size,

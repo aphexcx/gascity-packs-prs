@@ -21,7 +21,7 @@
 
 export const defaultMaxBodyBytes = 1024 * 1024; // 1MiB
 
-export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes, healthDetail = null }) {
+export function createRequestListener({ publisher, log = () => {}, maxBodyBytes = defaultMaxBodyBytes, healthDetail = null, isDraining = () => false }) {
   const refuse413 = (req, res) => {
     // Flush the 413 before severing: destroy() alone could race the
     // response bytes out of existence.
@@ -29,7 +29,17 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     res.writeHead(413, { Connection: 'close' }).end('request body too large');
   };
 
-  const handle = (handler, label) => (req, res) => {
+  // Keep receipt callbacks reachable during drain, but refuse new work,
+  // including request bodies that finish after shutdown starts.
+  const refuseDraining = (res) => {
+    if (!isDraining()) return false;
+    res.writeHead(503, { 'Content-Type': 'application/json', Connection: 'close' }).end(JSON.stringify({
+      delivered: false, failure_kind: 'not_sent', error: 'adapter is shutting down',
+    }));
+    return true;
+  };
+  const handle = (handler, label, receiptHandler = null) => (req, res) => {
+    if (!receiptHandler && refuseDraining(res)) return;
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > maxBodyBytes) {
       log(`${label}: Content-Length ${declared} exceeds the ${maxBodyBytes}-byte body cap; refused`);
@@ -57,6 +67,10 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     req.on('error', () => { /* severed mid-body; the 413 (if any) is already out */ });
     req.on('end', () => {
       if (refused) return;
+      if (isDraining()) {
+        if (!receiptHandler?.(req, res, body)) refuseDraining(res);
+        return;
+      }
       handler(req, res, body).catch((err) => {
         log(`${label} handler error: ${err.message}`);
         if (!res.headersSent) res.writeHead(500).end();
@@ -64,7 +78,7 @@ export function createRequestListener({ publisher, log = () => {}, maxBodyBytes 
     });
   };
 
-  const publish = handle(publisher.handlePublish, 'publish');
+  const publish = handle(publisher.handlePublish, 'publish', publisher.handlePublishReceipt);
   const publishMedia = handle(publisher.handlePublishMedia, 'publish-media');
   const uploadProbe = publisher.handleUploadProbe ? handle(publisher.handleUploadProbe, 'upload-probe') : null;
 
