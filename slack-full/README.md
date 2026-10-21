@@ -63,7 +63,9 @@ records. The shared rules in `adapter/redact/patterns.json` cover provider keys
 (`sk-`, `sk-ant-`, Slack `xoxb-`/`xoxp-`/`xapp-`, GitHub, AWS `AKIA`, Google
 `AIza`), Bearer tokens, JWT-shaped strings, 32+ hex and 40+ base64/base64url
 runs. This is a conservative shape filter: long hashes/identifiers in prose
-can be redacted too. Protocol routing IDs and attachment download URLs stay
+can be redacted too. Canonical Slack permalinks are exempt from the base64 rule
+through its shared allowlist; webhook URLs and slash-containing keys still redact.
+Protocol routing IDs and attachment download URLs stay
 intact; attachment bytes and outbound posts are outside this text filter.
 
 `scripts/slack_tail.py` imports `slack_redact.redact_text` from this pack and
@@ -75,8 +77,9 @@ pack's scripts on `sys.path`; keep `slack_redact.py` and
 fail closed at import/startup. Pending company receipts, including mention-only
 replay, also scrub old text and frozen context before delivery; receipt updates
 sanitize that context. Old shutdown spools are scrubbed before reminder clipping.
-Historical
-receipt body sidecars and existing journal records are not rewritten. Redacted
+Restored held replay text is scrubbed on state load before it can be saved or
+logged on expiry. Historical receipt body sidecars and existing journal records
+are not rewritten. Redacted
 attachment names include a file identity/index so matching suffixes cannot
 overwrite another attachment. Generated local file paths remain usable after
 attachment rejection and spool replay; their provenance stays in adapter state.

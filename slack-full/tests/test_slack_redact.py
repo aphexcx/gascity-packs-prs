@@ -17,7 +17,9 @@ FIXTURES = PACK / "tests/fixtures/redaction"
 @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
                          ids=lambda case: case["name"])
 def test_shared_patterns(case):
-    assert redact_text(case["text"]) == case["want"]
+    # Construct synthetic credential shapes without a full webhook literal.
+    text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+    assert redact_text(text) == case["want"]
     assert redact_text(case["want"]) == case["want"]
 
 

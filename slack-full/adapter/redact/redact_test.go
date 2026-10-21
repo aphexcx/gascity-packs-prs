@@ -12,13 +12,22 @@ func TestSharedFixtures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cases []struct{ Name, Text, Want string }
+	var cases []struct {
+		Name, Text, Want string
+		TextParts        []string `json:"text_parts"`
+	}
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range cases {
 		t.Run(tc.Name, func(t *testing.T) {
-			if got := Text(tc.Text); got != tc.Want {
+			text := tc.Text
+			// Assemble synthetic credential shapes without embedding a
+			// complete webhook URL in the repository's fixture data.
+			if tc.TextParts != nil {
+				text = strings.Join(tc.TextParts, "")
+			}
+			if got := Text(text); got != tc.Want {
 				t.Fatalf("got %q; want %q", got, tc.Want)
 			}
 			if got := Text(tc.Want); got != tc.Want {

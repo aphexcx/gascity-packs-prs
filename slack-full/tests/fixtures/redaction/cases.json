@@ -111,13 +111,13 @@
   },
   {
     "name": "unicode-bearer",
-    "text": "令牌Bearer short.token-42",
-    "want": "令牌[REDACTED:bearer:...n-42]"
+    "text": "\u4ee4\u724cBearer short.token-42",
+    "want": "\u4ee4\u724c[REDACTED:bearer:...n-42]"
   },
   {
     "name": "latin-unicode-bearer",
-    "text": "éBearer short.token-42",
-    "want": "é[REDACTED:bearer:...n-42]"
+    "text": "\u00e9Bearer short.token-42",
+    "want": "\u00e9[REDACTED:bearer:...n-42]"
   },
   {
     "name": "jwt-overlapping-prefix",
@@ -141,8 +141,8 @@
   },
   {
     "name": "bearer-overlapping-chain",
-    "text": "漢Bearer bEaReR Bearer short.token-42",
-    "want": "漢[REDACTED:bearer:...n-42]"
+    "text": "\u6f22Bearer bEaReR Bearer short.token-42",
+    "want": "\u6f22[REDACTED:bearer:...n-42]"
   },
   {
     "name": "ordinary-launchd-label",
@@ -167,16 +167,85 @@
   {
     "name": "ordinary-slack-permalink",
     "text": "https://example.slack.com/archives/C01234567/p1792436306401379",
-    "want": "https://example.slack.[REDACTED:base64:...1379]"
+    "want": "https://example.slack.com/archives/C01234567/p1792436306401379"
   },
   {
-    "name": "ordinary-short-slack-permalink",
-    "text": "https://example.slack.com/archives/C123/p1792436306401379",
-    "want": "https://example.slack.com/archives/C123/p1792436306401379"
+    "name": "ordinary-slack-permalink-thread",
+    "text": "https://example.slack.com/archives/C0123456789/p1792436306401379?thread_ts=1792436306.401379&cid=C0123456789",
+    "want": "https://example.slack.com/archives/C0123456789/p1792436306401379?thread_ts=1792436306.401379&cid=C0123456789"
   },
   {
     "name": "ordinary-semver-suffix",
     "text": "1.2.3-release.candidate.20261021",
     "want": "1.2.3-release.candidate.20261021"
+  },
+  {
+    "name": "ordinary-slack-permalink-D-9",
+    "text": "https://example-workspace.slack.com/archives/D01234567/p1792436306401379",
+    "want": "https://example-workspace.slack.com/archives/D01234567/p1792436306401379"
+  },
+  {
+    "name": "ordinary-slack-permalink-G-9",
+    "text": "https://example-workspace.slack.com/archives/G01234567/p1792436306401379",
+    "want": "https://example-workspace.slack.com/archives/G01234567/p1792436306401379"
+  },
+  {
+    "name": "ordinary-slack-permalink-D-11",
+    "text": "https://example-workspace.slack.com/archives/D0123456789/p1792436306401379",
+    "want": "https://example-workspace.slack.com/archives/D0123456789/p1792436306401379"
+  },
+  {
+    "name": "ordinary-slack-permalink-G-11",
+    "text": "https://example-workspace.slack.com/archives/G0123456789/p1792436306401379",
+    "want": "https://example-workspace.slack.com/archives/G0123456789/p1792436306401379"
+  },
+  {
+    "name": "slack-webhook",
+    "want": "https://hooks.slack.[REDACTED:base64:...2345]",
+    "text_parts": [
+      "https://hooks.slack.com/services/",
+      "T01234567/B01234567/",
+      "FixtureOnlySecretAB12345"
+    ]
+  },
+  {
+    "name": "aws-secret-with-slash",
+    "text": "AWS secret: qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "AWS secret: [REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "slack-permalink-adjacent-key",
+    "text": "https://example.slack.com/archives/C0123456789/p1792436306401379 sk-test-abcdefgh",
+    "want": "https://example.slack.com/archives/C0123456789/p1792436306401379 [REDACTED:openai:...efgh]"
+  },
+  {
+    "name": "slack-permalink-query-key",
+    "text": "https://example.slack.com/archives/C0123456789/p1792436306401379?key=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://example.slack.com/archives/C0123456789/p1792436306401379?key=[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "slack-permalink-appended-token",
+    "text": "https://example.slack.com/archives/C0123456789/p1792436306401379qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://example.slack.[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "slack-permalink-lookalike-host",
+    "text": "https://example.slack.com.evil.test/archives/C0123456789/p1792436306401379",
+    "want": "https://example.slack.com.evil.[REDACTED:base64:...1379]"
+  },
+  {
+    "name": "slack-permalink-bearer",
+    "text": "Bearer https://example.slack.com/archives/C0123456789/p1792436306401379",
+    "want": "[REDACTED:bearer:...ttps]://example.slack.[REDACTED:base64:...1379]"
+  },
+  {
+    "name": "slack-permalink-markdown-pair",
+    "text": "<https://example.slack.com/archives/C0123456789/p1792436306401379|first> <https://example.slack.com/archives/C0123456789/p1792436306401379|second>",
+    "want": "<https://example.slack.com/archives/C0123456789/p1792436306401379|first> <https://example.slack.com/archives/C0123456789/p1792436306401379|second>"
+  },
+  {
+    "name": "slack-permalink-secret-host",
+    "text": "https://sk-abcdefgh.slack.com/archives/C0123456789/p1792436306401379",
+    "want": "https://[REDACTED:openai:...efgh].slack.[REDACTED:base64:...1379]"
   }
 ]

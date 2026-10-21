@@ -16,20 +16,28 @@ import (
 var patterns []byte
 
 type rule struct {
-	kind    string
-	pattern *regexp.Regexp
+	kind      string
+	pattern   *regexp.Regexp
+	allowlist []*regexp.Regexp
 }
 
 var rules = compile()
 
 func compile() []rule {
-	var specs []struct{ Kind, Pattern string }
+	var specs []struct {
+		Kind, Pattern string
+		Allowlist     []string
+	}
 	if err := json.Unmarshal(patterns, &specs); err != nil {
 		panic(err)
 	}
 	parts := make([]rule, 0, len(specs))
 	for _, r := range specs {
-		parts = append(parts, rule{r.Kind, regexp.MustCompile(r.Pattern)})
+		compiled := rule{kind: r.Kind, pattern: regexp.MustCompile(r.Pattern)}
+		for _, allowed := range r.Allowlist {
+			compiled.allowlist = append(compiled.allowlist, regexp.MustCompile(allowed))
+		}
+		parts = append(parts, compiled)
 	}
 	return parts
 }
@@ -93,6 +101,45 @@ func Text(s string) string {
 		}
 		return a.priority < b.priority
 	})
+	// Apply each rule's exceptions only to complete matches. Another rule
+	// touching an allowed span invalidates that exception, so redacting a URL
+	// prefix cannot leave a partial permalink that changes on the next pass.
+	exempt := make([]bool, len(matches))
+	for priority, rule := range rules {
+		if len(rule.allowlist) == 0 {
+			continue
+		}
+		var blockers []match
+		for _, m := range matches {
+			if m.priority != priority {
+				blockers = append(blockers, m)
+			}
+		}
+		for _, allowed := range rule.allowlist {
+			b := 0
+			for _, span := range allowed.FindAllStringIndex(s, -1) {
+				for b < len(blockers) && blockers[b].end <= span[0] {
+					b++
+				}
+				if b < len(blockers) && blockers[b].start < span[1] {
+					continue
+				}
+				first := sort.Search(len(matches), func(i int) bool { return matches[i].start >= span[0] })
+				for i := first; i < len(matches) && matches[i].start < span[1]; i++ {
+					if matches[i].priority == priority && matches[i].end <= span[1] {
+						exempt[i] = true
+					}
+				}
+			}
+		}
+	}
+	kept := matches[:0]
+	for i, m := range matches {
+		if !exempt[i] {
+			kept = append(kept, m)
+		}
+	}
+	matches = kept
 	var out strings.Builder
 	end := 0
 	for i := 0; i < len(matches); {

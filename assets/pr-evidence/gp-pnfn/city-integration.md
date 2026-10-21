@@ -1,6 +1,6 @@
 # City integration for gp-pnfn
 
-The authorized city helper was updated at `/Users/tailor512/city/.gc/184th-slack-tail.py`; its original is retained as `.pre-gp-pnfn`. The wrapper imports a pinned, byte-identical installation of these pack files under `.gc/slack-tail-redaction/4ee953c5843e63bf/slack-full/`:
+The authorized city helper was updated at `/Users/tailor512/city/.gc/184th-slack-tail.py`; its original is retained as `.pre-gp-pnfn`. The wrapper imports a pinned, byte-identical installation of these pack files under `.gc/slack-tail-redaction/358d1826587a5caa/slack-full/`:
 
 - `scripts/slack_tail.py`
 - `scripts/slack_redact.py`
@@ -20,3 +20,11 @@ The old snapshot remains in place, and the preceding wrapper is retained as
 SHA-256 over the concatenated bytes of the three files listed above, in that
 order. All 36 shared fixtures, their idempotence checks, and the synthetic DM
 pass through the installed module and actual wrapper; see `round2-snapshot.txt`.
+
+Round 3 re-pinned the wrapper from `4ee953c5843e63bf` to `358d1826587a5caa`
+using the same three-file SHA-256 derivation. The previous snapshots remain
+in place, and the preceding wrapper is retained as `.pre-gp-pnfn-round3`.
+All 49 shared fixtures, their idempotence checks, and the synthetic DM pass
+through the installed module and actual wrapper from `/tmp` with fake gc;
+canonical permalinks (including the thread query) survive, while webhook URLs,
+slash-containing keys and adjacent secrets redact. See `round3-snapshot.txt`.
