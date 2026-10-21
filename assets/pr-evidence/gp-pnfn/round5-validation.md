@@ -121,3 +121,13 @@ The initial adapter run before the gate finding is retained separately as
 the collision and shared-store regressions. The intermediate 12,657-pass run
 is retained as `round5-adapter-second-tests.json`. CLI/Python source is
 unchanged after their full runs.
+
+## Final gate
+
+The installed helper's gpt-6-astra STANDARD gate returned CLEAN with no
+actionable findings on `f178d246f5a2bbe9f1555437a5a5557a9e2f1913`, reviewing
+from `f4fb6efbea84379cf7157a64ac77bb1a8f31dade`. Exit 0 and the anchored verdict
+are recorded in `round5-codex-gate-r3.txt`, `.rc`, and `.reason`. The two earlier
+BLOCK verdicts and their regressions remain committed. The following evidence
+commit changes no pack source; the final installed snapshot remains
+`7e3a7ea9044e70b7` and was compared byte-for-byte to the final source.
