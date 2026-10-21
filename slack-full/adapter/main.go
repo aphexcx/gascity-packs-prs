@@ -17,6 +17,10 @@
 //
 // # Environment contract
 //
+// SLACK_COMPACT_ALERTS defaults to off. Opt in with on only after the
+// receiving sessions have the reply-current contract in their profiles;
+// see docs/injection-format-recommendations-20261021.md for measured savings.
+//
 // Must-set (no default; loadConfigFromEnv returns an error if missing):
 //
 //   - SLACK_WORKSPACE_ID      Slack team id (e.g. T01234567).
@@ -415,6 +419,9 @@ type config struct {
 	// switchboard's events fall through to the legacy lookupSigningSecrets path).
 	slackAppID      string
 	registerOnStart bool
+	// compactAlerts is opt-in; only adapter-owned presentation changes.
+	// gc still owns the outer reminder framing and message identifiers.
+	compactAlerts bool
 	// identityStorePath is the JSON file backing the per-session Slack
 	// identity registry (chat:write.customize username/avatar overrides).
 	// Persisted so adapter restarts don't strip identity from running
@@ -947,6 +954,13 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		handleAliasStorePath: envOrFn("HANDLE_ALIAS_STORE_PATH", "/tmp/gc-slack-adapter/handle-aliases.json"),
 		inboundFileStore:     envOrFn("INBOUND_FILE_STORE", "/tmp/gc-slack-adapter/inbound"),
 		fileUploadRoot:       getenv("FILE_UPLOAD_ROOT"),
+	}
+	switch strings.ToLower(strings.TrimSpace(envOrFn("SLACK_COMPACT_ALERTS", "off"))) {
+	case "off", "0", "false", "no":
+	case "on", "1", "true", "yes":
+		cfg.compactAlerts = true
+	default:
+		return cfg, fmt.Errorf("SLACK_COMPACT_ALERTS %q invalid (want on|off)", getenv("SLACK_COMPACT_ALERTS"))
 	}
 
 	// BUSY_REACTION: emoji added to a targeted inbound while the agent
@@ -2359,6 +2373,9 @@ func listenUDS(path string) (net.Listener, error) {
 }
 
 func registerAdapter(cfg config) error {
+	if cfg.compactAlerts {
+		return registerAdapterRequest(cfg, compactSlackReplyInstructionsTemplate)
+	}
 	return registerAdapterRequest(cfg, slackReplyInstructionsTemplate)
 }
 
@@ -4672,7 +4689,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// forward failure so a Slack redelivery re-flushes the same
 		// context.
 		peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
-		peerBlock := formatPeerContextBlock(peerItems, peerDropped)
+		peerBlock := formatPeerContextBlockForConfig(cfg, peerItems, peerDropped)
 		// Once-per-channel full reply how-to (gp-729 item 3): the
 		// per-message reminder carries only the registered one-line
 		// template, so the first delivery for a channel this adapter
