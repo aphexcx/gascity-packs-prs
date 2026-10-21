@@ -247,5 +247,10 @@
     "name": "slack-permalink-secret-host",
     "text": "https://sk-abcdefgh.slack.com/archives/C0123456789/p1792436306401379",
     "want": "https://[REDACTED:openai:...efgh].slack.[REDACTED:base64:...1379]"
+  },
+  {
+    "name": "slack-permalink-prepended-base64",
+    "text": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZhttps://example.slack.com/archives/C0123456789/p1792436306401379",
+    "want": "[REDACTED:base64:...ttps]://example.slack.[REDACTED:base64:...1379]"
   }
 ]

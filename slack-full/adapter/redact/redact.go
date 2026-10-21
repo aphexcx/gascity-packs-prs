@@ -101,34 +101,34 @@ func Text(s string) string {
 		}
 		return a.priority < b.priority
 	})
-	// Apply each rule's exceptions only to complete matches. Another rule
-	// touching an allowed span invalidates that exception, so redacting a URL
-	// prefix cannot leave a partial permalink that changes on the next pass.
+	// Apply each rule's exceptions only to complete matches. Any other rule,
+	// or a same-rule match crossing the allowed span, invalidates the exception
+	// so redacting a URL prefix cannot leave a partial permalink on the next pass.
 	exempt := make([]bool, len(matches))
 	for priority, rule := range rules {
 		if len(rule.allowlist) == 0 {
 			continue
 		}
-		var blockers []match
-		for _, m := range matches {
-			if m.priority != priority {
-				blockers = append(blockers, m)
-			}
-		}
 		for _, allowed := range rule.allowlist {
 			b := 0
 			for _, span := range allowed.FindAllStringIndex(s, -1) {
-				for b < len(blockers) && blockers[b].end <= span[0] {
+				for b < len(matches) && matches[b].end <= span[0] {
 					b++
 				}
-				if b < len(blockers) && blockers[b].start < span[1] {
+				last, blocked := b, false
+				for last < len(matches) && matches[last].start < span[1] {
+					m := matches[last]
+					if m.priority != priority || m.start < span[0] || m.end > span[1] {
+						blocked = true
+						break
+					}
+					last++
+				}
+				if blocked {
 					continue
 				}
-				first := sort.Search(len(matches), func(i int) bool { return matches[i].start >= span[0] })
-				for i := first; i < len(matches) && matches[i].start < span[1]; i++ {
-					if matches[i].priority == priority && matches[i].end <= span[1] {
-						exempt[i] = true
-					}
+				for i := b; i < last; i++ {
+					exempt[i] = true
 				}
 			}
 		}

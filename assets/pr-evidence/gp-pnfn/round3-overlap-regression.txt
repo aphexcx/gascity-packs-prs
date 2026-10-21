@@ -1,0 +1,1 @@
+New prepended-base64 regression fails on reviewed source 5c36667b: first output differs from expected and changes again on a second pass. Current shared suite passes all 50 fixtures including idempotence.

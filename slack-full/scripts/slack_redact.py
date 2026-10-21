@@ -1,5 +1,4 @@
 """Inbound/display redaction, sharing the adapter's embedded pattern list."""
-from bisect import bisect_left
 import json
 from pathlib import Path
 import re
@@ -33,28 +32,29 @@ def redact_text(text: str) -> str:
             if offset < 0:
                 offset = stop
     matches.sort()
-    # Exempt only complete matches, and invalidate an exception if another
-    # rule touches it. A redacted URL prefix must not leave a partial permalink
-    # that changes on the next pass. Keep this sweep in sync with redact.go.
+    # Exempt only complete matches. Other rules and same-rule matches crossing
+    # the allowed span invalidate it, so redacting a URL prefix cannot leave a
+    # partial permalink on the next pass. Keep this sweep in sync with redact.go.
     exempt = set()
-    starts = [m[0] for m in matches]
     for priority, allowlist in enumerate(_ALLOWLISTS):
         if not allowlist:
             continue
-        blockers = [m for m in matches if m[2] != priority]
         for allowed in allowlist:
             b = 0
             for span in allowed.finditer(text):
                 left, right = span.span()
-                while b < len(blockers) and -blockers[b][1] <= left:
+                while b < len(matches) and -matches[b][1] <= left:
                     b += 1
-                if b < len(blockers) and blockers[b][0] < right:
+                last, blocked = b, False
+                while last < len(matches) and matches[last][0] < right:
+                    start, neg_stop, rule = matches[last]
+                    if rule != priority or start < left or -neg_stop > right:
+                        blocked = True
+                        break
+                    last += 1
+                if blocked:
                     continue
-                i = bisect_left(starts, left)
-                while i < len(matches) and matches[i][0] < right:
-                    if matches[i][2] == priority and -matches[i][1] <= right:
-                        exempt.add(i)
-                    i += 1
+                exempt.update(range(b, last))
     matches = [m for i, m in enumerate(matches) if i not in exempt]
     out, end, i = [], 0, 0
     while i < len(matches):
