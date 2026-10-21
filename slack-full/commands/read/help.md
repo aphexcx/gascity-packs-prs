@@ -29,9 +29,11 @@ gc slack read --conversation-id Cxxx --thread-ts 1234.5678 [...]
 - `--thread-ts TS` — read a thread instead of channel history.
 - `--limit N` — max messages, paginating under the hood. Default: 50.
 - `--oldest TS` / `--newest TS` — bound the window by Slack ts.
-- `--download` — spool attachments to the adapter's inbound file
-  store layout (`$INBOUND_FILE_STORE/<channel>/<ts>-<name>`, default
+- `--download` — spool attachments to the CLI's own namespace at
+  `$INBOUND_FILE_STORE/<channel>/<ts>-<name>` (store root defaults to
   `/tmp/gc-slack-adapter/inbound`); output shows the local paths.
+  The adapter writes to `<channel>.adapter/<ts>-<file-index>-<name>`
+  under the same store root.
 - `--download-dir PATH` — override the store root.
 - `--no-names` — skip `users.info` author resolution (faster).
 - `--json` — machine-readable output.

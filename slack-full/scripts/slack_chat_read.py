@@ -364,10 +364,11 @@ def download_file(url: str, dest: pathlib.Path, token: str) -> None:
 
 def spool_files(messages: list[dict[str, Any]], conversation_id: str, store: str,
                 token: str) -> dict[str, str]:
-    """Download every attachment to the adapter's inbound-store layout:
-    ``<store>/<channel>/<ts>-<safe-filename>``. Returns file-id → local
-    path for the downloads that succeeded; failures warn and are skipped
-    so one bad file doesn't sink the read."""
+    """Download every attachment to the CLI's own namespace at
+    ``<store>/<channel>/<ts>-<safe-filename>``, while the adapter uses
+    ``<store>/<channel>.adapter/<ts>-<file-index>-<safe-filename>``.
+    Returns file-id → local path for the downloads that succeeded;
+    failures warn and are skipped so one bad file doesn't sink the read."""
     local: dict[str, str] = {}
     base = pathlib.Path(store) / _safe_path_component(conversation_id)
     for msg in messages:
