@@ -283,7 +283,7 @@ try:
     token = minted.get('token')
     expires = minted.get('expires_at')
     permissions = minted.get('permissions', {})
-    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_]+', token):
+    if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_.\-]+', token):
         raise TokenError('GitHub response missing a valid token')
     secrets.append(token)
     if not isinstance(expires, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z', expires):
