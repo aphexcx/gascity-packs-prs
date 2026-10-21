@@ -822,6 +822,15 @@ func mentionOnlyInbound(inbound externalInboundMessage, files []slackFile, files
 	if filesBlock == "" || len(inbound.Attachments) == len(files) {
 		return inbound
 	}
+	// The files block retains successful downloads even when another file
+	// failed. Preserve their provenance before removing the structured list
+	// so reminder redaction keeps those local paths usable.
+	inbound.trustedFilePaths = append([]string(nil), inbound.trustedFilePaths...)
+	for _, att := range inbound.Attachments {
+		if strings.HasPrefix(att.URL, "file:///") {
+			inbound.trustedFilePaths = append(inbound.trustedFilePaths, att.URL)
+		}
+	}
 	inbound.Attachments = nil
 	if strings.TrimSpace(inbound.Text) == "" {
 		inbound.Text = filesBlock

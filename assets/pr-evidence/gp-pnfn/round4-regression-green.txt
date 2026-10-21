@@ -1,0 +1,2 @@
+ok  	github.com/sjarmak/gc-slack-adapter	1.271s
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.121s [no tests to run]

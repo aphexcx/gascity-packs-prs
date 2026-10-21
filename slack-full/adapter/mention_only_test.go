@@ -669,6 +669,68 @@ func TestMentionOnlyInbound_NamesFilesThatWereNotDownloaded(t *testing.T) {
 	}
 }
 
+func TestMentionOnlyInbound_PartialDownloadPreservesDeliveredPath(t *testing.T) {
+	testAllowAnyURL(t)
+	filesSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/downloaded" {
+			_, _ = io.WriteString(w, "downloaded file contents")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(filesSrv.Close)
+	gc := &mentionOnlyGCStub{}
+	gcSrv := httptest.NewServer(gc.handler())
+	t.Cleanup(gcSrv.Close)
+	cfg := mentionOnlyTestConfig(t, gcSrv.URL)
+	cfg.inboundFileStore = filepath.Join(t.TempDir(), "gc-slack-adapter", "inbound")
+	const channel, ts = "C1", "1792436306.401379"
+	files := []slackFile{
+		{ID: "F1", Name: "downloaded.txt", MIMEType: "text/plain", URLPrivate: filesSrv.URL + "/downloaded"},
+		{ID: "F2", Name: "failed.txt", MIMEType: "text/plain", URLPrivate: filesSrv.URL + "/failed"},
+	}
+	attachments := downloadSlackFiles(cfg, channel, ts, files)
+	if len(attachments) != 1 || attachments[0].ProviderID != "F1" {
+		t.Fatalf("downloaded attachments = %+v, want only F1", attachments)
+	}
+	path := strings.TrimPrefix(attachments[0].URL, "file://")
+	if body, err := os.ReadFile(path); err != nil || string(body) != "downloaded file contents" {
+		t.Fatalf("downloaded file = %q, %v", body, err)
+	}
+	if redactInboundText(path) == path {
+		t.Fatal("fixture path must need the trusted-path exemption")
+	}
+	_, secret := redactionDM(t)
+	inbound := mentionOnlyInbound(externalInboundMessage{
+		ProviderMessageID: ts, Conversation: conversationRef{ConversationID: channel},
+		Text: "review these files " + secret, Attachments: attachments,
+	}, files, formatInboundFilesBlock(files, attachments))
+	delivered, failed := deliverMentionOnly(cfg, []mentionOnlyTarget{{
+		binding: mentionOnlyBinding{SessionID: "mayor-session"}, reason: mentionOnlyReasonBotMention,
+	}}, inbound)
+	if delivered != 1 || len(failed) != 0 {
+		t.Fatalf("delivered=%d failed=%d, want one delivered reminder", delivered, len(failed))
+	}
+	_, injections := gc.snapshot()
+	if len(injections) != 1 {
+		t.Fatalf("got %d injections, want 1", len(injections))
+	}
+	body := injections[0].body
+	assertInboundRedacted(t, body, secret)
+	if !strings.Contains(body, "saved to "+path+"; Read that path to view it") {
+		t.Fatalf("delivered reminder lost the usable downloaded path: %s", body)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.Contains(line, "failed.txt") {
+			if !strings.Contains(line, "bytes not spooled locally") || strings.Contains(line, "saved to") || strings.Contains(line, path) {
+				t.Fatalf("failed download must be named without a local path: %s", line)
+			}
+			return
+		}
+	}
+	t.Fatal("failed download was not named in the delivered reminder")
+}
+
 // codex r7 P2: one busy session must not hold another session's copy behind
 // its confirmation.
 func TestMentionOnly_BusyRecipientDoesNotDelayTheOthers(t *testing.T) {
