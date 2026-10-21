@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urlsplit
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'assets/scripts/github-app-token.sh'
-TOKEN = 'ghs_offline_test_token'
+TOKEN = 'ghs_Ab-12.cd_3'
 EXPIRY = '2026-10-19T09:00:00Z'
 PERMISSIONS = {'contents': 'write', 'pull_requests': 'write'}
 
@@ -434,6 +434,20 @@ PATH=/dev/null
         self.assertEqual(proc.returncode, 1)
         self.assertIn('invalid or encrypted RSA private key', proc.stderr)
         self.assertEqual(len(self.requests), 1)
+
+    def test_whitespace_in_token_fails_in_every_output_mode(self):
+        query = 'protocol=https\nhost=github.com\n\n'
+        modes = ((), ('--json',), ('--check',), ('--git-credential', 'get'))
+        for whitespace in (' ', '\n', '\r', '\t'):
+            for args in modes:
+                with self.subTest(whitespace=repr(whitespace), args=args):
+                    self.mint_payload['token'] = TOKEN + whitespace + 'invalid'
+                    proc = self.invoke(*args, stdin=query)
+                    self.assertEqual(proc.returncode, 1)
+                    self.assertEqual(proc.stdout, '')
+                    self.assertEqual(proc.stderr,
+                                     'github-app-token: GitHub response missing a valid token\n')
+        self.assertEqual([verb for verb, _ in self.requests], ['POST'] * 16)
 
     def test_curlrc_and_inherited_xtrace_cannot_write_or_print_credentials(self):
         leaked = self.root / 'must-not-exist'
