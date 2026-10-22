@@ -13,14 +13,27 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"gchat-adapter/internal/wire"
 )
 
 type Client struct {
-	base, city string
-	http       *http.Client
+	base, city  string
+	http        *http.Client
+	onRefusedMu sync.RWMutex
+	onRefused   func(error)
+}
+
+// SetConnectionRefusedHandler lets the registrar observe failures from every
+// gc call, including inbound and receipt polling owned by other components.
+// The handler must return promptly; it schedules service-lifetime recovery.
+func (c *Client) SetConnectionRefusedHandler(fn func(error)) {
+	c.onRefusedMu.Lock()
+	defer c.onRefusedMu.Unlock()
+	c.onRefused = fn
 }
 
 // New constructs a client for a gc API base URL and city. Each call respects
@@ -142,6 +155,14 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			c.onRefusedMu.RLock()
+			fn := c.onRefused
+			c.onRefusedMu.RUnlock()
+			if fn != nil {
+				fn(err)
+			}
+		}
 		return fmt.Errorf("gc %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()

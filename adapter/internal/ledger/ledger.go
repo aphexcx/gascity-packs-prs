@@ -56,7 +56,9 @@ type SubscriptionState struct {
 }
 
 type SpaceState struct {
-	Kind          string    `json:"kind"`
+	Kind string `json:"kind"`
+	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
+	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`
 	MessageCursor time.Time `json:"message_cursor"`
 	EventCursor   time.Time `json:"event_cursor"`
@@ -94,6 +96,18 @@ type SendState struct {
 	Receipt  *wire.PublishReceipt `json:"receipt"`
 	Recorded bool                 `json:"recorded"`
 	Created  time.Time            `json:"created"`
+	// Optional command recovery data; old callback-only intents remain readable.
+	Request         *wire.PublishRequest `json:"request,omitempty"`
+	Upload          *SendUpload          `json:"upload,omitempty"`
+	RecordPending   bool                 `json:"record_pending,omitempty"`
+	NotRecordable   bool                 `json:"not_recordable,omitempty"`
+	RecordingReason string               `json:"recording_reason,omitempty"`
+}
+
+type SendUpload struct {
+	Path         string `json:"path"`
+	ResourceName string `json:"resource_name,omitempty"`
+	UploadToken  string `json:"upload_token,omitempty"`
 }
 
 type SendPart struct {
