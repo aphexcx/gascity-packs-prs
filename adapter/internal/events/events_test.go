@@ -524,18 +524,63 @@ func TestRenewLoopRetriesWithBoundedBackoff(t *testing.T) {
 	defer cancel()
 	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
 	f.clock.onSleep = func(time.Duration) error {
-		if len(f.clock.sleeps) == 10 {
+		if len(f.clock.sleeps) == 12 {
 			cancel()
 			return ctx.Err()
 		}
 		return nil
 	}
 	f.manager.RenewLoop(ctx)
-	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, 4 * time.Second, time.Minute, time.Minute}) {
+	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, 4 * time.Second, time.Minute, time.Minute, time.Minute, time.Minute}) {
 		t.Fatalf("backoff = %v", f.clock.sleeps)
 	}
 	if f.count("POST", "/v1/subscriptions") != 0 {
 		t.Fatal("created on lookup failure")
+	}
+}
+
+func TestRenewLoopBacksOffWhenRenewalDoesNotExtendExpiry(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	var subJSON []byte
+	f.server.Configure(func(s *fakegoogle.Server) {
+		var err error
+		subJSON, err = json.Marshal(s.Subscriptions[first.Name])
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	opJSON, err := json.Marshal(&api.Operation{Name: "operations/unchanged", Done: true, Response: subJSON})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "PATCH" {
+			if f.count("PATCH", "/v1/"+first.Name) > 1 {
+				t.Fatal("renewal repeated without backoff")
+			}
+			// Both the completed Operation and later GETs keep the old expiry.
+			return jsonResponse(200, string(opJSON)), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.clock.onSleep = func(delay time.Duration) error {
+		last, failures, next, state := f.manager.Status()
+		if last == nil || !strings.Contains(last.Error(), "renewal did not extend the subscription") || failures != 1 || !next.Equal(f.clock.Now().Add(time.Second)) || state != first {
+			t.Errorf("unchanged renewal status: %v %d %v %+v", last, failures, next, state)
+		}
+		if delay != time.Second || f.count("PATCH", "/v1/"+first.Name) != 1 {
+			t.Errorf("expected one PATCH then one-second backoff: delay=%v requests=%d", delay, len(f.requests))
+		}
+		cancel()
+		return ctx.Err()
+	}
+	f.manager.RenewLoop(ctx)
+	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second}) || f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatalf("unchanged renewal must back off without recreating: sleeps=%v", f.clock.sleeps)
 	}
 }
 
@@ -1474,7 +1519,7 @@ func TestTokenReloadLatchedWhenWaitingContextExpires(t *testing.T) {
 	}
 }
 
-func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
+func TestStatusSnapshotIsConsistentUnderConcurrentReconciles(t *testing.T) {
 	f := setup(t)
 	want := f.reconcile()
 	requests := 0 // The reconcile gate serializes transport calls.

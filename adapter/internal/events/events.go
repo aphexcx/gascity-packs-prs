@@ -438,6 +438,9 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
 		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
 	}
+	if m.pendingKind == "renew" && !m.clock.Now().Before(m.renewAt) {
+		return state, errors.New("events: renewal did not extend the subscription")
+	}
 	m.scopeReloaded = false
 	return state, nil
 }
