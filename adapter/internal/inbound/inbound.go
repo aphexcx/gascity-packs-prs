@@ -727,7 +727,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			var responseErr *gcclient.HTTPError
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
-			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408)) || (errors.As(err, &op) && op.Op == "dial") {
+			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408 || stoppedCity(responseErr))) || (errors.As(err, &op) && op.Op == "dial") {
 				if err := p.update(func(l *ledger.Ledger) {
 					if c := l.Changes[id]; c != nil {
 						c.Attempts--
@@ -740,7 +740,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			}
 			if answered && responseErr.StatusCode >= 400 && responseErr.StatusCode < 500 {
 				// The status and machine-readable code describe a definite rejection.
-				// This includes 404: a stopped city belongs to the app's health check.
+				// Every 404 except the stopped-city response above is definite.
 				// Never log HTTPError itself: it includes the response body.
 				reason := fmt.Sprintf("gc rejected the POST: HTTP %d", responseErr.StatusCode)
 				if code := reasonCode(responseErr.Code()); code != "" {
@@ -760,6 +760,11 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return err
 		}
 	}
+}
+
+func stoppedCity(err *gcclient.HTTPError) bool {
+	return err.StatusCode == 404 && (err.Code() == "city-not-found" ||
+		(err.Problem != nil && strings.HasPrefix(err.Problem.Detail, "not_found: city not found or not running")))
 }
 
 // reasonCode admits only short ASCII tokens into durable reasons and logs.

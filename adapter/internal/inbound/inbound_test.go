@@ -1805,3 +1805,73 @@ func TestPermanentLookupFailureContinuesBatch(t *testing.T) {
 		}
 	}
 }
+
+func TestStoppedCityPOSTRetriesOnlyExactDiscriminator(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       int
+		code, detail string
+		retry        bool
+	}{
+		{"code", 404, "city-not-found", "PRIVATE DETAIL", true},
+		{"detail", 404, "not-found", "not_found: city not found or not running: PRIVATE CITY", true},
+		{"ordinary_404", 404, "route-not-found", "PRIVATE DETAIL", false},
+		{"bare_404", 404, "", "", false},
+		{"code_suffix", 404, "city-not-found-extra", "PRIVATE DETAIL", false},
+		{"detail_not_prefix", 404, "not-found", "PRIVATE not_found: city not found or not running", false},
+		{"wrong_status", 422, "city-not-found", "not_found: city not found or not running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var calls atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.WriteHeader(tc.status)
+					_ = json.NewEncoder(w).Encode(map[string]string{"code": tc.code, "detail": tc.detail})
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("stopped-city", "message.created", message())
+			out, err := f.p.Handle(context.Background(), ev)
+			c := f.l.Changes[messageName]
+			if tc.retry {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || c.Status != "intent" || c.Reason != "retry" || c.Attempts != 0 || f.l.Transport.Seen("pubsub:stopped-city") {
+					t.Fatalf("stopped city not held: %v %v %+v", out, err, c)
+				}
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				handle(t, f, ev)
+				if calls.Load() != 2 || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != messageName || f.l.Changes[messageName].Reason != "delivered" || f.l.Counters["turns:"+space] != 1 {
+					t.Fatal("stopped city did not recover once")
+				}
+			} else {
+				if out != puller.Ack || err != nil || c.Status != "unresolved" {
+					t.Fatalf("definite rejection: %v %v %+v", out, err, c)
+				}
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				handle(t, f, ev)
+				if calls.Load() != 1 || len(f.gc.Inbound()) != 0 {
+					t.Fatal("definite rejection reposted")
+				}
+			}
+			if strings.Contains(logs.String(), "PRIVATE") || strings.Contains(c.Reason, "PRIVATE") {
+				t.Fatal("gc detail leaked")
+			}
+		})
+	}
+}
