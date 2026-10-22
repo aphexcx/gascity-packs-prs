@@ -114,7 +114,7 @@ func TestInboundStatusesReceiptsAndRetention(t *testing.T) {
 		if concluded["state"] != "concluded" || concluded["delivery"].(map[string]any)["status"] != "delivered" {
 			t.Fatalf("concluded: %v", concluded)
 		}
-		s.Advance(time.Second)
+		s.Advance(time.Second + time.Nanosecond)
 		if poll()["state"] != "unknown" {
 			t.Fatal("receipt retained beyond one hour")
 		}
@@ -222,7 +222,7 @@ func TestReceiptRemovalAllowsReplay(t *testing.T) {
 				concluded := wire.ReceiptResponse{State: "concluded"}
 				concluded.Delivery.Status = "delivered"
 				s.SetReceipt(id, concluded)
-				s.Advance(time.Hour)
+				s.Advance(time.Hour + time.Nanosecond)
 			} else {
 				s.EvictReceipt(id)
 			}
@@ -249,7 +249,7 @@ func TestOldReceiptRemovalPreservesNewerAttempt(t *testing.T) {
 			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
 			second := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
 			if expire {
-				s.Advance(time.Hour)
+				s.Advance(time.Hour + time.Nanosecond)
 			} else {
 				s.EvictReceipt(id)
 			}
@@ -472,7 +472,7 @@ func TestSynchronousDeliveryReceiptExpires(t *testing.T) {
 	s := New(t)
 	m := inbound("delivered")
 	first := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
-	s.Advance(time.Hour)
+	s.Advance(time.Hour + time.Nanosecond)
 	s.Configure(func(s *Server) { s.NextDelivery = "pending" })
 	replay := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
 	if replay["status"] != "pending" || replay["receipt_id"] == first["receipt_id"] {
@@ -606,5 +606,20 @@ func TestReceiptLookupIsScopedToIssuingCity(t *testing.T) {
 				t.Fatal("cross-city lookup changed the issuing city's receipt")
 			}
 		})
+	}
+}
+
+func TestReceiptRetainedAtExactlyOneHour(t *testing.T) {
+	s := New(t)
+	s.Now = func() time.Time { return time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC) }
+	first := call(t, s, "POST", "inbound", inbound("boundary"), true, 200)
+	id := first["delivery"].(map[string]any)["receipt_id"].(string)
+	s.Advance(time.Hour)
+	if got := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200); got["state"] != "concluded" {
+		t.Fatalf("receipt expired at inclusive boundary: %v", got)
+	}
+	s.Advance(time.Nanosecond)
+	if got := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200); got["state"] != "unknown" {
+		t.Fatalf("receipt retained past boundary: %v", got)
 	}
 }

@@ -128,7 +128,7 @@ func (s *Server) observeReceipts() {
 			s.concludedAt[id] = s.now()
 			when = s.now()
 		}
-		if s.now().Sub(when) >= time.Hour {
+		if s.now().Sub(when) > time.Hour {
 			s.removeReceipt(id)
 			continue
 		}
