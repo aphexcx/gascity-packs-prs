@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -119,11 +120,11 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 	if err != nil || len(list.Subscriptions) != 1 || list.Subscriptions[0].Name != sub.Name {
 		t.Fatalf("filter: %+v, %v", list, err)
 	}
-	page, err := api.Subscriptions.List().PageSize(1).Do()
+	page, err := api.Subscriptions.List().Filter(`event_types:"google.workspace.chat.message.v1.created"`).PageSize(1).Do()
 	if err != nil || len(page.Subscriptions) != 1 || page.NextPageToken == "" {
 		t.Fatalf("page: %+v, %v", page, err)
 	}
-	page2, err := api.Subscriptions.List().PageSize(1).PageToken(page.NextPageToken).Do()
+	page2, err := api.Subscriptions.List().Filter(`event_types:"google.workspace.chat.message.v1.created"`).PageSize(1).PageToken(page.NextPageToken).Do()
 	if err != nil || len(page2.Subscriptions) != 1 || page2.NextPageToken != "" || page.Subscriptions[0].Name == page2.Subscriptions[0].Name {
 		t.Fatalf("page 2: %+v, %v", page2, err)
 	}
@@ -165,11 +166,11 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 func TestLostSubscriptionResponseIsDiscoverable(t *testing.T) {
 	s := New(t, nil)
 	s.DropNextResponse = true
-	_, err := http.Post(s.URL()+"/v1/subscriptions", "application/json", strings.NewReader(`{"targetResource":"//chat.googleapis.com/spaces/-"}`))
+	_, err := http.Post(s.URL()+"/v1/subscriptions", "application/json", strings.NewReader(`{"targetResource":"//chat.googleapis.com/spaces/-","eventTypes":["google.workspace.chat.message.v1.created"]}`))
 	if err == nil {
 		t.Fatal("expected a dropped connection")
 	}
-	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
+	list := request(t, s, "GET", "/v1/subscriptions?filter="+url.QueryEscape(`event_types:"google.workspace.chat.message.v1.created"`), nil, 200)
 	if len(list["subscriptions"].([]any)) != 1 {
 		t.Fatalf("lost creation: %v", list)
 	}
@@ -179,7 +180,7 @@ func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
 	s := New(t, nil)
 	s.OperationDelay = time.Minute
 	s.OperationError = &events.Status{Code: 7, Message: "permission denied"}
-	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-"}, 200)
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}}, 200)
 	if op["done"] != false || op["error"] != nil || op["response"] != nil {
 		t.Fatalf("initial operation: %v", op)
 	}
@@ -192,7 +193,7 @@ func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
 	if done["done"] != true || done["error"] == nil || done["response"] != nil {
 		t.Fatalf("failed operation: %v", done)
 	}
-	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
+	list := request(t, s, "GET", "/v1/subscriptions?filter="+url.QueryEscape(`event_types:"google.workspace.chat.message.v1.created"`), nil, 200)
 	if len(list["subscriptions"].([]any)) != 0 {
 		t.Fatal("failed creation persisted a subscription")
 	}
@@ -201,11 +202,11 @@ func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
 func TestPendingCreateReservesTarget(t *testing.T) {
 	s := New(t, nil)
 	s.OperationDelay = time.Minute
-	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-"}
+	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}}
 	request(t, s, "POST", "/v1/subscriptions", body, 200)
 	request(t, s, "POST", "/v1/subscriptions", body, 409)
 	s.Advance(time.Minute)
-	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
+	list := request(t, s, "GET", "/v1/subscriptions?filter="+url.QueryEscape(`event_types:"google.workspace.chat.message.v1.created"`), nil, 200)
 	if len(list["subscriptions"].([]any)) != 1 {
 		t.Fatalf("duplicate creation: %v", list)
 	}
@@ -408,6 +409,68 @@ func TestSpaceEventsFiltersPaginationAndWindow(t *testing.T) {
 	}
 	filter = `eventTypes:"` + created + `" AND startTime="` + now.Add(-29*24*time.Hour).Format(time.RFC3339Nano) + `"`
 	request(t, s, "GET", "/v1/spaces/room/spaceEvents?filter="+url.QueryEscape(filter), nil, 400)
+}
+
+func TestDocumentedMessageFilters(t *testing.T) {
+	s := New(t, nil)
+	const thread = "spaces/room/threads/target"
+	for i, fixture := range []struct{ at, thread string }{
+		{"2026-01-30T10:00:00Z", thread},
+		{"2026-01-30T11:00:00Z", thread},
+		{"2026-01-30T11:00:00Z", "spaces/room/threads/other"},
+		{"2026-01-30T12:00:00Z", thread},
+	} {
+		name := fmt.Sprintf("spaces/room/messages/%d", i)
+		s.Messages[name] = &chat.Message{Name: name, CreateTime: fixture.at, Thread: &chat.Thread{Name: fixture.thread}}
+	}
+	for _, field := range []string{"create_time", "createTime"} {
+		t.Run(field, func(t *testing.T) {
+			filter := field + ` > "2026-01-30T10:00:00Z" AND ` + field + ` < "2026-01-30T12:00:00Z" AND thread.name = ` + thread
+			got := request(t, s, "GET", "/v1/spaces/room/messages?filter="+url.QueryEscape(filter), nil, 200)["messages"].([]any)
+			if len(got) != 1 || got[0].(map[string]any)["name"] != "spaces/room/messages/1" {
+				t.Fatalf("filtered messages: %v", got)
+			}
+		})
+	}
+}
+
+func TestDocumentedSpaceEventFilters(t *testing.T) {
+	s := New(t, nil)
+	s.Now = func() time.Time { return time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC) }
+	const created = "google.workspace.chat.message.v1.created"
+	const reaction = "google.workspace.chat.reaction.v1.created"
+	for i, fixture := range []struct{ at, typ string }{
+		{"2026-01-30T10:00:00Z", created},
+		{"2026-01-30T10:30:00Z", "google.workspace.chat.message.v1.batchCreated"},
+		{"2026-01-30T11:00:00Z", reaction},
+		{"2026-01-30T11:00:00Z", "google.workspace.chat.message.v1.deleted"},
+		{"2026-01-30T11:30:00Z", created},
+	} {
+		s.SpaceEvents["spaces/room"] = append(s.SpaceEvents["spaces/room"], &chat.SpaceEvent{Name: fmt.Sprintf("spaces/room/spaceEvents/%d", i), EventTime: fixture.at, EventType: fixture.typ})
+	}
+	for _, fields := range [][3]string{{"event_types", "start_time", "end_time"}, {"eventTypes", "startTime", "endTime"}} {
+		t.Run(fields[0], func(t *testing.T) {
+			filter := fmt.Sprintf(`(%s:"%s" OR %s:"%s") AND %s="2026-01-30T10:00:00Z" AND %s="2026-01-30T11:00:00Z"`, fields[0], created, fields[0], reaction, fields[1], fields[2])
+			got := request(t, s, "GET", "/v1/spaces/room/spaceEvents?filter="+url.QueryEscape(filter), nil, 200)["spaceEvents"].([]any)
+			if len(got) != 2 || got[0].(map[string]any)["name"] != "spaces/room/spaceEvents/1" || got[1].(map[string]any)["name"] != "spaces/room/spaceEvents/2" {
+				t.Fatalf("filtered events: %v", got)
+			}
+		})
+	}
+}
+
+func TestEventTypeFilterRequired(t *testing.T) {
+	for _, path := range []string{"/v1/subscriptions", "/v1/spaces/room/spaceEvents"} {
+		for _, filter := range []string{"", `target_resource="//chat.googleapis.com/spaces/room"`, `event_types:""`} {
+			t.Run(path+"/"+filter, func(t *testing.T) {
+				s := New(t, nil)
+				got := request(t, s, "GET", path+"?filter="+url.QueryEscape(filter), nil, 400)
+				if got["error"].(map[string]any)["status"] != "INVALID_ARGUMENT" {
+					t.Fatalf("missing event types: %v", got)
+				}
+			})
+		}
+	}
 }
 
 func TestEmitOverStreamingPull(t *testing.T) {

@@ -217,15 +217,28 @@ func page[T any](s *Server, w http.ResponseWriter, r *http.Request, key string, 
 	s.respond(w, r, 200, result)
 }
 
-// filterValues extracts the quoted scalar operands used by the adapter. It
-// accepts both API field spellings used by Chat and Workspace Events.
-func filterValues(filter, key string) []string {
-	re := regexp.MustCompile(regexp.QuoteMeta(key) + `\s*(?:=|:|>)\s*"([^"]*)"`)
+// filterValues accepts quoted operands and the documented unquoted thread name.
+// Operators are explicit so an upper bound cannot be mistaken for a lower one.
+func filterValues(filter, operator string, keys ...string) []string {
 	var values []string
-	for _, m := range re.FindAllStringSubmatch(filter, -1) {
-		values = append(values, m[1])
+	for _, key := range keys {
+		re := regexp.MustCompile(`(?:^|[\s(])` + regexp.QuoteMeta(key) + `\s*` + regexp.QuoteMeta(operator) + `\s*(?:"([^"]+)"|([^\s()"]+))`)
+		for _, m := range re.FindAllStringSubmatch(filter, -1) {
+			values = append(values, m[1]+m[2])
+		}
 	}
 	return values
+}
+
+func filterTime(filter, operator string, keys ...string) (time.Time, error) {
+	values := filterValues(filter, operator, keys...)
+	if len(values) == 0 {
+		return time.Time{}, nil
+	}
+	if len(values) > 1 {
+		return time.Time{}, fmt.Errorf("multiple %s bounds", keys[0])
+	}
+	return time.Parse(time.RFC3339Nano, values[0])
 }
 
 func matches(values []string, value string) bool {
@@ -276,8 +289,12 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 			s.newOperation(w, r, &sub)
 		case http.MethodGet:
 			filter := r.URL.Query().Get("filter")
-			targets := append(filterValues(filter, "target_resource"), filterValues(filter, "targetResource")...)
-			types := append(filterValues(filter, "event_types"), filterValues(filter, "eventTypes")...)
+			targets := filterValues(filter, "=", "target_resource", "targetResource")
+			types := filterValues(filter, ":", "event_types", "eventTypes")
+			if len(types) == 0 {
+				s.fail(w, 400, "INVALID_ARGUMENT", "at least one event_types filter is required")
+				return
+			}
 			list := make([]*events.Subscription, 0)
 			for _, sub := range s.Subscriptions {
 				if !matches(targets, sub.TargetResource) {
@@ -514,16 +531,12 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space string) {
 	filter := r.URL.Query().Get("filter")
-	threads := filterValues(filter, "thread.name")
-	times := filterValues(filter, "createTime")
-	var since time.Time
-	if len(times) > 0 {
-		var err error
-		since, err = time.Parse(time.RFC3339Nano, times[0])
-		if err != nil {
-			s.fail(w, 400, "INVALID_ARGUMENT", "invalid createTime")
-			return
-		}
+	threads := filterValues(filter, "=", "thread.name")
+	since, err := filterTime(filter, ">", "create_time", "createTime")
+	until, endErr := filterTime(filter, "<", "create_time", "createTime")
+	if err != nil || endErr != nil || len(threads) > 1 {
+		s.fail(w, 400, "INVALID_ARGUMENT", "invalid create_time or thread.name filter")
+		return
 	}
 	list := make([]*chat.Message, 0)
 	for name, m := range s.Messages {
@@ -539,6 +552,9 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space stri
 		}
 		created, _ := time.Parse(time.RFC3339Nano, m.CreateTime)
 		if !since.IsZero() && !created.After(since) {
+			continue
+		}
+		if !until.IsZero() && !created.Before(until) {
 			continue
 		}
 		list = append(list, m)
@@ -568,21 +584,28 @@ func singularEvent(typ string) string {
 
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request, space string) {
 	filter := r.URL.Query().Get("filter")
-	types := filterValues(filter, "eventTypes")
-	times := filterValues(filter, "startTime")
-	since := s.now().Add(-28 * 24 * time.Hour)
-	if len(times) > 0 {
-		parsed, err := time.Parse(time.RFC3339Nano, times[0])
-		if err != nil || parsed.Before(since) {
-			s.fail(w, 400, "INVALID_ARGUMENT", "startTime must be within 28 days")
-			return
-		}
-		since = parsed
+	types := filterValues(filter, ":", "event_types", "eventTypes")
+	if len(types) == 0 {
+		s.fail(w, 400, "INVALID_ARGUMENT", "at least one event_types filter is required")
+		return
+	}
+	since, err := filterTime(filter, "=", "start_time", "startTime")
+	until, endErr := filterTime(filter, "=", "end_time", "endTime")
+	earliest := s.now().Add(-28 * 24 * time.Hour)
+	if err != nil || endErr != nil || (!since.IsZero() && since.Before(earliest)) {
+		s.fail(w, 400, "INVALID_ARGUMENT", "invalid time filter or start_time older than 28 days")
+		return
+	}
+	if since.IsZero() {
+		since = earliest
+	}
+	if until.IsZero() || until.After(s.now()) {
+		until = s.now()
 	}
 	list := make([]*chat.SpaceEvent, 0)
 	for _, event := range s.SpaceEvents[space] {
 		when, err := time.Parse(time.RFC3339Nano, event.EventTime)
-		if err != nil || !when.After(since) || when.After(s.now()) || !matches(types, singularEvent(event.EventType)) {
+		if err != nil || !when.After(since) || when.After(until) || !matches(types, singularEvent(event.EventType)) {
 			continue
 		}
 		list = append(list, event)
