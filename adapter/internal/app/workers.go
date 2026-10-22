@@ -48,6 +48,9 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
+	if err = a.seedIdentity(source.IdentityUserID()); err != nil {
+		return err
+	}
 	a.mu.Lock()
 	id := a.l.IdentityUserID
 	a.mu.Unlock()
@@ -140,7 +143,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			} else if state.State != "ACTIVE" {
 				a.health("catching-up", "subscription is not active")
 			} else if c.IdentityUserID() == "" && a.lastEvent.Load() != 0 {
-				a.health("catching-up", "Chat identity not yet known; send a message to establish it")
+				a.health("catching-up", "Chat identity not yet known; run gc gchat auth")
 			} else if caught.Load() {
 				a.health("ready", "")
 			}

@@ -155,5 +155,10 @@ func checkAuth(ctx context.Context, cfg *config.Config, tokenFile string, stdout
 		return 1
 	}
 	fmt.Fprintln(stdout, source.State())
+	if id := source.IdentityUserID(); id != "" {
+		fmt.Fprintf(stdout, "identity_user_id: %s\n", id)
+	} else {
+		fmt.Fprintln(stdout, "identity_user_id: unknown (legacy token; run gc gchat auth)")
+	}
 	return 0
 }

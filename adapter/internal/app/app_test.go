@@ -127,8 +127,12 @@ func (f *fixture) startOptions(t *testing.T, opts Options) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	opts.Notify = func(context.Context, string, string) error { return nil }
+	if opts.Logger == nil {
+		opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	if opts.Notify == nil {
+		opts.Notify = func(context.Context, string, string) error { return nil }
+	}
 	opts.RetryDelay = time.Millisecond
 	go func() { done <- RunWithOptions(ctx, f.cfg, opts) }()
 	t.Cleanup(func() {
@@ -468,5 +472,85 @@ func TestCorruptLedgerServesStatusAndResetResumes(t *testing.T) {
 	f.health(t, "ready", 5*time.Second)
 	if !ledger.Established(f.cfg.SecretsDir) {
 		t.Fatal("missing established marker")
+	}
+}
+
+func (f *fixture) replaceIdentityToken(t *testing.T, id string) {
+	t.Helper()
+	writeFile(t, f.cfg.Secrets.TokenFile+".new", `{"access_token":"example","refresh_token":"example-refresh","token_type":"Bearer","expiry":"2099-01-01T00:00:00Z","identity_user_id":"`+id+`"}`)
+	if err := os.Rename(f.cfg.Secrets.TokenFile+".new", f.cfg.Secrets.TokenFile); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFreshTokenIdentityDeliversFirstDM(t *testing.T) {
+	f := newFixture(t, false)
+	f.replaceIdentityToken(t, "users/123456")
+	f.google.Configure(func(g *fakegoogle.Server) {
+		g.Spaces["spaces/dm"] = &api.Space{Name: "spaces/dm", SpaceType: "DIRECT_MESSAGE"}
+	})
+	f.start(t)
+	f.health(t, "ready", 5*time.Second)
+	data := `{"message":{"name":"spaces/dm/messages/first","text":"hello","sender":{"name":"users/222","type":"HUMAN"},"createTime":"` + time.Now().UTC().Format(time.RFC3339Nano) + `","thread":{"name":"spaces/dm/threads/first"}}}`
+	_, err := f.pub.Publish(t.Context(), &pubsub.Message{Data: []byte(data), Attributes: map[string]string{"ce-type": "google.workspace.chat.message.v1.created", "ce-id": "first"}}).Get(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 3*time.Second, func() bool { return len(f.gc.Inbound()) == 1 })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, request := range f.requests {
+		if strings.Contains(request, "POST /v1/spaces/dm/messages") {
+			t.Fatal("identity required an outbound send")
+		}
+	}
+}
+
+func TestTokenIdentityReplacementRebuildsOnce(t *testing.T) {
+	f := newFixture(t, false)
+	f.replaceIdentityToken(t, "users/123456")
+	f.start(t)
+	f.health(t, "ready", 5*time.Second)
+	f.replaceIdentityToken(t, "users/654321")
+	waitFor(t, 5*time.Second, func() bool {
+		data, _ := os.ReadFile(f.cfg.Endpoints.StateFile)
+		var l ledger.Ledger
+		return json.Unmarshal(data, &l) == nil && l.IdentityUserID == "users/654321"
+	})
+	f.health(t, "ready", 5*time.Second)
+	f.mu.Lock()
+	before := len(f.requests)
+	f.mu.Unlock()
+	time.Sleep(1100 * time.Millisecond)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, request := range f.requests[before:] {
+		if strings.Contains(request, "subscriptions") {
+			t.Fatalf("identity rebuild loop: %v", f.requests[before:])
+		}
+	}
+}
+
+type logBuffer struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.text.Write(p)
+}
+func (b *logBuffer) String() string { b.mu.Lock(); defer b.mu.Unlock(); return b.text.String() }
+
+func TestLegacyTokenWarnsOnce(t *testing.T) {
+	f := newFixture(t, true)
+	var logs logBuffer
+	f.startOptions(t, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	f.health(t, "ready", 5*time.Second)
+	f.replaceToken(t)
+	time.Sleep(2300 * time.Millisecond)
+	if n := strings.Count(logs.String(), "legacy token has no identity"); n != 1 || !strings.Contains(logs.String(), "gc gchat auth") {
+		t.Fatalf("expected one actionable warning: %s", logs.String())
 	}
 }

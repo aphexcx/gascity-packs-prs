@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,20 +41,21 @@ var errInvalidCredential = errors.New("invalid credential file")
 // Source shares refreshed tokens across HTTP and Pub/Sub clients. The mutex
 // protecting state is never held during network calls, so health stays readable.
 type Source struct {
-	config        *oauth2.Config
-	tokenFile     string
-	mu            sync.Mutex
-	refreshGate   chan struct{}
-	current       *oauth2.Token
-	state         State
-	generation    uint64
-	observed      os.FileInfo // owned by the single Watch loop after New
-	watchInterval time.Duration
-	retryAt       time.Time
-	retryDelay    time.Duration
-	now           func() time.Time
-	refreshDelay  time.Duration
-	validateFn    func(context.Context, *http.Client) error
+	config         *oauth2.Config
+	tokenFile      string
+	mu             sync.Mutex
+	refreshGate    chan struct{}
+	current        *oauth2.Token
+	identityUserID string
+	state          State
+	generation     uint64
+	observed       os.FileInfo // owned by the single Watch loop after New
+	watchInterval  time.Duration
+	retryAt        time.Time
+	retryDelay     time.Duration
+	now            func() time.Time
+	refreshDelay   time.Duration
+	validateFn     func(context.Context, *http.Client) error
 }
 
 // New loads the credential files without retaining a lifecycle context. Watch's
@@ -92,6 +94,7 @@ func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*S
 		return nil, err
 	}
 	s.current, s.observed, s.state = tok, info, Ready
+	s.identityUserID, _ = tok.Extra("identity_user_id").(string)
 	return s, nil
 }
 
@@ -99,6 +102,14 @@ func (s *Source) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
+}
+
+// IdentityUserID is the canonical Chat user learned during consent. An empty
+// value denotes a legacy credential; refreshing an access token preserves it.
+func (s *Source) IdentityUserID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.identityUserID
 }
 
 // Invalidate expires the cached access token so the next call refreshes it.
@@ -269,6 +280,10 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		s.retryAt, s.retryDelay = time.Time{}, 0
 	}
 	tok, readInfo, err := readToken(s.tokenFile)
+	var identity string
+	if tok != nil {
+		identity, _ = tok.Extra("identity_user_id").(string)
+	}
 	s.observed = info
 	if readInfo != nil {
 		s.observed = readInfo
@@ -308,6 +323,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 	s.retryAt, s.retryDelay = time.Time{}, 0
 	s.mu.Lock()
 	s.current, s.state = tok, Ready
+	s.identityUserID = identity
 	s.generation++
 	s.mu.Unlock()
 	if onReload != nil {
@@ -540,14 +556,21 @@ func readToken(path string) (*oauth2.Token, os.FileInfo, error) {
 	if err != nil {
 		return nil, info, fmt.Errorf("token file %s: %w", path, err)
 	}
-	var tok oauth2.Token
-	if err := json.Unmarshal(b, &tok); err != nil {
+	var saved struct {
+		oauth2.Token
+		IdentityUserID string `json:"identity_user_id"`
+	}
+	if err := json.Unmarshal(b, &saved); err != nil {
 		return nil, info, fmt.Errorf("token file %s: %w: %w", path, errMalformedJSON, err)
+	}
+	tok := saved.Token
+	if saved.IdentityUserID != "" && !validUserID(saved.IdentityUserID) {
+		return nil, info, fmt.Errorf("token file %s: %w: identity_user_id must be users/<numeric id>", path, errInvalidCredential)
 	}
 	if tok.AccessToken == "" && tok.RefreshToken == "" {
 		return nil, info, fmt.Errorf("token file %s: %w: access_token or refresh_token is required", path, errInvalidCredential)
 	}
-	return &tok, info, nil
+	return tok.WithExtra(map[string]any{"identity_user_id": saved.IdentityUserID}), info, nil
 }
 
 func loadConfig(path string, ep config.Endpoints, scopes []string) (*oauth2.Config, error) {
@@ -707,7 +730,46 @@ func runAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	if tok.RefreshToken == "" {
 		return errors.New("OAuth consent returned no refresh_token; repeat consent with offline access")
 	}
-	return writeToken(ctx, tokenFile, tok)
+	identity, err := identityFromIDToken(tok)
+	if err != nil {
+		return err
+	}
+	return writeToken(ctx, tokenFile, tok.WithExtra(map[string]any{"identity_user_id": identity}))
+}
+
+// The id_token is received directly from the configured OAuth token endpoint
+// over TLS in production. It is never accepted from a browser callback.
+func identityFromIDToken(tok *oauth2.Token) (string, error) {
+	raw, _ := tok.Extra("id_token").(string)
+	parts := strings.Split(raw, ".")
+	failure := errors.New("OAuth consent returned no valid id_token sub; repeat gc gchat auth with the openid scope")
+	if len(parts) != 3 {
+		return "", failure
+	}
+	data, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", failure
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if json.Unmarshal(data, &claims) != nil || !validUserID("users/"+claims.Sub) {
+		return "", failure
+	}
+	return "users/" + claims.Sub, nil
+}
+
+func validUserID(id string) bool {
+	digits, ok := strings.CutPrefix(id, "users/")
+	if !ok || digits == "" {
+		return false
+	}
+	for _, c := range digits {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func listenLoopback(ctx context.Context, listen func(context.Context, string, string) (net.Listener, error)) (net.Listener, error) {
@@ -743,7 +805,12 @@ func writeTokenWithSync(ctx context.Context, path string, tok *oauth2.Token, syn
 			_ = os.Remove(tmp)
 		}
 	}()
-	if err = json.NewEncoder(f).Encode(tok); err == nil {
+	identity, _ := tok.Extra("identity_user_id").(string)
+	saved := struct {
+		*oauth2.Token
+		IdentityUserID string `json:"identity_user_id,omitempty"`
+	}{tok, identity}
+	if err = json.NewEncoder(f).Encode(saved); err == nil {
 		err = syncFile(f)
 	}
 	closeErr := f.Close()

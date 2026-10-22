@@ -792,7 +792,7 @@ func TestRunAuth(t *testing.T) {
 			t.Errorf("unexpected exchange: %v", r.Form)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, strings.Join(testScopes, " "))
+		fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q,"id_token":"e30.eyJzdWIiOiIxMjM0NTYifQ.signature"}`, strings.Join(testScopes, " "))
 	})
 	writeJSON(t, clientFile, map[string]any{"installed": map[string]any{
 		"client_id": "example", "client_secret": "example-secret",
@@ -972,7 +972,7 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
-				response := map[string]any{"access_token": "signed-in", "refresh_token": "new-refresh", "expires_in": 3600, "scope": strings.Join(testScopes, " ")}
+				response := map[string]any{"access_token": "signed-in", "refresh_token": "new-refresh", "expires_in": 3600, "scope": strings.Join(testScopes, " "), "id_token": "e30.eyJzdWIiOiIxMjM0NTYifQ.signature"}
 				if scenario == "partial scopes" {
 					response["scope"] = testScopes[0]
 				}
@@ -1642,7 +1642,7 @@ func TestRunAuthHandlesStaleTemporaryPath(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, strings.Join(testScopes, " "))
+				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q,"id_token":"e30.eyJzdWIiOiIxMjM0NTYifQ.signature"}`, strings.Join(testScopes, " "))
 			})
 			writeJSON(t, tokenFile, savedToken("original"))
 			tmp := tokenFile + ".tmp"
@@ -1690,7 +1690,7 @@ func TestRunAuthRefusesUnsafeTokenPath(t *testing.T) {
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 				t.Error("unsafe token path reached the exchange endpoint")
 				w.Header().Set("Content-Type", "application/json")
-				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","scope":%q}`, strings.Join(testScopes, " "))
+				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","scope":%q,"id_token":"e30.eyJzdWIiOiIxMjM0NTYifQ.signature"}`, strings.Join(testScopes, " "))
 			})
 			target := tokenFile + ".original"
 			writeJSON(t, target, savedToken("original"))
@@ -1843,7 +1843,7 @@ func TestRunAuthOverlappingWritesAreAtomic(t *testing.T) {
 			t.Error(err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, r.Form.Get("code"), strings.Join(testScopes, " "))
+		fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"new-refresh","expires_in":3600,"scope":%q,"id_token":"e30.eyJzdWIiOiIxMjM0NTYifQ.signature"}`, r.Form.Get("code"), strings.Join(testScopes, " "))
 	})
 	writeJSON(t, tokenFile, savedToken("original"))
 	paused, resume := make(chan struct{}), make(chan struct{})

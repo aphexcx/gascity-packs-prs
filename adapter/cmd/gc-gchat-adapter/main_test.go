@@ -190,7 +190,7 @@ func TestAuthCheck(t *testing.T) {
 		name, tokenError, want string
 		missing                bool
 	}{
-		{name: "ready", want: "ready\n"},
+		{name: "ready", want: "identity_user_id: users/123456\n"},
 		{name: "missing", missing: true, want: "needs-sign-in"},
 		{name: "revoked", tokenError: "invalid_grant", want: "needs-sign-in"},
 		{name: "refresh failure", tokenError: "temporarily_unavailable", want: "OAuth refresh failed: OAuth temporarily_unavailable (HTTP 400)"},
@@ -205,7 +205,7 @@ func TestAuthCheck(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				writeFile(t, tokenPath, string(b))
+				writeFile(t, tokenPath, strings.TrimSuffix(string(b), "}")+`,"identity_user_id":"users/123456"}`)
 			}
 			var stdout, stderr bytes.Buffer
 			code := run(t.Context(), []string{"auth", "--check"}, &stdout, &stderr, envAt(env), func(string) error { t.Error("check opened browser"); return nil })
@@ -235,7 +235,7 @@ func TestAuthLoopback(t *testing.T) {
 				}
 				exchanges++
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "example-access", "refresh_token": "example-refresh", "expires_in": 3600, "token_type": "Bearer", "scope": consentScopes})
+				_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "example-access", "refresh_token": "example-refresh", "expires_in": 3600, "token_type": "Bearer", "scope": consentScopes, "id_token": "e30.eyJzdWIiOiIxMjM0NTYifQ.signature"})
 			}))
 			t.Cleanup(fake.Close)
 			env, tokenPath := authFixture(t, fake.URL)
@@ -258,7 +258,7 @@ func TestAuthLoopback(t *testing.T) {
 				}
 				q := u.Query()
 				consentScopes = q.Get("scope")
-				wantScopes := "https://www.googleapis.com/auth/chat.messages https://www.googleapis.com/auth/chat.spaces.readonly https://www.googleapis.com/auth/chat.memberships.readonly https://www.googleapis.com/auth/pubsub"
+				wantScopes := "https://www.googleapis.com/auth/chat.messages https://www.googleapis.com/auth/chat.spaces.readonly https://www.googleapis.com/auth/chat.memberships.readonly https://www.googleapis.com/auth/pubsub openid"
 				if consentScopes != wantScopes {
 					t.Errorf("scopes = %q", consentScopes)
 				}

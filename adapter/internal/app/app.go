@@ -39,22 +39,24 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
-	cfg        *config.Config
-	opts       Options
-	log        *slog.Logger
-	l          *ledger.Ledger
-	mu         sync.Mutex
-	stateMu    sync.Mutex // excludes app health transitions during POST /state
-	s          *server.Server
-	manager    atomic.Pointer[events.Manager]
-	chatClient atomic.Pointer[chat.Client]
-	loaded     atomic.Bool
-	lastEvent  atomic.Int64
-	gcDown     atomic.Bool
-	resume     chan struct{}
-	notices    chan string
-	noticeMu   sync.Mutex
-	notified   map[string]bool
+	cfg                *config.Config
+	opts               Options
+	log                *slog.Logger
+	l                  *ledger.Ledger
+	mu                 sync.Mutex
+	stateMu            sync.Mutex // excludes app health transitions during POST /state
+	s                  *server.Server
+	manager            atomic.Pointer[events.Manager]
+	chatClient         atomic.Pointer[chat.Client]
+	loaded             atomic.Bool
+	lastEvent          atomic.Int64
+	gcDown             atomic.Bool
+	resume             chan struct{}
+	notices            chan string
+	noticeMu           sync.Mutex
+	notified           map[string]bool
+	credentialIdentity string
+	legacyWarning      sync.Once
 }
 
 func Run(ctx context.Context, cfg *config.Config) error { return RunWithOptions(ctx, cfg, Options{}) }

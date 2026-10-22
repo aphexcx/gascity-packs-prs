@@ -11,6 +11,33 @@ import (
 	"gchat-adapter/internal/puller"
 )
 
+// Seed once per credential identity. Observed Chat identity wins subsequent
+// client rebuilds, so an OAuth/Chat mismatch cannot create a rebuild loop.
+func (a *application) seedIdentity(id string) error {
+	if id == "" {
+		a.legacyWarning.Do(func() { a.log.Warn("legacy token has no identity; run gc gchat auth", "operation", "identity") })
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if id == a.credentialIdentity && a.l.IdentityUserID != "" {
+		return nil
+	}
+	previous := a.l.IdentityUserID
+	if previous != id {
+		a.l.IdentityUserID = id
+		if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
+			a.l.IdentityUserID = previous
+			return err
+		}
+		if previous != "" {
+			a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
+		}
+	}
+	a.credentialIdentity = id
+	return nil
+}
+
 func (a *application) persistIdentity(c *chat.Client) error {
 	id, conflicted := c.ObservedIdentityUserID()
 	var result error
