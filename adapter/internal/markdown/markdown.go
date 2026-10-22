@@ -91,16 +91,17 @@ func lineEnd(s string, start int) int {
 }
 
 func paragraphEnd(s string, end int) int {
-	quoted := quoteLine(s[:end])
-	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) || (!quoted && blockBoundaryLine(s[:end])) {
+	first, quoteDepth := quoteContent(s[:end])
+	if strings.TrimSpace(first) == "" || headingLine(first) || blockBoundaryLine(first) {
 		return end
 	}
 	for end < len(s) {
 		next := lineEnd(s, end)
-		line := s[end:next]
-		// Consecutive quote lines can share a span; lazy continuation into
-		// an unquoted line still ends it in the supported subset.
-		if quoted != quoteLine(line) || strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || (!quoted && blockBoundaryLine(line)) {
+		line, depth := quoteContent(s[end:next])
+		// Consecutive quote lines can share a span at the same depth, but
+		// block boundaries inside the quote still end the paragraph. Lazy
+		// continuation into an unquoted line ends it in this subset too.
+		if quoteDepth != depth || strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || blockBoundaryLine(line) {
 			break
 		}
 		end = next
@@ -108,9 +109,19 @@ func paragraphEnd(s string, end int) int {
 	return end
 }
 
-func quoteLine(line string) bool {
-	body := strings.TrimLeft(line, " ")
-	return len(line)-len(body) <= 3 && strings.HasPrefix(body, ">")
+func quoteContent(line string) (string, int) {
+	depth := 0
+	for {
+		body := strings.TrimLeft(line, " ")
+		if len(line)-len(body) > 3 || !strings.HasPrefix(body, ">") {
+			return line, depth
+		}
+		line = body[1:]
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+			line = line[1:]
+		}
+		depth++
+	}
 }
 
 // Recognize the remaining block boundaries without letting code spans consume
