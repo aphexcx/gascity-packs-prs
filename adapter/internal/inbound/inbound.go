@@ -560,6 +560,9 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		if c == nil || c.Status != "intent" {
 			return nil
 		}
+		if superseded(l, c) {
+			return p.unresolved(id, "message deleted or superseded before retry")
+		}
 		if c.Attempts > 0 && c.Reason != "retry" {
 			return p.unresolved(id, "interrupted POST; delivery unknown")
 		}
@@ -598,6 +601,32 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return err
 		}
 	}
+}
+
+// An unsent or explicitly failed old revision must not resurrect content after
+// a newer edit or tombstone. Keep it for an operator instead of replaying it.
+// Pending receipts still get polled: they describe a POST already in flight.
+func superseded(l *ledger.Ledger, c *ledger.ChangeState) bool {
+	if c.Kind != "message.created" && c.Kind != "message.updated" {
+		return false
+	}
+	state := l.Messages[c.Message]
+	if state == nil {
+		return false
+	}
+	if state.Deleted {
+		return true
+	}
+	if stamp, ok := strings.CutPrefix(c.ID, c.Message+"#updated#"); ok {
+		revision, err := time.Parse(time.RFC3339Nano, stamp)
+		return err == nil && state.Revision.After(revision)
+	}
+	for _, other := range l.Changes {
+		if other.Message == c.Message && other.Kind == "message.updated" && other.ID != c.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Processor) outcome(id, status, receipt string) error {

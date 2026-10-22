@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -364,9 +365,9 @@ func TestCrashAfterTerminalBeforeTransportSave(t *testing.T) {
 
 func TestLostResponseAndInterruptedIntent(t *testing.T) {
 	f := setup(t)
-	calls := 0
+	var calls atomic.Int64
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
+		calls.Add(1)
 		conn, _, err := w.(http.Hijacker).Hijack()
 		if err != nil {
 			t.Error(err)
@@ -384,7 +385,7 @@ func TestLostResponseAndInterruptedIntent(t *testing.T) {
 	ev := event("p", "message.created", message())
 	handle(t, f, ev)
 	handle(t, f, ev)
-	if calls != 1 || f.l.Unresolved[messageName] == nil {
+	if calls.Load() != 1 || f.l.Unresolved[messageName] == nil {
 		t.Fatal("lost response was not held")
 	}
 
@@ -658,5 +659,81 @@ func TestAttachmentsRefuseUnsafePaths(t *testing.T) {
 				t.Fatalf("escaped media root: %v %v", files, err)
 			}
 		})
+	}
+}
+
+func TestSupersededIntentNeverRepostsOldText(t *testing.T) {
+	for _, kind := range []string{"message.updated", "message.deleted"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("old", "message.created", message())
+			if out, _ := f.p.Handle(context.Background(), ev); out != puller.Nack {
+				t.Fatal("expected unreachable")
+			}
+			f.opts.GC = gcclient.New(f.gc.URL(), "examplecity")
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Text = "replacement"
+			m.LastUpdateTime = "2026-10-22T10:01:00Z"
+			handle(t, f, event("newer", kind, m))
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.gc.Inbound(); len(got) != 1 || got[0].ProviderMessageID == messageName {
+				t.Fatalf("superseded text replayed: %+v", got)
+			}
+			if f.l.Unresolved[messageName] == nil {
+				t.Fatal("superseded undelivered intent not retained")
+			}
+		})
+	}
+}
+
+func TestMalformedDeliveryAndReceiptLookupFailure(t *testing.T) {
+	for _, response := range []string{`{"delivery":{"status":"pending"}}`, `{"delivery":{"status":"future"}}`, `{broken`} {
+		t.Run(response, func(t *testing.T) {
+			f := setup(t)
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, response) }))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			handle(t, f, event("malformed-response", "message.created", message()))
+			if f.l.Unresolved[messageName] == nil {
+				t.Fatal("malformed response did not retain uncertainty")
+			}
+		})
+	}
+	f := setup(t)
+	f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+	handle(t, f, event("pending", "message.created", message()))
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "private", 500) }))
+	defer s.Close()
+	f.opts.GC = gcclient.New(s.URL, "examplecity")
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.p.Poll(context.Background()); err == nil || strings.Contains(err.Error(), "private") {
+		t.Fatalf("receipt failure: %v", err)
+	}
+	if f.l.Changes[messageName].Status != "pending" || f.l.Unresolved[messageName] != nil {
+		t.Fatal("transient lookup lost receipt")
 	}
 }
