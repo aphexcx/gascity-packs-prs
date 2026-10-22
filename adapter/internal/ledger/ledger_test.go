@@ -24,6 +24,7 @@ func TestRoundTrip(t *testing.T) {
 	l := ledger.New()
 	l.Subscription = ledger.SubscriptionState{Name: "subscriptions/example", State: "ACTIVE", Expiry: now, Target: "//chat.googleapis.com/spaces/-"}
 	l.Spaces["spaces/example"] = &ledger.SpaceState{Kind: "room", Wake: "mentions", MessageCursor: now.Add(-time.Hour), EventCursor: now.Add(-time.Minute), Backlog: []string{"change-1"}, PageToken: "page-2", FrozenUpper: now}
+	l.Spaces["spaces/AAAAAAAAAAA"] = &ledger.SpaceState{Kind: "room", Wake: "all"}
 	l.Messages["spaces/example/messages/one"] = &ledger.MessageState{Revision: now, Deleted: true, Thread: "spaces/example/threads/one", Mine: true, SendKey: "send-1"}
 	for i, status := range []string{"intent", "pending", "committed", "unresolved"} {
 		id := fmt.Sprintf("change-%d", i)
@@ -33,7 +34,7 @@ func TestRoundTrip(t *testing.T) {
 	l.Sends["send-1"] = &ledger.SendState{
 		Key: "send-1", Space: "spaces/example", Thread: "spaces/example/threads/one", Created: now, Recorded: true,
 		Parts:   []ledger.SendPart{{RequestID: "send-1-0", Text: "first", MessageName: "spaces/example/messages/one"}, {RequestID: "send-1-1", Text: "second"}},
-		Receipt: &wire.PublishReceipt{MessageID: "spaces/example/messages/one", Delivered: true, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/example", Kind: "room"}, Metadata: map[string]string{"parts": "2"}},
+		Receipt: &wire.PublishReceipt{MessageID: "spaces/example/messages/one", Delivered: true, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/example", Kind: "room"}, Metadata: map[string]string{"parts": "2", "ExampleKey": "value"}},
 	}
 	l.Quarantine = []ledger.QuarantinedEvent{{PubSubID: "bad-event", Reason: "invalid JSON", Path: "quarantine/bad-event.json", At: now}}
 	l.Counters["spaces/example"] = 42
@@ -468,19 +469,70 @@ func writeFile(t *testing.T, path string, data []byte) {
 	}
 }
 
+func TestJSONKeysDistinguishDataFromStructFields(t *testing.T) {
+	for _, field := range []string{"spaces", "messages", "changes", "sends", "unresolved", "counters", "metadata"} {
+		t.Run(field, func(t *testing.T) {
+			raw := map[string]any{field: map[string]any{"MixedCase": map[string]any{"snake_case": true}}}
+			if err := jsonKeyError(raw); err != nil {
+				t.Errorf("data key rejected: %v", err)
+			}
+		})
+	}
+	for _, tc := range []struct{ contents, key string }{
+		{`{"Version":1}`, "Version"},
+		{`{"spaces":{"spaces/AAAAAAAAAAA":{"MessageCursor":""}}}`, "MessageCursor"},
+		{`{"spaces":{"metadata":{"Wake":"all"}}}`, "Wake"},
+		{`{"sends":{"SendKey":{"parts":[{"MessageName":""}]}}}`, "MessageName"},
+		{`{"sends":{"SendKey":{"receipt":{"conversation":{"ScopeID":""}}}}}`, "ScopeID"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			var raw any
+			if err := json.Unmarshal([]byte(tc.contents), &raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := jsonKeyError(raw); err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("expected rejection of struct key %s, got %v", tc.key, err)
+			}
+		})
+	}
+}
+
 func assertJSONKeys(t *testing.T, value any) {
 	t.Helper()
+	if err := jsonKeyError(value); err != nil {
+		t.Error(err)
+	}
+}
+
+func jsonKeyError(value any) error {
 	switch value := value.(type) {
 	case map[string]any:
 		for key, item := range value {
 			if strings.ContainsAny(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-				t.Errorf("JSON key is not snake_case: %s", key)
+				return fmt.Errorf("JSON key is not snake_case: %s", key)
 			}
-			assertJSONKeys(t, item)
+			switch key {
+			case "spaces", "messages", "changes", "sends", "unresolved", "counters", "metadata":
+				// Map keys are data; the records they contain still have struct keys.
+				if entries, ok := item.(map[string]any); ok {
+					for _, entry := range entries {
+						if err := jsonKeyError(entry); err != nil {
+							return err
+						}
+					}
+					continue
+				}
+			}
+			if err := jsonKeyError(item); err != nil {
+				return err
+			}
 		}
 	case []any:
 		for _, item := range value {
-			assertJSONKeys(t, item)
+			if err := jsonKeyError(item); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
