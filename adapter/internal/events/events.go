@@ -281,9 +281,15 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 			}
 		}()
 	}
+	m.ledgerMu.Lock()
+	adopting := m.ledger.Subscription.Name != sub.Name
+	m.ledgerMu.Unlock()
 	state, err = m.persist(sub, time.Time{})
 	if err != nil {
 		return state, err
+	}
+	if adopting {
+		m.logMutation(ctx, "adopt", state)
 	}
 	if state != m.ambiguousState {
 		m.ambiguousUntil = time.Time{}
@@ -392,6 +398,7 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	}
 	m.ambiguousUntil = time.Time{}
 	m.ambiguousCause = nil
+	m.logMutation(ctx, m.pendingKind, state)
 	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
 		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
 	}
@@ -445,10 +452,12 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	state := ledger.SubscriptionState{Name: sub.Name, Target: sub.TargetResource, State: sub.State, Expiry: expiry}
 	m.ledgerMu.Lock()
 	previous := m.ledger.Subscription
-	m.ledger.Subscription = state
-	err = m.ledger.Save(m.path)
-	if err != nil {
-		m.ledger.Subscription = previous
+	if previous != state {
+		m.ledger.Subscription = state
+		err = m.ledger.Save(m.path)
+		if err != nil {
+			m.ledger.Subscription = previous
+		}
 	}
 	m.ledgerMu.Unlock()
 	if err != nil {
@@ -478,6 +487,10 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 		m.scheduledName, m.scheduledExpiry = sub.Name, expiry
 	}
 	return state, nil
+}
+
+func (m *Manager) logMutation(ctx context.Context, action string, state ledger.SubscriptionState) {
+	m.log.InfoContext(ctx, "subscription mutation", "action", action, "name", state.Name, "state", state.State, "expiry", state.Expiry)
 }
 
 // Status returns the last reconciliation error, consecutive failures, scheduled
@@ -555,10 +568,12 @@ func (m *Manager) RenewLoop(ctx context.Context) {
 
 // HandleLifecycle ignores unrelated events. It deliberately ignores the event
 // payload's state: lifecycle deliveries can be late, duplicated or unordered.
+// Both full CloudEvent types and normalized subscription.<kind> are accepted.
 // Returning errors lets the dispatcher nack/retry a transient failure.
 func (m *Manager) HandleLifecycle(ctx context.Context, eventType string) error {
 	switch eventType {
-	case "google.workspace.events.subscription.v1.expirationReminder", "google.workspace.events.subscription.v1.expired", "google.workspace.events.subscription.v1.suspended":
+	case "google.workspace.events.subscription.v1.expirationReminder", "google.workspace.events.subscription.v1.expired", "google.workspace.events.subscription.v1.suspended",
+		"subscription.expirationReminder", "subscription.expired", "subscription.suspended":
 		_, err := m.Reconcile(ctx)
 		return err
 	default:

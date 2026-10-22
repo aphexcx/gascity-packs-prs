@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -950,4 +951,96 @@ func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
 		return nil
 	}
 	f.manager.RenewLoop(ctx)
+}
+
+func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
+	f := setup(t)
+	f.reconcile()
+	before, err := os.Stat(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	if err := f.manager.HandleLifecycle(context.Background(), "google.workspace.events.subscription.v1.expirationReminder"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged subscription rewrote the ledger")
+	}
+}
+
+func TestMutationLogsOnceWithAuthoritativeState(t *testing.T) {
+	f := setup(t)
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	f.reconcile()
+	f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.reconcile()
+	f.server.SuspendSubscription()
+	f.reconcile()
+	f.ledger.Subscription = ledger.SubscriptionState{}
+	f.reconcile()
+	f.reconcile()
+	var actions []string
+	decoder := json.NewDecoder(&logs)
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["level"] != "INFO" {
+			continue
+		}
+		action, _ := entry["action"].(string)
+		actions = append(actions, action)
+		if entry["name"] == nil || entry["name"] == "" || entry["state"] != "ACTIVE" || entry["expiry"] == nil {
+			t.Errorf("mutation log lacks subscription state: %v", entry)
+		}
+	}
+	if !reflect.DeepEqual(actions, []string{"create", "renew", "reactivate", "adopt"}) {
+		t.Fatalf("mutation log actions = %v", actions)
+	}
+}
+
+func TestShortLifecycleTypesReconcile(t *testing.T) {
+	for _, kind := range []string{"expirationReminder", "expired", "suspended"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			before := f.count("GET", "/v1/"+first.Name)
+			if err := f.manager.HandleLifecycle(context.Background(), "subscription."+kind); err != nil {
+				t.Fatal(err)
+			}
+			if f.count("GET", "/v1/"+first.Name) != before+1 {
+				t.Fatal("short lifecycle type did not reconcile")
+			}
+		})
+	}
+}
+
+func TestPendingOperationFinishesBeforeResourceValidation(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = 3 * time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	f.clock.advance(time.Minute)
+	f.server.Advance(0)
+	f.server.Configure(func(s *fakegoogle.Server) {
+		for _, sub := range s.Subscriptions {
+			sub.PayloadOptions.FieldMask = "message.name"
+		}
+	})
+	before := len(f.requests)
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("incompatible authoritative resource must still be reported")
+	}
+	if !strings.HasPrefix(f.requests[before].URL.Path, "/v1/operations/") || f.manager.pending != nil {
+		t.Fatal("resource validation prevented finishing the known operation")
+	}
 }
