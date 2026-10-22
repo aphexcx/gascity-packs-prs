@@ -1419,6 +1419,119 @@ func TestCanceledCommandFailureIsCallerOwned(t *testing.T) {
 	}
 }
 
+func TestExpiredDirectCommandFailureSurvivesRestart(t *testing.T) {
+	for _, mode := range []string{"upload", "unbound", "no-session"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					<-r.Context().Done()
+					return nil, r.Context().Err()
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}
+			c, err := chat.New(t.Context(), client, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			path, cmd := "/commands/publish", command("expired")
+			if mode == "upload" {
+				f.gc.Bind(conversation("spaces/room"), "session")
+				path = "/commands/upload"
+				file := filepath.Join(f.cfg.Endpoints.UploadRoot, "data.txt")
+				if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				cmd["path"] = file
+			} else if mode == "no-session" {
+				cmd["session_id"] = ""
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			raw, _ := json.Marshal(cmd)
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw)).WithContext(ctx)
+			w := httptest.NewRecorder()
+			f.s.ServeHTTP(w, req)
+			result := decode[CommandResult](t, w.Body.Bytes())
+			if w.Code != 200 || result.Delivered || result.FailureKind != "transient" || result.RetryAfter == 0 {
+				t.Fatalf("deadline result: %d %+v", w.Code, result)
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := f.options
+			opts.Ledger, opts.LedgerMu = l, new(sync.Mutex)
+			restarted, err := New(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restarted.Close()
+			restarted.SetHealth(Health{State: "ready"})
+			h := httptest.NewServer(restarted)
+			defer h.Close()
+			if err := opts.GC.Register(t.Context(), wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: h.URL}); err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := restarted.RetryPending(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			v := l.Sends["expired"]
+			if f.count() != 0 || v.RecordPending || v.Receipt == nil || v.Receipt.Delivered || v.Receipt.FailureKind != "transient" || v.RecordingReason != result.Reason {
+				t.Fatalf("expired failure not retained across restart: %+v sends=%d", v, f.count())
+			}
+		})
+	}
+}
+
+func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		t.Run(fmt.Sprint(delivered), func(t *testing.T) {
+			f := setup(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "settle"}
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			receipt := failure(p, errors.New("unavailable"))
+			var entry *map[string]any
+			if delivered {
+				receipt = f.send(t, p)
+				entry = &map[string]any{}
+			}
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// gc answers before the deadline, while another ledger consumer
+				// holds the mutex until the request expires.
+				f.mu.Lock()
+				go func() { <-ctx.Done(); f.mu.Unlock() }()
+				var out wire.OutboundResult
+				out.Receipt.Delivered, out.Receipt.MessageID = receipt.Delivered, receipt.MessageID
+				out.Receipt.FailureKind, out.Receipt.RetryAfter = receipt.FailureKind, receipt.RetryAfter
+				out.TranscriptEntry = entry
+				respond(w, 200, out)
+			}))
+			defer h.Close()
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			result, err := f.s.command(ctx, p, nil)
+			if err != nil || result.Delivered != delivered || result.Recorded != delivered {
+				t.Fatalf("settled result: %+v %v", result, err)
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := l.Sends[p.IdempotencyKey]
+			if v.RecordPending || v.Receipt == nil || v.Receipt.Delivered != delivered || v.Recorded != delivered {
+				t.Fatalf("definite gc result not durable: %+v", v)
+			}
+		})
+	}
+}
+
 func TestUnrecordableReceiptClearsPendingAtCommitAndAfterRestart(t *testing.T) {
 	for _, mode := range []string{"receipt-commit", "old-crash-window"} {
 		t.Run(mode, func(t *testing.T) {

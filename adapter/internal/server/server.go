@@ -309,6 +309,14 @@ func (s *Server) update(ctx context.Context, fn func(*ledger.Ledger) error) erro
 	return nil
 }
 
+// Outcome writes must survive a canceled command request. This extra bounded
+// budget is local only: it never permits another network call or delivery.
+func (s *Server) settle(ctx context.Context, fn func(*ledger.Ledger) error) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+	defer cancel()
+	return s.update(ctx, fn)
+}
+
 // Separate command/send locks avoid holding the send lock over gc's callback.
 func (s *Server) lock(ctx context.Context, key string) (func(), error) {
 	if err := ctx.Err(); err != nil {
@@ -880,7 +888,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 		return result, err
 	}
-	err = s.update(ctx, func(l *ledger.Ledger) error {
+	err = s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		// gc can return HTTP 200 with Delivered:false after losing the
 		// callback response. Reconcile under the ledger lock so that answer
@@ -916,7 +924,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 // returned failures (not pending), and delivered sends awaiting recording
 // (pending, delivered receipt). A caller can retry a returned failure explicitly.
 func (s *Server) stopRetry(ctx context.Context, p wire.PublishRequest, receipt wire.PublishReceipt, reason string) error {
-	return s.update(ctx, func(l *ledger.Ledger) error {
+	return s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		if v.Receipt == nil || !v.Receipt.Delivered {
 			v.Receipt = &receipt
