@@ -793,7 +793,7 @@ func TestConcurrentOutboundMetadataSurvivesOwnEcho(t *testing.T) {
 }
 
 func TestRetryablePOSTResponseRecovers(t *testing.T) {
-	for _, status := range []int{500, 503, 429} {
+	for _, status := range []int{500, 503, 429, 408} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			target, _ := url.Parse(f.gc.URL())
@@ -879,6 +879,63 @@ func TestRejectedPOSTRetainsStatusWithoutPrivateLogs(t *testing.T) {
 	var entry struct{ Level, Cause string }
 	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != want {
 		t.Fatalf("missing rejection warning: %s (%v)", logs.String(), err)
+	}
+}
+
+func TestPOSTStatusReasonsAreBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		code   string
+		want   string
+	}{
+		{"redirect", 302, "", "gc answered HTTP 302; delivery unknown"},
+		{"redirect_preserving_method", 307, "", "gc answered HTTP 307; delivery unknown"},
+		{"not_found", 404, "", "gc rejected the POST: HTTP 404"},
+		{"long_code", 422, strings.Repeat("a", 60000), "gc rejected the POST: HTTP 422 " + strings.Repeat("a", 64)},
+		{"allowed_token", 422, "AZaz09_-", "gc rejected the POST: HTTP 422 AZaz09_-"},
+		{"newline", 422, "bad\ncode", "gc rejected the POST: HTTP 422"},
+		{"whitespace", 422, "bad code", "gc rejected the POST: HTTP 422"},
+		{"punctuation", 422, "bad:code", "gc rejected the POST: HTTP 422"},
+		{"unicode", 422, "badé", "gc rejected the POST: HTTP 422"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			var calls atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Location", "/redirected")
+				w.WriteHeader(tc.status)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": tc.code, "detail": "PRIVATE RESPONSE BODY"})
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("status-reason", "message.created", message())
+			handle(t, f, ev)
+			ev.PubSubID = "status-again"
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Unresolved[messageName]
+			if c == nil {
+				t.Fatal("POST was not retained as unresolved")
+			}
+			if c.Status != "unresolved" || c.Reason != tc.want || calls.Load() != 1 || f.l.Counters["turns:"+space] != 0 {
+				t.Fatalf("status=%s reason=%.120q (%d bytes) calls=%d", c.Status, c.Reason, len(c.Reason), calls.Load())
+			}
+			var entry struct{ Level, Cause string }
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != tc.want || strings.Contains(logs.String(), "PRIVATE") {
+				t.Fatalf("status log: %s (%v)", logs.String(), err)
+			}
+		})
 	}
 }
 
@@ -1091,7 +1148,7 @@ func TestMentionRenderingUsesAnnotatedSpans(t *testing.T) {
 		{"unicode_prefix", `{"text":"é😀 @Example!","annotations":[{"type":"USER_MENTION","startIndex":4,"length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "é😀 Example!"},
 		{"literal_token", `{"text":"@Example <users/123>","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
 		{"bounded_token", `{"text":"<users/123> <users/123>","annotations":[{"type":"USER_MENTION","length":11,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
-		{"resource_fallback", `{"text":"@Example","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123"}}}]}`, "users/123"},
+		{"literal_fallback", `{"text":"@Example","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123"}}}]}`, "@Example"},
 		{"unsorted_spans", `{"text":"@One and @Two","annotations":[{"type":"USER_MENTION","startIndex":9,"length":4,"userMention":{"user":{"displayName":"Second"}}},{"type":"USER_MENTION","length":4,"userMention":{"user":{"displayName":"First"}}}]}`, "First and Second"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1316,6 +1373,14 @@ func TestExistingSpaceInheritsWakeDefault(t *testing.T) {
 			if f.l.Spaces[space].Wake != "mentions" {
 				t.Fatalf("wake default not retained: %+v", f.l.Spaces[space])
 			}
+			// Once inherited, a space's wake policy survives later default changes.
+			f.opts.Config.Settings.Defaults.Wake = config.WakeAll
+			m := message()
+			m.Name = space + "/messages/after-default-change"
+			handle(t, f, event("changed-default", "message.created", m))
+			if f.l.Spaces[space].Wake != "mentions" || len(f.gc.Inbound()) != 2*want {
+				t.Fatal("config default replaced the persisted wake policy")
+			}
 		})
 	}
 }
@@ -1369,6 +1434,42 @@ func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
 				t.Fatal("removed change was resurrected or counted")
 			}
 		})
+	}
+}
+
+func TestCatchUpSavesOnlyDeliveryState(t *testing.T) {
+	f := setup(t)
+	saves := 0
+	f.opts.Save = func(l *ledger.Ledger) error {
+		saves++
+		return l.Save(f.opts.LedgerPath)
+	}
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := puller.Change{Kind: "message.created", Space: space, Message: message()}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up: %v %v", out, err)
+	}
+	if saves != 3 {
+		t.Fatalf("catch-up saves=%d, want intent, attempt, outcome only", saves)
+	}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up repeat: %v %v", out, err)
+	}
+	if saves != 3 {
+		t.Fatalf("deduplicated catch-up saved unchanged state: %d saves", saves)
+	}
+	for _, ev := range []*puller.Event{
+		{PubSubID: "pubsub-only", Changes: []puller.Change{c}},
+		{CloudEventID: "cloud-only", Changes: []puller.Change{c}},
+	} {
+		handle(t, f, ev)
+	}
+	if saves != 5 || !f.l.Transport.Seen("pubsub:pubsub-only") || !f.l.Transport.Seen("cloudevent:cloud-only") || len(f.gc.Inbound()) != 1 {
+		t.Fatalf("live transport state: saves=%d ledger=%+v", saves, f.l)
 	}
 }
 

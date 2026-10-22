@@ -132,6 +132,9 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 			return puller.Nack, err
 		}
 	}
+	if ev.PubSubID == "" && ev.CloudEventID == "" {
+		return puller.Ack, nil
+	}
 	err = p.update(func(l *ledger.Ledger) {
 		if ev.PubSubID != "" {
 			l.Transport.Add("pubsub:" + ev.PubSubID)
@@ -588,6 +591,9 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 		Actor: a, ReplyToMessageID: thread, ReceivedAt: p.opts.Now().UTC()}
 }
 
+// record persists a change and fills an empty space Wake from config. Once
+// persisted, later config default changes no longer reach that space; a spaces
+// reset must clear or replace its stored Wake to inherit a new default.
 func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool) error {
 	if catchUp {
 		w.Text = "[catch-up]\n" + w.Text
@@ -691,7 +697,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			var responseErr *gcclient.HTTPError
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
-			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429)) || (errors.As(err, &op) && op.Op == "dial") {
+			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408)) || (errors.As(err, &op) && op.Op == "dial") {
 				if err := p.update(func(l *ledger.Ledger) {
 					if c := l.Changes[id]; c != nil {
 						c.Attempts--
@@ -704,12 +710,16 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			}
 			if answered && responseErr.StatusCode >= 400 && responseErr.StatusCode < 500 {
 				// The status and machine-readable code describe a definite rejection.
+				// This includes 404: a stopped city belongs to the app's health check.
 				// Never log HTTPError itself: it includes the response body.
 				reason := fmt.Sprintf("gc rejected the POST: HTTP %d", responseErr.StatusCode)
-				if code := responseErr.Code(); code != "" {
+				if code := reasonCode(responseErr.Code()); code != "" {
 					reason += " " + code
 				}
 				return p.unresolved(id, reason)
+			}
+			if answered && responseErr.StatusCode >= 300 && responseErr.StatusCode < 400 {
+				return p.unresolved(id, fmt.Sprintf("gc answered HTTP %d; delivery unknown", responseErr.StatusCode))
 			}
 			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
 				return err
@@ -720,6 +730,19 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return err
 		}
 	}
+}
+
+// reasonCode admits only short ASCII tokens into durable reasons and logs.
+func reasonCode(code string) string {
+	for _, c := range code {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return ""
+		}
+	}
+	if len(code) > 64 {
+		return code[:64]
+	}
+	return code
 }
 
 // An unsent or explicitly failed old revision must not resurrect content after
@@ -856,11 +879,8 @@ func renderMentions(m *api.Message) string {
 		if !startOK || !endOK {
 			continue // never split a surrogate pair
 		}
-		u := a.UserMention.User
-		name := u.DisplayName
-		if name == "" {
-			name = u.Name
-		}
+		// Without a display name, keep the literal span (usually @Name).
+		name := a.UserMention.User.DisplayName
 		if name != "" {
 			spans = append(spans, span{start, end, name})
 		}
