@@ -288,18 +288,13 @@ func TestSourceInvalidate(t *testing.T) {
 		fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
 	})
 	s := mustSource(t, clientFile, tokenFile, ep)
-	invalidator, ok := any(s).(interface{ Invalidate() })
-	if !ok {
-		t.Fatal("Source does not expose Invalidate")
-	}
-	invalidator.Invalidate() // Missing credentials remain missing.
+	s.Invalidate() // Missing credentials remain missing.
 	if s.State() != Missing {
 		t.Fatalf("missing credential state = %v", s.State())
 	}
 	writeJSON(t, tokenFile, savedToken("cached"))
 	s = mustSource(t, clientFile, tokenFile, ep)
-	invalidator = any(s).(interface{ Invalidate() })
-	invalidator.Invalidate()
+	s.Invalidate()
 	tok, err := s.TokenSource(t.Context()).Token()
 	if err != nil || tok.AccessToken != "fresh" || refreshes.Load() != 1 || s.State() != Ready {
 		t.Fatalf("invalidation: token=%+v err=%v refreshes=%d state=%v", tok, err, refreshes.Load(), s.State())
@@ -921,8 +916,13 @@ func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 			defer close(finishRefresh)
 			expired := savedToken("expired")
 			expired.Expiry = time.Now().Add(-time.Hour)
-			writeJSON(t, tokenFile, expired)
+			writeJSON(t, tokenFile, savedToken("cached"))
 			s := mustSource(t, clientFile, tokenFile, ep)
+			client, err := s.Client(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.current = expired
 			completed := make(chan error, 1)
 			go func() {
 				tok, err := s.TokenSource(t.Context()).Token()
@@ -938,6 +938,16 @@ func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitSignal(t, reloaded)
+			// A request can use the validated replacement even while the old
+			// credential's refresh still holds the refresh gate.
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/resource", nil)
+			res, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("valid cached token waited for stalled refresh: %v", err)
+			}
+			res.Body.Close()
 			finishRefresh <- struct{}{}
 			select {
 			case err := <-completed:

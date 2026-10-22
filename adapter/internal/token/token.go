@@ -158,6 +158,16 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 }
 
 func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if s.state != NeedsSignIn && s.current.Valid() {
+		copy := *s.current
+		s.mu.Unlock()
+		return &copy, nil
+	}
+	s.mu.Unlock()
 	select {
 	case s.refreshGate <- struct{}{}:
 		defer func() { <-s.refreshGate }()
@@ -170,6 +180,14 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 		}
 		s.mu.Lock()
 		current, generation, state := s.current, s.generation, s.state
+		// Another refresh or watch reload may have populated the cache while
+		// we waited. Return a copy without reinstalling it after unlocking,
+		// which could otherwise undo a concurrent invalidation.
+		if state != NeedsSignIn && current.Valid() {
+			copy := *current
+			s.mu.Unlock()
+			return &copy, nil
+		}
 		s.mu.Unlock()
 		if current == nil || state == NeedsSignIn {
 			return nil, ErrNeedsSignIn
