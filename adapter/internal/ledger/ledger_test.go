@@ -1,0 +1,313 @@
+package ledger_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/wire"
+)
+
+func TestRoundTrip(t *testing.T) {
+	now := time.Date(2026, 10, 22, 8, 0, 0, 123456789, time.UTC)
+	l := ledger.New()
+	l.Subscription = ledger.SubscriptionState{Name: "subscriptions/example", State: "ACTIVE", Expiry: now, Target: "//chat.googleapis.com/spaces/-"}
+	l.Spaces["spaces/example"] = &ledger.SpaceState{Kind: "room", Wake: "mentions", MessageCursor: now.Add(-time.Hour), EventCursor: now.Add(-time.Minute), Backlog: []string{"change-1"}, PageToken: "page-2", FrozenUpper: now}
+	l.Messages["spaces/example/messages/one"] = &ledger.MessageState{Revision: now, Deleted: true, Thread: "spaces/example/threads/one", Mine: true, SendKey: "send-1"}
+	for i, status := range []string{"intent", "pending", "committed", "unresolved"} {
+		id := fmt.Sprintf("change-%d", i)
+		l.Changes[id] = &ledger.ChangeState{ID: id, Space: "spaces/example", Message: "spaces/example/messages/one", Kind: "updated", Status: status, ReceiptID: "receipt-1", Attempts: 2, Created: now, Event: `{"text":"example"}`, Reason: "response lost"}
+	}
+	l.Unresolved["change-3"] = l.Changes["change-3"]
+	l.Sends["send-1"] = &ledger.SendState{
+		Key: "send-1", Space: "spaces/example", Thread: "spaces/example/threads/one", Created: now, Recorded: true,
+		Parts:   []ledger.SendPart{{RequestID: "send-1-0", Text: "first", MessageName: "spaces/example/messages/one"}, {RequestID: "send-1-1", Text: "second"}},
+		Receipt: &wire.PublishReceipt{MessageID: "spaces/example/messages/one", Delivered: true, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/example", Kind: "room"}, Metadata: map[string]string{"parts": "2"}},
+	}
+	l.Quarantine = []ledger.QuarantinedEvent{{PubSubID: "bad-event", Reason: "invalid JSON", Path: "quarantine/bad-event.json", At: now}}
+	l.Counters["spaces/example"] = 42
+	l.Transport.Add("pubsub:one")
+	l.Transport.Add("cloudevent:one")
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ledger.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, l) {
+		t.Fatalf("round trip changed ledger:\ngot  %#v\nwant %#v", got, l)
+	}
+	// The persisted schema uses snake_case even for nested records.
+	var raw map[string]any
+	if err := json.Unmarshal(readFile(t, path), &raw); err != nil {
+		t.Fatal(err)
+	}
+	assertJSONKeys(t, raw)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("state permissions = %o, want 600", info.Mode().Perm())
+	}
+}
+
+func TestSaveReplacesStateWithoutTemporaryFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	l := ledger.New()
+	l.Counters["turns"] = 1
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	l.Counters["turns"] = 2
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary file remains: %v", err)
+	}
+	got, err := ledger.Load(path, true)
+	if err != nil || got.Counters["turns"] != 2 {
+		t.Fatalf("replacement = %v, %v", got, err)
+	}
+}
+
+func TestCrashBeforeRenameLeavesOldLedgerIntact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	l := ledger.New()
+	l.Counters["turns"] = 7
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	old := readFile(t, path)
+	// Simulate a process dying after opening/writing the temp file, before rename.
+	writeFile(t, path+".tmp", []byte(`{"version":1,"counters":{"turns":8}`))
+	got, err := ledger.Load(path, true)
+	if err != nil || got.Counters["turns"] != 7 {
+		t.Fatalf("load after interrupted save = %v, %v", got, err)
+	}
+	if !bytes.Equal(readFile(t, path), old) {
+		t.Fatal("interrupted save changed the committed file")
+	}
+	got.Counters["turns"] = 9
+	if err := got.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful retry left temporary file: %v", err)
+	}
+}
+
+func TestLoadCorruptionRequiresRecoveryAndPreservesBytes(t *testing.T) {
+	for _, contents := range []string{`{"version":`, `null`, `{}`, `{"version":99}`, `[]`} {
+		t.Run(contents, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			writeFile(t, path, []byte(contents))
+			var previous string
+			for range 2 {
+				got, err := ledger.Load(path, false)
+				if got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
+					t.Fatalf("corrupt load = %v, %v", got, err)
+				}
+				var recovery *ledger.RecoveryError
+				if !errors.As(err, &recovery) || !strings.HasPrefix(recovery.PreservedPath, path+".corrupt-") {
+					t.Fatalf("recovery error lacks preserved path: %v", err)
+				}
+				if !strings.Contains(err.Error(), recovery.PreservedPath) {
+					t.Fatalf("error message lacks preserved path: %v", err)
+				}
+				if recovery.PreservedPath == previous {
+					t.Fatal("repeated load overwrote the previous preserved copy")
+				}
+				previous = recovery.PreservedPath
+				if string(readFile(t, previous)) != contents || string(readFile(t, path)) != contents {
+					t.Fatal("corrupt bytes were changed")
+				}
+			}
+		})
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	got, err := ledger.Load(path, false)
+	if err != nil || !reflect.DeepEqual(got, ledger.New()) {
+		t.Fatalf("fresh load = %v, %v", got, err)
+	}
+	got, err = ledger.Load(path, true)
+	if got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing established ledger = %v, %v", got, err)
+	}
+	var recovery *ledger.RecoveryError
+	if !errors.As(err, &recovery) || recovery.PreservedPath != "" {
+		t.Fatalf("missing file must not claim a preserved copy: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load wrote a new file: %v", err)
+	}
+}
+
+func TestLoadUnreadableFileRequiresRecovery(t *testing.T) {
+	// A directory is reliably unreadable as a state file even when tests run as root.
+	got, err := ledger.Load(t.TempDir(), false)
+	if got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
+		t.Fatalf("unreadable ledger = %v, %v", got, err)
+	}
+}
+
+func TestFailedSaveKeepsCommittedFile(t *testing.T) {
+	for _, failure := range []string{"encode", "open temporary file"} {
+		t.Run(failure, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state.json")
+			l := ledger.New()
+			if err := l.Save(path); err != nil {
+				t.Fatal(err)
+			}
+			old := readFile(t, path)
+			if failure == "encode" {
+				l.Subscription.Expiry = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+			} else if err := os.Mkdir(path+".tmp", 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.Save(path); err == nil {
+				t.Fatal("Save unexpectedly succeeded")
+			}
+			if !bytes.Equal(readFile(t, path), old) {
+				t.Fatal("failed save changed the committed file")
+			}
+		})
+	}
+}
+
+func TestEstablishedMarker(t *testing.T) {
+	dir := t.TempDir()
+	if ledger.Established(dir) {
+		t.Fatal("fresh directory is established")
+	}
+	for range 2 {
+		if err := ledger.MarkEstablished(dir); err != nil {
+			t.Fatal(err)
+		}
+		if !ledger.Established(dir) {
+			t.Fatal("marker not detected")
+		}
+		if len(readFile(t, filepath.Join(dir, ".gchat-established"))) != 0 {
+			t.Fatal("marker is not zero bytes")
+		}
+	}
+	if err := ledger.MarkEstablished(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing secrets directory must report a marker write error")
+	}
+}
+
+func TestTransportRingEvictionAndReload(t *testing.T) {
+	l := ledger.New()
+	for i := range 10000 {
+		if !l.Transport.Add(fmt.Sprintf("pubsub:%d", i)) {
+			t.Fatalf("new id %d was not added", i)
+		}
+	}
+	if l.Transport.Len() != 10000 || !l.Transport.Seen("pubsub:0") {
+		t.Fatal("ring lost an id before reaching capacity")
+	}
+	if l.Transport.Add("pubsub:0") || l.Transport.Add("") || l.Transport.Seen("") {
+		t.Fatal("duplicate or empty id was added")
+	}
+	if !l.Transport.Add("cloudevent:0") || !l.Transport.Seen("cloudevent:0") || l.Transport.Seen("pubsub:0") || !l.Transport.Seen("pubsub:1") || l.Transport.Len() != 10000 {
+		t.Fatal("ring did not evict only its oldest id")
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ledger.Load(path, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Transport.Seen("pubsub:0") || !got.Transport.Seen("cloudevent:0") || got.Transport.Add("pubsub:1") {
+		t.Fatal("reload lost dedup state")
+	}
+	got.Transport.Add("pubsub:10000")
+	if got.Transport.Seen("pubsub:1") || !got.Transport.Seen("pubsub:2") {
+		t.Fatal("reload lost eviction position")
+	}
+	for i := 10001; i < 20001; i++ {
+		got.Transport.Add(fmt.Sprintf("pubsub:%d", i))
+	}
+	if got.Transport.Len() != 10000 || got.Transport.Seen("pubsub:10000") || !got.Transport.Seen("pubsub:10001") || !got.Transport.Seen("pubsub:20000") {
+		t.Fatal("ring failed after a complete wrap")
+	}
+}
+
+func TestLoadInvalidTransportRequiresRecovery(t *testing.T) {
+	for _, transport := range []string{
+		`{"ids":["pubsub:one"],"next":1}`,
+		`{"ids":["pubsub:one"],"next":-1}`,
+		`{"ids":["pubsub:one","pubsub:one"],"next":0}`,
+		`{"ids":[""],"next":0}`,
+	} {
+		t.Run(transport, func(t *testing.T) {
+			data, err := json.Marshal(ledger.New())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(data, &raw); err != nil {
+				t.Fatal(err)
+			}
+			raw["transport"] = json.RawMessage(transport)
+			data, err = json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "state.json")
+			writeFile(t, path, data)
+			if got, err := ledger.Load(path, true); got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
+				t.Fatalf("invalid transport loaded: %v, %v", got, err)
+			}
+		})
+	}
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertJSONKeys(t *testing.T, value any) {
+	t.Helper()
+	switch value := value.(type) {
+	case map[string]any:
+		for key, item := range value {
+			if strings.ContainsAny(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+				t.Errorf("JSON key is not snake_case: %s", key)
+			}
+			assertJSONKeys(t, item)
+		}
+	case []any:
+		for _, item := range value {
+			assertJSONKeys(t, item)
+		}
+	}
+}
