@@ -442,3 +442,23 @@ func TestSynchronousDeliveryReceiptExpires(t *testing.T) {
 		t.Fatalf("expired synchronous delivery prevented replay: %v", replay)
 	}
 }
+
+func TestInboundRetriesOnlyOutcomesWithoutAWholeDelivery(t *testing.T) {
+	for _, status := range []string{"no_route", "failed", "partial", "pending", "delivered"} {
+		t.Run(status, func(t *testing.T) {
+			s := New(t)
+			s.NextDelivery = status
+			m := inbound("same")
+			first := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+			retry := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			if status == "pending" || status == "delivered" {
+				if retry["receipt_id"] != first["receipt_id"] || retry["status"] != status {
+					t.Fatalf("held delivery was retried: %v", retry)
+				}
+			} else if retry["receipt_id"] == first["receipt_id"] || retry["status"] != "pending" {
+				t.Fatalf("retryable %s delivery was held: %v", status, retry)
+			}
+		})
+	}
+}

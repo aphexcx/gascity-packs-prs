@@ -216,7 +216,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			ID           string
 		}{city, message.Conversation, message.ProviderMessageID})
 		key := string(keyBytes)
-		if previous, ok := s.dedup[key]; ok && previous.Delivery.Status != "failed" && previous.Delivery.Status != "partial" {
+		if previous, ok := s.dedup[key]; ok && (previous.Delivery.Status == "pending" || previous.Delivery.Status == "delivered") {
 			respond(w, 200, previous)
 			return
 		}
