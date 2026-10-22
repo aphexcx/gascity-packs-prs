@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gchat-adapter/internal/config"
@@ -635,6 +636,10 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 }
 
 func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
+	return writeTokenWithSync(ctx, path, tok, (*os.File).Sync)
+}
+
+func writeTokenWithSync(ctx context.Context, path string, tok *oauth2.Token, syncFile func(*os.File) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -655,7 +660,7 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 		}
 	}()
 	if err = json.NewEncoder(f).Encode(tok); err == nil {
-		err = f.Sync()
+		err = syncFile(f)
 	}
 	closeErr := f.Close()
 	if err == nil {
@@ -676,6 +681,16 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 		return fmt.Errorf("replace token %s: %w", path, err)
 	}
 	renamed = true
+	// Persist the directory entry as well as the file contents before reporting
+	// success. Some filesystems do not support syncing directory descriptors.
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("open token directory %s: %w", filepath.Dir(path), err)
+	}
+	defer dir.Close()
+	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) {
+		return fmt.Errorf("sync token directory %s: %w", filepath.Dir(path), err)
+	}
 	return nil
 }
 

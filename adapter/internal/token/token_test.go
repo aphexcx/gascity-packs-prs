@@ -1355,6 +1355,61 @@ func TestWriteTokenFailureCleansOwnTemporaryFile(t *testing.T) {
 	}
 }
 
+func TestWriteTokenSyncsDirectoryAfterRename(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		syncErr error
+	}{
+		{"success", nil},
+		{"unsupported directory sync", syscall.ENOTSUP},
+		{"failed directory sync", syscall.EIO},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "token.json")
+			writeJSON(t, path, savedToken("old"))
+			fileSyncs, directorySyncs := 0, 0
+			var directory *os.File
+			err := writeTokenWithSync(t.Context(), path, savedToken("replacement"), func(f *os.File) error {
+				info, err := f.Stat()
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() {
+					fileSyncs++
+					return f.Sync()
+				}
+				directorySyncs++
+				directory = f
+				if f.Name() != filepath.Dir(path) || fileSyncs != 1 {
+					t.Errorf("directory sync out of order: path=%q fileSyncs=%d", f.Name(), fileSyncs)
+				}
+				tok, _, err := readToken(path)
+				if err != nil || tok.AccessToken != "replacement" {
+					t.Fatalf("directory synced before rename: token=%+v err=%v", tok, err)
+				}
+				assertNoAuthTemps(t, path)
+				if tc.syncErr != nil {
+					return tc.syncErr
+				}
+				return f.Sync()
+			})
+			if tc.syncErr == syscall.EIO {
+				if !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), filepath.Dir(path)) {
+					t.Errorf("directory sync failure = %v", err)
+				}
+			} else if err != nil {
+				t.Error(err)
+			}
+			if fileSyncs != 1 || directorySyncs != 1 {
+				t.Fatalf("syncs: file=%d directory=%d", fileSyncs, directorySyncs)
+			}
+			if _, err := directory.Stat(); !errors.Is(err, os.ErrClosed) {
+				t.Errorf("directory left open: %v", err)
+			}
+		})
+	}
+}
+
 func TestRunAuthOverlappingWritesAreAtomic(t *testing.T) {
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
