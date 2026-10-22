@@ -55,6 +55,9 @@ type Processor struct {
 	gate chan struct{}
 }
 
+// ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
+var ErrCredentials = errors.New("inbound: credentials unavailable")
+
 func New(opts Options) (*Processor, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.GC == nil || opts.Chat == nil || (opts.Save == nil && opts.LedgerPath == "") {
 		return nil, errors.New("inbound: config, clients, ledger, shared mutex and persistence are required")
@@ -151,7 +154,7 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 
 // Poll performs one recovery pass. The app calls it every five seconds, also
 // after startup. Concluded receipts are honored even past the pending deadline;
-// lookup failures retain pending state only until that deadline.
+// lookup failures past that deadline get one persisted grace pass.
 func (p *Processor) Poll(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
@@ -189,9 +192,25 @@ func (p *Processor) Poll(ctx context.Context) error {
 		r, err := p.opts.GC.Receipt(ctx, c.ReceiptID)
 		if err != nil {
 			failures = append(failures, errors.New("inbound: receipt lookup failed"))
-			if ctx.Err() == nil && !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
-				if err := p.unresolved(id, "receipt lookup failed beyond deadline"); err != nil {
-					failures = append(failures, err)
+			if ctx.Err() == nil {
+				late := !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline))
+				var saveErr error
+				if late && c.Reason == receiptLookupGrace {
+					saveErr = p.unresolved(id, "receipt lookup failed beyond deadline")
+				} else if late || c.Reason == receiptLookupGrace {
+					// Reason is durable while pending; Attempts counts POSTs only.
+					// A pre-deadline pass breaks the streak after a clock correction.
+					saveErr = p.update(func(l *ledger.Ledger) {
+						if current := l.Changes[id]; current != nil && current.Status == "pending" {
+							current.Reason = ""
+							if late {
+								current.Reason = receiptLookupGrace
+							}
+						}
+					})
+				}
+				if saveErr != nil {
+					failures = append(failures, saveErr)
 				}
 			}
 			continue
@@ -200,6 +219,12 @@ func (p *Processor) Poll(ctx context.Context) error {
 		case "pending":
 			if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
 				err = p.unresolved(id, "receipt pending beyond deadline")
+			} else if c.Reason == receiptLookupGrace {
+				err = p.update(func(l *ledger.Ledger) {
+					if current := l.Changes[id]; current != nil && current.Status == "pending" {
+						current.Reason = ""
+					}
+				})
 			}
 		case "concluded":
 			if r.Delivery.Status == "pending" {
@@ -219,6 +244,8 @@ func (p *Processor) Poll(ctx context.Context) error {
 	}
 	return errors.Join(failures...)
 }
+
+const receiptLookupGrace = "receipt lookup failed beyond deadline; retry pending"
 
 func (p *Processor) enter(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -352,14 +379,41 @@ func unavailableSpace(err error) bool {
 	// spaces.list covers the whole identity: 401/403 are credential or scope
 	// failures, not evidence that this individual space is unavailable.
 	var apiErr *googleapi.Error
-	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404)
+	kind, _ := chat.Classify(err)
+	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404) || kind == "permanent"
 }
 
 func unavailableParent(err error) bool {
-	// A parent lookup can return 403 for a space the identity left. Retain
-	// that inaccessible parent just like 404; 401 still holds for credentials.
+	// Only a not-a-member 403 proves the parent inaccessible; a scope 403
+	// holds for credential repair just like 401.
+	kind, _ := chat.Classify(err)
+	return kind == "not_found" || kind == "permanent"
+}
+
+// lookupError exposes a safe classifier and status, never Google's response body.
+func lookupError(lookup string, err error) error {
+	kind, _ := chat.Classify(err)
+	summary := fmt.Sprintf("inbound: %s lookup failed: %s", lookup, lookupCause(err))
+	if kind == "auth" {
+		return fmt.Errorf("%s: %w", summary, ErrCredentials)
+	}
+	return errors.New(summary)
+}
+
+func lookupCause(err error) string {
+	kind, _ := chat.Classify(err)
 	var apiErr *googleapi.Error
-	return errors.As(err, &apiErr) && (apiErr.Code == 403 || apiErr.Code == 404)
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("%s (HTTP %d)", kind, apiErr.Code)
+	}
+	return kind
+}
+
+func retainedReason(reason string, err error) string {
+	if kind, _ := chat.Classify(err); kind == "permanent" {
+		return reason + ": " + lookupCause(err)
+	}
+	return reason
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
@@ -459,20 +513,9 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.deleted" && previous == nil {
 		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp)
 	}
-	s, err := p.space(ctx, c.Space, m.Space)
-	if err != nil {
-		if unavailableSpace(err) {
-			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
-			w.Text = renderMentions(m)
-			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
-		}
-		return errors.New("inbound: space lookup failed")
-	}
-	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
-	w.Text = renderMentions(m)
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "space unavailable" {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -480,7 +523,25 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	local := ""
 	if state.Mine {
 		local = "own"
-	} else if c.Kind == "message.deleted" {
+	} else if c.Kind == "message.deleted" && !forwarded {
+		local = "local"
+	}
+	s, err := p.space(ctx, c.Space, m.Space)
+	if err != nil {
+		if unavailableSpace(err) {
+			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
+			w.Text = renderMentions(m)
+			reason := local
+			if reason == "" {
+				reason = retainedReason("space unavailable", err)
+			}
+			return p.record(c, id, w, &state, nil, reason, catchUp)
+		}
+		return lookupError("space", err)
+	}
+	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
+	w.Text = renderMentions(m)
+	if c.Kind == "message.deleted" && !state.Mine {
 		w.Text = "deleted"
 		if base != nil {
 			var original wire.InboundMessage
@@ -488,10 +549,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 				w.Actor = original.Actor
 			}
 		}
-		if !forwarded {
-			local = "local"
-		}
-	} else if !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
+	} else if local == "" && !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
 		local = "wake_policy"
 	}
 	if c.Kind == "message.updated" && id != m.Name {
@@ -528,9 +586,9 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 			if unavailableParent(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
 				w.Text = reactionText(r, action, parent)
-				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
+				return p.record(c, id, w, nil, nil, retainedReason("parent unavailable", err), catchUp)
 			}
-			return errors.New("inbound: reaction parent lookup failed")
+			return lookupError("reaction parent", err)
 		}
 		state = &ledger.MessageState{Mine: m.Sender != nil && m.Sender.Name == p.identity()}
 		if m.Thread != nil {
@@ -542,9 +600,13 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
-			return p.record(c, id, w, state, nil, "space unavailable", catchUp)
+			reason := "local"
+			if state.Mine {
+				reason = retainedReason("space unavailable", err)
+			}
+			return p.record(c, id, w, state, nil, reason, catchUp)
 		}
-		return errors.New("inbound: space lookup failed")
+		return lookupError("space", err)
 	}
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
 	w.Text = reactionText(r, action, parent)
@@ -609,7 +671,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	if c.Reaction != nil {
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
-	unavailable := local == "space unavailable" || local == "parent unavailable"
+	unavailable := strings.HasPrefix(local, "space unavailable") || strings.HasPrefix(local, "parent unavailable")
 	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
@@ -697,7 +759,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			var responseErr *gcclient.HTTPError
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
-			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408)) || (errors.As(err, &op) && op.Op == "dial") {
+			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408 || stoppedCity(responseErr))) || (errors.As(err, &op) && op.Op == "dial") {
 				if err := p.update(func(l *ledger.Ledger) {
 					if c := l.Changes[id]; c != nil {
 						c.Attempts--
@@ -710,7 +772,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			}
 			if answered && responseErr.StatusCode >= 400 && responseErr.StatusCode < 500 {
 				// The status and machine-readable code describe a definite rejection.
-				// This includes 404: a stopped city belongs to the app's health check.
+				// Every 404 except the stopped-city response above is definite.
 				// Never log HTTPError itself: it includes the response body.
 				reason := fmt.Sprintf("gc rejected the POST: HTTP %d", responseErr.StatusCode)
 				if code := reasonCode(responseErr.Code()); code != "" {
@@ -730,6 +792,11 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return err
 		}
 	}
+}
+
+func stoppedCity(err *gcclient.HTTPError) bool {
+	return err.StatusCode == 404 && (err.Code() == "city-not-found" ||
+		(err.Problem != nil && strings.HasPrefix(err.Problem.Detail, "not_found: city not found or not running")))
 }
 
 // reasonCode admits only short ASCII tokens into durable reasons and logs.

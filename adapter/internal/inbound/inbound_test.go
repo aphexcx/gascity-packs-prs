@@ -959,6 +959,8 @@ func TestPOSTStatusReasonsAreBounded(t *testing.T) {
 		{"redirect_preserving_method", 307, "", "gc answered HTTP 307; delivery unknown"},
 		{"not_found", 404, "", "gc rejected the POST: HTTP 404"},
 		{"long_code", 422, strings.Repeat("a", 60000), "gc rejected the POST: HTTP 422 " + strings.Repeat("a", 64)},
+		{"exactly_65_bytes", 422, strings.Repeat("a", 65), "gc rejected the POST: HTTP 422 " + strings.Repeat("a", 64)},
+		{"bad_character_after_bound", 422, strings.Repeat("a", 64) + "!", "gc rejected the POST: HTTP 422"},
 		{"allowed_token", 422, "AZaz09_-", "gc rejected the POST: HTTP 422 AZaz09_-"},
 		{"newline", 422, "bad\ncode", "gc rejected the POST: HTTP 422"},
 		{"whitespace", 422, "bad code", "gc rejected the POST: HTTP 422"},
@@ -1015,6 +1017,11 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/messages/missing") {
 					lookups.Add(1)
+					if status == http.StatusForbidden {
+						w.WriteHeader(status)
+						io.WriteString(w, `{"error":{"code":403,"message":"not a member: PRIVATE LOOKUP CONTENT"}}`)
+						return
+					}
 					http.Error(w, "PRIVATE LOOKUP CONTENT", status)
 					return
 				}
@@ -1045,7 +1052,7 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status != 403 && status != 404 {
+			if status != 400 && status != 403 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[missing+"#created"] != nil || f.l.Transport.Seen("pubsub:parents") {
 					t.Fatalf("transient lookup: %v %v", out, err)
 				}
@@ -1058,7 +1065,11 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 				t.Fatalf("permanent parent failure: %v %v", out, err)
 			}
 			c := f.l.Changes[missing+"#created"]
-			if c == nil || c.Status != "committed" || c.Reason != "parent unavailable" || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != second+"#created" {
+			wantReason := "parent unavailable"
+			if status == 400 {
+				wantReason += ": permanent (HTTP 400)"
+			}
+			if c == nil || c.Status != "committed" || c.Reason != wantReason || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != second+"#created" {
 				t.Fatalf("batch did not continue: %+v, posts=%+v", c, f.gc.Inbound())
 			}
 			handle(t, f, ev)
@@ -1105,7 +1116,7 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status != 200 && status != 404 {
+			if status != 200 && status != 400 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil || f.l.Transport.Seen("pubsub:space-unavailable") {
 					t.Fatalf("transient space lookup: %v %v", out, err)
 				}
@@ -1118,7 +1129,11 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 				t.Fatalf("unavailable space: %v %v", out, err)
 			}
 			c := f.l.Changes[messageName]
-			if c == nil || c.Reason != "space unavailable" || c.Status != "committed" || len(f.gc.Inbound()) != 0 {
+			wantReason := "space unavailable"
+			if status == 400 {
+				wantReason += ": permanent (HTTP 400)"
+			}
+			if c == nil || c.Reason != wantReason || c.Status != "committed" || len(f.gc.Inbound()) != 0 {
 				t.Fatalf("unavailable space not retained: %+v", c)
 			}
 			ev.PubSubID = "space-again"
@@ -1329,6 +1344,16 @@ func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
 			if lookups.Load() != 1 {
 				t.Fatalf("receipt lookups=%d, want 1 before applying deadline", lookups.Load())
 			}
+			wantLookups := int64(1)
+			if status == "lookup_error" {
+				if f.l.Changes[messageName].Status != "pending" {
+					t.Fatal("first late lookup error abandoned receipt")
+				}
+				if err := f.p.Poll(context.Background()); err == nil {
+					t.Fatal("second lookup error missing")
+				}
+				wantLookups++
+			}
 			c = f.l.Changes[messageName]
 			wantPosts := 1
 			if status == "delivered" || status == "failed" {
@@ -1349,7 +1374,7 @@ func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			posts := f.gc.Inbound()
-			if len(posts) != wantPosts || lookups.Load() != 1 {
+			if len(posts) != wantPosts || lookups.Load() != wantLookups {
 				t.Fatalf("posts=%d lookups=%d", len(posts), lookups.Load())
 			}
 			for _, post := range posts {
@@ -1669,6 +1694,491 @@ func TestCatchUpReactionMarkerBelongsToCurrentChange(t *testing.T) {
 			}
 			if got := f.gc.Inbound()[1].Text; got != want {
 				t.Fatalf("delete marker: %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLookupHoldCarriesCredentialKind(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		for _, status := range []int{401, 403, 503, 429} {
+			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
+				f := setup(t)
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(status)
+					_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": status, "message": "PRIVATE SCOPE CONTENT"}})
+				}))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				var err error
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.p, err = New(f.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := message()
+				m.Space = nil
+				ev := event("credential-hold", "message.created", m)
+				if path != "message_space" {
+					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}}}
+					if path == "reaction_space" {
+						f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+					}
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				out, err := f.p.Handle(ctx, ev)
+				auth := status == 401 || status == 403
+				kind := map[int]string{401: "auth", 403: "auth", 503: "transient", 429: "rate_limited"}[status]
+				if out != puller.Nack || err == nil || errors.Is(err, ErrCredentials) != auth {
+					t.Fatalf("hold = %v, %v; credentials=%v", out, err, auth)
+				}
+				if !strings.Contains(err.Error(), kind) || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) || strings.Contains(err.Error(), "PRIVATE") {
+					t.Fatalf("unsafe or unclassified hold: %v", err)
+				}
+				if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:credential-hold") {
+					t.Fatal("held lookup consumed the change")
+				}
+			})
+		}
+	}
+}
+
+func TestPermanentLookupFailureContinuesBatch(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		for _, status := range []int{400, 422} {
+			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
+				f := setup(t)
+				var logs bytes.Buffer
+				f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "PRIVATE LOOKUP BODY", status)
+				}))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				var err error
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.p, err = New(f.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := message()
+				m.Space = nil
+				ev := event("permanent-batch", "message.created", m)
+				id, reason := messageName, "space unavailable"
+				if path != "message_space" {
+					r := &api.Reaction{Name: messageName + "/reactions/one"}
+					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+					id = r.Name + "#created"
+					if path == "reaction_parent" {
+						reason = "parent unavailable"
+					} else {
+						f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+					}
+				}
+				later := message()
+				later.Name = space + "/messages/later"
+				ev.Changes = append(ev.Changes, puller.Change{Kind: "message.created", Space: space, Message: later})
+				handle(t, f, ev)
+				// A new transport delivery still cannot recount or relog the retained change.
+				ev.PubSubID = "permanent-batch-again"
+				handle(t, f, ev)
+				want := fmt.Sprintf("%s: permanent (HTTP %d)", reason, status)
+				c := f.l.Changes[id]
+				if c == nil || c.Status != "committed" || c.Reason != want || f.l.Counters["unavailable:"+space] != 1 {
+					t.Fatalf("permanent record: %+v counters=%v", c, f.l.Counters)
+				}
+				if got := f.gc.Inbound(); len(got) != 1 || got[0].ProviderMessageID != later.Name || f.l.Changes[later.Name].Reason != "delivered" {
+					t.Fatalf("later change not delivered once: %+v", got)
+				}
+				var entry struct{ Level, Cause string }
+				if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != want || strings.Contains(logs.String(), "PRIVATE") {
+					t.Fatalf("retained warning: %s (%v)", logs.String(), err)
+				}
+				stored, err := ledger.Load(f.opts.LedgerPath, true)
+				if err != nil || stored.Changes[id].Reason != want || stored.Counters["unavailable:"+space] != 1 {
+					t.Fatalf("retention not durable: %v", err)
+				}
+				if path == "message_space" {
+					f.l.Spaces[space].Wake = "mentions"
+					m.LastUpdateTime = "2026-10-22T10:01:00Z"
+					handle(t, f, event("later-edit", "message.updated", m))
+					if f.l.Changes[messageName+"#updated#"+m.LastUpdateTime].Reason != "wake_policy" || len(f.gc.Inbound()) != 1 {
+						t.Fatal("retained base was treated as forwarded")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestStoppedCityPOSTRetriesOnlyExactDiscriminator(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		status       int
+		code, detail string
+		retry        bool
+	}{
+		{"code", 404, "city-not-found", "PRIVATE DETAIL", true},
+		{"detail", 404, "not-found", "not_found: city not found or not running: PRIVATE CITY", true},
+		{"ordinary_404", 404, "route-not-found", "PRIVATE DETAIL", false},
+		{"bare_404", 404, "", "", false},
+		{"code_suffix", 404, "city-not-found-extra", "PRIVATE DETAIL", false},
+		{"detail_not_prefix", 404, "not-found", "PRIVATE not_found: city not found or not running", false},
+		{"wrong_status", 422, "city-not-found", "not_found: city not found or not running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var calls atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) == 1 {
+					w.WriteHeader(tc.status)
+					_ = json.NewEncoder(w).Encode(map[string]string{"code": tc.code, "detail": tc.detail})
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("stopped-city", "message.created", message())
+			out, err := f.p.Handle(context.Background(), ev)
+			c := f.l.Changes[messageName]
+			if tc.retry {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || c.Status != "intent" || c.Reason != "retry" || c.Attempts != 0 || f.l.Transport.Seen("pubsub:stopped-city") {
+					t.Fatalf("stopped city not held: %v %v %+v", out, err, c)
+				}
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				handle(t, f, ev)
+				if calls.Load() != 2 || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != messageName || f.l.Changes[messageName].Reason != "delivered" || f.l.Counters["turns:"+space] != 1 {
+					t.Fatal("stopped city did not recover once")
+				}
+			} else {
+				if out != puller.Ack || err != nil || c.Status != "unresolved" {
+					t.Fatalf("definite rejection: %v %v %+v", out, err, c)
+				}
+				if err := f.p.Poll(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				handle(t, f, ev)
+				if calls.Load() != 1 || len(f.gc.Inbound()) != 0 {
+					t.Fatal("definite rejection reposted")
+				}
+			}
+			if strings.Contains(logs.String(), "PRIVATE") || strings.Contains(c.Reason, "PRIVATE") {
+				t.Fatal("gc detail leaked")
+			}
+		})
+	}
+}
+
+func TestLocalRecordsDoNotCountOrWarnUnavailable(t *testing.T) {
+	for _, tc := range []struct{ name, reason string }{
+		{"own_unlisted", "own"}, {"reaction_unlisted", "local"},
+		{"own_permanent", "own"}, {"reaction_permanent", "local"},
+		{"wake_policy", "wake_policy"}, {"local_delete", "local"},
+		{"known_local_delete", "local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			f.google.Configure(func(s *fakegoogle.Server) { delete(s.Spaces, space) })
+			var err error
+			if strings.HasSuffix(tc.name, "permanent") {
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "PRIVATE", http.StatusBadRequest) }))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("local-counter", "message.created", m)
+			id := messageName
+			switch {
+			case strings.HasPrefix(tc.name, "own"):
+				m.Sender.Name = identity
+			case strings.HasPrefix(tc.name, "reaction"):
+				f.l.Messages[messageName] = &ledger.MessageState{Mine: false}
+				r := &api.Reaction{Name: messageName + "/reactions/one"}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+				id = r.Name + "#created"
+			case tc.name == "wake_policy":
+				f.l.Spaces[space] = &ledger.SpaceState{Kind: "room", Wake: "mentions"}
+			default:
+				ev.Changes[0].Kind = "message.deleted"
+				id += "#deleted"
+				if tc.name == "known_local_delete" {
+					f.l.Messages[messageName] = &ledger.MessageState{}
+					f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Message: messageName, Kind: "message.created", Status: "committed", Reason: "wake_policy"}
+				}
+			}
+			handle(t, f, ev)
+			ev.PubSubID = "local-counter-again"
+			handle(t, f, ev)
+			if len(f.gc.Inbound()) != 0 || logs.Len() != 0 || len(f.l.Counters) != 0 {
+				t.Fatalf("local record counted or warned: counters=%v logs=%s", f.l.Counters, logs.String())
+			}
+			c := f.l.Changes[id]
+			if c == nil || c.Reason != tc.reason || c.Status != "committed" {
+				t.Fatalf("local record: %+v", c)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil || len(stored.Counters) != 0 || stored.Changes[id].Reason != tc.reason {
+				t.Fatalf("local record not durable: %v", err)
+			}
+		})
+	}
+}
+
+func TestLateReceiptLookupFailureGetsDurableGrace(t *testing.T) {
+	for _, second := range []string{"delivered", "lookup_error"} {
+		t.Run(second, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					n := lookups.Add(1)
+					if n == 1 || second == "lookup_error" {
+						http.Error(w, "PRIVATE RECEIPT", http.StatusServiceUnavailable)
+						return
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("grace", "message.created", message()))
+			before := *f.l.Changes[messageName]
+			receipt := wire.ReceiptResponse{State: "concluded"}
+			receipt.Delivery.Status = "delivered"
+			f.gc.SetReceipt(before.ReceiptID, receipt)
+			now = now.Add(time.Hour)
+			if err := f.p.Poll(context.Background()); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+				t.Fatalf("first lookup: %v", err)
+			}
+			c := f.l.Changes[messageName]
+			if c.Status != "pending" || c.Reason == "" || c.ReceiptID != before.ReceiptID || c.Attempts != before.Attempts || !c.Created.Equal(before.Created) || len(f.l.Unresolved) != 0 || logs.Len() != 0 {
+				t.Fatalf("first failure did not retain pending receipt: %+v logs=%s", c, logs.String())
+			}
+			// Rebuild from disk: the second pass must remember the first failure.
+			f.l, err = ledger.Load(f.opts.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.opts.Ledger = f.l
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.p.Poll(context.Background())
+			if (err != nil) != (second == "lookup_error") {
+				t.Fatalf("second lookup: %v", err)
+			}
+			c = f.l.Changes[messageName]
+			if second == "delivered" {
+				if c.Status != "committed" || c.Reason != "delivered" || f.l.Counters["turns:"+space] != 1 || len(f.l.Unresolved) != 0 || logs.Len() != 0 {
+					t.Fatalf("concluded receipt not honored: %+v", c)
+				}
+			} else {
+				if c.Status != "unresolved" || c.Reason != "receipt lookup failed beyond deadline" || f.l.Unresolved[messageName] == nil || f.l.Counters["turns:"+space] != 0 {
+					t.Fatalf("repeated failure not surfaced: %+v", c)
+				}
+				var entry struct{ Level, Cause string }
+				if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != c.Reason {
+					t.Fatalf("warning: %s (%v)", logs.String(), err)
+				}
+			}
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if lookups.Load() != 2 || len(f.gc.Inbound()) != 1 {
+				t.Fatalf("receipt was reposted or looked up again: %d", lookups.Load())
+			}
+		})
+	}
+}
+
+func TestLateReceiptLookupFailuresMustBeConsecutive(t *testing.T) {
+	for _, intermediateError := range []bool{false, true} {
+		t.Run(fmt.Sprint(intermediateError), func(t *testing.T) {
+			f := setup(t)
+			created := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			now := created
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var fail atomic.Bool
+			fail.Store(true)
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && fail.Load() {
+					http.Error(w, "lookup failed", http.StatusServiceUnavailable)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("consecutive", "message.created", message()))
+			now = created.Add(time.Hour)
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "pending" {
+				t.Fatalf("first late failure: %v", err)
+			}
+			// A backward clock step allows a pre-deadline pass, which breaks the streak.
+			now = created.Add(30 * time.Minute)
+			fail.Store(intermediateError)
+			if err := f.p.Poll(context.Background()); (err != nil) != intermediateError {
+				t.Fatal(err)
+			}
+			now = created.Add(time.Hour)
+			fail.Store(true)
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "pending" {
+				t.Fatalf("nonconsecutive failure abandoned receipt: %v %+v", err, f.l.Changes[messageName])
+			}
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "unresolved" {
+				t.Fatalf("consecutive failures not surfaced: %v", err)
+			}
+		})
+	}
+}
+
+func TestLiveReactionThenCatchUpDoesNotRecordOrPostAgain(t *testing.T) {
+	f := setup(t)
+	f.l.Messages[messageName] = &ledger.MessageState{Mine: true, Thread: space + "/threads/topic"}
+	r := &api.Reaction{Name: messageName + "/reactions/one", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
+	c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r}
+	handle(t, f, &puller.Event{PubSubID: "live-reaction", Changes: []puller.Change{c}})
+	before, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	f.opts.Save = func(l *ledger.Ledger) error { saves++; return l.Save(f.opts.LedgerPath) }
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up: %v %v", out, err)
+	}
+	after, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != 0 || !bytes.Equal(before, after) || len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 1 || f.l.Counters["no_route:"+space] != 0 {
+		t.Fatalf("catch-up changed live reaction: saves=%d posts=%d counters=%v", saves, len(f.gc.Inbound()), f.l.Counters)
+	}
+	change := f.l.Changes[r.Name+"#created"]
+	var turn wire.InboundMessage
+	if err := json.Unmarshal([]byte(change.Event), &turn); err != nil || turn.Text != "reaction created: 👍 on "+messageName || turn.Text != f.gc.Inbound()[0].Text || change.Reason != "delivered" {
+		t.Fatalf("live reaction relabeled: %+v %v", change, err)
+	}
+}
+
+func TestCanceledLateReceiptLookupKeepsPendingState(t *testing.T) {
+	for _, usedGrace := range []bool{false, true} {
+		t.Run(fmt.Sprint(usedGrace), func(t *testing.T) {
+			f := setup(t)
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			pollCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					n := lookups.Add(1)
+					if !usedGrace || n > 1 {
+						cancel()
+					}
+					http.Error(w, "PRIVATE RECEIPT", http.StatusServiceUnavailable)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("cancel-poll", "message.created", message()))
+			now = now.Add(2 * time.Hour)
+			if usedGrace {
+				if err := f.p.Poll(context.Background()); err == nil {
+					t.Fatal("first lookup should fail")
+				}
+			}
+			before, err := json.Marshal(f.l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.p.Poll(pollCtx); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+				t.Fatalf("canceled lookup: %v", err)
+			}
+			after, err := json.Marshal(f.l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if pollCtx.Err() != context.Canceled || !bytes.Equal(before, after) || f.l.Changes[messageName].Status != "pending" || len(f.l.Unresolved) != 0 || logs.Len() != 0 || len(f.gc.Inbound()) != 1 {
+				t.Fatalf("cancel changed pending receipt: %+v logs=%s", f.l.Changes[messageName], logs.String())
+			}
+			stored, err := os.ReadFile(f.opts.LedgerPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved ledger.Ledger
+			if err := json.Unmarshal(stored, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved.Changes[messageName].Status != "pending" || saved.Changes[messageName].Reason != f.l.Changes[messageName].Reason {
+				t.Fatal("canceled poll changed durable state")
 			}
 		})
 	}
