@@ -308,6 +308,13 @@ func (p *Processor) change(ctx context.Context, c puller.Change) error {
 	}
 }
 
+var errSpaceUnavailable = errors.New("inbound: space type unavailable")
+
+func permanentLookup(err error) bool {
+	kind, _ := chat.Classify(err)
+	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || kind == "auth" || kind == "permanent"
+}
+
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
 	l, err := p.snapshot()
 	if err != nil {
@@ -327,7 +334,7 @@ func (p *Processor) space(ctx context.Context, name string, supplied *api.Space)
 	if kind == "" {
 		spaces, err := p.opts.Chat.ListSpaces(ctx)
 		if err != nil {
-			return nil, errors.New("inbound: space lookup failed")
+			return nil, err // callers classify it and return only a safe summary
 		}
 		for _, candidate := range spaces {
 			if candidate.Name == name {
@@ -337,7 +344,7 @@ func (p *Processor) space(ctx context.Context, name string, supplied *api.Space)
 		}
 	}
 	if kind == "" {
-		return nil, errors.New("inbound: space type unavailable")
+		return nil, errSpaceUnavailable
 	}
 	s.Kind = kind
 	return s, nil
@@ -404,13 +411,18 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 	}
 	s, err := p.space(ctx, c.Space, m.Space)
 	if err != nil {
-		return err
+		if permanentLookup(err) {
+			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
+			w.Text = renderMentions(m)
+			return p.record(c, id, w, &state, nil, "space unavailable")
+		}
+		return errors.New("inbound: space lookup failed")
 	}
 	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
 	w.Text = renderMentions(m)
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "space unavailable" {
 			forwarded = true
 			break
 		}
@@ -463,6 +475,11 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)
 		if err != nil {
+			if permanentLookup(err) {
+				w := p.envelope(id, c.Space, "", r.User, "")
+				w.Text = reactionText(r, action, parent)
+				return p.record(c, id, w, nil, nil, "parent unavailable")
+			}
 			return errors.New("inbound: reaction parent lookup failed")
 		}
 		state = &ledger.MessageState{Mine: m.Sender != nil && m.Sender.Name == p.identity()}
@@ -472,18 +489,15 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 	}
 	s, err := p.space(ctx, c.Space, nil)
 	if err != nil {
-		return err
+		if permanentLookup(err) {
+			w := p.envelope(id, c.Space, "", r.User, state.Thread)
+			w.Text = reactionText(r, action, parent)
+			return p.record(c, id, w, state, nil, "space unavailable")
+		}
+		return errors.New("inbound: space lookup failed")
 	}
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
-	emoji := "reaction"
-	if r.Emoji != nil {
-		if r.Emoji.Unicode != "" {
-			emoji = r.Emoji.Unicode
-		} else if r.Emoji.CustomEmoji != nil {
-			emoji = r.Emoji.CustomEmoji.Uid
-		}
-	}
-	w.Text = "reaction " + action + ": " + emoji + " on " + parent
+	w.Text = reactionText(r, action, parent)
 	if action == "deleted" && r.User == nil {
 		if created := l.Changes[r.Name+"#created"]; created != nil {
 			var original wire.InboundMessage
@@ -501,6 +515,18 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 		return err
 	}
 	return p.resume(ctx, id)
+}
+
+func reactionText(r *api.Reaction, action, parent string) string {
+	emoji := "reaction"
+	if r.Emoji != nil {
+		if r.Emoji.Unicode != "" {
+			emoji = r.Emoji.Unicode
+		} else if r.Emoji.CustomEmoji != nil {
+			emoji = r.Emoji.CustomEmoji.Uid
+		}
+	}
+	return "reaction " + action + ": " + emoji + " on " + parent
 }
 
 func (p *Processor) envelope(id, space, kind string, user *api.User, thread string) wire.InboundMessage {

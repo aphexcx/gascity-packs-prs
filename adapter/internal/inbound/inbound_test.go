@@ -873,3 +873,122 @@ func TestRejectedPOSTRetainsStatusWithoutPrivateLogs(t *testing.T) {
 		t.Fatalf("missing rejection warning: %s (%v)", logs.String(), err)
 	}
 }
+
+func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
+	for _, status := range []int{403, 404, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := setup(t)
+			target, _ := url.Parse(f.google.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/messages/missing") {
+					lookups.Add(1)
+					http.Error(w, "PRIVATE LOOKUP CONTENT", status)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = s.URL
+			var err error
+			f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+			missing := space + "/messages/missing/reactions/first"
+			second := messageName + "/reactions/second"
+			ev := &puller.Event{PubSubID: "parents", Changes: []puller.Change{
+				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: missing}},
+				{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: second}},
+			}}
+			timeout := 5 * time.Second
+			if status == 503 {
+				timeout = 100 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			out, err := f.p.Handle(ctx, ev)
+			if status == 503 {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[missing+"#created"] != nil || f.l.Transport.Seen("pubsub:parents") {
+					t.Fatalf("transient lookup: %v %v", out, err)
+				}
+				return
+			}
+			if out != puller.Ack || err != nil {
+				t.Fatalf("permanent parent failure: %v %v", out, err)
+			}
+			c := f.l.Changes[missing+"#created"]
+			if c == nil || c.Status != "committed" || c.Reason != "parent unavailable" || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != second+"#created" {
+				t.Fatalf("batch did not continue: %+v, posts=%+v", c, f.gc.Inbound())
+			}
+			handle(t, f, ev)
+			ev.PubSubID = "parents-again"
+			handle(t, f, ev)
+			if lookups.Load() != 1 || len(f.gc.Inbound()) != 1 {
+				t.Fatalf("redelivery repeated lookup: %d", lookups.Load())
+			}
+		})
+	}
+}
+
+func TestUnavailableSpaceIsRetained(t *testing.T) {
+	for _, status := range []int{200, 403, 404, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := setup(t)
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				lookups.Add(1)
+				if status == 200 {
+					io.WriteString(w, `{"spaces":[]}`)
+				} else {
+					http.Error(w, "PRIVATE SPACE CONTENT", status)
+				}
+			}))
+			defer s.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = s.URL
+			var err error
+			f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("space-unavailable", "message.created", m)
+			timeout := 5 * time.Second
+			if status == 503 {
+				timeout = 100 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			out, err := f.p.Handle(ctx, ev)
+			if status == 503 {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil {
+					t.Fatalf("transient space lookup: %v %v", out, err)
+				}
+				return
+			}
+			if out != puller.Ack || err != nil {
+				t.Fatalf("unavailable space: %v %v", out, err)
+			}
+			c := f.l.Changes[messageName]
+			if c == nil || c.Reason != "space unavailable" || c.Status != "committed" || len(f.gc.Inbound()) != 0 {
+				t.Fatalf("unavailable space not retained: %+v", c)
+			}
+			ev.PubSubID = "space-again"
+			handle(t, f, ev)
+			if lookups.Load() != 1 {
+				t.Fatal("unavailable space looked up again")
+			}
+		})
+	}
+}
