@@ -20,6 +20,8 @@ func TestToChat(t *testing.T) {
 		{"strikethrough", "~~gone~~", "~gone~"},
 		{"inline code", "`**bold** _italic_ ~~gone~~ [x](url)`", "`**bold** _italic_ ~~gone~~ [x](url)`"},
 		{"multiline code", "`a\n**b**`", "`a\n**b**`"},
+		{"multiline code search resets after paragraph", "a \\``\n\nb `x\n**y**` **z**", "a \\``\n\nb `x\n**y**` *z*"},
+		{"multiline code search resets after fence", "a \\``\n```\nfence\n```\nb `x\n**y**` **z**", "a \\``\n```\nfence\n```\nb `x\n**y**` *z*"},
 		{"multiline code block syntax", "before ``a `\n# **title**\n- item\n```\nend`` **after**\n# Next", "before ``a `\n*title*\n* item\n```\nend`` **after**\n# Next"},
 		{"unclosed code before heading", "`open\n# Title", "`open\n*Title*"},
 		{"code span containing backtick", "``a ` **b**`` and **c**", "``a ` **b**`` and *c*"},
