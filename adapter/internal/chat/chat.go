@@ -264,14 +264,19 @@ func (c *Client) ListSpaceEvents(ctx context.Context, space string, since time.T
 // ListSpaceEventsPage reads one chronological page between frozen event-time
 // bounds. The API orders events itself and has no orderBy parameter.
 func (c *Client) ListSpaceEventsPage(ctx context.Context, space string, lower, upper time.Time, types []string, pageToken string) (events []*googlechat.SpaceEvent, nextPageToken string, err error) {
-	if lower.IsZero() || upper.IsZero() || !lower.Before(upper) || len(types) == 0 {
+	if upper.IsZero() || (!lower.IsZero() && !lower.Before(upper)) || len(types) == 0 {
 		return nil, "", localError{errors.New("chat: event types and a nonempty frozen interval are required")}
 	}
 	var terms []string
 	for _, typ := range types {
 		terms = append(terms, "event_types:"+strconv.Quote(typ))
 	}
-	filter := "start_time=" + strconv.Quote(lower.UTC().Format(time.RFC3339Nano)) + " AND end_time=" + strconv.Quote(upper.UTC().Format(time.RFC3339Nano)) + " AND (" + strings.Join(terms, " OR ") + ")"
+	filter := "end_time=" + strconv.Quote(upper.UTC().Format(time.RFC3339Nano)) + " AND (" + strings.Join(terms, " OR ") + ")"
+	// A zero lower bound uses Google's retained window, avoiding clock skew
+	// or request transit making an explicit retention boundary too old.
+	if !lower.IsZero() {
+		filter = "start_time=" + strconv.Quote(lower.UTC().Format(time.RFC3339Nano)) + " AND " + filter
+	}
 	call := c.api.Spaces.SpaceEvents.List(space).PageSize(1000).Filter(filter).PageToken(pageToken)
 	var result *googlechat.ListSpaceEventsResponse
 	err = c.retry(ctx, true, func(ctx context.Context) error {

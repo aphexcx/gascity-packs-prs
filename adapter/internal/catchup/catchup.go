@@ -324,7 +324,13 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			}
 			if p.EventLower.Before(s.FrozenUpper) {
 				var events []*api.SpaceEvent
-				events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, p.EventLower, s.FrozenUpper, eventTypes, p.Token)
+				lower := p.EventLower
+				if !lower.After(earliest) {
+					// Let Google measure its own retained window. Keep our bound
+					// in progress for resume and loss reporting, not on the wire.
+					lower = time.Time{}
+				}
+				events, next, err = r.opts.Chat.ListSpaceEventsPage(ctx, name, lower, s.FrozenUpper, eventTypes, p.Token)
 				for _, event := range events {
 					page = append(page, expandEvent(name, event)...)
 				}

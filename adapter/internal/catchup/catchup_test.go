@@ -503,7 +503,7 @@ func TestRetainedBoundaryEditsRecovered(t *testing.T) {
 			if len(tokens) != 2 || tokens[0] != "" || tokens[1] != "1" || filters[0] != filters[1] {
 				t.Fatalf("event pagination changed: tokens=%v filters=%v", tokens, filters)
 			}
-			if mode != "advancing-clock" && !strings.Contains(filters[0], `start_time="`+boundary.Format(time.RFC3339Nano)+`"`) {
+			if strings.Contains(filters[0], "start_time") {
 				t.Fatalf("query excluded retained history: %s", filters[0])
 			}
 			turns := f.gc.Inbound()
@@ -1111,5 +1111,70 @@ func TestPartialHistoryDrainsRetainedRecordsChronologically(t *testing.T) {
 	turns := f.gc.Inbound()
 	if len(turns) != 5 || turns[2].ProviderMessageID != old.Name+"#updated#"+old.LastUpdateTime || turns[3].ProviderMessageID != second.Name+"#updated#"+second.LastUpdateTime || turns[4].ProviderMessageID != newer.Name {
 		t.Fatalf("retained history out of order: %+v", turns)
+	}
+}
+
+func TestRetainedWindowUsesGoogleClock(t *testing.T) {
+	for _, skew := range []time.Duration{time.Millisecond, time.Second, 30 * time.Second} {
+		for _, cursor := range []string{"zero", "aged", "retained"} {
+			for _, resumed := range []bool{false, true} {
+				t.Run(fmt.Sprintf("skew=%s/cursor=%s/resumed=%v", skew, cursor, resumed), func(t *testing.T) {
+					f := setup(t)
+					f.google.Now = func() time.Time { return frozen.Add(skew) }
+					f.addSpace("spaces/room", true)
+					boundary := frozen.Add(-28 * 24 * time.Hour)
+					m := f.addMessage("spaces/room", 1, boundary.Add(-time.Hour))
+					if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+						t.Fatal(out, err)
+					}
+					m.Text, m.LastUpdateTime = "retained edit", boundary.Add(45*time.Second).Format(time.RFC3339Nano)
+					f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{{Name: "spaces/room/spaceEvents/edit", EventType: "google.workspace.chat.message.v1.updated", EventTime: m.LastUpdateTime, MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m}}}
+					f.addMessage("spaces/room", 2, frozen.Add(-time.Minute))
+					s := f.opts.Ledger.Spaces["spaces/room"]
+					wantLoss := int64(0)
+					switch cursor {
+					case "zero":
+						s.MessageCursor, s.EventCursor = time.Time{}, time.Time{}
+					case "aged":
+						s.EventCursor = boundary.Add(-time.Hour)
+						wantLoss = 1 // Only the genuinely aged-out interval is reported.
+					case "retained":
+						s.EventCursor = boundary.Add(30 * time.Second)
+					}
+					if resumed {
+						f.r.opts.Now = func() time.Time { return frozen.Add(-2 * time.Minute) }
+					}
+					f.freeze(t)
+					if resumed {
+						f.onRequest = func(r *http.Request) error {
+							if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
+								return &googleapi.Error{Code: 503, Header: http.Header{"Retry-After": {"60"}}}
+							}
+							return nil
+						}
+						if _, _, err := f.r.Pass(context.Background()); err == nil {
+							t.Fatal("expected interrupted events phase")
+						}
+						saved, err := ledger.Load(f.opts.LedgerPath, true)
+						if err != nil {
+							t.Fatal(err)
+						}
+						*f.opts.Ledger = *saved
+						f.newRunner(t)
+					}
+					f.onRequest = func(r *http.Request) error {
+						if strings.HasSuffix(r.URL.Path, "/spaceEvents") && strings.Contains(r.URL.Query().Get("filter"), "start_time") {
+							t.Error("clamped query sends a local retention boundary")
+						}
+						return nil
+					}
+					f.pass(t, 2, 0)
+					f.pass(t, 0, 0)
+					if len(f.gc.Inbound()) != 3 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != wantLoss || strings.Count(f.logs.String(), "level=WARN") != int(wantLoss) {
+						t.Fatalf("posts=%d counters=%v logs=%s", len(f.gc.Inbound()), f.opts.Ledger.Counters, f.logs.String())
+					}
+				})
+			}
+		}
 	}
 }

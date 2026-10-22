@@ -15,8 +15,9 @@ import (
 )
 
 func TestHistoryPages(t *testing.T) {
-	for _, events := range []bool{false, true} {
-		t.Run(fmt.Sprintf("events=%v", events), func(t *testing.T) {
+	for _, mode := range []string{"messages", "events", "retained-events"} {
+		t.Run(mode, func(t *testing.T) {
+			events := mode != "messages"
 			s := fakegoogle.New(t, nil)
 			upper := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 			lower := upper.Add(-time.Hour)
@@ -29,6 +30,9 @@ func TestHistoryPages(t *testing.T) {
 				name := fmt.Sprintf("%s/messages/m%04d", space, i)
 				s.Messages[name] = &api.Message{Name: name, CreateTime: stamp, Thread: &api.Thread{Name: thread}}
 				s.SpaceEvents[space] = append(s.SpaceEvents[space], &api.SpaceEvent{Name: fmt.Sprintf("%s/spaceEvents/e%04d", space, i), EventTime: stamp, EventType: typ})
+			}
+			if mode == "retained-events" {
+				lower = time.Time{}
 			}
 			calls := 0
 			h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
@@ -44,6 +48,9 @@ func TestHistoryPages(t *testing.T) {
 				wantFilter := `create_time > "2026-10-22T11:00:00Z" AND create_time < "2026-10-22T12:00:00Z" AND thread.name = ` + thread
 				if events {
 					wantFilter = `start_time="2026-10-22T11:00:00Z" AND end_time="2026-10-22T12:00:00Z" AND (event_types:"` + typ + `")`
+					if mode == "retained-events" {
+						wantFilter = strings.TrimPrefix(wantFilter, `start_time="2026-10-22T11:00:00Z" AND `)
+					}
 				} else if q.Get("orderBy") != "create_time ASC" {
 					t.Errorf("orderBy = %q", q.Get("orderBy"))
 				}
@@ -130,6 +137,9 @@ func TestHistoryPageValidation(t *testing.T) {
 	for _, bounds := range [][2]time.Time{{{}, now}, {now, {}}, {now, now}, {now, now.Add(-time.Hour)}} {
 		if _, _, err := c.ListMessagesPage(context.Background(), "spaces/room", bounds[0], bounds[1], "", ""); err == nil {
 			t.Error("accepted invalid message interval")
+		}
+		if bounds[0].IsZero() {
+			continue // Events may use Google's default retained lower bound.
 		}
 		if _, _, err := c.ListSpaceEventsPage(context.Background(), "spaces/room", bounds[0], bounds[1], []string{"type"}, ""); err == nil {
 			t.Error("accepted invalid event interval")
