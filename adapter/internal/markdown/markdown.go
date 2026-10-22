@@ -99,7 +99,7 @@ func inline(s string) string {
 				if i > 0 && s[i-1] == '!' {
 					out.WriteString(s[i:end])
 				} else {
-					out.WriteString("<" + url + "|" + inline(label) + ">")
+					out.WriteString("<" + chatDestination(url) + "|" + inline(label) + ">")
 				}
 				i = end
 				continue
@@ -240,6 +240,22 @@ func link(s string, start int, labels map[int]int) (label, url string, end int, 
 		}
 	}
 	return
+}
+
+func chatDestination(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			i++
+			continue
+		}
+		if s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n' {
+			s = s[:i] // Optional Markdown titles are not part of the URL.
+			break
+		}
+	}
+	// These delimiters have structural meaning in Chat's <url|label> syntax.
+	s = strings.ReplaceAll(s, "|", "%7C")
+	return strings.ReplaceAll(s, ">", "%3E")
 }
 
 type codeFence struct {
