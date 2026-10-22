@@ -87,7 +87,7 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	create := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, Ttl: "14400s"}
+	create := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}, Ttl: "14400s"}
 	op, err := api.Subscriptions.Create(create).Do()
 	if err != nil || op.Done || op.Name == "" {
 		t.Fatalf("create: %+v, %v", op, err)
@@ -150,12 +150,12 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 		t.Fatalf("reactivated: %+v, %v", got, err)
 	}
 	s.Configure(func(s *Server) { s.CreateReturnsAlreadyExists = true })
-	request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/scripted"}, 409)
+	request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/scripted", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}, 409)
 	s.Configure(func(s *Server) {
 		s.CreateReturnsAlreadyExists = false
 		s.OperationError = &events.Status{Code: 7, Message: "permission denied"}
 	})
-	failed := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/new"}, 200)
+	failed := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/new", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}, 200)
 	if failed["done"] != true || failed["error"].(map[string]any)["code"] != float64(7) {
 		t.Fatalf("failed op: %v", failed)
 	}
@@ -166,7 +166,7 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 func TestLostSubscriptionResponseIsDiscoverable(t *testing.T) {
 	s := New(t, nil)
 	s.DropNextResponse = true
-	_, err := http.Post(s.URL()+"/v1/subscriptions", "application/json", strings.NewReader(`{"targetResource":"//chat.googleapis.com/spaces/-","eventTypes":["google.workspace.chat.message.v1.created"]}`))
+	_, err := http.Post(s.URL()+"/v1/subscriptions", "application/json", strings.NewReader(`{"targetResource":"//chat.googleapis.com/spaces/-","eventTypes":["google.workspace.chat.message.v1.created"],"notificationEndpoint":{"pubsubTopic":"projects/example/topics/events"}}`))
 	if err == nil {
 		t.Fatal("expected a dropped connection")
 	}
@@ -180,7 +180,7 @@ func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
 	s := New(t, nil)
 	s.OperationDelay = time.Minute
 	s.OperationError = &events.Status{Code: 7, Message: "permission denied"}
-	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}}, 200)
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}, 200)
 	if op["done"] != false || op["error"] != nil || op["response"] != nil {
 		t.Fatalf("initial operation: %v", op)
 	}
@@ -202,7 +202,7 @@ func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
 func TestPendingCreateReservesTarget(t *testing.T) {
 	s := New(t, nil)
 	s.OperationDelay = time.Minute
-	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}}
+	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}
 	request(t, s, "POST", "/v1/subscriptions", body, 200)
 	request(t, s, "POST", "/v1/subscriptions", body, 409)
 	s.Advance(time.Minute)
@@ -214,7 +214,7 @@ func TestPendingCreateReservesTarget(t *testing.T) {
 
 func TestLostRenewalAndDelayedReactivation(t *testing.T) {
 	s := New(t, nil)
-	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", Ttl: "60s"}, 200)
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}, Ttl: "60s"}, 200)
 	sub := op["response"].(map[string]any)
 	name := sub["name"].(string)
 	s.Configure(func(s *Server) { s.DropNextResponse = true; s.OperationDelay = time.Minute })
@@ -276,6 +276,27 @@ func TestExpiredSubscriptionCanBeRecreated(t *testing.T) {
 	recreated := request(t, s, "POST", "/v1/subscriptions", body, 200)
 	if recreated["response"].(map[string]any)["name"] == name {
 		t.Fatal("recreation reused expired subscription")
+	}
+}
+
+func TestSubscriptionCreateRequiresEventTypesAndTopic(t *testing.T) {
+	for _, missing := range []string{"eventTypes", "notificationEndpoint", "pubsubTopic"} {
+		t.Run(missing, func(t *testing.T) {
+			s := New(t, nil)
+			sub := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}
+			switch missing {
+			case "eventTypes":
+				sub.EventTypes = nil
+			case "notificationEndpoint":
+				sub.NotificationEndpoint = nil
+			case "pubsubTopic":
+				sub.NotificationEndpoint.PubsubTopic = ""
+			}
+			got := request(t, s, "POST", "/v1/subscriptions", sub, 400)
+			if got["error"].(map[string]any)["status"] != "INVALID_ARGUMENT" {
+				t.Fatalf("invalid create: %v", got)
+			}
+		})
 	}
 }
 

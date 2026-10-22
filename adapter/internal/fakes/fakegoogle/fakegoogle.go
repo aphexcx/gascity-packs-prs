@@ -276,6 +276,10 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 				s.fail(w, 400, "INVALID_ARGUMENT", "targetResource is required")
 				return
 			}
+			if len(sub.EventTypes) == 0 || sub.NotificationEndpoint == nil || sub.NotificationEndpoint.PubsubTopic == "" {
+				s.fail(w, 400, "INVALID_ARGUMENT", "eventTypes and notificationEndpoint.pubsubTopic are required")
+				return
+			}
 			for _, existing := range s.Subscriptions {
 				if existing.TargetResource == sub.TargetResource {
 					s.fail(w, 409, "ALREADY_EXISTS", "subscription exists")
