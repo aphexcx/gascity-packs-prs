@@ -109,16 +109,35 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 }
 
 func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
+	tests := []struct{ name, input, want string }{}
 	for _, pattern := range []string{"*x ", "[x ", "(_x ", "**a *b ", "[x]("} {
-		t.Run(pattern, func(t *testing.T) {
-			input := strings.Repeat(pattern, (70000+len(pattern)-1)/len(pattern))
+		size := 70000
+		if pattern == "[x](" {
+			size = 140000 // Leave a clear margin above 500ms on the quadratic implementation.
+		}
+		input := strings.Repeat(pattern, (size+len(pattern)-1)/len(pattern))
+		tests = append(tests, struct{ name, input, want string }{pattern, input, input})
+	}
+	flat := strings.Repeat("\\``", (64000+2)/3)
+	multiline := strings.Repeat("\\``\n", 128000/4)
+	tests = append(tests,
+		struct{ name, input, want string }{"escaped backticks", flat, flat},
+		struct{ name, input, want string }{
+			"nested emphasis and escaped backticks",
+			"***a ___b **c __d *e _f ~~g " + flat + " g~~ f_ e* d__ c** b___ a***",
+			"*_a *_b *c *d _e _f ~g " + flat + " g~ f_ e_ d* c* b_* a_*",
+		},
+		struct{ name, input, want string }{"multiline escaped backticks", multiline, multiline},
+	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
-			got := ToChat(input)
+			got := ToChat(tt.input)
 			elapsed := time.Since(start)
-			if got != input {
-				t.Fatal("unclosed openers changed")
+			if got != tt.want {
+				t.Fatal("conversion changed literal code or failed to format surrounding emphasis")
 			}
-			t.Logf("converted %d bytes in %s", len(input), elapsed)
+			t.Logf("converted %d bytes in %s", len(tt.input), elapsed)
 			if elapsed > 500*time.Millisecond {
 				t.Errorf("conversion took %s; limit 500ms", elapsed)
 			}

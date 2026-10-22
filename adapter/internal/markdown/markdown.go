@@ -14,13 +14,15 @@ import (
 func ToChat(md string) string {
 	var out strings.Builder
 	var fence *codeFence
-	paragraphRemaining := 0
+	source := md
+	paragraphStop := 0
+	var noCodeCloser map[int]int
 	for len(md) > 0 {
 		end := lineEnd(md, 0)
 		line := md[:end]
 		if fence != nil {
 			md = md[end:]
-			paragraphRemaining = 0
+			paragraphStop = 0
 			out.WriteString(line)
 			if fence.closes(line) {
 				fence = nil
@@ -29,22 +31,26 @@ func ToChat(md string) string {
 		}
 		if fence = openingFence(line); fence != nil {
 			md = md[end:]
-			paragraphRemaining = 0
+			paragraphStop = 0
 			out.WriteString(line)
 			continue
 		}
 		// Code spans may cross physical lines, but never a block boundary.
 		// Cache the paragraph end so lines without a complete span do not
 		// repeatedly scan the rest of a long paragraph.
-		if paragraphRemaining == 0 {
-			paragraphRemaining = paragraphEnd(md, end)
+		offset := len(source) - len(md)
+		if paragraphStop <= offset {
+			paragraphStop = offset + paragraphEnd(md, end)
+			noCodeCloser = make(map[int]int)
 		}
 		for i := 0; i < end; {
 			switch {
 			case md[i] == '\\' && i+1 < len(md):
 				i = escapedEnd(md, i)
 			case md[i] == '`':
-				i = codeSpanEnd(md[:paragraphRemaining], i)
+				// Absolute offsets keep failed searches valid as md advances
+				// through physical lines in the same paragraph.
+				i = codeSpanEnd(source[:paragraphStop], offset+i, noCodeCloser) - offset
 				if i > end {
 					end = lineEnd(md, i)
 				}
@@ -53,7 +59,6 @@ func ToChat(md string) string {
 			}
 		}
 		line, md = md[:end], md[end:]
-		paragraphRemaining -= end
 		body := strings.TrimRight(line, "\r\n")
 		ending := line[len(body):]
 		indent := len(body) - len(strings.TrimLeft(body, " \t"))
@@ -149,9 +154,10 @@ func formatInline(s string, heading, allowLinks bool) string {
 	// A backtick in a destination can therefore hide later emphasis or labels
 	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
+	noCodeCloser := make(map[int]int)
 	var labels, destinations map[int]int
 	if allowLinks {
-		labels = linkLabelEnds(s)
+		labels = linkLabelEnds(s, noCodeCloser)
 		destinations = parenthesisEnds(s)
 	}
 	for i := 0; i < len(s); {
@@ -162,7 +168,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 			continue
 		}
 		if s[i] == '`' {
-			end := codeSpanEnd(s, i)
+			end := codeSpanEnd(s, i, noCodeCloser)
 			out.WriteString(s[i:end])
 			i = end
 			continue
@@ -186,7 +192,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
-				if end := emphasisEnd(s, i+n, marker); end >= 0 {
+				if end := emphasisEnd(s, i+n, marker, noCodeCloser); end >= 0 {
 					if heading {
 						chat = strings.TrimPrefix(chat, "*")
 					}
@@ -225,8 +231,13 @@ func escapedEnd(s string, i int) int {
 	return i + 2
 }
 
-func codeSpanEnd(s string, start int) int {
+func codeSpanEnd(s string, start int, noCloser map[int]int) int {
 	n := runLength(s[start:])
+	// Lookaheads can visit positions before the renderer does. Only reuse a
+	// failed search at or after its start, with offsets in the same source.
+	if failedAt, ok := noCloser[n]; ok && start >= failedAt {
+		return start + n
+	}
 	for i := start + n; i < len(s); i++ {
 		if s[i] == '`' {
 			count := runLength(s[i:])
@@ -236,16 +247,17 @@ func codeSpanEnd(s string, start int) int {
 			i += count - 1
 		}
 	}
+	noCloser[n] = start
 	return start + n
 }
 
-func emphasisEnd(s string, start int, marker string) int {
+func emphasisEnd(s string, start int, marker string, noCodeCloser map[int]int) int {
 	for i := start; i < len(s); {
 		switch {
 		case s[i] == '\\' && i+1 < len(s):
 			i = escapedEnd(s, i)
 		case s[i] == '`':
-			i = codeSpanEnd(s, i)
+			i = codeSpanEnd(s, i, noCodeCloser)
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
 			previous, _ := utf8.DecodeLastRuneInString(s[:i])
@@ -275,7 +287,7 @@ func wordBefore(s string) bool {
 	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
-func linkLabelEnds(s string) map[int]int {
+func linkLabelEnds(s string, noCodeCloser map[int]int) map[int]int {
 	ends := make(map[int]int)
 	var stack []int
 	for i := 0; i < len(s); i++ {
@@ -283,7 +295,7 @@ func linkLabelEnds(s string) map[int]int {
 		case '\\':
 			i++
 		case '`':
-			i = codeSpanEnd(s, i) - 1
+			i = codeSpanEnd(s, i, noCodeCloser) - 1
 		case '[':
 			stack = append(stack, i)
 		case ']':
