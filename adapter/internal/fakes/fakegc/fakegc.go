@@ -286,6 +286,20 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 			if err := json.NewDecoder(response.Body).Decode(&decoded); err == nil {
 				receipt = decoded
 			}
+		} else {
+			// gc discards error bodies, including any callback retry hints.
+			switch response.StatusCode {
+			case 401, 403:
+				receipt.FailureKind = "auth"
+			case 404:
+				receipt.FailureKind = "not_found"
+			case 429:
+				receipt.FailureKind = "rate_limited"
+			default:
+				if response.StatusCode >= 400 && response.StatusCode < 500 {
+					receipt.FailureKind = "permanent"
+				}
+			}
 		}
 	}
 	result := struct {

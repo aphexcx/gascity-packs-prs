@@ -3,6 +3,7 @@ package fakegc
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -318,5 +319,30 @@ func TestUndeliveredCallbackReceiptPreservesHints(t *testing.T) {
 	}
 	if len(s.Published()) != 1 {
 		t.Fatal("gc retried the callback")
+	}
+}
+
+func TestCallbackFailureClassification(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		kind   string
+	}{{401, "auth"}, {403, "auth"}, {404, "not_found"}, {429, "rate_limited"}, {400, "permanent"}, {409, "permanent"}, {422, "permanent"}, {500, "transient"}, {503, "transient"}, {0, "transient"}} {
+		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
+			s := New(t)
+			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, `{"delivered":true,"message_id":"ignored","failure_kind":"ignored","retry_after":100,"metadata":{"secret":"ignored"}}`)
+			}))
+			defer callback.Close()
+			if tc.status == 0 {
+				callback.Close()
+			}
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
+			receipt := result["Receipt"].(map[string]any)
+			if receipt["FailureKind"] != tc.kind || receipt["Delivered"] != false || receipt["MessageID"] != "" || receipt["RetryAfter"] != float64(0) || receipt["Metadata"] != nil || result["TranscriptEntry"] != nil {
+				t.Fatalf("callback failure: %v, want %s without body data", result, tc.kind)
+			}
+		})
 	}
 }
