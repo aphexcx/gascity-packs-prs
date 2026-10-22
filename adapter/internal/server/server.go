@@ -50,6 +50,9 @@ type Options struct {
 	GC           *gcclient.Client
 	// Poll is inbound.Processor.Poll; replay persists an intent before invoking it.
 	Poll func(context.Context) error
+	// LastEvent returns the app's last observed event time, including skipped
+	// events. It must be safe to call concurrently with event processing.
+	LastEvent func() time.Time
 	// StateChanged asks the app to reconcile after a restore or reset. The app
 	// must quiesce its other ledger consumers while invoking the state route.
 	StateChanged func(context.Context) error
@@ -105,6 +108,16 @@ func New(opts Options) (*Server, error) {
 
 func (s *Server) Close()             { s.cancel() }
 func (s *Server) SetHealth(h Health) { s.mu.Lock(); defer s.mu.Unlock(); s.health = h }
+
+// SetConfig publishes a validated config reload to future requests. The app
+// separately rebuilds clients and reloads inbound policy using the same config.
+func (s *Server) SetConfig(cfg config.Config) {
+	cfg.Settings.Spaces = append([]config.Space(nil), cfg.Settings.Spaces...)
+	cfg.Settings.Identities = append([]config.Identity(nil), cfg.Settings.Identities...)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg = cfg
+}
 func (s *Server) SetClients(c *chat.Client, g *gcclient.Client) {
 	if g != nil {
 		g.SetConnectionRefusedHandler(s.ObserveGCError)
@@ -252,6 +265,9 @@ func (s *Server) update(fn func(*ledger.Ledger) error) error {
 
 // Separate command/send locks avoid holding the send lock over gc's callback.
 func (s *Server) lock(ctx context.Context, key string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.keysMu.Lock()
 	k := s.keys[key]
 	if k == nil {
@@ -367,17 +383,32 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		return failure(p, err), err
 	}
 	defer unlock()
+	l, err := s.snapshot()
+	if err != nil {
+		return failure(p, err), err
+	}
+	if old := l.Sends[p.IdempotencyKey]; old != nil {
+		if old.Space != p.Conversation.ConversationID || (old.Request != nil && old.Request.SessionID != p.SessionID) {
+			return permanent(p), errors.New("idempotency key belongs to another conversation or session")
+		}
+		if old.Receipt != nil && old.Receipt.Delivered && s.Health().State != "recovery-required" {
+			return *old.Receipt, nil
+		}
+	}
 	if err = s.available(); err != nil {
 		return failure(p, err), err
 	}
 	if err = s.prepare(p, upload, false); err != nil {
 		return failure(p, err), err
 	}
-	l, err := s.snapshot()
+	l, err = s.snapshot()
 	if err != nil {
 		return failure(p, err), err
 	}
 	send := l.Sends[p.IdempotencyKey]
+	if send.Request != nil {
+		p = *send.Request
+	}
 	if send.Receipt != nil && send.Receipt.Delivered {
 		return *send.Receipt, nil
 	}
@@ -597,8 +628,12 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 		var out wire.OutboundResult
 		out, err = g.Outbound(ctx, wire.OutboundRequest{SessionID: p.SessionID, Conversation: p.Conversation, Text: p.Text, ReplyToMessageID: p.ReplyToMessageID, IdempotencyKey: p.IdempotencyKey})
 		if err == nil {
-			result.Delivered = out.Receipt.Delivered
-			result.MessageID = out.Receipt.MessageID
+			// Direct uploads are already delivered, even when gc's recording
+			// callback cannot retrieve their receipt. Keep the durable outcome.
+			if !result.Delivered {
+				result.Delivered = out.Receipt.Delivered
+				result.MessageID = out.Receipt.MessageID
+			}
 			result.Recorded = out.TranscriptEntry != nil
 		}
 	}
@@ -1015,7 +1050,13 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 			pending++
 		}
 	}
-	respond(w, 200, map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine)})
+	var lastEvent any
+	if s.opts.LastEvent != nil {
+		if at := s.opts.LastEvent(); !at.IsZero() {
+			lastEvent = at.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	respond(w, 200, map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent})
 }
 
 func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {

@@ -808,3 +808,53 @@ func TestGCRefusalFromInboundAlsoRegisters(t *testing.T) {
 		t.Fatal("refused inbound call did not schedule registration")
 	}
 }
+
+func TestCachedReceiptNeedsNeitherCredentialsNorAnotherSave(t *testing.T) {
+	f := setup(t)
+	p := wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "durable"}
+	first := f.send(t, p)
+	f.s.SetHealth(Health{State: "needs-sign-in"})
+	f.s.opts.LedgerPath = filepath.Join(f.cfg.Endpoints.UploadRoot, "absent", "state.json")
+	r := f.send(t, p)
+	if !r.Delivered || r.MessageID != first.MessageID || f.count() != 1 {
+		t.Fatalf("lost durable receipt: %+v", r)
+	}
+}
+
+func TestUploadDeliverySurvivesFailedRecordingCallback(t *testing.T) {
+	f := setup(t)
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"Receipt":{"Delivered":false},"TranscriptEntry":null}`)
+	}))
+	defer h.Close()
+	f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+	file := filepath.Join(f.cfg.Endpoints.UploadRoot, "data.txt")
+	if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := command("recording-callback")
+	cmd["path"] = file
+	_, raw, _ := f.call(t, "/commands/upload", cmd)
+	r := decode[CommandResult](t, raw)
+	if !r.Delivered || r.Recorded || r.MessageID == "" || f.count() != 1 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestStatusLastEventAndReloadedDefaults(t *testing.T) {
+	f := setup(t)
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	f.s.opts.LastEvent = func() time.Time { return at }
+	_, raw, _ := f.call(t, "/status", nil)
+	status := decode[map[string]any](t, raw)
+	if status["last_event_time"] != at.Format(time.RFC3339Nano) {
+		t.Fatalf("%s", raw)
+	}
+	cfg := *f.cfg
+	cfg.Settings.Defaults.Wake = config.WakeMentions
+	f.s.SetConfig(cfg)
+	_, raw, _ = f.call(t, "/spaces", nil)
+	if !bytes.Contains(raw, []byte(`"wake":"mentions"`)) {
+		t.Fatalf("%s", raw)
+	}
+}
