@@ -40,22 +40,23 @@ func TestCatchupCadence(t *testing.T) {
 				cfg := &config.Config{Endpoints: config.Endpoints{StateFile: path, ChatAPIBase: "https://example.invalid"}}
 				a := &application{cfg: cfg, l: ledger.New(), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 				a.l.IdentityUserID = "users/123456"
-				var lists, messages, history int
-				denied := held
+				var lists, messages, history atomic.Int32
+				var denied atomic.Bool
+				denied.Store(held)
 				hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					body, code := "{}", 200
 					switch {
 					case r.URL.Path == "/v1/spaces":
-						lists++
+						lists.Add(1)
 						body = `{"spaces":[{"name":"spaces/room","spaceType":"SPACE"}]}`
 					case strings.HasSuffix(r.URL.Path, "/messages"):
-						messages++
-						if denied {
+						messages.Add(1)
+						if denied.Load() {
 							code = 403
 							body = `{"error":{"code":403,"message":"not a member","status":"PERMISSION_DENIED"}}`
 						}
 					case strings.HasSuffix(r.URL.Path, "/spaceEvents"):
-						history++
+						history.Add(1)
 					default:
 						t.Errorf("unexpected request: %s", r.URL)
 					}
@@ -100,19 +101,19 @@ func TestCatchupCadence(t *testing.T) {
 				if !caught.Load() {
 					t.Fatal("initial recovery did not settle")
 				}
-				beforeLists, beforeMessages, beforeHistory := lists, messages, history
-				denied = false
+				beforeLists, beforeMessages, beforeHistory := lists.Load(), messages.Load(), history.Load()
+				denied.Store(false)
 				time.Sleep(10 * time.Minute)
 				synctest.Wait()
-				if lists != beforeLists || messages != beforeMessages || history != beforeHistory {
-					t.Fatalf("steady state polled Chat: lists %d->%d messages %d->%d events %d->%d", beforeLists, lists, beforeMessages, messages, beforeHistory, history)
+				if lists.Load() != beforeLists || messages.Load() != beforeMessages || history.Load() != beforeHistory {
+					t.Fatalf("steady state polled Chat: lists %d->%d messages %d->%d events %d->%d", beforeLists, lists.Load(), beforeMessages, messages.Load(), beforeHistory, history.Load())
 				}
 				time.Sleep(50 * time.Minute)
 				synctest.Wait()
-				if lists != beforeLists+1 {
-					t.Fatalf("hourly inventory calls=%d want 1", lists-beforeLists)
+				if lists.Load() != beforeLists+1 {
+					t.Fatalf("hourly inventory calls=%d want 1", lists.Load()-beforeLists)
 				}
-				if held && messages <= beforeMessages {
+				if held && messages.Load() <= beforeMessages {
 					t.Fatal("hourly inventory did not retry held space")
 				}
 				cancel()
