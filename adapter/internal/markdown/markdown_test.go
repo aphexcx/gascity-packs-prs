@@ -321,6 +321,17 @@ func TestSplitOpeningFenceBeforeHardCut(t *testing.T) {
 	}
 }
 
+func TestSplitFencedBodyBeforeHardCut(t *testing.T) {
+	input := "intro\n```go\nx\n" + strings.Repeat("`", 40000)
+	parts := Split(input, 32000)
+	checkParts(t, parts, 32000)
+	// A short code body can also precede a closing delimiter that needs hard
+	// cuts. Do not leave a synthetic closer whose reopener was dropped.
+	if strings.Join(parts, "") != input {
+		t.Fatal("hard cut left an unpaired synthetic fence")
+	}
+}
+
 func TestSplitEmpty(t *testing.T) {
 	if parts := Split("", 32000); len(parts) != 0 {
 		t.Fatalf("empty input = %q", parts)

@@ -105,8 +105,8 @@ func paragraphEnd(s string, end int) int {
 	return end
 }
 
-// Setext underlines, thematic breaks and blockquotes interrupt a paragraph even
-// though the supported output subset leaves their block markers unchanged.
+// Recognize the remaining block boundaries without letting code spans consume
+// inline formatting from the following block.
 func blockBoundaryLine(line string) bool {
 	body := strings.TrimLeft(line, " ")
 	if len(line)-len(body) > 3 || body == "" {
@@ -431,7 +431,7 @@ func Split(text string, limit int) []string {
 	points := splitPoints(text)
 	var parts []string
 	start, next := 0, 0
-	prefix := ""
+	prefix, closer := "", ""
 	for start < len(text) {
 		if len(prefix)+len(text)-start <= limit {
 			parts = append(parts, prefix+text[start:])
@@ -455,6 +455,12 @@ func Split(text string, limit int) []string {
 			}
 		}
 		if best < 0 {
+			if prefix != "" {
+				// A hard cut omits synthetic wrappers. Remove the matching
+				// closer too, rather than leave it without its reopener.
+				last := len(parts) - 1
+				parts[last] = strings.TrimSuffix(parts[last], closer)
+			}
 			end := start
 			for end < len(text) {
 				_, size := utf8.DecodeRuneInString(text[end:])
@@ -464,7 +470,7 @@ func Split(text string, limit int) []string {
 				end += size
 			}
 			parts = append(parts, text[start:end])
-			start, prefix = end, ""
+			start, prefix, closer = end, "", ""
 			for next < len(points) && points[next].end <= start {
 				next++
 			}
@@ -472,9 +478,10 @@ func Split(text string, limit int) []string {
 		}
 		point := points[best]
 		part := prefix + text[start:point.end]
-		prefix = ""
+		prefix, closer = "", ""
 		if point.fence != nil {
-			part += "\n" + point.fence.marker
+			closer = "\n" + point.fence.marker
+			part += closer
 			prefix = point.fence.opener
 		}
 		parts = append(parts, part)
