@@ -1,13 +1,16 @@
 package inbound
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -778,5 +781,95 @@ func TestConcurrentOutboundMetadataSurvivesOwnEcho(t *testing.T) {
 	}
 	if got := f.l.Messages[messageName].SendKey; got != "outbound-key" {
 		t.Fatalf("outbound send key lost: %q", got)
+	}
+}
+
+func TestRetryablePOSTResponseRecovers(t *testing.T) {
+	for _, status := range []int{500, 503, 429} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := setup(t)
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			ids := make(chan string, 2)
+			var calls atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				var envelope wire.InboundEnvelope
+				if err := json.Unmarshal(body, &envelope); err != nil {
+					t.Error(err)
+				}
+				ids <- envelope.Message.ProviderMessageID
+				if calls.Add(1) == 1 {
+					http.Error(w, "PRIVATE RESPONSE CONTENT", status)
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("retryable", "message.created", message())
+			out, err := f.p.Handle(context.Background(), ev)
+			if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") {
+				t.Fatalf("retryable response: %v %v", out, err)
+			}
+			c := f.l.Changes[messageName]
+			if c.Status != "intent" || c.Reason != "retry" || c.Attempts != 0 || f.l.Unresolved[messageName] != nil || f.l.Transport.Seen("pubsub:retryable") {
+				t.Fatalf("retry state: %+v", c)
+			}
+			handle(t, f, ev)
+			handle(t, f, ev)
+			if calls.Load() != 2 || len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 1 || f.l.Changes[messageName].Status != "committed" {
+				t.Fatalf("recovery: calls=%d changes=%+v", calls.Load(), f.l.Changes[messageName])
+			}
+			if first, second := <-ids, <-ids; first != messageName || second != first {
+				t.Fatalf("retry IDs: %q %q", first, second)
+			}
+		})
+	}
+}
+
+func TestRejectedPOSTRetainsStatusWithoutPrivateLogs(t *testing.T) {
+	f := setup(t)
+	var logs bytes.Buffer
+	f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	var calls atomic.Int64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		io.WriteString(w, `{"code":"validation-failed","detail":"PRIVATE RESPONSE CONTENT"}`)
+	}))
+	defer s.Close()
+	f.opts.GC = gcclient.New(s.URL, "examplecity")
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := message()
+	m.Text = "PRIVATE REQUEST CONTENT"
+	ev := event("rejected", "message.created", m)
+	handle(t, f, ev)
+	handle(t, f, ev)
+	c := f.l.Unresolved[messageName]
+	want := "gc rejected the POST: HTTP 422 validation-failed"
+	if c == nil || c.Reason != want || calls.Load() != 1 {
+		t.Fatalf("rejected POST: %+v, calls=%d", c, calls.Load())
+	}
+	if strings.Contains(logs.String(), "PRIVATE") || strings.Contains(c.Reason, "PRIVATE") {
+		t.Fatalf("private content leaked: %s", logs.String())
+	}
+	var entry struct{ Level, Cause string }
+	if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != want {
+		t.Fatalf("missing rejection warning: %s (%v)", logs.String(), err)
 	}
 }

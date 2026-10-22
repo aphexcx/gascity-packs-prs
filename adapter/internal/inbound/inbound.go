@@ -591,12 +591,23 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		}
 		r, err := p.opts.GC.Inbound(ctx, w)
 		if err != nil {
+			var responseErr *gcclient.HTTPError
+			answered := errors.As(err, &responseErr)
 			var op *net.OpError
-			if errors.As(err, &op) && op.Op == "dial" {
+			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429)) || (errors.As(err, &op) && op.Op == "dial") {
 				if err := p.update(func(l *ledger.Ledger) { l.Changes[id].Attempts--; l.Changes[id].Reason = "retry" }); err != nil {
 					return err
 				}
-				return errors.New("inbound: gc unreachable before POST")
+				return errors.New("inbound: gc temporarily unavailable; retry POST")
+			}
+			if answered && responseErr.StatusCode >= 400 && responseErr.StatusCode < 500 {
+				// The status and machine-readable code describe a definite rejection.
+				// Never log HTTPError itself: it includes the response body.
+				reason := fmt.Sprintf("gc rejected the POST: HTTP %d", responseErr.StatusCode)
+				if code := responseErr.Code(); code != "" {
+					reason += " " + code
+				}
+				return p.unresolved(id, reason)
 			}
 			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
 				return err
