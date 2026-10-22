@@ -257,7 +257,13 @@ func (s *Source) refresh(ctx context.Context, current *oauth2.Token) (*oauth2.To
 		var failure *oauth2.RetrieveError
 		if errors.As(err, &failure) {
 			if permanentOAuthCode(failure.ErrorCode) {
-				return nil, fmt.Errorf("%w: %w", ErrNeedsSignIn, failure)
+				// Preserve structured diagnostics without returning descriptions,
+				// URIs or bodies that a caller might accidentally log.
+				safe := &oauth2.RetrieveError{ErrorCode: failure.ErrorCode}
+				if failure.Response != nil {
+					safe.Response = &http.Response{StatusCode: failure.Response.StatusCode}
+				}
+				return nil, fmt.Errorf("%w: %w", ErrNeedsSignIn, safe)
 			}
 		}
 		if attempt >= 2 || !transient(err) {

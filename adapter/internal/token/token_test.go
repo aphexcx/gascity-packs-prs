@@ -127,7 +127,7 @@ func TestPermanentOAuthErrorsNeedSignIn(t *testing.T) {
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
-				fmt.Fprintf(w, `{"error":%q}`, code)
+				fmt.Fprintf(w, `{"error":%q,"error_description":"token-secret","error_uri":"token-secret"}`, code)
 			})
 			expired := savedToken("expired")
 			expired.Expiry = time.Now().Add(-time.Hour)
@@ -136,6 +136,8 @@ func TestPermanentOAuthErrorsNeedSignIn(t *testing.T) {
 			for range 3 {
 				if _, err := s.Client(t.Context()); !errors.Is(err, ErrNeedsSignIn) {
 					t.Errorf("Client error = %v", err)
+				} else if strings.Contains(err.Error(), "token-secret") {
+					t.Errorf("Client error contains credential response text: %v", err)
 				}
 				if _, err := s.TokenSource(t.Context()).Token(); !errors.Is(err, ErrNeedsSignIn) {
 					t.Errorf("Token error = %v", err)
