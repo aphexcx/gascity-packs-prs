@@ -162,7 +162,11 @@ func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, re
 	if err := ctx.Err(); err != nil {
 		return ledger.SubscriptionState{}, err
 	}
-	defer func() { m.recordResult(resultErr) }()
+	defer func() {
+		if ctx.Err() == nil {
+			m.recordResult(resultErr)
+		}
+	}()
 	if m.reloadPending.Swap(false) {
 		m.scopeReloaded = true
 	}
@@ -178,7 +182,8 @@ func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, re
 		state, err := m.resume(ctx)
 		if err == nil {
 			// An operation result can predate a later suspension or deletion.
-			sub, lookupErr := m.lookup(ctx, state.Name)
+			var lookupErr error
+			sub, lookupErr = m.lookup(ctx, state.Name)
 			if lookupErr != nil {
 				return state, lookupErr
 			}
@@ -191,12 +196,14 @@ func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, re
 			}
 			// A renewal/reactivation of a vanished resource cannot repair the
 			// lapse. Only confirmed absence permits abandoning that operation.
-			sub, lookupErr := m.lookup(ctx, saved.Name)
+			var lookupErr error
+			sub, lookupErr = m.lookup(ctx, saved.Name)
 			if lookupErr != nil {
 				return saved, lookupErr
 			}
 			if sub != nil {
-				return saved, m.reportSuspension(ctx, sub, err)
+				state, persistErr := m.persist(sub, time.Time{})
+				return state, m.reportSuspension(ctx, sub, errors.Join(err, persistErr))
 			}
 		}
 		m.pending = nil
@@ -231,11 +238,10 @@ func (m *Manager) lookup(ctx context.Context, name string) (*api.Subscription, e
 	if name != "" {
 		sub, err := m.service.Subscriptions.Get(name).Context(ctx).Do()
 		if err == nil {
-			expiry, err := m.validate(sub)
-			if err != nil {
-				return nil, err
-			}
-			if sub.State != "DELETED" && m.clock.Now().Before(expiry) {
+			if !m.expiredOrDeleted(sub) {
+				if _, err := m.validate(sub); err != nil {
+					return nil, err
+				}
 				return sub, nil
 			}
 		} else if !isHTTP(err, http.StatusNotFound) {
@@ -254,14 +260,13 @@ func (m *Manager) discover(ctx context.Context) (*api.Subscription, error) {
 	var found *api.Subscription
 	err := m.service.Subscriptions.List().Filter(filter).Pages(ctx, func(page *api.ListSubscriptionsResponse) error {
 		for _, sub := range page.Subscriptions {
+			if m.expiredOrDeleted(sub) {
+				continue
+			}
 			// Check all pages and the complete configuration. Silently adopting
 			// an incompatible topic or partial event set would lose deliveries.
-			expiry, err := m.validate(sub)
-			if err != nil {
+			if _, err := m.validate(sub); err != nil {
 				return err
-			}
-			if sub.State == "DELETED" || !m.clock.Now().Before(expiry) {
-				continue
 			}
 			if found != nil && found.Name != sub.Name {
 				return errors.New("events: multiple matching subscriptions; refusing to choose")
@@ -274,6 +279,17 @@ func (m *Manager) discover(ctx context.Context) (*api.Subscription, error) {
 		return nil, fmt.Errorf("events: discover: %w", err)
 	}
 	return found, nil
+}
+
+func (m *Manager) expiredOrDeleted(sub *api.Subscription) bool {
+	if sub == nil {
+		return false // validate must reject a malformed live record.
+	}
+	if sub.State == "DELETED" {
+		return true
+	}
+	expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime)
+	return err == nil && !m.clock.Now().Before(expiry)
 }
 
 func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {

@@ -1022,6 +1022,12 @@ func TestRenewLoopRechecksScheduleAfterConcurrentRecovery(t *testing.T) {
 func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
 	f := setup(t)
 	f.reconcile()
+	// A fixed old timestamp distinguishes a rewrite even if the filesystem
+	// reuses the inode or has coarse timestamp resolution.
+	stamp := time.Unix(123456789, 0)
+	if err := os.Chtimes(f.path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.Stat(f.path)
 	if err != nil {
 		t.Fatal(err)
@@ -1034,7 +1040,7 @@ func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !os.SameFile(before, after) {
+	if !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
 		t.Fatal("unchanged subscription rewrote the ledger")
 	}
 }
@@ -1125,6 +1131,162 @@ func TestResumedReactivationReportsSuspensionReason(t *testing.T) {
 	_, err := f.manager.Reconcile(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") {
 		t.Fatalf("resumed suspension error=%v log=%s", err, logs.String())
+	}
+	_, _ = f.manager.Reconcile(context.Background())
+	if f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+		t.Fatal("retained operation was replaced while its subscription still exists")
+	}
+}
+
+func TestStuckRenewalPersistsAuthoritativeSuspension(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.server.Configure(func(s *fakegoogle.Server) { s.OperationDelay = time.Hour })
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initial renewal = %v", err)
+	}
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	got, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") {
+		t.Fatalf("stuck renewal = %v", err)
+	}
+	want := first
+	want.State = "SUSPENDED"
+	last, _, _, state := f.manager.Status()
+	disk, loadErr := ledger.Load(f.path, true)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got != want || state != want || disk.Subscription != want || f.ledger.Subscription != want || last != err {
+		t.Fatalf("stale suspended state: returned=%+v status=%+v disk=%+v memory=%+v last=%v", got, state, disk.Subscription, f.ledger.Subscription, last)
+	}
+	if f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatal("stuck renewal was replaced")
+	}
+}
+
+func TestTokenReloadWhileActiveDoesNotAuthorizeLaterRevocation(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	if _, err := f.manager.TokenReloaded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	_, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "awaiting validated token reload") || f.count("POST", "/v1/"+first.Name+":reactivate") != 0 {
+		t.Fatalf("active reload authorized a later revocation: %v", err)
+	}
+}
+
+func TestReactivationAuthorizationFailureRequiresAnotherReload(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code int
+		body string
+	}{
+		{"http401", 401, `{"error":{"code":401,"message":"unauthenticated"}}`},
+		{"http403", 403, `{"error":{"code":403,"message":"permission denied"}}`},
+		{"operation7", 200, `{"name":"operations/denied","done":true,"error":{"code":7,"message":"permission denied"}}`},
+		{"operation16", 200, `{"name":"operations/denied","done":true,"error":{"code":16,"message":"unauthenticated"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+			})
+			f.hook = func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, ":reactivate") {
+					return jsonResponse(tc.code, tc.body), nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			}
+			if _, err := f.manager.TokenReloaded(context.Background()); err == nil {
+				t.Fatal("expected authorization failure")
+			}
+			f.hook = nil
+			f.clock.advance(operationTimeout)
+			_, err := f.manager.Reconcile(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "awaiting validated token reload") || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+				t.Fatalf("authorization failure did not clear permission: %v", err)
+			}
+			state, err := f.manager.TokenReloaded(context.Background())
+			if err != nil || state.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 2 {
+				t.Fatalf("new reload failed to restore permission: state=%+v error=%v", state, err)
+			}
+		})
+	}
+}
+
+func TestInactiveIncompatibleSubscriptionDoesNotBlockDiscovery(t *testing.T) {
+	for _, source := range []string{"lookup", "discover"} {
+		for _, inactive := range []string{"deleted", "expired"} {
+			t.Run(source+"/"+inactive, func(t *testing.T) {
+				f := setup(t)
+				first := f.reconcile()
+				var valid api.Subscription
+				f.server.Configure(func(s *fakegoogle.Server) { valid = *s.Subscriptions[first.Name] })
+				obsolete := valid
+				obsolete.Name = "subscriptions/obsolete"
+				obsolete.NotificationEndpoint = &api.NotificationEndpoint{PubsubTopic: "projects/example/topics/obsolete"}
+				if inactive == "deleted" {
+					obsolete.State, obsolete.ExpireTime = "DELETED", ""
+				} else {
+					obsolete.ExpireTime = f.clock.Now().Format(time.RFC3339Nano)
+				}
+				if source == "lookup" {
+					f.ledger.Subscription.Name = obsolete.Name
+				} else {
+					f.ledger.Subscription = ledger.SubscriptionState{}
+				}
+				f.hook = func(r *http.Request) (*http.Response, error) {
+					var value any
+					switch r.URL.Path {
+					case "/v1/" + obsolete.Name:
+						value = &obsolete
+					case "/v1/subscriptions":
+						value = &api.ListSubscriptionsResponse{Subscriptions: []*api.Subscription{&obsolete, &valid}}
+					default:
+						return http.DefaultTransport.RoundTrip(r)
+					}
+					body, err := json.Marshal(value)
+					return jsonResponse(200, string(body)), err
+				}
+				got := f.reconcile()
+				if got != first || f.count("POST", "/v1/subscriptions") != 1 {
+					t.Fatalf("failed to adopt the live subscription: %+v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCancelledLifecycleDoesNotChangeSharedBackoff(t *testing.T) {
+	f := setup(t)
+	want := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	_, wantErr := f.manager.Reconcile(context.Background())
+	wantNext := f.clock.Now().Add(time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		cancel()
+		return nil, r.Context().Err()
+	}
+	if err := f.manager.HandleLifecycle(ctx, "subscription.suspended"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled lifecycle = %v", err)
+	}
+	last, failures, next, state := f.manager.Status()
+	if last != wantErr || failures != 1 || next != wantNext || state != want {
+		t.Fatalf("caller cancellation changed shared backoff: %v %d %v %+v", last, failures, next, state)
 	}
 }
 
