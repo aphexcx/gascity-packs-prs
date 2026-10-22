@@ -1019,6 +1019,7 @@ func TestTransientClassification(t *testing.T) {
 		{"invalid port", &url.Error{Op: "Get", URL: "http://example:99999", Err: &net.OpError{Op: "dial", Err: &net.AddrError{Err: "invalid port", Addr: "99999"}}}, false},
 		{"invalid TLS certificate", &url.Error{Op: "Get", URL: "https://example", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
 		{"plain HTTP behind HTTPS", &url.Error{Op: "Post", URL: "https://example", Err: tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}}, false},
+		{"HTTP scheme mismatch", &url.Error{Op: "Post", URL: "https://example", Err: http.ErrSchemeMismatch}, false},
 		{"missing file", &os.PathError{Op: "open", Path: "token.json", Err: os.ErrNotExist}, false},
 		{"malformed JSON", &json.SyntaxError{}, false},
 		{"empty token file", emptyTokenErr, false},
