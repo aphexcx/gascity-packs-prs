@@ -3,9 +3,11 @@ package chat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -370,6 +372,106 @@ func TestIdentityRejectsAliases(t *testing.T) {
 	}
 	if err := c.SetIdentityUserID("users/456"); err == nil {
 		t.Fatal("allowed identity change")
+	}
+}
+
+func TestCreateIdentityLearningIsBestEffort(t *testing.T) {
+	for _, reaction := range []bool{false, true} {
+		for _, mismatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reaction=%v/mismatch=%v", reaction, mismatch), func(t *testing.T) {
+				_, s, _ := fixture(t)
+				const message = "spaces/room/messages/seed"
+				s.Messages[message] = &googlechat.Message{Name: message}
+				var logs bytes.Buffer
+				previous := slog.Default()
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				t.Cleanup(func() { slog.SetDefault(previous) })
+				observed := "users/example"
+				initial := ""
+				if mismatch {
+					initial, observed = "users/111", "users/222"
+				}
+				requests := 0
+				h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+					requests++
+					response, err := http.DefaultTransport.RoundTrip(r)
+					if err != nil {
+						return nil, err
+					}
+					defer response.Body.Close()
+					var body map[string]any
+					if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+						return nil, err
+					}
+					field := "sender"
+					if reaction {
+						field = "user"
+					}
+					body[field] = map[string]string{"name": observed}
+					data, err := json.Marshal(body)
+					if err != nil {
+						return nil, err
+					}
+					response.Body = io.NopCloser(bytes.NewReader(data))
+					response.ContentLength = int64(len(data))
+					response.Header.Set("Content-Length", fmt.Sprint(len(data)))
+					return response, nil
+				})}
+				c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				useTestClock(c)
+				if initial != "" {
+					if err := c.SetIdentityUserID(initial); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for i := 0; i < 2; i++ {
+					var name string
+					if reaction {
+						name, err = c.CreateReaction(context.Background(), message, "👍")
+					} else {
+						var thread string
+						name, thread, err = c.CreateMessage(context.Background(), "spaces/room", "hello", "", fmt.Sprint(i), true)
+						if thread == "" {
+							t.Error("successful message lost its thread")
+						}
+					}
+					if err != nil || name == "" {
+						t.Errorf("stored create: name=%q err=%v", name, err)
+					}
+					s.Configure(func(s *fakegoogle.Server) {
+						if reaction && s.Reactions[name] == nil || !reaction && s.Messages[name] == nil {
+							t.Errorf("create %q was not stored", name)
+						}
+					})
+				}
+				if got := c.IdentityUserID(); got != initial {
+					t.Errorf("identity=%q, want %q", got, initial)
+				}
+				if mismatch {
+					// Re-supplying the first ID cannot clear a credential conflict.
+					if err := c.SetIdentityUserID(initial); err != nil {
+						t.Fatal(err)
+					}
+					err := c.DeleteReaction(context.Background(), message, "👍")
+					kind, _ := Classify(err)
+					if kind != "permanent" || !strings.Contains(err.Error(), "mismatch") {
+						t.Errorf("delete after mismatch: kind=%s err=%v", kind, err)
+					}
+					var record struct{ Level, Msg string }
+					if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil || record.Level != "WARN" || !strings.Contains(record.Msg, "mismatch") {
+						t.Errorf("want exactly one WARN for mismatch, got %q (%v)", logs.String(), err)
+					}
+				} else if logs.Len() != 0 {
+					t.Errorf("non-canonical sender logged: %s", logs.String())
+				}
+				if requests != 2 {
+					t.Errorf("requests=%d, want only two creates", requests)
+				}
+			})
+		}
 	}
 }
 

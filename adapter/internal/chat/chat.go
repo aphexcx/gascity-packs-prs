@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,13 +29,14 @@ type Space = googlechat.Space
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
-	api            *googlechat.Service
-	limits         Limiter
-	timing         timing
-	retryBound     time.Duration
-	ep             config.Endpoints
-	identityMu     sync.RWMutex
-	identityUserID string
+	api              *googlechat.Service
+	limits           Limiter
+	timing           timing
+	retryBound       time.Duration
+	ep               config.Endpoints
+	identityMu       sync.RWMutex
+	identityUserID   string
+	identityMismatch error
 }
 
 func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Client, error) {
@@ -62,13 +64,37 @@ func (c *Client) SetIdentityUserID(id string) error {
 	c.identityMu.Lock()
 	defer c.identityMu.Unlock()
 	if c.identityUserID != "" && c.identityUserID != id {
-		return localError{errors.New("chat: identity user ID changed; rebuild the client")}
+		if c.identityMismatch == nil {
+			c.identityMismatch = localError{errors.New("chat: identity user ID mismatch; rebuild the client before deleting reactions")}
+			slog.Warn("chat identity user ID mismatch; rebuild the client before deleting reactions", "expected_user_id", c.identityUserID, "observed_user_id", id)
+		}
+		return c.identityMismatch
 	}
 	c.identityUserID = id
 	return nil
 }
 
 var validUserID = regexp.MustCompile(`^users/[0-9]+$`)
+
+// Learning cannot turn a stored create into a failed send. A canonical conflict
+// still disables reaction removal until the app rebuilds this client.
+func (c *Client) learnIdentityUserID(id string) {
+	if validUserID.MatchString(id) {
+		_ = c.SetIdentityUserID(id)
+	}
+}
+
+func (c *Client) reactionIdentity() (string, error) {
+	c.identityMu.RLock()
+	defer c.identityMu.RUnlock()
+	if c.identityMismatch != nil {
+		return "", c.identityMismatch
+	}
+	if c.identityUserID == "" {
+		return "", localError{errors.New("chat: SetIdentityUserID is required before deleting reactions")}
+	}
+	return c.identityUserID, nil
+}
 
 // IdentityUserID returns the canonical user resource learned from a successful
 // create response or supplied at startup. The app can persist it in its ledger.
@@ -132,9 +158,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	}
 	// Replayed creates may omit the sender. Never erase a previously learned ID.
 	if result.Sender != nil && result.Sender.Name != "" {
-		if err := c.SetIdentityUserID(result.Sender.Name); err != nil {
-			return result.Name, threadName, err
-		}
+		c.learnIdentityUserID(result.Sender.Name)
 	}
 	return result.Name, threadName, nil
 }
@@ -227,19 +251,15 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 		return "", err
 	}
 	if result.User != nil && result.User.Name != "" {
-		if err := c.SetIdentityUserID(result.User.Name); err != nil {
-			return result.Name, err
-		}
+		c.learnIdentityUserID(result.User.Name)
 	}
 	return result.Name, nil
 }
 
 func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) error {
-	c.identityMu.RLock()
-	user := c.identityUserID
-	c.identityMu.RUnlock()
-	if user == "" {
-		return localError{errors.New("chat: SetIdentityUserID is required before deleting reactions")}
+	user, err := c.reactionIdentity()
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -265,6 +285,10 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 	for _, name := range names {
 		err := c.retry(ctx, true, func(ctx context.Context) error {
 			if err := c.limits.WaitReaction(ctx); err != nil {
+				return err
+			}
+			// A concurrent create may discover a conflict while listing or pacing.
+			if _, err := c.reactionIdentity(); err != nil {
 				return err
 			}
 			_, err := c.api.Spaces.Messages.Reactions.Delete(name).Context(ctx).Do()
