@@ -245,8 +245,8 @@ func hasNullRecord[T any](records map[string]*T) bool {
 }
 
 // Save writes and syncs path.tmp before atomically replacing path, then syncs
-// the containing directory. Callers create the parent directory first. A failed
-// write can leave a .tmp file; Load will never treat it as committed state.
+// the containing directory. Callers create the parent directory first. Failed
+// writes and renames remove the temporary file, reporting any cleanup error.
 func (l *Ledger) Save(path string) error {
 	if err := l.validate(); err != nil {
 		return fmt.Errorf("save ledger %s: %w", path, err)
@@ -255,15 +255,16 @@ func (l *Ledger) Save(path string) error {
 	if err != nil {
 		return fmt.Errorf("encode ledger %s: %w", path, err)
 	}
-	f, err := os.OpenFile(path+".tmp", os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	tmpPath := path + ".tmp"
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("open temporary ledger: %w", err)
 	}
 	if err := writeAndClose(f, append(data, '\n')); err != nil {
-		return fmt.Errorf("write temporary ledger: %w", err)
+		return fmt.Errorf("write temporary ledger: %w", errors.Join(err, removeIfExists(tmpPath)))
 	}
-	if err := os.Rename(path+".tmp", path); err != nil {
-		return fmt.Errorf("replace ledger: %w", err)
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace ledger: %w", errors.Join(err, removeIfExists(tmpPath)))
 	}
 	return syncDir(filepath.Dir(path))
 }
@@ -281,10 +282,18 @@ func preserve(path string, data []byte) (string, error) {
 			return "", fmt.Errorf("preserve corrupt ledger: %w", err)
 		}
 		if err := writeAndClose(f, data); err != nil {
-			return "", fmt.Errorf("preserve corrupt ledger: %w", err)
+			return "", fmt.Errorf("preserve corrupt ledger %s: %w", copyPath, errors.Join(err, removeIfExists(copyPath)))
 		}
 		return copyPath, syncDir(filepath.Dir(path))
 	}
+}
+
+func removeIfExists(path string) error {
+	err := os.Remove(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func writeAndClose(f *os.File, data []byte) (err error) {

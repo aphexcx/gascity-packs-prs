@@ -6,9 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -21,6 +24,7 @@ func TestRoundTrip(t *testing.T) {
 	l := ledger.New()
 	l.Subscription = ledger.SubscriptionState{Name: "subscriptions/example", State: "ACTIVE", Expiry: now, Target: "//chat.googleapis.com/spaces/-"}
 	l.Spaces["spaces/example"] = &ledger.SpaceState{Kind: "room", Wake: "mentions", MessageCursor: now.Add(-time.Hour), EventCursor: now.Add(-time.Minute), Backlog: []string{"change-1"}, PageToken: "page-2", FrozenUpper: now}
+	l.Spaces["spaces/AAAAAAAAAAA"] = &ledger.SpaceState{Kind: "room", Wake: "all"}
 	l.Messages["spaces/example/messages/one"] = &ledger.MessageState{Revision: now, Deleted: true, Thread: "spaces/example/threads/one", Mine: true, SendKey: "send-1"}
 	for i, status := range []string{"intent", "pending", "committed", "unresolved"} {
 		id := fmt.Sprintf("change-%d", i)
@@ -30,7 +34,7 @@ func TestRoundTrip(t *testing.T) {
 	l.Sends["send-1"] = &ledger.SendState{
 		Key: "send-1", Space: "spaces/example", Thread: "spaces/example/threads/one", Created: now, Recorded: true,
 		Parts:   []ledger.SendPart{{RequestID: "send-1-0", Text: "first", MessageName: "spaces/example/messages/one"}, {RequestID: "send-1-1", Text: "second"}},
-		Receipt: &wire.PublishReceipt{MessageID: "spaces/example/messages/one", Delivered: true, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/example", Kind: "room"}, Metadata: map[string]string{"parts": "2"}},
+		Receipt: &wire.PublishReceipt{MessageID: "spaces/example/messages/one", Delivered: true, Conversation: wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/example", Kind: "room"}, Metadata: map[string]string{"parts": "2", "ExampleKey": "value"}},
 	}
 	l.Quarantine = []ledger.QuarantinedEvent{{PubSubID: "bad-event", Reason: "invalid JSON", Path: "quarantine/bad-event.json", At: now}}
 	l.Counters["spaces/example"] = 42
@@ -157,6 +161,77 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestCorruptCopyWriteFailureRemovesPartialFile(t *testing.T) {
+	if runInSubprocess(t) {
+		return
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	contents := bytes.Repeat([]byte("invalid JSON "), 32)
+	writeFile(t, path, contents)
+	limitFileSize(t)
+	got, err := ledger.Load(path, true)
+	if got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) || !errors.Is(err, syscall.EFBIG) {
+		t.Fatalf("load with failed copy write = %v, %v", got, err)
+	}
+	var writeErr *os.PathError
+	if !errors.As(err, &writeErr) || writeErr.Op != "write" || !strings.HasPrefix(writeErr.Path, path+".corrupt-") {
+		t.Fatalf("expected a corrupt-copy write failure: %v", err)
+	}
+	if !strings.Contains(err.Error(), writeErr.Path) {
+		t.Errorf("error lacks failed copy path %s: %v", writeErr.Path, err)
+	}
+	var recovery *ledger.RecoveryError
+	if !errors.As(err, &recovery) || recovery.PreservedPath != "" {
+		t.Errorf("failed copy claimed preserved evidence: %v", err)
+	}
+	assertAbsent(t, writeErr.Path)
+	if !bytes.Equal(readFile(t, path), contents) {
+		t.Fatal("failed copy changed the corrupt source")
+	}
+}
+
+func TestSaveWriteFailureRemovesPartialFile(t *testing.T) {
+	if runInSubprocess(t) {
+		return
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	l := ledger.New()
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	old := readFile(t, path)
+	l.Counters["turns"] = 1
+	limitFileSize(t)
+	err := l.Save(path)
+	var writeErr *os.PathError
+	if !errors.Is(err, syscall.EFBIG) || !errors.As(err, &writeErr) || writeErr.Op != "write" || writeErr.Path != path+".tmp" {
+		t.Fatalf("expected a temporary-file write failure: %v", err)
+	}
+	assertAbsent(t, path+".tmp")
+	if !bytes.Equal(readFile(t, path), old) {
+		t.Fatal("failed write changed the committed file")
+	}
+}
+
+func TestSaveRenameFailureRemovesTemporaryFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	// A directory destination reliably rejects rename even when running as root.
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(path, "existing")
+	writeFile(t, marker, []byte("keep existing destination"))
+	err := ledger.New().Save(path)
+	var renameErr *os.LinkError
+	if !errors.As(err, &renameErr) || renameErr.Op != "rename" {
+		t.Fatalf("expected a rename failure: %v", err)
+	}
+	assertAbsent(t, path+".tmp")
+	if string(readFile(t, marker)) != "keep existing destination" {
+		t.Fatal("failed rename changed the existing destination")
+	}
+}
+
 func TestLoadUnreadableFileRequiresRecovery(t *testing.T) {
 	// A directory is reliably unreadable as a state file even when tests run as root.
 	got, err := ledger.Load(t.TempDir(), false)
@@ -184,6 +259,9 @@ func TestFailedSaveKeepsCommittedFile(t *testing.T) {
 			}
 			if !bytes.Equal(readFile(t, path), old) {
 				t.Fatal("failed save changed the committed file")
+			}
+			if failure == "encode" {
+				assertAbsent(t, path+".tmp")
 			}
 		})
 	}
@@ -333,6 +411,48 @@ func TestLoadNullRecordsRequiresRecovery(t *testing.T) {
 	}
 }
 
+// File-size limits and signal handling must stay out of the main test process.
+func runInSubprocess(t *testing.T) bool {
+	t.Helper()
+	const env = "GCHAT_LEDGER_WRITE_FAILURE_TEST"
+	if os.Getenv(env) == t.Name() {
+		return false
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^"+t.Name()+"$")
+	cmd.Env = append(os.Environ(), env+"="+t.Name())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("write-failure subprocess: %v\n%s", err, output)
+	}
+	return true
+}
+
+func limitFileSize(t *testing.T) {
+	t.Helper()
+	var original syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
+		t.Fatal(err)
+	}
+	// Permit a short write, then force EFBIG instead of terminating the process.
+	signal.Ignore(syscall.SIGXFSZ)
+	limit := original
+	limit.Cur = 16
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &original); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+func assertAbsent(t *testing.T, path string) {
+	t.Helper()
+	if info, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("artifact remains at %s: %v, %v", path, info, err)
+	}
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -349,19 +469,70 @@ func writeFile(t *testing.T, path string, data []byte) {
 	}
 }
 
+func TestJSONKeysDistinguishDataFromStructFields(t *testing.T) {
+	for _, field := range []string{"spaces", "messages", "changes", "sends", "unresolved", "counters", "metadata"} {
+		t.Run(field, func(t *testing.T) {
+			raw := map[string]any{field: map[string]any{"MixedCase": map[string]any{"snake_case": true}}}
+			if err := jsonKeyError(raw); err != nil {
+				t.Errorf("data key rejected: %v", err)
+			}
+		})
+	}
+	for _, tc := range []struct{ contents, key string }{
+		{`{"Version":1}`, "Version"},
+		{`{"spaces":{"spaces/AAAAAAAAAAA":{"MessageCursor":""}}}`, "MessageCursor"},
+		{`{"spaces":{"metadata":{"Wake":"all"}}}`, "Wake"},
+		{`{"sends":{"SendKey":{"parts":[{"MessageName":""}]}}}`, "MessageName"},
+		{`{"sends":{"SendKey":{"receipt":{"conversation":{"ScopeID":""}}}}}`, "ScopeID"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			var raw any
+			if err := json.Unmarshal([]byte(tc.contents), &raw); err != nil {
+				t.Fatal(err)
+			}
+			if err := jsonKeyError(raw); err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("expected rejection of struct key %s, got %v", tc.key, err)
+			}
+		})
+	}
+}
+
 func assertJSONKeys(t *testing.T, value any) {
 	t.Helper()
+	if err := jsonKeyError(value); err != nil {
+		t.Error(err)
+	}
+}
+
+func jsonKeyError(value any) error {
 	switch value := value.(type) {
 	case map[string]any:
 		for key, item := range value {
 			if strings.ContainsAny(key, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
-				t.Errorf("JSON key is not snake_case: %s", key)
+				return fmt.Errorf("JSON key is not snake_case: %s", key)
 			}
-			assertJSONKeys(t, item)
+			switch key {
+			case "spaces", "messages", "changes", "sends", "unresolved", "counters", "metadata":
+				// Map keys are data; the records they contain still have struct keys.
+				if entries, ok := item.(map[string]any); ok {
+					for _, entry := range entries {
+						if err := jsonKeyError(entry); err != nil {
+							return err
+						}
+					}
+					continue
+				}
+			}
+			if err := jsonKeyError(item); err != nil {
+				return err
+			}
 		}
 	case []any:
 		for _, item := range value {
-			assertJSONKeys(t, item)
+			if err := jsonKeyError(item); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
