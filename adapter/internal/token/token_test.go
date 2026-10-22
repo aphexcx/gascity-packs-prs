@@ -377,6 +377,11 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 				exchanges.Add(1)
 				if scenario == "cancel during exchange" {
+					// The server starts watching for a disconnect after the request
+					// body is consumed. Drain it before waiting on cancellation.
+					if _, err := io.Copy(io.Discard, r.Body); err != nil {
+						t.Error(err)
+					}
 					cancel()
 					<-r.Context().Done()
 					return
