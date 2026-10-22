@@ -1169,8 +1169,11 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		if id == m.Name && m.LastUpdateTime != "" && change.Kind != "message.updated" {
 			return saved, false
 		}
+		if strings.HasPrefix(change.Reason, "space unavailable") {
+			return saved, false
+		}
 		switch change.Reason {
-		case "local", "own", "wake_policy", "space unavailable":
+		case "local", "own", "wake_policy":
 			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {

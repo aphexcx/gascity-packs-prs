@@ -1154,6 +1154,22 @@ func TestHistoryDoesNotReuseAnOlderTurnForALocalRevision(t *testing.T) {
 	}
 }
 
+func TestHistoryNormalizesRetainedSpaceFailureWithCause(t *testing.T) {
+	f := setup(t)
+	m := &api.Message{Name: "spaces/room/messages/retained", CreateTime: "2026-10-22T10:00:00Z", Text: "document",
+		Attachment: []*api.Attachment{{Name: "drive", ContentName: "document", ContentType: "text/plain", DriveDataRef: &api.DriveDataRef{DriveFileId: "drive-id"}}}}
+	f.g.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
+	at, _ := time.Parse(time.RFC3339Nano, m.CreateTime)
+	f.l.Messages[m.Name] = &ledger.MessageState{Revision: at}
+	raw, _ := json.Marshal(wire.InboundMessage{ProviderMessageID: m.Name, Text: m.Text})
+	f.l.Changes[m.Name] = &ledger.ChangeState{Kind: "message.created", Reason: "space unavailable: permanent (HTTP 400)", Event: string(raw)}
+	code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+	got := decode[[]wire.InboundMessage](t, raw)
+	if code != 200 || len(got) != 1 || !strings.Contains(got[0].Text, "https://drive.google.com/file/d/drive-id/view") || len(got[0].Attachments) != 1 {
+		t.Fatalf("retained history was not normalized: %d %s", code, raw)
+	}
+}
+
 func TestStatusLastEventAndReloadedDefaults(t *testing.T) {
 	f := setup(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
