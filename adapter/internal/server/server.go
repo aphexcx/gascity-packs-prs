@@ -838,7 +838,10 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			p = *send.Request
 		}
 	}
-	if (send.NotRecordable && send.RecordingFailureKind == "") || p.SessionID == "" {
+	if p.SessionID == "" {
+		return s.direct(ctx, p, send.Upload, noBindingReason(""), result, automatic)
+	}
+	if send.NotRecordable && send.RecordingFailureKind == "" {
 		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result, automatic)
 	}
 	if send.Upload != nil && !result.Delivered {

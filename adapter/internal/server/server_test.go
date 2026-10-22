@@ -2541,3 +2541,46 @@ func TestFullGCRestartSequenceDeliversOnce(t *testing.T) {
 		t.Fatalf("completed intent retried: %v gc=%d Google=%d", err, outbound.Load(), f.count())
 	}
 }
+
+func TestCallerDirectRetryReportsBindingReason(t *testing.T) {
+	for _, session := range []string{"", "session"} {
+		t.Run("session="+session, func(t *testing.T) {
+			f := setup(t)
+			c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":503,"message":"temporarily unavailable"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			cmd := command("caller-direct-retry")
+			cmd["session_id"] = session
+			_, raw, _ := f.call(t, "/commands/publish", cmd)
+			first := decode[CommandResult](t, raw)
+			if first.Delivered || first.FailureKind != "transient" || !strings.Contains(first.Reason, "temporarily unavailable") {
+				t.Fatalf("first attempt: %+v", first)
+			}
+			f.restart(t) // Reload the caller-owned failure, then retry with healthy Chat.
+			_, raw, _ = f.call(t, "/commands/publish", cmd)
+			got := decode[CommandResult](t, raw)
+			want := "no active binding: session_id is empty"
+			if session != "" {
+				want = "no active binding for conversation gchat/spaces/room"
+			}
+			if !got.Delivered || got.Recorded || got.Reason != want || f.count() != 1 {
+				t.Fatalf("retry: %+v Google=%d; want reason %q", got, f.count(), want)
+			}
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[first.Key]
+			if v.RecordingReason != want || !v.NotRecordable || v.RecordPending {
+				t.Fatalf("saved binding reason: %+v", v)
+			}
+		})
+	}
+}
