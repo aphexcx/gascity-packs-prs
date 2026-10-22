@@ -603,12 +603,16 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	if c.Reaction != nil {
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
-	return p.update(func(l *ledger.Ledger) {
+	unavailable := local == "space unavailable" || local == "parent unavailable"
+	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
 			status = "committed"
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local}
+		if unavailable {
+			l.Counters["unavailable:"+c.Space]++
+		}
 		if state != nil {
 			// Outbound can record its send key while a Chat lookup is in flight.
 			// That field belongs to outbound; retain its latest value under the
@@ -630,6 +634,10 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			}
 		}
 	})
+	if err == nil && unavailable {
+		p.opts.Logger.Warn("inbound change retained", "space", c.Space, "change", id, "message", name, "cause", local)
+	}
+	return err
 }
 
 func (p *Processor) resume(ctx context.Context, id string) error {

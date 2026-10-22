@@ -1007,6 +1007,84 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 	}
 }
 
+func TestRetainedUnavailableChangesAreCountedAndLoggedOnce(t *testing.T) {
+	for _, kind := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "PRIVATE LOOKUP BODY", http.StatusNotFound)
+			}))
+			defer s.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = s.URL
+			var err error
+			f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("retained", "message.created", m)
+			id, reason := messageName, "space unavailable"
+			if kind != "message_space" {
+				r := &api.Reaction{Name: messageName + "/reactions/one"}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+				id = r.Name + "#created"
+				if kind == "reaction_parent" {
+					reason = "parent unavailable"
+				} else {
+					f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+				}
+			}
+			failSave := true
+			f.opts.Save = func(l *ledger.Ledger) error {
+				if failSave && l.Changes[id] != nil {
+					return errors.New("injected save failure")
+				}
+				return l.Save(f.opts.LedgerPath)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+				t.Fatalf("failed persistence: %v %v", out, err)
+			}
+			if logs.Len() != 0 || len(f.l.Counters) != 0 || f.l.Changes[id] != nil {
+				t.Fatal("failed save logged or counted a retained record")
+			}
+			failSave = false
+			handle(t, f, ev)
+			handle(t, f, ev)
+			ev.PubSubID = "retained-again"
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Changes[id]
+			if c == nil || c.Status != "committed" || c.Reason != reason || f.l.Unresolved[id] != nil || len(f.gc.Inbound()) != 0 {
+				t.Fatalf("retained state: %+v", c)
+			}
+			if f.l.Counters["unavailable:"+space] != 1 || len(f.l.Counters) != 1 {
+				t.Fatalf("unavailable counter: %v", f.l.Counters)
+			}
+			var entry struct{ Level, Space, Change, Message, Cause string }
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Space != space || entry.Change != id || entry.Message != messageName || entry.Cause != reason {
+				t.Fatalf("want one structured warning: %s (%v)", logs.String(), err)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil || stored.Counters["unavailable:"+space] != 1 {
+				t.Fatalf("counter not durable: %v", err)
+			}
+			data, err := os.ReadFile(f.opts.LedgerPath)
+			if err != nil || strings.Contains(string(data)+logs.String(), "PRIVATE") {
+				t.Fatalf("lookup body leaked or state unreadable: %v", err)
+			}
+		})
+	}
+}
+
 func TestMentionRenderingUsesAnnotatedSpans(t *testing.T) {
 	for _, tc := range []struct{ name, payload, want string }{
 		{"documented_text", `{"text":"Hello @FooBot how are you!","annotations":[{"type":"USER_MENTION","startIndex":6,"length":7,"userMention":{"user":{"name":"users/123","displayName":"FooBot"},"type":"MENTION"}}]}`, "Hello FooBot how are you!"},
