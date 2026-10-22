@@ -396,9 +396,7 @@ func TestRunAuth(t *testing.T) {
 	if err != nil || info.Mode().Perm() != 0600 {
 		t.Fatalf("mode: info=%v error=%v", info, err)
 	}
-	if _, err := os.Stat(tokenFile + ".tmp"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("temporary file remains: %v", err)
-	}
+	assertNoAuthTemps(t, tokenFile)
 }
 
 func browserCallback(raw, code, denied, stateOverride string) error {
@@ -495,6 +493,7 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 			if readErr != nil || !bytes.Equal(before, after) {
 				t.Fatalf("old token changed: %v", readErr)
 			}
+			assertNoAuthTemps(t, tokenFile)
 		})
 	}
 }
@@ -506,11 +505,10 @@ func TestRunAuthCancelCreatesNothing(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error = %v", err)
 	}
-	for _, path := range []string{tokenFile, tokenFile + ".tmp"} {
-		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("cancel created %s: %v", path, err)
-		}
+	if _, err := os.Stat(tokenFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cancel created %s: %v", tokenFile, err)
 	}
+	assertNoAuthTemps(t, tokenFile)
 }
 
 func TestWatchRetriesTransientValidation(t *testing.T) {
@@ -1034,6 +1032,42 @@ func assertNoAuthTemps(t *testing.T, tokenFile string) {
 	paths, err := filepath.Glob(tokenFile + "*.tmp")
 	if err != nil || len(paths) != 0 {
 		t.Fatalf("temporary files remain: %v, %v", paths, err)
+	}
+}
+
+func TestWriteTokenFailureCleansOwnTemporaryFile(t *testing.T) {
+	for _, scenario := range []string{"encode", "cancel before rename"} {
+		t.Run(scenario, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "token.json")
+			writeJSON(t, path, savedToken("original"))
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tok := savedToken("replacement")
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			writeCtx := authCommitContext{Context: ctx, check: func() {
+				if scenario == "cancel before rename" {
+					paths, _ := filepath.Glob(path + "*.tmp")
+					if len(paths) > 0 {
+						cancel()
+					}
+				}
+			}}
+			if scenario == "encode" {
+				tok.Expiry = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC) // JSON time encoding rejects this year.
+			}
+			err = writeToken(writeCtx, path, tok)
+			if err == nil || (scenario == "cancel before rename" && !errors.Is(err, context.Canceled)) {
+				t.Fatalf("write error = %v", err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("old token changed: %v", err)
+			}
+			assertNoAuthTemps(t, path)
+		})
 	}
 }
 
