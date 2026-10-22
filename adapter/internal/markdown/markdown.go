@@ -363,9 +363,17 @@ func link(s string, start int, labels, destinations map[int]int) (label, url str
 }
 
 func chatDestination(s string) string {
+	angle := strings.HasPrefix(s, "<")
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++
+			continue
+		}
+		if angle {
+			if s[i] == '>' {
+				s = s[1:i] // Spaces inside <...> belong to the destination.
+				break
+			}
 			continue
 		}
 		if s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n' {

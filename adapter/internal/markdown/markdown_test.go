@@ -30,6 +30,10 @@ func TestToChat(t *testing.T) {
 		{"link destination pipe", "[t](https://example.com/a|b)", "<https://example.com/a%7Cb|t>"},
 		{"link destination angle", "[t](https://example.com/a>b)", "<https://example.com/a%3Eb|t>"},
 		{"link title", "[t](url \"title\")", "<url|t>"},
+		// Angle-delimited destinations preserve spaces, without percent-encoding.
+		{"angle link destination", "[t](<u v>)", "<u v|t>"},
+		{"angle link destination with title", "[t](<u v> \"title\")", "<u v|t>"},
+		{"angle link destination with pipe", "[t](<a|b>)", "<a%7Cb|t>"},
 		{"link escaped space", "[t](url\\ path \"title\")", "<url\\ path|t>"},
 		{"balanced link URL", "[text](https://example.com/a_(b))", "<https://example.com/a_(b)|text>"},
 		{"escaped link parentheses", `[text](a\(b\)) **after**`, `<a\(b\)|text> *after*`},
