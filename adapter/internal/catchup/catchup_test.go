@@ -801,6 +801,131 @@ func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
 	f.pass(t, 20, 0)
 }
 
+func TestExpiredResumeTokenRestartsPhaseAfterRejoin(t *testing.T) {
+	for _, phase := range []string{"messages", "spaceEvents"} {
+		t.Run(phase, func(t *testing.T) {
+			f := setup(t)
+			f.pageSize = 2
+			f.addSpace("spaces/room", true)
+			for i := 0; i < 4; i++ {
+				at := frozen.Add(-30 * time.Second)
+				if phase == "spaceEvents" {
+					at = frozen.Add(-2 * time.Hour)
+				}
+				m := f.addMessage("spaces/room", i, at)
+				if phase == "spaceEvents" {
+					if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+						t.Fatal(out, err)
+					}
+					m.LastUpdateTime = frozen.Add(-30 * time.Second).Format(time.RFC3339Nano)
+					f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+						Name: fmt.Sprintf("spaces/room/spaceEvents/e%d", i), EventTime: m.LastUpdateTime,
+						EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m},
+					})
+				}
+			}
+			initialPosts := len(f.gc.Inbound())
+			f.freeze(t)
+			f.onRequest = func(r *http.Request) error {
+				if strings.HasSuffix(r.URL.Path, "/"+phase) && r.URL.Query().Get("pageToken") == "2" {
+					return &googleapi.Error{Code: 403, Message: "not a member"}
+				}
+				return nil
+			}
+			if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 0 {
+				t.Fatalf("access loss = (%d, %d, %v)", d, n, err)
+			}
+			delete(f.google.Spaces, "spaces/room")
+			f.freeze(t)
+			f.addSpace("spaces/room", false)
+			f.freeze(t)
+			var tokens, filters []string
+			f.onRequest = func(r *http.Request) error {
+				if strings.HasSuffix(r.URL.Path, "/"+phase) {
+					tokens = append(tokens, r.URL.Query().Get("pageToken"))
+					filters = append(filters, r.URL.Query().Get("filter"))
+					if len(tokens) == 1 {
+						return &googleapi.Error{Code: 400, Message: "expired page token"}
+					}
+				}
+				return nil
+			}
+			f.pass(t, 2, 0)
+			if len(tokens) != 3 || tokens[0] != "2" || tokens[1] != "" || tokens[2] != "2" || filters[0] != filters[1] || filters[1] != filters[2] {
+				t.Fatalf("phase did not restart with stable bounds: %v %v", tokens, filters)
+			}
+			if len(f.gc.Inbound()) != initialPosts+2 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 {
+				t.Fatalf("replayed retained records or reported token loss: posts=%d counters=%v", len(f.gc.Inbound()), f.opts.Ledger.Counters)
+			}
+			for i, turn := range f.gc.Inbound()[initialPosts:] {
+				want := fmt.Sprintf("spaces/room/messages/m%04d", i+2)
+				if phase == "spaceEvents" {
+					want += "#updated#" + frozen.Add(-30*time.Second).Format(time.RFC3339Nano)
+				}
+				if turn.ProviderMessageID != want {
+					t.Fatalf("delivered %q, want unread %q", turn.ProviderMessageID, want)
+				}
+			}
+			f.pass(t, 0, 0)
+			if err := f.r.Freeze(context.Background(), frozen.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			f.pass(t, 0, 0)
+			if len(f.gc.Inbound()) != initialPosts+2 || !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(frozen.Add(time.Minute)) {
+				t.Fatal("recovery duplicated delivery or left cursor held")
+			}
+		})
+	}
+}
+
+func TestPermanentHistoryErrorWithoutTokenIsUnrecoverable(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.freeze(t)
+	f.onRequest = func(*http.Request) error { return &googleapi.Error{Code: 400, Message: "invalid query"} }
+	requests := len(f.requests)
+	for i := 0; i < 2; i++ {
+		if _, _, err := f.r.Pass(context.Background()); err == nil {
+			t.Fatal("permanent first page succeeded")
+		}
+	}
+	if len(f.requests)-requests != 2 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+		t.Fatal("permanent first page was retried or reported repeatedly")
+	}
+}
+
+func TestRepeatedExpiredTokensBoundRetriesAndKeepBacklog(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 2; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	f.freeze(t)
+	requests := 0
+	f.onRequest = func(r *http.Request) error {
+		requests++
+		if requests > 4 {
+			return errors.New("token retry did not stop")
+		}
+		if r.URL.Query().Get("pageToken") != "" {
+			return &googleapi.Error{Code: 400, Message: "expired page token"}
+		}
+		return nil
+	}
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n == 0 {
+		t.Fatalf("repeated expired tokens = (%d, %d, %v)", d, n, err)
+	}
+	if requests != 4 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 {
+		t.Fatalf("retries=%d counters=%v", requests, f.opts.Ledger.Counters)
+	}
+	f.onRequest = nil
+	f.pass(t, 2, 0)
+	if len(f.gc.Inbound()) != 2 {
+		t.Fatal("replayed backlog duplicated delivery")
+	}
+}
+
 func TestAccessFailureWarnsOnlyAfterPersistence(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)

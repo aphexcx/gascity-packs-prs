@@ -273,6 +273,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 	// Refresh retention once on entering the events phase, then keep the query
 	// fixed across its pages. A resumed enumeration checks the boundary again.
 	var earliest time.Time
+	var restartedPhase string
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -331,6 +332,21 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			var apiErr *googleapi.Error
 			if kind == "auth" || (kind == "not_found" && errors.As(err, &apiErr) && apiErr.Code == 403) {
 				return r.holdAccess(name, p, err)
+			}
+			if kind == "permanent" && p.Token != "" {
+				// A token can expire while access is held. Keep the frozen query
+				// and retained records; inbound and unavailable IDs absorb replay.
+				p.Token = ""
+				if saveErr := r.saveProgress(name, p, false); saveErr != nil {
+					return saveErr
+				}
+				if restartedPhase == p.Phase {
+					// Bound retries if even replacement tokens fail. A later pass
+					// retries from the first page without reporting history loss.
+					return fmt.Errorf("catchup: list %s for %s: %w", p.Phase, name, err)
+				}
+				restartedPhase = p.Phase
+				continue
 			}
 			if kind == "not_found" || kind == "permanent" {
 				if saveErr := r.saveProgress(name, p, true); saveErr != nil {
