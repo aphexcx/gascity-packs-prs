@@ -306,18 +306,6 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 				s.Backlog = append(s.Backlog, encode(item))
 			}
 			s.PageToken = encode(p)
-			if p.Phase == "done" {
-				items := make([]queuedChange, len(s.Backlog))
-				for i, raw := range s.Backlog {
-					if err := json.Unmarshal([]byte(raw), &items[i]); err != nil {
-						return errors.New("catchup: invalid durable backlog")
-					}
-				}
-				sort.SliceStable(items, func(i, j int) bool { return items[i].At.Before(items[j].At) })
-				for i, item := range items {
-					s.Backlog[i] = encode(item)
-				}
-			}
 			return nil
 		}); err != nil {
 			return err
@@ -326,6 +314,24 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 }
 
 func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered int, err error) {
+	// Even a partially enumerated interval can contain both messages and older
+	// space events. Order the retained records before delivering any of them.
+	if err := r.update(func(l *ledger.Ledger) error {
+		s := l.Spaces[name]
+		items := make([]queuedChange, len(s.Backlog))
+		for i, raw := range s.Backlog {
+			if err := json.Unmarshal([]byte(raw), &items[i]); err != nil {
+				return errors.New("catchup: invalid durable backlog")
+			}
+		}
+		sort.SliceStable(items, func(i, j int) bool { return items[i].At.Before(items[j].At) })
+		for i, item := range items {
+			s.Backlog[i] = encode(item)
+		}
+		return nil
+	}); err != nil {
+		return 0, err
+	}
 	index := 0
 	for {
 		if err := ctx.Err(); err != nil {

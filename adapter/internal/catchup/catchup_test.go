@@ -41,11 +41,12 @@ type fixture struct {
 	logs      bytes.Buffer
 	onRequest func(*http.Request) error
 	requests  []string
+	pageSize  int
 }
 
 func setup(t *testing.T) *fixture {
 	t.Helper()
-	f := &fixture{google: fakegoogle.New(t, nil), gc: fakegc.New(t)}
+	f := &fixture{google: fakegoogle.New(t, nil), gc: fakegc.New(t), pageSize: 17}
 	f.google.Now = func() time.Time { return frozen }
 	dir := t.TempDir()
 	cfg := &config.Config{Secrets: config.Secrets{CityName: "examplecity"}, Endpoints: config.Endpoints{ChatAPIBase: f.google.URL(), StateFile: filepath.Join(dir, "state.json")}}
@@ -62,7 +63,7 @@ func setup(t *testing.T) *fixture {
 		copy := r.Clone(r.Context())
 		q := copy.URL.Query()
 		if q.Has("pageSize") {
-			q.Set("pageSize", "17")
+			q.Set("pageSize", fmt.Sprint(f.pageSize))
 			copy.URL.RawQuery = q.Encode()
 		}
 		return http.DefaultTransport.RoundTrip(copy)
@@ -497,5 +498,35 @@ func TestHistoryErrorDoesNotStarveRetainedMessages(t *testing.T) {
 	f.pass(t, 0, 0)
 	if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(frozen) {
 		t.Fatal("cursor did not recover after successful enumeration")
+	}
+}
+
+func TestPartialHistoryDrainsRetainedRecordsChronologically(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	old := f.addMessage("spaces/room", 1, frozen.Add(-2*time.Hour))
+	if out, err := f.p.Handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: old}}}); out != puller.Ack || err != nil {
+		t.Fatal(out, err)
+	}
+	old.LastUpdateTime = frozen.Add(-20 * time.Minute).Format(time.RFC3339Nano)
+	newer := f.addMessage("spaces/room", 2, frozen.Add(-10*time.Minute))
+	f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{
+		{Name: "spaces/room/spaceEvents/edit", EventTime: old.LastUpdateTime, EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: old}},
+		{Name: "spaces/room/spaceEvents/unavailable", EventTime: frozen.Add(-time.Minute).Format(time.RFC3339Nano), EventType: "google.workspace.chat.message.v1.updated"},
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "1" {
+			return &googleapi.Error{Code: 404, Message: "history unavailable"}
+		}
+		return nil
+	}
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 2 || n != 0 {
+		t.Fatal(d, n, err)
+	}
+	turns := f.gc.Inbound()
+	if len(turns) != 3 || turns[1].ProviderMessageID != old.Name+"#updated#"+old.LastUpdateTime || turns[2].ProviderMessageID != newer.Name {
+		t.Fatalf("retained history out of order: %+v", turns)
 	}
 }
