@@ -58,6 +58,7 @@ type Server struct {
 
 type operation struct {
 	result       events.Operation
+	failure      *events.Status
 	ready        time.Time
 	subscription *events.Subscription
 }
@@ -257,6 +258,12 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 					return
 				}
 			}
+			for _, pending := range s.operations {
+				if !pending.result.Done && pending.subscription.TargetResource == sub.TargetResource {
+					s.fail(w, 409, "ALREADY_EXISTS", "subscription creation is pending")
+					return
+				}
+			}
 			if s.CreateReturnsAlreadyExists {
 				s.fail(w, 409, "ALREADY_EXISTS", "scripted existing subscription")
 				return
@@ -342,16 +349,11 @@ func (s *Server) newOperation(w http.ResponseWriter, r *http.Request, sub *event
 	op := &operation{result: events.Operation{Name: "operations/" + s.id(), ForceSendFields: []string{"Done"}}, ready: s.now().Add(s.OperationDelay), subscription: sub}
 	if s.OperationError != nil {
 		copy := *s.OperationError
-		op.result.Error = &copy
+		op.failure = &copy
 	}
 	s.operations[op.result.Name] = op
 	s.complete(op)
-	// An error is revealed only when the Operation completes.
-	result := op.result
-	if !result.Done {
-		result.Error = nil
-	}
-	s.respond(w, r, 200, &result)
+	s.respond(w, r, 200, &op.result)
 }
 
 func (s *Server) complete(op *operation) {
@@ -359,6 +361,7 @@ func (s *Server) complete(op *operation) {
 		return
 	}
 	op.result.Done = true
+	op.result.Error = op.failure
 	if op.result.Error == nil {
 		s.Subscriptions[op.subscription.Name] = op.subscription
 		b, _ := json.Marshal(op.subscription)

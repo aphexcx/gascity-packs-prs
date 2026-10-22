@@ -149,7 +149,7 @@ func TestSubscriptionLifecycleAndDiscovery(t *testing.T) {
 		t.Fatalf("reactivated: %+v, %v", got, err)
 	}
 	s.Configure(func(s *Server) { s.CreateReturnsAlreadyExists = true })
-	request(t, s, "POST", "/v1/subscriptions", create, 409)
+	request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/scripted"}, 409)
 	s.Configure(func(s *Server) {
 		s.CreateReturnsAlreadyExists = false
 		s.OperationError = &events.Status{Code: 7, Message: "permission denied"}
@@ -172,6 +172,78 @@ func TestLostSubscriptionResponseIsDiscoverable(t *testing.T) {
 	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
 	if len(list["subscriptions"].([]any)) != 1 {
 		t.Fatalf("lost creation: %v", list)
+	}
+}
+
+func TestDelayedOperationRevealsFailureOnlyWhenDone(t *testing.T) {
+	s := New(t, nil)
+	s.OperationDelay = time.Minute
+	s.OperationError = &events.Status{Code: 7, Message: "permission denied"}
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-"}, 200)
+	if op["done"] != false || op["error"] != nil || op["response"] != nil {
+		t.Fatalf("initial operation: %v", op)
+	}
+	pending := request(t, s, "GET", "/v1/"+op["name"].(string), nil, 200)
+	if pending["done"] != false || pending["error"] != nil || pending["response"] != nil {
+		t.Fatalf("pending failure was revealed: %v", pending)
+	}
+	s.Advance(time.Minute)
+	done := request(t, s, "GET", "/v1/"+op["name"].(string), nil, 200)
+	if done["done"] != true || done["error"] == nil || done["response"] != nil {
+		t.Fatalf("failed operation: %v", done)
+	}
+	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
+	if len(list["subscriptions"].([]any)) != 0 {
+		t.Fatal("failed creation persisted a subscription")
+	}
+}
+
+func TestPendingCreateReservesTarget(t *testing.T) {
+	s := New(t, nil)
+	s.OperationDelay = time.Minute
+	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-"}
+	request(t, s, "POST", "/v1/subscriptions", body, 200)
+	request(t, s, "POST", "/v1/subscriptions", body, 409)
+	s.Advance(time.Minute)
+	list := request(t, s, "GET", "/v1/subscriptions", nil, 200)
+	if len(list["subscriptions"].([]any)) != 1 {
+		t.Fatalf("duplicate creation: %v", list)
+	}
+}
+
+func TestLostRenewalAndDelayedReactivation(t *testing.T) {
+	s := New(t, nil)
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", Ttl: "60s"}, 200)
+	sub := op["response"].(map[string]any)
+	name := sub["name"].(string)
+	s.Configure(func(s *Server) { s.DropNextResponse = true; s.OperationDelay = time.Minute })
+	r, err := http.NewRequest("PATCH", s.URL()+"/v1/"+name, strings.NewReader(`{"ttl":"7200s"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(r)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("expected lost renewal response")
+	}
+	before := request(t, s, "GET", "/v1/"+name, nil, 200)
+	if before["expireTime"] != sub["expireTime"] {
+		t.Fatal("renewal applied before operation completed")
+	}
+	s.Advance(time.Minute)
+	after := request(t, s, "GET", "/v1/"+name, nil, 200)
+	if after["expireTime"] == sub["expireTime"] {
+		t.Fatal("accepted renewal was lost")
+	}
+	s.SuspendSubscription()
+	reactivate := request(t, s, "POST", "/v1/"+name+":reactivate", map[string]any{}, 200)
+	if reactivate["done"] != false {
+		t.Fatal("reactivation ignored operation delay")
+	}
+	s.Advance(time.Minute)
+	done := request(t, s, "GET", "/v1/"+reactivate["name"].(string), nil, 200)
+	if done["done"] != true || done["response"].(map[string]any)["state"] != "ACTIVE" {
+		t.Fatalf("reactivation: %v", done)
 	}
 }
 
@@ -238,6 +310,10 @@ func TestMessagesPaginationThreadsAndRate(t *testing.T) {
 	recovered := request(t, s, "POST", "/v1/spaces/room/messages?requestId=lost", map[string]string{"text": "accepted"}, 200)
 	if recovered["text"] != "accepted" {
 		t.Fatalf("recovered: %v", recovered)
+	}
+	all := request(t, s, "GET", "/v1/spaces/room/messages", nil, 200)
+	if len(all["messages"].([]any)) != 4 {
+		t.Fatalf("retry duplicated a message: %v", all)
 	}
 	request(t, s, "GET", "/v1/spaces/room/messages/missing", nil, 404)
 }
