@@ -19,14 +19,23 @@ func TestToChat(t *testing.T) {
 		{"italic underscores", "_italic_", "_italic_"},
 		{"strikethrough", "~~gone~~", "~gone~"},
 		{"inline code", "`**bold** _italic_ ~~gone~~ [x](url)`", "`**bold** _italic_ ~~gone~~ [x](url)`"},
+		{"backslash before code closer", "`**a**\\` **b**", "`**a**\\` *b*"},
 		{"multiline code", "`a\n**b**`", "`a\n**b**`"},
+		{"multiline code search resets after paragraph", "a \\``\n\nb `x\n**y**` **z**", "a \\``\n\nb `x\n**y**` *z*"},
+		{"multiline code search resets after fence", "a \\``\n```\nfence\n```\nb `x\n**y**` **z**", "a \\``\n```\nfence\n```\nb `x\n**y**` *z*"},
 		{"multiline code block syntax", "before ``a `\n# **title**\n- item\n```\nend`` **after**\n# Next", "before ``a `\n*title*\n* item\n```\nend`` **after**\n# Next"},
 		{"unclosed code before heading", "`open\n# Title", "`open\n*Title*"},
 		{"code span containing backtick", "``a ` **b**`` and **c**", "``a ` **b**`` and *c*"},
 		{"fenced code", "```go\n**b**\n- x\n# title\n[x](url)\n```\n**after**", "```go\n**b**\n- x\n# title\n[x](url)\n```\n*after*"},
 		{"dash bullet", "- one\n  - two\n", "* one\n  * two\n"},
+		{"empty dash bullet", "- one\n- \n- three", "* one\n* \n* three"},
 		{"star bullet", "* one\n* **two**", "* one\n* *two*"},
+		{"spaced thematic break", "- - -\n* * *", "- - -\n* * *"},
 		{"link", "[text](https://example.com)", "<https://example.com|text>"},
+		{"link destination surrounding spaces", "[text]( https://example.com )", "<https://example.com|text>"},
+		{"link destination leading space", "[text]( https://example.com)", "<https://example.com|text>"},
+		{"link destination leading tabs and title", "[text](\t \thttps://example.com \"title\")", "<https://example.com|text>"},
+		{"angle link destination leading whitespace", "[text]( \t<u v> \"title\")", "<u v|text>"},
 		{"link destination pipe", "[t](https://example.com/a|b)", "<https://example.com/a%7Cb|t>"},
 		{"link destination angle", "[t](https://example.com/a>b)", "<https://example.com/a%3Eb|t>"},
 		{"link title", "[t](url \"title\")", "<url|t>"},
@@ -34,12 +43,24 @@ func TestToChat(t *testing.T) {
 		{"angle link destination", "[t](<u v>)", "<u v|t>"},
 		{"angle link destination with title", "[t](<u v> \"title\")", "<u v|t>"},
 		{"angle link destination with pipe", "[t](<a|b>)", "<a%7Cb|t>"},
+		{"angle link destination trailing text", "[t](<a>b>)", "[t](<a>b>)"},
+		{"angle link destination open angle", "[t](<a<b>)", "<a%3Cb|t>"},
+		{"plain link destination open angle", "[t](a<b)", "<a%3Cb|t>"},
+		{"unclosed angle destination", "[t](<u v)", "<%3Cu|t>"},
+		{"unclosed angle destination title", "[t](<u \"title\")", "<%3Cu|t>"},
+		{"unclosed angle destination escaped space", `[t](<u\ v "title")`, `<%3Cu\ v|t>`},
+		{"angle destination escaped closer", `[t](<a\>b>)`, `<a\%3Eb|t>`},
 		{"link escaped space", "[t](url\\ path \"title\")", "<url\\ path|t>"},
 		{"balanced link URL", "[text](https://example.com/a_(b))", "<https://example.com/a_(b)|text>"},
 		{"escaped link parentheses", `[text](a\(b\)) **after**`, `<a\(b\)|text> *after*`},
 		{"escaped link backslash", `[text](a\\) **after**`, `<a\\|text> *after*`},
 		{"unclosed nested destination", "[text](a(b) **after**", "[text](a(b) *after*"},
 		{"format link label", "[**text**](https://example.com)", "<https://example.com|*text*>"},
+		{"link label closing angle", "[a>b](u)", "[a>b](u)"},
+		{"formatted link label closing angle", "[**a>b**](u)", "[**a>b**](u)"},
+		{"code link label closing angle", "[`Vec<u8>`](https://example.com)", "[`Vec<u8>`](https://example.com)"},
+		{"breadcrumb link label", "[Settings > Billing](url)", "[Settings > Billing](url)"},
+		{"literal link preserves surrounding formatting", "**before** [**a>b**](u) **after**", "*before* [**a>b**](u) *after*"},
 		{"literal brackets before link", "array[0] then [text](url)", "array[0] then <url|text>"},
 		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
 		{"links inside label stay literal", "[outer [inner](v) **bold**](u)", "<u|outer [inner](v) *bold*>"},
@@ -47,8 +68,13 @@ func TestToChat(t *testing.T) {
 		{"image inside label stays literal", "[![**B**](x)](u)", "<u|![**B**](x)>"},
 		{"nested destination inside label stays literal", "[t [x](a*b*c)](u)", "<u|t [x](a*b*c)>"},
 		{"image unchanged", "![**alt**](image.png) and **text**", "![**alt**](image.png) and *text*"},
+		{"escaped image marker becomes link", `\![a](u)`, `\!<u|a>`},
+		{"escaped image marker formats label", `\![**a**](u)`, `\!<u|*a*>`},
+		{"escaped backslash before image", `\\![a](u)`, `\\![a](u)`},
+		{"escaped backslash and image marker", `\\\![a](u)`, `\\\!<u|a>`},
 		{"link with code bracket", "[`]` label](url)", "<url|`]` label>"},
 		{"heading", "# Title\n## Subtitle\n###### Small\n", "*Title*\n*Subtitle*\n*Small*\n"},
+		{"tabbed heading", "#\tTitle\n##\t**Subtitle** #\t", "*Title*\n*Subtitle*"},
 		{"heading trailing space", "# Title  ", "*Title*"},
 		{"heading closing hashes", "# Title #", "*Title*"},
 		{"heading bold", "# **Bold** title", "*Bold title*"},
@@ -60,6 +86,11 @@ func TestToChat(t *testing.T) {
 		{"heading literal hashes", "# Title#", "*Title#*"},
 		{"heading escaped hash", "# Title \\#", "*Title \\#*"},
 		{"nested emphasis", "**bold _italic_** and *soft*", "*bold _italic_* and _soft_"},
+		{"emphasis after multiplication", "2*3 and *note*", "2*3 and _note_"},
+		{"spaced marker does not reopen emphasis", "*5 * 3 is 15*", "_5 * 3 is 15_"},
+		// The subset leaves an abandoned opener literal and pairs the later one.
+		{"nearest emphasis opener", "*a *b* c*", "*a _b_ c*"},
+		{"emphasis after bare URL", "https://x/a_b*c and *x*", "https://x/a_b*c and _x_"},
 		{"code in emphasis", "**bold `*code*`**", "*bold `*code*`*"},
 		{"plain text", "日本語 👋\n> quote\n1. item\n+ item\n---\n", "日本語 👋\n> quote\n1. item\n+ item\n---\n"},
 		{"literal underscores", "snake_case_name and file__name__part", "snake_case_name and file__name__part"},
@@ -93,7 +124,22 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 		{"same paragraph continuation", "first line\nbefore `open\n**inside**` **after**", "first line\nbefore `open\n**inside**` *after*"},
 		{"blockquote interrupts span", "Use `x\n> **q** `\n**after**", "Use `x\n> *q* `\n*after*"},
 		{"blockquote cannot start multiline span", "> `open\n**after** `", "> `open\n*after* `"},
+		{"consecutive blockquote code span", "> `open\n> **after** `", "> `open\n> **after** `"},
+		{"blockquote paragraph break", "> Run `ls\n>\n> **Important**: use `grep` here.", "> Run `ls\n>\n> *Important*: use `grep` here."},
+		{"blockquote list interrupts span", "> a `b\n> - item\n> **c** `", "> a `b\n> - item\n> *c* `"},
+		{"blockquote heading interrupts span", "> a `b\n> # Head\n> **c** `", "> a `b\n> # Head\n> *c* `"},
+		{"blockquote thematic break interrupts span", "> a `b\n> ---\n> **c** `", "> a `b\n> ---\n> *c* `"},
+		{"blockquote whitespace paragraph break", "> a `b\n> \n> **c** `", "> a `b\n> \n> *c* `"},
+		{"blockquote fence interrupts span", "> a `b\n> ~~~\n> **c** `", "> a `b\n> ~~~\n> *c* `"},
+		{"nested blockquote code span", "> > `open\n> > **after** `", "> > `open\n> > **after** `"},
+		{"deeper blockquote interrupts span", "> `open\n> > **after** `", "> `open\n> > *after* `"},
+		{"shallower blockquote interrupts span", "> > `open\n> **after** `", "> > `open\n> *after* `"},
+		{"nested blockquote paragraph break", " >\t > `open\n   > >\t\n> > **after** `", " >\t > `open\n   > >\t\n> > *after* `"},
+		{"quoted heading cannot start multiline span", "> # `open\n> **after** `", "> # `open\n> *after* `"},
+		{"indented blockquote code span", " > `open\n   > **inside** `\n**after**", " > `open\n   > **inside** `\n*after*"},
 		{"code search resets between paragraphs", "before \\``\n\n`**code**` **after**", "before \\``\n\n`**code**` *after*"},
+		{"spaced equals keeps code span", "a `b\n = = = \n**c** `", "a `b\n = = = \n**c** `"},
+		{"tabbed equals keeps code span", "a `b\n=\t=\n**c** `", "a `b\n=\t=\n**c** `"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -102,13 +148,10 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 			}
 		})
 	}
-	for _, boundary := range []string{"---", "===", "***", "___", " - - - ", " = = = ", " * * * ", " _ _ _ ", " > **quote**", "  > **quote**", "   > **quote**"} {
+	for _, boundary := range []string{"-", "--", "---", "=", "==", "===", " == \t", "***", "___", " - - - ", " * * * ", " _ _ _ ", " > **quote**", "  > **quote**", "   > **quote**"} {
 		t.Run("block boundary "+boundary, func(t *testing.T) {
 			input := "a `b\n" + boundary + "\n**c** `"
 			renderedBoundary := strings.ReplaceAll(boundary, "**quote**", "*quote*")
-			if boundary == " - - - " {
-				renderedBoundary = " * - - " // Retain the supported dash-bullet conversion.
-			}
 			want := "a `b\n" + renderedBoundary + "\n*c* `"
 			if got := ToChat(input); got != want {
 				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)
@@ -151,6 +194,11 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 	}
 	flat := strings.Repeat("\\``", (64000+2)/3)
 	multiline := strings.Repeat("\\``\n", 128000/4)
+	var runs strings.Builder
+	for n := 1; n <= 400; n++ {
+		runs.WriteString(strings.Repeat("`", n))
+		runs.WriteByte(' ')
+	}
 	tests = append(tests,
 		struct{ name, input, want string }{"escaped backticks", flat, flat},
 		struct{ name, input, want string }{
@@ -160,6 +208,16 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 		},
 		struct{ name, input, want string }{"multiline escaped backticks", multiline, multiline},
 	)
+	// Only the 1 MB case exceeds the bound before indexing on fast machines;
+	// the 128 KB case also checks the requested input size.
+	for _, size := range []int{128000, 1000000} {
+		distinct := runs.String() + strings.Repeat("x", size-runs.Len())
+		tests = append(tests, struct{ name, input, want string }{
+			fmt.Sprintf("nested emphasis and distinct backtick runs %d", size),
+			"***a ___b **c __d *e _f ~~g " + distinct + " g~~ f_ e* d__ c** b___ a***",
+			"*_a *_b *c *d _e _f ~g " + distinct + " g~ f_ e_ d* c* b_* a_*",
+		})
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()

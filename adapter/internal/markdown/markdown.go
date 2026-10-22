@@ -16,7 +16,7 @@ func ToChat(md string) string {
 	var fence *codeFence
 	source := md
 	paragraphStop := 0
-	var noCodeCloser map[int]int
+	var lastCodeRun map[int]int
 	for len(md) > 0 {
 		end := lineEnd(md, 0)
 		line := md[:end]
@@ -41,16 +41,16 @@ func ToChat(md string) string {
 		offset := len(source) - len(md)
 		if paragraphStop <= offset {
 			paragraphStop = offset + paragraphEnd(md, end)
-			noCodeCloser = make(map[int]int)
+			lastCodeRun = indexCodeRuns(source[:paragraphStop], offset)
 		}
 		for i := 0; i < end; {
 			switch {
 			case md[i] == '\\' && i+1 < len(md):
 				i = escapedEnd(md, i)
 			case md[i] == '`':
-				// Absolute offsets keep failed searches valid as md advances
+				// Absolute offsets keep the index valid as md advances
 				// through physical lines in the same paragraph.
-				i = codeSpanEnd(source[:paragraphStop], offset+i, noCodeCloser) - offset
+				i = codeSpanEnd(source[:paragraphStop], offset+i, lastCodeRun) - offset
 				if i > end {
 					end = lineEnd(md, i)
 				}
@@ -69,11 +69,11 @@ func ToChat(md string) string {
 			heading++
 		}
 		switch {
-		case heading > 0 && heading <= 6 && strings.HasPrefix(body[heading:], " "):
+		case heading > 0 && heading <= 6 && heading < len(body) && (body[heading] == ' ' || body[heading] == '\t'):
 			if content := headingContent(body[heading+1:]); content != "" {
 				out.WriteString("*" + inline(content, true) + "*")
 			}
-		case strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* "):
+		case !thematicBreakLine(body) && (strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* ")):
 			out.WriteString("* " + inline(body[2:], false))
 		default:
 			out.WriteString(inline(body, false))
@@ -91,18 +91,37 @@ func lineEnd(s string, start int) int {
 }
 
 func paragraphEnd(s string, end int) int {
-	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) || blockBoundaryLine(s[:end]) {
+	first, quoteDepth := quoteContent(s[:end])
+	if strings.TrimSpace(first) == "" || headingLine(first) || blockBoundaryLine(first) {
 		return end
 	}
 	for end < len(s) {
 		next := lineEnd(s, end)
-		line := s[end:next]
-		if strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || blockBoundaryLine(line) {
+		line, depth := quoteContent(s[end:next])
+		// Consecutive quote lines can share a span at the same depth, but
+		// block boundaries inside the quote still end the paragraph. Lazy
+		// continuation into an unquoted line ends it in this subset too.
+		if quoteDepth != depth || strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || blockBoundaryLine(line) {
 			break
 		}
 		end = next
 	}
 	return end
+}
+
+func quoteContent(line string) (string, int) {
+	depth := 0
+	for {
+		body := strings.TrimLeft(line, " ")
+		if len(line)-len(body) > 3 || !strings.HasPrefix(body, ">") {
+			return line, depth
+		}
+		line = body[1:]
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+			line = line[1:]
+		}
+		depth++
+	}
 }
 
 // Recognize the remaining block boundaries without letting code spans consume
@@ -116,6 +135,24 @@ func blockBoundaryLine(line string) bool {
 		return true
 	}
 	if !strings.ContainsRune("-=*_", rune(body[0])) {
+		return false
+	}
+	// Setext underlines need only one marker, but their runs are contiguous.
+	// Only thematic breaks (-, *, _) permit whitespace between markers.
+	if body[0] == '=' || body[0] == '-' {
+		if strings.Trim(body[runLength(body):], " \t\r\n") == "" {
+			return true
+		}
+		if body[0] == '=' {
+			return false
+		}
+	}
+	return thematicBreakLine(body)
+}
+
+func thematicBreakLine(line string) bool {
+	body := strings.TrimLeft(line, " ")
+	if len(line)-len(body) > 3 || body == "" || !strings.ContainsRune("-*_", rune(body[0])) {
 		return false
 	}
 	count := 0
@@ -171,31 +208,40 @@ func formatInline(s string, heading, allowLinks bool) string {
 	// A backtick in a destination can therefore hide later emphasis or labels
 	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
-	noCodeCloser := make(map[int]int)
-	labels := linkLabelEnds(s, noCodeCloser)
+	lastCodeRun := indexCodeRuns(s, 0)
+	labels := linkLabelEnds(s, lastCodeRun)
 	destinations := parenthesisEnds(s)
+	escapedByte := -1
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
+			escapedByte = i + 1
 			end := escapedEnd(s, i)
 			out.WriteString(s[i:end])
 			i = end
 			continue
 		}
 		if s[i] == '`' {
-			end := codeSpanEnd(s, i, noCodeCloser)
+			end := codeSpanEnd(s, i, lastCodeRun)
 			out.WriteString(s[i:end])
 			i = end
 			continue
 		}
 		if s[i] == '[' {
 			if label, url, end, ok := link(s, i, labels, destinations); ok {
-				if !allowLinks || (i > 0 && s[i-1] == '!') {
+				if !allowLinks || (i > 0 && s[i-1] == '!' && escapedByte != i-1) {
 					out.WriteString(s[i:end])
 				} else {
 					// Links cannot nest in link text. Keep nested link syntax
 					// literal while still formatting emphasis and code in the
 					// rest of the label, without recursing into nested links.
-					out.WriteString("<" + chatDestination(url) + "|" + formatInline(label, heading, false) + ">")
+					label = formatInline(label, heading, false)
+					if strings.Contains(label, ">") {
+						// Chat would end the label early; encoding it would
+						// change displayed text, including literal code bytes.
+						out.WriteString(s[i:end])
+					} else {
+						out.WriteString("<" + url + "|" + label + ">")
+					}
 				}
 				i = end
 				continue
@@ -206,7 +252,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
-				if end := emphasisEnd(s, i+n, marker, noCodeCloser); end >= 0 {
+				end := emphasisEnd(s, i+n, marker, lastCodeRun)
+				if end >= 0 {
 					if heading {
 						chat = strings.TrimPrefix(chat, "*")
 					}
@@ -218,7 +265,9 @@ func formatInline(s string, heading, allowLinks bool) string {
 					i = end + n
 					continue
 				}
-				noCloser[marker] = true
+				if end != emphasisReopened {
+					noCloser[marker] = true
+				}
 			}
 			out.WriteString(marker)
 			i += n
@@ -245,11 +294,27 @@ func escapedEnd(s string, i int) int {
 	return i + 2
 }
 
-func codeSpanEnd(s string, start int, noCloser map[int]int) int {
+// Index complete runs, including escaped backticks: escapes do not apply inside
+// code, so every complete run can close a span. A partial run after an escaped
+// opener still needs a later complete run of exactly its remaining length.
+func indexCodeRuns(s string, start int) map[int]int {
+	last := make(map[int]int)
+	for i := start; i < len(s); {
+		if s[i] != '`' {
+			i++
+			continue
+		}
+		n := runLength(s[i:])
+		last[n] = i
+		i += n
+	}
+	return last
+}
+
+func codeSpanEnd(s string, start int, lastCodeRun map[int]int) int {
 	n := runLength(s[start:])
-	// Lookaheads can visit positions before the renderer does. Only reuse a
-	// failed search at or after its start, with offsets in the same source.
-	if failedAt, ok := noCloser[n]; ok && start >= failedAt {
+	// Reject a missing closer in O(1), even when every opener length differs.
+	if last, ok := lastCodeRun[n]; !ok || last <= start {
 		return start + n
 	}
 	for i := start + n; i < len(s); i++ {
@@ -261,20 +326,25 @@ func codeSpanEnd(s string, start int, noCloser map[int]int) int {
 			i += count - 1
 		}
 	}
-	noCloser[n] = start
 	return start + n
 }
 
-func emphasisEnd(s string, start int, marker string, noCodeCloser map[int]int) int {
+// A later opener must be tried on its own, without memoizing a failed search.
+const emphasisReopened = -2
+
+func emphasisEnd(s string, start int, marker string, lastCodeRun map[int]int) int {
 	for i := start; i < len(s); {
 		switch {
 		case s[i] == '\\' && i+1 < len(s):
 			i = escapedEnd(s, i)
 		case s[i] == '`':
-			i = codeSpanEnd(s, i, noCodeCloser)
+			i = codeSpanEnd(s, i, lastCodeRun)
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
 			previous, _ := utf8.DecodeLastRuneInString(s[:i])
+			if n == len(marker) && unicode.IsSpace(previous) && i+n < len(s) && !spaceAt(s[i+n:]) {
+				return emphasisReopened
+			}
 			if n == len(marker) && i > start && !unicode.IsSpace(previous) && !(marker[0] == '_' && wordAt(s[i+n:])) {
 				return i
 			}
@@ -301,7 +371,7 @@ func wordBefore(s string) bool {
 	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
-func linkLabelEnds(s string, noCodeCloser map[int]int) map[int]int {
+func linkLabelEnds(s string, lastCodeRun map[int]int) map[int]int {
 	ends := make(map[int]int)
 	var stack []int
 	for i := 0; i < len(s); i++ {
@@ -309,7 +379,7 @@ func linkLabelEnds(s string, noCodeCloser map[int]int) map[int]int {
 		case '\\':
 			i++
 		case '`':
-			i = codeSpanEnd(s, i, noCodeCloser) - 1
+			i = codeSpanEnd(s, i, lastCodeRun) - 1
 		case '[':
 			stack = append(stack, i)
 		case ']':
@@ -352,31 +422,48 @@ func link(s string, start int, labels, destinations map[int]int) (label, url str
 	if !found {
 		return
 	}
-	return s[start+1 : closeLabel], s[closeLabel+2 : closeURL], closeURL + 1, true
+	url, ok = chatDestination(s[closeLabel+2 : closeURL])
+	if !ok {
+		return
+	}
+	return s[start+1 : closeLabel], url, closeURL + 1, true
 }
 
-func chatDestination(s string) string {
-	angle := strings.HasPrefix(s, "<")
+func chatDestination(s string) (string, bool) {
+	s = strings.TrimLeft(s, " \t")
+	angleEnd := -1
+	if strings.HasPrefix(s, "<") {
+		for i := 1; i < len(s); i++ {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if s[i] == '>' {
+				angleEnd = i
+				break
+			}
+		}
+	}
+	if angleEnd >= 0 {
+		if angleEnd+1 < len(s) && !strings.ContainsRune(" \t\r\n", rune(s[angleEnd+1])) {
+			return "", false // An angle destination cannot have an attached suffix.
+		}
+		s = s[1:angleEnd] // Spaces inside <...> belong to the destination.
+	}
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++
 			continue
 		}
-		if angle {
-			if s[i] == '>' {
-				s = s[1:i] // Spaces inside <...> belong to the destination.
-				break
-			}
-			continue
-		}
-		if s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n' {
+		if angleEnd < 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
 			s = s[:i] // Optional Markdown titles are not part of the URL.
 			break
 		}
 	}
 	// These delimiters have structural meaning in Chat's <url|label> syntax.
 	s = strings.ReplaceAll(s, "|", "%7C")
-	return strings.ReplaceAll(s, ">", "%3E")
+	s = strings.ReplaceAll(s, "<", "%3C")
+	return strings.ReplaceAll(s, ">", "%3E"), true
 }
 
 type codeFence struct {
@@ -416,8 +503,9 @@ func (f *codeFence) closes(line string) bool {
 // Empty text returns nil. For nonempty text, limit must be at least utf8.UTFMax;
 // smaller limits panic. If no fenced cut fits, or reopening and closing a fence
 // would consume more than half the limit, a hard rune-boundary cut without
-// synthetic wrappers guarantees progress. A complete message that fits,
-// including an unclosed fence, is unchanged.
+// synthetic wrappers guarantees progress. A hard cut also removes the preceding
+// part's synthetic closer if its matching reopener cannot be retained. A complete
+// message that fits, including an unclosed fence, is unchanged.
 func Split(text string, limit int) []string {
 	if text == "" {
 		return nil
