@@ -222,46 +222,84 @@ func (a *application) pull(ctx context.Context, pc *pubsub.Client, m *events.Man
 }
 
 func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.Manager, caught *atomic.Bool) error {
+	inventory := time.NewTicker(time.Hour)
+	defer inventory.Stop()
+	var retry <-chan time.Time
+	var timer *time.Timer
+	defer func() {
+		if timer != nil {
+			timer.Stop()
+		}
+	}()
+	pass := true // The generation already froze the mandatory startup interval.
+	delay := time.Second
 	for {
-		_, remaining, err := r.Pass(ctx)
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if credentialsError(err) {
-			return err
-		}
-		caught.Store(err == nil && remaining == 0)
-		if err != nil {
-			a.log.Warn("catch-up pass deferred", "cause", safeReason("retrying", err))
-		}
-		if !caught.Load() {
-			a.health("catching-up", "recovering retained history")
-		}
-		delay := time.Second
-		if caught.Load() {
-			delay = time.Minute
-		}
-		t := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return ctx.Err()
-		case <-m.RecoveryNeeded():
-			t.Stop()
-			caught.Store(false)
-			a.health("catching-up", "subscription recovered; recovering history")
-			if err = a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+		if pass {
+			_, remaining, err := r.Pass(ctx)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if credentialsError(err) {
 				return err
 			}
-		case <-t.C:
-			// Periodic inventory refresh also retries left/rejoined spaces.
-			if caught.Load() {
-				if err = a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
-					return err
-				}
+			caught.Store(err == nil && remaining == 0)
+			if err != nil {
+				a.log.Warn("catch-up pass deferred", "cause", safeReason("retrying", err))
 			}
+			if timer != nil {
+				timer.Stop()
+			}
+			retry = nil
+			if !caught.Load() {
+				a.health("catching-up", "recovering retained history")
+				timer = time.NewTimer(delay)
+				retry = timer.C
+				if err != nil {
+					delay = min(2*delay, time.Minute)
+				} else {
+					delay = time.Second
+				}
+			} else {
+				delay = time.Second
+			}
+			pass = false
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-retry:
+			retry = nil
+			pass = true
+		case <-m.RecoveryNeeded():
+			caught.Store(false)
+			a.health("catching-up", "subscription recovered; recovering history")
+			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+				return err
+			}
+			pass = a.frozenHistory()
+			caught.Store(!pass)
+		case <-inventory.C:
+			// Only the hourly inventory can discover rejoined/held spaces in
+			// the absence of a subscription recovery notification. Completed
+			// intervals otherwise stay idle; inbound arrives on the stream.
+			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
+				return err
+			}
+			pass = a.frozenHistory()
+			caught.Store(!pass)
 		}
 	}
+}
+
+func (a *application) frozenHistory() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, space := range a.l.Spaces {
+		if space != nil && !space.FrozenUpper.IsZero() {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *application) poll(ctx context.Context, p *inbound.Processor, fatal chan<- error) {
