@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,7 +22,9 @@ import (
 	"google.golang.org/api/option"
 	events "google.golang.org/api/workspaceevents/v1"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func TestDecodeSingularAndBatch(t *testing.T) {
@@ -147,7 +150,7 @@ type fixture struct {
 	google    *fakegoogle.Server
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T, dialOptions ...grpc.DialOption) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
@@ -155,7 +158,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Cleanup(pstest.ResetMinAckDeadline)
 	srv := pstest.NewServer()
 	t.Cleanup(func() { _ = srv.Close() })
-	conn, err := grpc.NewClient(srv.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(srv.Addr, append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,5 +450,191 @@ func TestQuarantineCreatesParentsAndEscapesID(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != string(ev.Raw) {
 		t.Fatalf("payload: %q, %v", data, err)
+	}
+}
+
+type logRecord struct {
+	level, message string
+	attrs          map[string]any
+}
+
+type recordingLogger struct {
+	mu      sync.Mutex
+	records []logRecord
+}
+
+func (l *recordingLogger) record(level, message string, args ...any) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	r := logRecord{level: level, message: message, attrs: map[string]any{}}
+	for i := 0; i < len(args); i += 2 {
+		r.attrs[args[i].(string)] = args[i+1]
+	}
+	l.records = append(l.records, r)
+}
+
+func (l *recordingLogger) Info(message string, args ...any)  { l.record("info", message, args...) }
+func (l *recordingLogger) Error(message string, args ...any) { l.record("error", message, args...) }
+func (l *recordingLogger) Warn(message string, args ...any)  { l.record("warn", message, args...) }
+
+func (l *recordingLogger) snapshot() []logRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]logRecord(nil), l.records...)
+}
+
+type failingReceiveStream struct {
+	grpc.ClientStream
+	err error
+}
+
+func (s *failingReceiveStream) RecvMsg(any) error { return s.err }
+
+// pstest v2.8.0 only consults its reactors for unary RPCs, not StreamingPull.
+// Bridge its error reactor into RecvMsg; successful streams still use pstest.
+func injectPullErrors(code codes.Code, failures int, attempts chan<- time.Time) grpc.DialOption {
+	var calls atomic.Int32
+	reactor := pstest.WithErrorInjection("StreamingPull", code, "injected failure").Reactor
+	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
+			return stream, err
+		}
+		attempts <- time.Now()
+		if int(calls.Add(1)) <= failures {
+			_, _, err := reactor.React(nil)
+			return &failingReceiveStream{ClientStream: stream, err: err}, nil
+		}
+		return stream, nil
+	})
+}
+
+func TestRunReconnectsAfterQuotaFailures(t *testing.T) {
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, injectPullErrors(codes.ResourceExhausted, 2, attempts))
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	log := &recordingLogger{}
+	done := make(chan error, 1)
+	delivered := make(chan struct{}, 1)
+	go func() {
+		done <- Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) {
+			delivered <- struct{}{}
+			return Ack, nil
+		}, log, RunOptions{InitialBackoff: 20 * time.Millisecond, MaxBackoff: 40 * time.Millisecond})
+	}()
+	var started []time.Time
+	for len(started) < 3 {
+		select {
+		case at := <-attempts:
+			started = append(started, at)
+		case err := <-done:
+			t.Fatalf("Run stopped before reconnecting: %v", err)
+		case <-ctx.Done():
+			t.Fatal("Run did not reconnect")
+		}
+	}
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-delivered:
+	case err := <-done:
+		t.Fatalf("Run stopped before delivery: %v", err)
+	case <-ctx.Done():
+		t.Fatal("no delivery after reconnecting")
+	}
+	waitFor(t, ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks > 0 })
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run cancellation: %v", err)
+	}
+	retries := 0
+	for _, record := range log.snapshot() {
+		if record.message != "pubsub receive retry" {
+			continue
+		}
+		delay, ok := record.attrs["delay"].(time.Duration)
+		if !ok || delay < 0 || delay >= time.Duration(20<<retries)*time.Millisecond || record.attrs["code"] != codes.ResourceExhausted.String() {
+			t.Fatalf("retry must log its delay and status code: %+v", record)
+		}
+		if elapsed := started[retries+1].Sub(started[retries]); elapsed < delay {
+			t.Errorf("reconnected after %v, before backoff %v", elapsed, delay)
+		}
+		retries++
+	}
+	if retries != 2 || len(attempts) != 0 {
+		t.Fatalf("retries=%d extra attempts=%d", retries, len(attempts))
+	}
+}
+
+func TestRunReturnsPermissionDenied(t *testing.T) {
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, injectPullErrors(codes.PermissionDenied, 10, attempts))
+	err := Run(f.ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, nil)
+	if status.Code(err) != codes.PermissionDenied || len(attempts) != 1 {
+		t.Fatalf("Run: %v, attempts=%d", err, len(attempts))
+	}
+}
+
+func TestReceiveErrorClassification(t *testing.T) {
+	for _, code := range []codes.Code{codes.ResourceExhausted, codes.Unavailable, codes.Internal, codes.DeadlineExceeded, codes.Aborted, codes.Unknown} {
+		if !recoverableReceiveError(status.Error(code, "retry")) {
+			t.Errorf("%s must reconnect", code)
+		}
+	}
+	if !recoverableReceiveError(errors.New("transport disconnected")) {
+		t.Error("non-status transport errors must reconnect")
+	}
+	for _, code := range []codes.Code{codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument} {
+		if recoverableReceiveError(status.Error(code, "fatal")) {
+			t.Errorf("%s must return to the application", code)
+		}
+	}
+}
+
+func TestReceiveBackoffGrowthCapAndReset(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		b := receiveBackoff{initial: time.Second, max: time.Minute}
+		for _, bound := range []time.Duration{1, 2, 4, 8, 16, 32, 60, 60} {
+			if delay := b.pause(0, false); delay < 0 || delay >= bound*time.Second {
+				t.Fatalf("delay %v exceeds bound %v", delay, bound*time.Second)
+			}
+		}
+		stretch := time.Duration(0)
+		if !delivered {
+			stretch = time.Minute
+		}
+		if delay := b.pause(stretch, delivered); delay < 0 || delay >= time.Second {
+			t.Errorf("backoff did not reset: %v", delay)
+		}
+	}
+}
+
+func TestRunCancellationInterruptsBackoff(t *testing.T) {
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, injectPullErrors(codes.ResourceExhausted, 10, attempts))
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	log := &recordingLogger{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, log,
+			RunOptions{InitialBackoff: time.Hour, MaxBackoff: time.Hour})
+	}()
+	waitFor(t, f.ctx, func() bool {
+		for _, record := range log.snapshot() {
+			if record.message == "pubsub receive retry" {
+				return true
+			}
+		}
+		return false
+	})
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt backoff")
 	}
 }

@@ -7,14 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"cloud.google.com/go/pubsub/v2"
 	chat "google.golang.org/api/chat/v1"
 	events "google.golang.org/api/workspaceevents/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type Event struct {
@@ -59,6 +64,10 @@ type Logger interface {
 type RunOptions struct {
 	MediaDir         string
 	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
+	// InitialBackoff and MaxBackoff bound full-jitter exponential reconnection
+	// delays. Zero uses one second and one minute respectively.
+	InitialBackoff time.Duration
+	MaxBackoff     time.Duration
 }
 
 // Decode reads a binary-mode CloudEvent: ce-* attributes carry the envelope and
@@ -203,7 +212,10 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 // Run owns sub until cancellation or a fatal receive error; do not use sub
 // concurrently. Exactly one streaming-pull connection and one in-flight handler
 // keep the ledger updates serialized. The Pub/Sub client automatically retries
-// transient stream failures and extends leases while the callback is running.
+// in-stream failures and extends leases while the callback is running. Run
+// reconnects after recoverable Receive errors with full-jitter backoff. Fatal
+// permission, authentication, configuration and missing-subscription errors
+// return to the application for credential/subscription reconciliation.
 // A quarantine storage/record failure always nacks. Without MediaDir quarantine
 // fails closed, so callers should supply their configured directory at startup.
 func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
@@ -220,12 +232,23 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if log == nil {
 		log = slog.Default()
 	}
+	if opts.InitialBackoff == 0 {
+		opts.InitialBackoff = time.Second
+	}
+	if opts.MaxBackoff == 0 {
+		opts.MaxBackoff = time.Minute
+	}
+	if opts.InitialBackoff < 0 || opts.MaxBackoff < opts.InitialBackoff {
+		return errors.New("puller backoff requires 0 < InitialBackoff <= MaxBackoff")
+	}
 	sub.ReceiveSettings.NumGoroutines = 1
 	sub.ReceiveSettings.MaxOutstandingMessages = 1
 	if sub.ReceiveSettings.MaxExtension <= 0 {
 		sub.ReceiveSettings.MaxExtension = pubsub.DefaultReceiveSettings.MaxExtension
 	}
-	return sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
+	var delivered atomic.Bool
+	handle := func(ctx context.Context, msg *pubsub.Message) {
+		delivered.Store(true)
 		ev, err := Decode(msg)
 		outcome := Quarantine
 		if err == nil {
@@ -256,7 +279,57 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 			return
 		}
 		msg.Ack()
-	})
+	}
+	backoff := receiveBackoff{initial: opts.InitialBackoff, max: opts.MaxBackoff}
+	for ctx.Err() == nil {
+		delivered.Store(false)
+		started := time.Now()
+		err := sub.Receive(ctx, handle)
+		if ctx.Err() != nil {
+			return nil // Preserve Receive's graceful cancellation contract.
+		}
+		if !recoverableReceiveError(err) {
+			return err
+		}
+		delay := backoff.pause(time.Since(started), delivered.Load())
+		log.Error("pubsub receive retry", "code", status.Code(err).String(), "cause", err, "delay", delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
+func recoverableReceiveError(err error) bool {
+	switch status.Code(err) {
+	case codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument:
+		return false
+	default:
+		// Includes non-status transport errors (Unknown). Only the application
+		// can repair the fatal codes above; other failures reconnect here.
+		return true
+	}
+}
+
+type receiveBackoff struct {
+	initial, max, current time.Duration
+}
+
+func (b *receiveBackoff) pause(stretch time.Duration, delivered bool) time.Duration {
+	if b.current == 0 || stretch >= time.Minute || delivered {
+		b.current = b.initial
+	}
+	delay := time.Duration(rand.Int64N(int64(b.current)))
+	if b.current > b.max/2 {
+		b.current = b.max
+	} else {
+		b.current *= 2
+	}
+	return delay
 }
 
 func quarantine(mediaDir string, ev *Event) (string, error) {
