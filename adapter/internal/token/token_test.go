@@ -1534,7 +1534,7 @@ func TestWriteTokenSyncsDirectoryAfterRename(t *testing.T) {
 				return f.Sync()
 			})
 			if tc.syncErr == syscall.EIO {
-				if !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), filepath.Dir(path)) {
+				if !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), fmt.Sprintf("token written to %s but its directory could not be synced", path)) {
 					t.Errorf("directory sync failure = %v", err)
 				}
 			} else if err != nil {

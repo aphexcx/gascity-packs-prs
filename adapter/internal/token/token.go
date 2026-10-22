@@ -583,6 +583,8 @@ func loadConfig(path string, ep config.Endpoints, scopes []string) (*oauth2.Conf
 
 // RunAuth performs desktop consent without modifying the existing token until
 // exchange, scope validation and the temporary file write have all succeeded.
+// If directory syncing fails after the atomic rename, the new token is already
+// installed; the returned error reports that partial success explicitly.
 func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoints, scopes []string, stdout io.Writer, open func(string) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -740,11 +742,11 @@ func writeTokenWithSync(ctx context.Context, path string, tok *oauth2.Token, syn
 	// success. Some filesystems do not support syncing directory descriptors.
 	dir, err := os.Open(filepath.Dir(path))
 	if err != nil {
-		return fmt.Errorf("open token directory %s: %w", filepath.Dir(path), err)
+		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	defer dir.Close()
 	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) {
-		return fmt.Errorf("sync token directory %s: %w", filepath.Dir(path), err)
+		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	return nil
 }
