@@ -810,15 +810,24 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 		return result, err
 	}
-	if !result.Recorded {
-		if result.Delivered {
-			result.Reason = "delivered but gc did not record a transcript entry"
-		} else {
-			result.Reason = "gc did not deliver the message"
-		}
-	}
 	err = s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
+		// gc can return HTTP 200 with Delivered:false after losing the
+		// callback response. Reconcile under the ledger lock so that answer
+		// can never overwrite a success committed by the callback.
+		if r := v.Receipt; r != nil && r.Delivered {
+			result.Delivered, result.MessageID = true, r.MessageID
+			result.FailureKind, result.RetryAfter = "", 0
+		}
+		result.Recorded = result.Recorded || v.Recorded
+		result.Reason = ""
+		if !result.Recorded {
+			if result.Delivered {
+				result.Reason = "delivered but gc did not record a transcript entry"
+			} else {
+				result.Reason = "gc did not deliver the message"
+			}
+		}
 		v.Recorded = result.Recorded
 		v.RecordPending = result.Delivered && !result.Recorded
 		v.RecordingReason = result.Reason

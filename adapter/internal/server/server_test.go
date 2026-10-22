@@ -1065,6 +1065,49 @@ func TestUploadDeliverySurvivesFailedRecordingCallback(t *testing.T) {
 	}
 }
 
+func TestCommandDeliverySurvivesLostCallbackResponse(t *testing.T) {
+	f := setup(t)
+	f.gc.Bind(conversation("spaces/room"), "session")
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Chat and the ledger have committed; gc cannot decode the lost body.
+		f.s.ServeHTTP(httptest.NewRecorder(), r)
+		_, _ = io.WriteString(w, `{"delivered":`)
+	}))
+	defer proxy.Close()
+	reg := wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: proxy.URL, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}}
+	if err := f.options.GC.Register(t.Context(), reg); err != nil {
+		t.Fatal(err)
+	}
+	_, raw, _ := f.call(t, "/commands/publish", command("lost-callback"))
+	first := decode[CommandResult](t, raw)
+	if !first.Delivered || first.Recorded || first.MessageID == "" || first.FailureKind != "" || f.count() != 1 {
+		t.Fatalf("durable success downgraded: %+v, sends=%d", first, f.count())
+	}
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := l.Sends[first.Key]
+	if v.Receipt == nil || !v.Receipt.Delivered || !v.RecordPending {
+		t.Fatalf("lost pending transcript: %+v", v)
+	}
+	f.mu.Lock()
+	*f.l = *l
+	f.mu.Unlock()
+	reg.CallbackURL = f.url
+	if err := f.options.GC.Register(t.Context(), reg); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_, raw, _ = f.call(t, "/commands/publish", command(first.Key))
+	got := decode[CommandResult](t, raw)
+	if !got.Delivered || !got.Recorded || got.MessageID != first.MessageID || f.count() != 1 {
+		t.Fatalf("transcript recovery: %+v, sends=%d", got, f.count())
+	}
+}
+
 func TestRecordingSuccessRemainsReportedWhenSaveFails(t *testing.T) {
 	f := setup(t)
 	f.gc.Bind(conversation("spaces/room"), "session")
