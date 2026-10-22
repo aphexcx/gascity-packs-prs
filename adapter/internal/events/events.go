@@ -558,20 +558,13 @@ func (m *Manager) RenewLoop(ctx context.Context) {
 				return
 			}
 			m.log.ErrorContext(ctx, "subscription reconciliation failed", "cause", err)
-			_, _, next, _ := m.Status()
-			if m.clock.Sleep(ctx, max(0, next.Sub(m.clock.Now()))) != nil {
-				return
-			}
-			continue
 		}
+		// Both recovery and retry schedules can change after Reconcile returns.
+		// Use the latest result each minute, including a concurrent success
+		// that replaces backoff with a renewal hours in the future.
 		for ctx.Err() == nil {
-			select {
-			case m.gate <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-			delay := m.renewAt.Sub(m.clock.Now())
-			<-m.gate
+			_, _, next, _ := m.Status()
+			delay := next.Sub(m.clock.Now())
 			if delay <= 0 {
 				break
 			}

@@ -531,7 +531,7 @@ func TestRenewLoopRetriesWithBoundedBackoff(t *testing.T) {
 		return nil
 	}
 	f.manager.RenewLoop(ctx)
-	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second, 2 * time.Minute, 2 * time.Minute, 2 * time.Minute}) {
+	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, 4 * time.Second, time.Minute, time.Minute}) {
 		t.Fatalf("backoff = %v", f.clock.sleeps)
 	}
 	if f.count("POST", "/v1/subscriptions") != 0 {
@@ -941,7 +941,7 @@ func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
 	f.clock.onSleep = func(delay time.Duration) error {
 		attempts++
 		last, failures, next, _ := reader.Status()
-		if last == nil || failures != attempts || !next.Equal(f.clock.Now().Add(delay)) {
+		if last == nil || failures != len(f.requests) || delay != min(next.Sub(f.clock.Now()), time.Minute) {
 			t.Errorf("retry schedule disagrees with status: %v %d %v delay=%v", last, failures, next, delay)
 		}
 		if attempts == 10 {
@@ -951,6 +951,48 @@ func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
 		return nil
 	}
 	f.manager.RenewLoop(ctx)
+}
+
+type callbackHandler struct {
+	slog.Handler
+	onError func()
+}
+
+func (h callbackHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level == slog.LevelError {
+		h.onError()
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func TestRenewLoopRechecksScheduleAfterConcurrentRecovery(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	failed, recovered := make(chan struct{}), make(chan struct{})
+	f.manager.log = slog.New(callbackHandler{
+		Handler: slog.NewTextHandler(io.Discard, nil),
+		onError: func() { close(failed); <-recovered },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.clock.onSleep = func(delay time.Duration) error {
+		if delay != time.Minute {
+			t.Errorf("recovered renewal wait = %v; want one minute", delay)
+		}
+		cancel()
+		return ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); f.manager.RenewLoop(ctx) }()
+	<-failed // The loop has failed and is about to read its retry schedule.
+	f.hook = nil
+	state, err := f.manager.Reconcile(context.Background())
+	close(recovered)
+	<-done
+	if err != nil || state != first {
+		t.Fatalf("concurrent recovery: state=%+v error=%v", state, err)
+	}
 }
 
 func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
