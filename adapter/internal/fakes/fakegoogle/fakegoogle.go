@@ -37,6 +37,7 @@ type Server struct {
 	CreateReturnsAlreadyExists bool
 	DropNextResponse           bool // accept the next mutation, then close without a response
 	EnforceRate                bool
+	EmitRespectsSubscriptions  bool
 	PageSize                   int
 	Now                        func() time.Time
 	Spaces                     map[string]*chat.Space
@@ -915,8 +916,33 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 // of resources; each becomes a singular wrapper inside the plural array. The
 // Pub/Sub message data is the event payload, not a second CloudEvent envelope.
 // Subscription lifecycle events wrap the subscription and use it as the subject.
+// By default Emit ignores subscription state so fixtures can inject missed or
+// delayed events. With EmitRespectsSubscriptions, it drops events unless an
+// active, unexpired subscription covers the space and event type (including
+// batch variants). Lifecycle types are implicit on every subscription.
 func (s *Server) Emit(eventType string, resource any, space string) {
 	s.t.Helper()
+	s.mu.Lock()
+	allowed := true
+	if s.EmitRespectsSubscriptions {
+		s.refreshSubscriptions()
+		allowed = false
+		target := space
+		if !strings.HasPrefix(target, "//") {
+			target = "//chat.googleapis.com/" + space
+		}
+		for _, sub := range s.Subscriptions {
+			if sub.State == "ACTIVE" && (sub.TargetResource == target || sub.TargetResource == "//chat.googleapis.com/spaces/-") &&
+				(strings.HasPrefix(eventType, "google.workspace.events.subscription.v1.") || (len(sub.EventTypes) > 0 && matches(sub.EventTypes, singularEvent(eventType)))) {
+				allowed = true
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+	if !allowed {
+		return
+	}
 	if s.publisher == nil {
 		s.t.Error("fakegoogle.Emit requires a pstest-connected publisher")
 		return

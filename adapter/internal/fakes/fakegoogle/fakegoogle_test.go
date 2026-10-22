@@ -918,3 +918,79 @@ func TestEmitOverStreamingPull(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEmitCanRespectSubscriptions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ps := pstest.NewServer()
+	defer ps.Close()
+	conn, err := grpc.NewClient(ps.Addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	client, err := pubsub.NewClient(ctx, "example", option.WithGRPCConn(conn))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	const topic = "projects/example/topics/events"
+	if _, err := client.TopicAdminClient.CreateTopic(ctx, &pubsubpb.Topic{Name: topic}); err != nil {
+		t.Fatal(err)
+	}
+	publisher := client.Publisher(topic)
+	defer publisher.Stop()
+	s := New(t, publisher)
+	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	const created = "google.workspace.chat.message.v1.created"
+	for _, tc := range []struct {
+		name, state, target, eventType string
+		respect, expired, want         bool
+	}{
+		{name: "default without subscription", want: true},
+		{name: "none", respect: true},
+		{name: "suspended", state: "SUSPENDED", respect: true},
+		{name: "expired", state: "ACTIVE", respect: true, expired: true},
+		{name: "active", state: "ACTIVE", respect: true, want: true},
+		{name: "other space", state: "ACTIVE", target: "//chat.googleapis.com/spaces/other", respect: true},
+		{name: "all spaces", state: "ACTIVE", target: "//chat.googleapis.com/spaces/-", respect: true, want: true},
+		{name: "other type", state: "ACTIVE", eventType: "google.workspace.chat.reaction.v1.created", respect: true},
+		{name: "batch", state: "ACTIVE", eventType: "google.workspace.chat.message.v1.batchCreated", respect: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s.Configure(func(s *Server) {
+				s.EmitRespectsSubscriptions = tc.respect
+				s.Subscriptions = map[string]*events.Subscription{}
+				if tc.state != "" {
+					target := tc.target
+					if target == "" {
+						target = "//chat.googleapis.com/spaces/room"
+					}
+					expiry := now.Add(time.Hour)
+					if tc.expired {
+						expiry = now
+					}
+					s.Subscriptions["subscriptions/one"] = &events.Subscription{Name: "subscriptions/one", TargetResource: target, EventTypes: []string{created}, State: tc.state, ExpireTime: expiry.Format(time.RFC3339Nano)}
+				}
+			})
+			typ := tc.eventType
+			if typ == "" {
+				typ = created
+			}
+			var resource any = &chat.Message{Name: "spaces/room/messages/1"}
+			if strings.Contains(typ, ".batch") {
+				resource = []*chat.Message{{Name: "spaces/room/messages/1"}}
+			}
+			before := len(ps.Messages())
+			s.Emit(typ, resource, "spaces/room")
+			want := 0
+			if tc.want {
+				want = 1
+			}
+			if got := len(ps.Messages()) - before; got != want {
+				t.Fatalf("published %d messages, want %d", got, want)
+			}
+		})
+	}
+}
