@@ -1132,6 +1132,67 @@ func TestRecordingSuccessRemainsReportedWhenSaveFails(t *testing.T) {
 	}
 }
 
+func TestDefiniteRecordingRefusalStopsAutomaticRecovery(t *testing.T) {
+	for _, status := range []int{400, 401, 403, 404, 409, 422} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.s.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "refused-recording"}
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			first := f.send(t, p)
+			if !first.Delivered {
+				t.Fatal(first)
+			}
+			calls := 0
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				respond(w, status, map[string]any{"code": "validation-failed", "detail": "binding belongs to another session"})
+			}))
+			defer h.Close()
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+			result := decode[CommandResult](t, raw)
+			if !result.Delivered || result.Recorded || result.MessageID != first.MessageID || result.Reason != "binding belongs to another session" || result.FailureKind == "" {
+				t.Fatalf("recording refusal: %+v", result)
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			*f.l = *l
+			f.mu.Unlock()
+			for range 2 {
+				if err := f.s.RetryPending(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			v := f.l.Sends[p.IdempotencyKey]
+			if calls != 1 || v.RecordPending || !v.NotRecordable || !v.Receipt.Delivered || commandOutcome(v) != result {
+				t.Fatalf("recording refusal not settled: %+v calls=%d", v, calls)
+			}
+			if strings.Count(logs.String(), `"level":"WARN"`) != 1 {
+				t.Fatalf("expected one refusal warning: %s", logs.String())
+			}
+			_, raw, _ = f.call(t, "/status", nil)
+			if decode[map[string]any](t, raw)["unrecorded"] != float64(0) {
+				t.Fatalf("refused recording still pending: %s", raw)
+			}
+			// A corrected binding and explicit retry can record the same delivery.
+			f.s.SetClients(f.options.Chat, f.options.GC)
+			f.gc.Bind(p.Conversation, p.SessionID)
+			_, raw, _ = f.call(t, "/commands/publish", command(p.IdempotencyKey))
+			got := decode[CommandResult](t, raw)
+			if !got.Delivered || !got.Recorded || got.MessageID != first.MessageID || got.Reason != "" || got.FailureKind != "" || f.count() != 1 {
+				t.Fatalf("explicit recording retry: %+v", got)
+			}
+		})
+	}
+}
+
 func TestDurableDeliverySurvivesNoBindingSaveFailure(t *testing.T) {
 	f := setup(t)
 	first := f.send(t, wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "saved"})

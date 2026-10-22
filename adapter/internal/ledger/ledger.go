@@ -102,6 +102,8 @@ type SendState struct {
 	RecordPending   bool                 `json:"record_pending,omitempty"`
 	NotRecordable   bool                 `json:"not_recordable,omitempty"`
 	RecordingReason string               `json:"recording_reason,omitempty"`
+	// Separate from Receipt: a recording refusal must not downgrade delivery.
+	RecordingFailureKind string `json:"recording_failure_kind,omitempty"`
 }
 
 type SendUpload struct {

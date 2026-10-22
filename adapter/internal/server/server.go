@@ -747,6 +747,9 @@ func commandOutcome(send *ledger.SendState) CommandResult {
 		result.Delivered, result.MessageID = r.Delivered, r.MessageID
 		result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
 	}
+	if send.RecordingFailureKind != "" {
+		result.FailureKind = send.RecordingFailureKind
+	}
 	return result
 }
 
@@ -786,7 +789,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 		// Re-check under the command lock: a caller may have finished or
 		// rejected this intent since RetryPending took its snapshot.
-		if (automatic && !send.RecordPending) || send.Recorded || (result.Delivered && send.NotRecordable) {
+		if (automatic && !send.RecordPending) || send.Recorded || (result.Delivered && send.NotRecordable && send.RecordingFailureKind == "") {
 			return result, nil
 		}
 		if send.Request != nil {
@@ -819,7 +822,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			p = *send.Request
 		}
 	}
-	if send.NotRecordable || p.SessionID == "" {
+	if (send.NotRecordable && send.RecordingFailureKind == "") || p.SessionID == "" {
 		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result)
 	}
 	if send.Upload != nil && !result.Delivered {
@@ -885,6 +888,22 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			r := failure(p, err)
 			result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
 			err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
+		} else {
+			// Delivery is durable; only recording failed. Definite rejections
+			// belong to the caller, while ambiguous recording failures recover.
+			var gcErr *gcclient.HTTPError
+			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429
+			if definite {
+				result.FailureKind = failure(p, err).FailureKind
+			}
+			err = errors.Join(err, s.settle(ctx, func(l *ledger.Ledger) error {
+				v := l.Sends[p.IdempotencyKey]
+				v.RecordPending = !definite && !v.Recorded
+				v.NotRecordable = definite
+				v.RecordingReason = result.Reason
+				v.RecordingFailureKind = result.FailureKind
+				return nil
+			}))
 		}
 		return result, err
 	}
@@ -908,6 +927,8 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 		v.Recorded = result.Recorded
 		v.RecordPending = result.Delivered && !result.Recorded
+		v.NotRecordable = false
+		v.RecordingFailureKind = ""
 		v.RecordingReason = result.Reason
 		if !result.Delivered {
 			v.Receipt = &wire.PublishReceipt{Conversation: p.Conversation, FailureKind: result.FailureKind, RetryAfter: result.RetryAfter}
@@ -952,6 +973,7 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	if err := s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.NotRecordable = true
+		v.RecordingFailureKind = ""
 		v.RecordPending = v.Receipt == nil || !v.Receipt.Delivered
 		v.RecordingReason = reason
 		return nil
