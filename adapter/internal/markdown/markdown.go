@@ -179,11 +179,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
 	noCodeCloser := make(map[int]int)
-	var labels, destinations map[int]int
-	if allowLinks {
-		labels = linkLabelEnds(s, noCodeCloser)
-		destinations = parenthesisEnds(s)
-	}
+	labels := linkLabelEnds(s, noCodeCloser)
+	destinations := parenthesisEnds(s)
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
 			end := escapedEnd(s, i)
@@ -197,14 +194,14 @@ func formatInline(s string, heading, allowLinks bool) string {
 			i = end
 			continue
 		}
-		if allowLinks && s[i] == '[' {
+		if s[i] == '[' {
 			if label, url, end, ok := link(s, i, labels, destinations); ok {
-				if i > 0 && s[i-1] == '!' {
+				if !allowLinks || (i > 0 && s[i-1] == '!') {
 					out.WriteString(s[i:end])
 				} else {
 					// Links cannot nest in link text. Keep nested link syntax
 					// literal while still formatting emphasis and code in the
-					// label, without recursively rebuilding link indexes.
+					// rest of the label, without recursing into nested links.
 					out.WriteString("<" + chatDestination(url) + "|" + formatInline(label, heading, false) + ">")
 				}
 				i = end

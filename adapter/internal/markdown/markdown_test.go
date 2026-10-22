@@ -40,6 +40,8 @@ func TestToChat(t *testing.T) {
 		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
 		{"links inside label stay literal", "[outer [inner](v) **bold**](u)", "<u|outer [inner](v) *bold*>"},
 		{"links inside emphasized label stay literal", "[*outer [inner](v)*](u)", "<u|_outer [inner](v)_>"},
+		{"image inside label stays literal", "[![**B**](x)](u)", "<u|![**B**](x)>"},
+		{"nested destination inside label stays literal", "[t [x](a*b*c)](u)", "<u|t [x](a*b*c)>"},
 		{"image unchanged", "![**alt**](image.png) and **text**", "![**alt**](image.png) and *text*"},
 		{"link with code bracket", "[`]` label](url)", "<url|`]` label>"},
 		{"heading", "# Title\n## Subtitle\n###### Small\n", "*Title*\n*Subtitle*\n*Small*\n"},
