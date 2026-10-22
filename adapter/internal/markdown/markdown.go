@@ -143,8 +143,11 @@ func inline(s string, heading bool) string {
 
 func formatInline(s string, heading, allowLinks bool) string {
 	var out strings.Builder
-	// Failed emphasis searches remain failed at all later positions. Bracket
-	// pairs are indexed once so unmatched '[' runs never rescan the suffix.
+	// Cache failed emphasis searches and index bracket pairs so unmatched
+	// openers do not repeatedly scan the suffix. Known subset limitation:
+	// these lookaheads scan link destinations too, while rendering skips them.
+	// A backtick in a destination can therefore hide later emphasis or labels
+	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
 	var labels, destinations map[int]int
 	if allowLinks {
