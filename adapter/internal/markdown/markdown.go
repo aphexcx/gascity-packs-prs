@@ -16,7 +16,7 @@ func ToChat(md string) string {
 	var fence *codeFence
 	source := md
 	paragraphStop := 0
-	var noCodeCloser map[int]int
+	var lastCodeRun map[int]int
 	for len(md) > 0 {
 		end := lineEnd(md, 0)
 		line := md[:end]
@@ -41,16 +41,16 @@ func ToChat(md string) string {
 		offset := len(source) - len(md)
 		if paragraphStop <= offset {
 			paragraphStop = offset + paragraphEnd(md, end)
-			noCodeCloser = make(map[int]int)
+			lastCodeRun = indexCodeRuns(source[:paragraphStop], offset)
 		}
 		for i := 0; i < end; {
 			switch {
 			case md[i] == '\\' && i+1 < len(md):
 				i = escapedEnd(md, i)
 			case md[i] == '`':
-				// Absolute offsets keep failed searches valid as md advances
+				// Absolute offsets keep the index valid as md advances
 				// through physical lines in the same paragraph.
-				i = codeSpanEnd(source[:paragraphStop], offset+i, noCodeCloser) - offset
+				i = codeSpanEnd(source[:paragraphStop], offset+i, lastCodeRun) - offset
 				if i > end {
 					end = lineEnd(md, i)
 				}
@@ -189,8 +189,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 	// A backtick in a destination can therefore hide later emphasis or labels
 	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
-	noCodeCloser := make(map[int]int)
-	labels := linkLabelEnds(s, noCodeCloser)
+	lastCodeRun := indexCodeRuns(s, 0)
+	labels := linkLabelEnds(s, lastCodeRun)
 	destinations := parenthesisEnds(s)
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
@@ -200,7 +200,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 			continue
 		}
 		if s[i] == '`' {
-			end := codeSpanEnd(s, i, noCodeCloser)
+			end := codeSpanEnd(s, i, lastCodeRun)
 			out.WriteString(s[i:end])
 			i = end
 			continue
@@ -224,7 +224,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
-				end := emphasisEnd(s, i+n, marker, noCodeCloser)
+				end := emphasisEnd(s, i+n, marker, lastCodeRun)
 				if end >= 0 {
 					if heading {
 						chat = strings.TrimPrefix(chat, "*")
@@ -266,11 +266,27 @@ func escapedEnd(s string, i int) int {
 	return i + 2
 }
 
-func codeSpanEnd(s string, start int, noCloser map[int]int) int {
+// Index complete runs, including escaped backticks: escapes do not apply inside
+// code, so every complete run can close a span. A partial run after an escaped
+// opener still needs a later complete run of exactly its remaining length.
+func indexCodeRuns(s string, start int) map[int]int {
+	last := make(map[int]int)
+	for i := start; i < len(s); {
+		if s[i] != '`' {
+			i++
+			continue
+		}
+		n := runLength(s[i:])
+		last[n] = i
+		i += n
+	}
+	return last
+}
+
+func codeSpanEnd(s string, start int, lastCodeRun map[int]int) int {
 	n := runLength(s[start:])
-	// Lookaheads can visit positions before the renderer does. Only reuse a
-	// failed search at or after its start, with offsets in the same source.
-	if failedAt, ok := noCloser[n]; ok && start >= failedAt {
+	// Reject a missing closer in O(1), even when every opener length differs.
+	if last, ok := lastCodeRun[n]; !ok || last <= start {
 		return start + n
 	}
 	for i := start + n; i < len(s); i++ {
@@ -282,20 +298,19 @@ func codeSpanEnd(s string, start int, noCloser map[int]int) int {
 			i += count - 1
 		}
 	}
-	noCloser[n] = start
 	return start + n
 }
 
 // A later opener must be tried on its own, without memoizing a failed search.
 const emphasisReopened = -2
 
-func emphasisEnd(s string, start int, marker string, noCodeCloser map[int]int) int {
+func emphasisEnd(s string, start int, marker string, lastCodeRun map[int]int) int {
 	for i := start; i < len(s); {
 		switch {
 		case s[i] == '\\' && i+1 < len(s):
 			i = escapedEnd(s, i)
 		case s[i] == '`':
-			i = codeSpanEnd(s, i, noCodeCloser)
+			i = codeSpanEnd(s, i, lastCodeRun)
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
 			previous, _ := utf8.DecodeLastRuneInString(s[:i])
@@ -328,7 +343,7 @@ func wordBefore(s string) bool {
 	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
-func linkLabelEnds(s string, noCodeCloser map[int]int) map[int]int {
+func linkLabelEnds(s string, lastCodeRun map[int]int) map[int]int {
 	ends := make(map[int]int)
 	var stack []int
 	for i := 0; i < len(s); i++ {
@@ -336,7 +351,7 @@ func linkLabelEnds(s string, noCodeCloser map[int]int) map[int]int {
 		case '\\':
 			i++
 		case '`':
-			i = codeSpanEnd(s, i, noCodeCloser) - 1
+			i = codeSpanEnd(s, i, lastCodeRun) - 1
 		case '[':
 			stack = append(stack, i)
 		case ']':

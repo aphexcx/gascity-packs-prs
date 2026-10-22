@@ -168,6 +168,11 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 	}
 	flat := strings.Repeat("\\``", (64000+2)/3)
 	multiline := strings.Repeat("\\``\n", 128000/4)
+	var runs strings.Builder
+	for n := 1; n <= 400; n++ {
+		runs.WriteString(strings.Repeat("`", n))
+		runs.WriteByte(' ')
+	}
 	tests = append(tests,
 		struct{ name, input, want string }{"escaped backticks", flat, flat},
 		struct{ name, input, want string }{
@@ -177,6 +182,15 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 		},
 		struct{ name, input, want string }{"multiline escaped backticks", multiline, multiline},
 	)
+	// The larger case also exceeds the bound before indexing on fast machines.
+	for _, size := range []int{128000, 1000000} {
+		distinct := runs.String() + strings.Repeat("x", size-runs.Len())
+		tests = append(tests, struct{ name, input, want string }{
+			fmt.Sprintf("nested emphasis and distinct backtick runs %d", size),
+			"***a ___b **c __d *e _f ~~g " + distinct + " g~~ f_ e* d__ c** b___ a***",
+			"*_a *_b *c *d _e _f ~g " + distinct + " g~ f_ e_ d* c* b_* a_*",
+		})
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			start := time.Now()
