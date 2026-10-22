@@ -700,6 +700,51 @@ func TestRunAuthCancelCreatesNothing(t *testing.T) {
 	assertNoAuthTemps(t, tokenFile)
 }
 
+func TestRunAuthExchangeErrorSanitized(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		code   string
+		want   string
+	}{
+		{500, "", "OAuth unrecognized (HTTP 500)"},
+		{400, "admin_policy_enforced", "OAuth admin_policy_enforced (HTTP 400)"},
+		{400, "response-body-secret", "OAuth unrecognized (HTTP 400)"},
+	} {
+		t.Run(tc.want+tc.code, func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				fmt.Fprintf(w, `{"error":%q,"error_description":"response-body-secret","access_token":"token-secret"}`, tc.code)
+			})
+			err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard,
+				func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("exchange error = %v, want sanitized %q", err, tc.want)
+			}
+			if _, err := os.Stat(tokenFile); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("failed exchange wrote token: %v", err)
+			}
+		})
+	}
+}
+
+func TestRunAuthExchangeBodyDeadline(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	err := RunAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard,
+		func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("exchange body deadline = %v", err)
+	}
+}
+
 func TestWatchRetriesTransientValidation(t *testing.T) {
 	var calls atomic.Int32
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {

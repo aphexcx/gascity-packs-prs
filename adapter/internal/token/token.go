@@ -592,7 +592,18 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	defer cancel()
 	tok, err := cfg.Exchange(exchangeCtx, response.code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return fmt.Errorf("OAuth code exchange: %w", err)
+		// oauth2 can flatten body-read failures and include response bodies in
+		// other errors. Preserve cancellation sentinels, never endpoint text.
+		if exchangeCtx.Err() != nil {
+			return fmt.Errorf("OAuth code exchange: %w", exchangeCtx.Err())
+		}
+		if errors.Is(err, context.Canceled) {
+			return fmt.Errorf("OAuth code exchange: %w", context.Canceled)
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("OAuth code exchange: %w", context.DeadlineExceeded)
+		}
+		return fmt.Errorf("OAuth code exchange: %s", sanitizedCause(err))
 	}
 	granted, _ := tok.Extra("scope").(string)
 	grants := make(map[string]bool)
