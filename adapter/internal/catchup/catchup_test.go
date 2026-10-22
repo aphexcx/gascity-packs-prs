@@ -1040,6 +1040,10 @@ func TestRepeatedExpiredTokensBoundRetriesAndKeepBacklog(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				progress, err := decodeProgress(saved.Spaces["spaces/room"].PageToken)
+				if err != nil || progress.Token != "" {
+					t.Fatalf("bounded return did not save the empty token: %+v %v", progress, err)
+				}
 				if len(saved.Spaces["spaces/room"].Backlog) != 1 || requests != 4 || saved.Counters["unrecoverable:spaces/room"] != 0 {
 					t.Fatalf("pass %d: backlog=%d requests=%d counters=%v", pass, len(saved.Spaces["spaces/room"].Backlog), requests, saved.Counters)
 				}
@@ -1311,5 +1315,153 @@ func TestUnavailableHoldIsNewAfterSuccessfulPage(t *testing.T) {
 	}
 	if f.opts.Ledger.Counters["unavailable:spaces/room"] != 2 || strings.Count(f.logs.String(), "level=WARN") != 2 {
 		t.Fatalf("new hold not reported: %v %s", f.opts.Ledger.Counters, f.logs.String())
+	}
+}
+
+func TestNewIntervalRemembersAbsentListing(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.addMessage("spaces/room", 1, frozen.Add(-time.Minute))
+	delete(f.google.Spaces, "spaces/room")
+	f.freeze(t)
+	f.onRequest = func(*http.Request) error { return &googleapi.Error{Code: 403, Message: "not a member"} }
+	if _, _, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) {
+		t.Fatal(err)
+	}
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f.opts.Ledger = *saved
+	f.newRunner(t)
+	f.addSpace("spaces/room", false)
+	f.onRequest = nil
+	if err := f.r.Freeze(context.Background(), frozen.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// The rejoin releases the hold before the one-hour retry interval.
+	f.pass(t, 1, 0)
+	if !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(frozen.Add(time.Minute)) || len(f.gc.Inbound()) != 1 {
+		t.Fatal("new interval lost its absent listing")
+	}
+	if f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+		t.Fatal("rejoin recounted hold")
+	}
+}
+
+func TestRepeatedListingRejoinDoesNotRecountHold(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.freeze(t)
+	for i := 0; i < 3; i++ {
+		f.onRequest = func(*http.Request) error { return &googleapi.Error{Code: 403, Message: "not a member"} }
+		if _, _, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) {
+			t.Fatal(err)
+		}
+		if f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+			t.Fatal("listing rejoin recounted an uninterrupted hold")
+		}
+		f.onRequest = nil
+		delete(f.google.Spaces, "spaces/room")
+		f.freeze(t)
+		f.addSpace("spaces/room", false)
+		f.freeze(t)
+	}
+}
+
+func TestResumedClampPersistsReportedAcrossPages(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	f.opts.Ledger.Spaces["spaces/room"].EventCursor = frozen.Add(-28*24*time.Hour + 30*time.Second)
+	now := frozen
+	f.opts.Now = func() time.Time { return now }
+	f.google.Now = func() time.Time { return now }
+	f.newRunner(t)
+	for i := 0; i < 2; i++ {
+		m := f.addMessage("spaces/room", i, frozen.Add(-2*time.Hour))
+		if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+			t.Fatal(out, err)
+		}
+		m.LastUpdateTime = frozen.Add(time.Duration(-10+i) * time.Minute).Format(time.RFC3339Nano)
+		f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+			Name: fmt.Sprintf("spaces/room/spaceEvents/e%d", i), EventTime: m.LastUpdateTime,
+			EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m},
+		})
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "1" {
+			return &googleapi.Error{Code: 503, Header: http.Header{"Retry-After": {"60"}}}
+		}
+		return nil
+	}
+	for pass := 0; pass < 3; pass++ {
+		now = frozen.Add(time.Duration(pass) * time.Minute)
+		if _, _, err := f.r.Pass(context.Background()); err == nil {
+			t.Fatal("expected interrupted enumeration")
+		}
+		saved, err := ledger.Load(f.opts.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err := decodeProgress(saved.Spaces["spaces/room"].PageToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantLoss := int64(0)
+		if pass > 0 {
+			wantLoss = 1
+		}
+		if p.Reported != (pass > 0) || saved.Counters["unrecoverable:spaces/room"] != wantLoss || strings.Count(f.logs.String(), "level=WARN") != int(wantLoss) {
+			t.Fatalf("pass %d lost reporting state: %+v counters=%v logs=%s", pass, p, saved.Counters, f.logs.String())
+		}
+		*f.opts.Ledger = *saved
+		f.newRunner(t)
+	}
+	f.onRequest = nil
+	f.pass(t, 2, 0)
+	if len(f.gc.Inbound()) != 4 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 1 {
+		t.Fatal("resume duplicated delivery or loss report")
+	}
+}
+
+func TestExpiredTokensRestartBothPhasesInOnePass(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 2; i++ {
+		m := f.addMessage("spaces/room", i, frozen.Add(-2*time.Hour))
+		if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+			t.Fatal(out, err)
+		}
+		m.LastUpdateTime = frozen.Add(-time.Minute).Format(time.RFC3339Nano)
+		f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+			Name: fmt.Sprintf("spaces/room/spaceEvents/e%d", i), EventTime: m.LastUpdateTime,
+			EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m},
+		})
+		f.addMessage("spaces/room", i+2, frozen.Add(-30*time.Minute))
+	}
+	f.freeze(t)
+	tokens := map[string][]string{}
+	f.onRequest = func(r *http.Request) error {
+		phase := filepath.Base(r.URL.Path)
+		if phase != "messages" && phase != "spaceEvents" {
+			return nil
+		}
+		tokens[phase] = append(tokens[phase], r.URL.Query().Get("pageToken"))
+		if len(tokens[phase]) == 2 {
+			return &googleapi.Error{Code: 400, Message: "expired page token"}
+		}
+		return nil
+	}
+	f.pass(t, 4, 0)
+	for _, phase := range []string{"messages", "spaceEvents"} {
+		if got := strings.Join(tokens[phase], ","); got != ",1,,1" {
+			t.Fatalf("%s tokens = %q", phase, got)
+		}
+	}
+	if len(f.gc.Inbound()) != 6 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 {
+		t.Fatal("phase restart duplicated delivery or reported loss")
 	}
 }
