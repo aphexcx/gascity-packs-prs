@@ -95,6 +95,8 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 		{"same paragraph continuation", "first line\nbefore `open\n**inside**` **after**", "first line\nbefore `open\n**inside**` *after*"},
 		{"blockquote interrupts span", "Use `x\n> **q** `\n**after**", "Use `x\n> *q* `\n*after*"},
 		{"blockquote cannot start multiline span", "> `open\n**after** `", "> `open\n*after* `"},
+		{"consecutive blockquote code span", "> `open\n> **after** `", "> `open\n> **after** `"},
+		{"indented blockquote code span", " > `open\n   > **inside** `\n**after**", " > `open\n   > **inside** `\n*after*"},
 		{"code search resets between paragraphs", "before \\``\n\n`**code**` **after**", "before \\``\n\n`**code**` *after*"},
 	}
 	for _, tt := range tests {

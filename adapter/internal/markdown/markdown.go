@@ -91,18 +91,26 @@ func lineEnd(s string, start int) int {
 }
 
 func paragraphEnd(s string, end int) int {
-	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) || blockBoundaryLine(s[:end]) {
+	quoted := quoteLine(s[:end])
+	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) || (!quoted && blockBoundaryLine(s[:end])) {
 		return end
 	}
 	for end < len(s) {
 		next := lineEnd(s, end)
 		line := s[end:next]
-		if strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || blockBoundaryLine(line) {
+		// Consecutive quote lines can share a span; lazy continuation into
+		// an unquoted line still ends it in the supported subset.
+		if quoted != quoteLine(line) || strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || (!quoted && blockBoundaryLine(line)) {
 			break
 		}
 		end = next
 	}
 	return end
+}
+
+func quoteLine(line string) bool {
+	body := strings.TrimLeft(line, " ")
+	return len(line)-len(body) <= 3 && strings.HasPrefix(body, ">")
 }
 
 // Recognize the remaining block boundaries without letting code spans consume
