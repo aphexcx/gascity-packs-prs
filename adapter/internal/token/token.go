@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -555,29 +556,18 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	// A hard kill can leave our fixed temporary path behind. Only reclaim a
-	// regular file; never follow a symlink or remove another kind of object.
-	if info, err := os.Lstat(tmp); err == nil {
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("write token %s: not a regular file", tmp)
-		}
-		if err := os.Remove(tmp); err != nil {
-			return fmt.Errorf("replace stale token file %s: %w", tmp, err)
-		}
-		slog.Warn("replaced stale token temporary file", "file", tmp)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect token temporary file %s: %w", tmp, err)
+	if err := checkTokenPath(path); err != nil {
+		return err
 	}
-	// O_EXCL still refuses a path created after the inspection.
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	// Each sign-in owns a distinct 0600 file in the destination directory, so
+	// overlapping runs cannot reclaim or rename each other's unfinished writes.
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
-		return fmt.Errorf("write token %s: %w", tmp, err)
+		return fmt.Errorf("write token %s: %w", path, err)
 	}
+	tmp := f.Name()
 	renamed := false
 	defer func() {
-		// Once renamed, this path can belong to a concurrent sign-in. Only
-		// clean up the temporary file when this write did not commit.
 		if !renamed {
 			_ = os.Remove(tmp)
 		}
@@ -595,9 +585,26 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := checkTokenPath(path); err != nil {
+		return err
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("replace token %s: %w", path, err)
 	}
 	renamed = true
+	return nil
+}
+
+func checkTokenPath(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect token file %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("write token %s: not a regular file", path)
+	}
 	return nil
 }

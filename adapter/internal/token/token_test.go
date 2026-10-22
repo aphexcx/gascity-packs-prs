@@ -18,7 +18,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -424,9 +426,10 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 			writeJSON(t, tokenFile, savedToken("original"))
 			before, _ := os.ReadFile(tokenFile)
 			if scenario == "write failure" {
-				if err := os.Mkdir(tokenFile+".tmp", 0700); err != nil {
+				if err := os.Chmod(filepath.Dir(tokenFile), 0500); err != nil {
 					t.Fatal(err)
 				}
+				t.Cleanup(func() { _ = os.Chmod(filepath.Dir(tokenFile), 0700) })
 			}
 			err := RunAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error {
 				if scenario == "cancel" {
@@ -450,7 +453,7 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 			if scenario == "denied" && (!strings.Contains(err.Error(), "access_denied") || exchanges.Load() != 0) {
 				t.Fatalf("denial: error=%v exchanges=%d", err, exchanges.Load())
 			}
-			if scenario == "write failure" && !strings.Contains(err.Error(), tokenFile+".tmp") {
+			if scenario == "write failure" && !strings.Contains(err.Error(), tokenFile) {
 				t.Fatalf("write error lacks path: %v", err)
 			}
 			after, readErr := os.ReadFile(tokenFile)
@@ -904,10 +907,6 @@ func TestRunAuthHandlesStaleTemporaryPath(t *testing.T) {
 				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, strings.Join(testScopes, " "))
 			})
 			writeJSON(t, tokenFile, savedToken("original"))
-			before, err := os.ReadFile(tokenFile)
-			if err != nil {
-				t.Fatal(err)
-			}
 			tmp := tokenFile + ".tmp"
 			switch kind {
 			case "regular":
@@ -921,35 +920,157 @@ func TestRunAuthHandlesStaleTemporaryPath(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			var logs bytes.Buffer
-			previous := slog.Default()
-			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
-			defer slog.SetDefault(previous)
+			staleInfo, err := os.Lstat(tmp)
+			if err != nil {
+				t.Fatal(err)
+			}
 			err = RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if err != nil {
+				t.Fatalf("unrelated temp path blocked auth: %v", err)
+			}
+			tok, info, err := readToken(tokenFile)
+			if err != nil || tok.AccessToken != "signed-in" || info.Mode().Perm() != 0600 {
+				t.Fatalf("replacement token: %+v, %v, %v", tok, info, err)
+			}
+			info, err = os.Lstat(tmp)
+			if err != nil || !os.SameFile(staleInfo, info) || staleInfo.Mode() != info.Mode() {
+				t.Fatalf("unrelated temp changed: %v, %v", info, err)
+			}
 			if kind == "regular" {
-				if err != nil {
-					t.Fatalf("stale temp blocked auth: %v", err)
-				}
-				tok, info, err := readToken(tokenFile)
-				if err != nil || tok.AccessToken != "signed-in" || info.Mode().Perm() != 0600 {
-					t.Fatalf("replacement token: %+v, %v, %v", tok, info, err)
-				}
-				if !strings.Contains(logs.String(), "stale") || !strings.Contains(logs.String(), tmp) || strings.Contains(logs.String(), "stale-secret") {
-					t.Fatalf("stale-file log = %q", logs.String())
-				}
-			} else {
-				if err == nil || !strings.Contains(err.Error(), tmp) || !strings.Contains(err.Error(), "not a regular file") {
-					t.Fatalf("unsafe temp error = %v", err)
-				}
-				after, err := os.ReadFile(tokenFile)
-				if err != nil || !bytes.Equal(before, after) {
-					t.Fatalf("old token changed: %v", err)
-				}
-				info, err := os.Lstat(tmp)
-				if err != nil || (kind == "symlink" && info.Mode()&os.ModeSymlink == 0) || (kind == "directory" && !info.IsDir()) {
-					t.Fatalf("unsafe temp changed: %v, %v", info, err)
+				stale, _, err := readToken(tmp)
+				if err != nil || stale.AccessToken != "stale-secret" {
+					t.Fatalf("stale file changed: %+v, %v", stale, err)
 				}
 			}
 		})
 	}
+}
+
+func TestRunAuthRefusesUnsafeTokenPath(t *testing.T) {
+	for _, kind := range []string{"symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","scope":%q}`, strings.Join(testScopes, " "))
+			})
+			target := tokenFile + ".original"
+			writeJSON(t, target, savedToken("original"))
+			if kind == "symlink" {
+				if err := os.Symlink(target, tokenFile); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Mkdir(tokenFile, 0700); err != nil {
+				t.Fatal(err)
+			}
+			err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if err == nil || !strings.Contains(err.Error(), tokenFile) || !strings.Contains(err.Error(), "not a regular file") {
+				t.Fatalf("unsafe token error = %v", err)
+			}
+			info, err := os.Lstat(tokenFile)
+			if err != nil || (kind == "symlink" && info.Mode()&os.ModeSymlink == 0) || (kind == "directory" && !info.IsDir()) {
+				t.Fatalf("unsafe token path changed: %v, %v", info, err)
+			}
+			tok, _, err := readToken(target)
+			if err != nil || tok.AccessToken != "original" {
+				t.Fatalf("original changed: %+v, %v", tok, err)
+			}
+			assertNoAuthTemps(t, tokenFile)
+		})
+	}
+}
+
+// Pause after a complete temp file exists, at writeToken's pre-rename context
+// check. This forces overlapping commits without timing-dependent sleeps.
+type authCommitContext struct {
+	context.Context
+	check func()
+}
+
+func (c authCommitContext) Err() error {
+	c.check()
+	return c.Context.Err()
+}
+
+func assertNoAuthTemps(t *testing.T, tokenFile string) {
+	t.Helper()
+	paths, err := filepath.Glob(tokenFile + "*.tmp")
+	if err != nil || len(paths) != 0 {
+		t.Fatalf("temporary files remain: %v, %v", paths, err)
+	}
+}
+
+func TestRunAuthOverlappingWritesAreAtomic(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"access_token":%q,"refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, r.Form.Get("code"), strings.Join(testScopes, " "))
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
+	paused, resume := make(chan struct{}), make(chan struct{})
+	release := sync.OnceFunc(func() { close(resume) })
+	defer release()
+	var pausedOnce atomic.Bool
+	ctx := authCommitContext{Context: t.Context(), check: func() {
+		paths, _ := filepath.Glob(tokenFile + "*.tmp")
+		for _, path := range paths {
+			tok, _, err := readToken(path)
+			if err == nil && tok.AccessToken == "first" && pausedOnce.CompareAndSwap(false, true) {
+				close(paused)
+				select {
+				case <-resume:
+				case <-t.Context().Done():
+				}
+			}
+		}
+	}}
+	// Observe the destination continuously while both runs exchange and commit.
+	stop, observed := make(chan struct{}), make(chan error, 1)
+	go func() {
+		for {
+			tok, info, err := readToken(tokenFile)
+			if !errors.Is(err, os.ErrNotExist) {
+				if err != nil {
+					observed <- err
+					return
+				}
+				if !tok.Valid() || tok.RefreshToken == "" || info.Mode().Perm() != 0600 ||
+					(tok.AccessToken != "original" && tok.AccessToken != "first" && tok.AccessToken != "second") {
+					observed <- fmt.Errorf("partial or unexpected token: %+v mode=%v", tok, info.Mode())
+					return
+				}
+			}
+			select {
+			case <-stop:
+				observed <- nil
+				return
+			default:
+				runtime.Gosched()
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		if err := <-observed; err != nil {
+			t.Error(err)
+		}
+	}()
+	first := make(chan error, 1)
+	go func() {
+		first <- RunAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "first", "", "") })
+	}()
+	waitSignal(t, paused)
+	if err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "second", "", "") }); err != nil {
+		t.Errorf("second auth: %v", err)
+	}
+	release()
+	if err := <-first; err != nil {
+		t.Errorf("first auth: %v", err)
+	}
+	tok, _, err := readToken(tokenFile)
+	if err != nil || !tok.Valid() || (tok.AccessToken != "first" && tok.AccessToken != "second") {
+		t.Fatalf("final token = %+v, %v", tok, err)
+	}
+	assertNoAuthTemps(t, tokenFile)
 }
