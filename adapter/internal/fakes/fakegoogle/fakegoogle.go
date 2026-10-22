@@ -477,7 +477,10 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 	if message.Thread != nil {
 		thread = message.Thread.Name
 	}
-	if thread != "" && reply != "" {
+	if room.SpaceType == "SPACE" && (reply == "" || reply == "MESSAGE_REPLY_OPTION_UNSPECIFIED") {
+		// The default starts a new thread, ignoring any supplied thread identity.
+		thread = ""
+	} else if room.SpaceType == "SPACE" {
 		found := false
 		for name, m := range s.Messages {
 			if strings.HasPrefix(name, space+"/messages/") && m.Thread != nil && m.Thread.Name == thread {

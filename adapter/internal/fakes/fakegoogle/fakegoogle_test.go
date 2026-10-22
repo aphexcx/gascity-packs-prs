@@ -353,6 +353,36 @@ func TestReactionsAndMedia(t *testing.T) {
 	request(t, s, "GET", "/v1/media/missing?alt=media", nil, 404)
 }
 
+func TestNamedSpaceReplyOptions(t *testing.T) {
+	for _, option := range []string{"", "MESSAGE_REPLY_OPTION_UNSPECIFIED", "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD", "REPLY_MESSAGE_OR_FAIL"} {
+		for _, exists := range []bool{false, true} {
+			t.Run(option+map[bool]string{false: "/missing", true: "/existing"}[exists], func(t *testing.T) {
+				s := New(t, nil)
+				s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room", SpaceType: "SPACE"}
+				const thread = "spaces/room/threads/target"
+				if exists {
+					s.Messages["spaces/room/messages/seed"] = &chat.Message{Name: "spaces/room/messages/seed", Thread: &chat.Thread{Name: thread}}
+				}
+				status := 200
+				if option == "REPLY_MESSAGE_OR_FAIL" && !exists {
+					status = 404
+				}
+				got := request(t, s, "POST", "/v1/spaces/room/messages?messageReplyOption="+option, &chat.Message{Text: "reply", Thread: &chat.Thread{Name: thread, ThreadKey: "ignored-key"}}, status)
+				if status == 404 {
+					if got["error"].(map[string]any)["status"] != "NOT_FOUND" {
+						t.Fatalf("missing thread: %v", got)
+					}
+					return
+				}
+				wantReply := exists && (option == "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD" || option == "REPLY_MESSAGE_OR_FAIL")
+				if replied := got["thread"].(map[string]any)["name"] == thread; replied != wantReply {
+					t.Fatalf("thread = %v; want existing reply %v", got["thread"], wantReply)
+				}
+			})
+		}
+	}
+}
+
 func TestSpaceEventsFiltersPaginationAndWindow(t *testing.T) {
 	s := New(t, nil)
 	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
