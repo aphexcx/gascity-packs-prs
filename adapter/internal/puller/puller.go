@@ -1,0 +1,302 @@
+// Package puller decodes Workspace CloudEvents and owns Pub/Sub acknowledgments.
+package puller
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"cloud.google.com/go/pubsub/v2"
+	chat "google.golang.org/api/chat/v1"
+	events "google.golang.org/api/workspaceevents/v1"
+)
+
+type Event struct {
+	PubSubID, CloudEventID, Type, Subject string
+	Changes                               []Change
+	Raw                                   []byte
+}
+
+type Change struct {
+	Kind         string
+	Message      *chat.Message
+	Reaction     *chat.Reaction
+	Membership   *chat.Membership
+	Subscription *events.Subscription
+	Space        string
+}
+
+type Outcome uint8
+
+const (
+	// Nack is the safe zero value: an unset outcome must never discard an event.
+	Nack Outcome = iota
+	Ack
+	Quarantine
+)
+
+// Handler returns Ack only after EVERY change is terminal or durably retained
+// with a recovery obligation. A transient error overrides Ack. An error with
+// Quarantine describes the permanent failure and is recorded with the raw data.
+// Run invokes Handler synchronously, keeping the client's lease management alive.
+type Handler func(context.Context, *Event) (Outcome, error)
+
+// Logger is implemented by slog.Logger. A nil logger uses slog.Default().
+type Logger interface {
+	Info(string, ...any)
+	Error(string, ...any)
+}
+
+// RunOptions supplies the storage configuration missing from the transport.
+// The optional callback lets the application persist quarantine status in its
+// ledger. It must be idempotent by PubSubID: failed writes are redelivered.
+type RunOptions struct {
+	MediaDir         string
+	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
+}
+
+// Decode reads a binary-mode CloudEvent: ce-* attributes carry the envelope and
+// Data carries the JSON resource wrapper(s). Unknown types need no JSON parsing.
+// On a malformed known event it returns its envelope and raw bytes, but no
+// partial changes, so the caller can preserve the entire event in quarantine.
+func Decode(msg *pubsub.Message) (*Event, error) {
+	if msg == nil {
+		return nil, errors.New("nil Pub/Sub message")
+	}
+	ev := &Event{
+		PubSubID: msg.ID, CloudEventID: msg.Attributes["ce-id"],
+		Type: msg.Attributes["ce-type"], Subject: msg.Attributes["ce-subject"],
+		Raw: append([]byte(nil), msg.Data...),
+	}
+	if ev.Type == "" {
+		return ev, errors.New("missing ce-type")
+	}
+	resource, action, batch := eventKind(ev.Type)
+	if resource == "" {
+		return ev, nil
+	}
+	items := []json.RawMessage{msg.Data}
+	if batch {
+		// RawMessage.UnmarshalJSON reuses its destination buffer. Do not seed
+		// the batch destination with the caller's data.
+		items = nil
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(msg.Data, &body); err != nil {
+			return ev, fmt.Errorf("decode %s: %w", ev.Type, err)
+		}
+		if err := json.Unmarshal(body[resource+"s"], &items); err != nil {
+			return ev, fmt.Errorf("decode %s wrappers: %w", ev.Type, err)
+		}
+		if len(items) == 0 {
+			return ev, fmt.Errorf("empty %s batch", resource)
+		}
+	}
+	changes := make([]Change, 0, len(items))
+	for i, item := range items {
+		change, err := decodeChange(item, resource, action)
+		if err != nil {
+			return ev, fmt.Errorf("decode %s change %d: %w", ev.Type, i, err)
+		}
+		changes = append(changes, change)
+	}
+	ev.Changes = changes
+	return ev, nil
+}
+
+func eventKind(typ string) (resource, action string, batch bool) {
+	const lifecycle = "google.workspace.events.subscription.v1."
+	if strings.HasPrefix(typ, lifecycle) {
+		action = strings.TrimPrefix(typ, lifecycle)
+		switch action {
+		case "expirationReminder", "expired", "suspended":
+			return "subscription", action, false
+		}
+		return "", "", false
+	}
+	for _, resource = range []string{"message", "reaction", "membership"} {
+		prefix := "google.workspace.chat." + resource + ".v1."
+		if !strings.HasPrefix(typ, prefix) {
+			continue
+		}
+		action = strings.TrimPrefix(typ, prefix)
+		switch action {
+		case "batchCreated":
+			action, batch = "created", true
+		case "batchUpdated":
+			action, batch = "updated", true
+		case "batchDeleted":
+			action, batch = "deleted", true
+		}
+		if action == "created" || action == "deleted" || (action == "updated" && resource != "reaction") {
+			return resource, action, batch
+		}
+	}
+	return "", "", false
+}
+
+func decodeChange(raw json.RawMessage, resource, action string) (Change, error) {
+	var body struct {
+		Message      *chat.Message        `json:"message"`
+		Reaction     *chat.Reaction       `json:"reaction"`
+		Membership   *chat.Membership     `json:"membership"`
+		Subscription *events.Subscription `json:"subscription"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return Change{}, err
+	}
+	c := Change{Kind: resource + "." + action}
+	var name string
+	switch resource {
+	case "message":
+		c.Message = body.Message
+		if c.Message != nil {
+			name = c.Message.Name
+		}
+	case "reaction":
+		c.Reaction = body.Reaction
+		if c.Reaction != nil {
+			name = c.Reaction.Name
+		}
+	case "membership":
+		c.Membership = body.Membership
+		if c.Membership != nil {
+			name = c.Membership.Name
+		}
+	case "subscription":
+		c.Subscription = body.Subscription
+		if c.Subscription != nil {
+			name = c.Subscription.Name
+		}
+	}
+	parts := strings.Split(name, "/")
+	for _, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return Change{}, fmt.Errorf("missing or invalid %s name %q", resource, name)
+		}
+	}
+	valid := false
+	switch resource {
+	case "message":
+		valid = len(parts) == 4 && parts[0] == "spaces" && parts[2] == "messages"
+	case "reaction":
+		valid = len(parts) == 6 && parts[0] == "spaces" && parts[2] == "messages" && parts[4] == "reactions"
+	case "membership":
+		valid = len(parts) == 4 && parts[0] == "spaces" && parts[2] == "members"
+	case "subscription":
+		valid = len(parts) == 2 && parts[0] == "subscriptions"
+	}
+	if !valid {
+		return Change{}, fmt.Errorf("invalid %s name %q", resource, name)
+	}
+	if resource != "subscription" {
+		c.Space = strings.Join(parts[:2], "/")
+	}
+	return c, nil
+}
+
+// Run owns sub until cancellation or a fatal receive error; do not use sub
+// concurrently. Exactly one streaming-pull connection and one in-flight handler
+// keep the ledger updates serialized. The Pub/Sub client automatically retries
+// transient stream failures and extends leases while the callback is running.
+// A quarantine storage/record failure always nacks. Without MediaDir quarantine
+// fails closed, so callers should supply their configured directory at startup.
+func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
+	if sub == nil || h == nil {
+		return errors.New("puller requires a subscriber and handler")
+	}
+	if len(options) > 1 {
+		return errors.New("puller accepts at most one RunOptions")
+	}
+	var opts RunOptions
+	if len(options) == 1 {
+		opts = options[0]
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	sub.ReceiveSettings.NumGoroutines = 1
+	sub.ReceiveSettings.MaxOutstandingMessages = 1
+	if sub.ReceiveSettings.MaxExtension <= 0 {
+		sub.ReceiveSettings.MaxExtension = pubsub.DefaultReceiveSettings.MaxExtension
+	}
+	return sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
+		ev, err := Decode(msg)
+		outcome := Quarantine
+		if err == nil {
+			if len(ev.Changes) == 0 {
+				log.Info("unknown event acknowledged", "pubsub_id", ev.PubSubID, "type", ev.Type, "subject", ev.Subject)
+				msg.Ack()
+				return
+			}
+			outcome, err = h(ctx, ev)
+		}
+		if outcome == Quarantine {
+			path, writeErr := quarantine(opts.MediaDir, ev)
+			if writeErr == nil && opts.RecordQuarantine != nil {
+				writeErr = opts.RecordQuarantine(ctx, ev, path, err)
+			}
+			if writeErr != nil {
+				log.Error("quarantine failed", "pubsub_id", ev.PubSubID, "subject", ev.Subject, "cause", writeErr)
+				msg.Nack()
+				return
+			}
+			log.Info("event quarantined", "pubsub_id", ev.PubSubID, "subject", ev.Subject, "path", path, "cause", err)
+			msg.Ack()
+			return
+		}
+		if err != nil || outcome != Ack {
+			log.Error("event nacked", "pubsub_id", ev.PubSubID, "subject", ev.Subject, "outcome", outcome, "cause", err)
+			msg.Nack()
+			return
+		}
+		msg.Ack()
+	})
+}
+
+func quarantine(mediaDir string, ev *Event) (string, error) {
+	if mediaDir == "" {
+		return "", errors.New("quarantine requires MediaDir")
+	}
+	if ev.PubSubID == "" {
+		return "", errors.New("quarantine requires Pub/Sub message ID")
+	}
+	dir := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	// Escape the untrusted transport ID into one filename, including any slash.
+	path := filepath.Join(dir, url.PathEscape(ev.PubSubID)+".json")
+	f, err := os.CreateTemp(dir, ".event-*.tmp")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	if _, err := f.Write(ev.Raw); err != nil {
+		return "", err
+	}
+	if err := f.Sync(); err != nil {
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return "", err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return "", err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return "", err
+	}
+	return path, nil
+}
