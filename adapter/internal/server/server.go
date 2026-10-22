@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -31,6 +32,7 @@ import (
 	"gchat-adapter/internal/wire"
 	"github.com/BurntSushi/toml"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 const publishBudget = 25 * time.Second
@@ -49,6 +51,7 @@ type Options struct {
 	SettingsPath string
 	Chat         *chat.Client
 	GC           *gcclient.Client
+	Logger       *slog.Logger
 	// Poll is inbound.Processor.Poll; replay persists an intent before invoking it.
 	Poll func(context.Context) error
 	// LastEvent returns the app's last observed event time, including skipped
@@ -60,21 +63,24 @@ type Options struct {
 }
 
 type Server struct {
-	opts        Options
-	mu          sync.RWMutex // config snapshot, clients, health, poll
-	cfg         config.Config
-	health      Health
-	chat        *chat.Client
-	gc          *gcclient.Client
-	poll        func(context.Context) error
-	mux         *http.ServeMux
-	ctx         context.Context
-	cancel      context.CancelFunc
-	regGate     chan struct{}
-	registering bool
-	stateGate   sync.RWMutex
-	keysMu      sync.Mutex
-	keys        map[string]*keyLock
+	opts            Options
+	mu              sync.RWMutex // config snapshot, clients, health, poll
+	cfg             config.Config
+	health          Health
+	chat            *chat.Client
+	gc              *gcclient.Client
+	poll            func(context.Context) error
+	mux             *http.ServeMux
+	ctx             context.Context
+	cancel          context.CancelFunc
+	regGate         chan struct{}
+	registering     bool
+	regFailed       bool // protected by regGate
+	logMu           sync.Mutex
+	publishFailures map[string]bool
+	stateGate       sync.RWMutex
+	keysMu          sync.Mutex
+	keys            map[string]*keyLock
 }
 
 type keyLock struct {
@@ -86,8 +92,11 @@ func New(opts Options) (*Server, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.LedgerPath == "" {
 		return nil, errors.New("server: config, ledger, shared mutex and ledger path are required")
 	}
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{opts: opts, cfg: *opts.Config, health: Health{State: "initializing", Reason: "initialization in progress"}, chat: opts.Chat, gc: opts.GC, poll: opts.Poll, ctx: ctx, cancel: cancel, regGate: make(chan struct{}, 1), keys: map[string]*keyLock{}, mux: http.NewServeMux()}
+	s := &Server{opts: opts, cfg: *opts.Config, health: Health{State: "initializing", Reason: "initialization in progress"}, chat: opts.Chat, gc: opts.GC, poll: opts.Poll, ctx: ctx, cancel: cancel, regGate: make(chan struct{}, 1), keys: map[string]*keyLock{}, publishFailures: map[string]bool{}, mux: http.NewServeMux()}
 	s.cfg.Settings.Spaces = append([]config.Space(nil), opts.Config.Settings.Spaces...)
 	s.cfg.Settings.Identities = append([]config.Identity(nil), opts.Config.Settings.Identities...)
 	if s.gc != nil {
@@ -366,13 +375,59 @@ func permanent(p wire.PublishRequest) wire.PublishReceipt {
 	return wire.PublishReceipt{Conversation: p.Conversation, FailureKind: "permanent"}
 }
 
+// Log identifiers and classification only. Error strings and HTTP bodies may
+// contain credentials, URLs with tokens, or message text and must never be logged.
+func logCause(err error) (string, int) {
+	kind, _ := chat.Classify(err)
+	var googleErr *googleapi.Error
+	if errors.As(err, &googleErr) {
+		return kind, googleErr.Code
+	}
+	var gcErr *gcclient.HTTPError
+	if errors.As(err, &gcErr) {
+		switch {
+		case gcErr.StatusCode == 429:
+			kind = "rate_limited"
+		case gcErr.StatusCode == 401 || gcErr.StatusCode == 403:
+			kind = "auth"
+		case gcErr.StatusCode == 404:
+			kind = "not_found"
+		case gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408:
+			kind = "permanent"
+		}
+		return kind, gcErr.StatusCode
+	}
+	return kind, 0
+}
+
+func (s *Server) logPublish(p wire.PublishRequest, receipt wire.PublishReceipt, err error) {
+	failed := err != nil || !receipt.Delivered
+	s.logMu.Lock()
+	recovered := s.publishFailures[p.IdempotencyKey] && !failed
+	if failed {
+		s.publishFailures[p.IdempotencyKey] = true
+	} else {
+		delete(s.publishFailures, p.IdempotencyKey)
+	}
+	s.logMu.Unlock()
+	attrs := []any{"operation", "publish", "space", p.Conversation.ConversationID, "key", p.IdempotencyKey, "message_id", receipt.MessageID}
+	if failed {
+		_, status := logCause(err)
+		s.opts.Logger.Warn("publish failed", append(attrs, "cause_kind", receipt.FailureKind, "http_status", status)...)
+	} else if recovered {
+		s.opts.Logger.Info("publish recovered", append(attrs, "cause_kind", "", "http_status", http.StatusOK)...)
+	}
+}
+
 func (s *Server) publishHTTP(w http.ResponseWriter, r *http.Request) {
 	var p wire.PublishRequest
 	if err := body(w, r, &p); err != nil {
+		s.logPublish(p, permanent(p), err)
 		respond(w, 200, permanent(p))
 		return
 	}
 	if err := s.normalize(&p); err != nil {
+		s.logPublish(p, permanent(p), err)
 		respond(w, 200, permanent(p))
 		return
 	}
@@ -410,7 +465,8 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 	})
 }
 
-func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload) (wire.PublishReceipt, error) {
+func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload) (receipt wire.PublishReceipt, err error) {
+	defer func() { s.logPublish(p, receipt, err) }()
 	unlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
 	if err != nil {
 		return failure(p, err), err
@@ -492,7 +548,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 			return failure(p, err), err
 		}
 	}
-	receipt := wire.PublishReceipt{MessageID: send.Parts[0].MessageName, Conversation: p.Conversation, Delivered: true, Metadata: map[string]string{"thread": send.Thread, "parts": strconv.Itoa(len(send.Parts))}}
+	receipt = wire.PublishReceipt{MessageID: send.Parts[0].MessageName, Conversation: p.Conversation, Delivered: true, Metadata: map[string]string{"thread": send.Thread, "parts": strconv.Itoa(len(send.Parts))}}
 	if err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[send.Key].Receipt = &receipt; return nil }); err != nil {
 		return failure(p, err), err
 	}
@@ -878,11 +934,20 @@ func (s *Server) Register(ctx context.Context) error {
 	reg := wire.Registration{Provider: "gchat", AccountID: cfg.Identity().Name, CallbackURL: base, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}, ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}
 	for delay := time.Second; ; {
 		_, g := s.clients()
+		err := errors.New("gc client is initializing")
 		if g != nil {
-			if err := g.Register(ctx, reg); err == nil {
-				return nil
-			}
+			err = g.Register(ctx, reg)
 		}
+		if err == nil {
+			if s.regFailed {
+				s.opts.Logger.Info("gc registration recovered", "operation", "register", "account", reg.AccountID, "cause_kind", "", "http_status", http.StatusOK)
+				s.regFailed = false
+			}
+			return nil
+		}
+		kind, status := logCause(err)
+		s.opts.Logger.Warn("gc registration failed", "operation", "register", "account", reg.AccountID, "cause_kind", kind, "http_status", status)
+		s.regFailed = true
 		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():

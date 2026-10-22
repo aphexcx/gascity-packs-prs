@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -875,6 +876,87 @@ func TestRegisterCancel(t *testing.T) {
 	cancel()
 	if err := f.s.Register(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("%v", err)
+	}
+}
+
+func TestPublishLogsSanitizedFailureAndRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	f := setup(t)
+	client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" {
+			return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"secret-response-token"}}`)), Request: r}, nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	c, err := chat.New(context.Background(), client, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
+	p := wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "private-message-body", IdempotencyKey: "log-key"}
+	if f.send(t, p).Delivered {
+		t.Fatal("expected failure")
+	}
+	f.s.SetClients(f.options.Chat, f.options.GC)
+	for range 2 {
+		if !f.send(t, p).Delivered {
+			t.Fatal("expected recovery and cached result")
+		}
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected one failure and one recovery: %s", logs.String())
+	}
+	failure := decode[map[string]any](t, []byte(lines[0]))
+	recovery := decode[map[string]any](t, []byte(lines[1]))
+	if failure["level"] != "WARN" || failure["space"] != "spaces/room" || failure["key"] != "log-key" || failure["cause_kind"] != "rate_limited" || failure["http_status"] != float64(429) || recovery["level"] != "INFO" {
+		t.Fatalf("unexpected records: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), p.Text) || strings.Contains(logs.String(), "secret-response-token") {
+		t.Fatal("sensitive error contents logged")
+	}
+}
+
+func TestRegistrarLogsSanitizedFailureAndRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	f := setup(t)
+	attempts := 0
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(503)
+			_, _ = io.WriteString(w, "secret-response-token")
+			return
+		}
+		w.WriteHeader(200)
+	}))
+	defer h.Close()
+	f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := f.s.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.Register(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected one failure and one recovery: %s", logs.String())
+	}
+	failure := decode[map[string]any](t, []byte(lines[0]))
+	recovery := decode[map[string]any](t, []byte(lines[1]))
+	if failure["level"] != "WARN" || failure["operation"] != "register" || failure["cause_kind"] != "transient" || failure["http_status"] != float64(503) || recovery["level"] != "INFO" {
+		t.Fatalf("unexpected records: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), "secret-response-token") {
+		t.Fatal("sensitive error contents logged")
 	}
 }
 
