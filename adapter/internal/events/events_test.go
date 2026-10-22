@@ -1019,6 +1019,36 @@ func TestRenewLoopRechecksScheduleAfterConcurrentRecovery(t *testing.T) {
 	}
 }
 
+func TestRenewLoopAdoptsRecoveryScheduleDuringBackoff(t *testing.T) {
+	f := setup(t)
+	f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	for range 7 {
+		_, _ = f.manager.Reconcile(context.Background())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requestsAfterRecovery := 0
+	f.clock.onSleep = func(delay time.Duration) error {
+		if delay != time.Minute {
+			t.Errorf("long wait did not recheck in one minute: %v", delay)
+		}
+		if len(f.clock.sleeps) == 1 {
+			f.hook = nil
+			f.reconcile()
+			requestsAfterRecovery = len(f.requests)
+		} else if len(f.requests) != requestsAfterRecovery {
+			t.Error("loop retried on the obsolete backoff schedule after recovery")
+		}
+		if len(f.clock.sleeps) == 3 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+}
+
 func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
 	f := setup(t)
 	f.reconcile()
@@ -1348,14 +1378,20 @@ func TestTokenReloadLatchedWhenWaitingContextExpires(t *testing.T) {
 func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
 	f := setup(t)
 	want := f.reconcile()
-	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	requests := 0 // The reconcile gate serializes transport calls.
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests%10 == 0 {
+			return http.DefaultTransport.RoundTrip(r)
+		}
+		return nil, errors.New("unavailable")
+	}
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
 			for range 20 {
-				if _, err := f.manager.Reconcile(context.Background()); err == nil {
-					t.Error("expected lookup failure")
-				}
+				// Exercise both persistence snapshots and result snapshots.
+				_, _ = f.manager.Reconcile(context.Background())
 			}
 		})
 		wg.Go(func() {
