@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -9,6 +10,31 @@ import (
 
 	"github.com/BurntSushi/toml"
 )
+
+func TestLoadWithoutSettingsFile(t *testing.T) {
+	env, _, dir := configFixture(t)
+	c, err := Load(env, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Identity().TokenFile != filepath.Join(dir, "token.json") || c.Wake("spaces/example") != WakeAll || c.CatchupBudget() != 50 || c.Endpoints.MediaMaxBytes != 209715200 {
+		t.Fatalf("unexpected defaults: %+v", c)
+	}
+}
+
+func TestMissingEnvFileNamesPathAndRequiredKeys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "missing-env")
+	_, err := Load(path, "", dir)
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing file error = %v", err)
+	}
+	for _, want := range []string{path, "GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION", "GCHAT_OAUTH_CLIENT_FILE", "GC_CITY_NAME", "GC_API_BASE_URL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+}
 
 func TestLoadSecretsAndSettings(t *testing.T) {
 	dir := t.TempDir()

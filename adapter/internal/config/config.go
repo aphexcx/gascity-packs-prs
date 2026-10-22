@@ -4,6 +4,7 @@ package config
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,16 +80,21 @@ type Config struct {
 }
 
 // Load reads KEY=VALUE secrets and TOML settings, preserving Settings as decoded.
-// Methods and Endpoints provide effective defaults. Both files must exist and be
-// well formed. Endpoint overrides and gc's service coordinates come from the
+// Methods and Endpoints provide effective defaults. An empty settingsFile uses
+// defaults; a specified file must exist and be well formed. Endpoint overrides
+// and gc's service coordinates come from the
 // process environment.
 func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	values, err := readEnv(envFile)
+	required := []string{"GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION", "GCHAT_OAUTH_CLIENT_FILE", "GC_CITY_NAME", "GC_API_BASE_URL"}
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("%w; required keys: %s", err, strings.Join(required, ", "))
+		}
 		return nil, err
 	}
 	var missing []string
-	for _, key := range []string{"GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION", "GCHAT_OAUTH_CLIENT_FILE", "GC_CITY_NAME", "GC_API_BASE_URL"} {
+	for _, key := range required {
 		if strings.TrimSpace(values[key]) == "" {
 			missing = append(missing, key)
 		}
@@ -109,9 +115,12 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if !filepath.IsAbs(c.Secrets.TokenFile) {
 		c.Secrets.TokenFile = filepath.Join(secretsDir, c.Secrets.TokenFile)
 	}
-	metadata, err := toml.DecodeFile(settingsFile, &c.Settings)
-	if err != nil {
-		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
+	var metadata toml.MetaData
+	if settingsFile != "" {
+		metadata, err = toml.DecodeFile(settingsFile, &c.Settings)
+		if err != nil {
+			return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
+		}
 	}
 	if unknown := metadata.Undecoded(); len(unknown) > 0 {
 		return nil, fmt.Errorf("settings %s: unknown key %s", settingsFile, unknown[0])
