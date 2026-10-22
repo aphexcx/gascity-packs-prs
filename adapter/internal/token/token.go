@@ -10,9 +10,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"gchat-adapter/internal/config"
@@ -45,6 +47,9 @@ type Source struct {
 }
 
 func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*Source, error) {
+	if strings.TrimSpace(ep.ChatAPIBase) == "" {
+		return nil, errors.New("ChatAPIBase is required for credential validation")
+	}
 	cfg, err := loadConfig(clientFile, ep, scopes)
 	if err != nil {
 		return nil, err
@@ -259,17 +264,49 @@ func permanentOAuthCode(code string) bool {
 }
 
 func transient(err error) bool {
+	if errors.Is(err, context.Canceled) || errors.Is(err, ErrNeedsSignIn) {
+		return false
+	}
 	var validation validationError
 	if errors.As(err, &validation) {
 		return validation == 429 || validation >= 500
 	}
 	var failure *oauth2.RetrieveError
 	if errors.As(err, &failure) {
+		if permanentOAuthCode(failure.ErrorCode) {
+			return false
+		}
 		return failure.ErrorCode == "temporarily_unavailable" || failure.ErrorCode == "server_error" ||
 			(failure.Response != nil && (failure.Response.StatusCode == 429 || failure.Response.StatusCode >= 500))
 	}
+	// url.Error implements net.Error even for permanent configuration errors.
+	// Classify its cause instead of assuming that the interface means network IO.
+	var urlError *url.Error
+	if errors.As(err, &urlError) {
+		return transient(urlError.Err)
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	var operation *net.OpError
+	if errors.As(err, &operation) {
+		return true
+	}
 	var networkError net.Error
-	return errors.As(err, &networkError)
+	if errors.As(err, &networkError) && networkError.Timeout() {
+		return true
+	}
+	// oauth2 v0.37 formats response-body read errors with %v, losing the
+	// original error chain. Recognize only its read-error prefix and known
+	// transport failures; never inspect a RetrieveError response body.
+	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
+		if detail, ok := strings.CutPrefix(cause.Error(), "oauth2: cannot fetch token: "); ok {
+			return detail == "EOF" || detail == "unexpected EOF" ||
+				strings.HasSuffix(detail, ": connection reset by peer") ||
+				strings.HasSuffix(detail, ": i/o timeout")
+		}
+	}
+	return false
 }
 
 type validationError int

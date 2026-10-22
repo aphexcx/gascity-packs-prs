@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -517,6 +519,111 @@ func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 				}
 			case <-time.After(3 * time.Second):
 				t.Fatal("refresh did not finish")
+			}
+		})
+	}
+}
+
+func TestWatchRetriesInterruptedOAuthResponse(t *testing.T) {
+	var interrupted atomic.Bool
+	interrupted.Store(true)
+	var refreshes, validations atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			if interrupted.Load() {
+				conn, rw, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer conn.Close()
+				fmt.Fprint(rw, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{\"access_token\":")
+				if err := rw.Flush(); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			fmt.Fprint(w, `{"access_token":"replacement","expires_in":3600}`)
+			return
+		}
+		validations.Add(1)
+		fmt.Fprint(w, `{"spaces":[]}`)
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	reloads := 0
+	reload := func() { reloads++ }
+	s.reload(t.Context(), reload)
+	if reloads != 0 {
+		t.Fatal("interrupted replacement installed")
+	}
+	interrupted.Store(false)
+	s.reload(t.Context(), reload)
+	s.reload(t.Context(), reload)
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "replacement" || reloads != 1 || validations.Load() != 1 {
+		t.Fatalf("recovery: token=%+v err=%v reloads=%d refreshes=%d validations=%d", tok, err, reloads, refreshes.Load(), validations.Load())
+	}
+}
+
+func TestWatchPermanentURLFailureObservedOnce(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected HTTP call") })
+	ep.ChatAPIBase = "unsupported://example"
+	s := mustSource(t, clientFile, tokenFile, ep)
+	validations := 0
+	validate := s.validateFn
+	s.validateFn = func(ctx context.Context, client *http.Client) error {
+		validations++
+		return validate(ctx, client)
+	}
+	writeJSON(t, tokenFile, savedToken("replacement"))
+	for range 3 {
+		s.reload(t.Context(), func() { t.Error("invalid URL accepted") })
+	}
+	if validations != 1 {
+		t.Fatalf("permanent URL error retried %d times", validations)
+	}
+}
+
+func TestNewRejectsEmptyChatAPIBase(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected HTTP call") })
+	ep.ChatAPIBase = ""
+	if _, err := New(clientFile, tokenFile, ep, testScopes); err == nil || !strings.Contains(err.Error(), "ChatAPIBase") {
+		t.Fatalf("missing ChatAPIBase error = %v", err)
+	}
+}
+
+func TestTransientClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"EOF", io.EOF, true},
+		{"unexpected EOF", fmt.Errorf("wrapped: %w", io.ErrUnexpectedEOF), true},
+		{"oauth body EOF", errors.New("oauth2: cannot fetch token: unexpected EOF"), true},
+		{"oauth body reset", errors.New("oauth2: cannot fetch token: read tcp: connection reset by peer"), true},
+		{"reset", syscall.ECONNRESET, true},
+		{"network", &url.Error{Op: "Get", URL: "http://example", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}, true},
+		{"deadline", context.DeadlineExceeded, true},
+		{"canceled", context.Canceled, false},
+		{"permanent URL", &url.Error{Op: "Get", URL: "unsupported://example", Err: errors.New("unsupported protocol scheme")}, false},
+		{"malformed JSON", &json.SyntaxError{}, false},
+		{"chat 429", validationError(429), true},
+		{"chat 503", validationError(503), true},
+		{"chat 401", validationError(401), false},
+		{"oauth 429", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 429}}, true},
+		{"oauth 503", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 503}}, true},
+		{"oauth policy", &oauth2.RetrieveError{ErrorCode: "admin_policy_enforced", Response: &http.Response{StatusCode: 503}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := transient(tc.err); got != tc.want {
+				t.Errorf("transient(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
