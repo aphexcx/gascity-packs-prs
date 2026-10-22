@@ -56,6 +56,7 @@ type Handler func(context.Context, *Event) (Outcome, error)
 // Logger is implemented by slog.Logger. A nil logger uses slog.Default().
 type Logger interface {
 	Info(string, ...any)
+	Warn(string, ...any)
 	Error(string, ...any)
 }
 
@@ -232,6 +233,16 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	}
 	if log == nil {
 		log = slog.Default()
+	}
+	var warnings []string
+	if opts.MediaDir == "" {
+		warnings = append(warnings, "MediaDir is empty: malformed events and Quarantine outcomes will be nacked")
+	}
+	if opts.RecordQuarantine == nil {
+		warnings = append(warnings, "RecordQuarantine is nil: quarantines will not be counted")
+	}
+	if len(warnings) > 0 {
+		log.Warn("quarantine configuration incomplete", "consequence", strings.Join(warnings, "; "))
 	}
 	if opts.InitialBackoff == 0 {
 		opts.InitialBackoff = time.Second

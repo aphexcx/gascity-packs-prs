@@ -704,3 +704,42 @@ func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) 
 		t.Fatalf("write escaped verified tree: %v, %v", files, err)
 	}
 }
+
+func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
+	f := newFixture(t)
+	record := func(context.Context, *Event, string, error) error { return nil }
+	for _, tc := range []struct {
+		name    string
+		options []RunOptions
+		want    []string
+	}{
+		{"four arguments", nil, []string{"MediaDir", "nacked", "RecordQuarantine", "not be counted"}},
+		{"missing directory", []RunOptions{{RecordQuarantine: record}}, []string{"MediaDir", "nacked"}},
+		{"missing recorder", []RunOptions{{MediaDir: quarantineTempDir(t)}}, []string{"RecordQuarantine", "not be counted"}},
+		{"complete", []RunOptions{{MediaDir: quarantineTempDir(t), RecordQuarantine: record}}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(f.ctx)
+			cancel()
+			log := &recordingLogger{}
+			if err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, log, tc.options...); err != nil {
+				t.Fatal(err)
+			}
+			records := log.snapshot()
+			if len(tc.want) == 0 {
+				if len(records) != 0 {
+					t.Fatalf("unexpected warning: %+v", records)
+				}
+				return
+			}
+			if len(records) != 1 || records[0].level != "warn" {
+				t.Fatalf("want one startup warning, got %+v", records)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(fmt.Sprint(records[0]), want) {
+					t.Errorf("warning does not name %q: %+v", want, records[0])
+				}
+			}
+		})
+	}
+}
