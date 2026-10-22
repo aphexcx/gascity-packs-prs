@@ -143,6 +143,7 @@ func inline(s string, heading bool) string {
 	// pairs are indexed once so unmatched '[' runs never rescan the suffix.
 	noCloser := make(map[string]bool)
 	labels := linkLabelEnds(s)
+	destinations := parenthesisEnds(s)
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
 			end := escapedEnd(s, i)
@@ -157,7 +158,7 @@ func inline(s string, heading bool) string {
 			continue
 		}
 		if s[i] == '[' {
-			if label, url, end, ok := link(s, i, labels); ok {
+			if label, url, end, ok := link(s, i, labels, destinations); ok {
 				if i > 0 && s[i-1] == '!' {
 					out.WriteString(s[i:end])
 				} else {
@@ -282,29 +283,37 @@ func linkLabelEnds(s string) map[int]int {
 	return ends
 }
 
-func link(s string, start int, labels map[int]int) (label, url string, end int, ok bool) {
+// Destination parentheses are paired once, including nested parentheses and
+// ignoring escaped delimiters. An unmatched destination then costs one lookup.
+func parenthesisEnds(s string) map[int]int {
+	ends := make(map[int]int)
+	var stack []int
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case '(':
+			stack = append(stack, i)
+		case ')':
+			if len(stack) > 0 {
+				ends[stack[len(stack)-1]] = i
+				stack = stack[:len(stack)-1]
+			}
+		}
+	}
+	return ends
+}
+
+func link(s string, start int, labels, destinations map[int]int) (label, url string, end int, ok bool) {
 	closeLabel, found := labels[start]
 	if !found || closeLabel+1 >= len(s) || s[closeLabel+1] != '(' {
 		return
 	}
-	urlStart := closeLabel + 2
-	depth := 1
-	for i := urlStart; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) {
-			i++
-			continue
-		}
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return s[start+1 : closeLabel], s[urlStart:i], i + 1, true
-			}
-		}
+	closeURL, found := destinations[closeLabel+1]
+	if !found {
+		return
 	}
-	return
+	return s[start+1 : closeLabel], s[closeLabel+2 : closeURL], closeURL + 1, true
 }
 
 func chatDestination(s string) string {

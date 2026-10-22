@@ -32,6 +32,9 @@ func TestToChat(t *testing.T) {
 		{"link title", "[t](url \"title\")", "<url|t>"},
 		{"link escaped space", "[t](url\\ path \"title\")", "<url\\ path|t>"},
 		{"balanced link URL", "[text](https://example.com/a_(b))", "<https://example.com/a_(b)|text>"},
+		{"escaped link parentheses", `[text](a\(b\)) **after**`, `<a\(b\)|text> *after*`},
+		{"escaped link backslash", `[text](a\\) **after**`, `<a\\|text> *after*`},
+		{"unclosed nested destination", "[text](a(b) **after**", "[text](a(b) *after*"},
 		{"format link label", "[**text**](https://example.com)", "<https://example.com|*text*>"},
 		{"literal brackets before link", "array[0] then [text](url)", "array[0] then <url|text>"},
 		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
@@ -104,7 +107,7 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 }
 
 func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
-	for _, pattern := range []string{"*x ", "[x ", "(_x ", "**a *b "} {
+	for _, pattern := range []string{"*x ", "[x ", "(_x ", "**a *b ", "[x]("} {
 		t.Run(pattern, func(t *testing.T) {
 			input := strings.Repeat(pattern, (70000+len(pattern)-1)/len(pattern))
 			start := time.Now()
