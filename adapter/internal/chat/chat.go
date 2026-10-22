@@ -290,7 +290,7 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 			return localError{err}
 		}
 		var err error
-		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(io.LimitReader(file, limit+1)).Context(ctx).Do()
+		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(&uploadReader{reader: file, remaining: limit}).Context(ctx).Do()
 		return err
 	})
 	if err != nil {
@@ -300,6 +300,33 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		return nil, fmt.Errorf("upload %q: missing attachment reference", path)
 	}
 	return result.AttachmentDataRef, nil
+}
+
+// Unlike LimitReader, uploadReader reports an oversized stream instead of
+// silently truncating it into a successful attachment if the file grows.
+type uploadReader struct {
+	reader    io.Reader
+	remaining int64
+}
+
+func (r *uploadReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if r.remaining == 0 {
+		var extra [1]byte
+		n, err := r.reader.Read(extra[:])
+		if n > 0 {
+			return 0, localError{errors.New("file exceeds media limit")}
+		}
+		return 0, err
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:r.remaining]
+	}
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+	return n, err
 }
 
 // DownloadMedia creates a new private file below MediaDir, never overwrites an

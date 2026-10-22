@@ -255,6 +255,9 @@ func TestMediaRejectsSymlinksAndEscapes(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(dir, "link")); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(outside, "out"), []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, path := range []string{filepath.Join(outside, "out"), filepath.Join(dir, "link", "out")} {
 		if _, err := c.DownloadMedia(context.Background(), "spaces/room/attachments/media", path, 20); err == nil {
 			t.Fatalf("unsafe download %s", path)
@@ -272,6 +275,38 @@ func TestMediaRejectsSymlinksAndEscapes(t *testing.T) {
 	if _, err := c.UploadAttachment(context.Background(), "spaces/room", filepath.Join(dir, "alias")); err == nil {
 		t.Fatal("uploaded symlink")
 	}
+}
+
+func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
+	_, s, dir := fixture(t)
+	path := filepath.Join(dir, "growing.txt")
+	if err := os.WriteFile(path, []byte("small"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	httpClient := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			if err := os.WriteFile(path, []byte("now too big"), 0600); err != nil {
+				t.Error(err)
+			}
+			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	c, err := New(context.Background(), httpClient, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir, MediaMaxBytes: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.UploadAttachment(context.Background(), "spaces/room", path)
+	if err == nil || !strings.Contains(err.Error(), "growing.txt") {
+		t.Fatalf("oversize upload: %v", err)
+	}
+	s.Configure(func(s *fakegoogle.Server) {
+		if len(s.Media) != 0 {
+			t.Errorf("oversized media accepted: %v", s.Media)
+		}
+	})
 }
 
 func TestClassify(t *testing.T) {
