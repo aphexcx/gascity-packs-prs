@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -333,8 +334,9 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	if err == nil {
 		defer response.Body.Close()
 		if response.StatusCode >= 200 && response.StatusCode < 300 {
+			body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 			var decoded wire.PublishReceipt
-			if err := json.NewDecoder(response.Body).Decode(&decoded); err == nil {
+			if readErr == nil && json.Unmarshal(body, &decoded) == nil {
 				receipt = decoded
 			}
 		} else {

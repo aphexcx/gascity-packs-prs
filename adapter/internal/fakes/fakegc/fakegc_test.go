@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -524,6 +525,27 @@ func TestUnknownReceiptReleasesOnlyItsOwnAttempt(t *testing.T) {
 			replay := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
 			if replay["receipt_id"] == id || (newer && replay["receipt_id"] != newerID) {
 				t.Fatalf("unknown receipt did not release only its attempt: %v", replay)
+			}
+		})
+	}
+}
+
+func TestCallbackRequiresBoundedCompleteJSON(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"trailing garbage", `{"delivered":true}garbage`},
+		{"second value", `{"delivered":true}{}`},
+		{"oversize", `{"delivered":true,"message_id":"` + strings.Repeat("x", 1<<20) + `"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := New(t)
+			s.Bindings[conversation()] = "session"
+			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, tc.body) }))
+			defer callback.Close()
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
+			receipt := result["Receipt"].(map[string]any)
+			if receipt["Delivered"] != false || receipt["FailureKind"] != "transient" || result["TranscriptEntry"] != nil {
+				t.Fatalf("invalid callback body recorded delivery (delivered=%v, failure=%v)", receipt["Delivered"], receipt["FailureKind"])
 			}
 		})
 	}
