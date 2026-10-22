@@ -483,6 +483,34 @@ func TestQuarantineRejectsSymlinkAncestorOnFirstAndLaterWrites(t *testing.T) {
 	}
 }
 
+func TestQuarantineRejectsRelativeSymlinks(t *testing.T) {
+	for _, name := range []string{"media", "quarantine"} {
+		t.Run(name, func(t *testing.T) {
+			parent := quarantineTempDir(t)
+			real := filepath.Join(parent, "real")
+			if err := os.Mkdir(real, 0700); err != nil {
+				t.Fatal(err)
+			}
+			// os.Root permits this target inside the parent; only our Lstat
+			// check refuses it. Absolute targets would be refused by os.Root.
+			if err := os.Symlink("real", filepath.Join(parent, name)); err != nil {
+				t.Fatal(err)
+			}
+			mediaDir := filepath.Join(parent, "inbound")
+			if name == "media" {
+				mediaDir = filepath.Join(parent, "media", "inbound")
+			}
+			if _, err := quarantine(mediaDir, &Event{PubSubID: "one", Raw: []byte("private")}); err == nil {
+				t.Fatal("quarantine accepted a relative symlink")
+			}
+			files, err := os.ReadDir(real)
+			if err != nil || len(files) != 0 {
+				t.Fatalf("wrote through relative symlink: %v, %v", files, err)
+			}
+		})
+	}
+}
+
 type logRecord struct {
 	level, message string
 	attrs          map[string]any
