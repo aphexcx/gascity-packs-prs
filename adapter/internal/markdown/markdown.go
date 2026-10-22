@@ -14,8 +14,11 @@ import (
 func ToChat(md string) string {
 	var out strings.Builder
 	var fence *codeFence
-	for line := range strings.SplitAfterSeq(md, "\n") {
+	for len(md) > 0 {
+		end := lineEnd(md, 0)
+		line := md[:end]
 		if fence != nil {
+			md = md[end:]
 			out.WriteString(line)
 			if fence.closes(line) {
 				fence = nil
@@ -23,9 +26,26 @@ func ToChat(md string) string {
 			continue
 		}
 		if fence = openingFence(line); fence != nil {
+			md = md[end:]
 			out.WriteString(line)
 			continue
 		}
+		// A complete code span can cross physical lines. Keep those lines
+		// together so neither inline nor block formatting changes its bytes.
+		for i := 0; i < end; {
+			switch {
+			case md[i] == '\\' && i+1 < len(md):
+				i = escapedEnd(md, i)
+			case md[i] == '`':
+				i = codeSpanEnd(md, i)
+				if i > end {
+					end = lineEnd(md, i)
+				}
+			default:
+				i++
+			}
+		}
+		line, md = md[:end], md[end:]
 		body := strings.TrimRight(line, "\r\n")
 		ending := line[len(body):]
 		indent := len(body) - len(strings.TrimLeft(body, " \t"))
@@ -46,6 +66,13 @@ func ToChat(md string) string {
 		out.WriteString(ending)
 	}
 	return out.String()
+}
+
+func lineEnd(s string, start int) int {
+	if i := strings.IndexByte(s[start:], '\n'); i >= 0 {
+		return start + i + 1
+	}
+	return len(s)
 }
 
 func inline(s string) string {
