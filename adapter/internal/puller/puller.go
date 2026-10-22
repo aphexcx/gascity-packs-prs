@@ -257,9 +257,11 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 		log = slog.Default()
 	}
 	storage, storageErr := openQuarantine(opts.MediaDir)
-	if storageErr == nil {
-		defer storage.root.Close()
-	}
+	defer func() {
+		if storage != nil {
+			storage.root.Close()
+		}
+	}()
 	var warnings []string
 	if opts.MediaDir == "" {
 		warnings = append(warnings, "MediaDir is empty: malformed events and Quarantine outcomes will be nacked")
@@ -310,9 +312,27 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 		}
 		if outcome == Quarantine {
 			var path string
-			writeErr := storageErr
-			if writeErr == nil {
+			var writeErr error
+			if storage != nil {
 				path, writeErr = storage.write(ev)
+			}
+			if storage == nil || writeErr != nil {
+				// Retry once through the same verified walk used at startup.
+				// Keep a failed replacement out of the cache and close every
+				// superseded handle; handlers are serialized by Receive.
+				var fresh *quarantineStore
+				fresh, writeErr = openQuarantine(opts.MediaDir)
+				if writeErr == nil {
+					path, writeErr = fresh.write(ev)
+					if writeErr == nil {
+						if storage != nil {
+							storage.root.Close()
+						}
+						storage = fresh
+					} else {
+						fresh.root.Close()
+					}
+				}
 			}
 			if writeErr == nil && opts.RecordQuarantine != nil {
 				writeErr = opts.RecordQuarantine(ctx, ev, path, err)
@@ -406,12 +426,34 @@ func (q *quarantineStore) write(ev *Event) (string, error) {
 	if ev.PubSubID == "" {
 		return "", errors.New("quarantine requires Pub/Sub message ID")
 	}
+	if err := q.verifyPath(); err != nil {
+		return "", err
+	}
 	// Escape the untrusted transport ID into one filename, including any slash.
 	name := url.PathEscape(ev.PubSubID) + ".json"
 	if err := writeQuarantine(q.root, name, ev.Raw); err != nil {
 		return "", err
 	}
+	// A rotation during the write must not hand the recorder a stale path.
+	if err := q.verifyPath(); err != nil {
+		return "", err
+	}
 	return filepath.Join(q.path, name), nil
+}
+
+func (q *quarantineStore) verifyPath() error {
+	info, err := os.Lstat(q.path)
+	if err != nil {
+		return err
+	}
+	opened, err := q.root.Stat(".")
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, opened) {
+		return fmt.Errorf("quarantine directory changed: %s", q.path)
+	}
+	return nil
 }
 
 func writeQuarantine(root *os.Root, name string, raw []byte) error {
