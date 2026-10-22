@@ -783,3 +783,61 @@ func TestWatchBacksOffTransientValidation(t *testing.T) {
 		t.Fatalf("successful validation did not reset retries: calls=%d reloads=%d state=%v delay=%v", calls.Load(), reloads, s.State(), s.retryDelay)
 	}
 }
+
+func TestRunAuthHandlesStaleTemporaryPath(t *testing.T) {
+	for _, kind := range []string{"regular", "symlink", "directory"} {
+		t.Run(kind, func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, strings.Join(testScopes, " "))
+			})
+			writeJSON(t, tokenFile, savedToken("original"))
+			before, err := os.ReadFile(tokenFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmp := tokenFile + ".tmp"
+			switch kind {
+			case "regular":
+				writeJSON(t, tmp, savedToken("stale-secret"))
+			case "symlink":
+				if err := os.Symlink(tokenFile, tmp); err != nil {
+					t.Fatal(err)
+				}
+			case "directory":
+				if err := os.Mkdir(tmp, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			err = RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if kind == "regular" {
+				if err != nil {
+					t.Fatalf("stale temp blocked auth: %v", err)
+				}
+				tok, info, err := readToken(tokenFile)
+				if err != nil || tok.AccessToken != "signed-in" || info.Mode().Perm() != 0600 {
+					t.Fatalf("replacement token: %+v, %v, %v", tok, info, err)
+				}
+				if !strings.Contains(logs.String(), "stale") || !strings.Contains(logs.String(), tmp) || strings.Contains(logs.String(), "stale-secret") {
+					t.Fatalf("stale-file log = %q", logs.String())
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tmp) || !strings.Contains(err.Error(), "not a regular file") {
+					t.Fatalf("unsafe temp error = %v", err)
+				}
+				after, err := os.ReadFile(tokenFile)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("old token changed: %v", err)
+				}
+				info, err := os.Lstat(tmp)
+				if err != nil || (kind == "symlink" && info.Mode()&os.ModeSymlink == 0) || (kind == "directory" && !info.IsDir()) {
+					t.Fatalf("unsafe temp changed: %v, %v", info, err)
+				}
+			}
+		})
+	}
+}

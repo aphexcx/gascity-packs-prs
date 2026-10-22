@@ -548,9 +548,21 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	// Exclusive creation also refuses stale files and symlinks instead of
-	// truncating an existing credential through the temporary path.
 	tmp := path + ".tmp"
+	// A hard kill can leave our fixed temporary path behind. Only reclaim a
+	// regular file; never follow a symlink or remove another kind of object.
+	if info, err := os.Lstat(tmp); err == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("write token %s: not a regular file", tmp)
+		}
+		if err := os.Remove(tmp); err != nil {
+			return fmt.Errorf("replace stale token file %s: %w", tmp, err)
+		}
+		slog.Warn("replaced stale token temporary file", "file", tmp)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect token temporary file %s: %w", tmp, err)
+	}
+	// O_EXCL still refuses a path created after the inspection.
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("write token %s: %w", tmp, err)
