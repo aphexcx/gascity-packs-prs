@@ -590,6 +590,10 @@ func loadConfig(path string, ep config.Endpoints, scopes []string) (*oauth2.Conf
 // If directory syncing fails after the atomic rename, the new token is already
 // installed; the returned error reports that partial success explicitly.
 func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoints, scopes []string, stdout io.Writer, open func(string) error) error {
+	return runAuth(ctx, clientFile, tokenFile, ep, scopes, stdout, open, (&net.ListenConfig{}).Listen)
+}
+
+func runAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoints, scopes []string, stdout io.Writer, open func(string) error, listen func(context.Context, string, string) (net.Listener, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -600,7 +604,7 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	if err != nil {
 		return err
 	}
-	listener, err := listenLoopback(ctx, (&net.ListenConfig{}).Listen)
+	listener, err := listenLoopback(ctx, listen)
 	if err != nil {
 		return err
 	}
@@ -624,13 +628,21 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 		} else if value.code == "" {
 			value.err = errors.New("OAuth callback missing code")
 		}
-		accepted.Do(func() { callback <- value })
 		fmt.Fprintln(w, "Consent received. You can close this window and return to the terminal.")
+		accepted.Do(func() { callback <- value })
 	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
-	defer server.Close()
+	defer func() {
+		// The callback may still be flushing its response after signaling the
+		// exchange. Give it a bounded grace period, even if auth was canceled.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+		}
+	}()
 	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"), oauth2.S256ChallengeOption(verifier))
 	if _, err := fmt.Fprintln(stdout, authURL); err != nil {
 		return fmt.Errorf("print OAuth consent URL: %w", err)

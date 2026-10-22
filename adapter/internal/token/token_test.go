@@ -723,6 +723,93 @@ func browserCallback(raw, code, denied, stateOverride string) error {
 	return err
 }
 
+type delayedWriteListener struct {
+	net.Listener
+	started chan struct{}
+	release <-chan struct{}
+	closed  chan struct{}
+}
+
+func (l *delayedWriteListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &delayedWriteConn{Conn: conn, listener: l}, nil
+}
+
+type delayedWriteConn struct {
+	net.Conn
+	listener *delayedWriteListener
+	write    sync.Once
+	close    sync.Once
+}
+
+func (c *delayedWriteConn) Write(p []byte) (int, error) {
+	c.write.Do(func() { close(c.listener.started) })
+	<-c.listener.release
+	return c.Conn.Write(p)
+}
+
+func (c *delayedWriteConn) Close() error {
+	c.close.Do(func() { close(c.listener.closed) })
+	return c.Conn.Close()
+}
+
+func TestRunAuthFinishesCallbackPageBeforeShutdown(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("denied consent reached token exchange")
+	})
+	started, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	defer finish()
+	listen := func(ctx context.Context, network, address string) (net.Listener, error) {
+		listener, err := (&net.ListenConfig{}).Listen(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &delayedWriteListener{Listener: listener, started: started, release: release, closed: closed}, nil
+	}
+	page := make(chan error, 1)
+	auth := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	go func() {
+		auth <- runAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error {
+			go func() {
+				u, _ := url.Parse(raw)
+				redirect, _ := url.Parse(u.Query().Get("redirect_uri"))
+				redirect.RawQuery = url.Values{"state": {u.Query().Get("state")}, "error": {"access_denied"}}.Encode()
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, redirect.String(), nil)
+				res, err := http.DefaultClient.Do(req)
+				if err == nil {
+					var body []byte
+					body, err = io.ReadAll(res.Body)
+					res.Body.Close()
+					if err == nil && string(body) != "Consent received. You can close this window and return to the terminal.\n" {
+						err = fmt.Errorf("callback page = %q", body)
+					}
+				}
+				page <- err
+			}()
+			return nil
+		}, listen)
+	}()
+	waitSignal(t, started)
+	select {
+	case <-closed:
+		t.Error("callback connection closed before its page was written")
+	case <-time.After(50 * time.Millisecond):
+	}
+	finish()
+	if err := <-page; err != nil {
+		t.Errorf("callback page failed: %v", err)
+	}
+	if err := <-auth; err == nil || !strings.Contains(err.Error(), "access_denied") {
+		t.Errorf("auth denial = %v", err)
+	}
+}
+
 func TestRunAuthFailuresPreserveToken(t *testing.T) {
 	for _, scenario := range []string{"partial scopes", "missing scope field", "denied", "cancel", "cancel during exchange", "write failure", "no refresh token"} {
 		t.Run(scenario, func(t *testing.T) {
