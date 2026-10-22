@@ -82,6 +82,7 @@ type Manager struct {
 	gate            chan struct{}
 	recoveryNeeded  chan struct{}
 	pending         *api.Operation
+	pendingKind     string
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
 	ambiguousState  ledger.SubscriptionState
@@ -130,33 +131,49 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 	m.ledgerMu.Lock()
 	saved := m.ledger.Subscription
 	m.ledgerMu.Unlock()
-	sub, err := m.lookup(ctx, saved.Name)
-	if err != nil {
-		return saved, err
-	}
-	// A known operation survives a polling timeout in memory. First reconcile
-	// Google's resource, then resume waiting instead of issuing another mutation.
+	var sub *api.Subscription
+	var err error
+	// Resume before looking up the resource: a resource snapshot cannot finish
+	// an Operation, and validation of that snapshot must not block its poll.
 	if m.pending != nil {
-		state, err := m.finish(ctx, m.pending)
+		kind := m.pendingKind
+		state, err := m.resume(ctx)
+		if err == nil {
+			// An operation result can predate a later suspension or deletion.
+			sub, lookupErr := m.lookup(ctx, state.Name)
+			if lookupErr != nil {
+				return state, lookupErr
+			}
+			if sub != nil {
+				return m.reconcileExisting(ctx, sub)
+			}
+		} else {
+			if kind == "create" || ctx.Err() != nil {
+				return saved, err
+			}
+			// A renewal/reactivation of a vanished resource cannot repair the
+			// lapse. Only confirmed absence permits abandoning that operation.
+			sub, lookupErr := m.lookup(ctx, saved.Name)
+			if lookupErr != nil {
+				return saved, lookupErr
+			}
+			if sub != nil {
+				return saved, err
+			}
+		}
+		m.pending = nil
+	} else {
+		sub, err = m.lookup(ctx, saved.Name)
 		if err != nil {
-			return state, err
+			return saved, err
 		}
-		// A retained operation response is a snapshot. State may have changed
-		// after completion while this process was backing off.
-		sub, err = m.lookup(ctx, state.Name)
-		if err != nil {
-			return state, err
-		}
-		if sub == nil {
-			return state, errors.New("events: subscription disappeared after operation completion")
-		}
-		return m.reconcileExisting(ctx, sub)
 	}
 	if sub == nil {
 		if m.clock.Now().Before(m.ambiguousUntil) {
 			return saved, errors.New("events: awaiting discovery after an ambiguous mutation")
 		}
 		m.mutationStarted = m.clock.Now()
+		m.pendingKind = "create"
 		op, err := m.service.Subscriptions.Create(&api.Subscription{TargetResource: Target, EventTypes: slices.Clone(m.types), PayloadOptions: &api.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &api.NotificationEndpoint{PubsubTopic: m.topic}}).Context(ctx).Do()
 		if isHTTP(err, http.StatusConflict) {
 			return m.adopt(ctx)
@@ -254,8 +271,10 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 	var op *api.Operation
 	switch sub.State {
 	case "ACTIVE":
+		m.pendingKind = "renew"
 		op, err = m.service.Subscriptions.Patch(sub.Name, &api.Subscription{Ttl: "0s"}).UpdateMask("ttl").Context(ctx).Do()
 	case "SUSPENDED":
+		m.pendingKind = "reactivate"
 		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(ctx).Do()
 	default:
 		return state, fmt.Errorf("events: unsupported subscription state %q", sub.State)
@@ -264,6 +283,25 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = state
 		return state, fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
+	}
+	return m.finish(ctx, op)
+}
+
+// resume makes at most one bounded HTTP poll per Reconcile. Retained operations
+// never consume another two-minute polling loop; callers provide retry backoff.
+func (m *Manager) resume(ctx context.Context) (ledger.SubscriptionState, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	op, err := m.service.Operations.Get(m.pending.Name).Context(ctx).Do()
+	if err != nil {
+		if isHTTP(err, http.StatusNotFound) {
+			m.pending = nil
+		}
+		return ledger.SubscriptionState{}, fmt.Errorf("events: resume operation: %w", err)
+	}
+	m.pending = op
+	if !op.Done {
+		return ledger.SubscriptionState{}, fmt.Errorf("events: operation %s is still pending", op.Name)
 	}
 	return m.finish(ctx, op)
 }

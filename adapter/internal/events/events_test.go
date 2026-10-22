@@ -394,6 +394,8 @@ func TestOperationTimeoutResumesKnownOperation(t *testing.T) {
 	if !f.clock.Now().Equal(start.Add(2*time.Minute)) || f.ledger.Subscription.Name != "" {
 		t.Fatal("timeout must bound polling without persisting a pending result")
 	}
+	// Resumed reconciles do one bounded poll; the caller supplies backoff.
+	f.clock.advance(time.Minute)
 	got := f.reconcile()
 	if got.Expiry != start.Add(4*time.Hour) || f.count("POST", "/v1/subscriptions") != 1 {
 		t.Fatalf("resumed result = %+v", got)
@@ -695,4 +697,68 @@ func TestRecoveryNotificationsFollowDurableCreationAndReactivation(t *testing.T)
 	f.reconcile()
 	assertRecovery(true)
 	assertRecovery(false)
+}
+
+func jsonResponse(code int, body string) *http.Response {
+	return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func TestStuckMutationRecreatesAfterConfirmedAbsence(t *testing.T) {
+	for _, kind := range []string{"renew", "reactivate"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			<-f.manager.RecoveryNeeded()
+			if kind == "renew" {
+				f.clock.advance(3 * time.Hour)
+			} else {
+				f.server.SuspendSubscription(first.Name)
+			}
+			f.hook = func(r *http.Request) (*http.Response, error) {
+				if r.Method == "PATCH" || strings.HasSuffix(r.URL.Path, ":reactivate") || r.URL.Path == "/v1/operations/stuck" {
+					return jsonResponse(200, `{"name":"operations/stuck","done":false}`), nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			}
+			if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("initial poll = %v", err)
+			}
+			f.clock.advance(4 * time.Hour)
+			f.server.Configure(func(s *fakegoogle.Server) { delete(s.Subscriptions, first.Name) })
+			got := f.reconcile()
+			if got.Name == first.Name || f.count("POST", "/v1/subscriptions") != 2 {
+				t.Fatalf("stuck %s prevented one recreation: %+v", kind, got)
+			}
+			select {
+			case <-f.manager.RecoveryNeeded():
+			default:
+				t.Fatal("recreation did not request recovery")
+			}
+			f.reconcile()
+			if f.count("POST", "/v1/subscriptions") != 2 {
+				t.Fatal("recreated twice")
+			}
+		})
+	}
+}
+
+func TestResumedCreatePollIsBoundedWithoutDuplicateCreation(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = time.Hour
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	for range 5 {
+		before := len(f.requests)
+		start := f.clock.Now()
+		if _, err := f.manager.Reconcile(context.Background()); err == nil {
+			t.Fatal("pending operation must be reported")
+		}
+		if len(f.requests)-before != 1 || !strings.HasPrefix(f.requests[before].URL.Path, "/v1/operations/") || !f.clock.Now().Equal(start) {
+			t.Fatalf("resume should only poll once without sleeping; requests=%d elapsed=%s", len(f.requests)-before, f.clock.Now().Sub(start))
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("pending create must not be replaced")
+	}
 }
