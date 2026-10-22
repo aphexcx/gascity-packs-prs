@@ -241,13 +241,38 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 	err = json.Unmarshal(b, &out)
 	return &out, err
 }
-func (s *Server) snapshot() (*ledger.Ledger, error) {
-	s.opts.LedgerMu.Lock()
+
+// Other consumers share a sync.Mutex, so use TryLock with a cancellable wait
+// instead of spawning a waiter that could outlive the request and take the lock.
+func (s *Server) lockLedger(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if s.opts.LedgerMu.TryLock() {
+			return nil
+		}
+		timer := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (s *Server) snapshot(ctx context.Context) (*ledger.Ledger, error) {
+	if err := s.lockLedger(ctx); err != nil {
+		return nil, err
+	}
 	defer s.opts.LedgerMu.Unlock()
 	return copyLedger(s.opts.Ledger)
 }
-func (s *Server) update(fn func(*ledger.Ledger) error) error {
-	s.opts.LedgerMu.Lock()
+func (s *Server) update(ctx context.Context, fn func(*ledger.Ledger) error) error {
+	if err := s.lockLedger(ctx); err != nil {
+		return err
+	}
 	defer s.opts.LedgerMu.Unlock()
 	l, err := copyLedger(s.opts.Ledger)
 	if err != nil {
@@ -331,6 +356,9 @@ func validSpace(space string) bool {
 }
 func failure(p wire.PublishRequest, err error) wire.PublishReceipt {
 	kind, delay := chat.Classify(err)
+	if kind == "transient" && delay == 0 {
+		delay = time.Second
+	}
 	return wire.PublishReceipt{Conversation: p.Conversation, FailureKind: kind, RetryAfter: int64(delay)}
 }
 func permanent(p wire.PublishRequest) wire.PublishReceipt {
@@ -353,8 +381,8 @@ func (s *Server) publishHTTP(w http.ResponseWriter, r *http.Request) {
 
 // prepare runs under the send lock. A receipt is durable only after update
 // succeeds; failed saves never make in-memory progress look committed.
-func (s *Server) prepare(p wire.PublishRequest, upload *ledger.SendUpload, record bool) error {
-	return s.update(func(l *ledger.Ledger) error {
+func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, record bool) error {
+	return s.update(ctx, func(l *ledger.Ledger) error {
 		if old := l.Sends[p.IdempotencyKey]; old != nil {
 			if old.Space != p.Conversation.ConversationID {
 				return errors.New("idempotency key already belongs to another conversation")
@@ -387,7 +415,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		return failure(p, err), err
 	}
 	defer unlock()
-	l, err := s.snapshot()
+	l, err := s.snapshot(ctx)
 	if err != nil {
 		return failure(p, err), err
 	}
@@ -402,10 +430,10 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 	if err = s.available(); err != nil {
 		return failure(p, err), err
 	}
-	if err = s.prepare(p, upload, false); err != nil {
+	if err = s.prepare(ctx, p, upload, false); err != nil {
 		return failure(p, err), err
 	}
-	l, err = s.snapshot()
+	l, err = s.snapshot(ctx)
 	if err != nil {
 		return failure(p, err), err
 	}
@@ -428,7 +456,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 		send.Upload.ResourceName = ref.ResourceName
 		send.Upload.UploadToken = ref.AttachmentUploadToken
-		if err = s.update(func(l *ledger.Ledger) error { l.Sends[send.Key].Upload = send.Upload; return nil }); err != nil {
+		if err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[send.Key].Upload = send.Upload; return nil }); err != nil {
 			return failure(p, err), err
 		}
 	}
@@ -446,7 +474,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 		send.Parts[i].MessageName = name
 		send.Thread = thread
-		if err = s.update(func(l *ledger.Ledger) error {
+		if err = s.update(ctx, func(l *ledger.Ledger) error {
 			current := l.Sends[send.Key]
 			current.Parts[i].MessageName = name
 			current.Thread = thread
@@ -464,14 +492,14 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 	}
 	receipt := wire.PublishReceipt{MessageID: send.Parts[0].MessageName, Conversation: p.Conversation, Delivered: true, Metadata: map[string]string{"thread": send.Thread, "parts": strconv.Itoa(len(send.Parts))}}
-	if err = s.update(func(l *ledger.Ledger) error { l.Sends[send.Key].Receipt = &receipt; return nil }); err != nil {
+	if err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[send.Key].Receipt = &receipt; return nil }); err != nil {
 		return failure(p, err), err
 	}
 	return receipt, nil
 }
 
 func (s *Server) named(ctx context.Context, space string) (bool, error) {
-	l, err := s.snapshot()
+	l, err := s.snapshot(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -489,7 +517,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 			if kind == "" {
 				return false, errors.New("space type unavailable")
 			}
-			err = s.update(func(l *ledger.Ledger) error {
+			err = s.update(ctx, func(l *ledger.Ledger) error {
 				v := l.Spaces[space]
 				if v == nil {
 					v = &ledger.SpaceState{}
@@ -548,7 +576,7 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 	// A derived key includes the conversation kind. Probe both possible kinds
 	// before inventory so a saved DM outcome survives missing credentials or
 	// stale space inventory as well as one with an explicit key.
-	l, err := s.snapshot()
+	l, err := s.snapshot(r.Context())
 	if err != nil {
 		respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
 		return
@@ -572,7 +600,7 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
 			return
 		}
-		l, err = s.snapshot()
+		l, err = s.snapshot(r.Context())
 		if err != nil {
 			problem(w, 500, err)
 			return
@@ -618,7 +646,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		return result, err
 	}
 	defer unlock()
-	l, err := s.snapshot()
+	l, err := s.snapshot(ctx)
 	if err != nil {
 		result.Reason = err.Error()
 		return result, err
@@ -648,14 +676,14 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		// Only hold the send lock for preparation; gc recursively calls /publish.
 		sendUnlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
 		if err == nil {
-			err = s.prepare(p, upload, true)
+			err = s.prepare(ctx, p, upload, true)
 			sendUnlock()
 		}
 		if err != nil {
 			result.Reason = err.Error()
 			return result, err
 		}
-		l, err = s.snapshot()
+		l, err = s.snapshot(ctx)
 		if err != nil {
 			result.Reason = err.Error()
 			return result, err
@@ -678,7 +706,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			if e != nil {
 				result.Reason = e.Error()
 			}
-			return result, errors.Join(e, s.stopRetry(p, r, result.Reason))
+			return result, errors.Join(e, s.stopRetry(ctx, p, r, result.Reason))
 		}
 	}
 	_, g := s.clients()
@@ -706,7 +734,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		s.ObserveGCError(err)
 		result.Reason = detail(err)
 		// A lost gc response can follow a durable callback receipt.
-		if l, e := s.snapshot(); e == nil {
+		if l, e := s.snapshot(ctx); e == nil {
 			if r := l.Sends[p.IdempotencyKey].Receipt; r != nil {
 				result.Delivered = r.Delivered
 				result.MessageID = r.MessageID
@@ -715,7 +743,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		var httpErr *gcclient.HTTPError
 		if !result.Delivered && errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != 408 && httpErr.StatusCode != 429 {
 			result.FailureKind = "permanent"
-			err = errors.Join(err, s.stopRetry(p, permanent(p), result.Reason))
+			err = errors.Join(err, s.stopRetry(ctx, p, permanent(p), result.Reason))
 		}
 		return result, err
 	}
@@ -726,7 +754,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			result.Reason = "gc did not deliver the message"
 		}
 	}
-	err = s.update(func(l *ledger.Ledger) error {
+	err = s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.Recorded = result.Recorded
 		v.RecordPending = result.Delivered && !result.Recorded
@@ -745,8 +773,8 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 // Receipt plus RecordPending distinguish interrupted sends (pending, no receipt),
 // returned failures (not pending), and delivered sends awaiting recording
 // (pending, delivered receipt). A caller can retry a returned failure explicitly.
-func (s *Server) stopRetry(p wire.PublishRequest, receipt wire.PublishReceipt, reason string) error {
-	return s.update(func(l *ledger.Ledger) error {
+func (s *Server) stopRetry(ctx context.Context, p wire.PublishRequest, receipt wire.PublishReceipt, reason string) error {
+	return s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		if v.Receipt == nil || !v.Receipt.Delivered {
 			v.Receipt = &receipt
@@ -771,7 +799,7 @@ func detail(err error) string {
 }
 func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string) (CommandResult, error) {
 	result := CommandResult{Key: p.IdempotencyKey, Reason: reason}
-	if err := s.update(func(l *ledger.Ledger) error {
+	if err := s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.NotRecordable = true
 		v.RecordPending = v.Receipt == nil || !v.Receipt.Delivered
@@ -789,9 +817,9 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	if err != nil {
 		result.Reason = err.Error()
 	}
-	err = errors.Join(err, s.stopRetry(p, r, result.Reason))
+	err = errors.Join(err, s.stopRetry(ctx, p, r, result.Reason))
 	if err == nil && r.Delivered {
-		err = s.update(func(l *ledger.Ledger) error { l.Sends[p.IdempotencyKey].RecordPending = false; return nil })
+		err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[p.IdempotencyKey].RecordPending = false; return nil })
 	}
 	return result, err
 }
@@ -807,7 +835,7 @@ func (s *Server) RetryPending(ctx context.Context) error {
 	if err := s.available(); err != nil {
 		return err
 	}
-	l, err := s.snapshot()
+	l, err := s.snapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -971,7 +999,7 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		problem(w, 502, err)
 		return
 	}
-	l, err := s.snapshot()
+	l, err := s.snapshot(r.Context())
 	if err != nil {
 		problem(w, 500, err)
 		return
@@ -1080,7 +1108,7 @@ func (s *Server) setSpace(w http.ResponseWriter, r *http.Request) {
 		problem(w, 500, err)
 		return
 	}
-	if err := s.update(func(l *ledger.Ledger) error {
+	if err := s.update(r.Context(), func(l *ledger.Ledger) error {
 		if space := l.Spaces[v.ID]; space != nil {
 			space.Wake = string(v.Wake)
 		}
@@ -1122,8 +1150,8 @@ func writeSettings(path string, data []byte) error {
 	return dir.Sync()
 }
 
-func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
-	l, err := s.snapshot()
+func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	l, err := s.snapshot(r.Context())
 	if err != nil {
 		problem(w, 500, err)
 		return
@@ -1167,7 +1195,7 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 		problem(w, 503, errors.New("inbound processor is initializing"))
 		return
 	}
-	err := s.update(func(l *ledger.Ledger) error {
+	err := s.update(r.Context(), func(l *ledger.Ledger) error {
 		c := l.Unresolved[v.ID]
 		if c == nil {
 			return errors.New("unresolved delivery not found")
@@ -1232,7 +1260,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	err = s.update(func(current *ledger.Ledger) error { *current = *l; return nil })
+	err = s.update(r.Context(), func(current *ledger.Ledger) error { *current = *l; return nil })
 	if err != nil {
 		problem(w, 500, err)
 		return

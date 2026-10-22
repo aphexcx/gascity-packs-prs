@@ -695,6 +695,35 @@ func TestPublishAlwaysHas25SecondBudget(t *testing.T) {
 	}
 }
 
+func TestPublishDeadlineWhileLedgerIsLocked(t *testing.T) {
+	f := setup(t)
+	// The holder outlives the request, but eventually releases even before the
+	// fix so this regression fails promptly instead of hanging the test suite.
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		f.mu.Lock()
+		close(held)
+		select {
+		case <-release:
+		case <-time.After(500 * time.Millisecond):
+		}
+		f.mu.Unlock()
+	}()
+	<-held
+	defer close(release)
+	p := wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "locked"}
+	data, _ := json.Marshal(p)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	w := httptest.NewRecorder()
+	start := time.Now()
+	f.s.ServeHTTP(w, httptest.NewRequest("POST", "/publish", bytes.NewReader(data)).WithContext(ctx))
+	r := decode[wire.PublishReceipt](t, w.Body.Bytes())
+	if time.Since(start) > 200*time.Millisecond || w.Code != 200 || r.Delivered || r.FailureKind != "transient" || r.RetryAfter <= 0 {
+		t.Fatalf("deadline not respected: elapsed=%v code=%d receipt=%+v", time.Since(start), w.Code, r)
+	}
+}
+
 func TestReadReactStatusAndState(t *testing.T) {
 	f := setup(t)
 	a := f.send(t, wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "older", IdempotencyKey: "older"})
