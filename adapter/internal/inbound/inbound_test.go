@@ -1115,3 +1115,24 @@ func TestPendingDeadlineUsesCreatedTimeAndInjectedClock(t *testing.T) {
 		t.Fatal("negative pending deadline accepted")
 	}
 }
+
+func TestExistingSpaceInheritsWakeDefault(t *testing.T) {
+	for _, kind := range []string{"room", "dm", ""} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			f.opts.Config.Settings.Defaults.Wake = config.WakeMentions
+			f.l.Spaces[space] = &ledger.SpaceState{Kind: kind}
+			handle(t, f, event("seeded", "message.created", message()))
+			want := 0
+			if kind == "dm" {
+				want = 1
+			}
+			if len(f.gc.Inbound()) != want || f.l.Counters["turns:"+space] != int64(want) {
+				t.Fatalf("empty wake bypassed default: posts=%d counters=%v", len(f.gc.Inbound()), f.l.Counters)
+			}
+			if f.l.Spaces[space].Wake != "mentions" {
+				t.Fatalf("wake default not retained: %+v", f.l.Spaces[space])
+			}
+		})
+	}
+}

@@ -342,7 +342,10 @@ func (p *Processor) space(ctx context.Context, name string, supplied *api.Space)
 	}
 	s := l.Spaces[name]
 	if s == nil {
-		s = &ledger.SpaceState{Wake: string(p.opts.Config.Wake(name))}
+		s = &ledger.SpaceState{}
+	}
+	if s.Wake == "" {
+		s.Wake = string(p.opts.Config.Wake(name))
 	}
 	if s.Kind != "" {
 		return s, nil
@@ -592,6 +595,9 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			// Preserve cursors/backlog and any concurrent wake-policy update.
 			if current := l.Spaces[c.Space]; current != nil {
 				current.Kind = space.Kind
+				if current.Wake == "" {
+					current.Wake = space.Wake
+				}
 			} else {
 				l.Spaces[c.Space] = space
 			}
