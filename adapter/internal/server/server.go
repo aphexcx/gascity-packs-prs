@@ -388,7 +388,7 @@ func failure(p wire.PublishRequest, err error) wire.PublishReceipt {
 	var gcErr *gcclient.HTTPError
 	if errors.As(err, &gcErr) {
 		kind, delay = chat.Classify(&googleapi.Error{Code: gcErr.StatusCode, Header: http.Header{"Retry-After": []string{gcErr.RetryAfter}}})
-		if gcErr.StatusCode == http.StatusRequestTimeout || gcclient.IsNoAdapter(err) {
+		if gcErr.StatusCode == http.StatusRequestTimeout || gcclient.IsNoAdapter(err) || gcclient.IsCityNotRunning(err) {
 			kind = "transient"
 		}
 	}
@@ -913,7 +913,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			// Delivery is durable; only recording failed. Definite rejections
 			// belong to the caller, while ambiguous recording failures recover.
 			var gcErr *gcclient.HTTPError
-			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429 && !gcclient.IsNoAdapter(err)
+			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429 && !gcclient.IsNoAdapter(err) && !gcclient.IsCityNotRunning(err)
 			if definite {
 				result.FailureKind = failure(p, err).FailureKind
 			}
@@ -1137,7 +1137,7 @@ func (s *Server) Register(ctx context.Context) error {
 // ObserveGCError is also available to app-owned gc call sites (inbound/poll).
 // Re-registration uses service lifetime, not the failed request's deadline.
 func (s *Server) ObserveGCError(err error) {
-	if !errors.Is(err, syscall.ECONNREFUSED) && !gcclient.IsNoAdapter(err) {
+	if !errors.Is(err, syscall.ECONNREFUSED) && !gcclient.IsNoAdapter(err) && !gcclient.IsCityNotRunning(err) {
 		return
 	}
 	// Coalesce without blocking the failed command or accumulating waiters.

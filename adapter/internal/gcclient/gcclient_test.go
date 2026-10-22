@@ -524,3 +524,31 @@ func TestNoAdapterProblem(t *testing.T) {
 		}
 	}
 }
+
+func TestCityNotRunningProblem(t *testing.T) {
+	s := fakegc.New(t)
+	s.Configure(func(g *fakegc.Server) { g.CityNotRunning = true })
+	c := checkedClient(t, s.URL())
+	_, outboundErr := c.Outbound(t.Context(), wire.OutboundRequest{SessionID: "session", Conversation: conversation(), Text: "reply"})
+	registerErr := c.Register(t.Context(), wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: "http://localhost/callback"})
+	for _, candidate := range []error{outboundErr, registerErr, fmt.Errorf("wrapped: %w", outboundErr)} {
+		if !IsCityNotRunning(candidate) {
+			t.Errorf("city startup error misclassified: %v", candidate)
+		}
+	}
+	const detail = "not_found: city not found or not running: examplecity"
+	for _, candidate := range []error{
+		nil,
+		(*HTTPError)(nil),
+		errors.New(detail),
+		&HTTPError{StatusCode: 404, Body: detail},
+		&HTTPError{StatusCode: 422, Problem: &Problem{Code: "city-not-found", Detail: detail}},
+		&HTTPError{StatusCode: 404, Problem: &Problem{Code: "not-found", Detail: detail}},
+		&HTTPError{StatusCode: 404, Problem: &Problem{Code: "city-not-found", Detail: "context: " + detail}},
+		&HTTPError{StatusCode: 404, Problem: &Problem{Code: "city-not-found", Detail: "route not found"}},
+	} {
+		if IsCityNotRunning(candidate) {
+			t.Errorf("unrelated error classified as city startup: %v", candidate)
+		}
+	}
+}

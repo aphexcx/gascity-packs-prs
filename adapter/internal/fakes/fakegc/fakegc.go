@@ -31,6 +31,8 @@ type Server struct {
 	// synchronized updates while clients are running.
 	Bindings       map[wire.Conversation]string
 	FailTranscript bool
+	// CityNotRunning models the supervisor serving before its city starts.
+	CityNotRunning bool
 	Now            func() time.Time
 
 	mu            sync.Mutex
@@ -212,6 +214,19 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	city := parts[2]
+	s.mu.Lock()
+	notRunning := s.CityNotRunning
+	s.mu.Unlock()
+	if notRunning {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type": "urn:gascity:error:city-not-found", "title": "City Not Found",
+			"status": 404, "code": "city-not-found",
+			"detail": "not_found: city not found or not running: " + city,
+		})
+		return
+	}
 	path := strings.Join(parts[4:], "/")
 	if r.Method != http.MethodGet && r.Header.Get(wire.RequestHeader) == "" {
 		fail(w, 403, "X-GC-Request is required")
