@@ -256,6 +256,7 @@ func (a *application) run(ctx context.Context) error {
 		}
 	}()
 	credentialHold := false
+	var lastCredentialFailure time.Time
 	reloaded := false
 	restartDelay := time.Second
 	settingsBytes, _ := os.ReadFile(a.opts.SettingsPath)
@@ -307,6 +308,7 @@ func (a *application) run(ctx context.Context) error {
 			}
 			stopGeneration()
 			credentialHold = false
+			lastCredentialFailure = time.Time{}
 			reloaded = true
 			a.noticeMu.Lock()
 			delete(a.notified, "credentials")
@@ -324,9 +326,40 @@ func (a *application) run(ctx context.Context) error {
 				start()
 				continue
 			}
-			if credentialsError(err) || source.State() != token.Ready {
+			bounded := false
+			if credentialsError(err) && source.State() == token.Ready {
+				a.health("initializing", "refreshing rejected credential")
+				state, refreshErr := source.RefreshNow(ctx)
+				if ctx.Err() != nil {
+					return nil
+				}
+				if state == token.Ready && refreshErr == nil {
+					now := time.Now()
+					bounded = !lastCredentialFailure.IsZero() && now.Sub(lastCredentialFailure) <= 5*time.Minute
+					lastCredentialFailure = now
+					if !bounded {
+						a.mu.Lock()
+						a.l.Counters["credential_refresh_restarts"]++
+						saveErr := a.l.Save(a.cfg.Endpoints.StateFile)
+						a.mu.Unlock()
+						if saveErr != nil {
+							return saveErr
+						}
+						start()
+						continue
+					}
+				}
+			} else if !credentialsError(err) {
+				lastCredentialFailure = time.Time{}
+			}
+			if source.State() != token.Ready || bounded {
 				credentialHold = true
-				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
+				reason := "credential rejected; run gc gchat auth"
+				if bounded {
+					reason = "two consecutive credential rejections within five minutes after refresh; run gc gchat auth"
+					a.log.Warn("credential refresh recovery exhausted", "cause", safeReason("repeated credential rejection", err))
+				}
+				a.health("needs-sign-in", reason)
 				a.notice("credentials")
 			} else {
 				a.health("initializing", safeReason("connection interrupted; retrying", err))
@@ -362,6 +395,7 @@ func (a *application) run(ctx context.Context) error {
 							source = fresh
 							stopWatch = watchToken(ctx, source, reload)
 							credentialHold = false
+							lastCredentialFailure = time.Time{}
 							reloaded = true
 						}
 						a.cfg = next

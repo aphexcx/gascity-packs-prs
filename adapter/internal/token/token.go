@@ -120,6 +120,15 @@ func (s *Source) Invalidate() {
 	s.expireLocked()
 }
 
+// RefreshNow expires the access token and exercises the refresh credential.
+// Transient failure leaves the source Ready for retry; only a permanent OAuth
+// failure moves it to NeedsSignIn. A concurrent validated replacement wins.
+func (s *Source) RefreshNow(ctx context.Context) (State, error) {
+	s.Invalidate()
+	_, err := s.token(ctx)
+	return s.State(), err
+}
+
 func (s *Source) invalidateSent(accessToken string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
