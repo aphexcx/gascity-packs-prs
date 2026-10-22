@@ -25,6 +25,25 @@ type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// The shared fake still emits users/example. Model Google's canonical numeric
+// user resource in this package without changing the fake outside this bead.
+func canonicalFakeResponse(r *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(r)
+	if err != nil || !strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
+		return response, err
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+	data = bytes.ReplaceAll(data, []byte(`"users/example"`), []byte(`"users/123"`))
+	response.Body = io.NopCloser(bytes.NewReader(data))
+	response.ContentLength = int64(len(data))
+	response.Header.Set("Content-Length", fmt.Sprint(len(data)))
+	return response, nil
+}
+
 type testClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -158,7 +177,7 @@ func TestDownloadStreamingContextAndUnknownLength(t *testing.T) {
 	resource := "spaces/room/attachments/stream"
 	s.Media[resource] = []byte("streaming data")
 	httpClient := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		response, err := http.DefaultTransport.RoundTrip(r)
+		response, err := canonicalFakeResponse(r)
 		if err == nil {
 			response.ContentLength = -1
 			response.Body = contextBody{ctx: r.Context(), ReadCloser: response.Body}
@@ -191,7 +210,7 @@ func fixture(t *testing.T) (*Client, *fakegoogle.Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(context.Background(), http.DefaultClient, config.Endpoints{ChatAPIBase: s.URL(), MediaDir: dir, UploadRoot: dir})
+	c, err := New(context.Background(), &http.Client{Transport: transportFunc(canonicalFakeResponse)}, config.Endpoints{ChatAPIBase: s.URL(), MediaDir: dir, UploadRoot: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +306,7 @@ func TestListMessagesUsesDefaultAscendingOrder(t *testing.T) {
 		if order := r.URL.Query().Get("orderBy"); order != "" {
 			t.Errorf("expected documented default order, got %q", order)
 		}
-		return http.DefaultTransport.RoundTrip(r)
+		return canonicalFakeResponse(r)
 	})}
 	c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {
@@ -317,12 +336,12 @@ func TestReactionsDeleteOnlyOwnAcrossPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A restarted client can remove reactions without first creating one.
-	c, err = New(context.Background(), http.DefaultClient, config.Endpoints{ChatAPIBase: s.URL()})
+	c, err = New(context.Background(), &http.Client{Transport: transportFunc(canonicalFakeResponse)}, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	useTestClock(c)
-	if err := c.SetIdentityUserID("users/example"); err != nil {
+	if err := c.SetIdentityUserID("users/123"); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.DeleteReaction(context.Background(), message, "👍"); err != nil {
@@ -336,6 +355,57 @@ func TestReactionsDeleteOnlyOwnAcrossPages(t *testing.T) {
 			t.Errorf("wrong reactions remaining: %v", s.Reactions)
 		}
 	})
+}
+
+func TestIdentityRejectsAliases(t *testing.T) {
+	for _, id := range []string{"", "users/", "users/me", "users/app", "users/example", "users/example@example.com", "users/123/4", "users/１２３", "users/+123", "users/123\n"} {
+		c := &Client{}
+		if err := c.SetIdentityUserID(id); err == nil {
+			t.Errorf("accepted %q", id)
+		}
+	}
+	c := &Client{}
+	if err := c.SetIdentityUserID("users/123456789012345678901"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetIdentityUserID("users/456"); err == nil {
+		t.Fatal("allowed identity change")
+	}
+}
+
+func TestCreateMessageLearnsIdentityForReactionRemoval(t *testing.T) {
+	c, s, _ := fixture(t)
+	name, _, err := c.CreateMessage(context.Background(), "spaces/room", "hello", "", "identity", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No reaction has been created by this client. A pre-existing own reaction
+	// must already be removable after a successful message response.
+	const own = "users/123"
+	reaction := name + "/reactions/own"
+	s.Configure(func(s *fakegoogle.Server) {
+		s.Reactions[reaction] = &googlechat.Reaction{Name: reaction, User: &googlechat.User{Name: own}, Emoji: &googlechat.Emoji{Unicode: "👍"}}
+	})
+	if err := c.DeleteReaction(context.Background(), name, "👍"); err != nil {
+		t.Fatal(err)
+	}
+	s.Configure(func(s *fakegoogle.Server) {
+		if s.Reactions[reaction] != nil {
+			t.Error("own reaction remains")
+		}
+		// Idempotency replays can omit the sender; preserve the learned identity.
+		s.Messages[name].Sender = nil
+	})
+	if _, _, err := c.CreateMessage(context.Background(), "spaces/room", "hello", "", "identity", true); err != nil {
+		t.Fatal(err)
+	}
+	identity, ok := any(c).(interface{ IdentityUserID() string })
+	if !ok {
+		t.Fatal("missing identity accessor")
+	}
+	if identity.IdentityUserID() != own {
+		t.Fatalf("identity = %q", identity.IdentityUserID())
+	}
 }
 
 func TestUploadMessageAndBoundedDownload(t *testing.T) {
@@ -482,7 +552,7 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 			}
 			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
 		}
-		return http.DefaultTransport.RoundTrip(r)
+		return canonicalFakeResponse(r)
 	})}
 	c, err := New(context.Background(), httpClient, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir, MediaMaxBytes: 5})
 	if err != nil {
@@ -516,7 +586,7 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 				// Inject at the transfer request, not at a resumable session's
 				// metadata request. This catches the SDK's hidden chunk retries.
 				if r.URL.Query().Get("uploadType") == "resumable" {
-					return http.DefaultTransport.RoundTrip(r)
+					return canonicalFakeResponse(r)
 				}
 				attempts++
 				if attempts == 1 {
@@ -529,7 +599,7 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 					r.Body.Close()
 					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"2"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
 				}
-				return http.DefaultTransport.RoundTrip(r)
+				return canonicalFakeResponse(r)
 			})}
 			c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir})
 			if err != nil {
@@ -695,7 +765,7 @@ func TestRetryHintAndLostResponse(t *testing.T) {
 		if clock.Now().Sub(first) < 2*time.Second {
 			t.Error("retried before Retry-After")
 		}
-		return http.DefaultTransport.RoundTrip(r)
+		return canonicalFakeResponse(r)
 	})}
 	c, err = New(context.Background(), httpClient, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {

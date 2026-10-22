@@ -56,7 +56,7 @@ func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Cl
 // identity. Configure it at startup so DeleteReaction also works before this
 // client has created a reaction. A create response can discover it otherwise.
 func (c *Client) SetIdentityUserID(id string) error {
-	if !strings.HasPrefix(id, "users/") || len(strings.Split(id, "/")) != 2 || strings.TrimPrefix(id, "users/") == "" || id == "users/me" || id == "users/app" {
+	if !validUserID.MatchString(id) {
 		return localError{errors.New("chat: canonical identity user ID required")}
 	}
 	c.identityMu.Lock()
@@ -66,6 +66,16 @@ func (c *Client) SetIdentityUserID(id string) error {
 	}
 	c.identityUserID = id
 	return nil
+}
+
+var validUserID = regexp.MustCompile(`^users/[0-9]+$`)
+
+// IdentityUserID returns the canonical user resource learned from a successful
+// create response or supplied at startup. The app can persist it in its ledger.
+func (c *Client) IdentityUserID() string {
+	c.identityMu.RLock()
+	defer c.identityMu.RUnlock()
+	return c.identityUserID
 }
 
 func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
@@ -119,6 +129,12 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	}
 	if result.Thread != nil {
 		threadName = result.Thread.Name
+	}
+	// Replayed creates may omit the sender. Never erase a previously learned ID.
+	if result.Sender != nil && result.Sender.Name != "" {
+		if err := c.SetIdentityUserID(result.Sender.Name); err != nil {
+			return result.Name, threadName, err
+		}
 	}
 	return result.Name, threadName, nil
 }
