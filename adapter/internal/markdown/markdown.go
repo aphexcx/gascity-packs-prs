@@ -126,6 +126,16 @@ func blockBoundaryLine(line string) bool {
 	if !strings.ContainsRune("-=*_", rune(body[0])) {
 		return false
 	}
+	// Setext underlines need only one marker, but their runs are contiguous.
+	// Only thematic breaks (-, *, _) permit whitespace between markers.
+	if body[0] == '=' || body[0] == '-' {
+		if strings.Trim(body[runLength(body):], " \t\r\n") == "" {
+			return true
+		}
+		if body[0] == '=' {
+			return false
+		}
+	}
 	count := 0
 	for _, c := range body {
 		if c == rune(body[0]) {

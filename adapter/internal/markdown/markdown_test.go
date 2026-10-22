@@ -98,6 +98,8 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 		{"consecutive blockquote code span", "> `open\n> **after** `", "> `open\n> **after** `"},
 		{"indented blockquote code span", " > `open\n   > **inside** `\n**after**", " > `open\n   > **inside** `\n*after*"},
 		{"code search resets between paragraphs", "before \\``\n\n`**code**` **after**", "before \\``\n\n`**code**` *after*"},
+		{"spaced equals keeps code span", "a `b\n = = = \n**c** `", "a `b\n = = = \n**c** `"},
+		{"tabbed equals keeps code span", "a `b\n=\t=\n**c** `", "a `b\n=\t=\n**c** `"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -106,7 +108,7 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 			}
 		})
 	}
-	for _, boundary := range []string{"---", "===", "***", "___", " - - - ", " = = = ", " * * * ", " _ _ _ ", " > **quote**", "  > **quote**", "   > **quote**"} {
+	for _, boundary := range []string{"-", "--", "---", "=", "==", "===", " == \t", "***", "___", " - - - ", " * * * ", " _ _ _ ", " > **quote**", "  > **quote**", "   > **quote**"} {
 		t.Run("block boundary "+boundary, func(t *testing.T) {
 			input := "a `b\n" + boundary + "\n**c** `"
 			renderedBoundary := strings.ReplaceAll(boundary, "**quote**", "*quote*")
