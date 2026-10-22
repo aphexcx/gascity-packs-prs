@@ -303,7 +303,7 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 			t.Errorf("transcript missing %s: %v", key, entry)
 		}
 	}
-	if len(entry) != 16 || entry["SourceSessionID"] != "session" || entry["ProviderMessageID"] != "spaces/room/messages/one" || entry["Text"] != "hello" {
+	if len(entry) != 15 || entry["SourceSessionID"] != "session" || entry["ProviderMessageID"] != "spaces/room/messages/one" || entry["Text"] != "hello" {
 		t.Errorf("transcript shape: %v", entry)
 	}
 	dc, ok := result["DeliveryContext"].(map[string]any)
