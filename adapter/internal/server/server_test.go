@@ -449,10 +449,16 @@ func TestRegistrarContractRetriesAndReconnectDoesNotBlock(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	var registration wire.Registration
+	var registrationKey string
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
 		attempts++
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" || (registrationKey != "" && key != registrationKey) {
+			t.Error("registration retries require one stable idempotency key")
+		}
+		registrationKey = key
 		if r.Header.Get(wire.RequestHeader) == "" {
 			t.Error("missing mutation header")
 		}
@@ -1453,5 +1459,139 @@ func TestUnrecordableReceiptClearsPendingAtCommitAndAfterRestart(t *testing.T) {
 				t.Fatalf("status: %s", raw)
 			}
 		})
+	}
+}
+
+func TestHistoryOmitsDeliveryMarkers(t *testing.T) {
+	f := setup(t)
+	p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu, LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := &api.Message{Name: "spaces/room/messages/caught", CreateTime: "2026-10-22T10:00:00Z", Text: "edited: literal content", Space: &api.Space{Name: "spaces/room", SpaceType: "SPACE"}, Sender: &api.User{Name: "users/456", Type: "HUMAN"}}
+	for _, kind := range []string{"message.created", "message.updated"} {
+		if kind == "message.updated" {
+			m.LastUpdateTime, m.Text = "2026-10-22T11:00:00Z", "current content"
+		}
+		f.g.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
+		if _, err := p.HandleChange(t.Context(), puller.Change{Kind: kind, Space: "spaces/room", Message: m}); err != nil {
+			t.Fatal(err)
+		}
+		_, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+		got := decode[[]wire.InboundMessage](t, raw)
+		if len(got) != 1 || got[0].Text != m.Text {
+			t.Fatalf("history includes delivery markers for %s: %s", kind, raw)
+		}
+	}
+}
+
+func TestCommandGCLogsSanitizedFailureAndRecovery(t *testing.T) {
+	for _, status := range []int{422, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.s.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = io.WriteString(w, "private-gc-error-body")
+			}))
+			defer h.Close()
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			cmd := command("gc-log")
+			cmd["text"] = "private-command-text"
+			_, _, _ = f.call(t, "/commands/publish", cmd)
+			f.s.SetClients(f.options.Chat, f.options.GC)
+			f.gc.Bind(conversation("spaces/room"), "session")
+			for range 2 {
+				_, _, _ = f.call(t, "/commands/publish", cmd)
+			}
+			lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("want one warning and one recovery: %s", logs.String())
+			}
+			bad, good := decode[map[string]any](t, []byte(lines[0])), decode[map[string]any](t, []byte(lines[1]))
+			wantKind := "transient"
+			if status == 422 {
+				wantKind = "permanent"
+			}
+			if bad["level"] != "WARN" || bad["key"] != "gc-log" || bad["space"] != "spaces/room" || bad["cause_kind"] != wantKind || bad["http_status"] != float64(status) || good["level"] != "INFO" {
+				t.Fatalf("unexpected records: %s", logs.String())
+			}
+			if strings.Contains(logs.String(), "private-") {
+				t.Fatal("private command or error body logged")
+			}
+		})
+	}
+}
+
+func TestFailureLogRecoveryTrackingIsBounded(t *testing.T) {
+	f := setup(t)
+	f.s.opts.Logger = slog.New(slog.NewJSONHandler(io.Discard, nil))
+	for i := range 1100 {
+		p := wire.PublishRequest{Conversation: conversation("spaces/room"), IdempotencyKey: fmt.Sprint(i)}
+		err := errors.New("failure")
+		f.s.logPublish(p, failure(p, err), err)
+	}
+	if len(f.s.publishFailures) > 1024 {
+		t.Fatalf("unbounded recovery tracking: %d entries", len(f.s.publishFailures))
+	}
+	// A recent failure must still produce its recovery line.
+	var logs bytes.Buffer
+	f.s.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+	f.s.logPublish(wire.PublishRequest{IdempotencyKey: "1099"}, wire.PublishReceipt{Delivered: true}, nil)
+	if !strings.Contains(logs.String(), `"level":"INFO"`) {
+		t.Fatal("recent recovery was evicted")
+	}
+}
+
+func TestMissingInventorySpaceReturnsNotFound(t *testing.T) {
+	f := setup(t)
+	p := wire.PublishRequest{Conversation: conversation("spaces/gone"), Text: "hello", IdempotencyKey: "gone"}
+	got := f.send(t, p)
+	if got.Delivered || got.FailureKind != "not_found" || got.RetryAfter != 0 {
+		t.Fatalf("missing space receipt: %+v", got)
+	}
+	cmd := command("gone-command")
+	cmd["conversation_id"] = "spaces/gone"
+	_, raw, _ := f.call(t, "/commands/publish", cmd)
+	result := decode[CommandResult](t, raw)
+	if result.Delivered || result.FailureKind != "not_found" || result.RetryAfter != 0 {
+		t.Fatalf("missing space command: %+v", result)
+	}
+}
+
+func TestStateReconciliationCanRetryWithoutReplacingStateAgain(t *testing.T) {
+	f := setup(t)
+	calls := 0
+	f.s.opts.StateChanged = func(ctx context.Context) error {
+		calls++
+		if f.s.stateGate.TryRLock() {
+			f.s.stateGate.RUnlock()
+			t.Error("StateChanged must run under the state gate")
+		}
+		if err := f.s.update(ctx, func(l *ledger.Ledger) error {
+			l.Counters["reconcile"]++
+			return nil
+		}); err != nil {
+			return err
+		}
+		if calls == 1 {
+			return errors.New("reconciliation temporarily unavailable")
+		}
+		f.s.SetHealth(Health{State: "ready"})
+		return nil
+	}
+	f.s.SetHealth(Health{State: "recovery-required"})
+	code, raw, _ := f.call(t, "/state", map[string]string{"action": "reset"})
+	if code != 503 || f.s.Health().State != "recovery-required" {
+		t.Fatalf("failed reconcile cannot be retried: %d %s, health=%+v", code, raw, f.s.Health())
+	}
+	code, _, _ = f.call(t, "/state", map[string]string{"action": "restore", "file": "different"})
+	if code != 409 || calls != 1 {
+		t.Fatal("pending recovery accepted a different state replacement")
+	}
+	code, raw, _ = f.call(t, "/state", map[string]string{"action": "reset"})
+	if code != 200 || calls != 2 || f.l.Counters["reconcile"] != 2 || f.s.Health().State != "ready" {
+		t.Fatalf("reconcile retry: %d %s, calls=%d counter=%d", code, raw, calls, f.l.Counters["reconcile"])
 	}
 }

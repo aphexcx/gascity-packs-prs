@@ -36,6 +36,7 @@ import (
 )
 
 const publishBudget = 25 * time.Second
+const maxFailureLogKeys = 1024
 
 type Health struct {
 	State  string `json:"state"`
@@ -46,6 +47,8 @@ type Options struct {
 	Config *config.Config
 	Ledger *ledger.Ledger
 	// LedgerMu must be shared with inbound, catch-up, and the subscription manager.
+	// Consumers must release it for I/O and between batches; continuous re-locking
+	// can starve the server's deadline-aware TryLock polling.
 	LedgerMu     *sync.Mutex
 	LedgerPath   string
 	SettingsPath string
@@ -59,6 +62,8 @@ type Options struct {
 	LastEvent func() time.Time
 	// StateChanged asks the app to reconcile after a restore or reset. The app
 	// must quiesce its other ledger consumers while invoking the state route.
+	// It runs under the state gate and must tolerate retries: after an error,
+	// the same /state request retries reconciliation without replacing the ledger.
 	StateChanged func(context.Context) error
 }
 
@@ -77,8 +82,9 @@ type Server struct {
 	registering     bool
 	regFailed       bool // protected by regGate
 	logMu           sync.Mutex
-	publishFailures map[string]bool
+	publishFailures map[string]time.Time
 	stateGate       sync.RWMutex
+	pendingState    *stateRequest // protected by stateGate
 	keysMu          sync.Mutex
 	keys            map[string]*keyLock
 }
@@ -96,7 +102,7 @@ func New(opts Options) (*Server, error) {
 		opts.Logger = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Server{opts: opts, cfg: *opts.Config, health: Health{State: "initializing", Reason: "initialization in progress"}, chat: opts.Chat, gc: opts.GC, poll: opts.Poll, ctx: ctx, cancel: cancel, regGate: make(chan struct{}, 1), keys: map[string]*keyLock{}, publishFailures: map[string]bool{}, mux: http.NewServeMux()}
+	s := &Server{opts: opts, cfg: *opts.Config, health: Health{State: "initializing", Reason: "initialization in progress"}, chat: opts.Chat, gc: opts.GC, poll: opts.Poll, ctx: ctx, cancel: cancel, regGate: make(chan struct{}, 1), keys: map[string]*keyLock{}, publishFailures: map[string]time.Time{}, mux: http.NewServeMux()}
 	s.cfg.Settings.Spaces = append([]config.Space(nil), opts.Config.Settings.Spaces...)
 	s.cfg.Settings.Identities = append([]config.Identity(nil), opts.Config.Settings.Identities...)
 	if s.gc != nil {
@@ -257,6 +263,8 @@ func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
 
 // Other consumers share a sync.Mutex, so use TryLock with a cancellable wait
 // instead of spawning a waiter that could outlive the request and take the lock.
+// This is bounded, not FIFO: consumers must release for I/O and between batches.
+// Fair acquisition would require changing the mutex shared by every consumer.
 func (s *Server) lockLedger(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -411,21 +419,39 @@ func logCause(err error) (string, int) {
 }
 
 func (s *Server) logPublish(p wire.PublishRequest, receipt wire.PublishReceipt, err error) {
+	s.logOutcome("publish", p, receipt, err)
+}
+
+func (s *Server) logOutcome(operation string, p wire.PublishRequest, receipt wire.PublishReceipt, err error) {
 	failed := err != nil || !receipt.Delivered
+	key := operation + ":" + p.IdempotencyKey
 	s.logMu.Lock()
-	recovered := s.publishFailures[p.IdempotencyKey] && !failed
+	_, previouslyFailed := s.publishFailures[key]
+	recovered := previouslyFailed && !failed
 	if failed {
-		s.publishFailures[p.IdempotencyKey] = true
+		// WARNs are never suppressed. Bound only the best-effort INFO recovery
+		// history, evicting the oldest failure when callers abandon their keys.
+		if !previouslyFailed && len(s.publishFailures) >= maxFailureLogKeys {
+			var oldest string
+			var at time.Time
+			for k, when := range s.publishFailures {
+				if at.IsZero() || when.Before(at) {
+					oldest, at = k, when
+				}
+			}
+			delete(s.publishFailures, oldest)
+		}
+		s.publishFailures[key] = time.Now()
 	} else {
-		delete(s.publishFailures, p.IdempotencyKey)
+		delete(s.publishFailures, key)
 	}
 	s.logMu.Unlock()
-	attrs := []any{"operation", "publish", "space", p.Conversation.ConversationID, "key", p.IdempotencyKey, "message_id", receipt.MessageID}
+	attrs := []any{"operation", operation, "space", p.Conversation.ConversationID, "key", p.IdempotencyKey, "message_id", receipt.MessageID}
 	if failed {
 		_, status := logCause(err)
-		s.opts.Logger.Warn("publish failed", append(attrs, "cause_kind", receipt.FailureKind, "http_status", status)...)
+		s.opts.Logger.Warn(operation+" failed", append(attrs, "cause_kind", receipt.FailureKind, "http_status", status)...)
 	} else if recovered {
-		s.opts.Logger.Info("publish recovered", append(attrs, "cause_kind", "", "http_status", http.StatusOK)...)
+		s.opts.Logger.Info(operation+" recovered", append(attrs, "cause_kind", "", "http_status", http.StatusOK)...)
 	}
 }
 
@@ -614,7 +640,7 @@ func (s *Server) named(ctx context.Context, space string) (bool, error) {
 			return kind == "SPACE", err
 		}
 	}
-	return false, errors.New("space not found in identity inventory")
+	return false, &googleapi.Error{Code: http.StatusNotFound, Message: "space not found in identity inventory"}
 }
 
 type commandRequest struct {
@@ -678,7 +704,8 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// A DM's gc binding is distinct from a room binding.
 		if _, err := s.named(r.Context(), p.Conversation.ConversationID); err != nil {
-			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
+			r := failure(p, err)
+			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error(), FailureKind: r.FailureKind, RetryAfter: r.RetryAfter})
 			return
 		}
 		l, err = s.snapshot(r.Context())
@@ -816,6 +843,15 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 				result.RetryAfter = out.Receipt.RetryAfter
 			}
 			result.Recorded = out.TranscriptEntry != nil
+		}
+	}
+	if !gcclient.IsNoBinding(err) {
+		if err != nil {
+			s.logOutcome("gc_outbound", p, failure(p, err), err)
+		} else {
+			// This boundary tracks gc transport/rejection recovery; delivery
+			// failures from its callback are logged by publish itself.
+			s.logOutcome("gc_outbound", p, wire.PublishReceipt{Delivered: true, MessageID: result.MessageID}, nil)
 		}
 	}
 	if gcclient.IsNoBinding(err) {
@@ -1177,6 +1213,10 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
+			saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
+			if change.Kind == "message.updated" && id != m.Name {
+				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
+			}
 			return saved, true
 		}
 	}
@@ -1382,11 +1422,13 @@ func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {
 	respond(w, 200, map[string]string{"id": v.ID, "action": v.Action})
 }
 
+type stateRequest struct {
+	Action string `json:"action"`
+	File   string `json:"file"`
+}
+
 func (s *Server) state(w http.ResponseWriter, r *http.Request) {
-	var v struct {
-		Action string `json:"action"`
-		File   string `json:"file"`
-	}
+	var v stateRequest
 	if err := body(w, r, &v); err != nil || (v.Action != "restore" && v.Action != "reset") {
 		problem(w, 400, errors.New("action restore or reset required"))
 		return
@@ -1401,19 +1443,29 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.stateGate.Unlock()
-	l := ledger.New()
+	if v.Action == "reset" {
+		v.File = ""
+	}
+	if s.pendingState != nil && *s.pendingState != v {
+		problem(w, 409, errors.New("state reconciliation pending; retry the same restore/reset request"))
+		return
+	}
 	var err error
-	if v.Action == "restore" {
-		l, err = ledger.Load(v.File, true)
+	if s.pendingState == nil {
+		l := ledger.New()
+		if v.Action == "restore" {
+			l, err = ledger.Load(v.File, true)
+			if err != nil {
+				problem(w, 400, err)
+				return
+			}
+		}
+		err = s.update(r.Context(), func(current *ledger.Ledger) error { *current = *l; return nil })
 		if err != nil {
-			problem(w, 400, err)
+			problem(w, 500, err)
 			return
 		}
-	}
-	err = s.update(r.Context(), func(current *ledger.Ledger) error { *current = *l; return nil })
-	if err != nil {
-		problem(w, 500, err)
-		return
+		s.pendingState = &v
 	}
 	if err = ledger.MarkEstablished(s.configuration().SecretsDir); err != nil {
 		problem(w, 500, err)
@@ -1422,13 +1474,15 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	s.SetHealth(Health{State: "initializing", Reason: "state restored; reconciliation required"})
 	if s.opts.StateChanged != nil {
 		if err = s.opts.StateChanged(r.Context()); err != nil {
+			s.SetHealth(Health{State: "recovery-required", Reason: "state reconciliation failed; retry the same restore/reset request"})
 			problem(w, 503, err)
 			return
 		}
 	}
+	s.pendingState = nil
 	reason := "state restored"
 	if v.Action == "reset" {
 		reason = "state reset; messages from the gap may be lost or duplicated"
 	}
-	respond(w, 200, map[string]string{"state": "initializing", "reason": reason})
+	respond(w, 200, map[string]string{"state": s.Health().State, "reason": reason})
 }

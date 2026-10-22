@@ -5,6 +5,7 @@ package gcclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -140,8 +141,10 @@ func (c *Client) Outbound(ctx context.Context, req wire.OutboundRequest) (wire.O
 
 func (c *Client) call(ctx context.Context, method, path string, body, result any) error {
 	var reader io.Reader
+	var data []byte
 	if body != nil {
-		data, err := json.Marshal(body)
+		var err error
+		data, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("gc %s %s: encode request: %w", method, path, err)
 		}
@@ -154,6 +157,12 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	}
 	req.Header.Set(wire.RequestHeader, "gc-gchat-adapter")
 	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost && path == "adapters" {
+		// The same registration can be retried after a lost response or a
+		// coalesced reconnect. A changed registration must get a new key.
+		sum := sha256.Sum256(data)
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("gchat-register-%x", sum))
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) {
