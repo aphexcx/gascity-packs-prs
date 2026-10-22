@@ -471,6 +471,112 @@ func TestUnavailableHistoryReportedWithoutMovingCursor(t *testing.T) {
 	}
 }
 
+func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 20; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/messages") && r.URL.Query().Get("pageToken") == "17" {
+			return &googleapi.Error{Code: 403, Message: "not a member; private response"}
+		}
+		return nil
+	}
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 17 {
+		t.Fatalf("left space Pass = (%d, %d, %v), want (0, 17, error)", d, n, err)
+	}
+	if len(f.gc.Inbound()) != 0 || f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 {
+		t.Fatal("left space posted or unavailable counter missing")
+	}
+	if strings.Count(f.logs.String(), "level=WARN") != 1 || !strings.Contains(f.logs.String(), "HTTP 403") || strings.Contains(f.logs.String(), "private response") {
+		t.Fatalf("unsafe or missing unavailable warning: %s", f.logs.String())
+	}
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f.opts.Ledger = *saved
+	f.newRunner(t)
+	requests := len(f.requests)
+	f.pass(t, 0, 17)
+	if len(f.requests) != requests {
+		t.Fatal("requested unavailable space after restart")
+	}
+	delete(f.google.Spaces, "spaces/room")
+	f.freeze(t)
+	requests = len(f.requests)
+	f.pass(t, 0, 17)
+	if len(f.requests) != requests || len(f.gc.Inbound()) != 0 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+		t.Fatal("absent space was retried, posted, or warned again")
+	}
+	s := f.opts.Ledger.Spaces["spaces/room"]
+	if !s.MessageCursor.Equal(frozen.Add(-time.Hour)) || !s.EventCursor.Equal(frozen.Add(-time.Hour)) || !s.FrozenUpper.Equal(frozen) {
+		t.Fatal("unavailable space moved cursors")
+	}
+	f.addSpace("spaces/room", false)
+	f.onRequest = nil
+	f.freeze(t)
+	f.pass(t, 20, 0)
+}
+
+func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 20; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if r.URL.Query().Get("pageToken") == "17" {
+			return &googleapi.Error{Code: 403, Message: "permission denied; private response"}
+		}
+		return nil
+	}
+	for i := 0; i < 2; i++ {
+		d, n, err := f.r.Pass(context.Background())
+		if !errors.Is(err, inbound.ErrCredentials) || d != 0 || n != 17 {
+			t.Fatalf("credential hold = (%d, %d, %v)", d, n, err)
+		}
+		if !strings.Contains(err.Error(), "auth (HTTP 403)") || strings.Contains(err.Error(), "private response") {
+			t.Fatalf("credential error lost safe kind/status: %v", err)
+		}
+	}
+	if len(f.gc.Inbound()) != 0 || f.opts.Ledger.Counters["credentials:spaces/room"] != 1 {
+		t.Fatal("credential hold posted or counter missing")
+	}
+	s := f.opts.Ledger.Spaces["spaces/room"]
+	if !s.MessageCursor.Equal(frozen.Add(-time.Hour)) || !s.EventCursor.Equal(frozen.Add(-time.Hour)) {
+		t.Fatal("credential failure moved cursors")
+	}
+	f.onRequest = nil
+	f.pass(t, 20, 0)
+}
+
+func TestAccessFailureWarnsOnlyAfterPersistence(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 20; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if r.URL.Query().Get("pageToken") == "17" {
+			f.opts.Save = func(*ledger.Ledger) error { return errors.New("disk full") }
+			f.r.opts.Save = f.opts.Save
+			return &googleapi.Error{Code: 403, Message: "not a member"}
+		}
+		return nil
+	}
+	if _, _, err := f.r.Pass(context.Background()); err == nil {
+		t.Fatal("expected failed persistence")
+	}
+	if len(f.gc.Inbound()) != 0 || f.opts.Ledger.Counters["unavailable:spaces/room"] != 0 || strings.Contains(f.logs.String(), "level=WARN") {
+		t.Fatal("failed persistence posted, published state, or warned")
+	}
+}
+
 func TestHistoryErrorDoesNotStarveRetainedMessages(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)

@@ -54,6 +54,9 @@ type Processor struct {
 	gate chan struct{}
 }
 
+// ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
+var ErrCredentials = errors.New("inbound: credentials unavailable")
+
 func New(opts Options) (*Processor, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.GC == nil || opts.Chat == nil || (opts.Save == nil && opts.LedgerPath == "") {
 		return nil, errors.New("inbound: config, clients, ledger, shared mutex and persistence are required")

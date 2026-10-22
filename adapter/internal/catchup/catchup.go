@@ -20,6 +20,7 @@ import (
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 type Options struct {
@@ -54,6 +55,10 @@ type progress struct {
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
 	NextUpper    time.Time `json:"next_upper,omitempty"`
+	// Access failures retain the backlog and cursors. Only a fresh listing in
+	// Freeze clears Unavailable; credential failures can retry after sign-in.
+	Unavailable string `json:"unavailable,omitempty"`
+	Credentials string `json:"credentials,omitempty"`
 }
 
 type queuedChange struct {
@@ -71,6 +76,8 @@ var eventTypes = []string{
 	"google.workspace.chat.reaction.v1.created",
 	"google.workspace.chat.reaction.v1.deleted",
 }
+
+var errSpaceUnavailable = errors.New("catchup: space unavailable")
 
 func New(opts Options) (*Runner, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.Chat == nil || opts.Processor == nil || (opts.Save == nil && opts.LedgerPath == "") {
@@ -121,6 +128,14 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				s.Kind = "dm"
 			} else {
 				s.Kind = "room"
+			}
+			if !s.FrozenUpper.IsZero() {
+				p, err := decodeProgress(s.PageToken)
+				if err != nil {
+					return err
+				}
+				p.Unavailable = ""
+				s.PageToken = encode(p)
 			}
 		}
 		for name, s := range l.Spaces {
@@ -198,6 +213,9 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 			enumerationErr := r.enumerate(ctx, name)
 			if enumerationErr != nil {
 				failures = append(failures, enumerationErr)
+				if errors.Is(enumerationErr, errSpaceUnavailable) || errors.Is(enumerationErr, inbound.ErrCredentials) {
+					break
+				}
 			}
 			n, err := r.drain(ctx, name, &budget)
 			delivered += n
@@ -214,7 +232,8 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 				break
 			}
 			s := current.Spaces[name]
-			if s.FrozenUpper.IsZero() || len(s.Backlog) > 0 {
+			p, err := decodeProgress(s.PageToken)
+			if s.FrozenUpper.IsZero() || len(s.Backlog) > 0 || (err == nil && p.Unavailable != "") {
 				break
 			}
 			// A queued restart interval starts here, sharing this pass's budget.
@@ -246,7 +265,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		if p.Phase == "done" {
+		if p.Phase == "done" || p.Unavailable != "" {
 			return nil
 		}
 		var page []queuedChange
@@ -282,6 +301,10 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		}
 		if err != nil {
 			kind, _ := chat.Classify(err)
+			var apiErr *googleapi.Error
+			if kind == "auth" || (kind == "not_found" && errors.As(err, &apiErr) && apiErr.Code == 403) {
+				return r.holdAccess(name, p, err)
+			}
 			if kind == "not_found" || kind == "permanent" {
 				if saveErr := r.saveProgress(name, p, true); saveErr != nil {
 					return saveErr
@@ -293,6 +316,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			return errors.New("catchup: history page token did not advance")
 		}
 		p.Token = next
+		p.Credentials = ""
 		if next == "" {
 			if p.Phase == "messages" {
 				p.Phase = "events"
@@ -342,8 +366,12 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			return delivered, err
 		}
 		s := before.Spaces[name]
-		if _, err := decodeProgress(s.PageToken); err != nil {
+		p, err := decodeProgress(s.PageToken)
+		if err != nil {
 			return delivered, err
+		}
+		if p.Unavailable != "" {
+			return delivered, nil
 		}
 		if index >= len(s.Backlog) {
 			break
@@ -520,6 +548,37 @@ func (r *Runner) saveProgress(name string, p progress, lost bool) error {
 		r.report(name)
 	}
 	return err
+}
+
+func (r *Runner) holdAccess(name string, p progress, cause error) error {
+	kind, _ := chat.Classify(cause)
+	summary := kind
+	var apiErr *googleapi.Error
+	if errors.As(cause, &apiErr) {
+		summary = fmt.Sprintf("%s (HTTP %d)", kind, apiErr.Code)
+	}
+	key, sentinel, first := "unavailable:", errSpaceUnavailable, p.Unavailable == ""
+	if kind == "auth" {
+		key, sentinel, first = "credentials:", inbound.ErrCredentials, p.Credentials == ""
+		p.Credentials = summary
+	} else {
+		p.Unavailable = summary
+	}
+	held := fmt.Errorf("catchup: list %s for %s: %s: %w", p.Phase, name, summary, sentinel)
+	err := r.update(func(l *ledger.Ledger) error {
+		l.Spaces[name].PageToken = encode(p)
+		if first {
+			l.Counters[key+name]++
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Join(held, err)
+	}
+	if first {
+		r.opts.Logger.Warn("catch-up access unavailable", "space", name, "cause", summary)
+	}
+	return held
 }
 
 func (r *Runner) report(name string) {
