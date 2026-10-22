@@ -55,6 +55,9 @@ type Processor struct {
 	gate chan struct{}
 }
 
+// ErrCredentials identifies a lookup held until Chat credentials or scopes are repaired.
+var ErrCredentials = errors.New("inbound: credentials unavailable")
+
 func New(opts Options) (*Processor, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.GC == nil || opts.Chat == nil || (opts.Save == nil && opts.LedgerPath == "") {
 		return nil, errors.New("inbound: config, clients, ledger, shared mutex and persistence are required")
@@ -356,10 +359,24 @@ func unavailableSpace(err error) bool {
 }
 
 func unavailableParent(err error) bool {
-	// A parent lookup can return 403 for a space the identity left. Retain
-	// that inaccessible parent just like 404; 401 still holds for credentials.
+	// Only a not-a-member 403 proves the parent inaccessible; a scope 403
+	// holds for credential repair just like 401.
+	kind, _ := chat.Classify(err)
+	return kind == "not_found"
+}
+
+// lookupError exposes a safe classifier and status, never Google's response body.
+func lookupError(lookup string, err error) error {
+	kind, _ := chat.Classify(err)
+	summary := fmt.Sprintf("inbound: %s lookup failed: %s", lookup, kind)
 	var apiErr *googleapi.Error
-	return errors.As(err, &apiErr) && (apiErr.Code == 403 || apiErr.Code == 404)
+	if errors.As(err, &apiErr) {
+		summary += fmt.Sprintf(" (HTTP %d)", apiErr.Code)
+	}
+	if kind == "auth" {
+		return fmt.Errorf("%s: %w", summary, ErrCredentials)
+	}
+	return errors.New(summary)
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
@@ -466,7 +483,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 			w.Text = renderMentions(m)
 			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
 		}
-		return errors.New("inbound: space lookup failed")
+		return lookupError("space", err)
 	}
 	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
 	w.Text = renderMentions(m)
@@ -530,7 +547,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 				w.Text = reactionText(r, action, parent)
 				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
 			}
-			return errors.New("inbound: reaction parent lookup failed")
+			return lookupError("reaction parent", err)
 		}
 		state = &ledger.MessageState{Mine: m.Sender != nil && m.Sender.Name == p.identity()}
 		if m.Thread != nil {
@@ -544,7 +561,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 			w.Text = reactionText(r, action, parent)
 			return p.record(c, id, w, state, nil, "space unavailable", catchUp)
 		}
-		return errors.New("inbound: space lookup failed")
+		return lookupError("space", err)
 	}
 	w := p.envelope(id, c.Space, s.Kind, r.User, state.Thread)
 	w.Text = reactionText(r, action, parent)

@@ -1015,6 +1015,11 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/messages/missing") {
 					lookups.Add(1)
+					if status == http.StatusForbidden {
+						w.WriteHeader(status)
+						io.WriteString(w, `{"error":{"code":403,"message":"not a member: PRIVATE LOOKUP CONTENT"}}`)
+						return
+					}
 					http.Error(w, "PRIVATE LOOKUP CONTENT", status)
 					return
 				}
@@ -1671,5 +1676,53 @@ func TestCatchUpReactionMarkerBelongsToCurrentChange(t *testing.T) {
 				t.Fatalf("delete marker: %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+func TestLookupHoldCarriesCredentialKind(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		for _, status := range []int{401, 403, 503, 429} {
+			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
+				f := setup(t)
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.WriteHeader(status)
+					_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": status, "message": "PRIVATE SCOPE CONTENT"}})
+				}))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				var err error
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.p, err = New(f.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := message()
+				m.Space = nil
+				ev := event("credential-hold", "message.created", m)
+				if path != "message_space" {
+					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}}}
+					if path == "reaction_space" {
+						f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+					}
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				out, err := f.p.Handle(ctx, ev)
+				auth := status == 401 || status == 403
+				kind := map[int]string{401: "auth", 403: "auth", 503: "transient", 429: "rate_limited"}[status]
+				if out != puller.Nack || err == nil || errors.Is(err, ErrCredentials) != auth {
+					t.Fatalf("hold = %v, %v; credentials=%v", out, err, auth)
+				}
+				if !strings.Contains(err.Error(), kind) || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) || strings.Contains(err.Error(), "PRIVATE") {
+					t.Fatalf("unsafe or unclassified hold: %v", err)
+				}
+				if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:credential-hold") {
+					t.Fatal("held lookup consumed the change")
+				}
+			})
+		}
 	}
 }
