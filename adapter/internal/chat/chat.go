@@ -172,6 +172,32 @@ func (c *Client) ListMessages(ctx context.Context, space string, since time.Time
 
 var validThread = regexp.MustCompile(`^spaces/[A-Za-z0-9_-]+/threads/[A-Za-z0-9_-]+$`)
 
+// ListMessagesPage reads one page of a frozen, exclusive create-time interval.
+// Persist nextPageToken with these same bounds before requesting another page.
+func (c *Client) ListMessagesPage(ctx context.Context, space string, lower, upper time.Time, thread, pageToken string) (msgs []*googlechat.Message, nextPageToken string, err error) {
+	if lower.IsZero() || upper.IsZero() || !lower.Before(upper) {
+		return nil, "", localError{errors.New("chat: both frozen bounds must define a nonempty interval")}
+	}
+	filters := []string{"create_time > " + strconv.Quote(lower.UTC().Format(time.RFC3339Nano)), "create_time < " + strconv.Quote(upper.UTC().Format(time.RFC3339Nano))}
+	if thread != "" {
+		if !validThread.MatchString(thread) {
+			return nil, "", localError{errors.New("chat: invalid thread resource name")}
+		}
+		filters = append(filters, "thread.name = "+thread)
+	}
+	call := c.api.Spaces.Messages.List(space).PageSize(1000).OrderBy("createTime asc").Filter(strings.Join(filters, " AND ")).PageToken(pageToken)
+	var result *googlechat.ListMessagesResponse
+	err = c.retry(ctx, true, func(ctx context.Context) error {
+		var err error
+		result, err = call.Context(ctx).Do()
+		return err
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return result.Messages, result.NextPageToken, nil
+}
+
 func (c *Client) GetMessage(ctx context.Context, name string) (*googlechat.Message, error) {
 	var result *googlechat.Message
 	err := c.retry(ctx, true, func(ctx context.Context) error {
@@ -209,6 +235,30 @@ func (c *Client) ListSpaceEvents(ctx context.Context, space string, since time.T
 		}
 		call.PageToken(result.NextPageToken)
 	}
+}
+
+// ListSpaceEventsPage reads one chronological page between frozen event-time
+// bounds. The API orders events itself and has no orderBy parameter.
+func (c *Client) ListSpaceEventsPage(ctx context.Context, space string, lower, upper time.Time, types []string, pageToken string) (events []*googlechat.SpaceEvent, nextPageToken string, err error) {
+	if lower.IsZero() || upper.IsZero() || !lower.Before(upper) || len(types) == 0 {
+		return nil, "", localError{errors.New("chat: event types and a nonempty frozen interval are required")}
+	}
+	var terms []string
+	for _, typ := range types {
+		terms = append(terms, "event_types:"+strconv.Quote(typ))
+	}
+	filter := "start_time=" + strconv.Quote(lower.UTC().Format(time.RFC3339Nano)) + " AND end_time=" + strconv.Quote(upper.UTC().Format(time.RFC3339Nano)) + " AND (" + strings.Join(terms, " OR ") + ")"
+	call := c.api.Spaces.SpaceEvents.List(space).PageSize(1000).Filter(filter).PageToken(pageToken)
+	var result *googlechat.ListSpaceEventsResponse
+	err = c.retry(ctx, true, func(ctx context.Context) error {
+		var err error
+		result, err = call.Context(ctx).Do()
+		return err
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return result.SpaceEvents, result.NextPageToken, nil
 }
 
 func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (string, error) {
