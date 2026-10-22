@@ -3,6 +3,8 @@ package token
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +16,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"gchat-adapter/internal/config"
@@ -32,6 +33,7 @@ const (
 var ErrNeedsSignIn = errors.New("OAuth credential needs sign-in")
 
 var errMalformedJSON = errors.New("malformed JSON")
+var errInvalidCredential = errors.New("invalid credential file")
 
 // Source shares refreshed tokens across HTTP and Pub/Sub clients. The mutex
 // protecting state is never held during network calls, so health stays readable.
@@ -291,49 +293,48 @@ func permanentOAuthCode(code string) bool {
 }
 
 func transient(err error) bool {
-	if errors.Is(err, context.Canceled) || errors.Is(err, ErrNeedsSignIn) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, ErrNeedsSignIn) ||
+		errors.Is(err, errMalformedJSON) || errors.Is(err, errInvalidCredential) {
+		return false
+	}
+	var fileError *os.PathError
+	var syntaxError *json.SyntaxError
+	var typeError *json.UnmarshalTypeError
+	if errors.As(err, &fileError) || errors.As(err, &syntaxError) || errors.As(err, &typeError) {
 		return false
 	}
 	var validation validationError
 	if errors.As(err, &validation) {
-		return validation == 429 || validation >= 500
+		return validation == 429 || validation < 400 || validation >= 500
 	}
 	var failure *oauth2.RetrieveError
 	if errors.As(err, &failure) {
 		if permanentOAuthCode(failure.ErrorCode) {
 			return false
 		}
-		return failure.ErrorCode == "temporarily_unavailable" || failure.ErrorCode == "server_error" ||
-			(failure.Response != nil && (failure.Response.StatusCode == 429 || failure.Response.StatusCode >= 500))
 	}
-	// url.Error implements net.Error even for permanent configuration errors.
-	// Classify its cause instead of assuming that the interface means network IO.
+	// URL errors can wrap transport failures, including HTTP/2 stream resets
+	// that do not implement net.Error. Reject only known configuration failures.
 	var urlError *url.Error
 	if errors.As(err, &urlError) {
-		return transient(urlError.Err)
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) {
-		return true
-	}
-	var operation *net.OpError
-	if errors.As(err, &operation) {
-		return true
-	}
-	var networkError net.Error
-	if errors.As(err, &networkError) && networkError.Timeout() {
-		return true
-	}
-	// oauth2 v0.37 formats response-body read errors with %v, losing the
-	// original error chain. Recognize only its read-error prefix and known
-	// transport failures; never inspect a RetrieveError response body.
-	for cause := err; cause != nil; cause = errors.Unwrap(cause) {
-		if detail, ok := strings.CutPrefix(cause.Error(), "oauth2: cannot fetch token: "); ok {
-			return detail == "EOF" || detail == "unexpected EOF" ||
-				strings.HasSuffix(detail, ": connection reset by peer") ||
-				strings.HasSuffix(detail, ": i/o timeout")
+		endpoint, parseErr := url.Parse(urlError.URL)
+		if urlError.Op == "parse" || parseErr != nil ||
+			(endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Hostname() == "" {
+			return false
+		}
+		var address *net.AddrError
+		var verification *tls.CertificateVerificationError
+		var authority x509.UnknownAuthorityError
+		var hostname x509.HostnameError
+		var certificate x509.CertificateInvalidError
+		if errors.As(err, &address) || errors.As(err, &verification) ||
+			errors.As(err, &authority) || errors.As(err, &hostname) || errors.As(err, &certificate) {
+			return false
 		}
 	}
-	return false
+	// Unknown errors remain retryable. In particular, oauth2 flattens body-read
+	// failures (including deadline exceeded) into strings without an error chain.
+	return true
 }
 
 type validationError int
@@ -412,7 +413,7 @@ func readToken(path string) (*oauth2.Token, os.FileInfo, error) {
 		return nil, info, fmt.Errorf("token file %s: %w: %w", path, errMalformedJSON, err)
 	}
 	if tok.AccessToken == "" && tok.RefreshToken == "" {
-		return nil, info, fmt.Errorf("token file %s: access_token or refresh_token is required", path)
+		return nil, info, fmt.Errorf("token file %s: %w: access_token or refresh_token is required", path, errInvalidCredential)
 	}
 	return &tok, info, nil
 }

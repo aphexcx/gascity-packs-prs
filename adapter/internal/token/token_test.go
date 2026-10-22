@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -597,24 +599,104 @@ func TestWatchRetriesInterruptedOAuthResponse(t *testing.T) {
 }
 
 func TestWatchPermanentURLFailureObservedOnce(t *testing.T) {
-	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected HTTP call") })
-	ep.ChatAPIBase = "unsupported://example"
+	for _, endpoint := range []string{"unsupported://example", "http://127.0.0.1:99999"} {
+		t.Run(endpoint, func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected HTTP call") })
+			ep.ChatAPIBase = endpoint
+			s := mustSource(t, clientFile, tokenFile, ep)
+			now := time.Now()
+			s.now = func() time.Time { return now }
+			validations := 0
+			validate := s.validateFn
+			s.validateFn = func(ctx context.Context, client *http.Client) error {
+				validations++
+				return validate(ctx, client)
+			}
+			writeJSON(t, tokenFile, savedToken("replacement"))
+			for range 3 {
+				now = now.Add(time.Hour) // Outlast even the maximum transient backoff.
+				s.reload(t.Context(), func() { t.Error("invalid URL accepted") })
+			}
+			if validations != 1 {
+				t.Fatalf("permanent URL error retried %d times", validations)
+			}
+		})
+	}
+}
+
+func TestWatchRetriesStalledOAuthBody(t *testing.T) {
+	var refreshes, validations atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			if refreshes.Add(1) == 1 {
+				_, _ = io.Copy(io.Discard, r.Body)
+				fmt.Fprint(w, `{"access_token":`)
+				w.(http.Flusher).Flush()
+				<-r.Context().Done()
+				return
+			}
+			fmt.Fprint(w, `{"access_token":"replacement","expires_in":3600}`)
+			return
+		}
+		validations.Add(1)
+		fmt.Fprint(w, `{"spaces":[]}`)
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
 	s := mustSource(t, clientFile, tokenFile, ep)
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	validations := 0
-	validate := s.validateFn
-	s.validateFn = func(ctx context.Context, client *http.Client) error {
-		validations++
-		return validate(ctx, client)
+	reloads := 0
+	deadline, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	s.reload(deadline, func() { reloads++ })
+	if refreshes.Load() != 1 || validations.Load() != 0 || reloads != 0 {
+		t.Fatalf("stalled response: refreshes=%d validations=%d reloads=%d", refreshes.Load(), validations.Load(), reloads)
 	}
+	now = now.Add(s.watchInterval)
+	s.reload(t.Context(), func() { reloads++ })
+	s.reload(t.Context(), func() { reloads++ })
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "replacement" || refreshes.Load() != 2 || validations.Load() != 1 || reloads != 1 {
+		t.Fatalf("recovery: token=%+v error=%v refreshes=%d validations=%d reloads=%d", tok, err, refreshes.Load(), validations.Load(), reloads)
+	}
+}
+
+func TestWatchRetriesHTTP2StreamReset(t *testing.T) {
+	var validations atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("protocol = %s, want HTTP/2", r.Proto)
+		}
+		if validations.Add(1) == 1 {
+			panic(http.ErrAbortHandler)
+		}
+		fmt.Fprint(w, `{"spaces":[]}`)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected OAuth call") })
+	ep.ChatAPIBase = server.URL
+	s := mustSource(t, clientFile, tokenFile, ep)
 	writeJSON(t, tokenFile, savedToken("replacement"))
-	for range 3 {
-		now = now.Add(time.Hour) // Outlast even the maximum transient backoff.
-		s.reload(t.Context(), func() { t.Error("invalid URL accepted") })
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	ctx := context.WithValue(t.Context(), oauth2.HTTPClient, server.Client())
+	reloads := 0
+	s.reload(ctx, func() { reloads++ })
+	if validations.Load() != 1 || reloads != 0 {
+		t.Fatalf("reset response: validations=%d reloads=%d", validations.Load(), reloads)
 	}
-	if validations != 1 {
-		t.Fatalf("permanent URL error retried %d times", validations)
+	now = now.Add(s.watchInterval)
+	s.reload(ctx, func() { reloads++ })
+	s.reload(ctx, func() { reloads++ })
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "replacement" || validations.Load() != 2 || reloads != 1 {
+		t.Fatalf("recovery: token=%+v error=%v validations=%d reloads=%d", tok, err, validations.Load(), reloads)
 	}
 }
 
@@ -635,12 +717,17 @@ func TestTransientClassification(t *testing.T) {
 		{"EOF", io.EOF, true},
 		{"unexpected EOF", fmt.Errorf("wrapped: %w", io.ErrUnexpectedEOF), true},
 		{"oauth body EOF", errors.New("oauth2: cannot fetch token: unexpected EOF"), true},
+		{"oauth body deadline", errors.New("oauth2: cannot fetch token: context deadline exceeded"), true},
+		{"unknown transport failure", errors.New("new transport failure"), true},
 		{"oauth body reset", errors.New("oauth2: cannot fetch token: read tcp: connection reset by peer"), true},
 		{"reset", syscall.ECONNRESET, true},
 		{"network", &url.Error{Op: "Get", URL: "http://example", Err: &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}}, true},
 		{"deadline", context.DeadlineExceeded, true},
 		{"canceled", context.Canceled, false},
 		{"permanent URL", &url.Error{Op: "Get", URL: "unsupported://example", Err: errors.New("unsupported protocol scheme")}, false},
+		{"invalid port", &url.Error{Op: "Get", URL: "http://example:99999", Err: &net.OpError{Op: "dial", Err: &net.AddrError{Err: "invalid port", Addr: "99999"}}}, false},
+		{"invalid TLS certificate", &url.Error{Op: "Get", URL: "https://example", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
+		{"missing file", &os.PathError{Op: "open", Path: "token.json", Err: os.ErrNotExist}, false},
 		{"malformed JSON", &json.SyntaxError{}, false},
 		{"chat 429", validationError(429), true},
 		{"chat 503", validationError(503), true},
