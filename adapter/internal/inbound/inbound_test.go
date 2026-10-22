@@ -1063,6 +1063,97 @@ func TestPendingReceiptBeyondDefaultDeadlineIsUnresolved(t *testing.T) {
 	}
 }
 
+func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
+	for _, status := range []string{"delivered", "failed", "pending", "unknown", "lookup_error"} {
+		t.Run(status, func(t *testing.T) {
+			f := setup(t)
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var recovered atomic.Bool
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !recovered.Load() {
+					http.Error(w, "gc restarting", http.StatusServiceUnavailable)
+					return
+				}
+				if r.Method == http.MethodGet {
+					lookups.Add(1)
+					if status == "lookup_error" {
+						http.Error(w, "PRIVATE RECEIPT BODY", http.StatusServiceUnavailable)
+						return
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("outage", "message.created", message())
+			if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+				t.Fatalf("outage: %v %v", out, err)
+			}
+			// Recovery first obtains a fresh pending receipt for an old intent.
+			now = now.Add(2 * time.Hour)
+			recovered.Store(true)
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Changes[messageName]
+			if c.Status != "pending" || c.ReceiptID == "" {
+				t.Fatalf("recovery: %+v", c)
+			}
+			r := wire.ReceiptResponse{State: "concluded"}
+			r.Delivery.Status = status
+			if status == "pending" || status == "unknown" {
+				r.State = status
+			}
+			f.gc.SetReceipt(c.ReceiptID, r)
+			err = f.p.Poll(context.Background())
+			if (err != nil) != (status == "lookup_error") || (err != nil && strings.Contains(err.Error(), "PRIVATE")) {
+				t.Fatalf("receipt poll: %v", err)
+			}
+			if lookups.Load() != 1 {
+				t.Fatalf("receipt lookups=%d, want 1 before applying deadline", lookups.Load())
+			}
+			c = f.l.Changes[messageName]
+			wantPosts := 1
+			if status == "delivered" || status == "failed" {
+				if c.Status != "committed" || c.Reason != "delivered" || f.l.Counters["turns:"+space] != 1 || f.l.Unresolved[messageName] != nil {
+					t.Fatalf("concluded receipt not honored: %+v", c)
+				}
+				if status == "failed" {
+					wantPosts = 2
+				}
+			} else {
+				wantReason := map[string]string{"pending": "receipt pending beyond deadline", "unknown": "receipt unavailable or unknown", "lookup_error": "receipt lookup failed beyond deadline"}[status]
+				if c.Status != "unresolved" || c.Reason != wantReason || f.l.Unresolved[messageName] == nil || f.l.Counters["turns:"+space] != 0 {
+					t.Fatalf("unresolved receipt: %+v", c)
+				}
+			}
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			posts := f.gc.Inbound()
+			if len(posts) != wantPosts || lookups.Load() != 1 {
+				t.Fatalf("posts=%d lookups=%d", len(posts), lookups.Load())
+			}
+			for _, post := range posts {
+				if post.ProviderMessageID != messageName {
+					t.Fatalf("retry changed identity: %q", post.ProviderMessageID)
+				}
+			}
+		})
+	}
+}
+
 func TestPendingDeadlineUsesCreatedTimeAndInjectedClock(t *testing.T) {
 	for _, deadline := range []time.Duration{0, 2 * time.Minute} {
 		t.Run(deadline.String(), func(t *testing.T) {

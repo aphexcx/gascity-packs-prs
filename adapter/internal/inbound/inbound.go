@@ -146,7 +146,8 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 }
 
 // Poll performs one recovery pass. The app calls it every five seconds, also
-// after startup. Receipt lookup failures retain pending state for a later pass.
+// after startup. Concluded receipts are honored even past the pending deadline;
+// lookup failures retain pending state only until that deadline.
 func (p *Processor) Poll(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
@@ -181,20 +182,21 @@ func (p *Processor) Poll(ctx context.Context) error {
 			}
 			continue
 		}
-		if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
-			if err := p.unresolved(id, "receipt pending beyond deadline"); err != nil {
-				failures = append(failures, err)
-			}
-			continue
-		}
 		r, err := p.opts.GC.Receipt(ctx, c.ReceiptID)
 		if err != nil {
 			failures = append(failures, errors.New("inbound: receipt lookup failed"))
+			if ctx.Err() == nil && !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+				if err := p.unresolved(id, "receipt lookup failed beyond deadline"); err != nil {
+					failures = append(failures, err)
+				}
+			}
 			continue
 		}
 		switch r.State {
 		case "pending":
-			continue
+			if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+				err = p.unresolved(id, "receipt pending beyond deadline")
+			}
 		case "concluded":
 			if r.Delivery.Status == "pending" {
 				err = p.unresolved(id, "receipt concluded with pending delivery")
