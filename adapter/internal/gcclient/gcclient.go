@@ -5,6 +5,7 @@ package gcclient
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,14 +14,27 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"gchat-adapter/internal/wire"
 )
 
 type Client struct {
-	base, city string
-	http       *http.Client
+	base, city  string
+	http        *http.Client
+	onRefusedMu sync.RWMutex
+	onRefused   func(error)
+}
+
+// SetConnectionRefusedHandler lets the registrar observe failures from every
+// gc call, including inbound and receipt polling owned by other components.
+// The handler must return promptly; it schedules service-lifetime recovery.
+func (c *Client) SetConnectionRefusedHandler(fn func(error)) {
+	c.onRefusedMu.Lock()
+	defer c.onRefusedMu.Unlock()
+	c.onRefused = fn
 }
 
 // New constructs a client for a gc API base URL and city. Each call respects
@@ -53,6 +67,7 @@ type HTTPError struct {
 	StatusCode int
 	Body       string
 	Problem    *Problem
+	RetryAfter string // Retry-After header; interpreted by the caller's retry policy.
 }
 
 func (e *HTTPError) Error() string {
@@ -126,8 +141,10 @@ func (c *Client) Outbound(ctx context.Context, req wire.OutboundRequest) (wire.O
 
 func (c *Client) call(ctx context.Context, method, path string, body, result any) error {
 	var reader io.Reader
+	var data []byte
 	if body != nil {
-		data, err := json.Marshal(body)
+		var err error
+		data, err = json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("gc %s %s: encode request: %w", method, path, err)
 		}
@@ -140,8 +157,22 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	}
 	req.Header.Set(wire.RequestHeader, "gc-gchat-adapter")
 	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost && path == "adapters" {
+		// The same registration can be retried after a lost response or a
+		// coalesced reconnect. A changed registration must get a new key.
+		sum := sha256.Sum256(data)
+		req.Header.Set("Idempotency-Key", fmt.Sprintf("gchat-register-%x", sum))
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			c.onRefusedMu.RLock()
+			fn := c.onRefused
+			c.onRefusedMu.RUnlock()
+			if fn != nil {
+				fn(err)
+			}
+		}
 		return fmt.Errorf("gc %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
@@ -151,7 +182,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	}
 	data, readErr := io.ReadAll(responseBody)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data)}
+		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data), RetryAfter: resp.Header.Get("Retry-After")}
 		var problem Problem
 		if json.Unmarshal(data, &problem) == nil && problem != (Problem{}) {
 			err.Problem = &problem

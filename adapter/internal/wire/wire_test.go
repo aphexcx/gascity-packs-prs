@@ -96,6 +96,23 @@ func TestReceiptResponseJSON(t *testing.T) {
 }
 
 func TestOutboundResultJSON(t *testing.T) {
+	t.Run("failure hints survive decoding", func(t *testing.T) {
+		var result OutboundResult
+		if err := json.Unmarshal([]byte(`{"Receipt":{"Delivered":false,"FailureKind":"rate_limited","RetryAfter":60000000000},"TranscriptEntry":null}`), &result); err != nil {
+			t.Fatal(err)
+		}
+		data, err := json.Marshal(result.Receipt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var receipt map[string]any
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		if receipt["FailureKind"] != "rate_limited" || receipt["RetryAfter"] != float64(60000000000) {
+			t.Fatalf("discarded failure hints: %s", data)
+		}
+	})
 	for _, tc := range []struct {
 		entry    string
 		recorded bool

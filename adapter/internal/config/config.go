@@ -66,10 +66,10 @@ type Media struct {
 type Settings struct {
 	Defaults struct {
 		Wake WakePolicy `toml:"wake,omitempty"`
-	} `toml:"defaults"`
+	} `toml:"defaults,omitempty"`
 	Identities    []Identity `toml:"identity"`
 	Spaces        []Space    `toml:"space"`
-	Media         Media      `toml:"media"`                   // as decoded; effective values are in Endpoints
+	Media         Media      `toml:"media,omitempty"`         // as decoded; effective values are in Endpoints
 	CatchupBudget int        `toml:"catchup_budget,omitzero"` // per space per pass, default 50
 }
 

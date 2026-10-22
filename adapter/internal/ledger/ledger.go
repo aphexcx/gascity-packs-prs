@@ -56,7 +56,9 @@ type SubscriptionState struct {
 }
 
 type SpaceState struct {
-	Kind          string    `json:"kind"`
+	Kind string `json:"kind"`
+	// ChatType distinguishes named SPACE from GROUP_CHAT; both have gc kind room.
+	ChatType      string    `json:"chat_type,omitempty"`
 	Wake          string    `json:"wake"`
 	MessageCursor time.Time `json:"message_cursor"`
 	EventCursor   time.Time `json:"event_cursor"`
@@ -84,6 +86,7 @@ type ChangeState struct {
 	Created   time.Time `json:"created"`
 	Event     string    `json:"event"`
 	Reason    string    `json:"reason"`
+	CatchUp   bool      `json:"catch_up,omitempty"` // adapter added the delivery header
 }
 
 type SendState struct {
@@ -94,6 +97,20 @@ type SendState struct {
 	Receipt  *wire.PublishReceipt `json:"receipt"`
 	Recorded bool                 `json:"recorded"`
 	Created  time.Time            `json:"created"`
+	// Optional command recovery data; old callback-only intents remain readable.
+	Request         *wire.PublishRequest `json:"request,omitempty"`
+	Upload          *SendUpload          `json:"upload,omitempty"`
+	RecordPending   bool                 `json:"record_pending,omitempty"`
+	NotRecordable   bool                 `json:"not_recordable,omitempty"`
+	RecordingReason string               `json:"recording_reason,omitempty"`
+	// Separate from Receipt: a recording refusal must not downgrade delivery.
+	RecordingFailureKind string `json:"recording_failure_kind,omitempty"`
+}
+
+type SendUpload struct {
+	Path         string `json:"path"`
+	ResourceName string `json:"resource_name,omitempty"`
+	UploadToken  string `json:"upload_token,omitempty"`
 }
 
 type SendPart struct {
