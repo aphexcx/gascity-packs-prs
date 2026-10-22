@@ -68,6 +68,30 @@ func TestRegister(t *testing.T) {
 	}
 }
 
+func TestRegistrationKeyTracksCallbackAndSurvivesClientRestart(t *testing.T) {
+	keys := make(chan string, 4)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		keys <- r.Header.Get("Idempotency-Key")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	callbacks := []string{
+		"http://127.0.0.1:8372/svc/gchat",
+		"http://127.0.0.1:8372/svc/gchat", // fresh client, identical configuration
+		"http://127.0.0.1:8373/svc/gchat", // changed callback base
+		"http://127.0.0.1:8372/svc/other", // changed service prefix
+	}
+	for _, callback := range callbacks {
+		if err := New(s.URL, "examplecity").Register(t.Context(), registration(callback)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, fresh, base, prefix := <-keys, <-keys, <-keys, <-keys
+	if first == "" || first != fresh || first == base || first == prefix || base == prefix {
+		t.Fatalf("registration keys: initial=%q fresh=%q changed-base=%q changed-prefix=%q", first, fresh, base, prefix)
+	}
+}
+
 func TestRegisterWithoutHeaderRejected(t *testing.T) {
 	s := fakegc.New(t)
 	body, err := json.Marshal(registration(s.URL() + "/adapter"))
