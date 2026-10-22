@@ -304,6 +304,9 @@ func TestRunAuth(t *testing.T) {
 		if redirect.Hostname() != "127.0.0.1" || redirect.Port() == "" || redirect.Port() == "0" {
 			t.Errorf("redirect is not an allocated loopback port: %s", redirect)
 		}
+		if err := browserCallback(raw, "wrong-code", "", "wrong-state"); err != nil {
+			return err
+		}
 		return browserCallback(raw, "example-code", "", "")
 	})
 	if err != nil {
@@ -431,5 +434,80 @@ func TestRunAuthCancelCreatesNothing(t *testing.T) {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("cancel created %s: %v", path, err)
 		}
+	}
+}
+
+func TestWatchRetriesTransientValidation(t *testing.T) {
+	var calls atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, `{"spaces":[]}`)
+	})
+	s := mustSource(t, clientFile, tokenFile, ep)
+	reloaded := startWatch(t, s)
+	writeJSON(t, tokenFile, savedToken("replacement"))
+	waitSignal(t, reloaded)
+	if s.State() != Ready || calls.Load() != 2 {
+		t.Fatalf("transient validation prevented recovery: state=%v calls=%d", s.State(), calls.Load())
+	}
+}
+
+func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
+	for _, revoked := range []bool{false, true} {
+		t.Run(fmt.Sprintf("revoked=%v", revoked), func(t *testing.T) {
+			refreshStarted, finishRefresh := make(chan struct{}), make(chan struct{})
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/token" {
+					close(refreshStarted)
+					select {
+					case <-finishRefresh:
+					case <-r.Context().Done():
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					if revoked {
+						w.WriteHeader(http.StatusBadRequest)
+						fmt.Fprint(w, `{"error":"invalid_grant"}`)
+					} else {
+						fmt.Fprint(w, `{"access_token":"old-refreshed","expires_in":3600}`)
+					}
+					return
+				}
+				fmt.Fprint(w, `{"spaces":[]}`)
+			})
+			// This cleanup also releases the server if the test fails early.
+			defer close(finishRefresh)
+			expired := savedToken("expired")
+			expired.Expiry = time.Now().Add(-time.Hour)
+			writeJSON(t, tokenFile, expired)
+			s := mustSource(t, clientFile, tokenFile, ep)
+			completed := make(chan error, 1)
+			go func() {
+				tok, err := s.TokenSource(t.Context()).Token()
+				if err == nil && tok.AccessToken != "replacement" {
+					err = fmt.Errorf("old refresh replaced new credential: %s", tok.AccessToken)
+				}
+				completed <- err
+			}()
+			waitSignal(t, refreshStarted)
+			reloaded := startWatch(t, s)
+			writeJSON(t, tokenFile+".new", savedToken("replacement"))
+			if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
+				t.Fatal(err)
+			}
+			waitSignal(t, reloaded)
+			finishRefresh <- struct{}{}
+			select {
+			case err := <-completed:
+				if err != nil || s.State() != Ready {
+					t.Fatalf("recovery: error=%v state=%v", err, s.State())
+				}
+			case <-time.After(3 * time.Second):
+				t.Fatal("refresh did not finish")
+			}
+		})
 	}
 }

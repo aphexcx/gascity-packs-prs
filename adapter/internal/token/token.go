@@ -61,7 +61,7 @@ func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*S
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK {
-			return fmt.Errorf("chat credential validation: HTTP %d", response.StatusCode)
+			return validationError(response.StatusCode)
 		}
 		return nil
 	}
@@ -140,8 +140,9 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 	}
 }
 
-// Watch blocks until cancellation. Call it once per Source. A rejected file is
-// logged once per revision, retaining both the previous token and its state.
+// Watch blocks until cancellation. Call it once per Source. An invalid file is
+// logged once per revision; transient validation failures retry on a later poll.
+// Both paths retain the previous token and its state until validation succeeds.
 func (s *Source) Watch(ctx context.Context, onReload func()) {
 	ticker := time.NewTicker(s.watchInterval)
 	defer ticker.Stop()
@@ -187,7 +188,12 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 	if err != nil {
 		// OAuth errors can include response bodies containing credentials. Do
 		// not put those bodies in the log.
-		slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile)
+		if transient(err) {
+			s.observed = nil
+			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile)
+		} else {
+			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile)
+		}
 		return
 	}
 	if ctx.Err() != nil {
@@ -243,6 +249,10 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 }
 
 func transient(err error) bool {
+	var validation validationError
+	if errors.As(err, &validation) {
+		return validation == 429 || validation >= 500
+	}
 	var failure *oauth2.RetrieveError
 	if errors.As(err, &failure) {
 		return failure.ErrorCode == "temporarily_unavailable" || failure.ErrorCode == "server_error" ||
@@ -250,6 +260,12 @@ func transient(err error) bool {
 	}
 	var networkError net.Error
 	return errors.As(err, &networkError)
+}
+
+type validationError int
+
+func (e validationError) Error() string {
+	return fmt.Sprintf("chat credential validation: HTTP %d", e)
 }
 
 func authenticatedClient(ctx context.Context, ts oauth2.TokenSource) *http.Client {
@@ -428,7 +444,14 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err != nil {
 		return fmt.Errorf("write token %s: %w", tmp, err)
 	}
-	defer os.Remove(tmp)
+	renamed := false
+	defer func() {
+		// Once renamed, this path can belong to a concurrent sign-in. Only
+		// clean up the temporary file when this write did not commit.
+		if !renamed {
+			_ = os.Remove(tmp)
+		}
+	}()
 	if err = json.NewEncoder(f).Encode(tok); err == nil {
 		err = f.Sync()
 	}
@@ -445,5 +468,6 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("replace token %s: %w", path, err)
 	}
+	renamed = true
 	return nil
 }
