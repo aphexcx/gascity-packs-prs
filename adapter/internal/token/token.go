@@ -45,6 +45,10 @@ type Source struct {
 	generation    uint64
 	observed      os.FileInfo // owned by the single Watch loop after New
 	watchInterval time.Duration
+	retryAt       time.Time
+	retryDelay    time.Duration
+	now           func() time.Time
+	refreshDelay  time.Duration
 	validateFn    func(context.Context, *http.Client) error
 }
 
@@ -56,7 +60,8 @@ func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*S
 	if err != nil {
 		return nil, err
 	}
-	s := &Source{config: cfg, tokenFile: tokenFile, state: Missing, watchInterval: 2 * time.Second}
+	s := &Source{config: cfg, tokenFile: tokenFile, state: Missing,
+		watchInterval: 2 * time.Second, now: time.Now, refreshDelay: 200 * time.Millisecond}
 	s.validateFn = func(ctx context.Context, client *http.Client) error {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(ep.ChatAPIBase, "/")+"/v1/spaces?pageSize=1", nil)
 		if err != nil {
@@ -124,7 +129,7 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 		if current == nil || state == NeedsSignIn {
 			return nil, ErrNeedsSignIn
 		}
-		tok, err := refresh(ts.ctx, s.config, current)
+		tok, err := s.refresh(ts.ctx, current)
 		s.mu.Lock()
 		if generation != s.generation {
 			// A watch reload won the race. Neither a token nor an error from the
@@ -170,6 +175,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 	info, err := os.Stat(s.tokenFile)
 	if errors.Is(err, os.ErrNotExist) {
 		s.observed = nil
+		s.retryAt, s.retryDelay = time.Time{}, 0
 		return
 	}
 	if err != nil {
@@ -177,7 +183,13 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		return
 	}
 	if sameRevision(info, s.observed) {
-		return
+		if s.retryAt.IsZero() || s.now().Before(s.retryAt) {
+			return
+		}
+	} else {
+		// A new revision may repair a credential immediately, even while a
+		// previous revision is backing off during an outage.
+		s.retryAt, s.retryDelay = time.Time{}, 0
 	}
 	tok, readInfo, err := readToken(s.tokenFile)
 	s.observed = info
@@ -187,7 +199,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 	if err == nil {
 		validationCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		tok, err = refresh(validationCtx, s.config, tok)
+		tok, err = s.refresh(validationCtx, tok)
 		if err == nil {
 			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, oauth2.StaticTokenSource(tok)))
 		}
@@ -196,9 +208,15 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		// OAuth errors can include response bodies containing credentials. Do
 		// not put those bodies in the log.
 		if transient(err) {
-			s.observed = nil
-			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err))
+			if s.retryDelay == 0 {
+				s.retryDelay = min(s.watchInterval, time.Minute)
+			} else {
+				s.retryDelay = min(2*s.retryDelay, time.Minute)
+			}
+			s.retryAt = s.now().Add(s.retryDelay)
+			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err), "retry_after", s.retryDelay)
 		} else {
+			s.retryAt, s.retryDelay = time.Time{}, 0
 			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
 		}
 		return
@@ -206,6 +224,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 	if ctx.Err() != nil {
 		return
 	}
+	s.retryAt, s.retryDelay = time.Time{}, 0
 	s.mu.Lock()
 	s.current, s.state = tok, Ready
 	s.generation++
@@ -219,7 +238,7 @@ func sameRevision(a, b os.FileInfo) bool {
 	return a != nil && b != nil && os.SameFile(a, b) && a.ModTime().Equal(b.ModTime()) && a.Size() == b.Size()
 }
 
-func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*oauth2.Token, error) {
+func (s *Source) refresh(ctx context.Context, current *oauth2.Token) (*oauth2.Token, error) {
 	if current.Valid() {
 		copy := *current
 		return &copy, nil
@@ -229,7 +248,7 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	ts := cfg.TokenSource(ctx, current)
+	ts := s.config.TokenSource(ctx, current)
 	for attempt := 0; ; attempt++ {
 		tok, err := ts.Token()
 		if err == nil {
@@ -244,7 +263,7 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 		if attempt >= 2 || !transient(err) {
 			return nil, err
 		}
-		timer := time.NewTimer(200 * time.Millisecond << attempt)
+		timer := time.NewTimer(s.refreshDelay << attempt)
 		select {
 		case <-ctx.Done():
 			timer.Stop()

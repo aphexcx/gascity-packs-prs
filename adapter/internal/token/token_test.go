@@ -64,6 +64,7 @@ func mustSource(t *testing.T, clientFile, tokenFile string, ep config.Endpoints)
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.refreshDelay = time.Millisecond
 	return s
 }
 
@@ -564,6 +565,7 @@ func TestWatchRetriesInterruptedOAuthResponse(t *testing.T) {
 		t.Fatal("interrupted replacement installed")
 	}
 	interrupted.Store(false)
+	s.now = func() time.Time { return time.Now().Add(s.watchInterval) }
 	s.reload(t.Context(), reload)
 	s.reload(t.Context(), reload)
 	tok, err := s.TokenSource(t.Context()).Token()
@@ -718,5 +720,66 @@ func TestWatchLogsSanitizedCause(t *testing.T) {
 				t.Fatalf("rejection log = %q, want sanitized %q", logs.String(), scenario.want)
 			}
 		})
+	}
+}
+
+func TestWatchBacksOffTransientValidation(t *testing.T) {
+	var calls atomic.Int32
+	var healthy atomic.Bool
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	})
+	s := mustSource(t, clientFile, tokenFile, ep)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	s.watchInterval = time.Second
+	writeJSON(t, tokenFile, savedToken("replacement"))
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	for range 3 {
+		s.reload(t.Context(), nil)
+	}
+	if calls.Load() != 1 || strings.Count(logs.String(), "WARN") != 1 {
+		t.Fatalf("polls bypassed backoff: requests=%d warnings=%d", calls.Load(), strings.Count(logs.String(), "WARN"))
+	}
+	// First retry is one poll later; subsequent retries double up to a minute.
+	wantCalls := int32(1)
+	for _, delay := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, time.Minute} {
+		now = now.Add(delay - time.Nanosecond)
+		s.reload(t.Context(), nil)
+		if calls.Load() != wantCalls {
+			t.Fatalf("retried before %v elapsed", delay)
+		}
+		now = now.Add(time.Nanosecond)
+		s.reload(t.Context(), nil)
+		wantCalls++
+		if calls.Load() != wantCalls || strings.Count(logs.String(), "WARN") != int(wantCalls) {
+			t.Fatalf("retry after %v: requests=%d warnings=%d want=%d", delay, calls.Load(), strings.Count(logs.String(), "WARN"), wantCalls)
+		}
+	}
+	// A new revision bypasses the one-minute delay and resets it to one poll.
+	writeJSON(t, tokenFile+".new", savedToken("new revision"))
+	if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	s.reload(t.Context(), nil)
+	wantCalls++
+	if calls.Load() != wantCalls {
+		t.Fatal("new file did not reset backoff")
+	}
+	healthy.Store(true)
+	now = now.Add(time.Second)
+	reloads := 0
+	s.reload(t.Context(), func() { reloads++ })
+	wantCalls++
+	now = now.Add(time.Hour)
+	s.reload(t.Context(), func() { reloads++ })
+	if calls.Load() != wantCalls || reloads != 1 || s.State() != Ready || s.retryDelay != 0 {
+		t.Fatalf("successful validation did not reset retries: calls=%d reloads=%d state=%v delay=%v", calls.Load(), reloads, s.State(), s.retryDelay)
 	}
 }
