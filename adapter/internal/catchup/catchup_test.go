@@ -341,14 +341,14 @@ func TestFailedSaveCannotSkipAPage(t *testing.T) {
 		t.Fatal("save error swallowed")
 	}
 	s := f.opts.Ledger.Spaces["spaces/room"]
-	// The first, durably saved page may drain even though the next save failed.
-	// None of the failed page may be delivered or reflected in the page token.
-	if len(s.Backlog) != 0 || len(f.gc.Inbound()) != 17 || !strings.Contains(s.PageToken, "17") || !s.MessageCursor.Equal(frozen.Add(-time.Hour)) {
+	// Keep the saved page until enumeration completes. None of the failed page
+	// may be delivered or reflected in the page token.
+	if len(s.Backlog) != 17 || len(f.gc.Inbound()) != 0 || !strings.Contains(s.PageToken, "17") || !s.MessageCursor.Equal(frozen.Add(-time.Hour)) {
 		t.Fatalf("failed page published in memory: %+v", s)
 	}
 	f.opts.Save = nil
 	f.newRunner(t)
-	f.pass(t, 3, 0)
+	f.pass(t, 20, 0)
 	if len(f.gc.Inbound()) != 20 {
 		t.Fatal("lost or duplicated a page after failed save")
 	}
@@ -577,7 +577,7 @@ func TestAccessFailureWarnsOnlyAfterPersistence(t *testing.T) {
 	}
 }
 
-func TestHistoryErrorDoesNotStarveRetainedMessages(t *testing.T) {
+func TestHistoryErrorHoldsRetainedMessagesUntilEnumerationCompletes(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)
 	f.addMessage("spaces/room", 1, frozen.Add(-time.Minute))
@@ -588,20 +588,20 @@ func TestHistoryErrorDoesNotStarveRetainedMessages(t *testing.T) {
 		}
 		return nil
 	}
-	for i, want := range []int{1, 0} {
+	for i := 0; i < 2; i++ {
 		delivered, remaining, err := f.r.Pass(context.Background())
-		if err == nil || delivered != want || remaining != 0 {
-			t.Fatalf("pass %d: (%d, %d, %v), want (%d, 0, error)", i, delivered, remaining, err, want)
+		if err == nil || delivered != 0 || remaining != 1 {
+			t.Fatalf("pass %d: (%d, %d, %v), want (0, 1, error)", i, delivered, remaining, err)
 		}
 		if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(frozen.Add(-time.Hour)) {
 			t.Fatal("cursor advanced over unenumerated events")
 		}
 	}
-	if len(f.gc.Inbound()) != 1 {
-		t.Fatal("saved message not delivered exactly once")
+	if len(f.gc.Inbound()) != 0 {
+		t.Fatal("saved message delivered before older history is enumerated")
 	}
 	f.onRequest = nil
-	f.pass(t, 0, 0)
+	f.pass(t, 1, 0)
 	if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(frozen) {
 		t.Fatal("cursor did not recover after successful enumeration")
 	}
@@ -612,27 +612,34 @@ func TestPartialHistoryDrainsRetainedRecordsChronologically(t *testing.T) {
 	f.pageSize = 1
 	f.addSpace("spaces/room", true)
 	old := f.addMessage("spaces/room", 1, frozen.Add(-2*time.Hour))
-	if out, err := f.p.Handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: old}}}); out != puller.Ack || err != nil {
-		t.Fatal(out, err)
+	second := f.addMessage("spaces/room", 2, frozen.Add(-2*time.Hour))
+	for _, m := range []*api.Message{old, second} {
+		if out, err := f.p.Handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: m}}}); out != puller.Ack || err != nil {
+			t.Fatal(out, err)
+		}
 	}
-	old.LastUpdateTime = frozen.Add(-20 * time.Minute).Format(time.RFC3339Nano)
-	newer := f.addMessage("spaces/room", 2, frozen.Add(-10*time.Minute))
+	old.LastUpdateTime = frozen.Add(-50 * time.Minute).Format(time.RFC3339Nano)
+	second.LastUpdateTime = frozen.Add(-40 * time.Minute).Format(time.RFC3339Nano)
+	newer := f.addMessage("spaces/room", 3, frozen.Add(-10*time.Minute))
 	f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{
 		{Name: "spaces/room/spaceEvents/edit", EventTime: old.LastUpdateTime, EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: old}},
-		{Name: "spaces/room/spaceEvents/unavailable", EventTime: frozen.Add(-time.Minute).Format(time.RFC3339Nano), EventType: "google.workspace.chat.message.v1.updated"},
+		{Name: "spaces/room/spaceEvents/later-edit", EventTime: second.LastUpdateTime, EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: second}},
 	}
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
 		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "1" {
-			return &googleapi.Error{Code: 404, Message: "history unavailable"}
+			return &googleapi.Error{Code: 503, Message: "history unavailable", Header: http.Header{"Retry-After": {"60"}}}
 		}
 		return nil
 	}
-	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 2 || n != 0 {
+	// Retry-After exceeds the client's retry bound, leaving Pass's context live.
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 2 {
 		t.Fatal(d, n, err)
 	}
+	f.onRequest = nil
+	f.pass(t, 3, 0)
 	turns := f.gc.Inbound()
-	if len(turns) != 3 || turns[1].ProviderMessageID != old.Name+"#updated#"+old.LastUpdateTime || turns[2].ProviderMessageID != newer.Name {
+	if len(turns) != 5 || turns[2].ProviderMessageID != old.Name+"#updated#"+old.LastUpdateTime || turns[3].ProviderMessageID != second.Name+"#updated#"+second.LastUpdateTime || turns[4].ProviderMessageID != newer.Name {
 		t.Fatalf("retained history out of order: %+v", turns)
 	}
 }

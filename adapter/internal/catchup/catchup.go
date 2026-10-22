@@ -213,17 +213,14 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 			enumerationErr := r.enumerate(ctx, name)
 			if enumerationErr != nil {
 				failures = append(failures, enumerationErr)
-				if errors.Is(enumerationErr, errSpaceUnavailable) || errors.Is(enumerationErr, inbound.ErrCredentials) {
-					break
-				}
+				// An unread event page may precede every retained message. Hold
+				// delivery until both streams are complete to preserve oldest-first.
+				break
 			}
 			n, err := r.drain(ctx, name, &budget)
 			delivered += n
 			if err != nil {
 				failures = append(failures, err)
-				break
-			}
-			if enumerationErr != nil {
 				break
 			}
 			current, err := r.snapshot()
@@ -338,8 +335,8 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 }
 
 func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered int, err error) {
-	// Even a partially enumerated interval can contain both messages and older
-	// space events. Order the retained records before delivering any of them.
+	// A fully enumerated interval can contain both messages and older space
+	// events. Order the retained records before delivering any of them.
 	if err := r.update(func(l *ledger.Ledger) error {
 		s := l.Spaces[name]
 		items := make([]queuedChange, len(s.Backlog))
@@ -370,7 +367,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		if err != nil {
 			return delivered, err
 		}
-		if p.Unavailable != "" {
+		if p.Unavailable != "" || p.Phase != "done" {
 			return delivered, nil
 		}
 		if index >= len(s.Backlog) {
@@ -450,8 +447,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			if err != nil {
 				return err
 			}
-			// A page failure need not starve known records, but neither cursor
-			// may advance until both streams' last pages have been saved.
+			// Neither cursor may advance until both streams' last pages are saved.
 			if p.Phase != "done" {
 				return nil
 			}
