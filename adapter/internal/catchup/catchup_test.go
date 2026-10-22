@@ -440,6 +440,86 @@ func TestFortyDayGapReportedUnrecoverable(t *testing.T) {
 	}
 }
 
+func TestRetainedBoundaryEditsRecovered(t *testing.T) {
+	for _, mode := range []string{"initial", "resumed", "advancing-clock"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			f.pageSize = 1
+			f.addSpace("spaces/room", true)
+			boundary := frozen.Add(-28 * 24 * time.Hour)
+			f.opts.Ledger.Spaces["spaces/room"].EventCursor = boundary.Add(30 * time.Second)
+			for i := 0; i < 2; i++ {
+				m := f.addMessage("spaces/room", i, boundary.Add(-time.Hour))
+				if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+					t.Fatal(out, err)
+				}
+				m.Text = "retained edit"
+				m.LastUpdateTime = boundary.Add(time.Duration(45+i) * time.Second).Format(time.RFC3339Nano)
+				f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+					Name: fmt.Sprintf("spaces/room/spaceEvents/e%d", i), EventTime: m.LastUpdateTime,
+					EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m},
+				})
+			}
+			if mode == "resumed" {
+				f.r.opts.Now = func() time.Time { return frozen.Add(-2 * time.Minute) }
+			}
+			f.freeze(t)
+			if mode == "resumed" {
+				f.onRequest = func(r *http.Request) error {
+					if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
+						return &googleapi.Error{Code: 503, Header: http.Header{"Retry-After": {"60"}}}
+					}
+					return nil
+				}
+				if _, _, err := f.r.Pass(context.Background()); err == nil {
+					t.Fatal("expected interrupted event enumeration")
+				}
+				saved, err := ledger.Load(f.opts.LedgerPath, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				*f.opts.Ledger = *saved
+				f.newRunner(t)
+			}
+			if mode == "advancing-clock" {
+				now := frozen
+				f.r.opts.Now = func() time.Time {
+					now = now.Add(time.Millisecond)
+					return now
+				}
+			}
+			var filters, tokens []string
+			f.onRequest = func(r *http.Request) error {
+				if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
+					filters = append(filters, r.URL.Query().Get("filter"))
+					tokens = append(tokens, r.URL.Query().Get("pageToken"))
+					if len(tokens) > 2 {
+						return errors.New("event pagination restarted without completing")
+					}
+				}
+				return nil
+			}
+			f.pass(t, 2, 0)
+			if len(tokens) != 2 || tokens[0] != "" || tokens[1] != "1" || filters[0] != filters[1] {
+				t.Fatalf("event pagination changed: tokens=%v filters=%v", tokens, filters)
+			}
+			if mode != "advancing-clock" && !strings.Contains(filters[0], `start_time="`+boundary.Format(time.RFC3339Nano)+`"`) {
+				t.Fatalf("query excluded retained history: %s", filters[0])
+			}
+			turns := f.gc.Inbound()
+			if len(turns) != 4 || !strings.Contains(turns[2].Text, "edited: retained edit") || !strings.Contains(turns[3].Text, "edited: retained edit") {
+				t.Fatalf("boundary edits missing: %+v", turns)
+			}
+			if f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 || strings.Contains(f.logs.String(), "level=WARN") {
+				t.Fatalf("retained cursor reported unrecoverable: %v %s", f.opts.Ledger.Counters, f.logs.String())
+			}
+			if !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(frozen) {
+				t.Fatal("completed interval did not advance cursor")
+			}
+		})
+	}
+}
+
 func TestPendingReceiptHoldsCursorUntilPoll(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unknown=%v", unknown), func(t *testing.T) {

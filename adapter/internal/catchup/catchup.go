@@ -178,9 +178,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 
 func (r *Runner) begin(s *ledger.SpaceState, upper time.Time) progress {
 	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
-	// Keep inside the moving retention boundary while the request travels.
-	// Message history has no 28-day limit. Report any known lost event interval.
-	earliest := r.opts.Now().UTC().Add(-28*24*time.Hour + time.Minute)
+	// Request the full retained event window. Message history has no 28-day
+	// limit. Report only a known cursor older than the retention boundary.
+	earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
 	if p.EventLower.Before(earliest) {
 		p.EventLower = earliest
 		p.Reported = !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
@@ -270,6 +270,9 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 }
 
 func (r *Runner) enumerate(ctx context.Context, name string) error {
+	// Refresh retention once on entering the events phase, then keep the query
+	// fixed across its pages. A resumed enumeration checks the boundary again.
+	var earliest time.Time
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -304,13 +307,16 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		} else {
 			// A long pause can age out the saved event query. Restart only that
 			// stream, retain its backlog, and report the lost history once.
-			earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
+			if earliest.IsZero() {
+				earliest = r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
+			}
 			if p.EventLower.Before(earliest) {
-				p.EventLower, p.Token = earliest.Add(time.Minute), ""
-				if err := r.saveProgress(name, p, !s.EventCursor.IsZero()); err != nil {
+				p.EventLower, p.Token = earliest, ""
+				lost := !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+				if err := r.saveProgress(name, p, lost); err != nil {
 					return err
 				}
-				continue
+				p.Reported = p.Reported || lost
 			}
 			if p.EventLower.Before(s.FrozenUpper) {
 				var events []*api.SpaceEvent
