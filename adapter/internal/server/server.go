@@ -362,6 +362,10 @@ func (s *Server) prepare(p wire.PublishRequest, upload *ledger.SendUpload, recor
 			if old.Request != nil && old.Request.SessionID != p.SessionID {
 				return errors.New("idempotency key already belongs to another session")
 			}
+			if record && !old.Recorded && (old.Receipt == nil || !old.Receipt.Delivered) {
+				// Only an explicit command retry re-arms a rejected intent.
+				old.RecordPending = true
+			}
 			return nil
 		}
 		parts := markdown.Split(markdown.ToChat(p.Text), 32000)
@@ -618,7 +622,7 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 			if e != nil {
 				result.Reason = e.Error()
 			}
-			return result, e
+			return result, errors.Join(e, s.stopRetry(p, r, result.Reason))
 		}
 	}
 	_, g := s.clients()
@@ -633,6 +637,8 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 			if !result.Delivered {
 				result.Delivered = out.Receipt.Delivered
 				result.MessageID = out.Receipt.MessageID
+				result.FailureKind = out.Receipt.FailureKind
+				result.RetryAfter = out.Receipt.RetryAfter
 			}
 			result.Recorded = out.TranscriptEntry != nil
 		}
@@ -650,6 +656,11 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 				result.MessageID = r.MessageID
 			}
 		}
+		var httpErr *gcclient.HTTPError
+		if !result.Delivered && errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != 408 && httpErr.StatusCode != 429 {
+			result.FailureKind = "permanent"
+			err = errors.Join(err, s.stopRetry(p, permanent(p), result.Reason))
+		}
 		return result, err
 	}
 	if !result.Recorded {
@@ -662,8 +673,11 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 	err = s.update(func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.Recorded = result.Recorded
-		v.RecordPending = !result.Recorded
+		v.RecordPending = result.Delivered && !result.Recorded
 		v.RecordingReason = result.Reason
+		if !result.Delivered {
+			v.Receipt = &wire.PublishReceipt{Conversation: p.Conversation, FailureKind: result.FailureKind, RetryAfter: result.RetryAfter}
+		}
 		return nil
 	})
 	if err != nil {
@@ -671,6 +685,21 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 		result.Reason = err.Error()
 	}
 	return result, err
+}
+
+// Receipt plus RecordPending distinguish interrupted sends (pending, no receipt),
+// returned failures (not pending), and delivered sends awaiting recording
+// (pending, delivered receipt). A caller can retry a returned failure explicitly.
+func (s *Server) stopRetry(p wire.PublishRequest, receipt wire.PublishReceipt, reason string) error {
+	return s.update(func(l *ledger.Ledger) error {
+		v := l.Sends[p.IdempotencyKey]
+		if v.Receipt == nil || !v.Receipt.Delivered {
+			v.Receipt = &receipt
+			v.RecordPending = false
+		}
+		v.RecordingReason = reason
+		return nil
+	})
 }
 func noBindingReason(reason string) string {
 	if reason != "" {
@@ -690,7 +719,7 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	if err := s.update(func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.NotRecordable = true
-		v.RecordPending = false
+		v.RecordPending = v.Receipt == nil || !v.Receipt.Delivered
 		v.RecordingReason = reason
 		return nil
 	}); err != nil {
@@ -704,6 +733,10 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	result.RetryAfter = r.RetryAfter
 	if err != nil {
 		result.Reason = err.Error()
+	}
+	err = errors.Join(err, s.stopRetry(p, r, result.Reason))
+	if err == nil && r.Delivered {
+		err = s.update(func(l *ledger.Ledger) error { l.Sends[p.IdempotencyKey].RecordPending = false; return nil })
 	}
 	return result, err
 }
@@ -725,7 +758,7 @@ func (s *Server) RetryPending(ctx context.Context) error {
 	}
 	var keys []string
 	for key, v := range l.Sends {
-		if v.Request != nil && (v.RecordPending || (v.NotRecordable && v.Receipt == nil)) {
+		if v.Request != nil && v.RecordPending {
 			keys = append(keys, key)
 		}
 	}

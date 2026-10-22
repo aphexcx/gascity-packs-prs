@@ -858,3 +858,85 @@ func TestStatusLastEventAndReloadedDefaults(t *testing.T) {
 		t.Fatalf("%s", raw)
 	}
 }
+
+func TestRejectedCommandNeverRetriesAutomatically(t *testing.T) {
+	f := setup(t)
+	f.gc.Bind(conversation("spaces/room"), "someone-else")
+	_, raw, _ := f.call(t, "/commands/publish", command("rejected"))
+	first := decode[CommandResult](t, raw)
+	if first.Delivered || first.Reason == "" {
+		t.Fatalf("expected rejection: %+v", first)
+	}
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the persisted state, including after the binding changes.
+	f.mu.Lock()
+	*f.l = *l
+	f.mu.Unlock()
+	f.gc.Bind(conversation("spaces/room"), "session")
+	if err := f.s.RetryPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.count() != 0 || f.l.Sends["rejected"].RecordingReason != first.Reason || f.l.Sends["rejected"].RecordPending {
+		t.Fatalf("rejected command was retried or lost: %+v, sends=%d", f.l.Sends["rejected"], f.count())
+	}
+	// A caller may explicitly choose to retry the same intent and key.
+	_, raw, _ = f.call(t, "/commands/publish", command("rejected"))
+	if got := decode[CommandResult](t, raw); !got.Delivered || !got.Recorded || f.count() != 1 {
+		t.Fatalf("caller retry: %+v", got)
+	}
+}
+
+func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
+	for _, mode := range []string{"bound", "unbound", "upload"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			if mode != "unbound" {
+				f.gc.Bind(conversation("spaces/room"), "session")
+			}
+			client := &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/messages") {
+					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}
+			c, err := chat.New(context.Background(), client, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			path, cmd := "/commands/publish", command("undelivered")
+			if mode == "upload" {
+				path = "/commands/upload"
+				file := filepath.Join(f.cfg.Endpoints.UploadRoot, "data.txt")
+				if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				cmd["path"] = file
+			}
+			_, raw, _ := f.call(t, path, cmd)
+			first := decode[CommandResult](t, raw)
+			if first.Delivered {
+				t.Fatalf("expected failure: %+v", first)
+			}
+			f.s.SetClients(f.options.Chat, f.options.GC)
+			if err := f.s.RetryPending(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := l.Sends["undelivered"]
+			if f.count() != 0 || v.RecordPending || v.Receipt == nil || v.Receipt.Delivered || v.Receipt.FailureKind != "rate_limited" || v.Receipt.RetryAfter != int64(time.Minute) {
+				t.Fatalf("failure not retained: %+v sends=%d", v, f.count())
+			}
+			_, raw, _ = f.call(t, path, cmd)
+			if got := decode[CommandResult](t, raw); !got.Delivered || f.count() != 1 {
+				t.Fatalf("caller retry: %+v", got)
+			}
+		})
+	}
+}
