@@ -26,13 +26,13 @@ type Client struct {
 // New constructs a client for a gc API base URL and city. Each call respects
 // its context and has a 35-second ceiling, allowing gc's 30-second publish
 // callback deadline to expire before the client's own timeout.
+// A redirect is a non-2xx error, not permission to replay a mutation or send it
+// to another endpoint.
 func New(base, city string) *Client {
 	return &Client{
 		base: strings.TrimRight(base, "/"), city: city,
 		http: &http.Client{
-			Timeout: 35 * time.Second,
-			// A redirect is a non-2xx response, not permission to replay a
-			// mutation or send it to another endpoint.
+			Timeout:       35 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
