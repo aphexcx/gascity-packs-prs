@@ -46,8 +46,9 @@ type InboundEnvelope struct {
 }
 
 // InboundResponse is what gc answers. Delivery.Status is one of
-// delivered | pending | partial | failed | no_route; ReceiptID is set while a
-// fan-out is still running.
+// delivered | pending | partial | failed | no_route.
+// ReceiptID is set whenever Delivery is present; poll .../receipts/{id} while
+// Status is pending.
 type InboundResponse struct {
 	Delivery struct {
 		Status    string `json:"status"`

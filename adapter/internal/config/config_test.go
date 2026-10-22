@@ -252,15 +252,19 @@ func TestAllMissingSecretsNamedWithoutEnvironmentFallback(t *testing.T) {
 }
 
 func TestMalformedSecretsNameFileAndKey(t *testing.T) {
-	for _, line := range []string{"GCHAT_PROJECT_ID", "GCHAT_PROJECT_ID='unterminated", "GCHAT_PROJECT_ID=" + strings.Repeat("x", 70*1024)} {
-		t.Run(line[:16], func(t *testing.T) {
+	for _, tc := range []struct{ name, line string }{
+		{"missing equals", "GCHAT_PROJECT_ID"},
+		{"unterminated quote", "GCHAT_PROJECT_ID='unterminated"},
+		{"over-long line", "GCHAT_PROJECT_ID=" + strings.Repeat("x", 70*1024)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			env, settings, dir := configFixture(t)
-			writeFixture(t, env, line+"\n")
+			writeFixture(t, env, tc.line+"\n")
 			_, err := Load(env, settings, dir)
 			if err == nil || !strings.Contains(err.Error(), env) {
 				t.Fatalf("want file error, got %v", err)
 			}
-			if len(line) < 70*1024 && !strings.Contains(err.Error(), "GCHAT_PROJECT_ID") {
+			if len(tc.line) < 70*1024 && !strings.Contains(err.Error(), "GCHAT_PROJECT_ID") {
 				t.Fatalf("want key error, got %v", err)
 			}
 		})
