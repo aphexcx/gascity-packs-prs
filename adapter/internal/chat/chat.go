@@ -318,7 +318,15 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		// Stream one multipart request, including for Chat's 200 MB maximum.
 		// SDK resumable chunks retry 429s internally without Retry-After and lose
 		// the HTTP error on deadline. Keep every retry under our policy instead.
-		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(&uploadReader{reader: file, remaining: limit}, googleapi.ChunkSize(0)).Context(ctx).Do()
+		transferCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stream := &uploadReader{reader: file, remaining: limit, cancel: cancel}
+		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(stream, googleapi.ChunkSize(0)).Context(transferCtx).Do()
+		// The SDK formats source errors as strings. Preserve the local byte-limit
+		// error so a growing file cannot yield a success or a transient receipt.
+		if limitErr := stream.Err(); limitErr != nil {
+			return limitErr
+		}
 		return err
 	})
 	if err != nil {
@@ -335,6 +343,15 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 type uploadReader struct {
 	reader    io.Reader
 	remaining int64
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	err       error
+}
+
+func (r *uploadReader) Err() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
 }
 
 func (r *uploadReader) Read(p []byte) (int, error) {
@@ -345,7 +362,13 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 		var extra [1]byte
 		n, err := r.reader.Read(extra[:])
 		if n > 0 {
-			return 0, localError{errors.New("file exceeds media limit")}
+			err := localError{errors.New("file exceeds media limit")}
+			r.mu.Lock()
+			r.err = err
+			r.mu.Unlock()
+			// Abort before the SDK closes the multipart boundary around a prefix.
+			r.cancel()
+			return 0, err
 		}
 		return 0, err
 	}

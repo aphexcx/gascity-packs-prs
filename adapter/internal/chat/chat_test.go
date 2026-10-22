@@ -640,6 +640,52 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 	}
 }
 
+func TestLargeUploadClientByteLimit(t *testing.T) {
+	for _, growDuringTransfer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("grow=%v", growDuringTransfer), func(t *testing.T) {
+			_, s, dir := fixture(t)
+			const size = 17 << 20
+			path := filepath.Join(dir, "large-limit.bin")
+			initialSize := size
+			if growDuringTransfer {
+				initialSize = size - 1
+			}
+			if err := os.WriteFile(path, bytes.Repeat([]byte("x"), initialSize), 0600); err != nil {
+				t.Fatal(err)
+			}
+			requests := 0
+			h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if growDuringTransfer {
+					file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = file.Write([]byte("x"))
+					file.Close()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				return canonicalFakeResponse(r)
+			})}
+			c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir, MediaMaxBytes: size - 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			useTestClock(c)
+			ref, err := c.UploadAttachment(context.Background(), "spaces/room", path)
+			kind, _ := Classify(err)
+			if ref != nil || kind != "permanent" || !strings.Contains(err.Error(), "large-limit.bin") {
+				t.Fatalf("size limit: ref=%v kind=%s err=%v", ref, kind, err)
+			}
+			if !growDuringTransfer && requests != 0 {
+				t.Fatalf("client sent oversize file (%d requests)", requests)
+			}
+		})
+	}
+}
+
 func TestClassify(t *testing.T) {
 	for _, tc := range []struct {
 		code          int
