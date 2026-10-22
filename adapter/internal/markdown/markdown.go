@@ -243,16 +243,17 @@ func (f *codeFence) closes(line string) bool {
 // the next part starts with the original opening fence and info string. Removing
 // only those synthetic wrappers and concatenating restores the original text.
 //
-// Empty text returns nil. For nonempty text, limit must be positive and large
-// enough to hold each rune and any required fence wrappers. Split panics if
-// those constraints are impossible; it never drops bytes or returns an oversize
-// part. A complete message that fits, including an unclosed fence, is unchanged.
+// Empty text returns nil. For nonempty text, limit must be at least utf8.UTFMax;
+// smaller limits panic. If no fenced cut fits, or reopening and closing a fence
+// would consume more than half the limit, a hard rune-boundary cut without
+// synthetic wrappers guarantees progress. A complete message that fits,
+// including an unclosed fence, is unchanged.
 func Split(text string, limit int) []string {
 	if text == "" {
 		return nil
 	}
-	if limit <= 0 {
-		panic("markdown: split limit must be positive")
+	if limit < utf8.UTFMax {
+		panic("markdown: split limit must be at least utf8.UTFMax")
 	}
 	if len(text) <= limit {
 		return []string{text}
@@ -274,6 +275,9 @@ func Split(text string, limit int) []string {
 				break
 			}
 			if point.fence != nil {
+				if len(point.fence.opener)+1+len(point.fence.marker) > limit/2 {
+					continue
+				}
 				size += 1 + len(point.fence.marker)
 			}
 			if size <= limit && (best < 0 || point.priority >= points[best].priority) {
@@ -281,7 +285,20 @@ func Split(text string, limit int) []string {
 			}
 		}
 		if best < 0 {
-			panic("markdown: split limit cannot hold a rune and required code fences")
+			end := start
+			for end < len(text) {
+				_, size := utf8.DecodeRuneInString(text[end:])
+				if end-start+size > limit {
+					break
+				}
+				end += size
+			}
+			parts = append(parts, text[start:end])
+			start, prefix = end, ""
+			for next < len(points) && points[next].end <= start {
+				next++
+			}
+			continue
 		}
 		point := points[best]
 		part := prefix + text[start:point.end]
@@ -302,8 +319,9 @@ type splitPoint struct {
 	priority int // rune = 0, space = 1, paragraph = 2
 }
 
-// Fence lines are atomic, so a cut never divides a marker or info string. Each
-// other candidate is a rune boundary carrying the fence state at that offset.
+// Fence markers and opening lines are preferred intact; trailing whitespace
+// after a closing marker is cuttable. Split can fall back to a hard cut when
+// these candidates cannot fit. Each point carries the fence state at its offset.
 func splitPoints(text string) []splitPoint {
 	var points []splitPoint
 	var fence *codeFence
@@ -313,7 +331,17 @@ func splitPoints(text string) []splitPoint {
 		switch {
 		case fence != nil && fence.closes(line):
 			fence = nil
-			points = append(points, splitPoint{end: end})
+			body := strings.TrimLeft(line, " ")
+			markerEnd := len(line) - len(body) + runLength(body)
+			points = append(points, splitPoint{end: offset + markerEnd})
+			for i, r := range line[markerEnd:] {
+				_, size := utf8.DecodeRuneInString(line[markerEnd+i:])
+				priority := 0
+				if r == ' ' {
+					priority = 1
+				}
+				points = append(points, splitPoint{end: offset + markerEnd + i + size, priority: priority})
+			}
 		case fence == nil && openingFence(line) != nil:
 			fence = openingFence(line)
 			points = append(points, splitPoint{end: end, fence: fence})

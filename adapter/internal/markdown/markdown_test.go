@@ -1,6 +1,7 @@
 package markdown
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -80,7 +81,6 @@ func TestSplitPlainTextRoundTrip(t *testing.T) {
 		{"whitespace", "\n\n a  b\n\n\n\t  c\n", 5},
 		{"CRLF paragraphs", "one\r\n\r\ntwo\r\n\r\nthree", 12},
 		{"exact limit", "1234567890", 10},
-		{"one byte parts", "abc", 1},
 		{"fits", "one\n\ntwo", 100},
 	}
 	for _, tt := range tests {
@@ -108,7 +108,7 @@ func TestSplitFencedCode(t *testing.T) {
 		{"no info string", "```\n", "```", strings.Repeat("x", 50), 20},
 		{"longer fence", "````go\n", "````", "a\n```\n" + strings.Repeat("x", 60), 30},
 		{"tilde fence", "~~~go\n", "~~~", strings.Repeat("x", 50), 20},
-		{"indented fence", "  ```go\n", "  ```", strings.Repeat("x", 50), 24},
+		{"indented fence", "  ```go\n", "  ```", strings.Repeat("x", 50), 32},
 		{"exact fit", "```go\n", "```", "1234567890", 20},
 	}
 	for _, tt := range tests {
@@ -157,14 +157,55 @@ func TestSplitImpossibleLimit(t *testing.T) {
 	for _, tt := range []struct {
 		text  string
 		limit int
-	}{{"x", 0}, {"x", -1}, {"🙂", 3}, {"```very-long-info\ncontent\n```", 10}} {
+	}{{"x", 0}, {"x", -1}, {"🙂", 3}, {"abc", 1}} {
 		t.Run(tt.text, func(t *testing.T) {
 			defer func() {
 				if recover() == nil {
-					t.Fatal("want a panic when the limit cannot preserve a rune or fence")
+					t.Fatal("want a panic for a limit smaller than utf8.UTFMax")
 				}
 			}()
 			Split(tt.text, tt.limit)
+		})
+	}
+}
+
+func TestSplitOversizeFences(t *testing.T) {
+	tests := []struct {
+		name, text string
+		limit      int
+	}{
+		{"closing whitespace", "```\nx\n```" + strings.Repeat(" ", 32000), 32000},
+		{"small limit", "```go\n日本語🙂\n```", 4},
+		{"long delimiter", strings.Repeat("`", 32000) + "\nx\n" + strings.Repeat("`", 32000), 32000},
+	}
+	for _, n := range []int{31990, 31992, 31996, 31997, 32000} {
+		opener := "```" + strings.Repeat("a", n-4) + "\n"
+		tests = append(tests, struct {
+			name, text string
+			limit      int
+		}{
+			fmt.Sprintf("opener %d bytes", n), opener + strings.Repeat("x", 1024) + "\n```", 32000,
+		})
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Errorf("Split panicked on valid input: %v", p)
+				}
+			}()
+			parts := Split(tt.text, tt.limit)
+			checkParts(t, parts, tt.limit)
+			// Fences too costly to wrap must round-trip without synthetic bytes.
+			if strings.Join(parts, "") != tt.text {
+				t.Error("hard cut changed source bytes")
+			}
+			// These inputs need at most one part per full limit, plus one for a
+			// possible UTF-8 boundary adjustment; long info cannot amplify output.
+			bound := (len(tt.text)+tt.limit-1)/tt.limit + 1
+			if len(parts) > bound {
+				t.Errorf("got %d parts, bound %d", len(parts), bound)
+			}
 		})
 	}
 }
