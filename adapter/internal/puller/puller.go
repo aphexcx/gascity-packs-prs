@@ -238,6 +238,9 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 // nonpositive value is replaced by the client default so handling extends leases.
 // A quarantine storage/record failure always nacks. Without MediaDir quarantine
 // fails closed, so callers should supply their configured directory at startup.
+// The quarantine directory is verified and opened once per Run. A startup
+// storage failure warns and disables quarantine for this Run; other events can
+// still be handled. Restart Run after repairing the directory.
 func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
 	if sub == nil || h == nil {
 		return errors.New("puller requires a subscriber and handler")
@@ -252,9 +255,15 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if log == nil {
 		log = slog.Default()
 	}
+	storage, storageErr := openQuarantine(opts.MediaDir)
+	if storageErr == nil {
+		defer storage.root.Close()
+	}
 	var warnings []string
 	if opts.MediaDir == "" {
 		warnings = append(warnings, "MediaDir is empty: malformed events and Quarantine outcomes will be nacked")
+	} else if storageErr != nil {
+		warnings = append(warnings, fmt.Sprintf("quarantine storage unavailable: %v; malformed events and Quarantine outcomes will be nacked", storageErr))
 	}
 	if opts.RecordQuarantine == nil {
 		warnings = append(warnings, "RecordQuarantine is nil: quarantines will not be counted")
@@ -299,7 +308,11 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 			outcome, err = h(ctx, ev)
 		}
 		if outcome == Quarantine {
-			path, writeErr := quarantine(opts.MediaDir, ev)
+			var path string
+			writeErr := storageErr
+			if writeErr == nil {
+				path, writeErr = storage.write(ev)
+			}
 			if writeErr == nil && opts.RecordQuarantine != nil {
 				writeErr = opts.RecordQuarantine(ctx, ev, path, err)
 			}
@@ -371,29 +384,33 @@ func (b *receiveBackoff) pause(stretch time.Duration, delivered bool) time.Durat
 	return delay
 }
 
-func quarantine(mediaDir string, ev *Event) (string, error) {
+type quarantineStore struct {
+	root *os.Root
+	path string
+}
+
+func openQuarantine(mediaDir string) (*quarantineStore, error) {
 	if mediaDir == "" {
-		return "", errors.New("quarantine requires MediaDir")
+		return nil, errors.New("quarantine requires MediaDir")
 	}
+	path := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
+	root, err := openDurableDirectory(path)
+	if err != nil {
+		return nil, err
+	}
+	return &quarantineStore{root: root, path: path}, nil
+}
+
+func (q *quarantineStore) write(ev *Event) (string, error) {
 	if ev.PubSubID == "" {
 		return "", errors.New("quarantine requires Pub/Sub message ID")
 	}
-	parent, err := openDurableDirectory(filepath.Dir(filepath.Clean(mediaDir)))
-	if err != nil {
-		return "", err
-	}
-	defer parent.Close()
-	root, err := openDurableChild(parent, "quarantine")
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
 	// Escape the untrusted transport ID into one filename, including any slash.
 	name := url.PathEscape(ev.PubSubID) + ".json"
-	if err := writeQuarantine(root, name, ev.Raw); err != nil {
+	if err := writeQuarantine(q.root, name, ev.Raw); err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine", name), nil
+	return filepath.Join(q.path, name), nil
 }
 
 func writeQuarantine(root *os.Root, name string, raw []byte) error {
@@ -443,17 +460,25 @@ func openDurableDirectory(path string) (*os.Root, error) {
 		}
 		root = child
 	}
+	// Check the final directory's durability before accepting any events.
+	if err := syncDirectory(root); err != nil {
+		root.Close()
+		return nil, err
+	}
 	return root, nil
 }
 
-// Persist each parent entry, including existing directories that may have been
-// created by an earlier attempt whose sync failed, before creating children.
+// Sync a parent only when this call created an entry in it. Existing ancestors
+// need identity verification but do not need to be opened again for fsync.
 func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
+	created := false
 	info, err := parent.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		err = parent.Mkdir(name, 0700)
+		if err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
+		created = err == nil
 		info, err = parent.Lstat(name)
 	}
 	if err != nil {
@@ -470,7 +495,7 @@ func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
 	if err == nil && !os.SameFile(info, opened) {
 		err = fmt.Errorf("quarantine directory changed while opening: %s", name)
 	}
-	if err == nil {
+	if err == nil && created {
 		err = syncDirectory(parent)
 	}
 	if err != nil {

@@ -909,6 +909,15 @@ func quarantineTempDir(t *testing.T) string {
 	return path
 }
 
+func quarantine(mediaDir string, ev *Event) (string, error) {
+	store, err := openQuarantine(mediaDir)
+	if err != nil {
+		return "", err
+	}
+	defer store.root.Close()
+	return store.write(ev)
+}
+
 func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) {
 	parent, outside := quarantineTempDir(t), quarantineTempDir(t)
 	media := filepath.Join(parent, "media")
@@ -940,6 +949,10 @@ func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) 
 func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 	f := newFixture(t)
 	record := func(context.Context, *Event, string, error) error { return nil }
+	unusable := filepath.Join(quarantineTempDir(t), "not-a-directory")
+	if err := os.WriteFile(unusable, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name    string
 		options []RunOptions
@@ -949,6 +962,7 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 		{"missing directory", []RunOptions{{RecordQuarantine: record}}, []string{"MediaDir", "nacked"}},
 		{"missing recorder", []RunOptions{{MediaDir: quarantineTempDir(t)}}, []string{"RecordQuarantine", "not be counted"}},
 		{"complete", []RunOptions{{MediaDir: quarantineTempDir(t), RecordQuarantine: record}}, nil},
+		{"unusable parent", []RunOptions{{MediaDir: filepath.Join(unusable, "inbound"), RecordQuarantine: record}}, []string{"quarantine", "not a directory", "nacked"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(f.ctx)
@@ -973,5 +987,41 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
+	f := newFixture(t)
+	parent := quarantineTempDir(t)
+	f.run(t, func(context.Context, *Event) (Outcome, error) { return Quarantine, nil }, RunOptions{
+		MediaDir: filepath.Join(parent, "inbound"),
+		RecordQuarantine: func(_ context.Context, ev *Event, path string, _ error) error {
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != string(ev.Raw) {
+				return fmt.Errorf("quarantine not retained at %s: %v", path, err)
+			}
+			return nil
+		},
+	})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks == 1 })
+	if err := os.Rename(filepath.Join(parent, "quarantine"), filepath.Join(parent, "retained")); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the returned path usable for the recorder while proving later writes
+	// do not walk/reopen it: a fresh walk would reject this relative symlink.
+	if err := os.Symlink("retained", filepath.Join(parent, "quarantine")); err != nil {
+		t.Fatal(err)
+	}
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/two"}, "spaces/room")
+	ctx, cancel := context.WithTimeout(f.ctx, time.Second)
+	defer cancel()
+	waitFor(t, ctx, func() bool {
+		messages := f.server.Messages()
+		return len(messages) == 2 && messages[0].Acks == 1 && messages[1].Acks == 1
+	})
+	files, err := os.ReadDir(filepath.Join(parent, "retained"))
+	if err != nil || len(files) != 2 {
+		t.Fatalf("quarantine root not reused: %v, %v", files, err)
 	}
 }
