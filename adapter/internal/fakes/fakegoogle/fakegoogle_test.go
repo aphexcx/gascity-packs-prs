@@ -665,6 +665,8 @@ func TestUnknownReplyOptionRejected(t *testing.T) {
 	if len(listed["messages"].([]any)) != 0 {
 		t.Fatal("invalid reply option created a message")
 	}
+	request(t, s, "POST", "/v1/spaces/room/messages?requestId=existing", &chat.Message{Text: "accepted"}, 200)
+	request(t, s, "POST", "/v1/spaces/room/messages?requestId=existing&messageReplyOption=REPLY_MESSAGE_TYPO", &chat.Message{Text: "reply"}, 400)
 }
 
 func TestSpaceEventsFiltersPaginationAndWindow(t *testing.T) {
