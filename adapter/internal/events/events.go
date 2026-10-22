@@ -95,6 +95,15 @@ type Manager struct {
 	scheduledName   string
 	scheduledExpiry time.Time
 	renewAt         time.Time
+	statusMu        sync.Mutex
+	status          statusSnapshot
+}
+
+type statusSnapshot struct {
+	err      error
+	failures int
+	next     time.Time
+	state    ledger.SubscriptionState
 }
 
 func New(opts Options) (*Manager, error) {
@@ -107,11 +116,15 @@ func New(opts Options) (*Manager, error) {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
+	opts.LedgerMu.Lock()
+	state := opts.Ledger.Subscription
+	opts.LedgerMu.Unlock()
 	return &Manager{
 		service: opts.Service, topic: opts.Topic, types: slices.Clone(EventTypes),
 		ledger: opts.Ledger, path: opts.LedgerPath, ledgerMu: opts.LedgerMu,
 		clock: opts.Clock, log: opts.Log, gate: make(chan struct{}, 1),
 		recoveryNeeded: make(chan struct{}, 1),
+		status:         statusSnapshot{state: state},
 	}, nil
 }
 
@@ -489,6 +502,9 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 		m.renewAt = expiry.Add(-ttl / 4)
 		m.scheduledName, m.scheduledExpiry = sub.Name, expiry
 	}
+	m.statusMu.Lock()
+	m.status = statusSnapshot{err: m.lastError, failures: m.failures, next: m.nextAttempt, state: state}
+	m.statusMu.Unlock()
 	return state, nil
 }
 
@@ -508,23 +524,26 @@ func (m *Manager) logMutation(ctx context.Context, action string, state ledger.S
 }
 
 // Status returns the last reconciliation error, consecutive failures, scheduled
-// next attempt, and last durably observed subscription. It shares the reconcile
-// gate and ledger lock, so callers receive one consistent snapshot. Before the
-// first attempt the error, count, and next attempt are zero. RenewLoop consumes
-// this schedule; direct Reconcile callers remain responsible for retrying.
+// next attempt, and last durably observed subscription. Its snapshot lock is
+// independent of reconciliation and persistence, so reads never wait for I/O.
+// Before the first attempt the error, count, and next attempt are zero.
+// RenewLoop consumes this schedule; direct Reconcile callers remain responsible
+// for retrying.
 //
 //lint:ignore ST1008 The first value is a stored diagnostic, not an accessor failure; preserve the status contract.
 func (m *Manager) Status() (error, int, time.Time, ledger.SubscriptionState) {
-	m.gate <- struct{}{}
-	defer func() { <-m.gate }()
-	m.ledgerMu.Lock()
-	state := m.ledger.Subscription
-	m.ledgerMu.Unlock()
-	return m.lastError, m.failures, m.nextAttempt, state
+	m.statusMu.Lock()
+	defer m.statusMu.Unlock()
+	return m.status.err, m.status.failures, m.status.next, m.status.state
 }
 
 // recordResult and holdError are only called under gate.
 func (m *Manager) recordResult(err error) {
+	defer func() {
+		m.statusMu.Lock()
+		m.status.err, m.status.failures, m.status.next = m.lastError, m.failures, m.nextAttempt
+		m.statusMu.Unlock()
+	}()
 	m.lastError = err
 	if err == nil {
 		m.failures, m.retryDelay = 0, 0

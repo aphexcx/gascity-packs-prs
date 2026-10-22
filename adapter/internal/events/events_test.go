@@ -1129,19 +1129,70 @@ func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
 
 func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
 	f := setup(t)
+	want := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			if _, err := f.manager.Reconcile(context.Background()); err != nil {
-				t.Error(err)
+			for range 20 {
+				if _, err := f.manager.Reconcile(context.Background()); err == nil {
+					t.Error("expected lookup failure")
+				}
 			}
 		})
 		wg.Go(func() {
-			last, failures, next, state := f.manager.Status()
-			if last != nil || failures != 0 || (state.Name != "" && next.IsZero()) {
-				t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+			for range 1000 {
+				last, failures, next, state := f.manager.Status()
+				wantNext := want.Expiry.Add(-time.Hour)
+				if failures > 0 {
+					wantNext = f.clock.Now().Add(min(time.Second<<min(failures-1, 7), operationTimeout))
+				}
+				if (last == nil) != (failures == 0) || !next.Equal(wantNext) || state != want {
+					t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+				}
 			}
 		})
 	}
 	wg.Wait()
+}
+
+func TestStatusReturnsLastResultDuringBlockedReconcile(t *testing.T) {
+	f := setup(t)
+	want := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	_, wantErr := f.manager.Reconcile(context.Background())
+	wantNext := f.clock.Now().Add(time.Second)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		close(entered)
+		<-release
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.manager.Reconcile(context.Background()); done <- err }()
+	<-entered
+	defer func() {
+		unblock()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		last, failures, next, state := f.manager.Status()
+		if last != wantErr || failures != 1 || next != wantNext || state != want {
+			t.Errorf("blocked reconcile changed status: %v %d %v %+v", last, failures, next, state)
+		}
+	}()
+	select {
+	case <-read:
+	case <-time.After(time.Second):
+		// Release and join both goroutines before reporting the failure.
+		unblock()
+		<-read
+		t.Fatal("Status waited for the in-flight reconciliation")
+	}
 }
