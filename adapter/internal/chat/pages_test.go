@@ -44,7 +44,7 @@ func TestHistoryPages(t *testing.T) {
 				wantFilter := `create_time > "2026-10-22T11:00:00Z" AND create_time < "2026-10-22T12:00:00Z" AND thread.name = ` + thread
 				if events {
 					wantFilter = `start_time="2026-10-22T11:00:00Z" AND end_time="2026-10-22T12:00:00Z" AND (event_types:"` + typ + `")`
-				} else if q.Get("orderBy") != "createTime asc" {
+				} else if q.Get("orderBy") != "create_time ASC" {
 					t.Errorf("orderBy = %q", q.Get("orderBy"))
 				}
 				if q.Get("filter") != wantFilter {

@@ -185,7 +185,7 @@ func (c *Client) ListMessagesPage(ctx context.Context, space string, lower, uppe
 		}
 		filters = append(filters, "thread.name = "+thread)
 	}
-	call := c.api.Spaces.Messages.List(space).PageSize(1000).OrderBy("createTime asc").Filter(strings.Join(filters, " AND ")).PageToken(pageToken)
+	call := c.api.Spaces.Messages.List(space).PageSize(1000).OrderBy("create_time ASC").Filter(strings.Join(filters, " AND ")).PageToken(pageToken)
 	var result *googlechat.ListMessagesResponse
 	err = c.retry(ctx, true, func(ctx context.Context) error {
 		var err error
