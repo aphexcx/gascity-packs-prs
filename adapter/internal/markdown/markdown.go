@@ -138,12 +138,19 @@ func headingContent(s string) string {
 }
 
 func inline(s string, heading bool) string {
+	return formatInline(s, heading, true)
+}
+
+func formatInline(s string, heading, allowLinks bool) string {
 	var out strings.Builder
 	// Failed emphasis searches remain failed at all later positions. Bracket
 	// pairs are indexed once so unmatched '[' runs never rescan the suffix.
 	noCloser := make(map[string]bool)
-	labels := linkLabelEnds(s)
-	destinations := parenthesisEnds(s)
+	var labels, destinations map[int]int
+	if allowLinks {
+		labels = linkLabelEnds(s)
+		destinations = parenthesisEnds(s)
+	}
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
 			end := escapedEnd(s, i)
@@ -157,12 +164,15 @@ func inline(s string, heading bool) string {
 			i = end
 			continue
 		}
-		if s[i] == '[' {
+		if allowLinks && s[i] == '[' {
 			if label, url, end, ok := link(s, i, labels, destinations); ok {
 				if i > 0 && s[i-1] == '!' {
 					out.WriteString(s[i:end])
 				} else {
-					out.WriteString("<" + chatDestination(url) + "|" + inline(label, heading) + ">")
+					// Links cannot nest in link text. Keep nested link syntax
+					// literal while still formatting emphasis and code in the
+					// label, without recursively rebuilding link indexes.
+					out.WriteString("<" + chatDestination(url) + "|" + formatInline(label, heading, false) + ">")
 				}
 				i = end
 				continue
@@ -181,7 +191,7 @@ func inline(s string, heading bool) string {
 					if chat == "*_" {
 						close = "_*"
 					}
-					out.WriteString(chat + inline(s[i+n:end], heading) + close)
+					out.WriteString(chat + formatInline(s[i+n:end], heading, allowLinks) + close)
 					i = end + n
 					continue
 				}

@@ -38,6 +38,8 @@ func TestToChat(t *testing.T) {
 		{"format link label", "[**text**](https://example.com)", "<https://example.com|*text*>"},
 		{"literal brackets before link", "array[0] then [text](url)", "array[0] then <url|text>"},
 		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
+		{"links inside label stay literal", "[outer [inner](v) **bold**](u)", "<u|outer [inner](v) *bold*>"},
+		{"links inside emphasized label stay literal", "[*outer [inner](v)*](u)", "<u|_outer [inner](v)_>"},
 		{"image unchanged", "![**alt**](image.png) and **text**", "![**alt**](image.png) and *text*"},
 		{"link with code bracket", "[`]` label](url)", "<url|`]` label>"},
 		{"heading", "# Title\n## Subtitle\n###### Small\n", "*Title*\n*Subtitle*\n*Small*\n"},
@@ -121,6 +123,22 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 				t.Errorf("conversion took %s; limit 500ms", elapsed)
 			}
 		})
+	}
+}
+
+func TestToChatNestedLinksLinearTime(t *testing.T) {
+	const depth = 14000 // 70,001 bytes of nested link syntax.
+	input := strings.Repeat("[", depth) + "a" + strings.Repeat("](u)", depth)
+	want := "<u|" + strings.Repeat("[", depth-1) + "a" + strings.Repeat("](u)", depth-1) + ">"
+	start := time.Now()
+	got := ToChat(input)
+	elapsed := time.Since(start)
+	if got != want {
+		t.Error("link label should retain nested links as literal text")
+	}
+	t.Logf("converted %d bytes in %s", len(input), elapsed)
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("conversion took %s; limit 500ms", elapsed)
 	}
 }
 
