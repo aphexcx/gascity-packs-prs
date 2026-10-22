@@ -634,6 +634,70 @@ func TestRunWaitsForHandlerDespiteTimedShutdown(t *testing.T) {
 	}
 }
 
+func TestRunRedeliversAfterAckDuringReconnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Pub/Sub's minimum per-extension lease is ten seconds")
+	}
+	interrupt := make(chan struct{})
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, interruptFirstPull(interrupt, attempts))
+	// The Run option must override a caller's longer cap.
+	f.sub.ReceiveSettings.MaxDurationPerAckExtension = time.Minute
+	var calls, active atomic.Int32
+	ids := make(chan string, 2)
+	f.run(t, func(ctx context.Context, ev *Event) (Outcome, error) {
+		if n := active.Add(1); n != 1 {
+			t.Errorf("overlapping handlers: %d", n)
+		}
+		defer active.Add(-1)
+		ids <- ev.PubSubID
+		if calls.Add(1) == 1 {
+			close(interrupt)
+			<-ctx.Done()
+			// The failed stream drops this Ack even though handling succeeded.
+		}
+		return Ack, nil
+	}, RunOptions{
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		MaxDurationPerAckExtension: 10 * time.Second,
+	})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks > 0 })
+	m := f.server.Messages()[0]
+	if calls.Load() != 2 || m.Deliveries != 2 || m.Acks != 1 {
+		t.Fatalf("calls=%d deliveries=%d acks=%d", calls.Load(), m.Deliveries, m.Acks)
+	}
+	if first, second := <-ids, <-ids; first != second || first == "" {
+		t.Fatalf("redelivery changed PubSubID: %q, %q", first, second)
+	}
+}
+
+func TestRunAckExtensionOption(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	cancel()
+	for _, duration := range []time.Duration{-time.Second, time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
+		t.Run(duration.String(), func(t *testing.T) {
+			f.sub.ReceiveSettings.MaxDurationPerAckExtension = 30 * time.Second
+			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: duration})
+			invalid := duration != 0 && (duration < 10*time.Second || duration > 600*time.Second)
+			if (err != nil) != invalid {
+				t.Fatalf("Run: %v, want invalid=%t", err, invalid)
+			}
+			if invalid {
+				return
+			}
+			want := duration
+			if want == 0 {
+				want = 30 * time.Second
+			}
+			if got := f.sub.ReceiveSettings.MaxDurationPerAckExtension; got != want {
+				t.Fatalf("ack extension=%v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestRunReconnectsAfterQuotaFailures(t *testing.T) {
 	attempts := make(chan time.Time, 10)
 	f := newFixture(t, injectPullErrors(codes.ResourceExhausted, 2, attempts))
