@@ -325,6 +325,12 @@ func (m *Manager) validate(sub *api.Subscription) (time.Time, error) {
 	if sub == nil || sub.Name == "" || sub.TargetResource != Target || sub.NotificationEndpoint == nil || sub.NotificationEndpoint.PubsubTopic != m.topic || sub.PayloadOptions == nil || !sub.PayloadOptions.IncludeResource {
 		return time.Time{}, errors.New("events: subscription has missing or incompatible resource, topic or payload options")
 	}
+	// The API's patch updateMask only permits expiry, TTL and event types;
+	// payload options cannot be repaired here. Refuse adoption (and duplicate
+	// creation) until the operator removes the incompatible subscription.
+	if sub.PayloadOptions.FieldMask != "" {
+		return time.Time{}, fmt.Errorf("events: subscription %s has incompatible payloadOptions.fieldMask %q", sub.Name, sub.PayloadOptions.FieldMask)
+	}
 	for _, typ := range m.types {
 		if !slices.Contains(sub.EventTypes, typ) {
 			return time.Time{}, fmt.Errorf("events: subscription %s lacks event type %s", sub.Name, typ)

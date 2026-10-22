@@ -442,7 +442,7 @@ func TestSavedMissingNameDiscoversReplacement(t *testing.T) {
 }
 
 func TestDiscoveryReadsAllPagesAndRejectsIncompatibleSubscriptions(t *testing.T) {
-	for _, wrong := range []string{"topic", "events", "payload", "expiry", "multiple"} {
+	for _, wrong := range []string{"topic", "events", "payload", "field mask", "expiry", "multiple"} {
 		t.Run(wrong, func(t *testing.T) {
 			f := setup(t)
 			first := f.reconcile()
@@ -457,6 +457,8 @@ func TestDiscoveryReadsAllPagesAndRejectsIncompatibleSubscriptions(t *testing.T)
 					sub.EventTypes = []string{EventTypes[0]}
 				case "payload":
 					sub.PayloadOptions.IncludeResource = false
+				case "field mask":
+					sub.PayloadOptions.FieldMask = "message.name"
 				case "expiry":
 					sub.ExpireTime = "invalid"
 				case "multiple":
