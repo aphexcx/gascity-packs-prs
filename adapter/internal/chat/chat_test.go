@@ -397,6 +397,59 @@ func TestMediaRejectsSymlinksAndEscapes(t *testing.T) {
 	}
 }
 
+func TestMediaRootAllowsSymlinkedParent(t *testing.T) {
+	c, s, dir := fixture(t)
+	parent := t.TempDir()
+	alias := filepath.Join(parent, "parent-link")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(alias, "root")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c.ep.UploadRoot, c.ep.MediaDir = root, root
+	path := filepath.Join(root, "source")
+	if err := os.WriteFile(path, []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ref, err := c.UploadAttachment(context.Background(), "spaces/room", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, err := c.DownloadMedia(context.Background(), ref.ResourceName, filepath.Join(root, "dest"), 10); err != nil || n != 4 {
+		t.Fatalf("download: %d %v", n, err)
+	}
+	// A symlink below the root is refused even when its target stays inside it.
+	if err := os.Symlink(root, filepath.Join(root, "inside-link")); err != nil {
+		t.Fatal(err)
+	}
+	s.Media["spaces/room/attachments/root-test"] = []byte("data")
+	for _, suffix := range []string{"inside-link/source", "./../root/source"} {
+		if _, err := c.UploadAttachment(context.Background(), "spaces/room", root+"/"+suffix); err == nil {
+			t.Fatalf("accepted %s", suffix)
+		}
+	}
+	for _, suffix := range []string{"inside-link/new", "./../root/new"} {
+		if _, err := c.DownloadMedia(context.Background(), ref.ResourceName, root+"/"+suffix, 10); err == nil {
+			t.Fatalf("accepted %s", suffix)
+		}
+	}
+}
+
+func TestMediaRejectsDotDotWithinRoot(t *testing.T) {
+	c, _, dir := fixture(t)
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "source"), []byte("data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.UploadAttachment(context.Background(), "spaces/room", dir+"/sub/../source"); err == nil {
+		t.Fatal("accepted dot-dot path")
+	}
+}
+
 func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 	_, s, dir := fixture(t)
 	path := filepath.Join(dir, "growing.txt")

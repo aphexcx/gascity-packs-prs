@@ -288,10 +288,17 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		if err := c.limits.WaitWrite(waitCtx, space); err != nil {
 			return err
 		}
+		// Recheck on each attempt: the file may grow during a quota wait.
+		info, err := file.Stat()
+		if err != nil {
+			return localError{err}
+		}
+		if info.Size() > limit {
+			return localError{errors.New("file exceeds media limit")}
+		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
 			return localError{err}
 		}
-		var err error
 		// Stream one multipart request, including for Chat's 200 MB maximum.
 		// SDK resumable chunks retry 429s internally without Retry-After and lose
 		// the HTTP error on deadline. Keep every retry under our policy instead.
@@ -393,11 +400,17 @@ func (c *Client) DownloadMedia(ctx context.Context, resourceName, dest string, m
 }
 
 // openMediaFile walks with directory descriptors and O_NOFOLLOW, so a concurrent
-// symlink replacement cannot redirect a checked path. Roots must be absolute,
-// existing real directories; callers keep both returned descriptors alive.
+// symlink replacement below the configured root cannot redirect a checked path.
+// The trusted root may have symlinked ancestors (e.g. /var on macOS); resolve it
+// once and anchor all untrusted relative components to its open descriptor.
 func openMediaFile(root, path string, flags int) (*os.File, *os.File, error) {
 	if root == "" {
 		return nil, nil, errors.New("media root is required")
+	}
+	for _, part := range strings.Split(path, string(filepath.Separator)) {
+		if part == ".." {
+			return nil, nil, errors.New("media path contains parent traversal")
+		}
 	}
 	root, err := filepath.Abs(root)
 	if err != nil {
@@ -411,12 +424,16 @@ func openMediaFile(root, path string, flags int) (*os.File, *os.File, error) {
 	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil, nil, errors.New("media path is outside its configured root")
 	}
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, part := range strings.Split(strings.TrimPrefix(filepath.Dir(path), "/"), "/") {
-		if part == "" {
+	fd, err := unix.Open(resolvedRoot, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, part := range strings.Split(filepath.Dir(rel), string(filepath.Separator)) {
+		if part == "." {
 			continue
 		}
 		next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
