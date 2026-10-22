@@ -599,6 +599,7 @@ func TestResumableUploadPUTChunks(t *testing.T) {
 		t.Fatalf("chunk range: %v", first.Header)
 	}
 	put("bytes 0-2/*", "abc", 308) // retry does not append twice
+	put("bytes 0-1/2", "ab", 400)  // total cannot shrink below bytes already accepted
 	put("bytes 3-5/6", "de", 400)  // mismatched byte count
 	final := put("bytes 3-5/6", "def", 200)
 	var attachment chat.UploadAttachmentResponse

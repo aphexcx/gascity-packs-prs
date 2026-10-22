@@ -859,7 +859,7 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	total := upload.total
 	if rangeParts[4] != "*" {
 		value, err := strconv.ParseInt(rangeParts[4], 10, 64)
-		if err != nil || value > maxUploadBytes || (total >= 0 && total != value) {
+		if err != nil || value > maxUploadBytes || value < int64(len(upload.data)) || (total >= 0 && total != value) {
 			s.fail(w, 400, "INVALID_ARGUMENT", "inconsistent upload size")
 			return
 		}
