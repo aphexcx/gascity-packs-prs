@@ -287,7 +287,8 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 }
 
 func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (state ledger.SubscriptionState, err error) {
-	defer func() { err = m.reportSuspension(ctx, sub, err) }()
+	m.reportSuspension(ctx, sub, nil)
+	defer func() { err = suspensionError(sub, err) }()
 	if sub.State == "ACTIVE" {
 		m.scopeReloaded = false
 	}
@@ -509,14 +510,17 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 }
 
 func (m *Manager) reportSuspension(ctx context.Context, sub *api.Subscription, err error) error {
-	if sub.State != "SUSPENDED" {
-		return err
+	if sub.State == "SUSPENDED" {
+		m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
 	}
-	m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
-	if err != nil {
+	return suspensionError(sub, err)
+}
+
+func suspensionError(sub *api.Subscription, err error) error {
+	if sub.State == "SUSPENDED" && err != nil {
 		return fmt.Errorf("events: subscription %s suspended (%s): %w", sub.Name, sub.SuspensionReason, err)
 	}
-	return nil
+	return err
 }
 
 func (m *Manager) logMutation(ctx context.Context, action string, state ledger.SubscriptionState) {

@@ -791,6 +791,30 @@ func TestSuspensionReasonReportedInErrorAndLog(t *testing.T) {
 	}
 }
 
+func TestReactivationLogsSuspensionBeforeRecovery(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	f.reconcile()
+	decoder := json.NewDecoder(&logs)
+	var entries []map[string]any
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) != 2 || entries[0]["level"] != "WARN" || entries[0]["reason"] != "ENDPOINT_PERMISSION_DENIED" || entries[1]["level"] != "INFO" || entries[1]["action"] != "reactivate" || entries[1]["state"] != "ACTIVE" {
+		t.Fatalf("want suspension warning followed only by recovery: %v", entries)
+	}
+}
+
 func TestScopeRevocationWaitsForTokenReload(t *testing.T) {
 	for _, reason := range []string{"USER_SCOPE_REVOKED", "APP_SCOPE_REVOKED"} {
 		t.Run(reason, func(t *testing.T) {
