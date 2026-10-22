@@ -1170,6 +1170,7 @@ func TestTransientClassification(t *testing.T) {
 		{"malformed JSON", &json.SyntaxError{}, false},
 		{"empty token file", emptyTokenErr, false},
 		{"chat 429", validationError(429), true},
+		{"chat 408", validationError(408), true},
 		{"chat 503", validationError(503), true},
 		{"chat 401", validationError(401), false},
 		{"oauth 429", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 429}}, true},

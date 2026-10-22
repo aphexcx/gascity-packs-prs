@@ -385,7 +385,7 @@ func transient(err error) bool {
 	}
 	var validation validationError
 	if errors.As(err, &validation) {
-		return validation == 429 || validation < 400 || validation >= 500
+		return validation == http.StatusRequestTimeout || validation == http.StatusTooManyRequests || validation < 400 || validation >= 500
 	}
 	var failure *oauth2.RetrieveError
 	if errors.As(err, &failure) {
