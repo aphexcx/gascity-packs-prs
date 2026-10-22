@@ -42,6 +42,7 @@ type Server struct {
 	published     []wire.PublishRequest
 	dedup         map[string]wire.InboundResponse
 	receiptKeys   map[string]string
+	receiptCities map[string]string
 	concludedAt   map[string]time.Time
 }
 
@@ -50,7 +51,7 @@ func New(t testing.TB) *Server {
 	s := &Server{Now: time.Now, Receipts: map[string]wire.ReceiptResponse{},
 		Bindings:      map[wire.Conversation]string{},
 		registrations: map[string]wire.Registration{}, dedup: map[string]wire.InboundResponse{},
-		receiptKeys: map[string]string{}, concludedAt: map[string]time.Time{},
+		receiptKeys: map[string]string{}, receiptCities: map[string]string{}, concludedAt: map[string]time.Time{},
 		client: &http.Client{Timeout: 30 * time.Second}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
@@ -109,6 +110,7 @@ func (s *Server) removeReceipt(id string) {
 	delete(s.Receipts, id)
 	delete(s.concludedAt, id)
 	delete(s.receiptKeys, id)
+	delete(s.receiptCities, id)
 }
 
 func (s *Server) observeReceipts() {
@@ -246,6 +248,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 				receipt := wire.ReceiptResponse{State: "concluded"}
 				receipt.Delivery.Status = "no_route"
 				s.Receipts[id] = receipt
+				s.receiptCities[id] = city
 				s.concludedAt[id] = s.now()
 			}
 			respond(w, 200, previous)
@@ -262,6 +265,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		id := fmt.Sprintf("receipt-%d", s.sequence)
 		response.Delivery.ReceiptID = id
 		s.receiptKeys[id] = key
+		s.receiptCities[id] = city
 		receipt := wire.ReceiptResponse{State: "pending"}
 		if status == "pending" {
 			s.Receipts[id] = receipt
@@ -276,7 +280,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "inbound/receipts/") && r.Method == http.MethodGet:
 		id := strings.TrimPrefix(path, "inbound/receipts/")
 		receipt, ok := s.Receipts[id]
-		if !ok {
+		if !ok || s.receiptCities[id] != city {
 			receipt.State = "unknown"
 		}
 		response := receiptResponse{ReceiptID: id, State: receipt.State}

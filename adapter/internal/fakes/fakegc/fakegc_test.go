@@ -16,11 +16,16 @@ import (
 
 func call(t *testing.T, s *Server, method, path string, body any, header bool, status int) map[string]any {
 	t.Helper()
+	return callCity(t, s, "examplecity", method, path, body, header, status)
+}
+
+func callCity(t *testing.T, s *Server, city, method, path string, body any, header bool, status int) map[string]any {
+	t.Helper()
 	b, err := json.Marshal(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	req, err := http.NewRequest(method, s.URL()+"/v0/city/examplecity/extmsg/"+path, bytes.NewReader(b))
+	req, err := http.NewRequest(method, s.URL()+"/v0/city/"+city+"/extmsg/"+path, bytes.NewReader(b))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,6 +579,31 @@ func TestCallbackRequiresBoundedCompleteJSON(t *testing.T) {
 			receipt := result["Receipt"].(map[string]any)
 			if receipt["Delivered"] != false || receipt["FailureKind"] != "transient" || result["TranscriptEntry"] != nil {
 				t.Fatalf("invalid callback body recorded delivery (delivered=%v, failure=%v)", receipt["Delivered"], receipt["FailureKind"])
+			}
+		})
+	}
+}
+
+func TestReceiptLookupIsScopedToIssuingCity(t *testing.T) {
+	for _, status := range []string{"pending", "delivered", "suppressed"} {
+		t.Run(status, func(t *testing.T) {
+			s := New(t)
+			if status == "pending" {
+				s.NextDelivery = status
+			}
+			m := inbound("city")
+			first := call(t, s, "POST", "inbound", m, true, 200)
+			if status == "suppressed" {
+				first = call(t, s, "POST", "inbound", m, true, 200)
+			}
+			id := first["delivery"].(map[string]any)["receipt_id"].(string)
+			other := callCity(t, s, "othercity", "GET", "inbound/receipts/"+id, nil, false, 200)
+			if other["state"] != "unknown" || other["delivery"] != nil {
+				t.Fatalf("receipt leaked across cities: %v", other)
+			}
+			own := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)
+			if own["state"] == "unknown" {
+				t.Fatal("cross-city lookup changed the issuing city's receipt")
 			}
 		})
 	}
