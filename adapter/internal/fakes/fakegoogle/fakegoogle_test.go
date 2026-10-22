@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -295,6 +296,63 @@ func TestSubscriptionCreateRequiresEventTypesAndTopic(t *testing.T) {
 			got := request(t, s, "POST", "/v1/subscriptions", sub, 400)
 			if got["error"].(map[string]any)["status"] != "INVALID_ARGUMENT" {
 				t.Fatalf("invalid create: %v", got)
+			}
+		})
+	}
+}
+
+func TestSubscriptionOperationResponseType(t *testing.T) {
+	s := New(t, nil)
+	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}}
+	created := request(t, s, "POST", "/v1/subscriptions", body, 200)
+	name := created["response"].(map[string]any)["name"].(string)
+	patched := request(t, s, "PATCH", "/v1/"+name, &events.Subscription{Ttl: "7200s"}, 200)
+	s.SuspendSubscription(name)
+	reactivated := request(t, s, "POST", "/v1/"+name+":reactivate", map[string]any{}, 200)
+	for _, op := range []map[string]any{created, patched, reactivated} {
+		if op["response"].(map[string]any)["@type"] != "type.googleapis.com/google.apps.events.subscriptions.v1.Subscription" {
+			t.Errorf("operation response missing Subscription type: %v", op)
+		}
+	}
+}
+
+type emitReporter struct {
+	testing.TB
+	errors []string
+}
+
+func (r *emitReporter) Error(args ...any) { r.errors = append(r.errors, fmt.Sprint(args...)) }
+func (r *emitReporter) Errorf(format string, args ...any) {
+	r.errors = append(r.errors, fmt.Sprintf(format, args...))
+}
+func (r *emitReporter) Fatal(args ...any) { r.Error(args...); runtime.Goexit() }
+func (r *emitReporter) Fatalf(format string, args ...any) {
+	r.Errorf(format, args...)
+	runtime.Goexit()
+}
+
+func TestEmitReportsErrorsWithoutTerminatingCaller(t *testing.T) {
+	for _, tc := range []struct {
+		name, typ string
+		publisher *pubsub.Publisher
+		value     any
+	}{
+		{"publisher", "google.workspace.chat.message.v1.created", nil, &chat.Message{}},
+		{"batch", "google.workspace.chat.message.v1.batchCreated", &pubsub.Publisher{}, &chat.Message{}},
+		{"marshal", "google.workspace.chat.message.v1.created", &pubsub.Publisher{}, make(chan int)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reporter := &emitReporter{TB: t}
+			s := New(reporter, tc.publisher)
+			done := make(chan bool, 1)
+			go func() {
+				returned := false
+				defer func() { done <- returned }()
+				s.Emit(tc.typ, tc.value, "spaces/room")
+				returned = true
+			}()
+			if returned := <-done; !returned || len(reporter.errors) != 1 {
+				t.Fatalf("Emit returned normally = %v, reported errors = %v", returned, reporter.errors)
 			}
 		})
 	}

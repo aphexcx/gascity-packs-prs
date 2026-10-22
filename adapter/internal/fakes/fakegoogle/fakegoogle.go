@@ -397,6 +397,10 @@ func (s *Server) complete(op *operation) {
 	if op.result.Error == nil {
 		s.Subscriptions[op.subscription.Name] = op.subscription
 		b, _ := json.Marshal(op.subscription)
+		var response map[string]json.RawMessage
+		_ = json.Unmarshal(b, &response)
+		response["@type"] = json.RawMessage(`"type.googleapis.com/google.apps.events.subscriptions.v1.Subscription"`)
+		b, _ = json.Marshal(response)
 		op.result.Response = googleapi.RawMessage(b)
 	}
 }
@@ -685,7 +689,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) Emit(eventType string, resource any, space string) {
 	s.t.Helper()
 	if s.publisher == nil {
-		s.t.Fatal("fakegoogle.Emit requires a pstest-connected publisher")
+		s.t.Error("fakegoogle.Emit requires a pstest-connected publisher")
 		return
 	}
 	wrapper := ""
@@ -700,7 +704,7 @@ func (s *Server) Emit(eventType string, resource any, space string) {
 		if strings.Contains(eventType, ".batch") {
 			value := reflect.ValueOf(resource)
 			if value.Kind() != reflect.Slice && value.Kind() != reflect.Array {
-				s.t.Fatalf("batch event requires a slice, got %T", resource)
+				s.t.Errorf("batch event requires a slice, got %T", resource)
 				return
 			}
 			items := make([]map[string]any, 0, value.Len())
@@ -714,7 +718,7 @@ func (s *Server) Emit(eventType string, resource any, space string) {
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		s.t.Fatalf("marshal event: %v", err)
+		s.t.Errorf("marshal event: %v", err)
 		return
 	}
 	s.mu.Lock()
