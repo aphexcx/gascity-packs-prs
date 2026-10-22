@@ -821,6 +821,11 @@ func TestReceiveBackoffGrowthCapAndReset(t *testing.T) {
 			if delay := b.pause(0, false); delay < 0 || delay >= bound*time.Second {
 				t.Fatalf("delay %v exceeds bound %v", delay, bound*time.Second)
 			}
+			// Random samples below a ceiling cannot prove growth or a cap.
+			// current is the NEXT draw's ceiling after pause has advanced it.
+			if want := min(2*bound*time.Second, time.Minute); b.current != want {
+				t.Fatalf("next ceiling=%v after %v, want %v", b.current, bound*time.Second, want)
+			}
 		}
 		stretch := time.Duration(0)
 		if !delivered {
@@ -828,6 +833,9 @@ func TestReceiveBackoffGrowthCapAndReset(t *testing.T) {
 		}
 		if delay := b.pause(stretch, delivered); delay < 0 || delay >= time.Second {
 			t.Errorf("backoff did not reset: %v", delay)
+		}
+		if b.current != 2*time.Second {
+			t.Errorf("next ceiling after reset=%v, want 2s", b.current)
 		}
 	}
 }
