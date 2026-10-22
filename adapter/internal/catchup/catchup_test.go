@@ -993,34 +993,65 @@ func TestPermanentHistoryErrorWithoutTokenIsUnrecoverable(t *testing.T) {
 }
 
 func TestRepeatedExpiredTokensBoundRetriesAndKeepBacklog(t *testing.T) {
-	f := setup(t)
-	f.pageSize = 1
-	f.addSpace("spaces/room", true)
-	for i := 0; i < 2; i++ {
-		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
-	}
-	f.freeze(t)
-	requests := 0
-	f.onRequest = func(r *http.Request) error {
-		requests++
-		if requests > 4 {
-			return errors.New("token retry did not stop")
-		}
-		if r.URL.Query().Get("pageToken") != "" {
-			return &googleapi.Error{Code: 400, Message: "expired page token"}
-		}
-		return nil
-	}
-	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n == 0 {
-		t.Fatalf("repeated expired tokens = (%d, %d, %v)", d, n, err)
-	}
-	if requests != 4 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 {
-		t.Fatalf("retries=%d counters=%v", requests, f.opts.Ledger.Counters)
-	}
-	f.onRequest = nil
-	f.pass(t, 2, 0)
-	if len(f.gc.Inbound()) != 2 {
-		t.Fatal("replayed backlog duplicated delivery")
+	for _, phase := range []string{"messages", "spaceEvents"} {
+		t.Run(phase, func(t *testing.T) {
+			f := setup(t)
+			f.pageSize = 1
+			f.addSpace("spaces/room", true)
+			for i := 0; i < 3; i++ {
+				at := frozen.Add(-time.Minute)
+				if phase == "spaceEvents" {
+					at = frozen.Add(-2 * time.Hour)
+				}
+				m := f.addMessage("spaces/room", i, at)
+				if phase == "spaceEvents" {
+					if out, err := f.p.HandleChange(context.Background(), puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}); out != puller.Ack || err != nil {
+						t.Fatal(out, err)
+					}
+					m.LastUpdateTime = frozen.Add(-time.Minute).Format(time.RFC3339Nano)
+					f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+						Name: fmt.Sprintf("spaces/room/spaceEvents/e%d", i), EventTime: m.LastUpdateTime,
+						EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m},
+					})
+				}
+			}
+			initialPosts := len(f.gc.Inbound())
+			f.freeze(t)
+			requests := 0
+			f.onRequest = func(r *http.Request) error {
+				if !strings.HasSuffix(r.URL.Path, "/"+phase) {
+					return nil
+				}
+				requests++
+				if requests > 4 {
+					return errors.New("token retry did not stop")
+				}
+				if r.URL.Query().Get("pageToken") != "" {
+					return &googleapi.Error{Code: 400, Message: "expired page token"}
+				}
+				return nil
+			}
+			for pass := 0; pass < 5; pass++ {
+				requests = 0
+				if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 1 {
+					t.Fatalf("pass %d = (%d, %d, %v), want one unique retained record", pass, d, n, err)
+				}
+				saved, err := ledger.Load(f.opts.LedgerPath, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(saved.Spaces["spaces/room"].Backlog) != 1 || requests != 4 || saved.Counters["unrecoverable:spaces/room"] != 0 {
+					t.Fatalf("pass %d: backlog=%d requests=%d counters=%v", pass, len(saved.Spaces["spaces/room"].Backlog), requests, saved.Counters)
+				}
+				*f.opts.Ledger = *saved
+				f.newRunner(t)
+			}
+			f.onRequest = nil
+			f.pass(t, 3, 0)
+			if len(f.gc.Inbound()) != initialPosts+3 {
+				t.Fatal("replayed backlog duplicated delivery")
+			}
+		})
 	}
 }
 

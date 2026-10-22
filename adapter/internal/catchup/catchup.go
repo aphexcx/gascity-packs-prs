@@ -387,8 +387,23 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			if err != nil {
 				return err
 			}
+			// Restarted phases replay earlier pages. Keep one durable record
+			// per history identity, even when a replacement token keeps failing.
+			seen := make(map[string]bool, len(s.Backlog)+len(page))
+			for _, raw := range s.Backlog {
+				var item queuedChange
+				if err := json.Unmarshal([]byte(raw), &item); err != nil {
+					return errors.New("catchup: invalid durable backlog")
+				}
+				seen[unavailableID(item)] = true
+			}
 			for _, item := range page {
+				id := unavailableID(item)
+				if seen[id] {
+					continue
+				}
 				s.Backlog = append(s.Backlog, encode(item))
+				seen[id] = true
 			}
 			s.PageToken = encode(p)
 			return nil
