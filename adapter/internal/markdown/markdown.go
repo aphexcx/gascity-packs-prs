@@ -57,11 +57,13 @@ func ToChat(md string) string {
 		}
 		switch {
 		case heading > 0 && heading <= 6 && strings.HasPrefix(body[heading:], " "):
-			out.WriteString("*" + inline(body[heading+1:]) + "*")
+			if content := headingContent(body[heading+1:]); content != "" {
+				out.WriteString("*" + inline(content, true) + "*")
+			}
 		case strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* "):
-			out.WriteString("* " + inline(body[2:]))
+			out.WriteString("* " + inline(body[2:], false))
 		default:
-			out.WriteString(inline(body))
+			out.WriteString(inline(body, false))
 		}
 		out.WriteString(ending)
 	}
@@ -75,7 +77,16 @@ func lineEnd(s string, start int) int {
 	return len(s)
 }
 
-func inline(s string) string {
+func headingContent(s string) string {
+	s = strings.Trim(s, " \t")
+	end := len(strings.TrimRight(s, "#"))
+	if end == 0 || (end < len(s) && (s[end-1] == ' ' || s[end-1] == '\t')) {
+		s = strings.TrimRight(s[:end], " \t")
+	}
+	return s
+}
+
+func inline(s string, heading bool) string {
 	var out strings.Builder
 	// Failed emphasis searches remain failed at all later positions. Bracket
 	// pairs are indexed once so unmatched '[' runs never rescan the suffix.
@@ -99,7 +110,7 @@ func inline(s string) string {
 				if i > 0 && s[i-1] == '!' {
 					out.WriteString(s[i:end])
 				} else {
-					out.WriteString("<" + chatDestination(url) + "|" + inline(label) + ">")
+					out.WriteString("<" + chatDestination(url) + "|" + inline(label, heading) + ">")
 				}
 				i = end
 				continue
@@ -111,11 +122,14 @@ func inline(s string) string {
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
 				if end := emphasisEnd(s, i+n, marker); end >= 0 {
+					if heading {
+						chat = strings.TrimPrefix(chat, "*")
+					}
 					close := chat
 					if chat == "*_" {
 						close = "_*"
 					}
-					out.WriteString(chat + inline(s[i+n:end]) + close)
+					out.WriteString(chat + inline(s[i+n:end], heading) + close)
 					i = end + n
 					continue
 				}
