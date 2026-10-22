@@ -77,6 +77,10 @@ func lineEnd(s string, start int) int {
 
 func inline(s string) string {
 	var out strings.Builder
+	// Failed emphasis searches remain failed at all later positions. Bracket
+	// pairs are indexed once so unmatched '[' runs never rescan the suffix.
+	noCloser := make(map[string]bool)
+	labels := linkLabelEnds(s)
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
 			end := escapedEnd(s, i)
@@ -91,7 +95,7 @@ func inline(s string) string {
 			continue
 		}
 		if s[i] == '[' {
-			if label, url, end, ok := link(s, i); ok {
+			if label, url, end, ok := link(s, i, labels); ok {
 				if i > 0 && s[i-1] == '!' {
 					out.WriteString(s[i:end])
 				} else {
@@ -105,7 +109,7 @@ func inline(s string) string {
 			n := runLength(s[i:])
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
-			if chat != "" && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
+			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
 				if end := emphasisEnd(s, i+n, marker); end >= 0 {
 					close := chat
 					if chat == "*_" {
@@ -115,6 +119,7 @@ func inline(s string) string {
 					i = end + n
 					continue
 				}
+				noCloser[marker] = true
 			}
 			out.WriteString(marker)
 			i += n
@@ -191,33 +196,34 @@ func wordBefore(s string) bool {
 	return unicode.IsLetter(r) || unicode.IsNumber(r)
 }
 
-func link(s string, start int) (label, url string, end int, ok bool) {
-	closeLabel := -1
-	depth := 1
-	for i := start + 1; i < len(s); i++ {
+func linkLabelEnds(s string) map[int]int {
+	ends := make(map[int]int)
+	var stack []int
+	for i := 0; i < len(s); i++ {
 		switch s[i] {
 		case '\\':
 			i++
 		case '`':
 			i = codeSpanEnd(s, i) - 1
 		case '[':
-			depth++
+			stack = append(stack, i)
 		case ']':
-			depth--
-		}
-		if depth == 0 {
-			if i+1 >= len(s) || s[i+1] != '(' {
-				return
+			if len(stack) > 0 {
+				ends[stack[len(stack)-1]] = i
+				stack = stack[:len(stack)-1]
 			}
-			closeLabel = i
-			break
 		}
 	}
-	if closeLabel < 0 {
+	return ends
+}
+
+func link(s string, start int, labels map[int]int) (label, url string, end int, ok bool) {
+	closeLabel, found := labels[start]
+	if !found || closeLabel+1 >= len(s) || s[closeLabel+1] != '(' {
 		return
 	}
 	urlStart := closeLabel + 2
-	depth = 1
+	depth := 1
 	for i := urlStart; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++

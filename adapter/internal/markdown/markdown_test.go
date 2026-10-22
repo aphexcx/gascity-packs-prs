@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -47,6 +48,24 @@ func TestToChat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ToChat(tt.input); got != tt.want {
 				t.Fatalf("ToChat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
+	for _, pattern := range []string{"*x ", "[x ", "(_x ", "**a *b "} {
+		t.Run(pattern, func(t *testing.T) {
+			input := strings.Repeat(pattern, (70000+len(pattern)-1)/len(pattern))
+			start := time.Now()
+			got := ToChat(input)
+			elapsed := time.Since(start)
+			if got != input {
+				t.Fatal("unclosed openers changed")
+			}
+			t.Logf("converted %d bytes in %s", len(input), elapsed)
+			if elapsed > 500*time.Millisecond {
+				t.Errorf("conversion took %s; limit 500ms", elapsed)
 			}
 		})
 	}
