@@ -226,8 +226,14 @@ func formatInline(s string, heading, allowLinks bool) string {
 					// Links cannot nest in link text. Keep nested link syntax
 					// literal while still formatting emphasis and code in the
 					// rest of the label, without recursing into nested links.
-					label = strings.ReplaceAll(formatInline(label, heading, false), ">", "%3E")
-					out.WriteString("<" + url + "|" + label + ">")
+					label = formatInline(label, heading, false)
+					if strings.Contains(label, ">") {
+						// Chat would end the label early; encoding it would
+						// change displayed text, including literal code bytes.
+						out.WriteString(s[i:end])
+					} else {
+						out.WriteString("<" + url + "|" + label + ">")
+					}
 				}
 				i = end
 				continue
