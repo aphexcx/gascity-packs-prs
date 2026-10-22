@@ -29,6 +29,59 @@ type contextBody struct {
 	io.ReadCloser
 }
 
+type slowBody struct {
+	contextBody
+	once sync.Once
+}
+
+func (b *slowBody) Read(p []byte) (int, error) {
+	b.once.Do(func() { time.Sleep(31 * time.Second) })
+	return b.contextBody.Read(p)
+}
+
+func TestMediaTransferUsesCallerDeadline(t *testing.T) {
+	for _, upload := range []bool{true, false} {
+		t.Run(fmt.Sprintf("upload=%v", upload), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				dir, err := filepath.EvalSymlinks(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(dir, "media")
+				if upload {
+					if err := os.WriteFile(path, []byte("media"), 0600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+					if upload {
+						body := &slowBody{contextBody: contextBody{ctx: r.Context(), ReadCloser: r.Body}}
+						defer body.Close()
+						if _, err := io.Copy(io.Discard, body); err != nil {
+							return nil, err
+						}
+						return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"attachmentDataRef":{"resourceName":"spaces/room/attachments/1"}}`)), Request: r}, nil
+					}
+					return &http.Response{StatusCode: 200, Header: make(http.Header), ContentLength: -1, Body: &slowBody{contextBody: contextBody{ctx: r.Context(), ReadCloser: io.NopCloser(strings.NewReader("media"))}}, Request: r}, nil
+				})}
+				c, err := New(context.Background(), h, config.Endpoints{UploadRoot: dir, MediaDir: dir})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+				defer cancel()
+				if upload {
+					if _, err := c.UploadAttachment(ctx, "spaces/room", path); err != nil {
+						t.Fatal(err)
+					}
+				} else if n, err := c.DownloadMedia(ctx, "spaces/room/attachments/1", path, 10); err != nil || n != 5 {
+					t.Fatalf("download: %d %v", n, err)
+				}
+			})
+		})
+	}
+}
+
 func (b contextBody) Read(p []byte) (int, error) {
 	if err := b.ctx.Err(); err != nil {
 		return 0, err

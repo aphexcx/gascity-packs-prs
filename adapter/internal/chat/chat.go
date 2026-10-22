@@ -282,8 +282,8 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		return nil, fmt.Errorf("upload %q: %w", path, localError{errors.New("file exceeds media limit")})
 	}
 	var result *googlechat.UploadAttachmentResponse
-	err = retry(ctx, false, func(ctx context.Context) error {
-		if err := c.limits.WaitWrite(ctx, space); err != nil {
+	err = retry(ctx, false, func(waitCtx context.Context) error {
+		if err := c.limits.WaitWrite(waitCtx, space); err != nil {
 			return err
 		}
 		if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -339,11 +339,9 @@ func (c *Client) DownloadMedia(ctx context.Context, resourceName, dest string, m
 	if c.ep.MediaMaxBytes > 0 && maxBytes > c.ep.MediaMaxBytes {
 		maxBytes = c.ep.MediaMaxBytes
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
 	var response *http.Response
-	// The response body outlives retry's per-call context. Keep the download's
-	// own bounded context alive until the body has been read and closed.
+	// Transfers, including reading the body after retry returns, use the caller's
+	// deadline. Only pacing and retries are bounded by the publish wait budget.
 	err = retry(ctx, true, func(_ context.Context) error {
 		var err error
 		response, err = c.api.Media.Download(resourceName).Context(ctx).Download()
@@ -482,8 +480,10 @@ func Classify(err error) (kind string, retryAfter time.Duration) {
 	return "transient", 0
 }
 
-// retry bounds pacing, I/O and backoff together. Only safe operations retry
-// ambiguous failures. A deadline preserves the last API error and retry hint.
+// retry bounds pacing and backoff. Ordinary calls also use its bounded context;
+// media calls use the caller's context for I/O so large transfers can finish.
+// Only safe operations retry ambiguous failures. A deadline preserves the last
+// API error and retry hint.
 func retry(ctx context.Context, safe bool, call func(context.Context) error) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
