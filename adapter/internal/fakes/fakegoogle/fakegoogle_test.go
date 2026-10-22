@@ -215,7 +215,7 @@ func TestPendingCreateReservesTarget(t *testing.T) {
 
 func TestLostRenewalAndDelayedReactivation(t *testing.T) {
 	s := New(t, nil)
-	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}, Ttl: "60s"}, 200)
+	op := request(t, s, "POST", "/v1/subscriptions", &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}, Ttl: "120s"}, 200)
 	sub := op["response"].(map[string]any)
 	name := sub["name"].(string)
 	s.Configure(func(s *Server) { s.DropNextResponse = true; s.OperationDelay = time.Minute })
@@ -278,6 +278,78 @@ func TestExpiredSubscriptionCanBeRecreated(t *testing.T) {
 	if recreated["response"].(map[string]any)["name"] == name {
 		t.Fatal("recreation reused expired subscription")
 	}
+}
+
+func TestLateSubscriptionOperationCannotResurrectExpiry(t *testing.T) {
+	for _, action := range []string{"renew", "reactivate"} {
+		for _, pollAtExpiry := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/poll=%v", action, pollAtExpiry), func(t *testing.T) {
+				s := New(t, nil)
+				now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
+				s.Now = func() time.Time { return now }
+				s.Subscriptions["subscriptions/one"] = &events.Subscription{Name: "subscriptions/one", State: "SUSPENDED", ExpireTime: now.Add(time.Minute).Format(time.RFC3339Nano)}
+				s.OperationDelay = 2 * time.Minute
+				method, path := "PATCH", "/v1/subscriptions/one"
+				if action == "reactivate" {
+					method, path = "POST", path+":reactivate"
+				}
+				op := request(t, s, method, path, &events.Subscription{Ttl: "7200s"}, 200)
+				if pollAtExpiry {
+					s.Advance(time.Minute)
+					request(t, s, "GET", "/v1/subscriptions/one", nil, 404)
+					s.Advance(time.Minute)
+				} else {
+					s.Advance(2 * time.Minute)
+				}
+				done := request(t, s, "GET", "/v1/"+op["name"].(string), nil, 200)
+				failure, ok := done["error"].(map[string]any)
+				if done["done"] != true || !ok || failure["code"] != float64(5) || done["response"] != nil {
+					t.Fatalf("late operation must fail NOT_FOUND: %v", done)
+				}
+				request(t, s, "GET", "/v1/subscriptions/one", nil, 404)
+			})
+		}
+	}
+}
+
+func TestLateSubscriptionOperationsMergeOnlyTheirFields(t *testing.T) {
+	s := New(t, nil)
+	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	s.Subscriptions["subscriptions/one"] = &events.Subscription{Name: "subscriptions/one", State: "ACTIVE", ExpireTime: now.Add(time.Hour).Format(time.RFC3339Nano)}
+	s.OperationDelay = time.Minute
+	renew := request(t, s, "PATCH", "/v1/subscriptions/one", &events.Subscription{Ttl: "7200s"}, 200)
+	s.SuspendSubscription("subscriptions/one")
+	s.Configure(func(s *Server) { s.Subscriptions["subscriptions/one"].SuspensionReason = "USER_SCOPE_REVOKED" })
+	s.Advance(time.Minute)
+	done := request(t, s, "GET", "/v1/"+renew["name"].(string), nil, 200)["response"].(map[string]any)
+	if done["state"] != "SUSPENDED" || done["suspensionReason"] != "USER_SCOPE_REVOKED" || done["expireTime"] != now.Add(2*time.Hour).Format(time.RFC3339Nano) {
+		t.Errorf("renewal replaced current state: %v", done)
+	}
+	s.SuspendSubscription("subscriptions/one")
+	reactivate := request(t, s, "POST", "/v1/subscriptions/one:reactivate", map[string]any{}, 200)
+	s.Configure(func(s *Server) { s.OperationDelay = 0 })
+	newer := request(t, s, "PATCH", "/v1/subscriptions/one", &events.Subscription{Ttl: "10800s"}, 200)["response"].(map[string]any)
+	s.Advance(time.Minute)
+	done = request(t, s, "GET", "/v1/"+reactivate["name"].(string), nil, 200)["response"].(map[string]any)
+	if done["state"] != "ACTIVE" || done["suspensionReason"] != nil || done["expireTime"] != newer["expireTime"] {
+		t.Errorf("reactivation replaced current expiry: %v", done)
+	}
+}
+
+func TestUnpolledRenewalCompletesBeforeOriginalExpiry(t *testing.T) {
+	s := New(t, nil)
+	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	s.Subscriptions["subscriptions/one"] = &events.Subscription{Name: "subscriptions/one", State: "ACTIVE", ExpireTime: now.Add(time.Minute).Format(time.RFC3339Nano)}
+	s.OperationDelay = 30 * time.Second
+	op := request(t, s, "PATCH", "/v1/subscriptions/one", &events.Subscription{Ttl: "7200s"}, 200)
+	s.Advance(2 * time.Minute)
+	done := request(t, s, "GET", "/v1/"+op["name"].(string), nil, 200)
+	if done["done"] != true || done["error"] != nil {
+		t.Fatalf("timely renewal failed because it was not polled: %v", done)
+	}
+	request(t, s, "GET", "/v1/subscriptions/one", nil, 200)
 }
 
 func TestSubscriptionCreateRequiresEventTypesAndTopic(t *testing.T) {

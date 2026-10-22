@@ -61,6 +61,8 @@ type operation struct {
 	failure      *events.Status
 	ready        time.Time
 	subscription *events.Subscription
+	action       string
+	sequence     int
 }
 
 // New permits a nil publisher for tests that do not call Emit. The caller owns
@@ -105,12 +107,30 @@ func (s *Server) SuspendSubscription(names ...string) {
 
 func (s *Server) refreshSubscriptions() {
 	// Complete ready Operations even if a create/renew response was lost and
-	// the client reconciles by listing subscriptions instead of polling.
+	// the client reconciles by listing instead of polling. Apply them in time
+	// order so advancing across both completion and expiry is deterministic.
+	var pending []*operation
 	for _, op := range s.operations {
+		if !op.result.Done && !s.now().Before(op.ready) {
+			pending = append(pending, op)
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].ready.Equal(pending[j].ready) {
+			return pending[i].sequence < pending[j].sequence
+		}
+		return pending[i].ready.Before(pending[j].ready)
+	})
+	for _, op := range pending {
+		s.expireSubscriptions(op.ready)
 		s.complete(op)
 	}
+	s.expireSubscriptions(s.now())
+}
+
+func (s *Server) expireSubscriptions(at time.Time) {
 	for name, sub := range s.Subscriptions {
-		if expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime); err == nil && !s.now().Before(expiry) {
+		if expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime); err == nil && !at.Before(expiry) {
 			delete(s.Subscriptions, name)
 		}
 	}
@@ -389,7 +409,7 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 			if !s.expiry(w, &sub) {
 				return
 			}
-			s.newOperation(w, r, &sub)
+			s.newOperation(w, r, &sub, "create")
 		case http.MethodGet:
 			filter, err := parseFilter(r.URL.Query().Get("filter"), "subscriptions")
 			if err != nil {
@@ -438,12 +458,12 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 		if !s.expiry(w, &sub) {
 			return
 		}
-		s.newOperation(w, r, &sub)
+		s.newOperation(w, r, &sub, "patch")
 	case r.Method == http.MethodPost && name != path:
 		sub := *existing
 		sub.State = "ACTIVE"
 		sub.SuspensionReason = ""
-		s.newOperation(w, r, &sub)
+		s.newOperation(w, r, &sub, "reactivate")
 	default:
 		s.fail(w, 405, "INVALID_ARGUMENT", "method not allowed")
 	}
@@ -464,8 +484,9 @@ func (s *Server) expiry(w http.ResponseWriter, sub *events.Subscription) bool {
 	return true
 }
 
-func (s *Server) newOperation(w http.ResponseWriter, r *http.Request, sub *events.Subscription) {
+func (s *Server) newOperation(w http.ResponseWriter, r *http.Request, sub *events.Subscription, action string) {
 	op := &operation{result: events.Operation{Name: "operations/" + s.id(), ForceSendFields: []string{"Done"}}, ready: s.now().Add(s.OperationDelay), subscription: sub}
+	op.action, op.sequence = action, s.sequence
 	if s.OperationError != nil {
 		copy := *s.OperationError
 		op.failure = &copy
@@ -481,6 +502,21 @@ func (s *Server) complete(op *operation) {
 	}
 	op.result.Done = true
 	op.result.Error = op.failure
+	if op.result.Error == nil && op.action != "create" {
+		current := s.Subscriptions[op.subscription.Name]
+		if current == nil {
+			op.result.Error = &events.Status{Code: 5, Message: "subscription not found"}
+			return
+		}
+		merged := *current
+		if op.action == "patch" {
+			merged.ExpireTime = op.subscription.ExpireTime
+		} else {
+			merged.State = "ACTIVE"
+			merged.SuspensionReason = ""
+		}
+		op.subscription = &merged
+	}
 	if op.result.Error == nil {
 		s.Subscriptions[op.subscription.Name] = op.subscription
 		b, _ := json.Marshal(op.subscription)
