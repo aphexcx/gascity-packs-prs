@@ -14,11 +14,13 @@ import (
 func ToChat(md string) string {
 	var out strings.Builder
 	var fence *codeFence
+	paragraphRemaining := 0
 	for len(md) > 0 {
 		end := lineEnd(md, 0)
 		line := md[:end]
 		if fence != nil {
 			md = md[end:]
+			paragraphRemaining = 0
 			out.WriteString(line)
 			if fence.closes(line) {
 				fence = nil
@@ -27,17 +29,22 @@ func ToChat(md string) string {
 		}
 		if fence = openingFence(line); fence != nil {
 			md = md[end:]
+			paragraphRemaining = 0
 			out.WriteString(line)
 			continue
 		}
-		// A complete code span can cross physical lines. Keep those lines
-		// together so neither inline nor block formatting changes its bytes.
+		// Code spans may cross physical lines, but never a block boundary.
+		// Cache the paragraph end so lines without a complete span do not
+		// repeatedly scan the rest of a long paragraph.
+		if paragraphRemaining == 0 {
+			paragraphRemaining = paragraphEnd(md, end)
+		}
 		for i := 0; i < end; {
 			switch {
 			case md[i] == '\\' && i+1 < len(md):
 				i = escapedEnd(md, i)
 			case md[i] == '`':
-				i = codeSpanEnd(md, i)
+				i = codeSpanEnd(md[:paragraphRemaining], i)
 				if i > end {
 					end = lineEnd(md, i)
 				}
@@ -46,6 +53,7 @@ func ToChat(md string) string {
 			}
 		}
 		line, md = md[:end], md[end:]
+		paragraphRemaining -= end
 		body := strings.TrimRight(line, "\r\n")
 		ending := line[len(body):]
 		indent := len(body) - len(strings.TrimLeft(body, " \t"))
@@ -75,6 +83,49 @@ func lineEnd(s string, start int) int {
 		return start + i + 1
 	}
 	return len(s)
+}
+
+func paragraphEnd(s string, end int) int {
+	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) {
+		return end
+	}
+	for end < len(s) {
+		next := lineEnd(s, end)
+		line := s[end:next]
+		if strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) {
+			break
+		}
+		end = next
+	}
+	return end
+}
+
+func headingLine(line string) bool {
+	body := strings.Trim(line, " \t\r\n")
+	if body == "" || body[0] != '#' {
+		return false
+	}
+	n := runLength(body)
+	return n <= 6 && (n == len(body) || body[n] == ' ' || body[n] == '\t')
+}
+
+func listItemLine(line string) bool {
+	body := strings.Trim(line, " \t\r\n")
+	if body == "" {
+		return false
+	}
+	n := 1
+	if !strings.ContainsRune("-*+", rune(body[0])) {
+		n = 0
+		for n < len(body) && body[n] >= '0' && body[n] <= '9' {
+			n++
+		}
+		if n == 0 || n > 9 || n == len(body) || (body[n] != '.' && body[n] != ')') {
+			return false
+		}
+		n++
+	}
+	return n == len(body) || body[n] == ' ' || body[n] == '\t'
 }
 
 func headingContent(s string) string {

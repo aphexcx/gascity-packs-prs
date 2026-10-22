@@ -20,7 +20,7 @@ func TestToChat(t *testing.T) {
 		{"strikethrough", "~~gone~~", "~gone~"},
 		{"inline code", "`**bold** _italic_ ~~gone~~ [x](url)`", "`**bold** _italic_ ~~gone~~ [x](url)`"},
 		{"multiline code", "`a\n**b**`", "`a\n**b**`"},
-		{"multiline code block syntax", "before ``a `\n# **title**\n- item\n```\nend`` **after**\n# Next", "before ``a `\n# **title**\n- item\n```\nend`` *after*\n*Next*"},
+		{"multiline code block syntax", "before ``a `\n# **title**\n- item\n```\nend`` **after**\n# Next", "before ``a `\n*title*\n* item\n```\nend`` **after**\n# Next"},
 		{"unclosed code before heading", "`open\n# Title", "`open\n*Title*"},
 		{"code span containing backtick", "``a ` **b**`` and **c**", "``a ` **b**`` and *c*"},
 		{"fenced code", "```go\n**b**\n- x\n# title\n[x](url)\n```\n**after**", "```go\n**b**\n- x\n# title\n[x](url)\n```\n*after*"},
@@ -62,6 +62,42 @@ func TestToChat(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ToChat(tt.input); got != tt.want {
 				t.Fatalf("ToChat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		{"fence after paragraph break", "Reply in a ``` block:\n\n```go\nfunc f() { return a**b }\n# not a heading\n```\n\n**Next** step", "Reply in a ``` block:\n\n```go\nfunc f() { return a**b }\n# not a heading\n```\n\n*Next* step"},
+		{"fence containing code span", "Use `x\n```sh\necho `date`\n**not bold in code**\n- not a bullet\n```\n**Done**", "Use `x\n```sh\necho `date`\n**not bold in code**\n- not a bullet\n```\n*Done*"},
+		{"paragraph break", "Run `ls\n\n**Note**: use `grep` here.", "Run `ls\n\n*Note*: use `grep` here."},
+		{"fence containing closer", "before `open\n```go\nx` **inside**\n```\n**after**", "before `open\n```go\nx` **inside**\n```\n*after*"},
+		{"heading interrupts span", "before `open\n# **Title** `\n**after**", "before `open\n*Title `*\n*after*"},
+		{"heading cannot start multiline span", "# `open\n**after** `", "*`open*\n*after* `"},
+		{"whitespace paragraph break", "before `open\r\n \t\r\n**after** `", "before `open\r\n \t\r\n*after* `"},
+		{"tilde fence interrupts span", "before `open\n~~~text\n` **inside**\n~~~\n**after**", "before `open\n~~~text\n` **inside**\n~~~\n*after*"},
+		{"same paragraph continuation", "first line\nbefore `open\n**inside**` **after**", "first line\nbefore `open\n**inside**` *after*"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ToChat(tt.input); got != tt.want {
+				t.Fatalf("ToChat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+	for _, marker := range []string{"- ", "* ", "+ ", "1. ", "2) "} {
+		t.Run("list "+marker, func(t *testing.T) {
+			input := "before `open\n" + marker + "**item** `\n**after**"
+			wantMarker := marker
+			if marker == "- " {
+				wantMarker = "* "
+			}
+			want := "before `open\n" + wantMarker + "*item* `\n*after*"
+			if got := ToChat(input); got != want {
+				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)
 			}
 		})
 	}
