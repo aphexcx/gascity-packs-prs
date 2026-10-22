@@ -27,8 +27,10 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/puller"
+	"gchat-adapter/internal/token"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 const space = "spaces/room"
@@ -1739,11 +1741,60 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				if !strings.Contains(err.Error(), kind) || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", status)) || strings.Contains(err.Error(), "PRIVATE") {
 					t.Fatalf("unsafe or unclassified hold: %v", err)
 				}
+				var apiErr *googleapi.Error
+				if !errors.As(err, &apiErr) || apiErr.Code != status {
+					t.Fatalf("hold lost the underlying API error: %v", err)
+				}
 				if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:credential-hold") {
 					t.Fatal("held lookup consumed the change")
 				}
 			})
 		}
+	}
+}
+
+func TestLookupHoldPreservesTokenError(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		t.Run(path, func(t *testing.T) {
+			f := setup(t)
+			cause := fmt.Errorf("PRIVATE TOKEN CONTENT: %w", token.ErrNeedsSignIn)
+			client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return nil, cause
+			})}
+			var err error
+			f.opts.Chat, err = chat.New(context.Background(), client, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("token-hold", "message.created", m)
+			lookup := "space"
+			if path != "message_space" {
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/one"}}}
+				if path == "reaction_space" {
+					f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+				} else {
+					lookup = "reaction parent"
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			out, err := f.p.Handle(ctx, ev)
+			if out != puller.Nack || !errors.Is(err, token.ErrNeedsSignIn) || !errors.Is(err, cause) {
+				t.Fatalf("hold lost token error: %v, %v", out, err)
+			}
+			if want := "inbound: " + lookup + " lookup failed: transient"; err.Error() != want {
+				t.Fatalf("hold text = %q, want %q", err.Error(), want)
+			}
+			if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:token-hold") {
+				t.Fatal("token failure consumed the change")
+			}
+		})
 	}
 }
 

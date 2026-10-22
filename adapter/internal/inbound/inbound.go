@@ -402,12 +402,18 @@ func permanentLookupFailure(err error) bool {
 // lookupError exposes a safe classifier and status, never Google's response body.
 func lookupError(lookup string, err error) error {
 	kind, _ := chat.Classify(err)
-	summary := fmt.Sprintf("inbound: %s lookup failed: %s", lookup, lookupCause(err))
+	cause := classifiedLookupError{cause: err}
 	if kind == "auth" {
-		return fmt.Errorf("%s: %w", summary, ErrCredentials)
+		return fmt.Errorf("inbound: %s lookup failed: %w: %w", lookup, cause, ErrCredentials)
 	}
-	return errors.New(summary)
+	return fmt.Errorf("inbound: %s lookup failed: %w", lookup, cause)
 }
+
+// Keep the original chain available to errors.Is/As without formatting its body.
+type classifiedLookupError struct{ cause error }
+
+func (e classifiedLookupError) Error() string { return lookupCause(e.cause) }
+func (e classifiedLookupError) Unwrap() error { return e.cause }
 
 func lookupCause(err error) string {
 	kind, _ := chat.Classify(err)
