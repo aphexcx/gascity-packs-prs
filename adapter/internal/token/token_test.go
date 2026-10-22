@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -668,5 +669,54 @@ func TestClientAllowsSlowBody(t *testing.T) {
 	body, err := io.ReadAll(res.Body)
 	if err != nil || string(body) != "first last" {
 		t.Fatalf("slow body = %q, error = %v", body, err)
+	}
+}
+
+func TestWatchLogsSanitizedCause(t *testing.T) {
+	for _, scenario := range []struct{ name, want string }{
+		{"unauthorized", "HTTP 401"},
+		{"oauth policy", "admin_policy_enforced"},
+		{"oauth body", "HTTP 400"},
+		{"malformed", "malformed JSON"},
+		{"bad expiry", "malformed JSON"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			defer slog.SetDefault(previous)
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/token" {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					if scenario.name == "oauth policy" {
+						fmt.Fprint(w, `{"error":"admin_policy_enforced","error_description":"token-secret"}`)
+					} else {
+						fmt.Fprint(w, `{"error_description":"token-secret"}`)
+					}
+					return
+				}
+				w.WriteHeader(http.StatusUnauthorized)
+				fmt.Fprint(w, "token-secret")
+			})
+			s := mustSource(t, clientFile, tokenFile, ep)
+			tok := savedToken("token-secret")
+			if strings.HasPrefix(scenario.name, "oauth") {
+				tok.Expiry = time.Now().Add(-time.Hour)
+			}
+			writeJSON(t, tokenFile, tok)
+			if scenario.name == "malformed" {
+				if err := os.WriteFile(tokenFile, []byte(`{"access_token":"token-secret",`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario.name == "bad expiry" {
+				writeJSON(t, tokenFile, map[string]string{"access_token": "token-secret", "expiry": "token-secret"})
+			}
+			s.reload(t.Context(), func() { t.Error("invalid token accepted") })
+			if !strings.Contains(logs.String(), scenario.want) || strings.Contains(logs.String(), "token-secret") {
+				t.Fatalf("rejection log = %q, want sanitized %q", logs.String(), scenario.want)
+			}
+		})
 	}
 }

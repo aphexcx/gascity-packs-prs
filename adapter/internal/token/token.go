@@ -31,6 +31,8 @@ const (
 
 var ErrNeedsSignIn = errors.New("OAuth credential needs sign-in")
 
+var errMalformedJSON = errors.New("malformed JSON")
+
 // Source shares refreshed tokens across HTTP and Pub/Sub clients. The mutex
 // protecting state is never held during network calls, so health stays readable.
 type Source struct {
@@ -195,9 +197,9 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		// not put those bodies in the log.
 		if transient(err) {
 			s.observed = nil
-			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile)
+			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err))
 		} else {
-			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile)
+			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
 		}
 		return
 	}
@@ -236,7 +238,7 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 		var failure *oauth2.RetrieveError
 		if errors.As(err, &failure) {
 			if permanentOAuthCode(failure.ErrorCode) {
-				return nil, fmt.Errorf("%w: %s", ErrNeedsSignIn, failure.ErrorCode)
+				return nil, fmt.Errorf("%w: %w", ErrNeedsSignIn, failure)
 			}
 		}
 		if attempt >= 2 || !transient(err) {
@@ -315,6 +317,47 @@ func (e validationError) Error() string {
 	return fmt.Sprintf("chat credential validation: HTTP %d", e)
 }
 
+// Never format arbitrary OAuth, JSON or URL errors: they may contain token
+// bodies, malformed token values, or sensitive query parameters.
+func sanitizedCause(err error) string {
+	var failure *oauth2.RetrieveError
+	if errors.As(err, &failure) {
+		code := failure.ErrorCode
+		if !permanentOAuthCode(code) && code != "temporarily_unavailable" && code != "server_error" {
+			code = "unrecognized"
+		}
+		if failure.Response != nil {
+			return fmt.Sprintf("OAuth %s (HTTP %d)", code, failure.Response.StatusCode)
+		}
+		return "OAuth " + code
+	}
+	var validation validationError
+	if errors.As(err, &validation) {
+		return validation.Error()
+	}
+	if errors.Is(err, errMalformedJSON) {
+		return errMalformedJSON.Error()
+	}
+	var fileError *os.PathError
+	if errors.As(err, &fileError) {
+		return fileError.Error()
+	}
+	if errors.Is(err, ErrNeedsSignIn) {
+		return ErrNeedsSignIn.Error()
+	}
+	if errors.Is(err, context.Canceled) {
+		return "operation canceled"
+	}
+	if transient(err) {
+		return "network interruption or timeout"
+	}
+	var urlError *url.Error
+	if errors.As(err, &urlError) {
+		return "invalid endpoint URL"
+	}
+	return "invalid credential or configuration"
+}
+
 func authenticatedClient(ctx context.Context, ts oauth2.TokenSource) *http.Client {
 	base := http.DefaultTransport
 	if client, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && client.Transport != nil {
@@ -341,7 +384,7 @@ func readToken(path string) (*oauth2.Token, os.FileInfo, error) {
 	}
 	var tok oauth2.Token
 	if err := json.Unmarshal(b, &tok); err != nil {
-		return nil, info, fmt.Errorf("token file %s: %w", path, err)
+		return nil, info, fmt.Errorf("token file %s: %w: %w", path, errMalformedJSON, err)
 	}
 	if tok.AccessToken == "" && tok.RefreshToken == "" {
 		return nil, info, fmt.Errorf("token file %s: access_token or refresh_token is required", path)
