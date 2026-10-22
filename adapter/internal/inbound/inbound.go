@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -379,15 +380,23 @@ func unavailableSpace(err error) bool {
 	// spaces.list covers the whole identity: 401/403 are credential or scope
 	// failures, not evidence that this individual space is unavailable.
 	var apiErr *googleapi.Error
-	kind, _ := chat.Classify(err)
-	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404) || kind == "permanent"
+	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404) || permanentLookupFailure(err)
 }
 
 func unavailableParent(err error) bool {
 	// Only a not-a-member 403 proves the parent inaccessible; a scope 403
 	// holds for credential repair just like 401.
 	kind, _ := chat.Classify(err)
-	return kind == "not_found" || kind == "permanent"
+	return kind == "not_found" || permanentLookupFailure(err)
+}
+
+func permanentLookupFailure(err error) bool {
+	kind, _ := chat.Classify(err)
+	var apiErr *googleapi.Error
+	// The shared classifier calls these permanent, but a lookup timeout or
+	// conflict must hold the event for another delivery instead of retaining it.
+	return kind == "permanent" && (!errors.As(err, &apiErr) ||
+		(apiErr.Code != http.StatusRequestTimeout && apiErr.Code != http.StatusConflict))
 }
 
 // lookupError exposes a safe classifier and status, never Google's response body.
