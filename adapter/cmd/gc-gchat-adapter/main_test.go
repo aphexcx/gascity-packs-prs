@@ -140,7 +140,7 @@ func TestServeRunsApplicationWithResolvedFiles(t *testing.T) {
 	}
 }
 
-func TestServeWatchesSettingsCreatedAfterStartup(t *testing.T) {
+func TestServePassesMissingSettingsPathToApplication(t *testing.T) {
 	for _, layout := range []string{"home", "service"} {
 		t.Run(layout, func(t *testing.T) {
 			fixtureEnv, _ := authFixture(t, "http://127.0.0.1:1")
