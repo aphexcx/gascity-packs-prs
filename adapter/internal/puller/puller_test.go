@@ -737,6 +737,52 @@ func TestRunAckExtensionOption(t *testing.T) {
 	}
 }
 
+func TestRunRejectsMinimumAckExtensionAboveMaximum(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	cancel()
+	for _, tc := range []struct {
+		name                     string
+		minimum, maximum, option time.Duration
+		invalid                  bool
+	}{
+		{"option cap", 20 * time.Second, time.Minute, 10 * time.Second, true},
+		{"preserved cap", 20 * time.Second, 10 * time.Second, 0, true},
+		{"equal", 10 * time.Second, time.Minute, 10 * time.Second, false},
+		{"below", 10 * time.Second, time.Minute, 20 * time.Second, false},
+		{"override raises cap", 20 * time.Second, 10 * time.Second, 20 * time.Second, false},
+		{"disabled minimum", -time.Second, time.Minute, 10 * time.Second, false},
+		{"default minimum", 0, time.Minute, 10 * time.Second, false},
+		{"no explicit cap", 20 * time.Second, 0, 0, false},
+		{"disabled cap", 20 * time.Second, -time.Second, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.sub.ReceiveSettings = pubsub.ReceiveSettings{
+				MinDurationPerAckExtension: tc.minimum,
+				MaxDurationPerAckExtension: tc.maximum,
+				NumGoroutines:              3,
+				MaxOutstandingMessages:     4,
+				ShutdownOptions: &pubsub.ShutdownOptions{
+					Behavior: pubsub.ShutdownBehaviorNackImmediately, Timeout: time.Second,
+				},
+			}
+			before := f.sub.ReceiveSettings
+			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: tc.option})
+			if (err != nil) != tc.invalid {
+				t.Fatalf("Run: %v, want invalid=%t", err, tc.invalid)
+			}
+			if tc.invalid {
+				if !strings.Contains(err.Error(), "MinDurationPerAckExtension") || !strings.Contains(err.Error(), "MaxDurationPerAckExtension") {
+					t.Errorf("error does not explain conflicting settings: %v", err)
+				}
+				if !reflect.DeepEqual(f.sub.ReceiveSettings, before) {
+					t.Error("invalid configuration mutated subscriber settings")
+				}
+			}
+		})
+	}
+}
+
 func TestRunReconnectsAfterQuotaFailures(t *testing.T) {
 	attempts := make(chan time.Time, 10)
 	f := newFixture(t, injectPullErrors(codes.ResourceExhausted, 2, attempts))

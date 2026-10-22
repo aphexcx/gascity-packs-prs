@@ -55,8 +55,10 @@ const (
 // with a recovery obligation. A transient error overrides Ack. An error with
 // Quarantine describes the permanent failure and is recorded with the raw data.
 // Run invokes Handler synchronously, keeping the client's lease management alive.
-// Handlers must be idempotent by PubSubID: the client drops an Ack issued after
-// its stream fails, so even successful handling can repeat after the stream lease.
+// Handlers must be idempotent by PubSubID: after a stream failure neither Ack nor
+// Nack reaches the server, and the message returns when its lease expires.
+// Run waits for the in-flight handler on stop or reconnect without a time limit;
+// handlers must return promptly when their context is cancelled.
 // Returned errors are logged verbatim as the cause and must not quote message text.
 type Handler func(context.Context, *Event) (Outcome, error)
 
@@ -72,6 +74,9 @@ type Logger interface {
 // ledger. It must be idempotent by PubSubID: failed writes are redelivered.
 type RunOptions struct {
 	// MediaDir and all its parent directory components must be free of symlinks.
+	// Quarantine uses the sibling directory "quarantine". Before recording a
+	// path, Run checks that this location still names the opened directory;
+	// a move, removal or storage error triggers one verified reopen and retry.
 	MediaDir         string
 	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
 	// InitialBackoff and MaxBackoff are the initial and maximum ceilings for
@@ -82,6 +87,8 @@ type RunOptions struct {
 	// MaxDurationPerAckExtension caps each lease extension, bounding how long a
 	// dropped ack can delay redelivery after a reconnect. Zero preserves sub's
 	// setting (and the client default); a positive value must be 10s to 600s.
+	// Run rejects a subscriber MinDurationPerAckExtension greater than the
+	// effective positive maximum, whether supplied here or on the subscriber.
 	MaxDurationPerAckExtension time.Duration
 }
 
@@ -232,16 +239,22 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 // reconnects after recoverable Receive errors with full-jitter backoff. Fatal
 // permission, authentication, configuration and missing-subscription errors
 // return to the application for credential/subscription reconciliation.
-// Handlers must be idempotent by PubSubID: an Ack during a failed stream is
-// dropped, and the message is redelivered after its lease even if handling
-// succeeded. MaxDurationPerAckExtension can shorten that redelivery delay.
+// Handlers must be idempotent by PubSubID: after a stream failure neither Ack nor
+// Nack reaches the server, and the message returns when its lease expires even
+// if handling succeeded. MaxDurationPerAckExtension can shorten that delay.
+// The caller's ReceiveSettings.ShutdownOptions is discarded. On stop or
+// reconnect, Run waits without limit for the in-flight handler, which must
+// return promptly on context cancellation.
 // A negative MaxExtension (the client's disable setting) is refused: any
 // nonpositive value is replaced by the client default so handling extends leases.
 // A quarantine storage/record failure always nacks. Without MediaDir quarantine
 // fails closed, so callers should supply their configured directory at startup.
-// The quarantine directory is verified and opened once per Run. A startup
-// storage failure warns and disables quarantine for this Run; other events can
-// still be handled. Restart Run after repairing the directory.
+// The quarantine directory is verified at startup and its handle is reused.
+// Before returning a recorded path, its configured location must still name
+// the opened directory. A missing store, changed directory or write failure
+// triggers one fresh verified walk and retry; a successful retry replaces the
+// cached handle. Startup storage failures warn but can recover on a later
+// quarantine in the same Run; other events can still be handled.
 func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
 	if sub == nil || h == nil {
 		return errors.New("puller requires a subscriber and handler")
@@ -285,6 +298,13 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	}
 	if d := opts.MaxDurationPerAckExtension; d != 0 && (d < 10*time.Second || d > 600*time.Second) {
 		return errors.New("puller MaxDurationPerAckExtension must be zero or between 10s and 600s")
+	}
+	maxAckExtension := opts.MaxDurationPerAckExtension
+	if maxAckExtension == 0 {
+		maxAckExtension = sub.ReceiveSettings.MaxDurationPerAckExtension
+	}
+	if maxAckExtension > 0 && sub.ReceiveSettings.MinDurationPerAckExtension > maxAckExtension {
+		return errors.New("puller MinDurationPerAckExtension must not exceed MaxDurationPerAckExtension")
 	}
 	sub.ReceiveSettings.NumGoroutines = 1
 	sub.ReceiveSettings.MaxOutstandingMessages = 1
