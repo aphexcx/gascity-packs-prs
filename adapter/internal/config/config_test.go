@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 func TestLoadSecretsAndSettings(t *testing.T) {
@@ -14,13 +16,15 @@ func TestLoadSecretsAndSettings(t *testing.T) {
 	os.WriteFile(env, []byte("GCHAT_PROJECT_ID=proj\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE="+filepath.Join(dir, "client.json")+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\n"), 0o600)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
 [defaults]
-wake = "all"
+wake = "mentions"
 [[identity]]
 name = "example"
 agent = "mayor"
 [[space]]
 id = "spaces/AAA"
-wake = "mentions"
+wake = "all"
+[[space]]
+id = "spaces/BBB"
 [media]
 max_bytes = 1000
 `), 0o600)
@@ -37,7 +41,7 @@ max_bytes = 1000
 	if c.Settings.Identities[0].Name != "example" || c.Settings.Identities[0].Agent != "mayor" {
 		t.Fatalf("identity: %+v", c.Settings.Identities)
 	}
-	if c.Wake("spaces/AAA") != WakeMentions || c.Wake("spaces/ZZZ") != WakeAll {
+	if c.Wake("spaces/AAA") != WakeAll || c.Wake("spaces/BBB") != WakeMentions || c.Wake("spaces/ZZZ") != WakeMentions {
 		t.Fatal("wake policy")
 	}
 	if c.Settings.Media.MaxBytes != 1000 || c.Endpoints.MediaMaxBytes != 1000 || c.Endpoints.ChatAPIBase != "https://chat.googleapis.com" {
@@ -99,11 +103,19 @@ func TestEmptySettingsDefaults(t *testing.T) {
 	if c.Secrets.ProjectID != "proj" || c.Secrets.OAuthClientFile != "client=one #literal.json" || c.SecretsDir != dir {
 		t.Fatalf("secrets: %+v, dir: %s", c.Secrets, c.SecretsDir)
 	}
-	wantIdentity := Identity{Name: "default", Agent: "mayor", TokenFile: filepath.Join(dir, "token.json")}
-	if len(c.Settings.Identities) != 1 || c.Identity() != wantIdentity {
-		t.Fatalf("default identity: %+v", c.Settings.Identities)
+	if !reflect.DeepEqual(c.Settings, Settings{}) {
+		t.Fatalf("omitted settings: %+v, want zero values", c.Settings)
 	}
-	if c.Wake("spaces/AAA") != WakeAll || c.Settings.CatchupBudget != 50 {
+	wantIdentity := Identity{Name: "default", Agent: "mayor", TokenFile: c.Secrets.TokenFile}
+	if !reflect.DeepEqual(c.Identities(), []Identity{wantIdentity}) || c.Identity() != wantIdentity {
+		t.Fatalf("default identity: %+v", c.Identities())
+	}
+	identities := c.Identities()
+	identities[0].Name = "changed"
+	if c.Identity() != wantIdentity || len(c.Settings.Identities) != 0 {
+		t.Fatal("effective default identity aliases settings or another call")
+	}
+	if c.Wake("spaces/AAA") != WakeAll || c.CatchupBudget() != 50 {
 		t.Fatalf("defaults: %+v", c.Settings)
 	}
 	city := filepath.Clean(filepath.Join(dir, "../../../.."))
@@ -119,6 +131,39 @@ func TestEmptySettingsDefaults(t *testing.T) {
 	}
 	if c.Settings.Media != (Media{}) {
 		t.Fatalf("omitted media settings: %+v, want zero values", c.Settings.Media)
+	}
+	writeFixture(t, settings, "[defaults]\nwake=''\n")
+	c, err = Load(env, settings, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Settings.Defaults.Wake != "" || c.Wake("spaces/AAA") != WakeAll {
+		t.Fatalf("empty default wake: %+v", c.Settings.Defaults)
+	}
+}
+
+func TestSettingsRoundTripOmitsComputedValues(t *testing.T) {
+	env, settings, dir := configFixture(t)
+	writeFixture(t, settings, "[[space]]\nid = \"spaces/AAA\"\n")
+	c, err := Load(env, settings, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var encoded strings.Builder
+	if err := toml.NewEncoder(&encoded).Encode(c.Settings); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"wake", "catchup_budget", "identity", "token_file", "inbound_dir", "upload_root", "max_bytes"} {
+		if strings.Contains(encoded.String(), key) {
+			t.Errorf("encoded settings contain omitted key %q:\n%s", key, encoded.String())
+		}
+	}
+	var roundTrip Settings
+	if _, err := toml.Decode(encoded.String(), &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(roundTrip, Settings{Spaces: []Space{{ID: "spaces/AAA"}}}) {
+		t.Fatalf("round-trip settings: %+v", roundTrip)
 	}
 }
 
@@ -147,8 +192,25 @@ func TestIdentityTokenPathsAndFirstEntry(t *testing.T) {
 			if c.Identity() != (Identity{Name: "example", Agent: "mayor", TokenFile: want}) {
 				t.Fatalf("first identity: %+v", c.Identity())
 			}
-			if c.Settings.Identities[1].TokenFile != filepath.Join(dir, "secret-token.json") {
-				t.Fatalf("second identity: %+v", c.Settings.Identities[1])
+			wantSettings := []Identity{
+				{Name: "example", Agent: "mayor", TokenFile: tc.token},
+				{Name: "second", Agent: "worker"},
+			}
+			if !reflect.DeepEqual(c.Settings.Identities, wantSettings) {
+				t.Fatalf("decoded identities: %+v, want %+v", c.Settings.Identities, wantSettings)
+			}
+			wantIdentities := []Identity{
+				{Name: "example", Agent: "mayor", TokenFile: want},
+				{Name: "second", Agent: "worker", TokenFile: c.Secrets.TokenFile},
+			}
+			identities := c.Identities()
+			if !reflect.DeepEqual(identities, wantIdentities) {
+				t.Fatalf("effective identities: %+v, want %+v", identities, wantIdentities)
+			}
+			identities[0].Name = "changed"
+			identities[1].TokenFile = "changed.json"
+			if !reflect.DeepEqual(c.Settings.Identities, wantSettings) || !reflect.DeepEqual(c.Identities(), wantIdentities) {
+				t.Fatal("effective identities alias settings or another call")
 			}
 		})
 	}
@@ -180,6 +242,9 @@ func TestEndpointAndServiceEnvironmentOverrides(t *testing.T) {
 	}
 	if c.Settings.Media != (Media{InboundDir: "/tmp/config-in", UploadRoot: "/tmp/config-out", MaxBytes: 1024}) || c.Settings.CatchupBudget != 7 {
 		t.Fatalf("settings: %+v", c.Settings)
+	}
+	if c.CatchupBudget() != 7 {
+		t.Fatalf("catchup budget: %d, want 7", c.CatchupBudget())
 	}
 	for _, key := range []string{"GCHAT_MEDIA_DIR", "GCHAT_UPLOAD_ROOT"} {
 		t.Setenv(key, "")
@@ -280,8 +345,8 @@ func TestInvalidSettingsNameFileAndKey(t *testing.T) {
 		{"[[identity]]\nname='example'", "identity"},
 		{"[media]\nmax_bytes=-1", "media.max_bytes"},
 		{"[media]\nmax_bytes=0", "media.max_bytes"},
-		{"catchup_budget=0", "catchup_budget"},
-		{"catchup_budget=-1", "catchup_budget"},
+		{"catchup_budget=0", "catchup_budget must be positive"},
+		{"catchup_budget=-1", "catchup_budget must be positive"},
 		{"[defaults]\nwake=123", "wake"},
 		{"[defaults]\nwkae='mentions'", "defaults.wkae"},
 	} {
