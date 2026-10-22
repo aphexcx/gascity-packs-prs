@@ -918,6 +918,17 @@ func TestPublishLogsSanitizedFailureAndRecovery(t *testing.T) {
 	if strings.Contains(logs.String(), p.Text) || strings.Contains(logs.String(), "secret-response-token") {
 		t.Fatal("sensitive error contents logged")
 	}
+	logs.Reset()
+	f.s.stateGate.Lock()
+	blocked := f.send(t, p)
+	f.s.stateGate.Unlock()
+	if blocked.Delivered || !f.send(t, p).Delivered {
+		t.Fatal("expected recovery gate rejection then cached delivery")
+	}
+	lines = strings.Split(strings.TrimSpace(logs.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("recovery gate must log failure and recovery: %s", logs.String())
+	}
 }
 
 func TestRegistrarLogsSanitizedFailureAndRecovery(t *testing.T) {

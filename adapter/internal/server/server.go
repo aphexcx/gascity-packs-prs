@@ -187,7 +187,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				var p wire.PublishRequest
 				_ = body(w, r, &p)
 				_ = s.normalize(&p)
-				respond(w, 200, failure(p, errors.New("state recovery in progress")))
+				err := errors.New("state recovery in progress")
+				receipt := failure(p, err)
+				s.logPublish(p, receipt, err)
+				respond(w, 200, receipt)
 			} else {
 				problem(w, 503, errors.New("state recovery in progress"))
 			}
