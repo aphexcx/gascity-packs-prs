@@ -191,6 +191,28 @@ func TestFollowupStillWakesWhenMentionRemoved(t *testing.T) {
 	}
 }
 
+func TestUnavailableMessageDoesNotMakeFollowupsWake(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.Defaults.Wake = config.WakeMentions
+	f.google.Configure(func(s *fakegoogle.Server) { delete(s.Spaces, space) })
+	m := message()
+	m.Space = nil
+	handle(t, f, event("unavailable-create", "message.created", m))
+	if c := f.l.Changes[messageName]; c == nil || c.Reason != "space unavailable" {
+		t.Fatalf("missing unavailable base: %+v", c)
+	}
+	f.google.Configure(func(s *fakegoogle.Server) { s.Spaces[space] = &api.Space{Name: space, SpaceType: "SPACE"} })
+	m.LastUpdateTime = "2026-10-22T10:01:00Z"
+	handle(t, f, event("available-edit", "message.updated", m))
+	handle(t, f, event("available-delete", "message.deleted", &api.Message{Name: messageName}))
+	if c := f.l.Changes[messageName+"#updated#"+m.LastUpdateTime]; c == nil || c.Reason != "wake_policy" {
+		t.Fatalf("unavailable base counted as forwarded: %+v", c)
+	}
+	if c := f.l.Changes[messageName+"#deleted"]; c == nil || c.Reason != "local" || len(f.gc.Inbound()) != 0 || f.l.Counters["turns:"+space] != 0 {
+		t.Fatalf("unforwarded deletion woke: %+v", c)
+	}
+}
+
 func TestReactionsAndMembership(t *testing.T) {
 	f := setup(t)
 	m := message()
@@ -789,6 +811,50 @@ func TestConcurrentOutboundMetadataSurvivesOwnEcho(t *testing.T) {
 	}
 	if got := f.l.Messages[messageName].SendKey; got != "outbound-key" {
 		t.Fatalf("outbound send key lost: %q", got)
+	}
+}
+
+func TestRecordPreservesConcurrentExplicitWake(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.Defaults.Wake = config.WakeAll
+	cursor := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	f.l.Spaces[space] = &ledger.SpaceState{MessageCursor: cursor, Backlog: []string{"older-change"}}
+	target, _ := url.Parse(f.google.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var lookups atomic.Int64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lookups.Add(1)
+		// The command surface writes an explicit policy while space() is away
+		// on the network, after inbound has copied the empty Wake.
+		f.opts.LedgerMu.Lock()
+		f.l.Spaces[space].Wake = "mentions"
+		f.opts.LedgerMu.Unlock()
+		proxy.ServeHTTP(w, r)
+	}))
+	defer s.Close()
+	f.opts.Config.Endpoints.ChatAPIBase = s.URL
+	var err error
+	f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := message()
+	m.Space = nil
+	m.Sender.Name = identity
+	handle(t, f, event("own-echo", "message.created", m))
+	saved := f.l.Spaces[space]
+	if saved.Wake != "mentions" || saved.Kind != "room" || !saved.MessageCursor.Equal(cursor) || len(saved.Backlog) != 1 || saved.Backlog[0] != "older-change" || lookups.Load() != 1 {
+		t.Fatalf("concurrent space state overwritten: %+v", saved)
+	}
+	m = message()
+	m.Name = space + "/messages/after-policy-change"
+	handle(t, f, event("after-policy-change", "message.created", m))
+	if len(f.gc.Inbound()) != 0 || f.l.Changes[m.Name].Reason != "wake_policy" {
+		t.Fatal("explicit wake policy was not applied to the next message")
 	}
 }
 
@@ -1394,6 +1460,8 @@ func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
 				}
 			}()
 			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Model an operator removing the change while the network is in flight.
 				f.opts.LedgerMu.Lock()
@@ -1433,7 +1501,79 @@ func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
 			if f.l.Changes[messageName] != nil || f.l.Unresolved[messageName] != nil || f.l.Counters["turns:"+space] != 0 {
 				t.Fatal("removed change was resurrected or counted")
 			}
+			if logs.Len() != 0 {
+				t.Fatalf("logged a change that was not recorded: %s", logs.String())
+			}
 		})
+	}
+}
+
+// retryWaitContext schedules an operator change exactly when wait registers
+// its cancellation channel, after resume's snapshot and before its next save.
+type retryWaitContext struct {
+	context.Context
+	onWait func()
+	once   sync.Once
+}
+
+func (c *retryWaitContext) Done() <-chan struct{} {
+	c.once.Do(c.onWait)
+	return c.Context.Done()
+}
+
+func TestChangeRemovedBeforeRetryAttemptIsNotPosted(t *testing.T) {
+	f := setup(t)
+	turn := f.p.envelope(messageName, space, "room", message().Sender, "")
+	data, err := json.Marshal(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Space: space, Message: messageName, Kind: "message.created", Status: "intent", Attempts: 1, Reason: "retry", Event: string(data)}
+	removed := false
+	ctx := &retryWaitContext{Context: context.Background(), onWait: func() {
+		f.opts.LedgerMu.Lock()
+		defer f.opts.LedgerMu.Unlock()
+		delete(f.l.Changes, messageName)
+		removed = true
+	}}
+	if err := f.p.resume(ctx, messageName); err != nil {
+		t.Fatal(err)
+	}
+	if !removed || len(f.gc.Inbound()) != 0 || len(f.l.Changes) != 0 || len(f.l.Counters) != 0 {
+		t.Fatalf("removed intent crossed process boundary: removed=%v posts=%d", removed, len(f.gc.Inbound()))
+	}
+}
+
+func TestLiveDeliveryThenCatchUpDoesNotRecordOrPostAgain(t *testing.T) {
+	f := setup(t)
+	handle(t, f, event("live-first", "message.created", message()))
+	before, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	f.opts.Save = func(l *ledger.Ledger) error {
+		saves++
+		return l.Save(f.opts.LedgerPath)
+	}
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := puller.Change{Kind: "message.created", Space: space, Message: message()}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up after live: %v %v", out, err)
+	}
+	after, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != 0 || !bytes.Equal(before, after) || len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 1 {
+		t.Fatalf("catch-up re-recorded or posted live change: saves=%d posts=%d", saves, len(f.gc.Inbound()))
+	}
+	var stored wire.InboundMessage
+	if err := json.Unmarshal([]byte(f.l.Changes[messageName].Event), &stored); err != nil || stored.Text != "hello" || f.gc.Inbound()[0].Text != "hello" {
+		t.Fatalf("live text relabeled by catch-up: %+v %v", stored, err)
 	}
 }
 
