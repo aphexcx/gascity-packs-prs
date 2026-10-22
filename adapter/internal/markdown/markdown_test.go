@@ -115,7 +115,7 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 			}
 		})
 	}
-	for _, marker := range []string{"- ", "* ", "+ ", "1. ", "2) "} {
+	for _, marker := range []string{"- ", "* ", "+ ", "1. ", "1) "} {
 		t.Run("list "+marker, func(t *testing.T) {
 			input := "before `open\n" + marker + "**item** `\n**after**"
 			wantMarker := marker
@@ -123,6 +123,15 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 				wantMarker = "* "
 			}
 			want := "before `open\n" + wantMarker + "*item* `\n*after*"
+			if got := ToChat(input); got != want {
+				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)
+			}
+		})
+	}
+	for _, line := range []string{"2. **inside**", "2) **inside**", "0. **inside**", "12. **inside**", "1.", "1) \t"} {
+		t.Run("noninterrupting ordered marker "+line, func(t *testing.T) {
+			input := "x `a\n" + line + "\n**inside**` **after**"
+			want := "x `a\n" + line + "\n**inside**` *after*"
 			if got := ToChat(input); got != want {
 				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)
 			}

@@ -143,18 +143,11 @@ func listItemLine(line string) bool {
 	if body == "" {
 		return false
 	}
-	n := 1
 	if !strings.ContainsRune("-*+", rune(body[0])) {
-		n = 0
-		for n < len(body) && body[n] >= '0' && body[n] <= '9' {
-			n++
-		}
-		if n == 0 || n > 9 || n == len(body) || (body[n] != '.' && body[n] != ')') {
-			return false
-		}
-		n++
+		// Only a nonempty ordered item starting at 1 interrupts a paragraph.
+		return len(body) > 3 && body[0] == '1' && (body[1] == '.' || body[1] == ')') && (body[2] == ' ' || body[2] == '\t')
 	}
-	return n == len(body) || body[n] == ' ' || body[n] == '\t'
+	return len(body) == 1 || body[1] == ' ' || body[1] == '\t'
 }
 
 func headingContent(s string) string {
