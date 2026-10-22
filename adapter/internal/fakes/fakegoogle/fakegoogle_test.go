@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -507,6 +509,11 @@ func TestReactionsAndMedia(t *testing.T) {
 	msg := request(t, s, "POST", "/v1/spaces/room/messages", map[string]string{"text": "hello"}, 200)
 	path := "/v1/" + msg["name"].(string) + "/reactions"
 	reaction := request(t, s, "POST", path, map[string]any{"emoji": map[string]string{"unicode": "👍"}}, 200)
+	sender := msg["sender"].(map[string]any)["name"].(string)
+	owner := reaction["user"].(map[string]any)["name"].(string)
+	if !regexp.MustCompile(`^users/[0-9]+$`).MatchString(sender) || owner != sender {
+		t.Errorf("want the same canonical user for sender and reaction owner: %q, %q", sender, owner)
+	}
 	list := request(t, s, "GET", path, nil, 200)
 	if len(list["reactions"].([]any)) != 1 || reaction["name"] == "" {
 		t.Fatalf("reactions: %v", list)
@@ -561,6 +568,37 @@ func TestResumableUploadRoundTripAboveDefaultChunk(t *testing.T) {
 	got, err := io.ReadAll(media.Body)
 	if err != nil || !bytes.Equal(got, data) {
 		t.Fatalf("download = %d bytes, want %d identical bytes: %v", len(got), len(data), err)
+	}
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func TestSimpleUploadRejectsOversizeMedia(t *testing.T) {
+	for _, multipart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("multipart=%v", multipart), func(t *testing.T) {
+			s := New(t, nil)
+			s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room"}
+			var body io.Reader = io.LimitReader(zeroReader{}, maxUploadBytes+1)
+			contentType := "application/octet-stream"
+			if multipart {
+				contentType = "multipart/related; boundary=upload-boundary"
+				body = io.MultiReader(
+					strings.NewReader("--upload-boundary\r\nContent-Type: application/json\r\n\r\n{}\r\n--upload-boundary\r\nContent-Type: application/octet-stream\r\n\r\n"),
+					body, strings.NewReader("\r\n--upload-boundary--\r\n"))
+			}
+			r := httptest.NewRequest(http.MethodPost, "/upload/v1/spaces/room/attachments:upload", body)
+			r.Header.Set("Content-Type", contentType)
+			w := httptest.NewRecorder()
+			s.upload(w, r)
+			if w.Code != http.StatusBadRequest || len(s.Media) != 0 {
+				t.Fatalf("oversize upload: status=%d, stored=%d", w.Code, len(s.Media))
+			}
+		})
 	}
 }
 
