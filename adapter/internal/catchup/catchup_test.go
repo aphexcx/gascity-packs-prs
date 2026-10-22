@@ -3,6 +3,7 @@ package catchup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -271,6 +272,140 @@ func TestDelayedNewSpaceDoesNotReportHistoryLoss(t *testing.T) {
 	f.pass(t, 1, 0)
 	if f.opts.Ledger.Counters["unrecoverable:spaces/joined"] != 0 || strings.Contains(f.logs.String(), "level=WARN") {
 		t.Fatalf("zero cursor reported lost history: %v %s", f.opts.Ledger.Counters, f.logs.String())
+	}
+}
+
+func TestFreezeSkipsOnlySpaceWithFutureCursor(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/ahead", true)
+	f.addSpace("spaces/normal", true)
+	f.opts.Ledger.Spaces["spaces/ahead"].MessageCursor = frozen.Add(time.Minute)
+	f.addMessage("spaces/normal", 1, frozen.Add(-time.Minute))
+	f.freeze(t)
+	ahead := f.opts.Ledger.Spaces["spaces/ahead"]
+	if !ahead.FrozenUpper.IsZero() || !ahead.MessageCursor.Equal(frozen.Add(time.Minute)) {
+		t.Fatal("clock rollback changed the ahead space")
+	}
+	f.pass(t, 1, 0)
+	if !f.opts.Ledger.Spaces["spaces/normal"].MessageCursor.Equal(frozen) {
+		t.Fatal("ahead space blocked normal recovery")
+	}
+	if !strings.Contains(f.logs.String(), "clock") || !strings.Contains(f.logs.String(), "spaces/ahead") {
+		t.Fatal("skipped space not reported")
+	}
+	if err := f.r.Freeze(context.Background(), frozen.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	f.pass(t, 0, 0)
+	if !f.opts.Ledger.Spaces["spaces/ahead"].MessageCursor.Equal(frozen.Add(2 * time.Minute)) {
+		t.Fatal("space did not resume after clock caught up")
+	}
+}
+
+func TestPaginationOmitsZeroNextUpper(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.freeze(t)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(f.opts.Ledger.Spaces["spaces/room"].PageToken), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := fields["next_upper"]; ok {
+		t.Fatal("zero next_upper was serialized")
+	}
+}
+
+func TestUnavailableReactionParentDoesNotConsumeDeliveryBudget(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.CatchupBudget = 1
+	f.newRunner(t)
+	f.addSpace("spaces/room", true)
+	own := f.addMessage("spaces/room", 1, frozen.Add(-2*time.Hour))
+	own.Sender.Name = "users/123"
+	for i, name := range []string{"spaces/room/messages/missing", own.Name} {
+		reaction := &api.Reaction{Name: name + "/reactions/one", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
+		f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{
+			Name: fmt.Sprintf("spaces/room/spaceEvents/r%d", i), EventTime: frozen.Add(time.Duration(i-2) * time.Minute).Format(time.RFC3339Nano),
+			EventType: "google.workspace.chat.reaction.v1.created", ReactionCreatedEventData: &api.ReactionCreatedEventData{Reaction: reaction},
+		})
+	}
+	f.freeze(t)
+	f.pass(t, 1, 0)
+	c := f.opts.Ledger.Changes["spaces/room/messages/missing/reactions/one#created"]
+	if c == nil || c.Reason != "parent unavailable" || len(f.gc.Inbound()) != 1 {
+		t.Fatalf("local retention or delivery missing: %+v", c)
+	}
+}
+
+func TestDrainSavesOnlyChangedOrderOrCompletedInterval(t *testing.T) {
+	for _, order := range []string{"sorted", "unsorted", "empty"} {
+		t.Run(order, func(t *testing.T) {
+			f := setup(t)
+			f.addSpace("spaces/room", true)
+			if order != "empty" {
+				f.addMessage("spaces/room", 1, frozen.Add(-2*time.Minute))
+				f.addMessage("spaces/room", 2, frozen.Add(-time.Minute))
+			}
+			f.freeze(t)
+			if err := f.r.enumerate(context.Background(), "spaces/room"); err != nil {
+				t.Fatal(err)
+			}
+			s := f.opts.Ledger.Spaces["spaces/room"]
+			if order == "unsorted" {
+				s.Backlog[0], s.Backlog[1] = s.Backlog[1], s.Backlog[0]
+			}
+			writes := 0
+			f.r.opts.Save = func(l *ledger.Ledger) error {
+				writes++
+				return l.Save(f.opts.LedgerPath)
+			}
+			budget := 0
+			if _, err := f.r.drain(context.Background(), "spaces/room", &budget); err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if order == "sorted" {
+				want = 0
+			}
+			if writes != want {
+				t.Fatalf("unchanged backlog saved: writes=%d, want %d", writes, want)
+			}
+		})
+	}
+}
+
+func TestMissingSpaceReturnsError(t *testing.T) {
+	for _, operation := range []string{"enumerate", "enumerate-page-save", "drain"} {
+		t.Run(operation, func(t *testing.T) {
+			f := setup(t)
+			f.addSpace("spaces/room", true)
+			f.freeze(t)
+			defer func() {
+				if got := recover(); got != nil {
+					t.Errorf("missing space panicked: %v", got)
+				}
+			}()
+			if operation == "enumerate-page-save" {
+				f.onRequest = func(*http.Request) error {
+					f.opts.LedgerMu.Lock()
+					delete(f.opts.Ledger.Spaces, "spaces/room")
+					f.opts.LedgerMu.Unlock()
+					return nil
+				}
+			} else {
+				f.opts.Ledger.Spaces["spaces/room"] = nil
+			}
+			var err error
+			if operation == "drain" {
+				budget := 1
+				_, err = f.r.drain(context.Background(), "spaces/room", &budget)
+			} else {
+				err = f.r.enumerate(context.Background(), "spaces/room")
+			}
+			if err == nil || !strings.Contains(err.Error(), "spaces/room") {
+				t.Fatalf("missing space error = %v", err)
+			}
+		})
 	}
 }
 

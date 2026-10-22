@@ -54,7 +54,7 @@ type progress struct {
 	MessageLower time.Time `json:"message_lower"`
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
-	NextUpper    time.Time `json:"next_upper,omitempty"`
+	NextUpper    time.Time `json:"next_upper,omitzero"`
 	// Access failures retain the backlog and cursors. Only a fresh listing in
 	// Freeze clears Unavailable; credential failures can retry after sign-in.
 	Unavailable string `json:"unavailable,omitempty"`
@@ -78,6 +78,7 @@ var eventTypes = []string{
 }
 
 var errSpaceUnavailable = errors.New("catchup: space unavailable")
+var errUnchanged = errors.New("catchup: ledger unchanged")
 
 func New(opts Options) (*Runner, error) {
 	if opts.Config == nil || opts.Ledger == nil || opts.LedgerMu == nil || opts.Chat == nil || opts.Processor == nil || (opts.Save == nil && opts.LedgerPath == "") {
@@ -113,7 +114,7 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("catchup: refresh spaces: %w", err)
 	}
-	var reported []string
+	var reported, clockAhead []string
 	err = r.update(func(l *ledger.Ledger) error {
 		for _, space := range spaces {
 			s := l.Spaces[space.Name]
@@ -139,6 +140,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			}
 		}
 		for name, s := range l.Spaces {
+			if s == nil {
+				continue
+			}
 			if !s.FrozenUpper.IsZero() {
 				p, err := decodeProgress(s.PageToken)
 				if err != nil {
@@ -151,7 +155,8 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				continue
 			}
 			if now.Before(s.MessageCursor) || now.Before(s.EventCursor) {
-				return errors.New("catchup: upper bound precedes a committed cursor")
+				clockAhead = append(clockAhead, name)
+				continue
 			}
 			if r.begin(s, now).Reported {
 				l.Counters["unrecoverable:"+name]++
@@ -161,6 +166,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 		return nil
 	})
 	if err == nil {
+		for _, name := range clockAhead {
+			r.opts.Logger.Warn("catch-up skipped space with cursor ahead of clock", "space", name)
+		}
 		for _, name := range reported {
 			r.report(name)
 		}
@@ -201,7 +209,7 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 	sort.Strings(names)
 	var failures []error
 	for _, name := range names {
-		if l.Spaces[name].FrozenUpper.IsZero() {
+		if l.Spaces[name] == nil || l.Spaces[name].FrozenUpper.IsZero() {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -228,9 +236,20 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 				failures = append(failures, err)
 				break
 			}
-			s := current.Spaces[name]
+			s, err := spaceState(current, name)
+			if err != nil {
+				failures = append(failures, err)
+				break
+			}
+			if s.FrozenUpper.IsZero() {
+				break
+			}
 			p, err := decodeProgress(s.PageToken)
-			if s.FrozenUpper.IsZero() || len(s.Backlog) > 0 || (err == nil && p.Unavailable != "") {
+			if err != nil {
+				failures = append(failures, err)
+				break
+			}
+			if len(s.Backlog) > 0 || p.Unavailable != "" {
 				break
 			}
 			// A queued restart interval starts here, sharing this pass's budget.
@@ -242,7 +261,9 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 		failures = append(failures, err)
 	} else {
 		for _, s := range l.Spaces {
-			remaining += len(s.Backlog)
+			if s != nil {
+				remaining += len(s.Backlog)
+			}
 		}
 	}
 	return delivered, remaining, errors.Join(failures...)
@@ -257,7 +278,10 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		s := l.Spaces[name]
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
 		p, err := decodeProgress(s.PageToken)
 		if err != nil {
 			return err
@@ -322,7 +346,10 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			}
 		}
 		if err := r.update(func(l *ledger.Ledger) error {
-			s := l.Spaces[name]
+			s, err := spaceState(l, name)
+			if err != nil {
+				return err
+			}
 			for _, item := range page {
 				s.Backlog = append(s.Backlog, encode(item))
 			}
@@ -338,14 +365,28 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 	// A fully enumerated interval can contain both messages and older space
 	// events. Order the retained records before delivering any of them.
 	if err := r.update(func(l *ledger.Ledger) error {
-		s := l.Spaces[name]
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
+		p, err := decodeProgress(s.PageToken)
+		if err != nil {
+			return err
+		}
+		if p.Unavailable != "" || p.Phase != "done" {
+			return errUnchanged
+		}
 		items := make([]queuedChange, len(s.Backlog))
 		for i, raw := range s.Backlog {
 			if err := json.Unmarshal([]byte(raw), &items[i]); err != nil {
 				return errors.New("catchup: invalid durable backlog")
 			}
 		}
-		sort.SliceStable(items, func(i, j int) bool { return items[i].At.Before(items[j].At) })
+		less := func(i, j int) bool { return items[i].At.Before(items[j].At) }
+		if sort.SliceIsSorted(items, less) {
+			return errUnchanged
+		}
+		sort.SliceStable(items, less)
 		for i, item := range items {
 			s.Backlog[i] = encode(item)
 		}
@@ -362,7 +403,10 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		if err != nil {
 			return delivered, err
 		}
-		s := before.Spaces[name]
+		s, err := spaceState(before, name)
+		if err != nil {
+			return delivered, err
+		}
 		p, err := decodeProgress(s.PageToken)
 		if err != nil {
 			return delivered, err
@@ -409,7 +453,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 				continue
 			}
 			switch c.Reason {
-			case "own", "local", "wake_policy", "space unavailable":
+			case "own", "local", "wake_policy", "space unavailable", "parent unavailable":
 				continue
 			}
 			*budget--
@@ -425,7 +469,10 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			}
 		}
 		if err := r.update(func(l *ledger.Ledger) error {
-			s := l.Spaces[name]
+			s, err := spaceState(l, name)
+			if err != nil {
+				return err
+			}
 			if terminal {
 				s.Backlog = append(s.Backlog[:index], s.Backlog[index+1:]...)
 			} else {
@@ -441,7 +488,10 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 	}
 	reported := false
 	err = r.update(func(l *ledger.Ledger) error {
-		s := l.Spaces[name]
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
 		if len(s.Backlog) == 0 {
 			p, err := decodeProgress(s.PageToken)
 			if err != nil {
@@ -449,7 +499,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			}
 			// Neither cursor may advance until both streams' last pages are saved.
 			if p.Phase != "done" {
-				return nil
+				return errUnchanged
 			}
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
@@ -459,8 +509,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 					l.Counters["unrecoverable:"+name]++
 				}
 			}
+			return nil
 		}
-		return nil
+		return errUnchanged
 	})
 	if err == nil && reported {
 		r.report(name)
@@ -534,7 +585,11 @@ func (r *Runner) saveProgress(name string, p progress, lost bool) error {
 		p.Reported = true
 	}
 	err := r.update(func(l *ledger.Ledger) error {
-		l.Spaces[name].PageToken = encode(p)
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
+		s.PageToken = encode(p)
 		if report {
 			l.Counters["unrecoverable:"+name]++
 		}
@@ -562,7 +617,11 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 	}
 	held := fmt.Errorf("catchup: list %s for %s: %s: %w", p.Phase, name, summary, sentinel)
 	err := r.update(func(l *ledger.Ledger) error {
-		l.Spaces[name].PageToken = encode(p)
+		s, err := spaceState(l, name)
+		if err != nil {
+			return err
+		}
+		s.PageToken = encode(p)
 		if first {
 			l.Counters[key+name]++
 		}
@@ -637,6 +696,14 @@ func (r *Runner) snapshot() (*ledger.Ledger, error) {
 	return clone(r.opts.Ledger)
 }
 
+func spaceState(l *ledger.Ledger, name string) (*ledger.SpaceState, error) {
+	s := l.Spaces[name]
+	if s == nil {
+		return nil, fmt.Errorf("catchup: space state missing for %s", name)
+	}
+	return s, nil
+}
+
 // Copy-on-save prevents a failed disk write from publishing in-memory progress.
 func (r *Runner) update(fn func(*ledger.Ledger) error) error {
 	r.opts.LedgerMu.Lock()
@@ -646,6 +713,9 @@ func (r *Runner) update(fn func(*ledger.Ledger) error) error {
 		return err
 	}
 	if err := fn(l); err != nil {
+		if errors.Is(err, errUnchanged) {
+			return nil
+		}
 		return err
 	}
 	if err := r.opts.Save(l); err != nil {
