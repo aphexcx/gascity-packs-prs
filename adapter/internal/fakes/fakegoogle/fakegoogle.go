@@ -587,6 +587,12 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 		return
 	}
 	reply := r.URL.Query().Get("messageReplyOption")
+	switch reply {
+	case "", "MESSAGE_REPLY_OPTION_UNSPECIFIED", "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD", "REPLY_MESSAGE_OR_FAIL":
+	default:
+		s.fail(w, 400, "INVALID_ARGUMENT", "unknown messageReplyOption")
+		return
+	}
 	if reply != "" && room.SpaceType != "SPACE" {
 		s.fail(w, 400, "INVALID_ARGUMENT", "reply option requires a named space")
 		return

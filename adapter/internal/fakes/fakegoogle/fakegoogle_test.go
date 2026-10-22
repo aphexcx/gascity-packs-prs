@@ -494,6 +494,19 @@ func TestNamedSpaceReplyOptions(t *testing.T) {
 	}
 }
 
+func TestUnknownReplyOptionRejected(t *testing.T) {
+	s := New(t, nil)
+	s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	got := request(t, s, "POST", "/v1/spaces/room/messages?messageReplyOption=REPLY_MESSAGE_TYPO", &chat.Message{Text: "reply"}, 400)
+	if got["error"].(map[string]any)["status"] != "INVALID_ARGUMENT" {
+		t.Fatalf("invalid reply option: %v", got)
+	}
+	listed := request(t, s, "GET", "/v1/spaces/room/messages", nil, 200)
+	if len(listed["messages"].([]any)) != 0 {
+		t.Fatal("invalid reply option created a message")
+	}
+}
+
 func TestSpaceEventsFiltersPaginationAndWindow(t *testing.T) {
 	s := New(t, nil)
 	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
