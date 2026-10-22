@@ -32,6 +32,7 @@ type Endpoints struct {
 	OAuthTokenURL  string // GCHAT_OAUTH_TOKEN_URL,  default https://oauth2.googleapis.com/token
 	MediaDir       string // GCHAT_MEDIA_DIR,        default <city>/.gc/gchat-media/inbound
 	UploadRoot     string // GCHAT_UPLOAD_ROOT,      default <city>/.gc/gchat-out
+	MediaMaxBytes  int64  // media.max_bytes,        default 209715200
 	StateFile      string // GCHAT_STATE_FILE,       default <secrets dir>/../state.json
 }
 
@@ -65,7 +66,7 @@ type Settings struct {
 	} `toml:"defaults"`
 	Identities    []Identity `toml:"identity"`
 	Spaces        []Space    `toml:"space"`
-	Media         Media      `toml:"media"`
+	Media         Media      `toml:"media"`          // as decoded; effective values are in Endpoints
 	CatchupBudget int        `toml:"catchup_budget"` // per space per pass, default 50
 }
 
@@ -107,7 +108,6 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		c.Secrets.TokenFile = filepath.Join(secretsDir, c.Secrets.TokenFile)
 	}
 	c.Settings.Defaults.Wake = WakeAll
-	c.Settings.Media.MaxBytes = 209715200
 	c.Settings.CatchupBudget = 50
 	metadata, err := toml.DecodeFile(settingsFile, &c.Settings)
 	if err != nil {
@@ -119,7 +119,11 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if len(c.Settings.Identities) == 0 {
 		c.Settings.Identities = []Identity{{Name: "default", Agent: "mayor"}}
 	}
-	if err := c.validateSettings(); err != nil {
+	mediaMaxBytes := int64(209715200)
+	if metadata.IsDefined("media", "max_bytes") {
+		mediaMaxBytes = c.Settings.Media.MaxBytes
+	}
+	if err := c.validateSettings(mediaMaxBytes); err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
 	}
 	for i := range c.Settings.Identities {
@@ -149,12 +153,9 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		OAuthAuthURL:   envOr("GCHAT_OAUTH_AUTH_URL", "https://accounts.google.com/o/oauth2/auth"),
 		OAuthTokenURL:  envOr("GCHAT_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
 		MediaDir:       envOr("GCHAT_MEDIA_DIR", mediaDir), UploadRoot: envOr("GCHAT_UPLOAD_ROOT", uploadRoot),
-		StateFile: envOr("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
+		MediaMaxBytes: mediaMaxBytes,
+		StateFile:     envOr("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
 	}
-	// Both public views expose the same effective paths. Environment overrides
-	// take precedence over TOML, which takes precedence over city defaults.
-	c.Settings.Media.InboundDir = c.Endpoints.MediaDir
-	c.Settings.Media.UploadRoot = c.Endpoints.UploadRoot
 	return c, nil
 }
 
@@ -173,7 +174,7 @@ func (c *Config) Identity() Identity {
 	return c.Settings.Identities[0]
 }
 
-func (c *Config) validateSettings() error {
+func (c *Config) validateSettings(mediaMaxBytes int64) error {
 	validWake := func(wake WakePolicy) bool { return wake == WakeAll || wake == WakeMentions }
 	if !validWake(c.Settings.Defaults.Wake) {
 		return fmt.Errorf("defaults.wake must be all or mentions")
@@ -194,7 +195,7 @@ func (c *Config) validateSettings() error {
 			return fmt.Errorf("identity[%d].agent is required", i)
 		}
 	}
-	if c.Settings.Media.MaxBytes <= 0 {
+	if mediaMaxBytes <= 0 {
 		return fmt.Errorf("media.max_bytes must be positive")
 	}
 	if c.Settings.CatchupBudget <= 0 {

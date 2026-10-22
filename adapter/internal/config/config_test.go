@@ -40,7 +40,7 @@ max_bytes = 1000
 	if c.Wake("spaces/AAA") != WakeMentions || c.Wake("spaces/ZZZ") != WakeAll {
 		t.Fatal("wake policy")
 	}
-	if c.Settings.Media.MaxBytes != 1000 || c.Endpoints.ChatAPIBase != "https://chat.googleapis.com" {
+	if c.Settings.Media.MaxBytes != 1000 || c.Endpoints.MediaMaxBytes != 1000 || c.Endpoints.ChatAPIBase != "https://chat.googleapis.com" {
 		t.Fatalf("defaults: %+v %+v", c.Settings.Media, c.Endpoints)
 	}
 }
@@ -103,7 +103,7 @@ func TestEmptySettingsDefaults(t *testing.T) {
 	if len(c.Settings.Identities) != 1 || c.Identity() != wantIdentity {
 		t.Fatalf("default identity: %+v", c.Settings.Identities)
 	}
-	if c.Wake("spaces/AAA") != WakeAll || c.Settings.Media.MaxBytes != 209715200 || c.Settings.CatchupBudget != 50 {
+	if c.Wake("spaces/AAA") != WakeAll || c.Settings.CatchupBudget != 50 {
 		t.Fatalf("defaults: %+v", c.Settings)
 	}
 	city := filepath.Clean(filepath.Join(dir, "../../../.."))
@@ -111,13 +111,14 @@ func TestEmptySettingsDefaults(t *testing.T) {
 		ChatAPIBase: "https://chat.googleapis.com", EventsAPIBase: "https://workspaceevents.googleapis.com",
 		OAuthAuthURL: "https://accounts.google.com/o/oauth2/auth", OAuthTokenURL: "https://oauth2.googleapis.com/token",
 		MediaDir: filepath.Join(city, ".gc/gchat-media/inbound"), UploadRoot: filepath.Join(city, ".gc/gchat-out"),
-		StateFile: filepath.Join(dir, "..", "state.json"),
+		MediaMaxBytes: 209715200,
+		StateFile:     filepath.Join(dir, "..", "state.json"),
 	}
 	if c.Endpoints != wantEndpoints {
 		t.Fatalf("endpoints: %+v, want %+v", c.Endpoints, wantEndpoints)
 	}
-	if c.Settings.Media.InboundDir != c.Endpoints.MediaDir || c.Settings.Media.UploadRoot != c.Endpoints.UploadRoot {
-		t.Fatal("effective media paths differ")
+	if c.Settings.Media != (Media{}) {
+		t.Fatalf("omitted media settings: %+v, want zero values", c.Settings.Media)
 	}
 }
 
@@ -173,11 +174,11 @@ func TestEndpointAndServiceEnvironmentOverrides(t *testing.T) {
 	want := Endpoints{ChatAPIBase: values["GCHAT_CHAT_API_BASE"], EventsAPIBase: values["GCHAT_EVENTS_API_BASE"],
 		PubSubEndpoint: values["GCHAT_PUBSUB_ENDPOINT"], OAuthAuthURL: values["GCHAT_OAUTH_AUTH_URL"],
 		OAuthTokenURL: values["GCHAT_OAUTH_TOKEN_URL"], MediaDir: values["GCHAT_MEDIA_DIR"],
-		UploadRoot: values["GCHAT_UPLOAD_ROOT"], StateFile: values["GCHAT_STATE_FILE"]}
+		UploadRoot: values["GCHAT_UPLOAD_ROOT"], MediaMaxBytes: 1024, StateFile: values["GCHAT_STATE_FILE"]}
 	if c.Endpoints != want || c.Secrets.ServiceSocket != values["GC_SERVICE_SOCKET"] || c.Secrets.ServiceURLPrefix != values["GC_SERVICE_URL_PREFIX"] {
 		t.Fatalf("overrides: %+v %+v", c.Endpoints, c.Secrets)
 	}
-	if c.Settings.Media != (Media{InboundDir: "/tmp/env-in", UploadRoot: "/tmp/env-out", MaxBytes: 1024}) || c.Settings.CatchupBudget != 7 {
+	if c.Settings.Media != (Media{InboundDir: "/tmp/config-in", UploadRoot: "/tmp/config-out", MaxBytes: 1024}) || c.Settings.CatchupBudget != 7 {
 		t.Fatalf("settings: %+v", c.Settings)
 	}
 	for _, key := range []string{"GCHAT_MEDIA_DIR", "GCHAT_UPLOAD_ROOT"} {
@@ -189,6 +190,22 @@ func TestEndpointAndServiceEnvironmentOverrides(t *testing.T) {
 	}
 	if c.Endpoints.MediaDir != "/tmp/config-in" || c.Endpoints.UploadRoot != "/tmp/config-out" {
 		t.Fatalf("TOML paths: %+v", c.Endpoints)
+	}
+}
+
+func TestMediaEnvironmentOverridePreservesSettings(t *testing.T) {
+	env, settings, dir := configFixture(t)
+	writeFixture(t, settings, "[media]\ninbound_dir='/tmp/config-in'\n")
+	t.Setenv("GCHAT_MEDIA_DIR", "/tmp/env-in")
+	c, err := Load(env, settings, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Settings.Media != (Media{InboundDir: "/tmp/config-in"}) {
+		t.Errorf("decoded media settings: %+v", c.Settings.Media)
+	}
+	if c.Endpoints.MediaDir != "/tmp/env-in" {
+		t.Errorf("effective media dir: %s, want /tmp/env-in", c.Endpoints.MediaDir)
 	}
 }
 
