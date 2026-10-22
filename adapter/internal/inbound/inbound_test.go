@@ -191,6 +191,28 @@ func TestFollowupStillWakesWhenMentionRemoved(t *testing.T) {
 	}
 }
 
+func TestUnavailableMessageDoesNotMakeFollowupsWake(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.Defaults.Wake = config.WakeMentions
+	f.google.Configure(func(s *fakegoogle.Server) { delete(s.Spaces, space) })
+	m := message()
+	m.Space = nil
+	handle(t, f, event("unavailable-create", "message.created", m))
+	if c := f.l.Changes[messageName]; c == nil || c.Reason != "space unavailable" {
+		t.Fatalf("missing unavailable base: %+v", c)
+	}
+	f.google.Configure(func(s *fakegoogle.Server) { s.Spaces[space] = &api.Space{Name: space, SpaceType: "SPACE"} })
+	m.LastUpdateTime = "2026-10-22T10:01:00Z"
+	handle(t, f, event("available-edit", "message.updated", m))
+	handle(t, f, event("available-delete", "message.deleted", &api.Message{Name: messageName}))
+	if c := f.l.Changes[messageName+"#updated#"+m.LastUpdateTime]; c == nil || c.Reason != "wake_policy" {
+		t.Fatalf("unavailable base counted as forwarded: %+v", c)
+	}
+	if c := f.l.Changes[messageName+"#deleted"]; c == nil || c.Reason != "local" || len(f.gc.Inbound()) != 0 || f.l.Counters["turns:"+space] != 0 {
+		t.Fatalf("unforwarded deletion woke: %+v", c)
+	}
+}
+
 func TestReactionsAndMembership(t *testing.T) {
 	f := setup(t)
 	m := message()
@@ -792,8 +814,52 @@ func TestConcurrentOutboundMetadataSurvivesOwnEcho(t *testing.T) {
 	}
 }
 
+func TestRecordPreservesConcurrentExplicitWake(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.Defaults.Wake = config.WakeAll
+	cursor := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	f.l.Spaces[space] = &ledger.SpaceState{MessageCursor: cursor, Backlog: []string{"older-change"}}
+	target, _ := url.Parse(f.google.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var lookups atomic.Int64
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lookups.Add(1)
+		// The command surface writes an explicit policy while space() is away
+		// on the network, after inbound has copied the empty Wake.
+		f.opts.LedgerMu.Lock()
+		f.l.Spaces[space].Wake = "mentions"
+		f.opts.LedgerMu.Unlock()
+		proxy.ServeHTTP(w, r)
+	}))
+	defer s.Close()
+	f.opts.Config.Endpoints.ChatAPIBase = s.URL
+	var err error
+	f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := message()
+	m.Space = nil
+	m.Sender.Name = identity
+	handle(t, f, event("own-echo", "message.created", m))
+	saved := f.l.Spaces[space]
+	if saved.Wake != "mentions" || saved.Kind != "room" || !saved.MessageCursor.Equal(cursor) || len(saved.Backlog) != 1 || saved.Backlog[0] != "older-change" || lookups.Load() != 1 {
+		t.Fatalf("concurrent space state overwritten: %+v", saved)
+	}
+	m = message()
+	m.Name = space + "/messages/after-policy-change"
+	handle(t, f, event("after-policy-change", "message.created", m))
+	if len(f.gc.Inbound()) != 0 || f.l.Changes[m.Name].Reason != "wake_policy" {
+		t.Fatal("explicit wake policy was not applied to the next message")
+	}
+}
+
 func TestRetryablePOSTResponseRecovers(t *testing.T) {
-	for _, status := range []int{500, 503, 429} {
+	for _, status := range []int{500, 503, 429, 408} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			target, _ := url.Parse(f.gc.URL())
@@ -882,8 +948,65 @@ func TestRejectedPOSTRetainsStatusWithoutPrivateLogs(t *testing.T) {
 	}
 }
 
+func TestPOSTStatusReasonsAreBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		code   string
+		want   string
+	}{
+		{"redirect", 302, "", "gc answered HTTP 302; delivery unknown"},
+		{"redirect_preserving_method", 307, "", "gc answered HTTP 307; delivery unknown"},
+		{"not_found", 404, "", "gc rejected the POST: HTTP 404"},
+		{"long_code", 422, strings.Repeat("a", 60000), "gc rejected the POST: HTTP 422 " + strings.Repeat("a", 64)},
+		{"allowed_token", 422, "AZaz09_-", "gc rejected the POST: HTTP 422 AZaz09_-"},
+		{"newline", 422, "bad\ncode", "gc rejected the POST: HTTP 422"},
+		{"whitespace", 422, "bad code", "gc rejected the POST: HTTP 422"},
+		{"punctuation", 422, "bad:code", "gc rejected the POST: HTTP 422"},
+		{"unicode", 422, "badé", "gc rejected the POST: HTTP 422"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			var calls atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Location", "/redirected")
+				w.WriteHeader(tc.status)
+				_ = json.NewEncoder(w).Encode(map[string]string{"code": tc.code, "detail": "PRIVATE RESPONSE BODY"})
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("status-reason", "message.created", message())
+			handle(t, f, ev)
+			ev.PubSubID = "status-again"
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Unresolved[messageName]
+			if c == nil {
+				t.Fatal("POST was not retained as unresolved")
+			}
+			if c.Status != "unresolved" || c.Reason != tc.want || calls.Load() != 1 || f.l.Counters["turns:"+space] != 0 {
+				t.Fatalf("status=%s reason=%.120q (%d bytes) calls=%d", c.Status, c.Reason, len(c.Reason), calls.Load())
+			}
+			var entry struct{ Level, Cause string }
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != tc.want || strings.Contains(logs.String(), "PRIVATE") {
+				t.Fatalf("status log: %s (%v)", logs.String(), err)
+			}
+		})
+	}
+}
+
 func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
-	for _, status := range []int{403, 404, 503} {
+	for _, status := range []int{400, 401, 403, 404, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			target, _ := url.Parse(f.google.URL())
@@ -922,9 +1045,12 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status == 503 {
+			if status != 403 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[missing+"#created"] != nil || f.l.Transport.Seen("pubsub:parents") {
 					t.Fatalf("transient lookup: %v %v", out, err)
+				}
+				if len(f.gc.Inbound()) != 0 || len(f.l.Changes) != 0 {
+					t.Fatal("failed lookup consumed the batch")
 				}
 				return
 			}
@@ -946,7 +1072,7 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 }
 
 func TestUnavailableSpaceIsRetained(t *testing.T) {
-	for _, status := range []int{200, 403, 404, 503} {
+	for _, status := range []int{200, 400, 401, 403, 404, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			var lookups atomic.Int64
@@ -979,9 +1105,12 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status == 503 {
-				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil {
+			if status != 200 && status != 404 {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil || f.l.Transport.Seen("pubsub:space-unavailable") {
 					t.Fatalf("transient space lookup: %v %v", out, err)
+				}
+				if len(f.gc.Inbound()) != 0 || len(f.l.Messages) != 0 {
+					t.Fatal("failed lookup consumed the message")
 				}
 				return
 			}
@@ -1001,13 +1130,91 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 	}
 }
 
+func TestRetainedUnavailableChangesAreCountedAndLoggedOnce(t *testing.T) {
+	for _, kind := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "PRIVATE LOOKUP BODY", http.StatusNotFound)
+			}))
+			defer s.Close()
+			f.opts.Config.Endpoints.ChatAPIBase = s.URL
+			var err error
+			f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("retained", "message.created", m)
+			id, reason := messageName, "space unavailable"
+			if kind != "message_space" {
+				r := &api.Reaction{Name: messageName + "/reactions/one"}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+				id = r.Name + "#created"
+				if kind == "reaction_parent" {
+					reason = "parent unavailable"
+				} else {
+					f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+				}
+			}
+			failSave := true
+			f.opts.Save = func(l *ledger.Ledger) error {
+				if failSave && l.Changes[id] != nil {
+					return errors.New("injected save failure")
+				}
+				return l.Save(f.opts.LedgerPath)
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+				t.Fatalf("failed persistence: %v %v", out, err)
+			}
+			if logs.Len() != 0 || len(f.l.Counters) != 0 || f.l.Changes[id] != nil {
+				t.Fatal("failed save logged or counted a retained record")
+			}
+			failSave = false
+			handle(t, f, ev)
+			handle(t, f, ev)
+			ev.PubSubID = "retained-again"
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Changes[id]
+			if c == nil || c.Status != "committed" || c.Reason != reason || f.l.Unresolved[id] != nil || len(f.gc.Inbound()) != 0 {
+				t.Fatalf("retained state: %+v", c)
+			}
+			if f.l.Counters["unavailable:"+space] != 1 || len(f.l.Counters) != 1 {
+				t.Fatalf("unavailable counter: %v", f.l.Counters)
+			}
+			var entry struct{ Level, Space, Change, Message, Cause string }
+			if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Space != space || entry.Change != id || entry.Message != messageName || entry.Cause != reason {
+				t.Fatalf("want one structured warning: %s (%v)", logs.String(), err)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil || stored.Counters["unavailable:"+space] != 1 {
+				t.Fatalf("counter not durable: %v", err)
+			}
+			data, err := os.ReadFile(f.opts.LedgerPath)
+			if err != nil || strings.Contains(string(data)+logs.String(), "PRIVATE") {
+				t.Fatalf("lookup body leaked or state unreadable: %v", err)
+			}
+		})
+	}
+}
+
 func TestMentionRenderingUsesAnnotatedSpans(t *testing.T) {
 	for _, tc := range []struct{ name, payload, want string }{
 		{"documented_text", `{"text":"Hello @FooBot how are you!","annotations":[{"type":"USER_MENTION","startIndex":6,"length":7,"userMention":{"user":{"name":"users/123","displayName":"FooBot"},"type":"MENTION"}}]}`, "Hello FooBot how are you!"},
 		{"unicode_prefix", `{"text":"é😀 @Example!","annotations":[{"type":"USER_MENTION","startIndex":4,"length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "é😀 Example!"},
 		{"literal_token", `{"text":"@Example <users/123>","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
 		{"bounded_token", `{"text":"<users/123> <users/123>","annotations":[{"type":"USER_MENTION","length":11,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
-		{"resource_fallback", `{"text":"@Example","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123"}}}]}`, "users/123"},
+		{"literal_fallback", `{"text":"@Example","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123"}}}]}`, "@Example"},
 		{"unsorted_spans", `{"text":"@One and @Two","annotations":[{"type":"USER_MENTION","startIndex":9,"length":4,"userMention":{"user":{"displayName":"Second"}}},{"type":"USER_MENTION","length":4,"userMention":{"user":{"displayName":"First"}}}]}`, "First and Second"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1060,6 +1267,97 @@ func TestPendingReceiptBeyondDefaultDeadlineIsUnresolved(t *testing.T) {
 	}
 	if len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 0 {
 		t.Fatal("expired pending receipt was reposted or counted")
+	}
+}
+
+func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
+	for _, status := range []string{"delivered", "failed", "pending", "unknown", "lookup_error"} {
+		t.Run(status, func(t *testing.T) {
+			f := setup(t)
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var recovered atomic.Bool
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !recovered.Load() {
+					http.Error(w, "gc restarting", http.StatusServiceUnavailable)
+					return
+				}
+				if r.Method == http.MethodGet {
+					lookups.Add(1)
+					if status == "lookup_error" {
+						http.Error(w, "PRIVATE RECEIPT BODY", http.StatusServiceUnavailable)
+						return
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("outage", "message.created", message())
+			if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+				t.Fatalf("outage: %v %v", out, err)
+			}
+			// Recovery first obtains a fresh pending receipt for an old intent.
+			now = now.Add(2 * time.Hour)
+			recovered.Store(true)
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			c := f.l.Changes[messageName]
+			if c.Status != "pending" || c.ReceiptID == "" {
+				t.Fatalf("recovery: %+v", c)
+			}
+			r := wire.ReceiptResponse{State: "concluded"}
+			r.Delivery.Status = status
+			if status == "pending" || status == "unknown" {
+				r.State = status
+			}
+			f.gc.SetReceipt(c.ReceiptID, r)
+			err = f.p.Poll(context.Background())
+			if (err != nil) != (status == "lookup_error") || (err != nil && strings.Contains(err.Error(), "PRIVATE")) {
+				t.Fatalf("receipt poll: %v", err)
+			}
+			if lookups.Load() != 1 {
+				t.Fatalf("receipt lookups=%d, want 1 before applying deadline", lookups.Load())
+			}
+			c = f.l.Changes[messageName]
+			wantPosts := 1
+			if status == "delivered" || status == "failed" {
+				if c.Status != "committed" || c.Reason != "delivered" || f.l.Counters["turns:"+space] != 1 || f.l.Unresolved[messageName] != nil {
+					t.Fatalf("concluded receipt not honored: %+v", c)
+				}
+				if status == "failed" {
+					wantPosts = 2
+				}
+			} else {
+				wantReason := map[string]string{"pending": "receipt pending beyond deadline", "unknown": "receipt unavailable or unknown", "lookup_error": "receipt lookup failed beyond deadline"}[status]
+				if c.Status != "unresolved" || c.Reason != wantReason || f.l.Unresolved[messageName] == nil || f.l.Counters["turns:"+space] != 0 {
+					t.Fatalf("unresolved receipt: %+v", c)
+				}
+			}
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			posts := f.gc.Inbound()
+			if len(posts) != wantPosts || lookups.Load() != 1 {
+				t.Fatalf("posts=%d lookups=%d", len(posts), lookups.Load())
+			}
+			for _, post := range posts {
+				if post.ProviderMessageID != messageName {
+					t.Fatalf("retry changed identity: %q", post.ProviderMessageID)
+				}
+			}
+		})
 	}
 }
 
@@ -1141,6 +1439,14 @@ func TestExistingSpaceInheritsWakeDefault(t *testing.T) {
 			if f.l.Spaces[space].Wake != "mentions" {
 				t.Fatalf("wake default not retained: %+v", f.l.Spaces[space])
 			}
+			// Once inherited, a space's wake policy survives later default changes.
+			f.opts.Config.Settings.Defaults.Wake = config.WakeAll
+			m := message()
+			m.Name = space + "/messages/after-default-change"
+			handle(t, f, event("changed-default", "message.created", m))
+			if f.l.Spaces[space].Wake != "mentions" || len(f.gc.Inbound()) != 2*want {
+				t.Fatal("config default replaced the persisted wake policy")
+			}
 		})
 	}
 }
@@ -1154,6 +1460,8 @@ func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
 				}
 			}()
 			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// Model an operator removing the change while the network is in flight.
 				f.opts.LedgerMu.Lock()
@@ -1193,7 +1501,115 @@ func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
 			if f.l.Changes[messageName] != nil || f.l.Unresolved[messageName] != nil || f.l.Counters["turns:"+space] != 0 {
 				t.Fatal("removed change was resurrected or counted")
 			}
+			if logs.Len() != 0 {
+				t.Fatalf("logged a change that was not recorded: %s", logs.String())
+			}
 		})
+	}
+}
+
+// retryWaitContext schedules an operator change exactly when wait registers
+// its cancellation channel, after resume's snapshot and before its next save.
+type retryWaitContext struct {
+	context.Context
+	onWait func()
+	once   sync.Once
+}
+
+func (c *retryWaitContext) Done() <-chan struct{} {
+	c.once.Do(c.onWait)
+	return c.Context.Done()
+}
+
+func TestChangeRemovedBeforeRetryAttemptIsNotPosted(t *testing.T) {
+	f := setup(t)
+	turn := f.p.envelope(messageName, space, "room", message().Sender, "")
+	data, err := json.Marshal(turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Space: space, Message: messageName, Kind: "message.created", Status: "intent", Attempts: 1, Reason: "retry", Event: string(data)}
+	removed := false
+	ctx := &retryWaitContext{Context: context.Background(), onWait: func() {
+		f.opts.LedgerMu.Lock()
+		defer f.opts.LedgerMu.Unlock()
+		delete(f.l.Changes, messageName)
+		removed = true
+	}}
+	if err := f.p.resume(ctx, messageName); err != nil {
+		t.Fatal(err)
+	}
+	if !removed || len(f.gc.Inbound()) != 0 || len(f.l.Changes) != 0 || len(f.l.Counters) != 0 {
+		t.Fatalf("removed intent crossed process boundary: removed=%v posts=%d", removed, len(f.gc.Inbound()))
+	}
+}
+
+func TestLiveDeliveryThenCatchUpDoesNotRecordOrPostAgain(t *testing.T) {
+	f := setup(t)
+	handle(t, f, event("live-first", "message.created", message()))
+	before, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saves := 0
+	f.opts.Save = func(l *ledger.Ledger) error {
+		saves++
+		return l.Save(f.opts.LedgerPath)
+	}
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := puller.Change{Kind: "message.created", Space: space, Message: message()}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up after live: %v %v", out, err)
+	}
+	after, err := json.Marshal(f.l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saves != 0 || !bytes.Equal(before, after) || len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 1 {
+		t.Fatalf("catch-up re-recorded or posted live change: saves=%d posts=%d", saves, len(f.gc.Inbound()))
+	}
+	var stored wire.InboundMessage
+	if err := json.Unmarshal([]byte(f.l.Changes[messageName].Event), &stored); err != nil || stored.Text != "hello" || f.gc.Inbound()[0].Text != "hello" {
+		t.Fatalf("live text relabeled by catch-up: %+v %v", stored, err)
+	}
+}
+
+func TestCatchUpSavesOnlyDeliveryState(t *testing.T) {
+	f := setup(t)
+	saves := 0
+	f.opts.Save = func(l *ledger.Ledger) error {
+		saves++
+		return l.Save(f.opts.LedgerPath)
+	}
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := puller.Change{Kind: "message.created", Space: space, Message: message()}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up: %v %v", out, err)
+	}
+	if saves != 3 {
+		t.Fatalf("catch-up saves=%d, want intent, attempt, outcome only", saves)
+	}
+	if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+		t.Fatalf("catch-up repeat: %v %v", out, err)
+	}
+	if saves != 3 {
+		t.Fatalf("deduplicated catch-up saved unchanged state: %d saves", saves)
+	}
+	for _, ev := range []*puller.Event{
+		{PubSubID: "pubsub-only", Changes: []puller.Change{c}},
+		{CloudEventID: "cloud-only", Changes: []puller.Change{c}},
+	} {
+		handle(t, f, ev)
+	}
+	if saves != 5 || !f.l.Transport.Seen("pubsub:pubsub-only") || !f.l.Transport.Seen("cloudevent:cloud-only") || len(f.gc.Inbound()) != 1 {
+		t.Fatalf("live transport state: saves=%d ledger=%+v", saves, f.l)
 	}
 }
 

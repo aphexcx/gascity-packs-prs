@@ -25,6 +25,7 @@ import (
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 type Options struct {
@@ -131,6 +132,9 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 			return puller.Nack, err
 		}
 	}
+	if ev.PubSubID == "" && ev.CloudEventID == "" {
+		return puller.Ack, nil
+	}
 	err = p.update(func(l *ledger.Ledger) {
 		if ev.PubSubID != "" {
 			l.Transport.Add("pubsub:" + ev.PubSubID)
@@ -146,7 +150,8 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 }
 
 // Poll performs one recovery pass. The app calls it every five seconds, also
-// after startup. Receipt lookup failures retain pending state for a later pass.
+// after startup. Concluded receipts are honored even past the pending deadline;
+// lookup failures retain pending state only until that deadline.
 func (p *Processor) Poll(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
@@ -181,20 +186,21 @@ func (p *Processor) Poll(ctx context.Context) error {
 			}
 			continue
 		}
-		if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
-			if err := p.unresolved(id, "receipt pending beyond deadline"); err != nil {
-				failures = append(failures, err)
-			}
-			continue
-		}
 		r, err := p.opts.GC.Receipt(ctx, c.ReceiptID)
 		if err != nil {
 			failures = append(failures, errors.New("inbound: receipt lookup failed"))
+			if ctx.Err() == nil && !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+				if err := p.unresolved(id, "receipt lookup failed beyond deadline"); err != nil {
+					failures = append(failures, err)
+				}
+			}
 			continue
 		}
 		switch r.State {
 		case "pending":
-			continue
+			if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+				err = p.unresolved(id, "receipt pending beyond deadline")
+			}
 		case "concluded":
 			if r.Delivery.Status == "pending" {
 				err = p.unresolved(id, "receipt concluded with pending delivery")
@@ -342,9 +348,18 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 
 var errSpaceUnavailable = errors.New("inbound: space type unavailable")
 
-func permanentLookup(err error) bool {
-	kind, _ := chat.Classify(err)
-	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || kind == "auth" || kind == "permanent"
+func unavailableSpace(err error) bool {
+	// spaces.list covers the whole identity: 401/403 are credential or scope
+	// failures, not evidence that this individual space is unavailable.
+	var apiErr *googleapi.Error
+	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404)
+}
+
+func unavailableParent(err error) bool {
+	// A parent lookup can return 403 for a space the identity left. Retain
+	// that inaccessible parent just like 404; 401 still holds for credentials.
+	var apiErr *googleapi.Error
+	return errors.As(err, &apiErr) && (apiErr.Code == 403 || apiErr.Code == 404)
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
@@ -446,7 +461,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	s, err := p.space(ctx, c.Space, m.Space)
 	if err != nil {
-		if permanentLookup(err) {
+		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
 			w.Text = renderMentions(m)
 			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
@@ -510,7 +525,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)
 		if err != nil {
-			if permanentLookup(err) {
+			if unavailableParent(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
 				w.Text = reactionText(r, action, parent)
 				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
@@ -524,7 +539,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	}
 	s, err := p.space(ctx, c.Space, nil)
 	if err != nil {
-		if permanentLookup(err) {
+		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
 			return p.record(c, id, w, state, nil, "space unavailable", catchUp)
@@ -576,6 +591,9 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 		Actor: a, ReplyToMessageID: thread, ReceivedAt: p.opts.Now().UTC()}
 }
 
+// record persists a change and fills an empty space Wake from config. Once
+// persisted, later config default changes no longer reach that space; a spaces
+// reset must clear or replace its stored Wake to inherit a new default.
 func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool) error {
 	if catchUp {
 		w.Text = "[catch-up]\n" + w.Text
@@ -591,12 +609,16 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	if c.Reaction != nil {
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
-	return p.update(func(l *ledger.Ledger) {
+	unavailable := local == "space unavailable" || local == "parent unavailable"
+	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
 			status = "committed"
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local}
+		if unavailable {
+			l.Counters["unavailable:"+c.Space]++
+		}
 		if state != nil {
 			// Outbound can record its send key while a Chat lookup is in flight.
 			// That field belongs to outbound; retain its latest value under the
@@ -618,6 +640,10 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 			}
 		}
 	})
+	if err == nil && unavailable {
+		p.opts.Logger.Warn("inbound change retained", "space", c.Space, "change", id, "message", name, "cause", local)
+	}
+	return err
 }
 
 func (p *Processor) resume(ctx context.Context, id string) error {
@@ -671,7 +697,7 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			var responseErr *gcclient.HTTPError
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
-			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429)) || (errors.As(err, &op) && op.Op == "dial") {
+			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429 || responseErr.StatusCode == 408)) || (errors.As(err, &op) && op.Op == "dial") {
 				if err := p.update(func(l *ledger.Ledger) {
 					if c := l.Changes[id]; c != nil {
 						c.Attempts--
@@ -684,12 +710,16 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			}
 			if answered && responseErr.StatusCode >= 400 && responseErr.StatusCode < 500 {
 				// The status and machine-readable code describe a definite rejection.
+				// This includes 404: a stopped city belongs to the app's health check.
 				// Never log HTTPError itself: it includes the response body.
 				reason := fmt.Sprintf("gc rejected the POST: HTTP %d", responseErr.StatusCode)
-				if code := responseErr.Code(); code != "" {
+				if code := reasonCode(responseErr.Code()); code != "" {
 					reason += " " + code
 				}
 				return p.unresolved(id, reason)
+			}
+			if answered && responseErr.StatusCode >= 300 && responseErr.StatusCode < 400 {
+				return p.unresolved(id, fmt.Sprintf("gc answered HTTP %d; delivery unknown", responseErr.StatusCode))
 			}
 			if err := p.unresolved(id, "POST response unavailable; delivery unknown"); err != nil {
 				return err
@@ -700,6 +730,19 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			return err
 		}
 	}
+}
+
+// reasonCode admits only short ASCII tokens into durable reasons and logs.
+func reasonCode(code string) string {
+	for _, c := range code {
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return ""
+		}
+	}
+	if len(code) > 64 {
+		return code[:64]
+	}
+	return code
 }
 
 // An unsent or explicitly failed old revision must not resurrect content after
@@ -836,11 +879,8 @@ func renderMentions(m *api.Message) string {
 		if !startOK || !endOK {
 			continue // never split a surrogate pair
 		}
-		u := a.UserMention.User
-		name := u.DisplayName
-		if name == "" {
-			name = u.Name
-		}
+		// Without a display name, keep the literal span (usually @Name).
+		name := a.UserMention.User.DisplayName
 		if name != "" {
 			spans = append(spans, span{start, end, name})
 		}
