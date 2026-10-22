@@ -111,26 +111,36 @@ func TestRefresh(t *testing.T) {
 	}
 }
 
-func TestInvalidGrant(t *testing.T) {
-	var requests atomic.Int32
-	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"error":"invalid_grant"}`)
-	})
-	expired := savedToken("expired")
-	expired.Expiry = time.Now().Add(-time.Hour)
-	writeJSON(t, tokenFile, expired)
-	s := mustSource(t, clientFile, tokenFile, ep)
-	if _, err := s.Client(t.Context()); !errors.Is(err, ErrNeedsSignIn) {
-		t.Fatalf("Client error = %v", err)
-	}
-	if s.State() != NeedsSignIn {
-		t.Fatalf("state = %v", s.State())
-	}
-	if _, err := s.TokenSource(t.Context()).Token(); !errors.Is(err, ErrNeedsSignIn) || requests.Load() != 1 {
-		t.Fatalf("revoked token retried: err=%v calls=%d", err, requests.Load())
+func TestPermanentOAuthErrorsNeedSignIn(t *testing.T) {
+	for _, code := range []string{
+		"invalid_grant", "invalid_client", "unauthorized_client", "invalid_request",
+		"invalid_scope", "unsupported_grant_type", "access_denied", "admin_policy_enforced",
+		"invalid_rapt", "disabled_client", "deleted_client", "org_internal", "restricted_client",
+	} {
+		t.Run(code, func(t *testing.T) {
+			var requests atomic.Int32
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, `{"error":%q}`, code)
+			})
+			expired := savedToken("expired")
+			expired.Expiry = time.Now().Add(-time.Hour)
+			writeJSON(t, tokenFile, expired)
+			s := mustSource(t, clientFile, tokenFile, ep)
+			for range 3 {
+				if _, err := s.Client(t.Context()); !errors.Is(err, ErrNeedsSignIn) {
+					t.Errorf("Client error = %v", err)
+				}
+				if _, err := s.TokenSource(t.Context()).Token(); !errors.Is(err, ErrNeedsSignIn) {
+					t.Errorf("Token error = %v", err)
+				}
+			}
+			if s.State() != NeedsSignIn || requests.Load() != 1 {
+				t.Fatalf("permanent failure: state=%v requests=%d", s.State(), requests.Load())
+			}
+		})
 	}
 }
 

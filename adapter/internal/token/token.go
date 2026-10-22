@@ -230,8 +230,7 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 		}
 		var failure *oauth2.RetrieveError
 		if errors.As(err, &failure) {
-			switch failure.ErrorCode {
-			case "invalid_grant", "invalid_client", "unauthorized_client":
+			if permanentOAuthCode(failure.ErrorCode) {
 				return nil, fmt.Errorf("%w: %s", ErrNeedsSignIn, failure.ErrorCode)
 			}
 		}
@@ -245,6 +244,17 @@ func refresh(ctx context.Context, cfg *oauth2.Config, current *oauth2.Token) (*o
 			return nil, ctx.Err()
 		case <-timer.C:
 		}
+	}
+}
+
+func permanentOAuthCode(code string) bool {
+	switch code {
+	case "invalid_grant", "invalid_client", "unauthorized_client", "invalid_request",
+		"invalid_scope", "unsupported_grant_type", "access_denied", "admin_policy_enforced",
+		"invalid_rapt", "disabled_client", "deleted_client", "org_internal", "restricted_client":
+		return true
+	default:
+		return false
 	}
 }
 
