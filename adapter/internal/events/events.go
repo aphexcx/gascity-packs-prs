@@ -129,7 +129,7 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 }
 
 // TokenReloaded is called by the app after validating and installing a new
-// credential. It permits one scope-revoked reactivation and reconciles under
+// credential. It permits scope-revoked reactivation (including transient retries) under
 // the same gate as lifecycle events and RenewLoop.
 func (m *Manager) TokenReloaded(ctx context.Context) (ledger.SubscriptionState, error) {
 	return m.reconcile(ctx, true)
@@ -146,8 +146,9 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.S
 		return ledger.SubscriptionState{}, err
 	}
 	defer func() { m.recordResult(resultErr) }()
-	m.scopeReloaded = tokenReloaded
-	defer func() { m.scopeReloaded = false }()
+	if tokenReloaded {
+		m.scopeReloaded = true
+	}
 	m.ledgerMu.Lock()
 	saved := m.ledger.Subscription
 	m.ledgerMu.Unlock()
@@ -178,7 +179,7 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.S
 				return saved, lookupErr
 			}
 			if sub != nil {
-				return saved, err
+				return saved, m.reportSuspension(ctx, sub, err)
 			}
 		}
 		m.pending = nil
@@ -273,13 +274,9 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 }
 
 func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (state ledger.SubscriptionState, err error) {
-	if sub.State == "SUSPENDED" {
-		m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
-		defer func() {
-			if err != nil {
-				err = fmt.Errorf("events: subscription %s suspended (%s): %w", sub.Name, sub.SuspensionReason, err)
-			}
-		}()
+	defer func() { err = m.reportSuspension(ctx, sub, err) }()
+	if sub.State == "ACTIVE" {
+		m.scopeReloaded = false
 	}
 	m.ledgerMu.Lock()
 	adopting := m.ledger.Subscription.Name != sub.Name
@@ -315,7 +312,6 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 			if !m.scopeReloaded {
 				return state, errors.New("events: awaiting validated token reload before reactivation")
 			}
-			m.scopeReloaded = false
 		}
 		m.pendingKind = "reactivate"
 		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(ctx).Do()
@@ -323,6 +319,9 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		return state, fmt.Errorf("events: unsupported subscription state %q", sub.State)
 	}
 	if err != nil {
+		if m.pendingKind == "reactivate" && (isHTTP(err, http.StatusForbidden) || isHTTP(err, http.StatusUnauthorized)) {
+			m.scopeReloaded = false
+		}
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = state
 		m.ambiguousCause = fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
@@ -383,6 +382,9 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	}
 	m.pending = nil
 	if op.Error != nil {
+		if m.pendingKind == "reactivate" && (op.Error.Code == 7 || op.Error.Code == 16) {
+			m.scopeReloaded = false
+		}
 		if op.Error.Code == 6 {
 			return m.adopt(ctx)
 		} // google.rpc.Code.ALREADY_EXISTS
@@ -402,6 +404,7 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
 		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
 	}
+	m.scopeReloaded = false
 	return state, nil
 }
 
@@ -489,6 +492,17 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	return state, nil
 }
 
+func (m *Manager) reportSuspension(ctx context.Context, sub *api.Subscription, err error) error {
+	if sub.State != "SUSPENDED" {
+		return err
+	}
+	m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
+	if err != nil {
+		return fmt.Errorf("events: subscription %s suspended (%s): %w", sub.Name, sub.SuspensionReason, err)
+	}
+	return nil
+}
+
 func (m *Manager) logMutation(ctx context.Context, action string, state ledger.SubscriptionState) {
 	m.log.InfoContext(ctx, "subscription mutation", "action", action, "name", state.Name, "state", state.State, "expiry", state.Expiry)
 }
@@ -498,6 +512,8 @@ func (m *Manager) logMutation(ctx context.Context, action string, state ledger.S
 // gate and ledger lock, so callers receive one consistent snapshot. Before the
 // first attempt the error, count, and next attempt are zero. RenewLoop consumes
 // this schedule; direct Reconcile callers remain responsible for retrying.
+//
+//lint:ignore ST1008 The first value is a stored diagnostic, not an accessor failure; preserve the status contract.
 func (m *Manager) Status() (error, int, time.Time, ledger.SubscriptionState) {
 	m.gate <- struct{}{}
 	defer func() { <-m.gate }()

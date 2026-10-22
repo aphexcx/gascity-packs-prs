@@ -1044,3 +1044,62 @@ func TestPendingOperationFinishesBeforeResourceValidation(t *testing.T) {
 		t.Fatal("resource validation prevented finishing the known operation")
 	}
 }
+
+func TestResumedReactivationReportsSuspensionReason(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+		s.OperationDelay = time.Hour
+	})
+	_, _ = f.manager.Reconcile(context.Background())
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewTextHandler(&logs, nil))
+	_, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") {
+		t.Fatalf("resumed suspension error=%v log=%s", err, logs.String())
+	}
+}
+
+func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, ":reactivate") {
+			return jsonResponse(503, `{"error":{"code":503,"message":"unavailable"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	if _, err := f.manager.TokenReloaded(context.Background()); err == nil {
+		t.Fatal("expected transient reactivation failure")
+	}
+	f.clock.advance(operationTimeout)
+	f.hook = nil
+	if got := f.reconcile(); got.State != "ACTIVE" {
+		t.Fatalf("did not retry after reload: %+v", got)
+	}
+}
+
+func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
+	f := setup(t)
+	var wg sync.WaitGroup
+	for range 12 {
+		wg.Go(func() {
+			if _, err := f.manager.Reconcile(context.Background()); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Go(func() {
+			last, failures, next, state := f.manager.Status()
+			if last != nil || failures != 0 || (state.Name != "" && next.IsZero()) {
+				t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+			}
+		})
+	}
+	wg.Wait()
+}
