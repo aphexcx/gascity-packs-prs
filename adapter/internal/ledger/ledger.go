@@ -121,7 +121,7 @@ type TransportDedup struct {
 
 type transportJSON struct {
 	IDs  []string `json:"ids"`
-	Next int      `json:"next"`
+	Next *int     `json:"next"`
 }
 
 func (d *TransportDedup) Seen(id string) bool {
@@ -156,7 +156,7 @@ func (d TransportDedup) MarshalJSON() ([]byte, error) {
 	if ids == nil {
 		ids = []string{}
 	}
-	return json.Marshal(transportJSON{IDs: ids, Next: d.next})
+	return json.Marshal(transportJSON{IDs: ids, Next: &d.next})
 }
 
 func (d *TransportDedup) UnmarshalJSON(data []byte) error {
@@ -164,7 +164,10 @@ func (d *TransportDedup) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &state); err != nil {
 		return err
 	}
-	if len(state.IDs) > transportLimit || state.Next < 0 || state.Next >= transportLimit || (len(state.IDs) < transportLimit && state.Next != 0) {
+	if state.IDs == nil || state.Next == nil {
+		return errors.New("transport ring is missing ids or next")
+	}
+	if len(state.IDs) > transportLimit || *state.Next < 0 || *state.Next >= transportLimit || (len(state.IDs) < transportLimit && *state.Next != 0) {
 		return errors.New("invalid transport ring size or position")
 	}
 	restored := TransportDedup{ids: []string{}, seen: make(map[string]struct{})}
@@ -173,7 +176,7 @@ func (d *TransportDedup) UnmarshalJSON(data []byte) error {
 			return errors.New("empty or duplicate transport id")
 		}
 	}
-	restored.next = state.Next
+	restored.next = *state.Next
 	*d = restored
 	return nil
 }
@@ -207,6 +210,11 @@ func Load(path string, established bool) (*Ledger, error) {
 	if err == nil {
 		err = l.validate()
 	}
+	// UnmarshalJSON always initializes seen, even for an empty ring. A nil
+	// index here means the transport field was absent, not an empty window.
+	if err == nil && l.Transport.seen == nil {
+		err = errors.New("ledger is missing transport state")
+	}
 	if err != nil {
 		preserved, copyErr := preserve(path, data)
 		return nil, &RecoveryError{Path: path, PreservedPath: preserved, Err: errors.Join(err, copyErr)}
@@ -221,7 +229,19 @@ func (l *Ledger) validate() error {
 	if l.Spaces == nil || l.Messages == nil || l.Changes == nil || l.Sends == nil || l.Unresolved == nil || l.Counters == nil {
 		return errors.New("ledger is missing required state maps")
 	}
+	if hasNullRecord(l.Spaces) || hasNullRecord(l.Messages) || hasNullRecord(l.Changes) || hasNullRecord(l.Sends) || hasNullRecord(l.Unresolved) {
+		return errors.New("ledger contains a null state record")
+	}
 	return nil
+}
+
+func hasNullRecord[T any](records map[string]*T) bool {
+	for _, record := range records {
+		if record == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Save writes and syncs path.tmp before atomically replacing path, then syncs

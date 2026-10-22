@@ -251,6 +251,10 @@ func TestTransportRingEvictionAndReload(t *testing.T) {
 
 func TestLoadInvalidTransportRequiresRecovery(t *testing.T) {
 	for _, transport := range []string{
+		`null`,
+		`{}`,
+		`{"ids":[],"next":null}`,
+		`{"ids":[]}`,
 		`{"ids":["pubsub:one"],"next":1}`,
 		`{"ids":["pubsub:one"],"next":-1}`,
 		`{"ids":["pubsub:one","pubsub:one"],"next":0}`,
@@ -274,6 +278,56 @@ func TestLoadInvalidTransportRequiresRecovery(t *testing.T) {
 			writeFile(t, path, data)
 			if got, err := ledger.Load(path, true); got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
 				t.Fatalf("invalid transport loaded: %v, %v", got, err)
+			}
+		})
+	}
+}
+
+func TestLoadMissingTransportRequiresRecovery(t *testing.T) {
+	data, err := json.Marshal(ledger.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	delete(raw, "transport")
+	data, err = json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "state.json")
+	writeFile(t, path, data)
+	if got, err := ledger.Load(path, true); got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
+		t.Fatalf("missing transport loaded: %v, %v", got, err)
+	}
+}
+
+func TestLoadNullRecordsRequiresRecovery(t *testing.T) {
+	for _, field := range []string{"spaces", "messages", "changes", "sends", "unresolved"} {
+		t.Run(field, func(t *testing.T) {
+			l := ledger.New()
+			switch field {
+			case "spaces":
+				l.Spaces["spaces/example"] = nil
+			case "messages":
+				l.Messages["spaces/example/messages/one"] = nil
+			case "changes":
+				l.Changes["change-1"] = nil
+			case "sends":
+				l.Sends["send-1"] = nil
+			case "unresolved":
+				l.Unresolved["change-1"] = nil
+			}
+			data, err := json.Marshal(l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(t.TempDir(), "state.json")
+			writeFile(t, path, data)
+			if got, err := ledger.Load(path, true); got != nil || !errors.Is(err, ledger.ErrRecoveryRequired) {
+				t.Fatalf("null record loaded: %v, %v", got, err)
 			}
 		})
 	}
