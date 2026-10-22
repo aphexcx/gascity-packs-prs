@@ -909,6 +909,41 @@ func TestWatchRetriesTransientValidation(t *testing.T) {
 	}
 }
 
+func TestWatchCancellationDuringValidationDoesNotWarn(t *testing.T) {
+	started := make(chan struct{})
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	writeJSON(t, tokenFile+".new", savedToken("replacement"))
+	if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Watch(ctx, func() { t.Error("canceled validation installed a token") })
+	}()
+	defer func() { cancel(); waitSignal(t, done) }()
+	waitSignal(t, started)
+	cancel()
+	waitSignal(t, done)
+	if logs.Len() != 0 {
+		t.Fatalf("shutdown logged credential rejection: %s", logs.String())
+	}
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "original" || s.State() != Ready {
+		t.Fatalf("shutdown changed credential: token=%+v err=%v state=%v", tok, err, s.State())
+	}
+}
+
 func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 	for _, revoked := range []bool{false, true} {
 		t.Run(fmt.Sprintf("revoked=%v", revoked), func(t *testing.T) {

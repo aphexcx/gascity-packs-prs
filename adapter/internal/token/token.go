@@ -291,10 +291,14 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 				s.retryDelay = min(2*s.retryDelay, time.Minute)
 			}
 			s.retryAt = s.now().Add(s.retryDelay)
-			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err), "retry_after", s.retryDelay)
+			if ctx.Err() == nil {
+				slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err), "retry_after", s.retryDelay)
+			}
 		} else {
 			s.retryAt, s.retryDelay = time.Time{}, 0
-			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
+			if ctx.Err() == nil {
+				slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
+			}
 		}
 		return
 	}
