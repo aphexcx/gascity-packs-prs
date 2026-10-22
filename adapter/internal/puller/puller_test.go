@@ -276,7 +276,7 @@ func TestRunQuarantine(t *testing.T) {
 	for _, malformed := range []bool{false, true} {
 		t.Run(fmt.Sprint(malformed), func(t *testing.T) {
 			f := newFixture(t)
-			mediaDir := filepath.Join(t.TempDir(), "inbound")
+			mediaDir := filepath.Join(quarantineTempDir(t), "inbound")
 			var handled, recorded atomic.Int32
 			f.run(t, func(_ context.Context, ev *Event) (Outcome, error) {
 				handled.Add(1)
@@ -318,7 +318,7 @@ func TestRunQuarantineRecordFailureRedelivers(t *testing.T) {
 	f := newFixture(t)
 	var records atomic.Int32
 	f.run(t, func(context.Context, *Event) (Outcome, error) { return Quarantine, nil }, RunOptions{
-		MediaDir: filepath.Join(t.TempDir(), "inbound"),
+		MediaDir: filepath.Join(quarantineTempDir(t), "inbound"),
 		RecordQuarantine: func(context.Context, *Event, string, error) error {
 			if records.Add(1) == 1 {
 				return errors.New("ledger unavailable")
@@ -381,7 +381,7 @@ func TestRunExtendsLeaseUntilWholeBatchHandled(t *testing.T) {
 
 func TestRunQuarantineWriteFailureRedelivers(t *testing.T) {
 	f := newFixture(t)
-	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	parent := filepath.Join(quarantineTempDir(t), "not-a-directory")
 	if err := os.WriteFile(parent, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func TestRunCancellationReleasesHandler(t *testing.T) {
 }
 
 func TestQuarantineRejectsSymlinkDirectory(t *testing.T) {
-	parent, target := t.TempDir(), t.TempDir()
+	parent, target := quarantineTempDir(t), quarantineTempDir(t)
 	if err := os.Symlink(target, filepath.Join(parent, "quarantine")); err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +438,7 @@ func TestQuarantineRejectsSymlinkDirectory(t *testing.T) {
 }
 
 func TestQuarantineCreatesParentsAndEscapesID(t *testing.T) {
-	parent := filepath.Join(t.TempDir(), "nested", "media")
+	parent := filepath.Join(quarantineTempDir(t), "nested", "media")
 	ev := &Event{PubSubID: "../outside", Raw: []byte("preserve exact bytes")}
 	path, err := quarantine(filepath.Join(parent, "inbound"), ev)
 	if err != nil {
@@ -450,6 +450,33 @@ func TestQuarantineCreatesParentsAndEscapesID(t *testing.T) {
 	data, err := os.ReadFile(path)
 	if err != nil || string(data) != string(ev.Raw) {
 		t.Fatalf("payload: %q, %v", data, err)
+	}
+}
+
+func TestQuarantineRejectsSymlinkAncestorOnFirstAndLaterWrites(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("quarantine_exists=%t", existing), func(t *testing.T) {
+			parent, outside := quarantineTempDir(t), quarantineTempDir(t)
+			if existing {
+				if err := os.Mkdir(filepath.Join(outside, "quarantine"), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Refuse a symlinked media ancestor, whether quarantine exists yet
+			// or not. Neither case may write raw payloads into the target tree.
+			if err := os.Symlink(outside, filepath.Join(parent, "media")); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				_, err := quarantine(filepath.Join(parent, "media", "inbound"), &Event{PubSubID: "one", Raw: []byte("private")})
+				if err == nil {
+					t.Errorf("write %d accepted symlinked media ancestor", i+1)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(outside, "quarantine", "one.json")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("raw payload escaped: %v", err)
+			}
+		})
 	}
 }
 
@@ -636,5 +663,44 @@ func TestRunCancellationInterruptsBackoff(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("cancellation did not interrupt backoff")
+	}
+}
+
+// macOS exposes the test temp directory through /var, a system symlink. Resolve
+// that trusted fixture base before testing rejection of configured symlinks.
+func quarantineTempDir(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) {
+	parent, outside := quarantineTempDir(t), quarantineTempDir(t)
+	media := filepath.Join(parent, "media")
+	root, err := openDurableDirectory(filepath.Join(media, "quarantine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	moved := filepath.Join(parent, "original-media")
+	if err := os.Rename(media, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, media); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeQuarantine(root, "one.json", []byte("private")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(moved, "quarantine", "one.json"))
+	if err != nil || string(data) != "private" {
+		t.Fatalf("verified tree: %q, %v", data, err)
+	}
+	files, err := os.ReadDir(outside)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("write escaped verified tree: %v, %v", files, err)
 	}
 }

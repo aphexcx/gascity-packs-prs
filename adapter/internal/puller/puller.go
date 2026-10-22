@@ -3,6 +3,7 @@ package puller
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -339,65 +340,110 @@ func quarantine(mediaDir string, ev *Event) (string, error) {
 	if ev.PubSubID == "" {
 		return "", errors.New("quarantine requires Pub/Sub message ID")
 	}
-	dir := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
-	if err := durableDirectory(dir); err != nil {
-		return "", err
-	}
-	// Escape the untrusted transport ID into one filename, including any slash.
-	path := filepath.Join(dir, url.PathEscape(ev.PubSubID)+".json")
-	f, err := os.CreateTemp(dir, ".event-*.tmp")
+	parent, err := openDurableDirectory(filepath.Dir(filepath.Clean(mediaDir)))
 	if err != nil {
 		return "", err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if _, err := f.Write(ev.Raw); err != nil {
+	defer parent.Close()
+	root, err := openDurableChild(parent, "quarantine")
+	if err != nil {
 		return "", err
 	}
-	if err := f.Sync(); err != nil {
+	defer root.Close()
+	// Escape the untrusted transport ID into one filename, including any slash.
+	name := url.PathEscape(ev.PubSubID) + ".json"
+	if err := writeQuarantine(root, name, ev.Raw); err != nil {
 		return "", err
 	}
-	if err := f.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return "", err
-	}
-	if err := syncDirectory(dir); err != nil {
-		return "", err
-	}
-	return path, nil
+	return filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine", name), nil
 }
 
-// Create ancestors one at a time, persisting each directory's parent entry
-// before creating its children. Also sync the parent of an existing directory:
-// it may have been created by a previous attempt whose sync failed.
-func durableDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		parent := filepath.Dir(path)
-		if parent == path {
-			return err
-		}
-		if err := durableDirectory(parent); err != nil {
-			return err
-		}
-		if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		info, err = os.Lstat(path)
-	}
+func writeQuarantine(root *os.Root, name string, raw []byte) error {
+	temp := ".event-" + cryptorand.Text() + ".tmp"
+	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() {
-		return fmt.Errorf("quarantine path is not a directory (symlinks are refused): %s", path)
+	defer root.Remove(temp)
+	defer f.Close()
+	if _, err := f.Write(raw); err != nil {
+		return err
 	}
-	return syncDirectory(filepath.Dir(path))
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := root.Rename(temp, name); err != nil {
+		return err
+	}
+	return syncDirectory(root)
 }
 
-func syncDirectory(path string) error {
-	d, err := os.Open(path)
+// Walk from the filesystem root using directory handles, refusing symlinks in
+// every component (including existing ancestors). Each opened child must match
+// its lstat identity, so a concurrent replacement cannot redirect the walk.
+func openDurableDirectory(path string) (*os.Root, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	volume := filepath.VolumeName(abs) + string(filepath.Separator)
+	root, err := os.OpenRoot(volume)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range strings.Split(strings.TrimPrefix(abs, volume), string(filepath.Separator)) {
+		if name == "" {
+			continue
+		}
+		child, err := openDurableChild(root, name)
+		root.Close()
+		if err != nil {
+			return nil, err
+		}
+		root = child
+	}
+	return root, nil
+}
+
+// Persist each parent entry, including existing directories that may have been
+// created by an earlier attempt whose sync failed, before creating children.
+func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
+	info, err := parent.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return nil, err
+		}
+		info, err = parent.Lstat(name)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("quarantine path is not a directory (symlinks are refused): %s", name)
+	}
+	child, err := parent.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := child.Stat(".")
+	if err == nil && !os.SameFile(info, opened) {
+		err = fmt.Errorf("quarantine directory changed while opening: %s", name)
+	}
+	if err == nil {
+		err = syncDirectory(parent)
+	}
+	if err != nil {
+		child.Close()
+		return nil, err
+	}
+	return child, nil
+}
+
+func syncDirectory(root *os.Root) error {
+	d, err := root.Open(".")
 	if err != nil {
 		return err
 	}
