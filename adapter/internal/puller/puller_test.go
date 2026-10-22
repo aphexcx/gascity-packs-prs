@@ -334,6 +334,9 @@ func TestRunQuarantineRecordFailureRedelivers(t *testing.T) {
 }
 
 func TestRunExtendsLeaseUntilWholeBatchHandled(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Pub/Sub's first lease renewal has a fixed five-second delay")
+	}
 	f := newFixture(t)
 	f.sub.ReceiveSettings.MinDurationPerAckExtension = 10 * time.Second
 	f.sub.ReceiveSettings.MaxDurationPerAckExtension = 10 * time.Second
