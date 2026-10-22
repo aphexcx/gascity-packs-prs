@@ -382,3 +382,19 @@ func TestOutboundRequiresSessionBindingAndAdapter(t *testing.T) {
 		})
 	}
 }
+
+func TestCallbackURLIsConcatenatedVerbatim(t *testing.T) {
+	s := New(t)
+	s.Bindings[conversation()] = "session"
+	paths := make(chan string, 1)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths <- r.URL.Path
+		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), Delivered: true})
+	}))
+	defer callback.Close()
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter/"}, true, 200)
+	call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
+	if path := <-paths; path != "/adapter//publish" {
+		t.Fatalf("callback path %q, want verbatim /adapter//publish", path)
+	}
+}

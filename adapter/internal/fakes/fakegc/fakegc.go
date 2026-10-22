@@ -279,7 +279,7 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 		return
 	}
 	body, _ := json.Marshal(callback)
-	call, err := http.NewRequestWithContext(r.Context(), http.MethodPost, strings.TrimRight(registration.CallbackURL, "/")+"/publish", bytes.NewReader(body))
+	call, err := http.NewRequestWithContext(r.Context(), http.MethodPost, registration.CallbackURL+"/publish", bytes.NewReader(body))
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
