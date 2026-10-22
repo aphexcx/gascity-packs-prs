@@ -254,6 +254,42 @@ func TestAttachments(t *testing.T) {
 	}
 }
 
+func TestNormalizeContentForHistory(t *testing.T) {
+	f := setup(t)
+	m := message()
+	m.Text = "@Reader"
+	m.Annotations = []*api.Annotation{{Type: "USER_MENTION", Length: 7, UserMention: &api.UserMentionMetadata{User: &api.User{DisplayName: "Example Reader"}}}}
+	m.Attachment = []*api.Attachment{
+		{Name: "drive", ContentName: "document", ContentType: "text/plain", DriveDataRef: &api.DriveDataRef{DriveFileId: "drive-id"}},
+		{Name: "upload", ContentName: "report.txt", ContentType: "text/plain", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/report"}},
+		{Name: "missing", ContentName: "missing.txt", ContentType: "text/plain"},
+	}
+	f.google.Configure(func(g *fakegoogle.Server) { g.Media["spaces/room/media/report"] = []byte("report") })
+	text, attachments := NormalizeContent(context.Background(), f.opts.Chat, f.opts.Config.Endpoints, m)
+	if len(attachments) != 3 {
+		t.Fatalf("%+v", attachments)
+	}
+	want := "Example Reader\n[attachment] document (text/plain) https://drive.google.com/file/d/drive-id/view\n[attachment] report.txt (text/plain) " + attachments[1].URL + "\n[attachment] missing.txt unavailable: attachment data unavailable"
+	if text != want {
+		t.Fatalf("got %q want %q", text, want)
+	}
+	u, err := url.Parse(attachments[1].URL)
+	if err != nil || u.Scheme != "file" {
+		t.Fatalf("%+v %v", u, err)
+	}
+	data, err := os.ReadFile(u.Path)
+	if err != nil || string(data) != "report" {
+		t.Fatalf("%q %v", data, err)
+	}
+	// History is an independent API boundary; malformed names cannot index past
+	// the message-name components when choosing the media directory.
+	m.Name = "malformed"
+	text, _ = NormalizeContent(context.Background(), f.opts.Chat, f.opts.Config.Endpoints, m)
+	if !strings.Contains(text, "report.txt unavailable: invalid message name") {
+		t.Fatal(text)
+	}
+}
+
 func TestDeliveryOutcomes(t *testing.T) {
 	for _, status := range []string{"delivered", "no_route", "failed", "partial", "pending"} {
 		t.Run(status, func(t *testing.T) {

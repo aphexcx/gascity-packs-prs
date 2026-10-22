@@ -25,6 +25,7 @@ import (
 	"gchat-adapter/internal/gcclient"
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
 )
@@ -774,6 +775,63 @@ func TestReadReactStatusAndState(t *testing.T) {
 				t.Fatal("restore lost sends")
 			}
 		}
+	}
+}
+
+func TestReadNormalizesMentionsAndMediaLikeInbound(t *testing.T) {
+	f := setup(t)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.cfg.Endpoints.MediaDir = filepath.Join(dir, "media")
+	f.s.SetConfig(*f.cfg)
+	f.options.Chat, err = chat.New(context.Background(), http.DefaultClient, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.options.Chat.SetIdentityUserID(fakegoogle.UserID); err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(f.options.Chat, f.options.GC)
+	m := &api.Message{Name: "spaces/room/messages/history", Text: "Hi @Reader", CreateTime: "2026-10-22T10:00:00Z",
+		Space: &api.Space{Name: "spaces/room", SpaceType: "SPACE"}, Sender: &api.User{Name: "users/456", DisplayName: "Reader", Type: "HUMAN"}, Thread: &api.Thread{Name: "spaces/room/threads/topic"},
+		Annotations: []*api.Annotation{{Type: "USER_MENTION", StartIndex: 3, Length: 7, UserMention: &api.UserMentionMetadata{User: &api.User{Name: "users/456", DisplayName: "Example Reader"}}}},
+		Attachment: []*api.Attachment{
+			{Name: "drive", ContentName: "document", ContentType: "text/plain", DriveDataRef: &api.DriveDataRef{DriveFileId: "drive-id"}},
+			{Name: "upload", ContentName: "report.txt", ContentType: "text/plain", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/report"}},
+			{Name: "missing", ContentName: "missing.txt", ContentType: "text/plain", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/missing"}},
+		}}
+	f.g.Configure(func(g *fakegoogle.Server) {
+		g.Messages[m.Name] = m
+		g.Media["spaces/room/media/report"] = []byte("report")
+	})
+	// A message not yet observed on the stream also uses the shared normalizer.
+	_, fresh, _ := f.call(t, "/read?space=spaces/room", nil)
+	for _, fragment := range []string{"Hi Example Reader", "https://drive.google.com/file/d/drive-id/view", "(text/plain) file://", "missing.txt unavailable: file not found"} {
+		if !bytes.Contains(fresh, []byte(fragment)) {
+			t.Fatalf("unseen history missing %q: %s", fragment, fresh)
+		}
+	}
+	p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu, LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Handle(context.Background(), &puller.Event{PubSubID: "history", Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: m}}}); err != nil {
+		t.Fatal(err)
+	}
+	want := f.gc.Inbound()[0]
+	code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+	got := decode[[]wire.InboundMessage](t, raw)
+	if code != 200 || len(got) != 1 {
+		t.Fatalf("%d %s", code, raw)
+	}
+	// The persisted inbound text also keeps the already-downloaded local path.
+	if got[0].Text != want.Text || got[0].Actor != want.Actor || got[0].ReplyToMessageID != want.ReplyToMessageID {
+		t.Fatalf("history differs from turn:\n got %+v\nwant %+v", got[0], want)
+	}
+	if !strings.Contains(got[0].Text, "Hi Example Reader") || !strings.Contains(got[0].Text, "https://drive.google.com/file/d/drive-id/view") || !strings.Contains(got[0].Text, "(text/plain) file://") || !strings.Contains(got[0].Text, "missing.txt unavailable: file not found") {
+		t.Fatalf("incomplete normalized content: %s", got[0].Text)
 	}
 }
 

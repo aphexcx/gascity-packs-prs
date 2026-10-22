@@ -479,11 +479,11 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	} else if !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
 		local = "wake_policy"
 	}
+	if local == "" && c.Kind != "message.deleted" {
+		w.Text, w.Attachments = NormalizeContent(ctx, p.opts.Chat, p.opts.Config.Endpoints, m)
+	}
 	if c.Kind == "message.updated" && id != m.Name {
 		w.Text = "edited: " + w.Text
-	}
-	if local == "" && c.Kind != "message.deleted" {
-		p.attachments(ctx, m, &w)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -860,7 +860,16 @@ func renderMentions(m *api.Message) string {
 	return text.String()
 }
 
-func (p *Processor) attachments(ctx context.Context, m *api.Message, w *wire.InboundMessage) {
+// NormalizeContent is shared by inbound turns and on-demand history. Uploaded
+// files use the same bounded, symlink-safe download path; failures remain visible
+// in the text instead of dropping the attachment or the message.
+func NormalizeContent(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message) (string, []wire.Attachment) {
+	w := wire.InboundMessage{Text: renderMentions(m)}
+	appendAttachments(ctx, client, endpoints, m, &w)
+	return w.Text, w.Attachments
+}
+
+func appendAttachments(ctx context.Context, client *chat.Client, endpoints config.Endpoints, m *api.Message, w *wire.InboundMessage) {
 	used := map[string]bool{}
 	for i, a := range m.Attachment {
 		if a == nil {
@@ -886,7 +895,11 @@ func (p *Processor) attachments(ctx context.Context, m *api.Message, w *wire.Inb
 			}
 			used[filename] = true
 			parts := strings.Split(m.Name, "/")
-			dir, err := mediaDirectory(p.opts.Config.Endpoints.MediaDir, parts[1], parts[3])
+			if len(parts) != 4 || parts[0] != "spaces" || parts[2] != "messages" {
+				reason = "invalid message name"
+				break
+			}
+			dir, err := mediaDirectory(endpoints.MediaDir, parts[1], parts[3])
 			if err != nil {
 				reason = "media directory unavailable"
 				break
@@ -897,7 +910,7 @@ func (p *Processor) attachments(ctx context.Context, m *api.Message, w *wire.Inb
 			if _, err := os.Lstat(dest); !errors.Is(err, os.ErrNotExist) {
 				dest = filepath.Join(dir, rand.Text()+"-"+filename)
 			}
-			_, err = p.opts.Chat.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, p.opts.Config.Endpoints.MediaMaxBytes)
+			_, err = client.DownloadMedia(ctx, a.AttachmentDataRef.ResourceName, dest, endpoints.MediaMaxBytes)
 			if err != nil {
 				reason = mediaReason(err)
 			} else {

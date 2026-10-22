@@ -25,6 +25,7 @@ import (
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
 	"gchat-adapter/internal/markdown"
 	"gchat-adapter/internal/wire"
@@ -1022,15 +1023,44 @@ func (s *Server) read(w http.ResponseWriter, r *http.Request) {
 		if m.Thread != nil {
 			v.ReplyToMessageID = m.Thread.Name
 		}
-		for _, a := range m.Attachment {
-			if a != nil {
-				v.Attachments = append(v.Attachments, wire.Attachment{ProviderID: a.Name, URL: a.DownloadUri, MIMEType: a.ContentType})
-				v.Text += "\n" + a.ContentName + " (" + a.ContentType + "): " + a.DownloadUri
-			}
+		if saved, ok := historyContent(l, m); ok {
+			v.Text, v.Attachments = saved.Text, saved.Attachments
+		} else {
+			v.Text, v.Attachments = inbound.NormalizeContent(r.Context(), c, cfg.Endpoints, m)
 		}
 		result = append(result, v)
 	}
 	respond(w, 200, result)
+}
+
+// Reuse the turn's exact normalized content for the same revision, including
+// its local media paths. Locally skipped messages still need normalization.
+func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool) {
+	var saved wire.InboundMessage
+	revision := m.LastUpdateTime
+	if revision == "" {
+		revision = m.CreateTime
+	}
+	at, err := time.Parse(time.RFC3339Nano, revision)
+	state := l.Messages[m.Name]
+	if err != nil || state == nil || state.Deleted || !state.Revision.Equal(at) {
+		return saved, false
+	}
+	ids := []string{m.Name + "#updated#" + m.LastUpdateTime, m.Name}
+	for _, id := range ids {
+		change := l.Changes[id]
+		if change == nil {
+			continue
+		}
+		switch change.Reason {
+		case "local", "own", "wake_policy", "space unavailable":
+			continue
+		}
+		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
+			return saved, true
+		}
+	}
+	return saved, false
 }
 
 func (s *Server) spaces(w http.ResponseWriter, r *http.Request) {
