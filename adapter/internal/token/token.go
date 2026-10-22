@@ -367,10 +367,11 @@ func transient(err error) bool {
 		}
 		var address *net.AddrError
 		var verification *tls.CertificateVerificationError
+		var record tls.RecordHeaderError
 		var authority x509.UnknownAuthorityError
 		var hostname x509.HostnameError
 		var certificate x509.CertificateInvalidError
-		if errors.As(err, &address) || errors.As(err, &verification) ||
+		if errors.As(err, &address) || errors.As(err, &verification) || errors.As(err, &record) ||
 			errors.As(err, &authority) || errors.As(err, &hostname) || errors.As(err, &certificate) {
 			return false
 		}
@@ -422,6 +423,10 @@ func sanitizedCause(err error) string {
 	}
 	var urlError *url.Error
 	if errors.As(err, &urlError) {
+		var record tls.RecordHeaderError
+		if errors.As(err, &record) {
+			return "plain HTTP server behind an https URL"
+		}
 		return "invalid endpoint URL"
 	}
 	return "invalid credential or configuration"

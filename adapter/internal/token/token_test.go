@@ -748,6 +748,18 @@ func TestRunAuthExchangeBodyDeadline(t *testing.T) {
 	}
 }
 
+func TestRunAuthPlainHTTPBehindHTTPS(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("TLS request unexpectedly reached the HTTP handler")
+	})
+	ep.OAuthTokenURL = strings.Replace(ep.OAuthTokenURL, "http://", "https://", 1)
+	err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard,
+		func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+	if err == nil || !strings.Contains(err.Error(), "plain HTTP server behind an https URL") {
+		t.Fatalf("exchange error = %v", err)
+	}
+}
+
 func TestWatchRetriesTransientValidation(t *testing.T) {
 	var calls atomic.Int32
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -1006,6 +1018,7 @@ func TestTransientClassification(t *testing.T) {
 		{"permanent URL", &url.Error{Op: "Get", URL: "unsupported://example", Err: errors.New("unsupported protocol scheme")}, false},
 		{"invalid port", &url.Error{Op: "Get", URL: "http://example:99999", Err: &net.OpError{Op: "dial", Err: &net.AddrError{Err: "invalid port", Addr: "99999"}}}, false},
 		{"invalid TLS certificate", &url.Error{Op: "Get", URL: "https://example", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
+		{"plain HTTP behind HTTPS", &url.Error{Op: "Post", URL: "https://example", Err: tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}}, false},
 		{"missing file", &os.PathError{Op: "open", Path: "token.json", Err: os.ErrNotExist}, false},
 		{"malformed JSON", &json.SyntaxError{}, false},
 		{"empty token file", emptyTokenErr, false},
