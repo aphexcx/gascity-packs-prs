@@ -292,7 +292,10 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 			return localError{err}
 		}
 		var err error
-		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(&uploadReader{reader: file, remaining: limit}).Context(ctx).Do()
+		// Stream one multipart request, including for Chat's 200 MB maximum.
+		// SDK resumable chunks retry 429s internally without Retry-After and lose
+		// the HTTP error on deadline. Keep every retry under our policy instead.
+		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(&uploadReader{reader: file, remaining: limit}, googleapi.ChunkSize(0)).Context(ctx).Do()
 		return err
 	})
 	if err != nil {

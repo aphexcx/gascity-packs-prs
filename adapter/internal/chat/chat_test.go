@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -427,6 +428,76 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 			t.Errorf("oversized media accepted: %v", s.Media)
 		}
 	})
+}
+
+func TestLargeUploadQuotaPolicy(t *testing.T) {
+	for _, exhausted := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exhausted=%v", exhausted), func(t *testing.T) {
+			_, s, dir := fixture(t)
+			data := bytes.Repeat([]byte("x"), 17<<20)
+			path := filepath.Join(dir, "large.bin")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var clock *testClock
+			var first time.Time
+			attempts := 0
+			h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+				// Inject at the transfer request, not at a resumable session's
+				// metadata request. This catches the SDK's hidden chunk retries.
+				if r.URL.Query().Get("uploadType") == "resumable" {
+					return http.DefaultTransport.RoundTrip(r)
+				}
+				attempts++
+				if attempts == 1 {
+					first = clock.Now()
+				} else if clock.Now().Sub(first) < 2*time.Second {
+					t.Error("transfer retried before Retry-After")
+				}
+				if exhausted || attempts == 1 {
+					// RoundTrippers own and close each request body, even on errors.
+					r.Body.Close()
+					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"2"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}
+			c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			clock = useTestClock(c)
+			c.retryBound = 3 * time.Second
+			// Also bound old SDK retries in the regression's failing version.
+			ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+			if !exhausted {
+				cancel()
+				ctx = context.Background()
+			}
+			defer cancel()
+			ref, err := c.UploadAttachment(ctx, "spaces/room", path)
+			if exhausted {
+				kind, hint := Classify(err)
+				if kind != "rate_limited" || hint != 2*time.Second || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("quota deadline: kind=%s hint=%v err=%v", kind, hint, err)
+				}
+				if attempts != 1 {
+					t.Fatalf("unfit hint retried %d times", attempts)
+				}
+				return
+			}
+			if err != nil || ref == nil {
+				t.Fatalf("upload: %v %v", ref, err)
+			}
+			if attempts != 2 {
+				t.Fatalf("transfer attempts=%d, want 2 single requests", attempts)
+			}
+			s.Configure(func(s *fakegoogle.Server) {
+				if !bytes.Equal(s.Media[ref.ResourceName], data) {
+					t.Error("uploaded bytes differ")
+				}
+			})
+		})
+	}
 }
 
 func TestClassify(t *testing.T) {
