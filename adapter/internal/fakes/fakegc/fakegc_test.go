@@ -138,7 +138,7 @@ func TestInboundDedupIgnoresDedupKey(t *testing.T) {
 	s.Configure(func(s *Server) { s.NextDelivery = "failed" })
 	m.Message.DedupKey = "different"
 	duplicate := call(t, s, "POST", "inbound", m, true, 200)
-	if duplicate["delivery"].(map[string]any)["status"] != "delivered" {
+	if duplicate["delivery"].(map[string]any)["status"] != "no_route" {
 		t.Fatal("duplicate redelivered")
 	}
 	m.Message.ProviderMessageID = "second"
@@ -174,7 +174,7 @@ func TestConcludedFailureDoesNotOverwriteSuccessfulRetry(t *testing.T) {
 	}
 	s.Configure(func(s *Server) { s.NextDelivery = "partial" })
 	duplicate := call(t, s, "POST", "inbound", m, true, 200)
-	if duplicate["delivery"].(map[string]any)["status"] != "delivered" {
+	if duplicate["delivery"].(map[string]any)["status"] != "no_route" {
 		t.Fatalf("stale receipt overwrote successful retry: %v", duplicate)
 	}
 	if call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)["state"] != "concluded" {
@@ -455,7 +455,21 @@ func TestInboundRetriesOnlyOutcomesWithoutAWholeDelivery(t *testing.T) {
 			first := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
 			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
 			retry := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
-			if status == "pending" || status == "delivered" {
+			if status == "delivered" {
+				if retry["receipt_id"] == first["receipt_id"] || retry["status"] != "no_route" {
+					t.Fatalf("suppression needs a new no_route receipt: %v", retry)
+				}
+				id := retry["receipt_id"].(string)
+				poll := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)
+				if poll["state"] != "concluded" || poll["delivery"].(map[string]any)["status"] != "no_route" {
+					t.Fatalf("suppression not concluded: %v", poll)
+				}
+				s.EvictReceipt(id)
+				again := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+				if again["status"] != "no_route" || again["receipt_id"] == id {
+					t.Fatalf("suppression changed delivery evidence: %v", again)
+				}
+			} else if status == "pending" {
 				if retry["receipt_id"] != first["receipt_id"] || retry["status"] != status {
 					t.Fatalf("held delivery was retried: %v", retry)
 				}

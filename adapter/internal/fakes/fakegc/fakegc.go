@@ -220,6 +220,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}{city, message.Conversation, message.ProviderMessageID})
 		key := string(keyBytes)
 		if previous, ok := s.dedup[key]; ok && (previous.Delivery.Status == "pending" || previous.Delivery.Status == "delivered") {
+			if previous.Delivery.Status == "delivered" {
+				// Suppression has its own receipt, without replacing the evidence
+				// that a whole copy of this message was already delivered.
+				s.sequence++
+				id := fmt.Sprintf("receipt-%d", s.sequence)
+				previous.Delivery.Status = "no_route"
+				previous.Delivery.ReceiptID = id
+				receipt := wire.ReceiptResponse{State: "concluded"}
+				receipt.Delivery.Status = "no_route"
+				s.Receipts[id] = receipt
+				s.concludedAt[id] = s.now()
+			}
 			respond(w, 200, previous)
 			return
 		}
