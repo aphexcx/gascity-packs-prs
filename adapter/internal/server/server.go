@@ -449,6 +449,8 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 			if record && !old.Recorded && (old.Receipt == nil || !old.Receipt.Delivered) {
 				// Only an explicit command retry re-arms a rejected intent.
 				old.RecordPending = true
+				old.Receipt = nil
+				old.RecordingReason = ""
 			}
 			return nil
 		}
@@ -746,12 +748,13 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			return result, err
 		}
 		send = l.Sends[p.IdempotencyKey]
+		result = commandOutcome(send)
 		if send.Request != nil {
 			p = *send.Request
 		}
 	}
 	if send.NotRecordable || p.SessionID == "" {
-		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason))
+		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result)
 	}
 	if send.Upload != nil && !result.Delivered {
 		r, e := s.publish(ctx, p, send.Upload)
@@ -785,7 +788,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 	}
 	if gcclient.IsNoBinding(err) {
-		return s.direct(ctx, p, send.Upload, detail(err))
+		return s.direct(ctx, p, send.Upload, detail(err), result)
 	}
 	if err != nil {
 		s.ObserveGCError(err)
@@ -854,8 +857,8 @@ func detail(err error) string {
 	}
 	return err.Error()
 }
-func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string) (CommandResult, error) {
-	result := CommandResult{Key: p.IdempotencyKey, Reason: reason}
+func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string, result CommandResult) (CommandResult, error) {
+	result.Reason = reason
 	if err := s.update(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.NotRecordable = true
@@ -865,6 +868,9 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	}); err != nil {
 		result.Reason = err.Error()
 		return result, err
+	}
+	if result.Delivered {
+		return result, nil
 	}
 	r, err := s.publish(ctx, p, upload)
 	result.Delivered = r.Delivered
@@ -1117,9 +1123,12 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 		if change == nil {
 			continue
 		}
+		if id == m.Name && m.LastUpdateTime != "" && change.Kind != "message.updated" {
+			return saved, false
+		}
 		switch change.Reason {
 		case "local", "own", "wake_policy", "space unavailable":
-			continue
+			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
 			return saved, true

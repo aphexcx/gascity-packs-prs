@@ -1072,6 +1072,34 @@ func TestRecordingSuccessRemainsReportedWhenSaveFails(t *testing.T) {
 	}
 }
 
+func TestDurableDeliverySurvivesNoBindingSaveFailure(t *testing.T) {
+	f := setup(t)
+	first := f.send(t, wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "saved"})
+	if !first.Delivered {
+		t.Fatal(first)
+	}
+	// A crash left a delivery receipt but no determination of recordability.
+	f.s.opts.LedgerPath = filepath.Join(f.cfg.Endpoints.UploadRoot, "absent", "state.json")
+	_, raw, _ := f.call(t, "/commands/publish", command("saved"))
+	got := decode[CommandResult](t, raw)
+	if !got.Delivered || got.Recorded || got.MessageID != first.MessageID || f.count() != 1 {
+		t.Fatalf("lost saved delivery: %+v", got)
+	}
+}
+
+func TestHistoryDoesNotReuseAnOlderTurnForALocalRevision(t *testing.T) {
+	l := ledger.New()
+	m := &api.Message{Name: "spaces/room/messages/edited", CreateTime: "2026-10-22T10:00:00Z", LastUpdateTime: "2026-10-22T11:00:00Z", Text: "current"}
+	at, _ := time.Parse(time.RFC3339Nano, m.LastUpdateTime)
+	l.Messages[m.Name] = &ledger.MessageState{Revision: at}
+	original, _ := json.Marshal(wire.InboundMessage{ProviderMessageID: m.Name, Text: "old"})
+	l.Changes[m.Name] = &ledger.ChangeState{Kind: "message.created", Event: string(original)}
+	l.Changes[m.Name+"#updated#"+m.LastUpdateTime] = &ledger.ChangeState{Kind: "message.updated", Reason: "own"}
+	if got, ok := historyContent(l, m); ok {
+		t.Fatalf("used obsolete content: %+v", got)
+	}
+}
+
 func TestStatusLastEventAndReloadedDefaults(t *testing.T) {
 	f := setup(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
