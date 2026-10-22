@@ -398,3 +398,47 @@ func TestCallbackURLIsConcatenatedVerbatim(t *testing.T) {
 		t.Fatalf("callback path %q, want verbatim /adapter//publish", path)
 	}
 }
+
+func TestReceiptWireShape(t *testing.T) {
+	for _, status := range []string{"pending", "delivered", "failed", "partial", "no_route", "unknown"} {
+		t.Run(status, func(t *testing.T) {
+			s := New(t)
+			id := "unknown-id"
+			if status != "unknown" {
+				s.NextDelivery = status
+				result := call(t, s, "POST", "inbound", inbound(status), true, 200)
+				var ok bool
+				id, ok = result["delivery"].(map[string]any)["receipt_id"].(string)
+				if !ok || id == "" {
+					t.Fatalf("inbound %s missing receipt_id: %v", status, result)
+				}
+			}
+			poll := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)
+			if poll["receipt_id"] != id {
+				t.Errorf("poll omitted receipt_id: %v", poll)
+			}
+			if status == "pending" || status == "unknown" {
+				if _, present := poll["delivery"]; present || poll["state"] != status {
+					t.Fatalf("unconcluded receipt must omit delivery: %v", poll)
+				}
+			} else {
+				delivery, ok := poll["delivery"].(map[string]any)
+				if !ok || poll["state"] != "concluded" || delivery["status"] != status || delivery["receipt_id"] != id {
+					t.Fatalf("concluded receipt: %v", poll)
+				}
+			}
+		})
+	}
+}
+
+func TestSynchronousDeliveryReceiptExpires(t *testing.T) {
+	s := New(t)
+	m := inbound("delivered")
+	first := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+	s.Advance(time.Hour)
+	s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+	replay := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+	if replay["status"] != "pending" || replay["receipt_id"] == first["receipt_id"] {
+		t.Fatalf("expired synchronous delivery prevented replay: %v", replay)
+	}
+}

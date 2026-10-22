@@ -153,6 +153,19 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 
+// receiptResponse is the HTTP shape; the wire package's value-shaped fixture
+// type remains convenient for SetReceipt, but must not emit empty delivery data.
+type receiptResponse struct {
+	ReceiptID string           `json:"receipt_id"`
+	State     string           `json:"state"`
+	Delivery  *receiptDelivery `json:"delivery,omitempty"`
+}
+
+type receiptDelivery struct {
+	Status    string `json:"status"`
+	ReceiptID string `json:"receipt_id"`
+}
+
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 5 || parts[0] != "v0" || parts[1] != "city" || parts[3] != "extmsg" {
@@ -214,12 +227,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		response := wire.InboundResponse{}
 		response.Delivery.Status = status
+		s.sequence++
+		id := fmt.Sprintf("receipt-%d", s.sequence)
+		response.Delivery.ReceiptID = id
+		s.receiptKeys[id] = key
+		receipt := wire.ReceiptResponse{State: "pending"}
 		if status == "pending" {
-			s.sequence++
-			id := fmt.Sprintf("receipt-%d", s.sequence)
-			response.Delivery.ReceiptID = id
-			s.Receipts[id] = wire.ReceiptResponse{State: "pending"}
-			s.receiptKeys[id] = key
+			s.Receipts[id] = receipt
+		} else {
+			receipt.State = "concluded"
+			receipt.Delivery.Status = status
+			s.Receipts[id] = receipt
+			s.concludedAt[id] = s.now()
 		}
 		s.dedup[key] = response
 		respond(w, 200, response)
@@ -229,7 +248,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			receipt.State = "unknown"
 		}
-		respond(w, 200, receipt)
+		response := receiptResponse{ReceiptID: id, State: receipt.State}
+		if receipt.State == "concluded" {
+			response.Delivery = &receiptDelivery{Status: receipt.Delivery.Status, ReceiptID: id}
+		}
+		respond(w, 200, response)
 	default:
 		fail(w, 404, "route not found")
 	}
