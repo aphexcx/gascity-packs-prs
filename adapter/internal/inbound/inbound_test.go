@@ -115,8 +115,8 @@ func TestWakePolicyMappingAndDedup(t *testing.T) {
 				m.Sender.Type = "BOT"
 			}
 			if tc.mention {
-				m.Text = "hello <users/123>"
-				m.Annotations = []*api.Annotation{{Type: "USER_MENTION", StartIndex: 6, Length: 11, UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity, DisplayName: "Example"}}}}
+				m.Text = "hello @Example"
+				m.Annotations = []*api.Annotation{{Type: "USER_MENTION", StartIndex: 6, Length: 8, UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity, DisplayName: "Example"}}}}
 			}
 			ev := event("p1", "message.created", m)
 			handle(t, f, ev)
@@ -990,5 +990,44 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 				t.Fatal("unavailable space looked up again")
 			}
 		})
+	}
+}
+
+func TestMentionRenderingUsesAnnotatedSpans(t *testing.T) {
+	for _, tc := range []struct{ name, payload, want string }{
+		{"documented_text", `{"text":"Hello @FooBot how are you!","annotations":[{"type":"USER_MENTION","startIndex":6,"length":7,"userMention":{"user":{"name":"users/123","displayName":"FooBot"},"type":"MENTION"}}]}`, "Hello FooBot how are you!"},
+		{"unicode_prefix", `{"text":"é😀 @Example!","annotations":[{"type":"USER_MENTION","startIndex":4,"length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "é😀 Example!"},
+		{"literal_token", `{"text":"@Example <users/123>","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
+		{"bounded_token", `{"text":"<users/123> <users/123>","annotations":[{"type":"USER_MENTION","length":11,"userMention":{"user":{"name":"users/123","displayName":"Example"}}}]}`, "Example <users/123>"},
+		{"resource_fallback", `{"text":"@Example","annotations":[{"type":"USER_MENTION","length":8,"userMention":{"user":{"name":"users/123"}}}]}`, "users/123"},
+		{"unsorted_spans", `{"text":"@One and @Two","annotations":[{"type":"USER_MENTION","startIndex":9,"length":4,"userMention":{"user":{"displayName":"Second"}}},{"type":"USER_MENTION","length":4,"userMention":{"user":{"displayName":"First"}}}]}`, "First and Second"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			m := message()
+			if err := json.Unmarshal([]byte(tc.payload), m); err != nil {
+				t.Fatal(err)
+			}
+			handle(t, f, event(tc.name, "message.created", m))
+			if got := f.gc.Inbound()[0].Text; got != tc.want {
+				t.Fatalf("text=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMentionRenderingIgnoresInvalidAndOverlappingSpans(t *testing.T) {
+	annotation := func(start, length int64) *api.Annotation {
+		return &api.Annotation{Type: "USER_MENTION", StartIndex: start, Length: length, UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity, DisplayName: "Example"}}}
+	}
+	for _, span := range [][2]int64{{-1, 3}, {0, 0}, {0, -1}, {100, 1}, {0, 100}, {1, 1}, {0, 1}, {3, 1<<63 - 1}} {
+		m := &api.Message{Text: "😀 <users/123>", Annotations: []*api.Annotation{annotation(span[0], span[1])}}
+		if got := renderMentions(m); got != m.Text {
+			t.Errorf("span=%v text=%q", span, got)
+		}
+	}
+	m := &api.Message{Text: "@Example!", Annotations: []*api.Annotation{annotation(0, 8), annotation(2, 6), annotation(0, 8), nil, {Type: "USER_MENTION"}}}
+	if got := renderMentions(m); got != "Example!" {
+		t.Fatalf("overlap: %q", got)
 	}
 }

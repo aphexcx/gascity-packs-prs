@@ -739,19 +739,60 @@ func mentions(m *api.Message, id string) bool {
 }
 
 func renderMentions(m *api.Message) string {
-	text := m.Text
+	// Annotation describes spans in Message.Text (for example @FooBot), not
+	// global substitutions of user-resource tokens. Interpret offsets as UTF-16
+	// code units and map only complete rune boundaries back to Go byte offsets.
+	// The REST reference does not explicitly state its Unicode indexing unit:
+	// https://developers.google.com/workspace/chat/api/reference/rest/v1/spaces.messages#Annotation
+	boundaries := make(map[int64]int)
+	var units int64
+	for offset, r := range m.Text {
+		boundaries[units] = offset
+		units++
+		if r > 0xffff {
+			units++
+		}
+	}
+	boundaries[units] = len(m.Text)
+	type span struct {
+		start, end int
+		name       string
+	}
+	var spans []span
 	for _, a := range m.Annotations {
 		if a == nil || a.Type != "USER_MENTION" || a.UserMention == nil || a.UserMention.User == nil {
 			continue
+		}
+		if a.StartIndex < 0 || a.StartIndex > units || a.Length <= 0 || a.Length > units-a.StartIndex {
+			continue
+		}
+		start, startOK := boundaries[a.StartIndex]
+		end, endOK := boundaries[a.StartIndex+a.Length]
+		if !startOK || !endOK {
+			continue // never split a surrogate pair
 		}
 		u := a.UserMention.User
 		name := u.DisplayName
 		if name == "" {
 			name = u.Name
 		}
-		text = strings.ReplaceAll(text, "<"+u.Name+">", name)
+		if name != "" {
+			spans = append(spans, span{start, end, name})
+		}
 	}
-	return text
+	sort.SliceStable(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	var text strings.Builder
+	pos := 0
+	for _, s := range spans {
+		if s.start < pos {
+			continue // first valid span wins; duplicates/overlaps cannot corrupt text
+		}
+		text.WriteString(m.Text[pos:s.start])
+		text.WriteString(s.name)
+		pos = s.end
+	}
+	text.WriteString(m.Text[pos:])
+	return text.String()
 }
 
 func (p *Processor) attachments(ctx context.Context, m *api.Message, w *wire.InboundMessage) {
