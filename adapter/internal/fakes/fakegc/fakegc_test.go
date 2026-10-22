@@ -62,7 +62,9 @@ func TestMutationAndScopeRequirements(t *testing.T) {
 	bad.Message.Conversation.ScopeID = ""
 	call(t, s, "POST", "inbound", bad, true, 400)
 	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, false, 400)
-	call(t, s, "POST", "outbound", wire.OutboundRequest{}, true, 400)
+	missingScope := conversation()
+	missingScope.ScopeID = ""
+	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: missingScope}, true, 400)
 	reg.CallbackURL = "/relative"
 	call(t, s, "POST", "adapters", reg, true, 400)
 	if len(s.Inbound()) != 0 || len(s.Published()) != 0 {
@@ -150,6 +152,63 @@ func TestInboundDedupIgnoresDedupKey(t *testing.T) {
 	two := call(t, s, "POST", "inbound", m, true, 200)
 	if one["delivery"].(map[string]any)["receipt_id"] != two["delivery"].(map[string]any)["receipt_id"] {
 		t.Fatal("pending receipt changed on duplicate")
+	}
+}
+
+func TestConcludedFailureDoesNotOverwriteSuccessfulRetry(t *testing.T) {
+	s := New(t)
+	s.NextDelivery = "pending"
+	m := inbound("retry")
+	result := call(t, s, "POST", "inbound", m, true, 200)
+	id := result["delivery"].(map[string]any)["receipt_id"].(string)
+	failed := wire.ReceiptResponse{State: "concluded"}
+	failed.Delivery.Status = "failed"
+	s.SetReceipt(id, failed)
+	retry := call(t, s, "POST", "inbound", m, true, 200)
+	if retry["delivery"].(map[string]any)["status"] != "delivered" {
+		t.Fatalf("retry: %v", retry)
+	}
+	s.Configure(func(s *Server) { s.NextDelivery = "partial" })
+	duplicate := call(t, s, "POST", "inbound", m, true, 200)
+	if duplicate["delivery"].(map[string]any)["status"] != "delivered" {
+		t.Fatalf("stale receipt overwrote successful retry: %v", duplicate)
+	}
+	if call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)["state"] != "concluded" {
+		t.Fatal("historical receipt must remain available")
+	}
+}
+
+func TestConcludedPendingRemainsObservable(t *testing.T) {
+	s := New(t)
+	s.NextDelivery = "pending"
+	m := inbound("unresolved")
+	result := call(t, s, "POST", "inbound", m, true, 200)
+	id := result["delivery"].(map[string]any)["receipt_id"].(string)
+	concluded := wire.ReceiptResponse{State: "concluded"}
+	concluded.Delivery.Status = "pending"
+	s.SetReceipt(id, concluded)
+	got := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)
+	if got["state"] != "concluded" || got["delivery"].(map[string]any)["status"] != "pending" {
+		t.Fatalf("concluded pending: %v", got)
+	}
+	duplicate := call(t, s, "POST", "inbound", m, true, 200)
+	if duplicate["delivery"].(map[string]any)["receipt_id"] != id {
+		t.Fatal("duplicate lost its unresolved receipt")
+	}
+}
+
+func TestCallbackRejectsInvalidWireValueTypes(t *testing.T) {
+	for _, body := range []string{`{"delivered":true,"metadata":{"parts":1}}`, `{"delivered":true,"retry_after":"1s"}`} {
+		t.Run(body, func(t *testing.T) {
+			s := New(t)
+			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+			defer callback.Close()
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
+			if result["Receipt"].(map[string]any)["Delivered"] != false || result["TranscriptEntry"] != nil {
+				t.Fatalf("malformed receipt accepted: %v", result)
+			}
+		})
 	}
 }
 

@@ -113,8 +113,14 @@ func (s *Server) observeReceipts() {
 		}
 		if key := s.receiptKeys[id]; key != "" {
 			response := s.dedup[key]
+			// A retained historical receipt must not overwrite a later attempt.
+			if response.Delivery.ReceiptID != id {
+				continue
+			}
 			response.Delivery.Status = receipt.Delivery.Status
-			response.Delivery.ReceiptID = ""
+			if receipt.Delivery.Status != "pending" {
+				response.Delivery.ReceiptID = ""
+			}
 			s.dedup[key] = response
 		}
 	}
