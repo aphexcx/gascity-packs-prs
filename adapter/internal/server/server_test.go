@@ -1170,6 +1170,78 @@ func TestHistoryNormalizesRetainedSpaceFailureWithCause(t *testing.T) {
 	}
 }
 
+func TestHistoryDoesNotReuseTurnBeforeRemoteEdit(t *testing.T) {
+	f := setup(t)
+	m := &api.Message{Name: "spaces/room/messages/edited", CreateTime: "2026-10-22T10:00:00Z", LastUpdateTime: "2026-10-22T11:00:00Z", Text: "first edit"}
+	oldRevision, _ := time.Parse(time.RFC3339Nano, m.LastUpdateTime)
+	f.l.Messages[m.Name] = &ledger.MessageState{Revision: oldRevision}
+	id := m.Name + "#updated#" + m.LastUpdateTime
+	raw, _ := json.Marshal(wire.InboundMessage{ProviderMessageID: id, Text: "edited: first edit"})
+	// An update first observed as a creation uses the base name too. Both
+	// records are plausible fallbacks unless the revision guard runs first.
+	f.l.Changes[id] = &ledger.ChangeState{Kind: "message.updated", Event: string(raw)}
+	raw, _ = json.Marshal(wire.InboundMessage{ProviderMessageID: m.Name, Text: "edited: first edit"})
+	f.l.Changes[m.Name] = &ledger.ChangeState{Kind: "message.updated", Event: string(raw)}
+	m.LastUpdateTime, m.Text = "2026-10-22T12:00:00Z", "latest remote edit"
+	f.g.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
+	code, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+	got := decode[[]wire.InboundMessage](t, raw)
+	if code != 200 || len(got) != 1 || got[0].Text != m.Text {
+		t.Fatalf("stale history: %d %s", code, raw)
+	}
+}
+
+func TestStateResetRefusedThroughoutInFlightDelivery(t *testing.T) {
+	f := setup(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/messages") {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return nil, r.Context().Err()
+			}
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}, f.cfg.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.SetClients(c, f.options.GC)
+	raw, _ := json.Marshal(wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "in flight", IdempotencyKey: "in-flight"})
+	done := make(chan *httptest.ResponseRecorder, 1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go func() {
+		w := httptest.NewRecorder()
+		f.s.ServeHTTP(w, httptest.NewRequest("POST", "/publish", bytes.NewReader(raw)).WithContext(ctx))
+		done <- w
+	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("delivery did not start")
+	}
+	f.s.SetHealth(Health{State: "recovery-required"})
+	code, response, _ := f.call(t, "/state", map[string]string{"action": "reset"})
+	if code != 409 || !bytes.Contains(response, []byte("delivery is still in flight")) {
+		t.Fatalf("reset allowed during delivery: %d %s", code, response)
+	}
+	unblock()
+	w := <-done
+	if !decode[wire.PublishReceipt](t, w.Body.Bytes()).Delivered {
+		t.Fatalf("delivery: %s", w.Body.String())
+	}
+	code, response, _ = f.call(t, "/state", map[string]string{"action": "reset"})
+	if code != 200 {
+		t.Fatalf("reset after delivery: %d %s", code, response)
+	}
+}
+
 func TestStatusLastEventAndReloadedDefaults(t *testing.T) {
 	f := setup(t)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
