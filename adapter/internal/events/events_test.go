@@ -897,6 +897,31 @@ type statusReader interface {
 	Status() (error, int, time.Time, ledger.SubscriptionState)
 }
 
+func TestNewSeedsStatusFromLoadedLedger(t *testing.T) {
+	f := setup(t)
+	saved := ledger.SubscriptionState{
+		Name: "subscriptions/saved", Target: Target, State: "SUSPENDED",
+		Expiry: f.clock.Now().Add(40 * time.Minute),
+	}
+	loaded := ledger.New()
+	loaded.Subscription = saved
+	m, err := New(Options{
+		Service: f.manager.service, Topic: f.manager.topic,
+		Ledger: loaded, LedgerPath: f.path, LedgerMu: &sync.Mutex{},
+		Clock: f.clock, Log: f.manager.log,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	last, failures, next, state := m.Status()
+	if last != nil || failures != 0 || !next.IsZero() || state != saved {
+		t.Fatalf("startup status: %v %d %v %+v; want zero diagnostics and %+v", last, failures, next, state, saved)
+	}
+	if len(f.requests) != 0 {
+		t.Fatal("startup status must not require reconciliation")
+	}
+}
+
 func TestStatusExposesFailuresBackoffAndRecovery(t *testing.T) {
 	f := setup(t)
 	reader, ok := any(f.manager).(statusReader)
