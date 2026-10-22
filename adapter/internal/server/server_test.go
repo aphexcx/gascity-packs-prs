@@ -2347,3 +2347,76 @@ func TestNoAdapterAfterGCRestartRecovers(t *testing.T) {
 		})
 	}
 }
+
+func TestUnboundTransientRetryRechecksBinding(t *testing.T) {
+	for _, mode := range []string{"sweep", "explicit", "still-unbound"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "unbound-transient"}
+			const reason = "no active binding for conversation gchat/spaces/room"
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var calls atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/outbound") && calls.Add(1) == 2 {
+					// Inspect the durable re-arm before gc supplies the new outcome.
+					saved, err := ledger.Load(f.options.LedgerPath, true)
+					if err != nil {
+						t.Error(err)
+					} else if v := saved.Sends[p.IdempotencyKey]; v.NotRecordable || !v.RecordPending || v.RecordingReason != reason {
+						t.Errorf("re-arm lost binding diagnostic or retained direct shortcut: %+v", v)
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			f.options.GC = gcclient.New(h.URL, "examplecity")
+			var attempts atomic.Int32
+			c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "POST" {
+					attempts.Add(1)
+					return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":503,"message":"temporarily unavailable"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.RetryPending(t.Context()); err == nil {
+				t.Fatal("transient Chat error not returned")
+			}
+			f.assertPending(t, p.IdempotencyKey, true)
+			v := f.l.Sends[p.IdempotencyKey]
+			if !v.NotRecordable || v.RecordingReason != reason || calls.Load() != 1 || attempts.Load() != 1 || f.count() != 0 {
+				t.Fatalf("first unbound attempt: %+v; gc=%d attempts=%d Google=%d", v, calls.Load(), attempts.Load(), f.count())
+			}
+			f.restart(t) // Reload the no-binding decision from disk, with healthy Chat.
+			if mode != "still-unbound" {
+				f.gc.Bind(p.Conversation, p.SessionID)
+			}
+			if mode == "explicit" {
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				if got := decode[CommandResult](t, raw); !got.Delivered || !got.Recorded {
+					t.Errorf("explicit same-key retry: %+v", got)
+				}
+			} else if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			f.assertPending(t, p.IdempotencyKey, false)
+			got := commandOutcome(f.l.Sends[p.IdempotencyKey])
+			if !got.Delivered || got.Recorded != (mode != "still-unbound") || calls.Load() != 2 || f.count() != 1 {
+				t.Fatalf("binding recheck: %+v; gc=%d Google=%d", got, calls.Load(), f.count())
+			}
+			if mode == "still-unbound" && got.Reason != reason {
+				t.Fatalf("no-binding diagnostic changed: %q", got.Reason)
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || calls.Load() != 2 || f.count() != 1 {
+				t.Fatalf("completed intent retried: %v; gc=%d Google=%d", err, calls.Load(), f.count())
+			}
+		})
+	}
+}

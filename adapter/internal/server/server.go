@@ -498,10 +498,14 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 				return errors.New("idempotency key already belongs to another session")
 			}
 			if record && !old.Recorded && (old.Receipt == nil || !old.Receipt.Delivered) {
-				// Only an explicit command retry re-arms a rejected intent.
+				// A command retry or recovery sweep re-arms an undelivered
+				// intent. A session may have gained a binding since the last
+				// attempt; ask gc again, retaining the diagnostic until then.
 				old.RecordPending = true
 				old.Receipt = nil
-				old.RecordingReason = ""
+				if old.Request != nil && old.Request.SessionID != "" {
+					old.NotRecordable = false
+				}
 			}
 			return nil
 		}
