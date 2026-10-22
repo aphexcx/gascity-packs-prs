@@ -65,7 +65,7 @@ func TestMutationAndScopeRequirements(t *testing.T) {
 	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, false, 403)
 	missingScope := conversation()
 	missingScope.ScopeID = ""
-	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: missingScope}, true, 400)
+	call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: missingScope}, true, 422)
 	reg.CallbackURL = "/relative"
 	call(t, s, "POST", "adapters", reg, true, 400)
 	if len(s.Inbound()) != 0 || len(s.Published()) != 0 {
@@ -253,6 +253,7 @@ func TestCallbackRejectsInvalidWireValueTypes(t *testing.T) {
 	for _, body := range []string{`{"delivered":true,"metadata":{"parts":1}}`, `{"delivered":true,"retry_after":"1s"}`} {
 		t.Run(body, func(t *testing.T) {
 			s := New(t)
+			s.Bindings[conversation()] = "session"
 			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer callback.Close()
 			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
@@ -266,6 +267,7 @@ func TestCallbackRejectsInvalidWireValueTypes(t *testing.T) {
 
 func TestOutboundCallbackAndTranscript(t *testing.T) {
 	s := New(t)
+	s.Bindings[conversation()] = "session"
 	callbackStatus := 200
 	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/adapter/publish" {
@@ -307,12 +309,13 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 
 func TestUndeliveredCallbackReceiptPreservesHints(t *testing.T) {
 	s := New(t)
+	s.Bindings[conversation()] = "session"
 	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), FailureKind: "rate_limited", RetryAfter: int64(2 * time.Second), Metadata: map[string]string{"parts": "0"}})
 	}))
 	defer callback.Close()
 	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
-	result := call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, true, 200)
+	result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 	receipt := result["Receipt"].(map[string]any)
 	if receipt["Delivered"] != false || receipt["FailureKind"] != "rate_limited" || receipt["RetryAfter"] != float64(2*time.Second) || result["TranscriptEntry"] != nil {
 		t.Fatalf("hints: %v", result)
@@ -329,6 +332,7 @@ func TestCallbackFailureClassification(t *testing.T) {
 	}{{401, "auth"}, {403, "auth"}, {404, "not_found"}, {429, "rate_limited"}, {400, "permanent"}, {409, "permanent"}, {422, "permanent"}, {500, "transient"}, {503, "transient"}, {0, "transient"}} {
 		t.Run(fmt.Sprint(tc.status), func(t *testing.T) {
 			s := New(t)
+			s.Bindings[conversation()] = "session"
 			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tc.status)
 				_, _ = io.WriteString(w, `{"delivered":true,"message_id":"ignored","failure_kind":"ignored","retry_after":100,"metadata":{"secret":"ignored"}}`)
@@ -342,6 +346,38 @@ func TestCallbackFailureClassification(t *testing.T) {
 			receipt := result["Receipt"].(map[string]any)
 			if receipt["FailureKind"] != tc.kind || receipt["Delivered"] != false || receipt["MessageID"] != "" || receipt["RetryAfter"] != float64(0) || receipt["Metadata"] != nil || result["TranscriptEntry"] != nil {
 				t.Fatalf("callback failure: %v, want %s without body data", result, tc.kind)
+			}
+		})
+	}
+}
+
+func TestOutboundRequiresSessionBindingAndAdapter(t *testing.T) {
+	for _, invalid := range []string{"session_id", "scope_id", "adapter", "binding", "owner"} {
+		t.Run(invalid, func(t *testing.T) {
+			s := New(t)
+			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), Delivered: true})
+			}))
+			defer callback.Close()
+			if invalid != "adapter" {
+				call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			}
+			if invalid != "binding" {
+				s.Bindings[conversation()] = "session"
+			}
+			req := wire.OutboundRequest{SessionID: "session", Conversation: conversation()}
+			if invalid == "owner" {
+				req.SessionID = "other-session"
+			}
+			if invalid == "session_id" {
+				req.SessionID = ""
+			}
+			if invalid == "scope_id" {
+				req.Conversation.ScopeID = ""
+			}
+			call(t, s, "POST", "outbound", req, true, 422)
+			if len(s.Published()) != 0 {
+				t.Fatal("invalid outbound invoked callback")
 			}
 		})
 	}

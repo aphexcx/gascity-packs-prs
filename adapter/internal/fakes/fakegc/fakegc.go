@@ -23,8 +23,11 @@ import (
 // a conclusion at the moment it is scripted, including before a polling client
 // observes it. Direct Receipts edits are timestamped on the next request.
 type Server struct {
-	NextDelivery   string
-	Receipts       map[string]wire.ReceiptResponse
+	NextDelivery string
+	Receipts     map[string]wire.ReceiptResponse
+	// Bindings maps each active conversation binding to its owning session.
+	// Outbound fixtures must populate this explicitly before publishing.
+	Bindings       map[wire.Conversation]string
 	FailTranscript bool
 	Now            func() time.Time
 
@@ -44,6 +47,7 @@ type Server struct {
 func New(t testing.TB) *Server {
 	t.Helper()
 	s := &Server{Now: time.Now, Receipts: map[string]wire.ReceiptResponse{},
+		Bindings:      map[wire.Conversation]string{},
 		registrations: map[string]wire.Registration{}, dedup: map[string]wire.InboundResponse{},
 		receiptKeys: map[string]string{}, concludedAt: map[string]time.Time{},
 		client: &http.Client{Timeout: 30 * time.Second}}
@@ -254,19 +258,24 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	if !decode(w, r, &request) {
 		return
 	}
-	if !validConversation(request.Conversation) {
-		fail(w, 400, "conversation including scope_id is required")
+	if request.SessionID == "" || !validConversation(request.Conversation) {
+		fail(w, 422, "session_id and conversation including scope_id are required")
 		return
 	}
 	callback := wire.PublishRequest{SessionID: request.SessionID, Conversation: request.Conversation, Text: request.Text, ReplyToMessageID: request.ReplyToMessageID, IdempotencyKey: request.IdempotencyKey}
 	s.mu.Lock()
 	registration, ok := s.registrations[registrationKey(city, request.Conversation.Provider, request.Conversation.AccountID)]
-	if ok {
+	owner := s.Bindings[request.Conversation]
+	if ok && owner == request.SessionID {
 		s.published = append(s.published, callback)
 	}
 	s.mu.Unlock()
 	if !ok {
-		fail(w, 404, "adapter not registered")
+		fail(w, 422, "adapter not registered")
+		return
+	}
+	if owner == "" || owner != request.SessionID {
+		fail(w, 422, "session does not own an active conversation binding")
 		return
 	}
 	body, _ := json.Marshal(callback)
@@ -311,7 +320,7 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	s.mu.Lock()
 	failTranscript := s.FailTranscript
 	s.mu.Unlock()
-	if receipt.Delivered && !failTranscript && request.SessionID != "" {
+	if receipt.Delivered && !failTranscript {
 		entry := map[string]any{"session_id": request.SessionID, "message_id": receipt.MessageID, "text": request.Text}
 		result.TranscriptEntry = &entry
 	}
