@@ -1708,7 +1708,7 @@ func TestLateCallbackRearmsTranscriptRecovery(t *testing.T) {
 	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.stopRetry(t.Context(), p, failure(p, errors.New("gc unavailable")), "gc unavailable"); err != nil {
+	if err := f.s.stopRetry(t.Context(), p, f.s.failure(p, errors.New("gc unavailable")), "gc unavailable"); err != nil {
 		t.Fatal(err)
 	}
 	// The callback outlived gc's failed response. Its success must re-arm
@@ -1831,7 +1831,7 @@ func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
 			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 				t.Fatal(err)
 			}
-			receipt := failure(p, errors.New("unavailable"))
+			receipt := f.s.failure(p, errors.New("unavailable"))
 			var entry *map[string]any
 			if delivered {
 				receipt = f.send(t, p)
@@ -2110,7 +2110,7 @@ func TestFailureLogRecoveryTrackingIsBounded(t *testing.T) {
 	for i := range 1100 {
 		p := wire.PublishRequest{Conversation: conversation("spaces/room"), IdempotencyKey: fmt.Sprint(i)}
 		err := errors.New("failure")
-		f.s.logPublish(p, failure(p, err), err)
+		f.s.logPublish(p, f.s.failure(p, err), err)
 	}
 	if len(f.s.publishFailures) > 1024 {
 		t.Fatalf("unbounded recovery tracking: %d entries", len(f.s.publishFailures))
@@ -2580,6 +2580,77 @@ func TestCallerDirectRetryReportsBindingReason(t *testing.T) {
 			v := saved.Sends[first.Key]
 			if v.RecordingReason != want || !v.NotRecordable || v.RecordPending {
 				t.Fatalf("saved binding reason: %+v", v)
+			}
+		})
+	}
+}
+
+func TestPreviousAccountIsDefiniteAndDoesNotRegister(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delivered=%v", delivered), func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "previous account", IdempotencyKey: "previous-account"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			if delivered && !f.send(t, p).Delivered {
+				t.Fatal("could not seed delivered send awaiting recording")
+			}
+			// A configuration rename leaves the saved intent under its old account.
+			f.s.mu.Lock()
+			f.s.cfg.Settings.Identities = []config.Identity{{Name: "renamed", Agent: "mayor"}}
+			f.s.mu.Unlock()
+			f.gc.ForgetRegistrations()
+			if err := f.options.GC.Register(t.Context(), wire.Registration{Provider: "gchat", AccountID: "renamed", CallbackURL: f.url}); err != nil {
+				t.Fatal(err)
+			}
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var registrations, outbound atomic.Int32
+			release := make(chan struct{})
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/adapters") {
+					registrations.Add(1)
+					<-release
+				}
+				if strings.HasSuffix(r.URL.Path, "/outbound") {
+					outbound.Add(1)
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			defer close(release)
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			err := f.s.RetryPending(t.Context())
+			var responseErr *gcclient.HTTPError
+			if !errors.As(err, &responseErr) || responseErr.StatusCode != 422 || responseErr.Problem.Detail != "no adapter for gchat/example" {
+				t.Fatalf("previous account rejection: %v", err)
+			}
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[p.IdempotencyKey]
+			got := commandOutcome(v)
+			if v.RecordPending || got.FailureKind != "permanent" || got.Delivered != delivered || (delivered && !v.NotRecordable) {
+				t.Errorf("previous account retained for retry: %+v outcome=%+v", v, got)
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 1 {
+				t.Errorf("definite rejection retried: %v gc=%d", err, outbound.Load())
+			}
+			f.s.mu.RLock()
+			registering := f.s.registering
+			f.s.mu.RUnlock()
+			if registering || registrations.Load() != 0 {
+				t.Errorf("previous account triggered registration: registering=%v calls=%d", registering, registrations.Load())
+			}
+			wantMessages := 0
+			if delivered {
+				wantMessages = 1
+			}
+			if f.count() != wantMessages {
+				t.Fatalf("previous account sent to Google: %d", f.count())
 			}
 		})
 	}

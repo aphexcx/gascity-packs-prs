@@ -98,9 +98,10 @@ func IsNoBinding(err error) bool {
 
 // IsNoAdapter identifies a missing in-memory adapter registration after a gc
 // restart. gc internal/extmsg/outbound.go emits "no adapter for <provider>/<account>",
-// returned by the outbound API as 422 validation-failed.
-func IsNoAdapter(err error) bool {
-	return strings.HasPrefix(validationDetail(err), "no adapter for ")
+// returned by the outbound API as 422 validation-failed. Only a missing current
+// account can recover by re-registering; an intent from a renamed account cannot.
+func IsNoAdapter(err error, accountID string) bool {
+	return validationDetail(err) == "no adapter for gchat/"+accountID
 }
 
 // IsCityNotRunning identifies the supervisor's startup window before its city
