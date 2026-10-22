@@ -465,6 +465,131 @@ func TestClientOutlivesConstructionContext(t *testing.T) {
 	}
 }
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type closeTrackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *closeTrackingBody) Close() error { b.closed = true; return nil }
+
+func TestTokenFailureClosesRequestBody(t *testing.T) {
+	body := &closeTrackingBody{Reader: strings.NewReader("payload")}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://example/resource", body)
+	transport := &tokenTransport{
+		token: func(context.Context) (*oauth2.Token, error) { return nil, ErrNeedsSignIn },
+		base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Error("request sent without a token")
+			return nil, errors.New("unexpected request")
+		}),
+	}
+	res, err := transport.RoundTrip(req)
+	if res != nil || !errors.Is(err, ErrNeedsSignIn) || !body.closed {
+		t.Fatalf("token failure: response=%v err=%v bodyClosed=%v", res, err, body.closed)
+	}
+}
+
+func TestClientRequestRefreshUsesOAuthHTTPClient(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request bypassed the custom HTTP client")
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	refreshes, requests := 0, 0
+	custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Body != nil {
+			defer req.Body.Close()
+		}
+		body := `{}`
+		if req.URL.Path == "/token" {
+			refreshes++
+			body = `{"access_token":"fresh","expires_in":3600}`
+		} else {
+			requests++
+			if req.Header.Get("Authorization") != "Bearer fresh" {
+				t.Errorf("request token = %q", req.Header.Get("Authorization"))
+			}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), oauth2.HTTPClient, custom))
+	client, err := s.Client(ctx)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Invalidate()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.ChatAPIBase+"/resource", nil)
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if refreshes != 1 || requests != 1 {
+		t.Fatalf("custom transport: refreshes=%d requests=%d", refreshes, requests)
+	}
+}
+
+func TestRunAuthExchangeContextSentinels(t *testing.T) {
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Error("exchange bypassed the custom HTTP client")
+			})
+			custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				req.Body.Close()
+				return nil, sentinel
+			})}
+			ctx := context.WithValue(t.Context(), oauth2.HTTPClient, custom)
+			err := RunAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard,
+				func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if !errors.Is(err, sentinel) || ctx.Err() != nil {
+				t.Fatalf("exchange sentinel: err=%v ctx.Err=%v", err, ctx.Err())
+			}
+		})
+	}
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+func TestRefreshRestoresContextErrorAfterLastBodyFailure(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("refresh bypassed the custom HTTP client")
+	})
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	s := mustSource(t, clientFile, tokenFile, ep)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.Body.Close()
+		calls++
+		status := http.StatusServiceUnavailable
+		body := io.NopCloser(strings.NewReader(`{"error":"temporarily_unavailable"}`))
+		if calls == 3 {
+			status = http.StatusOK
+			body = io.NopCloser(readerFunc(func([]byte) (int, error) {
+				cancel()
+				return 0, context.Canceled
+			}))
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: body}, nil
+	})}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, custom)
+	_, err := s.TokenSource(ctx).Token()
+	if !errors.Is(err, context.Canceled) || calls != 3 {
+		t.Fatalf("last body failure: err=%v calls=%d", err, calls)
+	}
+}
+
 func TestConcurrentClientsShareOneRefresh(t *testing.T) {
 	var calls atomic.Int32
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
