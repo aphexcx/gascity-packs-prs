@@ -1,12 +1,14 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -394,6 +396,8 @@ func TestOperationTimeoutResumesKnownOperation(t *testing.T) {
 	if !f.clock.Now().Equal(start.Add(2*time.Minute)) || f.ledger.Subscription.Name != "" {
 		t.Fatal("timeout must bound polling without persisting a pending result")
 	}
+	// Resumed reconciles do one bounded poll; the caller supplies backoff.
+	f.clock.advance(time.Minute)
 	got := f.reconcile()
 	if got.Expiry != start.Add(4*time.Hour) || f.count("POST", "/v1/subscriptions") != 1 {
 		t.Fatalf("resumed result = %+v", got)
@@ -442,7 +446,7 @@ func TestSavedMissingNameDiscoversReplacement(t *testing.T) {
 }
 
 func TestDiscoveryReadsAllPagesAndRejectsIncompatibleSubscriptions(t *testing.T) {
-	for _, wrong := range []string{"topic", "events", "payload", "expiry", "multiple"} {
+	for _, wrong := range []string{"topic", "events", "payload", "field mask", "expiry", "multiple"} {
 		t.Run(wrong, func(t *testing.T) {
 			f := setup(t)
 			first := f.reconcile()
@@ -457,6 +461,8 @@ func TestDiscoveryReadsAllPagesAndRejectsIncompatibleSubscriptions(t *testing.T)
 					sub.EventTypes = []string{EventTypes[0]}
 				case "payload":
 					sub.PayloadOptions.IncludeResource = false
+				case "field mask":
+					sub.PayloadOptions.FieldMask = "message.name"
 				case "expiry":
 					sub.ExpireTime = "invalid"
 				case "multiple":
@@ -693,4 +699,407 @@ func TestRecoveryNotificationsFollowDurableCreationAndReactivation(t *testing.T)
 	f.reconcile()
 	assertRecovery(true)
 	assertRecovery(false)
+}
+
+func jsonResponse(code int, body string) *http.Response {
+	return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func TestStuckMutationRecreatesAfterConfirmedAbsence(t *testing.T) {
+	for _, kind := range []string{"renew", "reactivate"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			<-f.manager.RecoveryNeeded()
+			if kind == "renew" {
+				f.clock.advance(3 * time.Hour)
+			} else {
+				f.server.SuspendSubscription(first.Name)
+			}
+			f.hook = func(r *http.Request) (*http.Response, error) {
+				if r.Method == "PATCH" || strings.HasSuffix(r.URL.Path, ":reactivate") || r.URL.Path == "/v1/operations/stuck" {
+					return jsonResponse(200, `{"name":"operations/stuck","done":false}`), nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			}
+			if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("initial poll = %v", err)
+			}
+			f.clock.advance(4 * time.Hour)
+			f.server.Configure(func(s *fakegoogle.Server) { delete(s.Subscriptions, first.Name) })
+			got := f.reconcile()
+			if got.Name == first.Name || f.count("POST", "/v1/subscriptions") != 2 {
+				t.Fatalf("stuck %s prevented one recreation: %+v", kind, got)
+			}
+			select {
+			case <-f.manager.RecoveryNeeded():
+			default:
+				t.Fatal("recreation did not request recovery")
+			}
+			f.reconcile()
+			if f.count("POST", "/v1/subscriptions") != 2 {
+				t.Fatal("recreated twice")
+			}
+		})
+	}
+}
+
+func TestResumedCreatePollIsBoundedWithoutDuplicateCreation(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = time.Hour
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	for range 5 {
+		before := len(f.requests)
+		start := f.clock.Now()
+		if _, err := f.manager.Reconcile(context.Background()); err == nil {
+			t.Fatal("pending operation must be reported")
+		}
+		if len(f.requests)-before != 1 || !strings.HasPrefix(f.requests[before].URL.Path, "/v1/operations/") || !f.clock.Now().Equal(start) {
+			t.Fatalf("resume should only poll once without sleeping; requests=%d elapsed=%s", len(f.requests)-before, f.clock.Now().Sub(start))
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("pending create must not be replaced")
+	}
+}
+
+func TestSuspensionReasonReportedInErrorAndLog(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewTextHandler(&logs, nil))
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, ":reactivate") {
+			return jsonResponse(403, `{"error":{"code":403,"message":"permission denied"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for range 2 { // The ambiguity hold must keep the actionable reason, too.
+		_, err := f.manager.Reconcile(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(err.Error(), first.Name) {
+			t.Fatalf("suspension error = %v", err)
+		}
+	}
+	if !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), first.Name) {
+		t.Fatalf("suspension log = %q", logs.String())
+	}
+}
+
+func TestScopeRevocationWaitsForTokenReload(t *testing.T) {
+	for _, reason := range []string{"USER_SCOPE_REVOKED", "APP_SCOPE_REVOKED"} {
+		t.Run(reason, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			<-f.manager.RecoveryNeeded()
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = reason
+			})
+			for range 2 {
+				_, err := f.manager.Reconcile(context.Background())
+				if err == nil || !strings.Contains(err.Error(), reason) {
+					t.Fatalf("scope suspension error = %v", err)
+				}
+				f.clock.advance(time.Minute)
+			}
+			if f.count("POST", "/v1/"+first.Name+":reactivate") != 0 {
+				t.Fatal("reactivation attempted before credential reload")
+			}
+			reloader, ok := any(f.manager).(interface {
+				TokenReloaded(context.Context) (ledger.SubscriptionState, error)
+			})
+			if !ok {
+				t.Fatal("missing token-reload entry point")
+			}
+			got, err := reloader.TokenReloaded(context.Background())
+			if err != nil || got.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+				t.Fatalf("reload state=%+v error=%v", got, err)
+			}
+			select {
+			case <-f.manager.RecoveryNeeded():
+			default:
+				t.Fatal("reactivation after reload did not request recovery")
+			}
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = reason
+			})
+			if _, err := f.manager.Reconcile(context.Background()); err == nil {
+				t.Fatal("a later scope revocation needs a new reload")
+			}
+		})
+	}
+}
+
+func TestIncompatibilityNamesSubscriptionFieldAndValue(t *testing.T) {
+	for _, tc := range []struct {
+		field, value string
+		mutate       func(*api.Subscription)
+	}{
+		{"targetResource", "spaces/wrong", func(s *api.Subscription) { s.TargetResource = "spaces/wrong" }},
+		{"notificationEndpoint.pubsubTopic", "topics/wrong", func(s *api.Subscription) { s.NotificationEndpoint.PubsubTopic = "topics/wrong" }},
+		{"notificationEndpoint", "<nil>", func(s *api.Subscription) { s.NotificationEndpoint = nil }},
+		{"payloadOptions.includeResource", "false", func(s *api.Subscription) { s.PayloadOptions.IncludeResource = false }},
+		{"payloadOptions", "<nil>", func(s *api.Subscription) { s.PayloadOptions = nil }},
+		{"payloadOptions.fieldMask", "message.name", func(s *api.Subscription) { s.PayloadOptions.FieldMask = "message.name" }},
+		{"eventTypes", EventTypes[1], func(s *api.Subscription) { s.EventTypes = []string{EventTypes[0]} }},
+		{"expireTime", "invalid-time", func(s *api.Subscription) { s.ExpireTime = "invalid-time" }},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			var sub api.Subscription
+			f.server.Configure(func(s *fakegoogle.Server) { tc.mutate(s.Subscriptions[first.Name]); sub = *s.Subscriptions[first.Name] })
+			_, err := f.manager.validate(&sub)
+			if err == nil {
+				t.Fatal("accepted incompatible subscription")
+			}
+			for _, want := range []string{first.Name, tc.field, tc.value} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q omits %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+type statusReader interface {
+	Status() (error, int, time.Time, ledger.SubscriptionState)
+}
+
+func TestStatusExposesFailuresBackoffAndRecovery(t *testing.T) {
+	f := setup(t)
+	reader, ok := any(f.manager).(statusReader)
+	if !ok {
+		t.Fatal("missing subscription status accessor")
+	}
+	last, failures, next, state := reader.Status()
+	if last != nil || failures != 0 || !next.IsZero() || state.Name != "" {
+		t.Fatalf("initial status: %v %d %v %+v", last, failures, next, state)
+	}
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" {
+			return jsonResponse(403, `{"error":{"code":403,"message":"admin approval missing"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for i := 1; i <= 10; i++ {
+		if _, err := f.manager.Reconcile(context.Background()); err == nil {
+			t.Fatal("create failure not reported")
+		}
+		last, failures, next, state = reader.Status()
+		wantDelay := min(time.Second<<(i-1), 2*time.Minute)
+		if last == nil || !strings.Contains(last.Error(), "admin approval missing") || failures != i || !next.Equal(f.clock.Now().Add(wantDelay)) || state.Name != "" {
+			t.Fatalf("failure %d status: %v %d %v %+v", i, last, failures, next, state)
+		}
+		f.clock.advance(wantDelay)
+	}
+	f.hook = nil
+	f.clock.advance(2 * time.Minute)
+	got := f.reconcile()
+	last, failures, next, state = reader.Status()
+	if last != nil || failures != 0 || !next.Equal(f.manager.renewAt) || state != got {
+		t.Fatalf("recovered status: %v %d %v %+v", last, failures, next, state)
+	}
+}
+
+func TestMutationHoldPreservesOriginalCause(t *testing.T) {
+	f := setup(t)
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" {
+			return jsonResponse(403, `{"error":{"code":403,"message":"admin approval missing"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for range 2 {
+		_, err := f.manager.Reconcile(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "admin approval missing") || !isHTTP(err, http.StatusForbidden) {
+			t.Fatalf("failure cause lost: %v", err)
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("hold repeated create")
+	}
+}
+
+func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
+	f := setup(t)
+	reader, ok := any(f.manager).(statusReader)
+	if !ok {
+		t.Fatal("missing subscription status accessor")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	attempts := 0
+	f.clock.onSleep = func(delay time.Duration) error {
+		attempts++
+		last, failures, next, _ := reader.Status()
+		if last == nil || failures != attempts || !next.Equal(f.clock.Now().Add(delay)) {
+			t.Errorf("retry schedule disagrees with status: %v %d %v delay=%v", last, failures, next, delay)
+		}
+		if attempts == 10 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+}
+
+func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
+	f := setup(t)
+	f.reconcile()
+	before, err := os.Stat(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	if err := f.manager.HandleLifecycle(context.Background(), "google.workspace.events.subscription.v1.expirationReminder"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(f.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) {
+		t.Fatal("unchanged subscription rewrote the ledger")
+	}
+}
+
+func TestMutationLogsOnceWithAuthoritativeState(t *testing.T) {
+	f := setup(t)
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	f.reconcile()
+	f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.reconcile()
+	f.server.SuspendSubscription()
+	f.reconcile()
+	f.ledger.Subscription = ledger.SubscriptionState{}
+	f.reconcile()
+	f.reconcile()
+	var actions []string
+	decoder := json.NewDecoder(&logs)
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatal(err)
+		}
+		if entry["level"] != "INFO" {
+			continue
+		}
+		action, _ := entry["action"].(string)
+		actions = append(actions, action)
+		if entry["name"] == nil || entry["name"] == "" || entry["state"] != "ACTIVE" || entry["expiry"] == nil {
+			t.Errorf("mutation log lacks subscription state: %v", entry)
+		}
+	}
+	if !reflect.DeepEqual(actions, []string{"create", "renew", "reactivate", "adopt"}) {
+		t.Fatalf("mutation log actions = %v", actions)
+	}
+}
+
+func TestShortLifecycleTypesReconcile(t *testing.T) {
+	for _, kind := range []string{"expirationReminder", "expired", "suspended"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			before := f.count("GET", "/v1/"+first.Name)
+			if err := f.manager.HandleLifecycle(context.Background(), "subscription."+kind); err != nil {
+				t.Fatal(err)
+			}
+			if f.count("GET", "/v1/"+first.Name) != before+1 {
+				t.Fatal("short lifecycle type did not reconcile")
+			}
+		})
+	}
+}
+
+func TestPendingOperationFinishesBeforeResourceValidation(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = 3 * time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	f.clock.advance(time.Minute)
+	f.server.Advance(0)
+	f.server.Configure(func(s *fakegoogle.Server) {
+		for _, sub := range s.Subscriptions {
+			sub.PayloadOptions.FieldMask = "message.name"
+		}
+	})
+	before := len(f.requests)
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("incompatible authoritative resource must still be reported")
+	}
+	if !strings.HasPrefix(f.requests[before].URL.Path, "/v1/operations/") || f.manager.pending != nil {
+		t.Fatal("resource validation prevented finishing the known operation")
+	}
+}
+
+func TestResumedReactivationReportsSuspensionReason(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+		s.OperationDelay = time.Hour
+	})
+	_, _ = f.manager.Reconcile(context.Background())
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewTextHandler(&logs, nil))
+	_, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") {
+		t.Fatalf("resumed suspension error=%v log=%s", err, logs.String())
+	}
+}
+
+func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, ":reactivate") {
+			return jsonResponse(503, `{"error":{"code":503,"message":"unavailable"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	if _, err := f.manager.TokenReloaded(context.Background()); err == nil {
+		t.Fatal("expected transient reactivation failure")
+	}
+	f.clock.advance(operationTimeout)
+	f.hook = nil
+	if got := f.reconcile(); got.State != "ACTIVE" {
+		t.Fatalf("did not retry after reload: %+v", got)
+	}
+}
+
+func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
+	f := setup(t)
+	var wg sync.WaitGroup
+	for range 12 {
+		wg.Go(func() {
+			if _, err := f.manager.Reconcile(context.Background()); err != nil {
+				t.Error(err)
+			}
+		})
+		wg.Go(func() {
+			last, failures, next, state := f.manager.Status()
+			if last != nil || failures != 0 || (state.Name != "" && next.IsZero()) {
+				t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+			}
+		})
+	}
+	wg.Wait()
 }

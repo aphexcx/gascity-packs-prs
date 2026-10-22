@@ -82,9 +82,16 @@ type Manager struct {
 	gate            chan struct{}
 	recoveryNeeded  chan struct{}
 	pending         *api.Operation
+	pendingKind     string
+	scopeReloaded   bool
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
 	ambiguousState  ledger.SubscriptionState
+	ambiguousCause  error
+	lastError       error
+	failures        int
+	retryDelay      time.Duration
+	nextAttempt     time.Time
 	scheduledName   string
 	scheduledExpiry time.Time
 	renewAt         time.Time
@@ -118,6 +125,17 @@ func (m *Manager) RecoveryNeeded() <-chan struct{} { return m.recoveryNeeded }
 // Errors (including lost responses) leave the caller responsible for retrying
 // with backoff; RenewLoop does this automatically. No ambiguous read is absence.
 func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, error) {
+	return m.reconcile(ctx, false)
+}
+
+// TokenReloaded is called by the app after validating and installing a new
+// credential. It permits scope-revoked reactivation (including transient retries) under
+// the same gate as lifecycle events and RenewLoop.
+func (m *Manager) TokenReloaded(ctx context.Context) (ledger.SubscriptionState, error) {
+	return m.reconcile(ctx, true)
+}
+
+func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.SubscriptionState, resultErr error) {
 	select {
 	case m.gate <- struct{}{}:
 		defer func() { <-m.gate }()
@@ -127,36 +145,56 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 	if err := ctx.Err(); err != nil {
 		return ledger.SubscriptionState{}, err
 	}
+	defer func() { m.recordResult(resultErr) }()
+	if tokenReloaded {
+		m.scopeReloaded = true
+	}
 	m.ledgerMu.Lock()
 	saved := m.ledger.Subscription
 	m.ledgerMu.Unlock()
-	sub, err := m.lookup(ctx, saved.Name)
-	if err != nil {
-		return saved, err
-	}
-	// A known operation survives a polling timeout in memory. First reconcile
-	// Google's resource, then resume waiting instead of issuing another mutation.
+	var sub *api.Subscription
+	var err error
+	// Resume before looking up the resource: a resource snapshot cannot finish
+	// an Operation, and validation of that snapshot must not block its poll.
 	if m.pending != nil {
-		state, err := m.finish(ctx, m.pending)
+		kind := m.pendingKind
+		state, err := m.resume(ctx)
+		if err == nil {
+			// An operation result can predate a later suspension or deletion.
+			sub, lookupErr := m.lookup(ctx, state.Name)
+			if lookupErr != nil {
+				return state, lookupErr
+			}
+			if sub != nil {
+				return m.reconcileExisting(ctx, sub)
+			}
+		} else {
+			if kind == "create" || ctx.Err() != nil {
+				return saved, err
+			}
+			// A renewal/reactivation of a vanished resource cannot repair the
+			// lapse. Only confirmed absence permits abandoning that operation.
+			sub, lookupErr := m.lookup(ctx, saved.Name)
+			if lookupErr != nil {
+				return saved, lookupErr
+			}
+			if sub != nil {
+				return saved, m.reportSuspension(ctx, sub, err)
+			}
+		}
+		m.pending = nil
+	} else {
+		sub, err = m.lookup(ctx, saved.Name)
 		if err != nil {
-			return state, err
+			return saved, err
 		}
-		// A retained operation response is a snapshot. State may have changed
-		// after completion while this process was backing off.
-		sub, err = m.lookup(ctx, state.Name)
-		if err != nil {
-			return state, err
-		}
-		if sub == nil {
-			return state, errors.New("events: subscription disappeared after operation completion")
-		}
-		return m.reconcileExisting(ctx, sub)
 	}
 	if sub == nil {
 		if m.clock.Now().Before(m.ambiguousUntil) {
-			return saved, errors.New("events: awaiting discovery after an ambiguous mutation")
+			return saved, m.holdError("events: awaiting discovery after a failed mutation")
 		}
 		m.mutationStarted = m.clock.Now()
+		m.pendingKind = "create"
 		op, err := m.service.Subscriptions.Create(&api.Subscription{TargetResource: Target, EventTypes: slices.Clone(m.types), PayloadOptions: &api.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &api.NotificationEndpoint{PubsubTopic: m.topic}}).Context(ctx).Do()
 		if isHTTP(err, http.StatusConflict) {
 			return m.adopt(ctx)
@@ -164,7 +202,8 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 		if err != nil {
 			m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 			m.ambiguousState = ledger.SubscriptionState{}
-			return saved, fmt.Errorf("events: create: %w", err)
+			m.ambiguousCause = fmt.Errorf("events: create: %w", err)
+			return saved, m.ambiguousCause
 		}
 		return m.finish(ctx, op)
 	}
@@ -228,18 +267,30 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 	if sub == nil {
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = ledger.SubscriptionState{}
-		return ledger.SubscriptionState{}, errors.New("events: ALREADY_EXISTS but subscription is not yet discoverable")
+		m.ambiguousCause = errors.New("events: ALREADY_EXISTS but subscription is not yet discoverable")
+		return ledger.SubscriptionState{}, m.ambiguousCause
 	}
 	return m.reconcileExisting(ctx, sub)
 }
 
-func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (ledger.SubscriptionState, error) {
-	state, err := m.persist(sub, time.Time{})
+func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (state ledger.SubscriptionState, err error) {
+	defer func() { err = m.reportSuspension(ctx, sub, err) }()
+	if sub.State == "ACTIVE" {
+		m.scopeReloaded = false
+	}
+	m.ledgerMu.Lock()
+	adopting := m.ledger.Subscription.Name != sub.Name
+	m.ledgerMu.Unlock()
+	state, err = m.persist(sub, time.Time{})
 	if err != nil {
 		return state, err
 	}
+	if adopting {
+		m.logMutation(ctx, "adopt", state)
+	}
 	if state != m.ambiguousState {
 		m.ambiguousUntil = time.Time{}
+		m.ambiguousCause = nil
 	}
 	if sub.Reconciling {
 		return state, errors.New("events: subscription is still reconciling")
@@ -248,22 +299,52 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		return state, nil
 	}
 	if m.clock.Now().Before(m.ambiguousUntil) {
-		return state, errors.New("events: awaiting authoritative change after an ambiguous mutation")
+		return state, m.holdError("events: awaiting authoritative change after a failed mutation")
 	}
 	m.mutationStarted = m.clock.Now()
 	var op *api.Operation
 	switch sub.State {
 	case "ACTIVE":
+		m.pendingKind = "renew"
 		op, err = m.service.Subscriptions.Patch(sub.Name, &api.Subscription{Ttl: "0s"}).UpdateMask("ttl").Context(ctx).Do()
 	case "SUSPENDED":
+		if sub.SuspensionReason == "USER_SCOPE_REVOKED" || sub.SuspensionReason == "APP_SCOPE_REVOKED" {
+			if !m.scopeReloaded {
+				return state, errors.New("events: awaiting validated token reload before reactivation")
+			}
+		}
+		m.pendingKind = "reactivate"
 		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(ctx).Do()
 	default:
 		return state, fmt.Errorf("events: unsupported subscription state %q", sub.State)
 	}
 	if err != nil {
+		if m.pendingKind == "reactivate" && (isHTTP(err, http.StatusForbidden) || isHTTP(err, http.StatusUnauthorized)) {
+			m.scopeReloaded = false
+		}
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = state
-		return state, fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
+		m.ambiguousCause = fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
+		return state, m.ambiguousCause
+	}
+	return m.finish(ctx, op)
+}
+
+// resume makes at most one bounded HTTP poll per Reconcile. Retained operations
+// never consume another two-minute polling loop; callers provide retry backoff.
+func (m *Manager) resume(ctx context.Context) (ledger.SubscriptionState, error) {
+	ctx, cancel := context.WithTimeout(ctx, operationTimeout)
+	defer cancel()
+	op, err := m.service.Operations.Get(m.pending.Name).Context(ctx).Do()
+	if err != nil {
+		if isHTTP(err, http.StatusNotFound) {
+			m.pending = nil
+		}
+		return ledger.SubscriptionState{}, fmt.Errorf("events: resume operation: %w", err)
+	}
+	m.pending = op
+	if !op.Done {
+		return ledger.SubscriptionState{}, fmt.Errorf("events: operation %s is still pending", op.Name)
 	}
 	return m.finish(ctx, op)
 }
@@ -301,6 +382,9 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	}
 	m.pending = nil
 	if op.Error != nil {
+		if m.pendingKind == "reactivate" && (op.Error.Code == 7 || op.Error.Code == 16) {
+			m.scopeReloaded = false
+		}
 		if op.Error.Code == 6 {
 			return m.adopt(ctx)
 		} // google.rpc.Code.ALREADY_EXISTS
@@ -315,24 +399,50 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 		return state, err
 	}
 	m.ambiguousUntil = time.Time{}
+	m.ambiguousCause = nil
+	m.logMutation(ctx, m.pendingKind, state)
 	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
 		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
 	}
+	m.scopeReloaded = false
 	return state, nil
 }
 
 func (m *Manager) validate(sub *api.Subscription) (time.Time, error) {
-	if sub == nil || sub.Name == "" || sub.TargetResource != Target || sub.NotificationEndpoint == nil || sub.NotificationEndpoint.PubsubTopic != m.topic || sub.PayloadOptions == nil || !sub.PayloadOptions.IncludeResource {
-		return time.Time{}, errors.New("events: subscription has missing or incompatible resource, topic or payload options")
+	if sub == nil {
+		return time.Time{}, errors.New("events: subscription is <nil>")
+	}
+	incompatible := func(field string, value any) (time.Time, error) {
+		return time.Time{}, fmt.Errorf("events: subscription %q has incompatible %s=%v; remove the incompatible subscription manually", sub.Name, field, value)
+	}
+	switch {
+	case sub.Name == "":
+		return incompatible("name", `""`)
+	case sub.TargetResource != Target:
+		return incompatible("targetResource", sub.TargetResource)
+	case sub.NotificationEndpoint == nil:
+		return incompatible("notificationEndpoint", nil)
+	case sub.NotificationEndpoint.PubsubTopic != m.topic:
+		return incompatible("notificationEndpoint.pubsubTopic", sub.NotificationEndpoint.PubsubTopic)
+	case sub.PayloadOptions == nil:
+		return incompatible("payloadOptions", nil)
+	case !sub.PayloadOptions.IncludeResource:
+		return incompatible("payloadOptions.includeResource", sub.PayloadOptions.IncludeResource)
+	}
+	// The API's patch updateMask only permits expiry, TTL and event types;
+	// payload options cannot be repaired here. Refuse adoption (and duplicate
+	// creation) until the operator removes the incompatible subscription.
+	if sub.PayloadOptions.FieldMask != "" {
+		return incompatible("payloadOptions.fieldMask", sub.PayloadOptions.FieldMask)
 	}
 	for _, typ := range m.types {
 		if !slices.Contains(sub.EventTypes, typ) {
-			return time.Time{}, fmt.Errorf("events: subscription %s lacks event type %s", sub.Name, typ)
+			return incompatible("eventTypes", fmt.Sprintf("%v (missing %s)", sub.EventTypes, typ))
 		}
 	}
 	expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("events: invalid subscription expiry: %w", err)
+		return time.Time{}, fmt.Errorf("events: subscription %q has invalid expireTime=%q: %w", sub.Name, sub.ExpireTime, err)
 	}
 	return expiry, nil
 }
@@ -345,10 +455,12 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	state := ledger.SubscriptionState{Name: sub.Name, Target: sub.TargetResource, State: sub.State, Expiry: expiry}
 	m.ledgerMu.Lock()
 	previous := m.ledger.Subscription
-	m.ledger.Subscription = state
-	err = m.ledger.Save(m.path)
-	if err != nil {
-		m.ledger.Subscription = previous
+	if previous != state {
+		m.ledger.Subscription = state
+		err = m.ledger.Save(m.path)
+		if err != nil {
+			m.ledger.Subscription = previous
+		}
 	}
 	m.ledgerMu.Unlock()
 	if err != nil {
@@ -380,11 +492,65 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	return state, nil
 }
 
+func (m *Manager) reportSuspension(ctx context.Context, sub *api.Subscription, err error) error {
+	if sub.State != "SUSPENDED" {
+		return err
+	}
+	m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
+	if err != nil {
+		return fmt.Errorf("events: subscription %s suspended (%s): %w", sub.Name, sub.SuspensionReason, err)
+	}
+	return nil
+}
+
+func (m *Manager) logMutation(ctx context.Context, action string, state ledger.SubscriptionState) {
+	m.log.InfoContext(ctx, "subscription mutation", "action", action, "name", state.Name, "state", state.State, "expiry", state.Expiry)
+}
+
+// Status returns the last reconciliation error, consecutive failures, scheduled
+// next attempt, and last durably observed subscription. It shares the reconcile
+// gate and ledger lock, so callers receive one consistent snapshot. Before the
+// first attempt the error, count, and next attempt are zero. RenewLoop consumes
+// this schedule; direct Reconcile callers remain responsible for retrying.
+//
+//lint:ignore ST1008 The first value is a stored diagnostic, not an accessor failure; preserve the status contract.
+func (m *Manager) Status() (error, int, time.Time, ledger.SubscriptionState) {
+	m.gate <- struct{}{}
+	defer func() { <-m.gate }()
+	m.ledgerMu.Lock()
+	state := m.ledger.Subscription
+	m.ledgerMu.Unlock()
+	return m.lastError, m.failures, m.nextAttempt, state
+}
+
+// recordResult and holdError are only called under gate.
+func (m *Manager) recordResult(err error) {
+	m.lastError = err
+	if err == nil {
+		m.failures, m.retryDelay = 0, 0
+		m.nextAttempt = m.renewAt
+		return
+	}
+	m.failures++
+	if m.retryDelay == 0 {
+		m.retryDelay = time.Second
+	} else {
+		m.retryDelay = min(2*m.retryDelay, operationTimeout)
+	}
+	m.nextAttempt = m.clock.Now().Add(m.retryDelay)
+}
+
+func (m *Manager) holdError(message string) error {
+	if m.ambiguousCause != nil {
+		return fmt.Errorf("%s: %w", message, m.ambiguousCause)
+	}
+	return errors.New(message)
+}
+
 // RenewLoop retries failures with exponential backoff up to two minutes. Long
 // waits recheck wall time and the latest schedule at least once a minute, so
 // clock jumps and lifecycle-driven renewal cannot leave a stale relative timer.
 func (m *Manager) RenewLoop(ctx context.Context) {
-	backoff := time.Second
 	for ctx.Err() == nil {
 		_, err := m.Reconcile(ctx)
 		if err != nil {
@@ -392,13 +558,12 @@ func (m *Manager) RenewLoop(ctx context.Context) {
 				return
 			}
 			m.log.ErrorContext(ctx, "subscription reconciliation failed", "cause", err)
-			if m.clock.Sleep(ctx, backoff) != nil {
+			_, _, next, _ := m.Status()
+			if m.clock.Sleep(ctx, max(0, next.Sub(m.clock.Now()))) != nil {
 				return
 			}
-			backoff = min(backoff*2, operationTimeout)
 			continue
 		}
-		backoff = time.Second
 		for ctx.Err() == nil {
 			select {
 			case m.gate <- struct{}{}:
@@ -419,10 +584,12 @@ func (m *Manager) RenewLoop(ctx context.Context) {
 
 // HandleLifecycle ignores unrelated events. It deliberately ignores the event
 // payload's state: lifecycle deliveries can be late, duplicated or unordered.
+// Both full CloudEvent types and normalized subscription.<kind> are accepted.
 // Returning errors lets the dispatcher nack/retry a transient failure.
 func (m *Manager) HandleLifecycle(ctx context.Context, eventType string) error {
 	switch eventType {
-	case "google.workspace.events.subscription.v1.expirationReminder", "google.workspace.events.subscription.v1.expired", "google.workspace.events.subscription.v1.suspended":
+	case "google.workspace.events.subscription.v1.expirationReminder", "google.workspace.events.subscription.v1.expired", "google.workspace.events.subscription.v1.suspended",
+		"subscription.expirationReminder", "subscription.expired", "subscription.suspended":
 		_, err := m.Reconcile(ctx)
 		return err
 	default:
