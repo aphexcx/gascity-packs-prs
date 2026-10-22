@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -28,13 +29,14 @@ type Space = googlechat.Space
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
-	api            *googlechat.Service
-	limits         Limiter
-	timing         timing
-	retryBound     time.Duration
-	ep             config.Endpoints
-	identityMu     sync.RWMutex
-	identityUserID string
+	api              *googlechat.Service
+	limits           Limiter
+	timing           timing
+	retryBound       time.Duration
+	ep               config.Endpoints
+	identityMu       sync.RWMutex
+	identityUserID   string
+	identityMismatch error
 }
 
 func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Client, error) {
@@ -62,13 +64,37 @@ func (c *Client) SetIdentityUserID(id string) error {
 	c.identityMu.Lock()
 	defer c.identityMu.Unlock()
 	if c.identityUserID != "" && c.identityUserID != id {
-		return localError{errors.New("chat: identity user ID changed; rebuild the client")}
+		if c.identityMismatch == nil {
+			c.identityMismatch = localError{errors.New("chat: identity user ID mismatch; rebuild the client before deleting reactions")}
+			slog.Warn("chat identity user ID mismatch; rebuild the client before deleting reactions", "expected_user_id", c.identityUserID, "observed_user_id", id)
+		}
+		return c.identityMismatch
 	}
 	c.identityUserID = id
 	return nil
 }
 
 var validUserID = regexp.MustCompile(`^users/[0-9]+$`)
+
+// Learning cannot turn a stored create into a failed send. A canonical conflict
+// still disables reaction removal until the app rebuilds this client.
+func (c *Client) learnIdentityUserID(id string) {
+	if validUserID.MatchString(id) {
+		_ = c.SetIdentityUserID(id)
+	}
+}
+
+func (c *Client) reactionIdentity() (string, error) {
+	c.identityMu.RLock()
+	defer c.identityMu.RUnlock()
+	if c.identityMismatch != nil {
+		return "", c.identityMismatch
+	}
+	if c.identityUserID == "" {
+		return "", localError{errors.New("chat: SetIdentityUserID is required before deleting reactions")}
+	}
+	return c.identityUserID, nil
+}
 
 // IdentityUserID returns the canonical user resource learned from a successful
 // create response or supplied at startup. The app can persist it in its ledger.
@@ -132,9 +158,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 	}
 	// Replayed creates may omit the sender. Never erase a previously learned ID.
 	if result.Sender != nil && result.Sender.Name != "" {
-		if err := c.SetIdentityUserID(result.Sender.Name); err != nil {
-			return result.Name, threadName, err
-		}
+		c.learnIdentityUserID(result.Sender.Name)
 	}
 	return result.Name, threadName, nil
 }
@@ -227,19 +251,15 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 		return "", err
 	}
 	if result.User != nil && result.User.Name != "" {
-		if err := c.SetIdentityUserID(result.User.Name); err != nil {
-			return result.Name, err
-		}
+		c.learnIdentityUserID(result.User.Name)
 	}
 	return result.Name, nil
 }
 
 func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) error {
-	c.identityMu.RLock()
-	user := c.identityUserID
-	c.identityMu.RUnlock()
-	if user == "" {
-		return localError{errors.New("chat: SetIdentityUserID is required before deleting reactions")}
+	user, err := c.reactionIdentity()
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -265,6 +285,10 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 	for _, name := range names {
 		err := c.retry(ctx, true, func(ctx context.Context) error {
 			if err := c.limits.WaitReaction(ctx); err != nil {
+				return err
+			}
+			// A concurrent create may discover a conflict while listing or pacing.
+			if _, err := c.reactionIdentity(); err != nil {
 				return err
 			}
 			_, err := c.api.Spaces.Messages.Reactions.Delete(name).Context(ctx).Do()
@@ -312,15 +336,12 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		if info.Size() > limit {
 			return localError{errors.New("file exceeds media limit")}
 		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return localError{err}
-		}
 		// Stream one multipart request, including for Chat's 200 MB maximum.
 		// SDK resumable chunks retry 429s internally without Retry-After and lose
 		// the HTTP error on deadline. Keep every retry under our policy instead.
 		transferCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		stream := &uploadReader{reader: file, remaining: limit, cancel: cancel}
+		stream := newUploadReader(file, limit, cancel)
 		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(stream, googleapi.ChunkSize(0)).Context(transferCtx).Do()
 		// The SDK formats source errors as strings. Preserve the local byte-limit
 		// error so a growing file cannot yield a success or a transient receipt.
@@ -346,6 +367,11 @@ type uploadReader struct {
 	cancel    context.CancelFunc
 	mu        sync.Mutex
 	err       error
+}
+
+func newUploadReader(file *os.File, limit int64, cancel context.CancelFunc) *uploadReader {
+	// Each SDK pipe gets its own offset, including any earlier pipe still exiting.
+	return &uploadReader{reader: io.NewSectionReader(file, 0, limit+1), remaining: limit, cancel: cancel}
 }
 
 func (r *uploadReader) Err() error {
@@ -382,7 +408,7 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 
 // DownloadMedia creates a new private file below MediaDir, never overwrites an
 // existing file, and removes an incomplete download. The caller creates parent
-// directories and only uses dest after success. No path component may be a link.
+// directories and only uses dest after success. No component below MediaDir may be a link.
 func (c *Client) DownloadMedia(ctx context.Context, resourceName, dest string, maxBytes int64) (n int64, err error) {
 	if maxBytes <= 0 {
 		return 0, localError{errors.New("chat: positive download byte limit required")}
@@ -559,7 +585,7 @@ func (c *Client) retry(ctx context.Context, safe bool, call func(context.Context
 	deadline := c.timing.Now().Add(bound)
 	remaining := func() time.Duration {
 		d := deadline.Sub(c.timing.Now())
-		if realDeadline, ok := ctx.Deadline(); ok && time.Until(realDeadline) < d {
+		if realDeadline, ok := ctx.Deadline(); c.timing.now == nil && ok && time.Until(realDeadline) < d {
 			d = time.Until(realDeadline)
 		}
 		return d

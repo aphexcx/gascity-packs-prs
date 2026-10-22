@@ -27,6 +27,9 @@ import (
 	events "google.golang.org/api/workspaceevents/v1"
 )
 
+// UserID is the canonical authenticated user returned by message and reaction creates.
+const UserID = "users/123456789"
+
 // Server owns all fixtures. Set exported fields before making requests, or use
 // Configure while clients are running. Configure callbacks must not call methods
 // on Server. Fixtures are keyed by full resource name (spaces/room, etc.).
@@ -588,7 +591,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, path string) {
 				return
 			}
 			reaction.Name = name + "/reactions/" + s.id()
-			reaction.User = &chat.User{Name: "users/example", Type: "HUMAN"}
+			reaction.User = &chat.User{Name: UserID, Type: "HUMAN"}
 			s.Reactions[reaction.Name] = &reaction
 			s.respond(w, r, 200, &reaction)
 		case len(parts) == 5 && r.Method == http.MethodGet:
@@ -680,7 +683,7 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 	message.Thread = &chat.Thread{Name: thread}
 	message.CreateTime = s.now().Format(time.RFC3339Nano)
 	message.Space = room
-	message.Sender = &chat.User{Name: "users/example", Type: "HUMAN"}
+	message.Sender = &chat.User{Name: UserID, Type: "HUMAN"}
 	s.Messages[message.Name] = &message
 	s.lastWrite[space] = s.now()
 	if requestID != "" {
@@ -828,12 +831,16 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, 400, "INVALID_ARGUMENT", "missing upload data")
 			return
 		}
-		data, err = io.ReadAll(part)
+		data, err = io.ReadAll(io.LimitReader(part, maxUploadBytes+1))
 	} else {
-		data, err = io.ReadAll(r.Body)
+		data, err = io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
 	}
 	if err != nil {
 		s.fail(w, 400, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	if len(data) > maxUploadBytes {
+		s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload size")
 		return
 	}
 	name := parent + "/attachments/" + s.id()

@@ -3,10 +3,15 @@ package chat
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,25 +29,6 @@ import (
 type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-// The shared fake still emits users/example. Model Google's canonical numeric
-// user resource in this package without changing the fake outside this bead.
-func canonicalFakeResponse(r *http.Request) (*http.Response, error) {
-	response, err := http.DefaultTransport.RoundTrip(r)
-	if err != nil || !strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
-		return response, err
-	}
-	data, err := io.ReadAll(response.Body)
-	response.Body.Close()
-	if err != nil {
-		return nil, err
-	}
-	data = bytes.ReplaceAll(data, []byte(`"users/example"`), []byte(`"users/123"`))
-	response.Body = io.NopCloser(bytes.NewReader(data))
-	response.ContentLength = int64(len(data))
-	response.Header.Set("Content-Length", fmt.Sprint(len(data)))
-	return response, nil
-}
 
 type testClock struct {
 	mu  sync.Mutex
@@ -86,6 +72,27 @@ func TestRetryBudgetUsesClock(t *testing.T) {
 	if calls != 3 || f.Now().Sub(start) != 4*time.Second || kind != "rate_limited" || hint != 2*time.Second || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("calls=%d elapsed=%v kind=%s hint=%v err=%v", calls, f.Now().Sub(start), kind, hint, err)
 	}
+}
+
+func TestInjectedRetryBudgetIgnoresWallClockElapsed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &Client{retryBound: 5 * time.Second}
+		clock := useTestClock(c)
+		start := clock.Now()
+		calls := 0
+		err := c.retry(context.Background(), true, func(context.Context) error {
+			calls++
+			if calls == 1 {
+				// Real elapsed time must not shorten the injected backoff budget.
+				time.Sleep(3 * time.Second)
+				return &googleapi.Error{Code: 429, Header: http.Header{"Retry-After": []string{"3"}}}
+			}
+			return nil
+		})
+		if err != nil || calls != 2 || clock.Now().Sub(start) != 3*time.Second {
+			t.Fatalf("calls=%d fake elapsed=%v err=%v", calls, clock.Now().Sub(start), err)
+		}
+	})
 }
 
 func TestLimiterUsesClock(t *testing.T) {
@@ -177,7 +184,7 @@ func TestDownloadStreamingContextAndUnknownLength(t *testing.T) {
 	resource := "spaces/room/attachments/stream"
 	s.Media[resource] = []byte("streaming data")
 	httpClient := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
-		response, err := canonicalFakeResponse(r)
+		response, err := http.DefaultTransport.RoundTrip(r)
 		if err == nil {
 			response.ContentLength = -1
 			response.Body = contextBody{ctx: r.Context(), ReadCloser: response.Body}
@@ -210,7 +217,7 @@ func fixture(t *testing.T) (*Client, *fakegoogle.Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(context.Background(), &http.Client{Transport: transportFunc(canonicalFakeResponse)}, config.Endpoints{ChatAPIBase: s.URL(), MediaDir: dir, UploadRoot: dir})
+	c, err := New(context.Background(), http.DefaultClient, config.Endpoints{ChatAPIBase: s.URL(), MediaDir: dir, UploadRoot: dir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +313,7 @@ func TestListMessagesUsesDefaultAscendingOrder(t *testing.T) {
 		if order := r.URL.Query().Get("orderBy"); order != "" {
 			t.Errorf("expected documented default order, got %q", order)
 		}
-		return canonicalFakeResponse(r)
+		return http.DefaultTransport.RoundTrip(r)
 	})}
 	c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {
@@ -336,12 +343,12 @@ func TestReactionsDeleteOnlyOwnAcrossPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A restarted client can remove reactions without first creating one.
-	c, err = New(context.Background(), &http.Client{Transport: transportFunc(canonicalFakeResponse)}, config.Endpoints{ChatAPIBase: s.URL()})
+	c, err = New(context.Background(), http.DefaultClient, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	useTestClock(c)
-	if err := c.SetIdentityUserID("users/123"); err != nil {
+	if err := c.SetIdentityUserID(fakegoogle.UserID); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.DeleteReaction(context.Background(), message, "👍"); err != nil {
@@ -373,6 +380,106 @@ func TestIdentityRejectsAliases(t *testing.T) {
 	}
 }
 
+func TestCreateIdentityLearningIsBestEffort(t *testing.T) {
+	for _, reaction := range []bool{false, true} {
+		for _, mismatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("reaction=%v/mismatch=%v", reaction, mismatch), func(t *testing.T) {
+				_, s, _ := fixture(t)
+				const message = "spaces/room/messages/seed"
+				s.Messages[message] = &googlechat.Message{Name: message}
+				var logs bytes.Buffer
+				previous := slog.Default()
+				slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+				t.Cleanup(func() { slog.SetDefault(previous) })
+				observed := "users/example"
+				initial := ""
+				if mismatch {
+					initial, observed = "users/111", "users/222"
+				}
+				requests := 0
+				h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+					requests++
+					response, err := http.DefaultTransport.RoundTrip(r)
+					if err != nil {
+						return nil, err
+					}
+					defer response.Body.Close()
+					var body map[string]any
+					if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+						return nil, err
+					}
+					field := "sender"
+					if reaction {
+						field = "user"
+					}
+					body[field] = map[string]string{"name": observed}
+					data, err := json.Marshal(body)
+					if err != nil {
+						return nil, err
+					}
+					response.Body = io.NopCloser(bytes.NewReader(data))
+					response.ContentLength = int64(len(data))
+					response.Header.Set("Content-Length", fmt.Sprint(len(data)))
+					return response, nil
+				})}
+				c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				useTestClock(c)
+				if initial != "" {
+					if err := c.SetIdentityUserID(initial); err != nil {
+						t.Fatal(err)
+					}
+				}
+				for i := 0; i < 2; i++ {
+					var name string
+					if reaction {
+						name, err = c.CreateReaction(context.Background(), message, "👍")
+					} else {
+						var thread string
+						name, thread, err = c.CreateMessage(context.Background(), "spaces/room", "hello", "", fmt.Sprint(i), true)
+						if thread == "" {
+							t.Error("successful message lost its thread")
+						}
+					}
+					if err != nil || name == "" {
+						t.Errorf("stored create: name=%q err=%v", name, err)
+					}
+					s.Configure(func(s *fakegoogle.Server) {
+						if reaction && s.Reactions[name] == nil || !reaction && s.Messages[name] == nil {
+							t.Errorf("create %q was not stored", name)
+						}
+					})
+				}
+				if got := c.IdentityUserID(); got != initial {
+					t.Errorf("identity=%q, want %q", got, initial)
+				}
+				if mismatch {
+					// Re-supplying the first ID cannot clear a credential conflict.
+					if err := c.SetIdentityUserID(initial); err != nil {
+						t.Fatal(err)
+					}
+					err := c.DeleteReaction(context.Background(), message, "👍")
+					kind, _ := Classify(err)
+					if kind != "permanent" || !strings.Contains(err.Error(), "mismatch") {
+						t.Errorf("delete after mismatch: kind=%s err=%v", kind, err)
+					}
+					var record struct{ Level, Msg string }
+					if err := json.Unmarshal(bytes.TrimSpace(logs.Bytes()), &record); err != nil || record.Level != "WARN" || !strings.Contains(record.Msg, "mismatch") {
+						t.Errorf("want exactly one WARN for mismatch, got %q (%v)", logs.String(), err)
+					}
+				} else if logs.Len() != 0 {
+					t.Errorf("non-canonical sender logged: %s", logs.String())
+				}
+				if requests != 2 {
+					t.Errorf("requests=%d, want only two creates", requests)
+				}
+			})
+		}
+	}
+}
+
 func TestCreateMessageLearnsIdentityForReactionRemoval(t *testing.T) {
 	c, s, _ := fixture(t)
 	name, _, err := c.CreateMessage(context.Background(), "spaces/room", "hello", "", "identity", true)
@@ -381,7 +488,7 @@ func TestCreateMessageLearnsIdentityForReactionRemoval(t *testing.T) {
 	}
 	// No reaction has been created by this client. A pre-existing own reaction
 	// must already be removable after a successful message response.
-	const own = "users/123"
+	const own = fakegoogle.UserID
 	reaction := name + "/reactions/own"
 	s.Configure(func(s *fakegoogle.Server) {
 		s.Reactions[reaction] = &googlechat.Reaction{Name: reaction, User: &googlechat.User{Name: own}, Emoji: &googlechat.Emoji{Unicode: "👍"}}
@@ -517,6 +624,19 @@ func TestMediaRootAllowsSymlinkedParent(t *testing.T) {
 			t.Fatalf("accepted %s", suffix)
 		}
 	}
+	// Resolving only symlinked ancestors is insufficient: the root can be a link.
+	rootLink := filepath.Join(parent, "root-link")
+	if err := os.Symlink(root, rootLink); err != nil {
+		t.Fatal(err)
+	}
+	c.ep.UploadRoot, c.ep.MediaDir = rootLink, rootLink
+	ref, err = c.UploadAttachment(context.Background(), "spaces/room", filepath.Join(rootLink, "source"))
+	if err != nil {
+		t.Fatalf("upload through root symlink: %v", err)
+	}
+	if n, err := c.DownloadMedia(context.Background(), ref.ResourceName, filepath.Join(rootLink, "root-link-dest"), 10); err != nil || n != 4 {
+		t.Fatalf("download through root symlink: %d %v", n, err)
+	}
 }
 
 func TestMediaRejectsDotDotWithinRoot(t *testing.T) {
@@ -547,7 +667,7 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 			}
 			return &http.Response{StatusCode: 429, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
 		}
-		return canonicalFakeResponse(r)
+		return http.DefaultTransport.RoundTrip(r)
 	})}
 	c, err := New(context.Background(), httpClient, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir, MediaMaxBytes: 5})
 	if err != nil {
@@ -557,6 +677,9 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 	_, err = c.UploadAttachment(context.Background(), "spaces/room", path)
 	if err == nil || !strings.Contains(err.Error(), "growing.txt") {
 		t.Fatalf("oversize upload: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("requests=%d, want only the attempt before growth", calls)
 	}
 	s.Configure(func(s *fakegoogle.Server) {
 		if len(s.Media) != 0 {
@@ -581,7 +704,7 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 				// Inject at the transfer request, not at a resumable session's
 				// metadata request. This catches the SDK's hidden chunk retries.
 				if r.URL.Query().Get("uploadType") == "resumable" {
-					return canonicalFakeResponse(r)
+					return http.DefaultTransport.RoundTrip(r)
 				}
 				attempts++
 				if attempts == 1 {
@@ -594,7 +717,7 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 					r.Body.Close()
 					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"2"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
 				}
-				return canonicalFakeResponse(r)
+				return http.DefaultTransport.RoundTrip(r)
 			})}
 			c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir})
 			if err != nil {
@@ -662,7 +785,7 @@ func TestLargeUploadClientByteLimit(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				return canonicalFakeResponse(r)
+				return http.DefaultTransport.RoundTrip(r)
 			})}
 			c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL(), UploadRoot: dir, MediaMaxBytes: size - 1})
 			if err != nil {
@@ -678,6 +801,113 @@ func TestLargeUploadClientByteLimit(t *testing.T) {
 				t.Fatalf("client sent oversize file (%d requests)", requests)
 			}
 		})
+	}
+}
+
+func TestHTTP2UploadGrowthNeverCompletesPart(t *testing.T) {
+	const size = 8 << 20
+	dir := t.TempDir()
+	path := filepath.Join(dir, "growing.bin")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0600); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		protocol int
+		bytes    int64
+		err      error
+	}
+	done := make(chan result, 1)
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := result{protocol: r.ProtoMajor}
+		defer func() { done <- got }()
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, err = file.Write([]byte("x"))
+		file.Close()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		reader := multipart.NewReader(r.Body, params["boundary"])
+		metadata, err := reader.NextPart()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := io.Copy(io.Discard, metadata); err != nil {
+			t.Error(err)
+			return
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		got.bytes, got.err = io.Copy(io.Discard, part)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"attachmentDataRef":{"resourceName":"spaces/room/attachments/1"}}`)
+	}))
+	s.EnableHTTP2 = true
+	s.StartTLS()
+	defer s.Close()
+	c, err := New(context.Background(), s.Client(), config.Endpoints{ChatAPIBase: s.URL, UploadRoot: dir, MediaMaxBytes: size})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ref, err := c.UploadAttachment(ctx, "spaces/room", path)
+	if kind, _ := Classify(err); kind != "permanent" || ref != nil {
+		t.Fatalf("growing upload: ref=%v err=%v", ref, err)
+	}
+	select {
+	case got := <-done:
+		if got.protocol != 2 {
+			t.Fatalf("want HTTP/2, got HTTP/%d", got.protocol)
+		}
+		if got.err == nil {
+			t.Fatalf("server parsed a complete truncated part: %d bytes", got.bytes)
+		}
+	case <-ctx.Done():
+		t.Fatal("server did not finish reading the canceled upload")
+	}
+}
+
+func TestUploadAttemptsHaveIndependentOffsets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source")
+	if err := os.WriteFile(path, []byte("abcdef"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := newUploadReader(file, 6, cancel)
+	var prefix [2]byte
+	if _, err := io.ReadFull(first, prefix[:]); err != nil || string(prefix[:]) != "ab" {
+		t.Fatalf("first prefix=%q err=%v", prefix, err)
+	}
+	second := newUploadReader(file, 6, cancel)
+	// An earlier SDK pipe can still be reading when the next attempt starts.
+	if got, err := io.ReadAll(second); err != nil || string(got) != "abcdef" {
+		t.Errorf("second attempt=%q err=%v", got, err)
+	}
+	if got, err := io.ReadAll(first); err != nil || string(got) != "cdef" {
+		t.Errorf("first remainder=%q err=%v", got, err)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Errorf("in-limit attempts canceled: %v", err)
 	}
 }
 
@@ -806,7 +1036,7 @@ func TestRetryHintAndLostResponse(t *testing.T) {
 		if clock.Now().Sub(first) < 2*time.Second {
 			t.Error("retried before Retry-After")
 		}
-		return canonicalFakeResponse(r)
+		return http.DefaultTransport.RoundTrip(r)
 	})}
 	c, err = New(context.Background(), httpClient, config.Endpoints{ChatAPIBase: s.URL()})
 	if err != nil {
