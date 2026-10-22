@@ -112,6 +112,10 @@ func (s *Server) removeReceipt(id string) {
 
 func (s *Server) observeReceipts() {
 	for id, receipt := range s.Receipts {
+		if receipt.State == "unknown" {
+			s.removeReceipt(id)
+			continue
+		}
 		if receipt.State != "concluded" {
 			delete(s.concludedAt, id)
 			continue

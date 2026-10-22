@@ -502,3 +502,29 @@ func TestRegistrationResponseAndValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestUnknownReceiptReleasesOnlyItsOwnAttempt(t *testing.T) {
+	for _, newer := range []bool{false, true} {
+		t.Run(fmt.Sprint(newer), func(t *testing.T) {
+			s := New(t)
+			s.NextDelivery = "pending"
+			m := inbound("unknown")
+			first := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			id := first["receipt_id"].(string)
+			var newerID any
+			if newer {
+				failed := wire.ReceiptResponse{State: "concluded"}
+				failed.Delivery.Status = "failed"
+				s.SetReceipt(id, failed)
+				s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+				newerID = call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)["receipt_id"]
+			}
+			s.SetReceipt(id, wire.ReceiptResponse{State: "unknown"})
+			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+			replay := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			if replay["receipt_id"] == id || (newer && replay["receipt_id"] != newerID) {
+				t.Fatalf("unknown receipt did not release only its attempt: %v", replay)
+			}
+		})
+	}
+}
