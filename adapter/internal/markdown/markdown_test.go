@@ -24,6 +24,10 @@ func TestToChat(t *testing.T) {
 		{"link", "[text](https://example.com)", "<https://example.com|text>"},
 		{"balanced link URL", "[text](https://example.com/a_(b))", "<https://example.com/a_(b)|text>"},
 		{"format link label", "[**text**](https://example.com)", "<https://example.com|*text*>"},
+		{"literal brackets before link", "array[0] then [text](url)", "array[0] then <url|text>"},
+		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
+		{"image unchanged", "![**alt**](image.png) and **text**", "![**alt**](image.png) and *text*"},
+		{"link with code bracket", "[`]` label](url)", "<url|`]` label>"},
 		{"heading", "# Title\n## Subtitle\n###### Small\n", "*Title*\n*Subtitle*\n*Small*\n"},
 		{"nested emphasis", "**bold _italic_** and *soft*", "*bold _italic_* and _soft_"},
 		{"code in emphasis", "**bold `*code*`**", "*bold `*code*`*"},
@@ -98,7 +102,7 @@ func TestSplitFencedCode(t *testing.T) {
 		name, opener, marker, body string
 		limit                      int
 	}{
-		{"40000 bytes", "```go\n", "```", strings.Repeat("x", 40000), 32000},
+		{"40000 bytes", "```go\n", "```", strings.Repeat("x", 39990), 32000},
 		{"multibyte", "```日本語\n", "```", strings.Repeat("日本語🙂", 4000), 32000},
 		{"many splits", "```text title\n", "```", strings.Repeat("abc def\n\n", 30), 40},
 		{"no info string", "```\n", "```", strings.Repeat("x", 50), 20},

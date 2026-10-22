@@ -63,9 +63,13 @@ func inline(s string) string {
 			i = end
 			continue
 		}
-		if s[i] == '[' && (i == 0 || s[i-1] != '!') {
+		if s[i] == '[' {
 			if label, url, end, ok := link(s, i); ok {
-				out.WriteString("<" + url + "|" + inline(label) + ">")
+				if i > 0 && s[i-1] == '!' {
+					out.WriteString(s[i:end])
+				} else {
+					out.WriteString("<" + url + "|" + inline(label) + ">")
+				}
 				i = end
 				continue
 			}
@@ -161,13 +165,32 @@ func wordBefore(s string) bool {
 }
 
 func link(s string, start int) (label, url string, end int, ok bool) {
-	closeLabel := strings.Index(s[start+1:], "](")
+	closeLabel := -1
+	depth := 1
+	for i := start + 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case '`':
+			i = codeSpanEnd(s, i) - 1
+		case '[':
+			depth++
+		case ']':
+			depth--
+		}
+		if depth == 0 {
+			if i+1 >= len(s) || s[i+1] != '(' {
+				return
+			}
+			closeLabel = i
+			break
+		}
+	}
 	if closeLabel < 0 {
 		return
 	}
-	closeLabel += start + 1
 	urlStart := closeLabel + 2
-	depth := 1
+	depth = 1
 	for i := urlStart; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++
