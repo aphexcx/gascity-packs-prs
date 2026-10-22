@@ -1659,6 +1659,42 @@ func TestHistoryOmitsDeliveryMarkers(t *testing.T) {
 	}
 }
 
+func TestHistoryPreservesLiteralCatchUpHeader(t *testing.T) {
+	for _, catchUp := range []bool{false, true} {
+		t.Run(fmt.Sprint(catchUp), func(t *testing.T) {
+			f := setup(t)
+			p, err := inbound.New(inbound.Options{Config: f.cfg, Ledger: f.l, LedgerMu: f.mu, LedgerPath: f.options.LedgerPath, Chat: f.options.Chat, GC: f.options.GC})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := &api.Message{Name: "spaces/room/messages/literal", CreateTime: "2026-10-22T10:00:00Z", Text: "[catch-up]\nliteral user content", Space: &api.Space{Name: "spaces/room", SpaceType: "SPACE"}, Sender: &api.User{Name: "users/456", Type: "HUMAN"}}
+			f.g.Configure(func(g *fakegoogle.Server) { g.Messages[m.Name] = m })
+			c := puller.Change{Kind: "message.created", Space: "spaces/room", Message: m}
+			if catchUp {
+				_, err = p.HandleChange(t.Context(), c)
+			} else {
+				_, err = p.Handle(t.Context(), &puller.Event{PubSubID: "live", Changes: []puller.Change{c}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Exercise persisted provenance rather than only the processor's memory.
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			*f.l = *l
+			f.mu.Unlock()
+			_, raw, _ := f.call(t, "/read?space=spaces/room", nil)
+			got := decode[[]wire.InboundMessage](t, raw)
+			if len(got) != 1 || got[0].Text != m.Text {
+				t.Fatalf("literal header altered: %s", raw)
+			}
+		})
+	}
+}
+
 func TestCommandGCLogsSanitizedFailureAndRecovery(t *testing.T) {
 	for _, status := range []int{422, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

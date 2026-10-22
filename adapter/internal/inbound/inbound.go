@@ -596,7 +596,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		if local != "" {
 			status = "committed"
 		}
-		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local}
+		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local, CatchUp: catchUp}
 		if state != nil {
 			// Outbound can record its send key while a Chat lookup is in flight.
 			// That field belongs to outbound; retain its latest value under the

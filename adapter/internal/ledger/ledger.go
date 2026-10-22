@@ -86,6 +86,7 @@ type ChangeState struct {
 	Created   time.Time `json:"created"`
 	Event     string    `json:"event"`
 	Reason    string    `json:"reason"`
+	CatchUp   bool      `json:"catch_up,omitempty"` // adapter added the delivery header
 }
 
 type SendState struct {

@@ -1243,7 +1243,9 @@ func historyContent(l *ledger.Ledger, m *api.Message) (wire.InboundMessage, bool
 			return saved, false
 		}
 		if json.Unmarshal([]byte(change.Event), &saved) == nil && saved.ProviderMessageID == id {
-			saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
+			if change.CatchUp {
+				saved.Text = strings.TrimPrefix(saved.Text, "[catch-up]\n")
+			}
 			if change.Kind == "message.updated" && id != m.Name {
 				saved.Text = strings.TrimPrefix(saved.Text, "edited: ")
 			}
