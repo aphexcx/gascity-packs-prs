@@ -798,6 +798,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	}
 	if !result.Delivered {
 		if err := s.available(); err != nil {
+			if send != nil {
+				return s.failPreparedCommand(ctx, p, err)
+			}
 			result.Reason = err.Error()
 			return result, err
 		}
@@ -808,13 +811,15 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			sendUnlock()
 		}
 		if err != nil {
+			if send != nil {
+				return s.failPreparedCommand(ctx, p, err)
+			}
 			result.Reason = err.Error()
 			return result, err
 		}
 		l, err = s.snapshot(ctx)
 		if err != nil {
-			result.Reason = err.Error()
-			return result, err
+			return s.failPreparedCommand(ctx, p, err)
 		}
 		send = l.Sends[p.IdempotencyKey]
 		result = commandOutcome(send)
@@ -939,6 +944,26 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		result.Reason = err.Error()
 	}
 	return result, err
+}
+
+// A returned preparation failure also ends an existing intent's automatic
+// delivery obligation. This includes cancellation just after prepare saved it.
+func (s *Server) failPreparedCommand(ctx context.Context, p wire.PublishRequest, cause error) (CommandResult, error) {
+	receipt := failure(p, cause)
+	result := CommandResult{Key: p.IdempotencyKey, Reason: cause.Error(), FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter}
+	err := s.settle(ctx, func(l *ledger.Ledger) error {
+		v := l.Sends[p.IdempotencyKey]
+		if v.Receipt != nil && v.Receipt.Delivered {
+			// A concurrent callback may have completed while preparation waited.
+			result = commandOutcome(v)
+			return nil
+		}
+		v.Receipt = &receipt
+		v.RecordPending = false
+		v.RecordingReason = result.Reason
+		return nil
+	})
+	return result, errors.Join(cause, err)
 }
 
 // Receipt plus RecordPending distinguish interrupted sends (pending, no receipt),

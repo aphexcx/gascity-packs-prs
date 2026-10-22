@@ -1680,6 +1680,71 @@ func TestNoBindingAtDeadlineDoesNotLeaveAnAutomaticSend(t *testing.T) {
 	}
 }
 
+type cancelAfterIntent struct {
+	context.Context
+	cancel context.CancelFunc
+	ledger *ledger.Ledger
+	key    string
+}
+
+func (c cancelAfterIntent) Err() error {
+	// Inject a caller disconnect immediately after the intent becomes durable,
+	// before any network operation. The command runs synchronously in this test.
+	if c.ledger.Sends[c.key] != nil {
+		c.cancel()
+	}
+	return c.Context.Err()
+}
+
+func TestCommandPreparationFailureSettlesExistingIntent(t *testing.T) {
+	for _, mode := range []string{"after-intent", "not-ready", "send-lock"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "preparation"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			if mode == "after-intent" {
+				ctx = cancelAfterIntent{Context: ctx, cancel: cancel, ledger: f.l, key: p.IdempotencyKey}
+			} else {
+				if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if mode == "not-ready" {
+				f.s.SetHealth(Health{State: "needs-sign-in"})
+			}
+			release := func() {}
+			if mode == "send-lock" {
+				var err error
+				release, err = f.s.lock(t.Context(), "send:"+p.IdempotencyKey)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := f.s.command(ctx, p, nil)
+			release()
+			if err == nil || result.Delivered || result.FailureKind == "" {
+				t.Fatalf("preparation failure: %+v %v", result, err)
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.mu.Lock()
+			*f.l = *l
+			f.mu.Unlock()
+			f.s.SetHealth(Health{State: "ready"})
+			if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if v := f.l.Sends[p.IdempotencyKey]; v.RecordPending || v.Receipt == nil || v.Receipt.FailureKind != result.FailureKind || f.count() != 0 {
+				t.Fatalf("preparation failure retried: %+v sends=%d", v, f.count())
+			}
+		})
+	}
+}
+
 func TestUnrecordableReceiptClearsPendingAtCommitAndAfterRestart(t *testing.T) {
 	for _, mode := range []string{"receipt-commit", "old-crash-window"} {
 		t.Run(mode, func(t *testing.T) {
