@@ -183,6 +183,16 @@ func TestSplitParagraphBeforeCode(t *testing.T) {
 	}
 }
 
+func TestSplitBeforeOpeningFence(t *testing.T) {
+	intro := strings.Repeat("i", 19) + "\n"
+	input := intro + "```go\n" + strings.Repeat("x", 40) + "\n```"
+	parts := Split(input, 30)
+	checkParts(t, parts, 30)
+	if parts[0] != intro {
+		t.Fatalf("first part = %q; want preceding line without an empty code block", parts[0])
+	}
+}
+
 func TestSplitEmpty(t *testing.T) {
 	if parts := Split("", 32000); len(parts) != 0 {
 		t.Fatalf("empty input = %q", parts)

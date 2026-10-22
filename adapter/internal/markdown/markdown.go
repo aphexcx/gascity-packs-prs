@@ -379,7 +379,7 @@ func Split(text string, limit int) []string {
 type splitPoint struct {
 	end      int
 	fence    *codeFence
-	priority int // rune = 0, space = 1, paragraph = 2
+	priority int // opening fence = -1, rune = 0, space = 1, paragraph = 2
 }
 
 // Fence markers and opening lines are preferred intact; trailing whitespace
@@ -407,7 +407,7 @@ func splitPoints(text string) []splitPoint {
 			}
 		case fence == nil && openingFence(line) != nil:
 			fence = openingFence(line)
-			points = append(points, splitPoint{end: end, fence: fence})
+			points = append(points, splitPoint{end: end, fence: fence, priority: -1})
 		default:
 			for i, r := range line {
 				_, size := utf8.DecodeRuneInString(line[i:])
