@@ -1114,6 +1114,61 @@ func TestCommandDeliverySurvivesLostCallbackResponse(t *testing.T) {
 	}
 }
 
+func TestCommandDeliverySurvivesGCErrorAfterCallback(t *testing.T) {
+	for _, mode := range []string{"503", "lost-response"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			f.gc.Bind(conversation("spaces/room"), "session")
+			proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				req, err := http.NewRequestWithContext(r.Context(), r.Method, f.gc.URL()+r.URL.RequestURI(), r.Body)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				req.Header = r.Header.Clone()
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if mode == "503" {
+					w.WriteHeader(503)
+				} else {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					conn.Close()
+				}
+			}))
+			defer proxy.Close()
+			f.s.SetClients(f.options.Chat, gcclient.New(proxy.URL, "examplecity"))
+			_, raw, _ := f.call(t, "/commands/publish", command("lost-gc-response"))
+			first := decode[CommandResult](t, raw)
+			if !first.Delivered || first.Recorded || first.MessageID == "" || first.FailureKind != "" || f.count() != 1 {
+				t.Fatalf("gc error downgraded delivery: %+v sends=%d", first, f.count())
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !l.Sends[first.Key].RecordPending || !l.Sends[first.Key].Receipt.Delivered {
+				t.Fatalf("lost transcript recovery: %+v", l.Sends[first.Key])
+			}
+			f.s.SetClients(f.options.Chat, f.options.GC)
+			if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if v := f.l.Sends[first.Key]; !v.Recorded || v.RecordPending || f.count() != 1 {
+				t.Fatalf("recording retry: %+v sends=%d", v, f.count())
+			}
+		})
+	}
+}
+
 func TestRecordingSuccessRemainsReportedWhenSaveFails(t *testing.T) {
 	f := setup(t)
 	f.gc.Bind(conversation("spaces/room"), "session")
