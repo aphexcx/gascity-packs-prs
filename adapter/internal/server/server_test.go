@@ -1203,7 +1203,7 @@ func TestRejectedCommandNeverRetriesAutomatically(t *testing.T) {
 }
 
 func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
-	for _, mode := range []string{"bound", "unbound", "upload"} {
+	for _, mode := range []string{"bound", "unbound", "upload", "gc-503", "gc-429", "gc-408", "gc-refused"} {
 		t.Run(mode, func(t *testing.T) {
 			f := setup(t)
 			if mode != "unbound" {
@@ -1220,6 +1220,25 @@ func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.s.SetClients(c, f.options.GC)
+			wantKind, wantDelay := "rate_limited", int64(time.Minute)
+			if strings.HasPrefix(mode, "gc-") {
+				status := map[string]int{"gc-503": 503, "gc-429": 429, "gc-408": 408}[mode]
+				h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", "60")
+					w.WriteHeader(status)
+				}))
+				defer h.Close()
+				if mode == "gc-refused" {
+					h.Close()
+				}
+				f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+				if mode != "gc-429" {
+					wantKind = "transient"
+				}
+				if mode == "gc-refused" {
+					wantDelay = int64(time.Second)
+				}
+			}
 			path, cmd := "/commands/publish", command("undelivered")
 			if mode == "upload" {
 				path = "/commands/upload"
@@ -1231,8 +1250,8 @@ func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
 			}
 			_, raw, _ := f.call(t, path, cmd)
 			first := decode[CommandResult](t, raw)
-			if first.Delivered {
-				t.Fatalf("expected failure: %+v", first)
+			if first.Delivered || first.FailureKind != wantKind || first.RetryAfter != wantDelay {
+				t.Fatalf("expected typed failure: %+v", first)
 			}
 			f.s.SetClients(f.options.Chat, f.options.GC)
 			if err := f.s.RetryPending(context.Background()); err != nil {
@@ -1243,7 +1262,7 @@ func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
 				t.Fatal(err)
 			}
 			v := l.Sends["undelivered"]
-			if f.count() != 0 || v.RecordPending || v.Receipt == nil || v.Receipt.Delivered || v.Receipt.FailureKind != "rate_limited" || v.Receipt.RetryAfter != int64(time.Minute) {
+			if f.count() != 0 || v.RecordPending || v.Receipt == nil || v.Receipt.Delivered || v.Receipt.FailureKind != wantKind || v.Receipt.RetryAfter != wantDelay {
 				t.Fatalf("failure not retained: %+v sends=%d", v, f.count())
 			}
 			_, raw, _ = f.call(t, path, cmd)
@@ -1251,5 +1270,57 @@ func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
 				t.Fatalf("caller retry: %+v", got)
 			}
 		})
+	}
+}
+
+func TestLateCallbackRearmsTranscriptRecovery(t *testing.T) {
+	f := setup(t)
+	f.gc.Bind(conversation("spaces/room"), "session")
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "late"}
+	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.stopRetry(t.Context(), p, failure(p, errors.New("gc unavailable")), "gc unavailable"); err != nil {
+		t.Fatal(err)
+	}
+	// The callback outlived gc's failed response. Its success must re-arm
+	// recording even though the caller already received a failure.
+	if !f.send(t, p).Delivered {
+		t.Fatal("late callback failed")
+	}
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !l.Sends[p.IdempotencyKey].Recorded || l.Sends[p.IdempotencyKey].RecordPending || f.count() != 1 {
+		t.Fatalf("late success not recorded: %+v", l.Sends[p.IdempotencyKey])
+	}
+}
+
+func TestCanceledCommandFailureIsCallerOwned(t *testing.T) {
+	f := setup(t)
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer h.Close()
+	f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "canceled"}
+	result, err := f.s.command(ctx, p, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || result.Delivered || result.FailureKind != "transient" {
+		t.Fatalf("result=%+v error=%v", result, err)
+	}
+	f.s.SetClients(f.options.Chat, f.options.GC)
+	f.gc.Bind(p.Conversation, p.SessionID)
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if f.count() != 0 || f.l.Sends[p.IdempotencyKey].RecordPending {
+		t.Fatal("canceled command was delivered automatically")
 	}
 }

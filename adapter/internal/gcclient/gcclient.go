@@ -66,6 +66,7 @@ type HTTPError struct {
 	StatusCode int
 	Body       string
 	Problem    *Problem
+	RetryAfter string // Retry-After header; interpreted by the caller's retry policy.
 }
 
 func (e *HTTPError) Error() string {
@@ -172,7 +173,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	}
 	data, readErr := io.ReadAll(responseBody)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data)}
+		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data), RetryAfter: resp.Header.Get("Retry-After")}
 		var problem Problem
 		if json.Unmarshal(data, &problem) == nil && problem != (Problem{}) {
 			err.Problem = &problem

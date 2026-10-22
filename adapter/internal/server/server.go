@@ -369,6 +369,13 @@ func validSpace(space string) bool {
 }
 func failure(p wire.PublishRequest, err error) wire.PublishReceipt {
 	kind, delay := chat.Classify(err)
+	var gcErr *gcclient.HTTPError
+	if errors.As(err, &gcErr) {
+		kind, delay = chat.Classify(&googleapi.Error{Code: gcErr.StatusCode, Header: http.Header{"Retry-After": []string{gcErr.RetryAfter}}})
+		if gcErr.StatusCode == http.StatusRequestTimeout {
+			kind = "transient"
+		}
+	}
 	if kind == "transient" && delay == 0 {
 		delay = time.Second
 	}
@@ -554,7 +561,16 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 	}
 	receipt = wire.PublishReceipt{MessageID: send.Parts[0].MessageName, Conversation: p.Conversation, Delivered: true, Metadata: map[string]string{"thread": send.Thread, "parts": strconv.Itoa(len(send.Parts))}}
-	if err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[send.Key].Receipt = &receipt; return nil }); err != nil {
+	if err = s.update(ctx, func(l *ledger.Ledger) error {
+		v := l.Sends[send.Key]
+		// A callback may finish after the command returned a gc failure.
+		// Its late success must revive transcript recovery, not delivery.
+		if v.Receipt != nil && !v.Receipt.Delivered && !v.NotRecordable && !v.Recorded {
+			v.RecordPending = true
+		}
+		v.Receipt = &receipt
+		return nil
+	}); err != nil {
 		return failure(p, err), err
 	}
 	return receipt, nil
@@ -796,17 +812,23 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	if err != nil {
 		s.ObserveGCError(err)
 		result.Reason = detail(err)
+		// Once a failure is returned, retries belong to the caller. Allow a
+		// bounded local settlement even if the gc request exhausted its ctx;
+		// this context performs no network calls or additional delivery.
+		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
+		defer cancel()
 		// A lost gc response can follow a durable callback receipt.
-		if l, e := s.snapshot(ctx); e == nil {
-			if r := l.Sends[p.IdempotencyKey].Receipt; r != nil {
-				result.Delivered = r.Delivered
+		if l, e := s.snapshot(settleCtx); e == nil {
+			if r := l.Sends[p.IdempotencyKey].Receipt; r != nil && r.Delivered {
+				result.Delivered = true
 				result.MessageID = r.MessageID
+				result.FailureKind, result.RetryAfter = "", 0
 			}
 		}
-		var httpErr *gcclient.HTTPError
-		if !result.Delivered && errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != 408 && httpErr.StatusCode != 429 {
-			result.FailureKind = "permanent"
-			err = errors.Join(err, s.stopRetry(ctx, p, permanent(p), result.Reason))
+		if !result.Delivered {
+			r := failure(p, err)
+			result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
+			err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
 		}
 		return result, err
 	}
