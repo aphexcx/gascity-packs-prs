@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gchat-adapter/internal/ledger"
 )
@@ -76,6 +78,219 @@ func TestStateInvalidRestorePreservesCurrent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStateReclaimsStaleSocket(t *testing.T) {
+	for _, action := range []string{"restore", "reset"} {
+		for _, force := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/force=%t", action, force), func(t *testing.T) {
+				env, state, socket := stateFixture(t)
+				ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				ln.SetUnlinkOnClose(false)
+				if err := ln.Close(); err != nil {
+					t.Fatal(err)
+				}
+				backup := filepath.Join(t.TempDir(), "backup.json")
+				l := ledger.New()
+				l.Counters["restored"] = 9
+				if err := l.Save(backup); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"state", action}
+				if action == "restore" {
+					args = append(args, backup)
+				}
+				if force {
+					args = append(args, "--force")
+				}
+				var stdout, stderr bytes.Buffer
+				if code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil); code != 0 {
+					t.Fatalf("stale socket blocked %s: exit=%d stderr=%q", action, code, &stderr)
+				}
+				saved, err := ledger.Load(state, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := int64(0)
+				if action == "restore" {
+					want = 9
+				}
+				if saved.Counters["restored"] != want || saved.Counters["original"] != 0 || !ledger.Established(filepath.Dir(env)) {
+					t.Fatalf("unexpected ledger/marker after %s: %+v", action, saved)
+				}
+				if _, err := os.Lstat(socket); !os.IsNotExist(err) {
+					t.Fatalf("state socket reservation not released: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestStateLiveSocketIsProbedBeforeRefusal(t *testing.T) {
+	for _, action := range []string{"restore", "reset"} {
+		t.Run(action, func(t *testing.T) {
+			env, state, socket := stateFixture(t)
+			before, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = ln.Close() })
+			info, err := os.Lstat(socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"state", action}
+			if action == "restore" {
+				args = append(args, "test-backup.json")
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil); code != 1 || !strings.Contains(stderr.String(), "--force") {
+				t.Fatalf("live service not refused: exit=%d stderr=%q", code, &stderr)
+			}
+			if err := ln.SetDeadline(time.Now().Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			conn, err := ln.AcceptUnix()
+			if err != nil {
+				t.Fatalf("live socket was not probed: %v", err)
+			}
+			_ = conn.Close()
+			after, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			current, err := os.Lstat(socket)
+			if err != nil || !os.SameFile(info, current) || !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("refusal changed live socket or state: socket error=%v", err)
+			}
+		})
+	}
+}
+
+func TestStateRefusesNonSocketPath(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%t", force), func(t *testing.T) {
+			env, state, socket := stateFixture(t)
+			before, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFile(t, socket, "keep this file")
+			args := []string{"state", "reset"}
+			if force {
+				args = append(args, "--force")
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil); code != 1 || !strings.Contains(stderr.String(), "not a socket") {
+				t.Fatalf("non-socket path not refused: exit=%d stderr=%q", code, &stderr)
+			}
+			contents, err := os.ReadFile(socket)
+			if err != nil || string(contents) != "keep this file" {
+				t.Fatalf("non-socket path changed: contents=%q error=%v", contents, err)
+			}
+			after, err := os.ReadFile(state)
+			if err != nil || !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("refusal changed state: %v", err)
+			}
+		})
+	}
+}
+
+func TestStateUncertainSocketProbePreservesState(t *testing.T) {
+	env, state, socket := stateFixture(t)
+	before, err := os.ReadFile(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.SetUnlinkOnClose(false)
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	var stdout, stderr bytes.Buffer
+	if code := run(ctx, []string{"state", "reset", "--force"}, &stdout, &stderr, envAt(env), nil); code != 1 || !strings.Contains(stderr.String(), "cannot verify") {
+		t.Fatalf("uncertain probe not refused: exit=%d stderr=%q", code, &stderr)
+	}
+	after, err := os.ReadFile(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.Lstat(socket)
+	if err != nil || !os.SameFile(info, current) || !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+		t.Fatalf("uncertain probe changed socket or state: socket error=%v", err)
+	}
+}
+
+func TestStatePreservesReplacedSocketOnCancellation(t *testing.T) {
+	for _, replacement := range []string{"file", "socket"} {
+		t.Run(replacement, func(t *testing.T) {
+			env, state, socket := stateFixture(t)
+			before, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var replaced os.FileInfo
+			ctx := stateCancelAtCheck{Context: t.Context(), check: func() {
+				// Replace the reservation immediately before the final cancellation
+				// check, so cleanup must preserve the new path's owner.
+				if err := os.Rename(socket, socket+".old"); err != nil {
+					t.Fatal(err)
+				}
+				if replacement == "file" {
+					writeFile(t, socket, "replacement")
+				} else {
+					ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = ln.Close() })
+				}
+				var err error
+				replaced, err = os.Lstat(socket)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}}
+			var stdout, stderr bytes.Buffer
+			if code := run(ctx, []string{"state", "reset"}, &stdout, &stderr, envAt(env), nil); code != 1 || !strings.Contains(stderr.String(), "context canceled") {
+				t.Fatalf("cancellation not honored: exit=%d stderr=%q", code, &stderr)
+			}
+			current, err := os.Lstat(socket)
+			if err != nil || !os.SameFile(replaced, current) {
+				t.Fatalf("cleanup removed replacement %s: %v", replacement, err)
+			}
+			after, err := os.ReadFile(state)
+			if err != nil || !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("cancellation changed state: %v", err)
+			}
+		})
+	}
+}
+
+type stateCancelAtCheck struct {
+	context.Context
+	check func()
+}
+
+func (c stateCancelAtCheck) Err() error {
+	c.check()
+	return context.Canceled
 }
 
 func TestStateRunningService(t *testing.T) {

@@ -79,17 +79,50 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 	}
 	// Holding the same listener address as serve excludes a service startup
 	// between a liveness probe and the final atomic ledger replacement.
-	ln, err := net.Listen("unix", socket)
+	address := &net.UnixAddr{Name: socket, Net: "unix"}
+	ln, err := net.ListenUnix("unix", address)
 	if err != nil {
 		if !errors.Is(err, syscall.EADDRINUSE) {
 			return fmt.Errorf("reserve state socket %s: %w", socket, err)
 		}
-		if !force {
-			return fmt.Errorf("service socket %s is in use; stop the service or use --force to request recovery through the service", socket)
+		before, err := os.Lstat(socket)
+		if err != nil {
+			return fmt.Errorf("inspect state socket %s: %w", socket, err)
 		}
-		return requestState(ctx, socket, action, backup)
+		if before.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("state socket path %s is not a socket", socket)
+		}
+		conn, probeErr := (&net.Dialer{Timeout: 50 * time.Millisecond}).DialContext(ctx, "unix", socket)
+		if probeErr == nil {
+			_ = conn.Close()
+			if !force {
+				return fmt.Errorf("service socket %s is in use; stop the service or use --force to request recovery through the service", socket)
+			}
+			return requestState(ctx, socket, action, backup)
+		}
+		if !errors.Is(probeErr, syscall.ECONNREFUSED) {
+			return fmt.Errorf("cannot verify stale state socket %s: %w", socket, probeErr)
+		}
+		if err := removeStateSocket(socket, before); err != nil {
+			return fmt.Errorf("reclaim stale state socket %s: %w", socket, err)
+		}
+		ln, err = net.ListenUnix("unix", address)
+		if err != nil {
+			return fmt.Errorf("reserve state socket %s: %w", socket, err)
+		}
 	}
-	defer ln.Close()
+	// Go's default Unix listener cleanup unlinks by pathname, including a path
+	// replaced by another owner. Only remove the socket we actually reserved.
+	ln.SetUnlinkOnClose(false)
+	owned, err := os.Lstat(socket)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("inspect reserved state socket %s: %w", socket, err)
+	}
+	defer func() {
+		_ = ln.Close()
+		_ = removeStateSocket(socket, owned)
+	}()
 	if err := os.Chmod(socket, 0600); err != nil {
 		return fmt.Errorf("secure state socket: %w", err)
 	}
@@ -110,6 +143,17 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 		return err
 	}
 	return ledger.MarkEstablished(cfg.SecretsDir)
+}
+
+func removeStateSocket(socket string, expected os.FileInfo) error {
+	current, err := os.Lstat(socket)
+	if err != nil {
+		return err
+	}
+	if current.Mode()&os.ModeSocket == 0 || !os.SameFile(expected, current) {
+		return fmt.Errorf("state socket path %s changed", socket)
+	}
+	return os.Remove(socket)
 }
 
 func requestState(ctx context.Context, socket, action, backup string) error {
