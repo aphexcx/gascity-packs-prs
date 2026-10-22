@@ -93,14 +93,21 @@ func (e *HTTPError) Code() string {
 // gc internal/extmsg/outbound.go:137-146 emits this detail for both an absent
 // caller session and a caller that has no matching group route.
 func IsNoBinding(err error) bool {
-	return strings.HasPrefix(bindingDetail(err), "no active binding for conversation ")
+	return strings.HasPrefix(validationDetail(err), "no active binding for conversation ")
+}
+
+// IsNoAdapter identifies a missing in-memory adapter registration after a gc
+// restart. gc internal/extmsg/outbound.go emits "no adapter for <provider>/<account>",
+// returned by the outbound API as 422 validation-failed.
+func IsNoAdapter(err error) bool {
+	return strings.HasPrefix(validationDetail(err), "no adapter for ")
 }
 
 // IsWrongOwner reports whether the outbound caller does not own the binding.
 // gc internal/extmsg/outbound.go:109-110,129-130 uses the same detail prefix for
 // agent and session bindings, with the caller session formatted using %q.
 func IsWrongOwner(err error) bool {
-	rest, ok := strings.CutPrefix(bindingDetail(err), "session ")
+	rest, ok := strings.CutPrefix(validationDetail(err), "session ")
 	if !ok {
 		return false
 	}
@@ -108,7 +115,7 @@ func IsWrongOwner(err error) bool {
 	return quoteErr == nil && strings.HasPrefix(rest[len(session):], " does not own binding for conversation ")
 }
 
-func bindingDetail(err error) string {
+func validationDetail(err error) string {
 	var responseErr *HTTPError
 	if errors.As(err, &responseErr) && responseErr != nil &&
 		responseErr.StatusCode == http.StatusUnprocessableEntity && responseErr.Code() == "validation-failed" {

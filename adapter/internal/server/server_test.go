@@ -2229,3 +2229,121 @@ func TestConcurrentRecoveryChecksHealthUnderExclusiveGate(t *testing.T) {
 		t.Fatalf("recovered state replaced: %d %s", code, raw)
 	}
 }
+
+func TestNoAdapterAfterGCRestartRecovers(t *testing.T) {
+	for _, mode := range []string{"interrupted", "caller", "delivered"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.s.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "gc-restart"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			if mode != "caller" {
+				if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "delivered" && !f.send(t, p).Delivered {
+					t.Fatal("could not seed delivered send awaiting recording")
+				}
+			}
+			f.gc.ForgetRegistrations()
+
+			// Hold re-registration so all assertions observe gc's restart window.
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			entered, release, registered := make(chan struct{}, 1), make(chan struct{}), make(chan struct{}, 1)
+			var registrations, outbound atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/adapters") {
+					registrations.Add(1)
+					entered <- struct{}{}
+					<-release
+					proxy.ServeHTTP(w, r)
+					registered <- struct{}{}
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/outbound") {
+					outbound.Add(1)
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			defer unblock()
+			f.s.mu.Lock()
+			f.s.cfg.Secrets.GCAPIBase = f.url
+			f.s.mu.Unlock()
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var restartErr error
+			if mode == "caller" {
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				got := decode[CommandResult](t, raw)
+				if got.Delivered || got.FailureKind != "transient" || got.RetryAfter != int64(time.Second) {
+					t.Errorf("caller restart failure: %+v", got)
+				}
+			} else {
+				restartErr = f.s.RetryPending(ctx)
+				var responseErr *gcclient.HTTPError
+				if !errors.As(restartErr, &responseErr) || responseErr.StatusCode != 422 || responseErr.Problem.Detail != "no adapter for gchat/example" {
+					t.Fatalf("restart error not returned: %v", restartErr)
+				}
+			}
+			cancel() // Registration must outlive the failed attempt's context.
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[p.IdempotencyKey]
+			if v.RecordPending != (mode != "caller") || v.NotRecordable {
+				t.Errorf("restart recovery state: %+v", v)
+			}
+			if mode == "interrupted" && v.Receipt != nil {
+				t.Errorf("interrupted send settled: %+v", v.Receipt)
+			}
+			lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+			if len(lines) != 1 {
+				t.Errorf("want one WARN: %s", logs.String())
+			} else if line := decode[map[string]any](t, []byte(lines[0])); line["level"] != "WARN" || line["operation"] != "gc_outbound" || line["cause_kind"] != "transient" || line["http_status"] != float64(422) {
+				t.Errorf("restart warning: %s", logs.String())
+			}
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("no-adapter error did not trigger registration")
+			}
+			if restartErr == nil {
+				restartErr = &gcclient.HTTPError{StatusCode: 422, Problem: &gcclient.Problem{Code: "validation-failed", Detail: "no adapter for gchat/example"}}
+			}
+			for range 10 {
+				f.s.ObserveGCError(restartErr)
+			}
+			unblock()
+			select {
+			case <-registered:
+			case <-time.After(time.Second):
+				t.Fatal("registration did not survive attempt cancellation")
+			}
+			if mode == "caller" {
+				if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 1 {
+					t.Fatalf("caller failure retried automatically: %v calls=%d", err, outbound.Load())
+				}
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				if got := decode[CommandResult](t, raw); !got.Delivered || !got.Recorded {
+					t.Fatalf("caller recovery: %+v", got)
+				}
+			} else if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got := commandOutcome(f.l.Sends[p.IdempotencyKey])
+			if !got.Delivered || !got.Recorded || f.count() != 1 || outbound.Load() != 2 || registrations.Load() != 1 {
+				t.Fatalf("recovery: %+v Google=%d gc=%d registrations=%d", got, f.count(), outbound.Load(), registrations.Load())
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 2 {
+				t.Fatalf("completed intent retried: %v calls=%d", err, outbound.Load())
+			}
+		})
+	}
+}

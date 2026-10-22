@@ -495,3 +495,32 @@ func TestReceiptEscapesPathSegments(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNoAdapterProblem(t *testing.T) {
+	s := fakegc.New(t)
+	s.Bind(conversation(), "session")
+	_, err := checkedClient(t, s.URL()).Outbound(t.Context(), wire.OutboundRequest{
+		SessionID: "session", Conversation: conversation(), Text: "reply",
+	})
+	for _, candidate := range []error{err, fmt.Errorf("outbound failed: %w", err)} {
+		if !IsNoAdapter(candidate) || IsNoBinding(candidate) || IsWrongOwner(candidate) {
+			t.Errorf("missing registration misclassified: %v", candidate)
+		}
+	}
+	const detail = "no adapter for gchat/example"
+	for _, candidate := range []error{
+		nil,
+		(*HTTPError)(nil),
+		errors.New(detail),
+		&HTTPError{StatusCode: 422, Body: detail},
+		&HTTPError{StatusCode: 503, Problem: &Problem{Code: "validation-failed", Detail: detail}},
+		&HTTPError{StatusCode: 422, Problem: &Problem{Code: "other", Detail: detail}},
+		&HTTPError{StatusCode: 422, Problem: &Problem{Code: "validation-failed", Detail: "context: " + detail}},
+		&HTTPError{StatusCode: 422, Problem: &Problem{Code: "validation-failed", Detail: "no active binding for conversation gchat/spaces/room"}},
+		&HTTPError{StatusCode: 422, Problem: &Problem{Code: "validation-failed", Detail: "no adapter format supplied"}},
+	} {
+		if IsNoAdapter(candidate) {
+			t.Errorf("unrelated error classified as missing registration: %v", candidate)
+		}
+	}
+}

@@ -70,6 +70,13 @@ func (s *Server) Configure(fn func(*Server)) {
 func (s *Server) Advance(d time.Duration) {
 	s.Configure(func(s *Server) { s.observeReceipts(); s.offset += d })
 }
+
+// ForgetRegistrations simulates a controller restart's loss of its in-memory
+// adapter registry while preserving durable bindings and the request history.
+func (s *Server) ForgetRegistrations() {
+	s.Configure(func(s *Server) { s.registrations = map[string]wire.Registration{} })
+}
+
 func (s *Server) now() time.Time { return s.Now().Add(s.offset) }
 
 // Bind sets the owning session, replacing any equivalent conversation binding.
