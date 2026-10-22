@@ -85,11 +85,27 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 		{"whitespace paragraph break", "before `open\r\n \t\r\n**after** `", "before `open\r\n \t\r\n*after* `"},
 		{"tilde fence interrupts span", "before `open\n~~~text\n` **inside**\n~~~\n**after**", "before `open\n~~~text\n` **inside**\n~~~\n*after*"},
 		{"same paragraph continuation", "first line\nbefore `open\n**inside**` **after**", "first line\nbefore `open\n**inside**` *after*"},
+		{"blockquote interrupts span", "Use `x\n> **q** `\n**after**", "Use `x\n> *q* `\n*after*"},
+		{"blockquote cannot start multiline span", "> `open\n**after** `", "> `open\n*after* `"},
+		{"code search resets between paragraphs", "before \\``\n\n`**code**` **after**", "before \\``\n\n`**code**` *after*"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := ToChat(tt.input); got != tt.want {
 				t.Fatalf("ToChat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+	for _, boundary := range []string{"---", "===", "***", "___", " - - - ", " = = = ", " * * * ", " _ _ _ ", " > **quote**", "  > **quote**", "   > **quote**"} {
+		t.Run("block boundary "+boundary, func(t *testing.T) {
+			input := "a `b\n" + boundary + "\n**c** `"
+			renderedBoundary := strings.ReplaceAll(boundary, "**quote**", "*quote*")
+			if boundary == " - - - " {
+				renderedBoundary = " * - - " // Retain the supported dash-bullet conversion.
+			}
+			want := "a `b\n" + renderedBoundary + "\n*c* `"
+			if got := ToChat(input); got != want {
+				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)
 			}
 		})
 	}

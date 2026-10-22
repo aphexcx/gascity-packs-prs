@@ -91,18 +91,42 @@ func lineEnd(s string, start int) int {
 }
 
 func paragraphEnd(s string, end int) int {
-	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) {
+	if strings.TrimSpace(s[:end]) == "" || headingLine(s[:end]) || blockBoundaryLine(s[:end]) {
 		return end
 	}
 	for end < len(s) {
 		next := lineEnd(s, end)
 		line := s[end:next]
-		if strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) {
+		if strings.TrimSpace(line) == "" || openingFence(line) != nil || headingLine(line) || listItemLine(line) || blockBoundaryLine(line) {
 			break
 		}
 		end = next
 	}
 	return end
+}
+
+// Setext underlines, thematic breaks and blockquotes interrupt a paragraph even
+// though the supported output subset leaves their block markers unchanged.
+func blockBoundaryLine(line string) bool {
+	body := strings.TrimLeft(line, " ")
+	if len(line)-len(body) > 3 || body == "" {
+		return false
+	}
+	if body[0] == '>' {
+		return true
+	}
+	if !strings.ContainsRune("-=*_", rune(body[0])) {
+		return false
+	}
+	count := 0
+	for _, c := range body {
+		if c == rune(body[0]) {
+			count++
+		} else if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+			return false
+		}
+	}
+	return count >= 3
 }
 
 func headingLine(line string) bool {
