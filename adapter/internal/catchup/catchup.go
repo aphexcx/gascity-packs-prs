@@ -195,14 +195,17 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 		}
 		budget := r.budget
 		for {
-			if err := r.enumerate(ctx, name); err != nil {
-				failures = append(failures, err)
-				break
+			enumerationErr := r.enumerate(ctx, name)
+			if enumerationErr != nil {
+				failures = append(failures, enumerationErr)
 			}
 			n, err := r.drain(ctx, name, &budget)
 			delivered += n
 			if err != nil {
 				failures = append(failures, err)
+				break
+			}
+			if enumerationErr != nil {
 				break
 			}
 			current, err := r.snapshot()
@@ -333,6 +336,9 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			return delivered, err
 		}
 		s := before.Spaces[name]
+		if _, err := decodeProgress(s.PageToken); err != nil {
+			return delivered, err
+		}
 		if index >= len(s.Backlog) {
 			break
 		}
@@ -406,10 +412,14 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 	err = r.update(func(l *ledger.Ledger) error {
 		s := l.Spaces[name]
 		if len(s.Backlog) == 0 {
-			// enumerate returned only after both streams' last pages were saved.
 			p, err := decodeProgress(s.PageToken)
 			if err != nil {
 				return err
+			}
+			// A page failure need not starve known records, but neither cursor
+			// may advance until both streams' last pages have been saved.
+			if p.Phase != "done" {
+				return nil
 			}
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}

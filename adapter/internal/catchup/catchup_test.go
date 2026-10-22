@@ -23,6 +23,7 @@ import (
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 var frozen = time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -339,12 +340,17 @@ func TestFailedSaveCannotSkipAPage(t *testing.T) {
 		t.Fatal("save error swallowed")
 	}
 	s := f.opts.Ledger.Spaces["spaces/room"]
-	if len(s.Backlog) != 17 || !strings.Contains(s.PageToken, "17") {
+	// The first, durably saved page may drain even though the next save failed.
+	// None of the failed page may be delivered or reflected in the page token.
+	if len(s.Backlog) != 0 || len(f.gc.Inbound()) != 17 || !strings.Contains(s.PageToken, "17") || !s.MessageCursor.Equal(frozen.Add(-time.Hour)) {
 		t.Fatalf("failed page published in memory: %+v", s)
 	}
 	f.opts.Save = nil
 	f.newRunner(t)
-	f.pass(t, 20, 0)
+	f.pass(t, 3, 0)
+	if len(f.gc.Inbound()) != 20 {
+		t.Fatal("lost or duplicated a page after failed save")
+	}
 }
 
 func TestOverlapAndLocalChangesDoNotConsumeDeliveryBudget(t *testing.T) {
@@ -379,5 +385,117 @@ func TestRestartAlsoRecoversThroughTheNewFreezeTime(t *testing.T) {
 	f.pass(t, 1, 0)
 	if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(next) || len(f.gc.Inbound()) != 2 {
 		t.Fatal("restart gap was not recovered")
+	}
+}
+
+func TestEventPagesResumeAndExpandBatches(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 19; i++ {
+		m := f.addMessage("spaces/room", i, frozen.Add(-2*time.Hour))
+		out, err := f.p.Handle(context.Background(), &puller.Event{Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: m}}})
+		if out != puller.Ack || err != nil {
+			t.Fatal(out, err)
+		}
+		if i < 17 {
+			m.LastUpdateTime = frozen.Add(-time.Minute).Format(time.RFC3339Nano)
+			f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{Name: fmt.Sprintf("spaces/room/spaceEvents/e%02d", i), EventTime: m.LastUpdateTime, EventType: "google.workspace.chat.message.v1.updated", MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m}})
+		}
+	}
+	f.google.SpaceEvents["spaces/room"] = append(f.google.SpaceEvents["spaces/room"], &api.SpaceEvent{Name: "spaces/room/spaceEvents/z", EventTime: frozen.Add(-30 * time.Second).Format(time.RFC3339Nano), EventType: "google.workspace.chat.message.v1.batchDeleted", MessageBatchDeletedEventData: &api.MessageBatchDeletedEventData{Messages: []*api.MessageDeletedEventData{{Message: &api.Message{Name: "spaces/room/messages/m0017"}}, {Message: &api.Message{Name: "spaces/room/messages/m0018"}}}}})
+	f.freeze(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "17" {
+			cancel()
+			return context.Canceled
+		}
+		return nil
+	}
+	if _, _, err := f.r.Pass(ctx); err == nil {
+		t.Fatal("expected interrupted event enumeration")
+	}
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f.opts.Ledger = *saved
+	f.onRequest, f.requests = nil, nil
+	f.newRunner(t)
+	f.pass(t, 19, 0)
+	if len(f.requests) != 1 || !strings.Contains(f.requests[0], "/spaceEvents?") || !strings.Contains(f.requests[0], "pageToken=17") {
+		t.Fatalf("event restart requests: %v", f.requests)
+	}
+	if !f.opts.Ledger.Messages["spaces/room/messages/m0017"].Deleted || !f.opts.Ledger.Messages["spaces/room/messages/m0018"].Deleted {
+		t.Fatal("batch delete missing")
+	}
+}
+
+func TestCatchupReactionsAndMalformedHistory(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	m := f.addMessage("spaces/room", 1, frozen.Add(-2*time.Hour))
+	m.Sender.Name = "users/123"
+	reaction := &api.Reaction{Name: m.Name + "/reactions/one", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
+	f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{
+		{Name: "spaces/room/spaceEvents/r1", EventTime: frozen.Add(-time.Minute).Format(time.RFC3339Nano), EventType: "google.workspace.chat.reaction.v1.created", ReactionCreatedEventData: &api.ReactionCreatedEventData{Reaction: reaction}},
+		{Name: "spaces/room/spaceEvents/r2", EventTime: frozen.Add(-30 * time.Second).Format(time.RFC3339Nano), EventType: "google.workspace.chat.reaction.v1.deleted", ReactionDeletedEventData: &api.ReactionDeletedEventData{Reaction: &api.Reaction{Name: reaction.Name}}},
+		{Name: "spaces/room/spaceEvents/bad", EventTime: frozen.Add(-20 * time.Second).Format(time.RFC3339Nano), EventType: "google.workspace.chat.message.v1.updated"},
+	}
+	f.freeze(t)
+	f.pass(t, 2, 0)
+	turns := f.gc.Inbound()
+	if len(turns) != 2 || turns[0].ProviderMessageID != reaction.Name+"#created" || turns[1].ProviderMessageID != reaction.Name+"#deleted" {
+		t.Fatalf("reaction turns: %+v", turns)
+	}
+	if len(f.opts.Ledger.Unresolved) != 1 {
+		t.Fatal("malformed history was not retained")
+	}
+}
+
+func TestUnavailableHistoryReportedWithoutMovingCursor(t *testing.T) {
+	f := setup(t)
+	f.opts.Ledger.Spaces["spaces/gone"] = &ledger.SpaceState{Kind: "room", Wake: "all", MessageCursor: frozen.Add(-time.Hour), EventCursor: frozen.Add(-time.Hour)}
+	f.freeze(t)
+	// The shared fake lists an absent space as empty; inject the client's
+	// classified error to exercise a genuinely inaccessible history interval.
+	f.onRequest = func(r *http.Request) error { return &googleapi.Error{Code: 404, Message: "space unavailable"} }
+	for i := 0; i < 2; i++ {
+		if _, _, err := f.r.Pass(context.Background()); err == nil {
+			t.Fatal("unavailable history succeeded")
+		}
+	}
+	if f.opts.Ledger.Counters["unrecoverable:spaces/gone"] != 1 || !f.opts.Ledger.Spaces["spaces/gone"].MessageCursor.Equal(frozen.Add(-time.Hour)) {
+		t.Fatal("history loss not reported or cursor advanced")
+	}
+}
+
+func TestHistoryErrorDoesNotStarveRetainedMessages(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.addMessage("spaces/room", 1, frozen.Add(-time.Minute))
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
+			return &googleapi.Error{Code: 404, Message: "event history unavailable"}
+		}
+		return nil
+	}
+	for i, want := range []int{1, 0} {
+		delivered, remaining, err := f.r.Pass(context.Background())
+		if err == nil || delivered != want || remaining != 0 {
+			t.Fatalf("pass %d: (%d, %d, %v), want (%d, 0, error)", i, delivered, remaining, err, want)
+		}
+		if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(frozen.Add(-time.Hour)) {
+			t.Fatal("cursor advanced over unenumerated events")
+		}
+	}
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("saved message not delivered exactly once")
+	}
+	f.onRequest = nil
+	f.pass(t, 0, 0)
+	if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(frozen) {
+		t.Fatal("cursor did not recover after successful enumeration")
 	}
 }
