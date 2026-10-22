@@ -287,6 +287,27 @@ func TestSplitBeforeOpeningFence(t *testing.T) {
 	}
 }
 
+func TestSplitOpeningFenceBeforeHardCut(t *testing.T) {
+	const limit = 32000
+	for _, intro := range []string{"intro\n", ""} {
+		t.Run(fmt.Sprintf("intro %q", intro), func(t *testing.T) {
+			code := "```go\n" + strings.Repeat("`", 40000)
+			parts := Split(intro+code, limit)
+			checkParts(t, parts, limit)
+			want := []string{code[:limit], code[limit:]}
+			if intro != "" {
+				want = append([]string{intro}, want...)
+			}
+			if !reflect.DeepEqual(parts, want) {
+				t.Fatalf("want hard cuts without an empty fenced part or synthetic closer; part lengths = %v", lengths(parts))
+			}
+			if strings.Join(parts, "") != intro+code {
+				t.Fatal("hard cut added or dropped bytes")
+			}
+		})
+	}
+}
+
 func TestSplitEmpty(t *testing.T) {
 	if parts := Split("", 32000); len(parts) != 0 {
 		t.Fatalf("empty input = %q", parts)
