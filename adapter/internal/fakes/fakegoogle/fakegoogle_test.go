@@ -248,6 +248,37 @@ func TestLostRenewalAndDelayedReactivation(t *testing.T) {
 	}
 }
 
+func TestExpiredSubscriptionCanBeRecreated(t *testing.T) {
+	s := New(t, nil)
+	s.Now = func() time.Time { return time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC) }
+	body := &events.Subscription{TargetResource: "//chat.googleapis.com/spaces/-", EventTypes: []string{"google.workspace.chat.message.v1.created"}, NotificationEndpoint: &events.NotificationEndpoint{PubsubTopic: "projects/example/topics/events"}, Ttl: "60s"}
+	op := request(t, s, "POST", "/v1/subscriptions", body, 200)
+	name := op["response"].(map[string]any)["name"].(string)
+	s.Advance(59 * time.Second)
+	request(t, s, "GET", "/v1/"+name, nil, 200)
+	s.Advance(time.Second)
+	for _, method := range []string{"GET", "PATCH", "POST"} {
+		t.Run(method, func(t *testing.T) {
+			path := "/v1/" + name
+			if method == "POST" {
+				path += ":reactivate"
+			}
+			got := request(t, s, method, path, &events.Subscription{Ttl: "60s"}, 404)
+			if got["error"].(map[string]any)["status"] != "NOT_FOUND" {
+				t.Fatalf("expired subscription: %v", got)
+			}
+		})
+	}
+	list := request(t, s, "GET", "/v1/subscriptions?filter="+url.QueryEscape(`event_types:"google.workspace.chat.message.v1.created"`), nil, 200)
+	if len(list["subscriptions"].([]any)) != 0 {
+		t.Errorf("expired subscription still discoverable: %v", list)
+	}
+	recreated := request(t, s, "POST", "/v1/subscriptions", body, 200)
+	if recreated["response"].(map[string]any)["name"] == name {
+		t.Fatal("recreation reused expired subscription")
+	}
+}
+
 func TestMessagesPaginationThreadsAndRate(t *testing.T) {
 	s := New(t, nil)
 	s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room", SpaceType: "SPACE"}

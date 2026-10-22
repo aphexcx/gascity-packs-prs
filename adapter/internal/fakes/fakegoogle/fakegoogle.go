@@ -80,9 +80,11 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 func (s *Server) URL() string                { return s.http.URL }
 func (s *Server) Close()                     { s.http.Close() }
 func (s *Server) Configure(fn func(*Server)) { s.mu.Lock(); defer s.mu.Unlock(); fn(s) }
-func (s *Server) Advance(d time.Duration)    { s.Configure(func(s *Server) { s.offset += d }) }
-func (s *Server) now() time.Time             { return s.Now().Add(s.offset).UTC() }
-func (s *Server) id() string                 { s.sequence++; return strconv.Itoa(s.sequence) }
+func (s *Server) Advance(d time.Duration) {
+	s.Configure(func(s *Server) { s.offset += d; s.refreshSubscriptions() })
+}
+func (s *Server) now() time.Time { return s.Now().Add(s.offset).UTC() }
+func (s *Server) id() string     { s.sequence++; return strconv.Itoa(s.sequence) }
 
 // SuspendSubscription suspends the named subscriptions, or all if none are
 // named. Reactivation changes state without inventing a lifecycle event.
@@ -101,14 +103,23 @@ func (s *Server) SuspendSubscription(names ...string) {
 	})
 }
 
-func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Server) refreshSubscriptions() {
 	// Complete ready Operations even if a create/renew response was lost and
 	// the client reconciles by listing subscriptions instead of polling.
 	for _, op := range s.operations {
 		s.complete(op)
 	}
+	for name, sub := range s.Subscriptions {
+		if expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime); err == nil && !s.now().Before(expiry) {
+			delete(s.Subscriptions, name)
+		}
+	}
+}
+
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshSubscriptions()
 	path := strings.TrimPrefix(r.URL.Path, "/v1/")
 	switch {
 	case r.URL.Path == "/token" && r.Method == http.MethodPost:
