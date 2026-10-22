@@ -92,7 +92,18 @@ func (s *Server) SetReceipt(id string, receipt wire.ReceiptResponse) {
 }
 
 func (s *Server) EvictReceipt(id string) {
-	s.Configure(func(s *Server) { delete(s.Receipts, id); delete(s.concludedAt, id) })
+	s.Configure(func(s *Server) { s.removeReceipt(id) })
+}
+
+// removeReceipt releases only the delivery attempt indexed by this receipt.
+// Historical failed attempts may coexist with a newer pending or delivered one.
+func (s *Server) removeReceipt(id string) {
+	if key := s.receiptKeys[id]; s.dedup[key].Delivery.ReceiptID == id {
+		delete(s.dedup, key)
+	}
+	delete(s.Receipts, id)
+	delete(s.concludedAt, id)
+	delete(s.receiptKeys, id)
 }
 
 func (s *Server) observeReceipts() {
@@ -107,8 +118,7 @@ func (s *Server) observeReceipts() {
 			when = s.now()
 		}
 		if s.now().Sub(when) >= time.Hour {
-			delete(s.Receipts, id)
-			delete(s.concludedAt, id)
+			s.removeReceipt(id)
 			continue
 		}
 		if key := s.receiptKeys[id]; key != "" {
@@ -118,9 +128,6 @@ func (s *Server) observeReceipts() {
 				continue
 			}
 			response.Delivery.Status = receipt.Delivery.Status
-			if receipt.Delivery.Status != "pending" {
-				response.Delivery.ReceiptID = ""
-			}
 			s.dedup[key] = response
 		}
 	}

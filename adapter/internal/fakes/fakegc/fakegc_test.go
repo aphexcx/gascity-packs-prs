@@ -197,6 +197,57 @@ func TestConcludedPendingRemainsObservable(t *testing.T) {
 	}
 }
 
+func TestReceiptRemovalAllowsReplay(t *testing.T) {
+	for _, expire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "eviction", true: "expiry"}[expire], func(t *testing.T) {
+			s := New(t)
+			s.NextDelivery = "pending"
+			m := inbound("replay")
+			first := call(t, s, "POST", "inbound", m, true, 200)
+			id := first["delivery"].(map[string]any)["receipt_id"].(string)
+			if expire {
+				concluded := wire.ReceiptResponse{State: "concluded"}
+				concluded.Delivery.Status = "delivered"
+				s.SetReceipt(id, concluded)
+				s.Advance(time.Hour)
+			} else {
+				s.EvictReceipt(id)
+			}
+			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+			replay := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			if replay["status"] != "pending" || replay["receipt_id"] == id || replay["receipt_id"] == nil {
+				t.Fatalf("replay did not start a fresh delivery: %v (old receipt %s)", replay, id)
+			}
+		})
+	}
+}
+
+func TestOldReceiptRemovalPreservesNewerAttempt(t *testing.T) {
+	for _, expire := range []bool{false, true} {
+		t.Run(map[bool]string{false: "eviction", true: "expiry"}[expire], func(t *testing.T) {
+			s := New(t)
+			s.NextDelivery = "pending"
+			m := inbound("retry")
+			first := call(t, s, "POST", "inbound", m, true, 200)
+			id := first["delivery"].(map[string]any)["receipt_id"].(string)
+			failed := wire.ReceiptResponse{State: "concluded"}
+			failed.Delivery.Status = "failed"
+			s.SetReceipt(id, failed)
+			s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+			second := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			if expire {
+				s.Advance(time.Hour)
+			} else {
+				s.EvictReceipt(id)
+			}
+			duplicate := call(t, s, "POST", "inbound", m, true, 200)["delivery"].(map[string]any)
+			if duplicate["receipt_id"] != second["receipt_id"] {
+				t.Fatalf("old receipt removed newer delivery: %v, want %v", duplicate, second)
+			}
+		})
+	}
+}
+
 func TestCallbackRejectsInvalidWireValueTypes(t *testing.T) {
 	for _, body := range []string{`{"delivered":true,"metadata":{"parts":1}}`, `{"delivered":true,"retry_after":"1s"}`} {
 		t.Run(body, func(t *testing.T) {
