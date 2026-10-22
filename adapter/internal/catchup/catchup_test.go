@@ -781,13 +781,26 @@ func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
 		}
 		return nil
 	}
+	writes := 0
+	f.r.opts.Save = func(l *ledger.Ledger) error {
+		writes++
+		return l.Save(f.opts.LedgerPath)
+	}
 	for i := 0; i < 2; i++ {
+		writes = 0
 		d, n, err := f.r.Pass(context.Background())
 		if !errors.Is(err, inbound.ErrCredentials) || d != 0 || n != 17 {
 			t.Fatalf("credential hold = (%d, %d, %v)", d, n, err)
 		}
 		if !strings.Contains(err.Error(), "auth (HTTP 403)") || strings.Contains(err.Error(), "private response") {
 			t.Fatalf("credential error lost safe kind/status: %v", err)
+		}
+		wantWrites := 0
+		if i == 0 {
+			wantWrites = 2 // The first saved page and the first credential hold.
+		}
+		if writes != wantWrites {
+			t.Fatalf("held pass %d saved %d times, want %d", i, writes, wantWrites)
 		}
 	}
 	if len(f.gc.Inbound()) != 0 || f.opts.Ledger.Counters["credentials:spaces/room"] != 1 {

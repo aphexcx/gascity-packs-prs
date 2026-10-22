@@ -644,6 +644,9 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 	}
 	held := fmt.Errorf("catchup: list %s for %s: %s: %w", p.Phase, name, summary, sentinel)
 	err := r.update(func(l *ledger.Ledger) error {
+		if !first {
+			return errUnchanged
+		}
 		s, err := spaceState(l, name)
 		if err != nil {
 			return err
