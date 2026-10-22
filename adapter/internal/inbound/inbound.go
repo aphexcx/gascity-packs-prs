@@ -534,6 +534,12 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		}
 		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: time.Now().UTC(), Event: string(data), Reason: local}
 		if state != nil {
+			// Outbound can record its send key while a Chat lookup is in flight.
+			// That field belongs to outbound; retain its latest value under the
+			// shared mutex instead of overwriting it with our earlier snapshot.
+			if current := l.Messages[name]; current != nil {
+				state.SendKey = current.SendKey
+			}
 			l.Messages[name] = state
 		}
 		if space != nil {

@@ -737,3 +737,46 @@ func TestMalformedDeliveryAndReceiptLookupFailure(t *testing.T) {
 		t.Fatal("transient lookup lost receipt")
 	}
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestConcurrentOutboundMetadataSurvivesOwnEcho(t *testing.T) {
+	f := setup(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		close(entered)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return nil, r.Context().Err()
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"spaces":[{"name":"spaces/room","spaceType":"SPACE"}]}`))}, nil
+	})}
+	var err error
+	f.opts.Chat, err = chat.New(context.Background(), httpClient, f.opts.Config.Endpoints)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := message()
+	m.Sender.Name = identity
+	m.Space.SpaceType = ""
+	done := make(chan error, 1)
+	go func() { _, err := f.p.Handle(context.Background(), event("echo", "message.created", m)); done <- err }()
+	<-entered
+	f.opts.LedgerMu.Lock()
+	f.l.Messages[messageName] = &ledger.MessageState{Mine: true, Thread: m.Thread.Name, SendKey: "outbound-key"}
+	f.opts.LedgerMu.Unlock()
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got := f.l.Messages[messageName].SendKey; got != "outbound-key" {
+		t.Fatalf("outbound send key lost: %q", got)
+	}
+}
