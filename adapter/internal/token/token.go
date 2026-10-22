@@ -101,6 +101,31 @@ func (s *Source) State() State {
 	return s.state
 }
 
+// Invalidate expires the cached access token so the next call refreshes it.
+// A permanent refresh failure then moves State to NeedsSignIn.
+func (s *Source) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireLocked()
+}
+
+func (s *Source) invalidateSent(accessToken string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current != nil && s.current.AccessToken == accessToken {
+		s.expireLocked()
+	}
+}
+
+// expireLocked replaces the token rather than mutating one a refresh may use.
+func (s *Source) expireLocked() {
+	if s.current != nil {
+		expired := *s.current
+		expired.Expiry = time.Now().Add(-time.Hour)
+		s.current = &expired
+	}
+}
+
 // Client checks the credential immediately using ctx, but does not retain its
 // cancellation or deadline. Later token acquisition (including waiting for a
 // refresh) uses each request's context. Its transport continues to report
@@ -113,7 +138,7 @@ func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	}
 	// Do not wrap in ReuseTokenSource: Source already caches, and a second
 	// cache would retain the old access token after a validated file replacement.
-	return authenticatedClient(ctx, s.token), nil
+	return authenticatedClient(ctx, s.token, s.invalidateSent), nil
 }
 
 // TokenSource adapts Source to oauth2's context-free interface. The supplied ctx
@@ -235,7 +260,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		defer cancel()
 		tok, err = s.refresh(validationCtx, tok)
 		if err == nil {
-			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, func(context.Context) (*oauth2.Token, error) { return tok, nil }))
+			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, func(context.Context) (*oauth2.Token, error) { return tok, nil }, nil))
 		}
 	}
 	if err != nil {
@@ -432,7 +457,7 @@ func sanitizedCause(err error) string {
 	return "invalid credential or configuration"
 }
 
-func authenticatedClient(ctx context.Context, token func(context.Context) (*oauth2.Token, error)) *http.Client {
+func authenticatedClient(ctx context.Context, token func(context.Context) (*oauth2.Token, error), invalidate func(string)) *http.Client {
 	base := http.DefaultTransport
 	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
 	if client != nil && client.Transport != nil {
@@ -440,13 +465,14 @@ func authenticatedClient(ctx context.Context, token func(context.Context) (*oaut
 	}
 	// Request contexts bound API calls; a total client timeout would also cut
 	// off large media bodies after the headers have already arrived.
-	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client}}
+	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate}}
 }
 
 type tokenTransport struct {
 	token       func(context.Context) (*oauth2.Token, error)
 	base        http.RoundTripper
 	oauthClient *http.Client
+	invalidate  func(string)
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -466,7 +492,13 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	request := req.Clone(req.Context())
 	tok.SetAuthHeader(request)
-	return t.base.RoundTrip(request)
+	response, err := t.base.RoundTrip(request)
+	if err == nil && response.StatusCode == http.StatusUnauthorized && t.invalidate != nil {
+		// Do not replay the request: its caller owns retry policy. A late 401
+		// must not expire a different token installed by a concurrent refresh.
+		t.invalidate(tok.AccessToken)
+	}
+	return response, err
 }
 
 func readToken(path string) (*oauth2.Token, os.FileInfo, error) {

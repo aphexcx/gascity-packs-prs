@@ -190,6 +190,122 @@ func TestRefreshTransientRetry(t *testing.T) {
 	}
 }
 
+func TestClientUnauthorizedRefreshesRevokedToken(t *testing.T) {
+	var refreshes, requests atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "revoked")
+	})
+	writeJSON(t, tokenFile, savedToken("revoked"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	client, err := s.Client(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.Get(ep.ChatAPIBase + "/resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusUnauthorized || string(body) != "revoked" || refreshes.Load() != 0 || requests.Load() != 1 {
+		t.Fatalf("401 was altered or retried: response=%v body=%q err=%v refreshes=%d requests=%d", res, body, err, refreshes.Load(), requests.Load())
+	}
+	res, err = client.Get(ep.ChatAPIBase + "/resource")
+	if res != nil {
+		res.Body.Close()
+	}
+	if !errors.Is(err, ErrNeedsSignIn) || s.State() != NeedsSignIn || refreshes.Load() != 1 || requests.Load() != 1 {
+		t.Fatalf("revocation: err=%v state=%v refreshes=%d requests=%d", err, s.State(), refreshes.Load(), requests.Load())
+	}
+}
+
+func TestClientStaleUnauthorizedKeepsRefreshedToken(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	defer finish()
+	var refreshes atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer old" {
+			t.Errorf("stale request authorization = %q", r.Header.Get("Authorization"))
+		}
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	writeJSON(t, tokenFile, savedToken("old"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	client, err := s.Client(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		res, err := client.Get(ep.ChatAPIBase + "/resource")
+		if res != nil {
+			res.Body.Close()
+		}
+		done <- err
+	}()
+	waitSignal(t, started)
+	s.mu.Lock()
+	expired := *s.current
+	expired.Expiry = time.Now().Add(-time.Hour)
+	s.current = &expired
+	s.mu.Unlock()
+	if _, err := s.TokenSource(t.Context()).Token(); err != nil {
+		t.Fatal(err)
+	}
+	finish()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "fresh" || !tok.Valid() || refreshes.Load() != 1 || s.State() != Ready {
+		t.Fatalf("stale 401 invalidated replacement: token=%+v err=%v refreshes=%d state=%v", tok, err, refreshes.Load(), s.State())
+	}
+}
+
+func TestSourceInvalidate(t *testing.T) {
+	var refreshes atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		refreshes.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+	})
+	s := mustSource(t, clientFile, tokenFile, ep)
+	invalidator, ok := any(s).(interface{ Invalidate() })
+	if !ok {
+		t.Fatal("Source does not expose Invalidate")
+	}
+	invalidator.Invalidate() // Missing credentials remain missing.
+	if s.State() != Missing {
+		t.Fatalf("missing credential state = %v", s.State())
+	}
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s = mustSource(t, clientFile, tokenFile, ep)
+	invalidator = any(s).(interface{ Invalidate() })
+	invalidator.Invalidate()
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "fresh" || refreshes.Load() != 1 || s.State() != Ready {
+		t.Fatalf("invalidation: token=%+v err=%v refreshes=%d state=%v", tok, err, refreshes.Load(), s.State())
+	}
+}
+
 func TestClientRequestBoundsRefresh(t *testing.T) {
 	for _, stalledBody := range []bool{false, true} {
 		t.Run(fmt.Sprintf("stalledBody=%v", stalledBody), func(t *testing.T) {
