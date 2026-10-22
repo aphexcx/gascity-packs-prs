@@ -154,7 +154,7 @@ func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) 
 
 // Poll performs one recovery pass. The app calls it every five seconds, also
 // after startup. Concluded receipts are honored even past the pending deadline;
-// lookup failures retain pending state only until that deadline.
+// lookup failures past that deadline get one persisted grace pass.
 func (p *Processor) Poll(ctx context.Context) error {
 	if err := p.enter(ctx); err != nil {
 		return err
@@ -192,9 +192,25 @@ func (p *Processor) Poll(ctx context.Context) error {
 		r, err := p.opts.GC.Receipt(ctx, c.ReceiptID)
 		if err != nil {
 			failures = append(failures, errors.New("inbound: receipt lookup failed"))
-			if ctx.Err() == nil && !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
-				if err := p.unresolved(id, "receipt lookup failed beyond deadline"); err != nil {
-					failures = append(failures, err)
+			if ctx.Err() == nil {
+				late := !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline))
+				var saveErr error
+				if late && c.Reason == receiptLookupGrace {
+					saveErr = p.unresolved(id, "receipt lookup failed beyond deadline")
+				} else if late || c.Reason == receiptLookupGrace {
+					// Reason is durable while pending; Attempts counts POSTs only.
+					// A pre-deadline pass breaks the streak after a clock correction.
+					saveErr = p.update(func(l *ledger.Ledger) {
+						if current := l.Changes[id]; current != nil && current.Status == "pending" {
+							current.Reason = ""
+							if late {
+								current.Reason = receiptLookupGrace
+							}
+						}
+					})
+				}
+				if saveErr != nil {
+					failures = append(failures, saveErr)
 				}
 			}
 			continue
@@ -203,6 +219,12 @@ func (p *Processor) Poll(ctx context.Context) error {
 		case "pending":
 			if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
 				err = p.unresolved(id, "receipt pending beyond deadline")
+			} else if c.Reason == receiptLookupGrace {
+				err = p.update(func(l *ledger.Ledger) {
+					if current := l.Changes[id]; current != nil && current.Status == "pending" {
+						current.Reason = ""
+					}
+				})
 			}
 		case "concluded":
 			if r.Delivery.Status == "pending" {
@@ -222,6 +244,8 @@ func (p *Processor) Poll(ctx context.Context) error {
 	}
 	return errors.Join(failures...)
 }
+
+const receiptLookupGrace = "receipt lookup failed beyond deadline; retry pending"
 
 func (p *Processor) enter(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {

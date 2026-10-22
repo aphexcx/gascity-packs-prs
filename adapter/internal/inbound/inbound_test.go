@@ -1342,6 +1342,16 @@ func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
 			if lookups.Load() != 1 {
 				t.Fatalf("receipt lookups=%d, want 1 before applying deadline", lookups.Load())
 			}
+			wantLookups := int64(1)
+			if status == "lookup_error" {
+				if f.l.Changes[messageName].Status != "pending" {
+					t.Fatal("first late lookup error abandoned receipt")
+				}
+				if err := f.p.Poll(context.Background()); err == nil {
+					t.Fatal("second lookup error missing")
+				}
+				wantLookups++
+			}
 			c = f.l.Changes[messageName]
 			wantPosts := 1
 			if status == "delivered" || status == "failed" {
@@ -1362,7 +1372,7 @@ func TestReceiptIsLookedUpAfterPendingDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			posts := f.gc.Inbound()
-			if len(posts) != wantPosts || lookups.Load() != 1 {
+			if len(posts) != wantPosts || lookups.Load() != wantLookups {
 				t.Fatalf("posts=%d lookups=%d", len(posts), lookups.Load())
 			}
 			for _, post := range posts {
@@ -1937,6 +1947,135 @@ func TestLocalRecordsDoNotCountOrWarnUnavailable(t *testing.T) {
 			stored, err := ledger.Load(f.opts.LedgerPath, true)
 			if err != nil || len(stored.Counters) != 0 || stored.Changes[id].Reason != tc.reason {
 				t.Fatalf("local record not durable: %v", err)
+			}
+		})
+	}
+}
+
+func TestLateReceiptLookupFailureGetsDurableGrace(t *testing.T) {
+	for _, second := range []string{"delivered", "lookup_error"} {
+		t.Run(second, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var lookups atomic.Int64
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					n := lookups.Add(1)
+					if n == 1 || second == "lookup_error" {
+						http.Error(w, "PRIVATE RECEIPT", 503)
+						return
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("grace", "message.created", message()))
+			before := *f.l.Changes[messageName]
+			receipt := wire.ReceiptResponse{State: "concluded"}
+			receipt.Delivery.Status = "delivered"
+			f.gc.SetReceipt(before.ReceiptID, receipt)
+			now = now.Add(time.Hour)
+			if err := f.p.Poll(context.Background()); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+				t.Fatalf("first lookup: %v", err)
+			}
+			c := f.l.Changes[messageName]
+			if c.Status != "pending" || c.Reason == "" || c.ReceiptID != before.ReceiptID || c.Attempts != before.Attempts || !c.Created.Equal(before.Created) || len(f.l.Unresolved) != 0 || logs.Len() != 0 {
+				t.Fatalf("first failure did not retain pending receipt: %+v logs=%s", c, logs.String())
+			}
+			// Rebuild from disk: the second pass must remember the first failure.
+			f.l, err = ledger.Load(f.opts.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.opts.Ledger = f.l
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = f.p.Poll(context.Background())
+			if (err != nil) != (second == "lookup_error") {
+				t.Fatalf("second lookup: %v", err)
+			}
+			c = f.l.Changes[messageName]
+			if second == "delivered" {
+				if c.Status != "committed" || c.Reason != "delivered" || f.l.Counters["turns:"+space] != 1 || len(f.l.Unresolved) != 0 || logs.Len() != 0 {
+					t.Fatalf("concluded receipt not honored: %+v", c)
+				}
+			} else {
+				if c.Status != "unresolved" || c.Reason != "receipt lookup failed beyond deadline" || f.l.Unresolved[messageName] == nil || f.l.Counters["turns:"+space] != 0 {
+					t.Fatalf("repeated failure not surfaced: %+v", c)
+				}
+				var entry struct{ Level, Cause string }
+				if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != c.Reason {
+					t.Fatalf("warning: %s (%v)", logs.String(), err)
+				}
+			}
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if lookups.Load() != 2 || len(f.gc.Inbound()) != 1 {
+				t.Fatalf("receipt was reposted or looked up again: %d", lookups.Load())
+			}
+		})
+	}
+}
+
+func TestLateReceiptLookupFailuresMustBeConsecutive(t *testing.T) {
+	for _, intermediateError := range []bool{false, true} {
+		t.Run(fmt.Sprint(intermediateError), func(t *testing.T) {
+			f := setup(t)
+			created := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			now := created
+			f.opts.Now = func() time.Time { return now }
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var fail atomic.Bool
+			fail.Store(true)
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && fail.Load() {
+					http.Error(w, "lookup failed", 503)
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("consecutive", "message.created", message()))
+			now = created.Add(time.Hour)
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "pending" {
+				t.Fatalf("first late failure: %v", err)
+			}
+			// A backward clock step allows a pre-deadline pass, which breaks the streak.
+			now = created.Add(30 * time.Minute)
+			fail.Store(intermediateError)
+			if err := f.p.Poll(context.Background()); (err != nil) != intermediateError {
+				t.Fatal(err)
+			}
+			now = created.Add(time.Hour)
+			fail.Store(true)
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "pending" {
+				t.Fatalf("nonconsecutive failure abandoned receipt: %v %+v", err, f.l.Changes[messageName])
+			}
+			if err := f.p.Poll(context.Background()); err == nil || f.l.Changes[messageName].Status != "unresolved" {
+				t.Fatalf("consecutive failures not surfaced: %v", err)
 			}
 		})
 	}
