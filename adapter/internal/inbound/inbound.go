@@ -377,10 +377,10 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 var errSpaceUnavailable = errors.New("inbound: space type unavailable")
 
 func unavailableSpace(err error) bool {
-	// spaces.list covers the whole identity: 401/403 are credential or scope
-	// failures, not evidence that this individual space is unavailable.
-	var apiErr *googleapi.Error
-	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404) || permanentLookupFailure(err)
+	// A classified not-a-member 403 is unavailable; other 401/403 responses
+	// hold for credential or scope repair.
+	kind, _ := chat.Classify(err)
+	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || permanentLookupFailure(err)
 }
 
 func unavailableParent(err error) bool {

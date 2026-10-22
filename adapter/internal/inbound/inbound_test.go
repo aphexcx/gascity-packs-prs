@@ -1747,14 +1747,19 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 	}
 }
 
-func TestPermanentLookupFailureContinuesBatch(t *testing.T) {
+func TestRetainedLookupFailureContinuesBatch(t *testing.T) {
 	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
-		for _, status := range []int{400, 422} {
+		for _, status := range []int{400, 403, 422} {
 			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
 				f := setup(t)
 				var logs bytes.Buffer
 				f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if status == http.StatusForbidden {
+						w.WriteHeader(status)
+						io.WriteString(w, `{"error":{"code":403,"message":"not a member: PRIVATE LOOKUP BODY"}}`)
+						return
+					}
 					http.Error(w, "PRIVATE LOOKUP BODY", status)
 				}))
 				defer s.Close()
@@ -1789,7 +1794,10 @@ func TestPermanentLookupFailureContinuesBatch(t *testing.T) {
 				// A new transport delivery still cannot recount or relog the retained change.
 				ev.PubSubID = "permanent-batch-again"
 				handle(t, f, ev)
-				want := fmt.Sprintf("%s: permanent (HTTP %d)", reason, status)
+				want := reason
+				if status != http.StatusForbidden {
+					want += fmt.Sprintf(": permanent (HTTP %d)", status)
+				}
 				c := f.l.Changes[id]
 				if c == nil || c.Status != "committed" || c.Reason != want || f.l.Counters["unavailable:"+space] != 1 {
 					t.Fatalf("permanent record: %+v counters=%v", c, f.l.Counters)
