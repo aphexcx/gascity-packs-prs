@@ -1151,6 +1151,38 @@ func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
 	}
 }
 
+func TestTokenReloadLatchedWhenWaitingContextExpires(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		once.Do(func() { close(entered); <-release })
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.manager.Reconcile(context.Background()); done <- err }()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, reloadErr := f.manager.TokenReloaded(ctx)
+	close(release)
+	if err := <-done; err == nil {
+		t.Error("reconcile preceding reload unexpectedly reactivated")
+	}
+	if !errors.Is(reloadErr, context.DeadlineExceeded) {
+		t.Fatalf("waiting reload = %v", reloadErr)
+	}
+	got, err := f.manager.Reconcile(context.Background())
+	if err != nil || got.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+		t.Fatalf("reload lost while waiting: state=%+v error=%v", got, err)
+	}
+}
+
 func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
 	f := setup(t)
 	want := f.reconcile()

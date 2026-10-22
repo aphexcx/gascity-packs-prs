@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gchat-adapter/internal/ledger"
@@ -84,6 +85,7 @@ type Manager struct {
 	pending         *api.Operation
 	pendingKind     string
 	scopeReloaded   bool
+	reloadPending   atomic.Bool
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
 	ambiguousState  ledger.SubscriptionState
@@ -138,17 +140,19 @@ func (m *Manager) RecoveryNeeded() <-chan struct{} { return m.recoveryNeeded }
 // Errors (including lost responses) leave the caller responsible for retrying
 // with backoff; RenewLoop does this automatically. No ambiguous read is absence.
 func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, error) {
-	return m.reconcile(ctx, false)
+	return m.reconcile(ctx)
 }
 
 // TokenReloaded is called by the app after validating and installing a new
 // credential. It permits scope-revoked reactivation (including transient retries) under
-// the same gate as lifecycle events and RenewLoop.
+// the same gate as lifecycle events and RenewLoop. The reload remains latched
+// if this caller is cancelled while waiting for another reconciliation.
 func (m *Manager) TokenReloaded(ctx context.Context) (ledger.SubscriptionState, error) {
-	return m.reconcile(ctx, true)
+	m.reloadPending.Store(true)
+	return m.reconcile(ctx)
 }
 
-func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.SubscriptionState, resultErr error) {
+func (m *Manager) reconcile(ctx context.Context) (_ ledger.SubscriptionState, resultErr error) {
 	select {
 	case m.gate <- struct{}{}:
 		defer func() { <-m.gate }()
@@ -159,7 +163,7 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.S
 		return ledger.SubscriptionState{}, err
 	}
 	defer func() { m.recordResult(resultErr) }()
-	if tokenReloaded {
+	if m.reloadPending.Swap(false) {
 		m.scopeReloaded = true
 	}
 	m.ledgerMu.Lock()
