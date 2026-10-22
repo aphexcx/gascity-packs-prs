@@ -302,13 +302,13 @@ func TestSourceInvalidate(t *testing.T) {
 }
 
 func TestClientRequestBoundsRefresh(t *testing.T) {
-	for _, stalledBody := range []bool{false, true} {
-		t.Run(fmt.Sprintf("stalledBody=%v", stalledBody), func(t *testing.T) {
+	for _, scenario := range []string{"stalled headers", "stalled body", "deadline before refresh"} {
+		t.Run(scenario, func(t *testing.T) {
 			started := make(chan struct{})
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 				io.Copy(io.Discard, r.Body)
 				close(started)
-				if stalledBody {
+				if scenario == "stalled body" {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
 					w.(http.Flusher).Flush()
@@ -324,22 +324,40 @@ func TestClientRequestBoundsRefresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.current.Expiry = time.Now().Add(-time.Hour)
-			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			timeout := 100 * time.Millisecond
+			if scenario == "deadline before refresh" {
+				timeout = -time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/resource", nil)
 			done := make(chan error, 1)
 			start := time.Now()
 			go func() { _, err := client.Do(req); done <- err }()
-			waitSignal(t, started)
+			timer := time.NewTimer(500 * time.Millisecond)
+			defer timer.Stop()
+			var requestErr error
+			completed := false
 			select {
-			case err := <-done:
-				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 500*time.Millisecond {
-					t.Fatalf("request deadline: elapsed=%v error=%v", time.Since(start), err)
-				}
-			case <-time.After(500 * time.Millisecond):
-				stop()
+			case <-started:
+			case requestErr = <-done:
+				completed = true // The deadline can expire before the handler starts.
+			case <-timer.C:
+				cancel()
 				<-done
 				t.Fatal("request deadline did not interrupt refresh")
+			}
+			if !completed {
+				select {
+				case requestErr = <-done:
+				case <-timer.C:
+					cancel()
+					<-done
+					t.Fatal("request deadline did not interrupt refresh")
+				}
+			}
+			if !errors.Is(requestErr, context.DeadlineExceeded) || time.Since(start) > 500*time.Millisecond {
+				t.Fatalf("request deadline: elapsed=%v error=%v", time.Since(start), requestErr)
 			}
 		})
 	}
