@@ -1178,3 +1178,107 @@ func TestRetainedWindowUsesGoogleClock(t *testing.T) {
 		}
 	}
 }
+
+func TestListedHeldSpaceRetriesAfterInterval(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 2; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	now := frozen
+	f.opts.Now = func() time.Time { return now }
+	f.newRunner(t)
+	f.freeze(t)
+	forbidden := true
+	f.onRequest = func(r *http.Request) error {
+		if forbidden && strings.HasSuffix(r.URL.Path, "/messages") && r.URL.Query().Get("pageToken") == "1" {
+			return &googleapi.Error{Code: 403, Message: "not a member"}
+		}
+		return nil
+	}
+	if _, _, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) {
+		t.Fatal(err)
+	}
+	now = frozen.Add(time.Hour - time.Nanosecond)
+	if err := f.r.Freeze(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	requests := len(f.requests)
+	f.pass(t, 0, 0)
+	if len(f.requests) != requests {
+		t.Fatal("held space retried before one hour")
+	}
+	for hour := 1; hour <= 3; hour++ {
+		now = frozen.Add(time.Duration(hour) * time.Hour)
+		// Retry timing and the already-reported hold must both survive restart.
+		saved, err := ledger.Load(f.opts.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*f.opts.Ledger = *saved
+		f.newRunner(t)
+		if hour == 3 {
+			forbidden = false // Re-added between Freezes: every listing still includes it.
+			f.addMessage("spaces/room", 2, now.Add(-time.Minute))
+		}
+		if err := f.r.Freeze(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
+		requests = len(f.requests)
+		if hour < 3 {
+			if d, n, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) || d != 0 || n != 0 {
+				t.Fatalf("hour %d: (%d, %d, %v), want renewed access attempt", hour, d, n, err)
+			}
+			if len(f.requests)-requests != 1 {
+				t.Fatal("retry was not bounded to one held page")
+			}
+			f.pass(t, 0, 0)
+			if len(f.requests)-requests != 1 {
+				t.Fatal("repeated pass retried the hold")
+			}
+		} else {
+			f.pass(t, 2, 0)
+			if len(f.gc.Inbound()) != 2 || !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(now) {
+				t.Fatal("held space did not recover queued history")
+			}
+		}
+		if f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+			t.Fatalf("hour %d recounted hold: %v %s", hour, f.opts.Ledger.Counters, f.logs.String())
+		}
+	}
+}
+
+func TestUnavailableHoldIsNewAfterSuccessfulPage(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 1
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 2; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+	}
+	now := frozen
+	f.opts.Now = func() time.Time { return now }
+	f.newRunner(t)
+	f.freeze(t)
+	failedToken := ""
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/messages") && r.URL.Query().Get("pageToken") == failedToken {
+			return &googleapi.Error{Code: 403, Message: "not a member"}
+		}
+		return nil
+	}
+	if _, _, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) {
+		t.Fatal(err)
+	}
+	now = frozen.Add(time.Hour)
+	failedToken = "1" // One successful page separates the two failures.
+	if err := f.r.Freeze(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.r.Pass(context.Background()); !errors.Is(err, errSpaceUnavailable) {
+		t.Fatal(err)
+	}
+	if f.opts.Ledger.Counters["unavailable:spaces/room"] != 2 || strings.Count(f.logs.String(), "level=WARN") != 2 {
+		t.Fatalf("new hold not reported: %v %s", f.opts.Ledger.Counters, f.logs.String())
+	}
+}

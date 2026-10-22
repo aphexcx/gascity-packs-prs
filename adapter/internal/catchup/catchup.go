@@ -55,12 +55,17 @@ type progress struct {
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
 	NextUpper    time.Time `json:"next_upper,omitzero"`
-	// Access loss retains records locally and holds cursors. Freeze must see
-	// the space absent then present before retrying it; credentials can retry
-	// after sign-in. ListingAbsent survives restart along with the hold.
-	Unavailable   string `json:"unavailable,omitempty"`
-	Credentials   string `json:"credentials,omitempty"`
-	ListingAbsent bool   `json:"listing_absent,omitempty"`
+	// Freeze retries access after a listing rejoin or a one-hour hold. Keep
+	// the summary until a successful page so repeated denials are not new holds.
+	Unavailable      string    `json:"unavailable,omitempty"`
+	Credentials      string    `json:"credentials,omitempty"`
+	ListingAbsent    bool      `json:"listing_absent,omitempty"`
+	RetryUnavailable bool      `json:"retry_unavailable,omitempty"`
+	AccessRetryAfter time.Time `json:"access_retry_after,omitzero"`
+}
+
+func (p progress) unavailableHeld() bool {
+	return p.Unavailable != "" && !p.RetryUnavailable
 }
 
 type queuedChange struct {
@@ -144,8 +149,8 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				if err != nil {
 					return err
 				}
-				if listed[name] && p.ListingAbsent {
-					p.Unavailable = ""
+				if p.Unavailable != "" && listed[name] && (p.ListingAbsent || !now.Before(p.AccessRetryAfter)) {
+					p.RetryUnavailable = true
 				}
 				p.ListingAbsent = !listed[name]
 				if now.After(s.FrozenUpper) && now.After(p.NextUpper) {
@@ -252,7 +257,7 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 				failures = append(failures, err)
 				break
 			}
-			if len(s.Backlog) > 0 || p.Unavailable != "" {
+			if len(s.Backlog) > 0 || p.unavailableHeld() {
 				break
 			}
 			// A queued restart interval starts here, sharing this pass's budget.
@@ -293,7 +298,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		if err != nil {
 			return err
 		}
-		if p.Phase == "done" || p.Unavailable != "" {
+		if p.Phase == "done" || p.unavailableHeld() {
 			return nil
 		}
 		var page []queuedChange
@@ -369,6 +374,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 		}
 		p.Token = next
 		p.Credentials = ""
+		p.Unavailable, p.RetryUnavailable, p.AccessRetryAfter = "", false, time.Time{}
 		if next == "" {
 			if p.Phase == "messages" {
 				p.Phase = "events"
@@ -404,7 +410,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		if err != nil {
 			return err
 		}
-		if p.Unavailable != "" || p.Phase != "done" {
+		if p.unavailableHeld() || p.Phase != "done" {
 			return errUnchanged
 		}
 		items := make([]queuedChange, len(s.Backlog))
@@ -442,7 +448,7 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		if err != nil {
 			return delivered, err
 		}
-		if p.Unavailable != "" || p.Phase != "done" {
+		if p.unavailableHeld() || p.Phase != "done" {
 			return delivered, nil
 		}
 		if index >= len(s.Backlog) {
@@ -648,15 +654,18 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 		summary = fmt.Sprintf("%s (HTTP %d)", kind, apiErr.Code)
 	}
 	key, sentinel, first := "unavailable:", errSpaceUnavailable, p.Unavailable == ""
+	retrying := p.RetryUnavailable
 	if kind == "auth" {
 		key, sentinel, first = "credentials:", inbound.ErrCredentials, p.Credentials == ""
 		p.Credentials = summary
 	} else {
 		p.Unavailable = summary
+		p.RetryUnavailable = false
+		p.AccessRetryAfter = r.opts.Now().UTC().Add(time.Hour)
 	}
 	held := fmt.Errorf("catchup: list %s for %s: %s: %w", p.Phase, name, summary, sentinel)
 	err := r.update(func(l *ledger.Ledger) error {
-		if !first {
+		if !first && (kind == "auth" || !retrying) {
 			return errUnchanged
 		}
 		s, err := spaceState(l, name)
