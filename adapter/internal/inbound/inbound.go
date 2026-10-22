@@ -25,6 +25,7 @@ import (
 	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
+	"google.golang.org/api/googleapi"
 )
 
 type Options struct {
@@ -344,9 +345,18 @@ func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) e
 
 var errSpaceUnavailable = errors.New("inbound: space type unavailable")
 
-func permanentLookup(err error) bool {
-	kind, _ := chat.Classify(err)
-	return errors.Is(err, errSpaceUnavailable) || kind == "not_found" || kind == "auth" || kind == "permanent"
+func unavailableSpace(err error) bool {
+	// spaces.list covers the whole identity: 401/403 are credential or scope
+	// failures, not evidence that this individual space is unavailable.
+	var apiErr *googleapi.Error
+	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404)
+}
+
+func unavailableParent(err error) bool {
+	// A parent lookup can return 403 for a space the identity left. Retain
+	// that inaccessible parent just like 404; 401 still holds for credentials.
+	var apiErr *googleapi.Error
+	return errors.As(err, &apiErr) && (apiErr.Code == 403 || apiErr.Code == 404)
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
@@ -448,7 +458,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	}
 	s, err := p.space(ctx, c.Space, m.Space)
 	if err != nil {
-		if permanentLookup(err) {
+		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
 			w.Text = renderMentions(m)
 			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
@@ -512,7 +522,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	if state == nil {
 		m, err := p.opts.Chat.GetMessage(ctx, parent)
 		if err != nil {
-			if permanentLookup(err) {
+			if unavailableParent(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
 				w.Text = reactionText(r, action, parent)
 				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
@@ -526,7 +536,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 	}
 	s, err := p.space(ctx, c.Space, nil)
 	if err != nil {
-		if permanentLookup(err) {
+		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
 			return p.record(c, id, w, state, nil, "space unavailable", catchUp)

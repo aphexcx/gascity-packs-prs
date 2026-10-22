@@ -883,7 +883,7 @@ func TestRejectedPOSTRetainsStatusWithoutPrivateLogs(t *testing.T) {
 }
 
 func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
-	for _, status := range []int{403, 404, 503} {
+	for _, status := range []int{400, 401, 403, 404, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			target, _ := url.Parse(f.google.URL())
@@ -922,9 +922,12 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status == 503 {
+			if status != 403 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[missing+"#created"] != nil || f.l.Transport.Seen("pubsub:parents") {
 					t.Fatalf("transient lookup: %v %v", out, err)
+				}
+				if len(f.gc.Inbound()) != 0 || len(f.l.Changes) != 0 {
+					t.Fatal("failed lookup consumed the batch")
 				}
 				return
 			}
@@ -946,7 +949,7 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 }
 
 func TestUnavailableSpaceIsRetained(t *testing.T) {
-	for _, status := range []int{200, 403, 404, 503} {
+	for _, status := range []int{200, 400, 401, 403, 404, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := setup(t)
 			var lookups atomic.Int64
@@ -979,9 +982,12 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status == 503 {
-				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil {
+			if status != 200 && status != 404 {
+				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil || f.l.Transport.Seen("pubsub:space-unavailable") {
 					t.Fatalf("transient space lookup: %v %v", out, err)
+				}
+				if len(f.gc.Inbound()) != 0 || len(f.l.Messages) != 0 {
+					t.Fatal("failed lookup consumed the message")
 				}
 				return
 			}
