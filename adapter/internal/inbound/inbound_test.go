@@ -1050,7 +1050,7 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status != 403 && status != 404 {
+			if status != 400 && status != 403 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[missing+"#created"] != nil || f.l.Transport.Seen("pubsub:parents") {
 					t.Fatalf("transient lookup: %v %v", out, err)
 				}
@@ -1063,7 +1063,11 @@ func TestUnavailableReactionParentDoesNotBlockBatch(t *testing.T) {
 				t.Fatalf("permanent parent failure: %v %v", out, err)
 			}
 			c := f.l.Changes[missing+"#created"]
-			if c == nil || c.Status != "committed" || c.Reason != "parent unavailable" || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != second+"#created" {
+			wantReason := "parent unavailable"
+			if status == 400 {
+				wantReason += ": permanent (HTTP 400)"
+			}
+			if c == nil || c.Status != "committed" || c.Reason != wantReason || len(f.gc.Inbound()) != 1 || f.gc.Inbound()[0].ProviderMessageID != second+"#created" {
 				t.Fatalf("batch did not continue: %+v, posts=%+v", c, f.gc.Inbound())
 			}
 			handle(t, f, ev)
@@ -1110,7 +1114,7 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), timeout)
 			defer cancel()
 			out, err := f.p.Handle(ctx, ev)
-			if status != 200 && status != 404 {
+			if status != 200 && status != 400 && status != 404 {
 				if out != puller.Nack || err == nil || strings.Contains(err.Error(), "PRIVATE") || f.l.Changes[messageName] != nil || f.l.Transport.Seen("pubsub:space-unavailable") {
 					t.Fatalf("transient space lookup: %v %v", out, err)
 				}
@@ -1123,7 +1127,11 @@ func TestUnavailableSpaceIsRetained(t *testing.T) {
 				t.Fatalf("unavailable space: %v %v", out, err)
 			}
 			c := f.l.Changes[messageName]
-			if c == nil || c.Reason != "space unavailable" || c.Status != "committed" || len(f.gc.Inbound()) != 0 {
+			wantReason := "space unavailable"
+			if status == 400 {
+				wantReason += ": permanent (HTTP 400)"
+			}
+			if c == nil || c.Reason != wantReason || c.Status != "committed" || len(f.gc.Inbound()) != 0 {
 				t.Fatalf("unavailable space not retained: %+v", c)
 			}
 			ev.PubSubID = "space-again"
@@ -1721,6 +1729,77 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				}
 				if len(f.l.Changes) != 0 || len(f.gc.Inbound()) != 0 || f.l.Transport.Seen("pubsub:credential-hold") {
 					t.Fatal("held lookup consumed the change")
+				}
+			})
+		}
+	}
+}
+
+func TestPermanentLookupFailureContinuesBatch(t *testing.T) {
+	for _, path := range []string{"message_space", "reaction_parent", "reaction_space"} {
+		for _, status := range []int{400, 422} {
+			t.Run(fmt.Sprintf("%s/%d", path, status), func(t *testing.T) {
+				f := setup(t)
+				var logs bytes.Buffer
+				f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					http.Error(w, "PRIVATE LOOKUP BODY", status)
+				}))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				var err error
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.p, err = New(f.opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				m := message()
+				m.Space = nil
+				ev := event("permanent-batch", "message.created", m)
+				id, reason := messageName, "space unavailable"
+				if path != "message_space" {
+					r := &api.Reaction{Name: messageName + "/reactions/one"}
+					ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+					id = r.Name + "#created"
+					if path == "reaction_parent" {
+						reason = "parent unavailable"
+					} else {
+						f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+					}
+				}
+				later := message()
+				later.Name = space + "/messages/later"
+				ev.Changes = append(ev.Changes, puller.Change{Kind: "message.created", Space: space, Message: later})
+				handle(t, f, ev)
+				// A new transport delivery still cannot recount or relog the retained change.
+				ev.PubSubID = "permanent-batch-again"
+				handle(t, f, ev)
+				want := fmt.Sprintf("%s: permanent (HTTP %d)", reason, status)
+				c := f.l.Changes[id]
+				if c == nil || c.Status != "committed" || c.Reason != want || f.l.Counters["unavailable:"+space] != 1 {
+					t.Fatalf("permanent record: %+v counters=%v", c, f.l.Counters)
+				}
+				if got := f.gc.Inbound(); len(got) != 1 || got[0].ProviderMessageID != later.Name || f.l.Changes[later.Name].Reason != "delivered" {
+					t.Fatalf("later change not delivered once: %+v", got)
+				}
+				var entry struct{ Level, Cause string }
+				if err := json.Unmarshal(logs.Bytes(), &entry); err != nil || entry.Level != "WARN" || entry.Cause != want || strings.Contains(logs.String(), "PRIVATE") {
+					t.Fatalf("retained warning: %s (%v)", logs.String(), err)
+				}
+				stored, err := ledger.Load(f.opts.LedgerPath, true)
+				if err != nil || stored.Changes[id].Reason != want || stored.Counters["unavailable:"+space] != 1 {
+					t.Fatalf("retention not durable: %v", err)
+				}
+				if path == "message_space" {
+					f.l.Spaces[space].Wake = "mentions"
+					m.LastUpdateTime = "2026-10-22T10:01:00Z"
+					handle(t, f, event("later-edit", "message.updated", m))
+					if f.l.Changes[messageName+"#updated#"+m.LastUpdateTime].Reason != "wake_policy" || len(f.gc.Inbound()) != 1 {
+						t.Fatal("retained base was treated as forwarded")
+					}
 				}
 			})
 		}

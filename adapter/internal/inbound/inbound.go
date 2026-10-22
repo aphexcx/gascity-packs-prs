@@ -355,28 +355,41 @@ func unavailableSpace(err error) bool {
 	// spaces.list covers the whole identity: 401/403 are credential or scope
 	// failures, not evidence that this individual space is unavailable.
 	var apiErr *googleapi.Error
-	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404)
+	kind, _ := chat.Classify(err)
+	return errors.Is(err, errSpaceUnavailable) || (errors.As(err, &apiErr) && apiErr.Code == 404) || kind == "permanent"
 }
 
 func unavailableParent(err error) bool {
 	// Only a not-a-member 403 proves the parent inaccessible; a scope 403
 	// holds for credential repair just like 401.
 	kind, _ := chat.Classify(err)
-	return kind == "not_found"
+	return kind == "not_found" || kind == "permanent"
 }
 
 // lookupError exposes a safe classifier and status, never Google's response body.
 func lookupError(lookup string, err error) error {
 	kind, _ := chat.Classify(err)
-	summary := fmt.Sprintf("inbound: %s lookup failed: %s", lookup, kind)
-	var apiErr *googleapi.Error
-	if errors.As(err, &apiErr) {
-		summary += fmt.Sprintf(" (HTTP %d)", apiErr.Code)
-	}
+	summary := fmt.Sprintf("inbound: %s lookup failed: %s", lookup, lookupCause(err))
 	if kind == "auth" {
 		return fmt.Errorf("%s: %w", summary, ErrCredentials)
 	}
 	return errors.New(summary)
+}
+
+func lookupCause(err error) string {
+	kind, _ := chat.Classify(err)
+	var apiErr *googleapi.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("%s (HTTP %d)", kind, apiErr.Code)
+	}
+	return kind
+}
+
+func retainedReason(reason string, err error) string {
+	if kind, _ := chat.Classify(err); kind == "permanent" {
+		return reason + ": " + lookupCause(err)
+	}
+	return reason
 }
 
 func (p *Processor) space(ctx context.Context, name string, supplied *api.Space) (*ledger.SpaceState, error) {
@@ -481,7 +494,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
 			w.Text = renderMentions(m)
-			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
+			return p.record(c, id, w, &state, nil, retainedReason("space unavailable", err), catchUp)
 		}
 		return lookupError("space", err)
 	}
@@ -489,7 +502,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	w.Text = renderMentions(m)
 	forwarded := false
 	for _, change := range l.Changes {
-		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && change.Reason != "space unavailable" {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
 			forwarded = true
 			break
 		}
@@ -545,7 +558,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 			if unavailableParent(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
 				w.Text = reactionText(r, action, parent)
-				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
+				return p.record(c, id, w, nil, nil, retainedReason("parent unavailable", err), catchUp)
 			}
 			return lookupError("reaction parent", err)
 		}
@@ -559,7 +572,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
-			return p.record(c, id, w, state, nil, "space unavailable", catchUp)
+			return p.record(c, id, w, state, nil, retainedReason("space unavailable", err), catchUp)
 		}
 		return lookupError("space", err)
 	}
@@ -626,7 +639,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 	if c.Reaction != nil {
 		name = strings.Split(c.Reaction.Name, "/reactions/")[0]
 	}
-	unavailable := local == "space unavailable" || local == "parent unavailable"
+	unavailable := strings.HasPrefix(local, "space unavailable") || strings.HasPrefix(local, "parent unavailable")
 	err = p.update(func(l *ledger.Ledger) {
 		status := "intent"
 		if local != "" {
