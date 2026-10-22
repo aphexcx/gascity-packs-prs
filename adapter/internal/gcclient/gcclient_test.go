@@ -245,6 +245,168 @@ func TestHTTPErrorIncludesStatusAndBody(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorBoundsForeignBody(t *testing.T) {
+	body := strings.Repeat("x", 1<<20)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(s.Close)
+	err := New(s.URL, "examplecity").Register(t.Context(), wire.Registration{})
+	var responseErr *HTTPError
+	if !errors.As(err, &responseErr) {
+		t.Fatalf("error type = %T, want *HTTPError", err)
+	}
+	if len(responseErr.Body) > 64<<10 || responseErr.Body != body[:64<<10] {
+		t.Errorf("retained body length = %d, want first 64 KiB", len(responseErr.Body))
+	}
+	message := err.Error()
+	if len(message) > 300 || !strings.HasPrefix(message, "gc API: HTTP 502: x") || !strings.HasSuffix(message, "...") {
+		t.Errorf("error message length = %d, want short status/body summary with ellipsis", len(message))
+	}
+}
+
+func TestSuccessfulResponseIsNotTruncated(t *testing.T) {
+	want := wire.InboundResponse{}
+	want.Delivery.Status = strings.Repeat("x", 65<<10)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	t.Cleanup(s.Close)
+	got, err := New(s.URL, "examplecity").Inbound(t.Context(), inbound("message"))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("response truncated: status length = %d, error = %v", len(got.Delivery.Status), err)
+	}
+}
+
+func TestHTTPErrorProblemSummary(t *testing.T) {
+	for _, contentType := range []string{"application/problem+json", "application/json", "text/plain", ""} {
+		t.Run(contentType, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header()["Content-Type"] = []string{contentType}
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = io.WriteString(w, `{"type":"urn:gascity:error:validation-failed","title":"Validation Failed","status":422,"detail":"invalid conversation","code":"validation-failed","extra":"not in summary"}`)
+			}))
+			t.Cleanup(s.Close)
+			err := New(s.URL, "examplecity").Register(t.Context(), wire.Registration{})
+			if err == nil || err.Error() != "gc API: HTTP 422: validation-failed: invalid conversation" {
+				t.Fatalf("error = %v; want status, problem code and detail", err)
+			}
+		})
+	}
+}
+
+func TestOutboundBindingProblems(t *testing.T) {
+	for _, owner := range []string{"", "other-session"} {
+		t.Run("owner="+owner, func(t *testing.T) {
+			s := fakegc.New(t)
+			if owner != "" {
+				s.Bind(conversation(), owner)
+			}
+			_, err := checkedClient(t, s.URL()).Outbound(t.Context(), wire.OutboundRequest{
+				SessionID: "session", Conversation: conversation(), Text: "reply",
+			})
+			var responseErr *HTTPError
+			if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("error = %v; want HTTP 422", err)
+			}
+			detail := "no active binding for conversation gchat/spaces/room"
+			if owner != "" {
+				detail = `session "session" does not own binding for conversation gchat/spaces/room (bound to other-session)`
+			}
+			want := &Problem{Type: "urn:gascity:error:validation-failed", Title: "Validation Failed", Status: 422, Detail: detail, Code: "validation-failed"}
+			if !reflect.DeepEqual(responseErr.Problem, want) || responseErr.Code() != want.Code {
+				t.Fatalf("problem = %+v, code = %q; want %+v", responseErr.Problem, responseErr.Code(), want)
+			}
+			var retained Problem
+			if err := json.Unmarshal([]byte(responseErr.Body), &retained); err != nil || retained != *want {
+				t.Fatalf("raw body not retained: %q, %v", responseErr.Body, err)
+			}
+			for _, candidate := range []error{err, fmt.Errorf("outbound failed: %w", err)} {
+				if IsNoBinding(candidate) != (owner == "") || IsWrongOwner(candidate) != (owner != "") {
+					t.Errorf("binding helpers misclassified %v", candidate)
+				}
+			}
+		})
+	}
+}
+
+func TestHTTPErrorNonProblem(t *testing.T) {
+	for _, body := range []string{"not JSON", `{"code":`, `null`, `{}`, `{"error":"proxy failure"}`, `[]`, `{"status":"bad"}`} {
+		t.Run(body, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(s.Close)
+			err := New(s.URL, "examplecity").Register(t.Context(), wire.Registration{})
+			var responseErr *HTTPError
+			if !errors.As(err, &responseErr) || responseErr.Problem != nil || responseErr.Code() != "" || responseErr.Body != body {
+				t.Fatalf("error = %+v; want unparsed body %q", responseErr, body)
+			}
+			if IsNoBinding(err) || IsWrongOwner(err) {
+				t.Fatalf("non-problem classified as binding error: %v", err)
+			}
+		})
+	}
+}
+
+func TestBindingHelpersRejectOtherErrors(t *testing.T) {
+	for _, detail := range []string{
+		"no active binding for conversation gchat/spaces/room",
+		`session "session" does not own binding for conversation gchat/spaces/room (bound to other-session)`,
+	} {
+		for _, err := range []error{
+			nil,
+			errors.New(detail),
+			&HTTPError{StatusCode: 422, Body: detail},
+			&HTTPError{StatusCode: 503, Problem: &Problem{Code: "validation-failed", Detail: detail}},
+			&HTTPError{StatusCode: 422, Problem: &Problem{Code: "other", Detail: detail}},
+			&HTTPError{StatusCode: 422, Problem: &Problem{Code: "validation-failed", Detail: "context: " + detail}},
+		} {
+			if IsNoBinding(err) || IsWrongOwner(err) {
+				t.Errorf("unrelated error classified as binding error: %v", err)
+			}
+		}
+	}
+	for _, detail := range []string{"session is required", `session "session" could not resolve a binding`, `session setup: does not own binding for conversation gchat/spaces/room`} {
+		err := &HTTPError{StatusCode: 422, Problem: &Problem{Code: "validation-failed", Detail: detail}}
+		if IsNoBinding(err) || IsWrongOwner(err) {
+			t.Errorf("unrelated validation detail classified as binding error: %v", err)
+		}
+	}
+}
+
+func TestWrongOwnerAgentBinding(t *testing.T) {
+	err := &HTTPError{StatusCode: 422, Problem: &Problem{
+		Code:   "validation-failed",
+		Detail: fmt.Sprintf("session %q does not own binding for conversation gchat/spaces/room (bound to agent example, currently session other)", `session"quoted`),
+	}}
+	if !IsWrongOwner(err) || IsNoBinding(err) {
+		t.Fatalf("agent binding misclassified: %v", err)
+	}
+}
+
+func TestHTTPErrorBoundsProblemSummary(t *testing.T) {
+	for _, field := range []string{"code", "detail"} {
+		t.Run(field, func(t *testing.T) {
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+				_ = json.NewEncoder(w).Encode(map[string]string{field: strings.Repeat("x", 1024)})
+			}))
+			t.Cleanup(s.Close)
+			err := New(s.URL, "examplecity").Register(t.Context(), wire.Registration{})
+			var responseErr *HTTPError
+			if !errors.As(err, &responseErr) || responseErr.Problem == nil {
+				t.Fatalf("error = %v; want parsed problem", err)
+			}
+			if len(err.Error()) > 300 || !strings.HasSuffix(err.Error(), "...") {
+				t.Errorf("problem summary not bounded: %d bytes", len(err.Error()))
+			}
+		})
+	}
+}
+
 func TestMalformedResponse(t *testing.T) {
 	for name, call := range clientCalls() {
 		if name == "register" { // Registration only needs a successful status.
@@ -272,6 +434,25 @@ func TestContextCancellation(t *testing.T) {
 			cancel()
 			if err := call(ctx, checkedClient(t, s.URL())); !errors.Is(err, context.Canceled) {
 				t.Fatalf("error = %v; want context.Canceled", err)
+			}
+		})
+	}
+}
+
+func TestTransportFailureIsNotHTTPError(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("closed server received a request")
+	}))
+	s.Close()
+	for name, call := range clientCalls() {
+		t.Run(name, func(t *testing.T) {
+			err := call(t.Context(), checkedClient(t, s.URL))
+			if err == nil {
+				t.Fatal("connection to closed server succeeded")
+			}
+			var responseErr *HTTPError
+			if errors.As(err, &responseErr) {
+				t.Fatalf("transport failure classified as HTTP response: %v", err)
 			}
 		})
 	}

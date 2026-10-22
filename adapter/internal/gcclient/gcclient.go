@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,26 +26,80 @@ type Client struct {
 // New constructs a client for a gc API base URL and city. Each call respects
 // its context and has a 35-second ceiling, allowing gc's 30-second publish
 // callback deadline to expire before the client's own timeout.
+// A redirect is a non-2xx error, not permission to replay a mutation or send it
+// to another endpoint.
 func New(base, city string) *Client {
 	return &Client{
 		base: strings.TrimRight(base, "/"), city: city,
 		http: &http.Client{
-			Timeout: 35 * time.Second,
-			// A redirect is a non-2xx response, not permission to replay a
-			// mutation or send it to another endpoint.
+			Timeout:       35 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
 }
 
-// HTTPError retains gc's status and response body, including problem details.
+// Problem is gc's RFC 9457 error envelope, including its machine-readable code.
+type Problem struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+	Code   string `json:"code"`
+}
+
+// HTTPError retains gc's status and up to 64 KiB of its response body.
+// Problem is populated best-effort, regardless of the response content type.
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	Problem    *Problem
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, e.Body)
+	summary := e.Body
+	if e.Problem != nil {
+		summary = e.Problem.Code + ": " + e.Problem.Detail
+	}
+	if len(summary) > 256 {
+		summary = summary[:256] + "..."
+	}
+	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, summary)
+}
+
+// Code returns the problem code, or an empty string when no problem was parsed.
+func (e *HTTPError) Code() string {
+	if e == nil || e.Problem == nil {
+		return ""
+	}
+	return e.Problem.Code
+}
+
+// IsNoBinding reports whether gc rejected an outbound request with no binding.
+// gc internal/extmsg/outbound.go:137-146 emits this detail for both an absent
+// caller session and a caller that has no matching group route.
+func IsNoBinding(err error) bool {
+	return strings.HasPrefix(bindingDetail(err), "no active binding for conversation ")
+}
+
+// IsWrongOwner reports whether the outbound caller does not own the binding.
+// gc internal/extmsg/outbound.go:109-110,129-130 uses the same detail prefix for
+// agent and session bindings, with the caller session formatted using %q.
+func IsWrongOwner(err error) bool {
+	rest, ok := strings.CutPrefix(bindingDetail(err), "session ")
+	if !ok {
+		return false
+	}
+	session, quoteErr := strconv.QuotedPrefix(rest)
+	return quoteErr == nil && strings.HasPrefix(rest[len(session):], " does not own binding for conversation ")
+}
+
+func bindingDetail(err error) string {
+	var responseErr *HTTPError
+	if errors.As(err, &responseErr) && responseErr != nil &&
+		responseErr.StatusCode == http.StatusUnprocessableEntity && responseErr.Code() == "validation-failed" {
+		return responseErr.Problem.Detail
+	}
+	return ""
 }
 
 func (c *Client) Register(ctx context.Context, reg wire.Registration) error {
@@ -89,9 +145,17 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 		return fmt.Errorf("gc %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	data, readErr := io.ReadAll(resp.Body)
+	var responseBody io.Reader = resp.Body
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody = io.LimitReader(resp.Body, 64<<10)
+	}
+	data, readErr := io.ReadAll(responseBody)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data)}
+		var problem Problem
+		if json.Unmarshal(data, &problem) == nil && problem != (Problem{}) {
+			err.Problem = &problem
+		}
 		if readErr != nil {
 			return fmt.Errorf("%w (read response: %w)", err, readErr)
 		}
