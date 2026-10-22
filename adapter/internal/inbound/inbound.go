@@ -360,6 +360,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 		return err
 	}
 	previous := l.Messages[m.Name]
+	base := l.Changes[m.Name]
 	revision := m.CreateTime
 	if m.LastUpdateTime != "" {
 		revision = m.LastUpdateTime
@@ -367,18 +368,18 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 	updated, _ := time.Parse(time.RFC3339Nano, revision)
 	if c.Kind == "message.deleted" {
 		id += "#deleted"
-	} else if c.Kind == "message.updated" && previous != nil {
+	} else if c.Kind == "message.updated" && base != nil {
 		id += "#updated#" + m.LastUpdateTime
 		// An update received before creation owns the base ID, including when
 		// a redelivery resumes its interrupted or transiently failed POST.
-		if base := l.Changes[m.Name]; base != nil && base.Kind == "message.updated" && previous.Revision.Equal(updated) {
+		if base.Kind == "message.updated" && previous != nil && previous.Revision.Equal(updated) {
 			id = m.Name
 		}
 	}
 	if l.Changes[id] != nil {
 		return p.resume(ctx, id)
 	}
-	if previous != nil && (previous.Deleted || (c.Kind != "message.deleted" && (c.Kind == "message.created" || !updated.After(previous.Revision)))) {
+	if previous != nil && (previous.Deleted || (base != nil && c.Kind != "message.deleted" && (c.Kind == "message.created" || !updated.After(previous.Revision)))) {
 		return nil
 	}
 	state := ledger.MessageState{Revision: updated}
@@ -407,8 +408,13 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 	}
 	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
 	w.Text = renderMentions(m)
-	base := l.Changes[m.Name]
-	forwarded := base != nil && base.Reason != "local" && base.Reason != "own" && base.Reason != "wake_policy"
+	forwarded := false
+	for _, change := range l.Changes {
+		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" {
+			forwarded = true
+			break
+		}
+	}
 	local := ""
 	if state.Mine {
 		local = "own"
@@ -750,8 +756,9 @@ func mediaReason(err error) string {
 	return "download or storage failed"
 }
 
-// Only the configured root is trusted. Untrusted space/message directories are
-// created through directory handles and refuse symlinks, matching DownloadMedia.
+// Walk from the filesystem root using directory handles, refusing symlinks in
+// the configured root and every child. Use a canonical path on systems with
+// symlinked temporary directories, as required by the puller's media storage.
 func mediaDirectory(root string, parts ...string) (string, error) {
 	if root == "" {
 		return "", errors.New("media root missing")
@@ -760,15 +767,17 @@ func mediaDirectory(root string, parts ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(abs, 0700); err != nil {
-		return "", err
-	}
-	dir, err := os.OpenRoot(abs)
+	abs = filepath.Join(append([]string{abs}, parts...)...)
+	volume := filepath.VolumeName(abs) + string(filepath.Separator)
+	dir, err := os.OpenRoot(volume)
 	if err != nil {
 		return "", err
 	}
 	defer func() { dir.Close() }()
-	for _, part := range parts {
+	for _, part := range strings.Split(strings.TrimPrefix(abs, volume), string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
 		if err := dir.Mkdir(part, 0700); err != nil && !errors.Is(err, os.ErrExist) {
 			return "", err
 		}
@@ -787,7 +796,6 @@ func mediaDirectory(root string, parts ...string) (string, error) {
 		}
 		dir.Close()
 		dir = next
-		abs = filepath.Join(abs, part)
 	}
 	return abs, nil
 }

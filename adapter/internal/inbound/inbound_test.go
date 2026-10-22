@@ -44,6 +44,10 @@ func setup(t *testing.T) *fixture {
 	g := fakegoogle.New(t, nil)
 	f := fakegc.New(t)
 	dir := t.TempDir()
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{Secrets: config.Secrets{CityName: "examplecity"}, Endpoints: config.Endpoints{
 		ChatAPIBase: g.URL(), MediaDir: filepath.Join(dir, "media"), MediaMaxBytes: 1024, StateFile: filepath.Join(dir, "state.json"),
 	}}
@@ -441,5 +445,218 @@ func TestMalformedCancellationAndPrivateErrors(t *testing.T) {
 	b, _ := json.Marshal(f.l.Unresolved)
 	if strings.Contains(string(b), "PRIVATE") {
 		t.Fatal("response body persisted in reason")
+	}
+}
+
+func TestReactionLookupDoesNotConsumeMessageCreation(t *testing.T) {
+	for _, kind := range []string{"message.created", "message.updated"} {
+		t.Run(kind, func(t *testing.T) {
+			f := setup(t)
+			m := message()
+			f.google.Configure(func(s *fakegoogle.Server) { s.Messages[m.Name] = m })
+			handle(t, f, &puller.Event{PubSubID: "reaction-first", Changes: []puller.Change{{Kind: "reaction.created", Space: space, Reaction: &api.Reaction{Name: messageName + "/reactions/first", User: &api.User{Name: identity}, Emoji: &api.Emoji{Unicode: "👍"}}}}})
+			if kind == "message.updated" {
+				m.LastUpdateTime = "2026-10-22T10:01:00Z"
+			}
+			handle(t, f, event("message-after-reaction", kind, m))
+			got := f.gc.Inbound()
+			if len(got) != 1 || got[0].ProviderMessageID != messageName || got[0].Text != "hello" {
+				t.Fatalf("lookup consumed message: %+v", got)
+			}
+		})
+	}
+}
+
+func TestEditsThatFirstWakeRemainFollowed(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.Defaults.Wake = config.WakeMentions
+	m := message()
+	handle(t, f, event("ambient", "message.created", m))
+	m.LastUpdateTime = "2026-10-22T10:01:00Z"
+	m.Annotations = []*api.Annotation{{Type: "USER_MENTION", UserMention: &api.UserMentionMetadata{User: &api.User{Name: identity}}}}
+	handle(t, f, event("mention-edit", "message.updated", m))
+	m.LastUpdateTime = "2026-10-22T10:02:00Z"
+	m.Annotations = nil
+	handle(t, f, event("remove-mention", "message.updated", m))
+	handle(t, f, event("delete", "message.deleted", &api.Message{Name: messageName}))
+	if got := f.gc.Inbound(); len(got) != 3 || got[2].Text != "deleted" {
+		t.Fatalf("followups after first wake: %+v", got)
+	}
+}
+
+func TestRetriesExhaustedAndPendingFailureRetries(t *testing.T) {
+	for _, status := range []string{"failed", "partial"} {
+		t.Run(status, func(t *testing.T) {
+			f := setup(t)
+			f.opts.Save = func(l *ledger.Ledger) error {
+				// Keep the real fake on the selected failure through every attempt.
+				f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = status })
+				return l.Save(f.opts.LedgerPath)
+			}
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := event("exhausted", "message.created", message())
+			handle(t, f, ev)
+			handle(t, f, ev)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if got := f.gc.Inbound(); len(got) != 4 || f.l.Unresolved[messageName] == nil || f.l.Counters["turns:"+space] != 0 {
+				t.Fatalf("bounded retries: posts=%d, %+v", len(got), f.l.Changes[messageName])
+			}
+			for _, m := range f.gc.Inbound() {
+				if m.ProviderMessageID != messageName {
+					t.Fatal("retry identity changed")
+				}
+			}
+		})
+	}
+	for _, status := range []string{"failed", "partial", "no_route"} {
+		t.Run("receipt_"+status, func(t *testing.T) {
+			f := setup(t)
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("pending", "message.created", message()))
+			r := wire.ReceiptResponse{State: "concluded"}
+			r.Delivery.Status = status
+			f.gc.SetReceipt(f.l.Changes[messageName].ReceiptID, r)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			want := 2
+			if status == "no_route" {
+				want = 1
+			}
+			if len(f.gc.Inbound()) != want || f.l.Changes[messageName].Status != "committed" || f.l.Counters["turns:"+space] != 1 {
+				t.Fatal("concluded receipt not honored")
+			}
+		})
+	}
+}
+
+func TestTransportIDsBatchAndUnreachableRecovery(t *testing.T) {
+	f := setup(t)
+	ev := event("pubsub-one", "message.created", message())
+	ev.CloudEventID = "cloud-one"
+	handle(t, f, ev)
+	m := message()
+	m.Name = space + "/messages/two"
+	ev = event("pubsub-two", "message.created", m)
+	ev.CloudEventID = "cloud-one"
+	handle(t, f, ev)
+	if len(f.gc.Inbound()) != 1 {
+		t.Fatal("CloudEvent repeat was posted")
+	}
+	ev.CloudEventID = ""
+	handle(t, f, ev)
+	if len(f.gc.Inbound()) != 2 {
+		t.Fatal("absent CloudEvent suppressed a distinct Pub/Sub ID")
+	}
+
+	f = setup(t)
+	s := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	s.Close()
+	f.opts.GC = gcclient.New(s.URL, "examplecity")
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev = event("batch", "message.created", message())
+	ev.Changes = append(ev.Changes, puller.Change{Kind: "message.created", Space: space, Message: m})
+	if out, err := f.p.Handle(context.Background(), ev); out != puller.Nack || err == nil {
+		t.Fatalf("unreachable: %v %v", out, err)
+	}
+	if f.l.Transport.Seen("pubsub:batch") || f.l.Unresolved[messageName] != nil {
+		t.Fatal("unreachable event consumed")
+	}
+	f.opts.GC = gcclient.New(f.gc.URL(), "examplecity")
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle(t, f, ev)
+	handle(t, f, ev)
+	if len(f.gc.Inbound()) != 2 || f.l.Counters["turns:"+space] != 2 {
+		t.Fatal("batch did not recover")
+	}
+}
+
+func TestCancellationDuringPOSTAndWaitingPoll(t *testing.T) {
+	f := setup(t)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { close(entered); <-release }))
+	defer s.Close()
+	defer close(release)
+	f.opts.GC = gcclient.New(s.URL, "examplecity")
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := f.p.Handle(ctx, event("cancel", "message.created", message())); done <- err }()
+	<-entered
+	// The shared ledger lock remains available throughout a network call.
+	if !f.opts.LedgerMu.TryLock() {
+		t.Fatal("network request holds ledger lock")
+	}
+	f.opts.LedgerMu.Unlock()
+	pollCtx, pollCancel := context.WithCancel(context.Background())
+	pollCancel()
+	if err := f.p.Poll(pollCtx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiting poll: %v", err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("POST cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Handle did not cancel promptly")
+	}
+	if f.l.Unresolved[messageName] == nil {
+		t.Fatal("canceled in-flight POST not retained")
+	}
+}
+
+func TestAttachmentsRefuseUnsafePaths(t *testing.T) {
+	for _, unsafe := range []string{"traversal", "space_symlink", "root_symlink"} {
+		t.Run(unsafe, func(t *testing.T) {
+			f := setup(t)
+			m := message()
+			m.Attachment = []*api.Attachment{{Name: messageName + "/attachments/file", ContentName: "report.txt", ContentType: "text/plain", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/file"}}}
+			f.google.Configure(func(s *fakegoogle.Server) { s.Media["spaces/room/media/file"] = []byte("safe") })
+			outside := t.TempDir()
+			switch unsafe {
+			case "traversal":
+				m.Attachment[0].ContentName = "../outside.txt"
+			case "space_symlink":
+				if err := os.MkdirAll(f.opts.Config.Endpoints.MediaDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(f.opts.Config.Endpoints.MediaDir, "room")); err != nil {
+					t.Fatal(err)
+				}
+			case "root_symlink":
+				if err := os.Symlink(outside, f.opts.Config.Endpoints.MediaDir); err != nil {
+					t.Fatal(err)
+				}
+			}
+			handle(t, f, event("unsafe", "message.created", m))
+			if got := f.gc.Inbound()[0]; !strings.Contains(got.Text, "unavailable:") || got.Attachments[0].URL != "" {
+				t.Fatalf("unsafe attachment: %+v", got)
+			}
+			files, err := os.ReadDir(outside)
+			if err != nil || len(files) != 0 {
+				t.Fatalf("escaped media root: %v %v", files, err)
+			}
+		})
 	}
 }
