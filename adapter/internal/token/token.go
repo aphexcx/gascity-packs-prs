@@ -425,6 +425,9 @@ func transient(err error) bool {
 	}
 	// Unknown errors remain retryable. In particular, oauth2 flattens body-read
 	// failures (including deadline exceeded) into strings without an error chain.
+	// oauth2 v0.37.0 also flattens non-JSON 2xx token responses and responses
+	// without access_token. These remain retryable too: matching their message
+	// prefixes would depend on library wording rather than structured errors.
 	return true
 }
 
