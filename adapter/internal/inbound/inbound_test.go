@@ -1031,3 +1031,87 @@ func TestMentionRenderingIgnoresInvalidAndOverlappingSpans(t *testing.T) {
 		t.Fatalf("overlap: %q", got)
 	}
 }
+
+func TestPendingReceiptBeyondDefaultDeadlineIsUnresolved(t *testing.T) {
+	f := setup(t)
+	f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+	ev := event("pending-deadline", "message.created", message())
+	handle(t, f, ev)
+	// Model an old durable pending change recovered after a long outage.
+	f.l.Changes[messageName].Created = time.Now().Add(-time.Hour)
+	if err := f.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	c := f.l.Unresolved[messageName]
+	if c == nil || c.Reason != "receipt pending beyond deadline" {
+		t.Fatalf("old pending receipt: %+v", f.l.Changes[messageName])
+	}
+	handle(t, f, ev)
+	if err := f.p.Poll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.gc.Inbound()) != 1 || f.l.Counters["turns:"+space] != 0 {
+		t.Fatal("expired pending receipt was reposted or counted")
+	}
+}
+
+func TestPendingDeadlineUsesCreatedTimeAndInjectedClock(t *testing.T) {
+	for _, deadline := range []time.Duration{0, 2 * time.Minute} {
+		t.Run(deadline.String(), func(t *testing.T) {
+			f := setup(t)
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			created := now
+			f.opts.Now = func() time.Time { return now }
+			f.opts.PendingDeadline = deadline
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("clock", "message.created", message()))
+			if !f.l.Changes[messageName].Created.Equal(created) {
+				t.Fatal("Created ignored injected clock")
+			}
+			if deadline == 0 {
+				deadline = time.Hour
+			}
+			now = created.Add(deadline - time.Nanosecond)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if f.l.Changes[messageName].Status != "pending" {
+				t.Fatal("receipt expired early")
+			}
+			// A restart must not reset the deadline.
+			f.l, err = ledger.Load(f.opts.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.opts.Ledger = f.l
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			now = created.Add(deadline)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if c := f.l.Unresolved[messageName]; c == nil || c.Reason != "receipt pending beyond deadline" {
+				t.Fatalf("deadline not enforced: %+v", c)
+			}
+			now = created.Add(3 * time.Hour)
+			if err := f.p.Poll(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(f.gc.Inbound()) != 1 {
+				t.Fatal("deadline caused repost")
+			}
+		})
+	}
+	f := setup(t)
+	f.opts.PendingDeadline = -time.Second
+	if _, err := New(f.opts); err == nil {
+		t.Fatal("negative pending deadline accepted")
+	}
+}

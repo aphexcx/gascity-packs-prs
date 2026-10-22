@@ -42,6 +42,11 @@ type Options struct {
 	Save func(*ledger.Ledger) error
 	// RetryDelay defaults to one second; retries back off exponentially.
 	RetryDelay time.Duration
+	// PendingDeadline bounds receipt polling from ChangeState.Created. The
+	// default is one hour, matching gc's receipt retention period.
+	PendingDeadline time.Duration
+	// Now supplies wall time for durable timestamps and pending deadlines.
+	Now func() time.Time
 }
 
 type Processor struct {
@@ -61,6 +66,15 @@ func New(opts Options) (*Processor, error) {
 	}
 	if opts.RetryDelay < 0 {
 		return nil, errors.New("inbound: retry delay must be positive")
+	}
+	if opts.PendingDeadline == 0 {
+		opts.PendingDeadline = time.Hour
+	}
+	if opts.PendingDeadline < 0 {
+		return nil, errors.New("inbound: pending deadline must be positive")
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	if opts.Save == nil {
 		opts.Save = func(l *ledger.Ledger) error { return l.Save(opts.LedgerPath) }
@@ -151,6 +165,12 @@ func (p *Processor) Poll(ctx context.Context) error {
 		c := l.Changes[id]
 		if c.Status == "intent" {
 			if err := p.resume(ctx, id); err != nil {
+				failures = append(failures, err)
+			}
+			continue
+		}
+		if !p.opts.Now().Before(c.Created.Add(p.opts.PendingDeadline)) {
+			if err := p.unresolved(id, "receipt pending beyond deadline"); err != nil {
 				failures = append(failures, err)
 			}
 			continue
@@ -538,7 +558,7 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 		}
 	}
 	return wire.InboundMessage{ProviderMessageID: id, Conversation: wire.Conversation{ScopeID: p.opts.Config.Secrets.CityName, Provider: "gchat", AccountID: p.opts.Config.Identity().Name, ConversationID: space, Kind: kind},
-		Actor: a, ReplyToMessageID: thread, ReceivedAt: time.Now().UTC()}
+		Actor: a, ReplyToMessageID: thread, ReceivedAt: p.opts.Now().UTC()}
 }
 
 func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string) error {
@@ -558,7 +578,7 @@ func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, st
 		if local != "" {
 			status = "committed"
 		}
-		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: time.Now().UTC(), Event: string(data), Reason: local}
+		l.Changes[id] = &ledger.ChangeState{ID: id, Space: c.Space, Message: name, Kind: c.Kind, Status: status, Created: p.opts.Now().UTC(), Event: string(data), Reason: local}
 		if state != nil {
 			// Outbound can record its send key while a Chat lookup is in flight.
 			// That field belongs to outbound; retain its latest value under the
