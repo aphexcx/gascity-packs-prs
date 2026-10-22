@@ -57,7 +57,10 @@ func TestMutationAndScopeRequirements(t *testing.T) {
 	s := New(t)
 	reg := wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: "http://127.0.0.1:1/adapter", Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}}
 	call(t, s, "POST", "adapters", reg, false, 403)
-	call(t, s, "POST", "adapters", reg, true, 200)
+	registered := call(t, s, "POST", "adapters", reg, true, 200)
+	if registered["name"] != "gchat/example" {
+		t.Fatalf("default adapter name: %v", registered)
+	}
 	call(t, s, "POST", "inbound", inbound("one"), false, 403)
 	bad := inbound("bad")
 	bad.Message.Conversation.ScopeID = ""
@@ -67,7 +70,7 @@ func TestMutationAndScopeRequirements(t *testing.T) {
 	missingScope.ScopeID = ""
 	call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: missingScope}, true, 422)
 	reg.CallbackURL = "/relative"
-	call(t, s, "POST", "adapters", reg, true, 400)
+	call(t, s, "POST", "adapters", reg, true, 422)
 	if len(s.Inbound()) != 0 || len(s.Published()) != 0 {
 		t.Fatal("invalid requests were accepted")
 	}
@@ -458,6 +461,29 @@ func TestInboundRetriesOnlyOutcomesWithoutAWholeDelivery(t *testing.T) {
 				}
 			} else if retry["receipt_id"] == first["receipt_id"] || retry["status"] != "pending" {
 				t.Fatalf("retryable %s delivery was held: %v", status, retry)
+			}
+		})
+	}
+}
+
+func TestRegistrationResponseAndValidation(t *testing.T) {
+	for _, missing := range []string{"", "provider", "account_id"} {
+		t.Run("missing/"+missing, func(t *testing.T) {
+			s := New(t)
+			reg := wire.Registration{Provider: "gchat", AccountID: "example", Name: "example adapter", CallbackURL: "http://127.0.0.1:1/adapter"}
+			status := 200
+			if missing != "" {
+				status = 422
+			}
+			if missing == "provider" {
+				reg.Provider = ""
+			}
+			if missing == "account_id" {
+				reg.AccountID = ""
+			}
+			got := call(t, s, "POST", "adapters", reg, true, status)
+			if status == 200 && (got["status"] != "registered" || got["provider"] != reg.Provider || got["account_id"] != reg.AccountID || got["name"] != reg.Name) {
+				t.Fatalf("registration response: %v", got)
 			}
 		})
 	}

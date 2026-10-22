@@ -193,11 +193,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		callback, err := url.Parse(registration.CallbackURL)
 		if registration.Provider == "" || registration.AccountID == "" || err != nil || callback.Host == "" || (callback.Scheme != "http" && callback.Scheme != "https") {
-			fail(w, 400, "provider, account_id and absolute callback_url are required")
+			fail(w, 422, "provider, account_id and absolute callback_url are required")
 			return
 		}
+		if registration.Name == "" {
+			registration.Name = registration.Provider + "/" + registration.AccountID
+		}
 		s.registrations[registrationKey(city, registration.Provider, registration.AccountID)] = registration
-		respond(w, 200, map[string]any{"registered": true})
+		respond(w, 200, map[string]any{"status": "registered", "provider": registration.Provider, "account_id": registration.AccountID, "name": registration.Name})
 	case path == "inbound" && r.Method == http.MethodPost:
 		var envelope wire.InboundEnvelope
 		if !decode(w, r, &envelope) {
