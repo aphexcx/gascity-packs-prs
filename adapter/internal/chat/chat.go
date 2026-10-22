@@ -137,7 +137,7 @@ func (c *Client) ListMessages(ctx context.Context, space string, since time.Time
 		}
 		filters = append(filters, "thread.name = "+thread)
 	}
-	call := c.api.Spaces.Messages.List(space).PageSize(1000).OrderBy("create_time asc").Filter(strings.Join(filters, " AND "))
+	call := c.api.Spaces.Messages.List(space).PageSize(1000).Filter(strings.Join(filters, " AND "))
 	for {
 		var result *googlechat.ListMessagesResponse
 		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
@@ -487,7 +487,7 @@ func classifyAt(err error, now time.Time) (kind string, retryAfter time.Duration
 		switch {
 		case apiErr.Code == 429:
 			return "rate_limited", retryAfter
-		case apiErr.Code == 403 && strings.Contains(strings.ToLower(apiErr.Message), "not a member") && strings.Contains(strings.ToLower(apiErr.Message), "space"):
+		case apiErr.Code == 403 && strings.Contains(strings.ToLower(apiErr.Message), "not a member"):
 			return "not_found", retryAfter
 		case apiErr.Code == 401 || apiErr.Code == 403:
 			return "auth", retryAfter

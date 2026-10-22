@@ -281,6 +281,23 @@ func TestPaginationAndFilters(t *testing.T) {
 	}
 }
 
+func TestListMessagesUsesDefaultAscendingOrder(t *testing.T) {
+	_, s, _ := fixture(t)
+	h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if order := r.URL.Query().Get("orderBy"); order != "" {
+			t.Errorf("expected documented default order, got %q", order)
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	})}
+	c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ListMessages(context.Background(), "spaces/room", time.Time{}, "", func([]*googlechat.Message) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestReactionsDeleteOnlyOwnAcrossPages(t *testing.T) {
 	c, s, _ := fixture(t)
 	message := "spaces/room/messages/seed"
@@ -560,6 +577,7 @@ func TestClassify(t *testing.T) {
 	}{
 		{429, "quota", "rate_limited"}, {401, "unauthorized", "auth"}, {403, "scope missing", "auth"},
 		{403, "The caller is not a member of the space.", "not_found"}, {404, "gone", "not_found"},
+		{403, "The caller is not a member.", "not_found"},
 		{400, "bad", "permanent"}, {409, "conflict", "permanent"}, {500, "server", "transient"}, {503, "down", "transient"},
 	} {
 		err := fmt.Errorf("wrapped: %w", &googleapi.Error{Code: tc.code, Message: tc.message, Header: http.Header{"Retry-After": []string{"3"}}})
