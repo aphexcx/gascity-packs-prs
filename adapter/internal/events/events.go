@@ -523,6 +523,11 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 		m.renewAt = expiry.Add(-ttl / 4)
 		m.scheduledName, m.scheduledExpiry = sub.Name, expiry
 	}
+	// A cancelled caller skips recordResult, but an earlier durable renewal
+	// must still reach RenewLoop through the published schedule.
+	if m.renewAt.Before(m.nextAttempt) {
+		m.nextAttempt = m.renewAt
+	}
 	m.statusMu.Lock()
 	m.status = statusSnapshot{err: m.lastError, failures: m.failures, next: m.nextAttempt, state: state}
 	m.statusMu.Unlock()

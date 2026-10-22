@@ -1320,6 +1320,80 @@ func TestCancelledLifecycleDoesNotChangeSharedBackoff(t *testing.T) {
 	}
 }
 
+func TestRenewLoopUsesEarlierScheduleFromCancelledLifecycle(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	start := f.clock.Now()
+	_, _, next, _ := f.manager.Status()
+	if !next.Equal(start.Add(3 * time.Hour)) {
+		t.Fatalf("initial renewal = %v", next)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lifecycleCtx, cancelLifecycle := context.WithCancel(context.Background())
+	defer cancelLifecycle()
+	cancelAfterGet := false
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "PATCH" && !f.clock.Now().Equal(start.Add(30*time.Minute)) {
+			t.Errorf("renewed at %v; want thirty minutes", f.clock.Now().Sub(start))
+		}
+		response, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil || !cancelAfterGet || r.Method != "GET" || r.URL.Path != "/v1/"+first.Name {
+			return response, err
+		}
+		// Buffer the completed GET so cancellation cannot interrupt decoding.
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		cancelAfterGet = false
+		cancelLifecycle()
+		return response, nil
+	}
+	f.clock.onSleep = func(time.Duration) error {
+		if len(f.clock.sleeps) == 1 {
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].ExpireTime = start.Add(40 * time.Minute).Format(time.RFC3339Nano)
+				s.Subscriptions[first.Name].UpdateTime = start.Format(time.RFC3339Nano)
+			})
+			cancelAfterGet = true
+			if err := f.manager.HandleLifecycle(lifecycleCtx, "subscription.expirationReminder"); err != nil {
+				t.Fatal(err)
+			}
+			if !errors.Is(lifecycleCtx.Err(), context.Canceled) {
+				t.Fatal("lifecycle caller was not cancelled after its GET")
+			}
+			want := first
+			want.Expiry = start.Add(40 * time.Minute)
+			last, failures, next, state := f.manager.Status()
+			disk, err := ledger.Load(f.path, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state != want || disk.Subscription != want || f.ledger.Subscription != want {
+				t.Fatalf("shorter expiry not persisted: status=%+v disk=%+v memory=%+v", state, disk.Subscription, f.ledger.Subscription)
+			}
+			if last != nil || failures != 0 || !next.Equal(start.Add(30*time.Minute)) {
+				t.Errorf("cancelled lifecycle status: %v %d next=%v; want renewal at thirty minutes", last, failures, next.Sub(start))
+			}
+		}
+		if f.count("PATCH", "/v1/"+first.Name) > 0 {
+			cancel()
+			return ctx.Err()
+		}
+		if !f.clock.Now().Before(start.Add(40 * time.Minute)) {
+			t.Fatal("loop let the subscription expire without renewing")
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+	if f.count("PATCH", "/v1/"+first.Name) != 1 || f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("expected one renewal without recreating the subscription")
+	}
+}
+
 func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
 	f := setup(t)
 	first := f.reconcile()
