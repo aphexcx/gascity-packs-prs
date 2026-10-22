@@ -422,6 +422,7 @@ func link(s string, start int, labels, destinations map[int]int) (label, url str
 }
 
 func chatDestination(s string) (string, bool) {
+	s = strings.TrimLeft(s, " \t")
 	angleEnd := -1
 	if strings.HasPrefix(s, "<") {
 		for i := 1; i < len(s); i++ {
