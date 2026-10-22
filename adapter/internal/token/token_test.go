@@ -124,6 +124,10 @@ func TestPermanentOAuthErrorsNeedSignIn(t *testing.T) {
 		t.Run(code, func(t *testing.T) {
 			var requests atomic.Int32
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/token" {
+					fmt.Fprint(w, `{"spaces":[]}`)
+					return
+				}
 				requests.Add(1)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
@@ -145,6 +149,18 @@ func TestPermanentOAuthErrorsNeedSignIn(t *testing.T) {
 			}
 			if s.State() != NeedsSignIn || requests.Load() != 1 {
 				t.Fatalf("permanent failure: state=%v requests=%d", s.State(), requests.Load())
+			}
+			if code == "admin_policy_enforced" {
+				writeJSON(t, tokenFile+".new", savedToken("repaired"))
+				if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
+					t.Fatal(err)
+				}
+				reloads := 0
+				s.reload(t.Context(), func() { reloads++ })
+				tok, err := s.TokenSource(t.Context()).Token()
+				if err != nil || tok.AccessToken != "repaired" || s.State() != Ready || reloads != 1 || requests.Load() != 1 {
+					t.Fatalf("policy recovery: token=%+v error=%v state=%v reloads=%d requests=%d", tok, err, s.State(), reloads, requests.Load())
+				}
 			}
 		})
 	}
@@ -584,6 +600,8 @@ func TestWatchPermanentURLFailureObservedOnce(t *testing.T) {
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) { t.Error("unexpected HTTP call") })
 	ep.ChatAPIBase = "unsupported://example"
 	s := mustSource(t, clientFile, tokenFile, ep)
+	now := time.Now()
+	s.now = func() time.Time { return now }
 	validations := 0
 	validate := s.validateFn
 	s.validateFn = func(ctx context.Context, client *http.Client) error {
@@ -592,6 +610,7 @@ func TestWatchPermanentURLFailureObservedOnce(t *testing.T) {
 	}
 	writeJSON(t, tokenFile, savedToken("replacement"))
 	for range 3 {
+		now = now.Add(time.Hour) // Outlast even the maximum transient backoff.
 		s.reload(t.Context(), func() { t.Error("invalid URL accepted") })
 	}
 	if validations != 1 {
