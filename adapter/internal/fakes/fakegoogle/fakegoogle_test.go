@@ -397,7 +397,7 @@ func TestMessagesPaginationThreadsAndRate(t *testing.T) {
 	if got["text"] != "reply" {
 		t.Fatalf("get: %v", got)
 	}
-	filter := `createTime > "` + one["createTime"].(string) + `" AND thread.name = "` + one["thread"].(map[string]any)["name"].(string) + `"`
+	filter := `create_time > "` + one["createTime"].(string) + `" AND thread.name = ` + one["thread"].(map[string]any)["name"].(string)
 	listed := request(t, s, "GET", "/v1/spaces/room/messages?filter="+url.QueryEscape(filter), nil, 200)
 	if len(listed["messages"].([]any)) != 1 || listed["messages"].([]any)[0].(map[string]any)["name"] != two["name"] {
 		t.Fatalf("filtered: %v", listed)
@@ -505,19 +505,19 @@ func TestSpaceEventsFiltersPaginationAndWindow(t *testing.T) {
 		{Name: "spaces/room/spaceEvents/2", EventTime: now.Add(-time.Minute).Format(time.RFC3339Nano), EventType: "google.workspace.chat.message.v1.batchCreated"},
 		{Name: "spaces/room/spaceEvents/3", EventTime: now.Format(time.RFC3339Nano), EventType: "google.workspace.chat.reaction.v1.created"},
 	}
-	filter := `eventTypes:"` + created + `" AND startTime="` + now.Add(-2*time.Hour).Format(time.RFC3339Nano) + `"`
+	filter := `event_types:"` + created + `" AND start_time="` + now.Add(-2*time.Hour).Format(time.RFC3339Nano) + `"`
 	path := "/v1/spaces/room/spaceEvents?filter=" + url.QueryEscape(filter) + "&pageSize=1"
 	first := request(t, s, "GET", path, nil, 200)
 	second := request(t, s, "GET", path+"&pageToken="+first["nextPageToken"].(string), nil, 200)
 	if first["spaceEvents"].([]any)[0].(map[string]any)["name"] != "spaces/room/spaceEvents/1" || second["spaceEvents"].([]any)[0].(map[string]any)["name"] != "spaces/room/spaceEvents/2" || second["nextPageToken"] != nil {
 		t.Fatalf("events: %v %v", first, second)
 	}
-	filter = `eventTypes:"` + created + `" AND startTime="` + now.Add(-time.Hour).Format(time.RFC3339Nano) + `"`
+	filter = `event_types:"` + created + `" AND start_time="` + now.Add(-time.Hour).Format(time.RFC3339Nano) + `"`
 	exclusive := request(t, s, "GET", "/v1/spaces/room/spaceEvents?filter="+url.QueryEscape(filter), nil, 200)
 	if len(exclusive["spaceEvents"].([]any)) != 1 {
 		t.Fatalf("startTime not exclusive: %v", exclusive)
 	}
-	filter = `eventTypes:"` + created + `" AND startTime="` + now.Add(-29*24*time.Hour).Format(time.RFC3339Nano) + `"`
+	filter = `event_types:"` + created + `" AND start_time="` + now.Add(-29*24*time.Hour).Format(time.RFC3339Nano) + `"`
 	request(t, s, "GET", "/v1/spaces/room/spaceEvents?filter="+url.QueryEscape(filter), nil, 400)
 }
 
@@ -533,7 +533,7 @@ func TestDocumentedMessageFilters(t *testing.T) {
 		name := fmt.Sprintf("spaces/room/messages/%d", i)
 		s.Messages[name] = &chat.Message{Name: name, CreateTime: fixture.at, Thread: &chat.Thread{Name: fixture.thread}}
 	}
-	for _, field := range []string{"create_time", "createTime"} {
+	for _, field := range []string{"create_time"} {
 		t.Run(field, func(t *testing.T) {
 			filter := field + ` > "2026-01-30T10:00:00Z" AND ` + field + ` < "2026-01-30T12:00:00Z" AND thread.name = ` + thread
 			got := request(t, s, "GET", "/v1/spaces/room/messages?filter="+url.QueryEscape(filter), nil, 200)["messages"].([]any)
@@ -558,7 +558,7 @@ func TestDocumentedSpaceEventFilters(t *testing.T) {
 	} {
 		s.SpaceEvents["spaces/room"] = append(s.SpaceEvents["spaces/room"], &chat.SpaceEvent{Name: fmt.Sprintf("spaces/room/spaceEvents/%d", i), EventTime: fixture.at, EventType: fixture.typ})
 	}
-	for _, fields := range [][3]string{{"event_types", "start_time", "end_time"}, {"eventTypes", "startTime", "endTime"}} {
+	for _, fields := range [][3]string{{"event_types", "start_time", "end_time"}} {
 		t.Run(fields[0], func(t *testing.T) {
 			filter := fmt.Sprintf(`(%s:"%s" OR %s:"%s") AND %s="2026-01-30T10:00:00Z" AND %s="2026-01-30T11:00:00Z"`, fields[0], created, fields[0], reaction, fields[1], fields[2])
 			got := request(t, s, "GET", "/v1/spaces/room/spaceEvents?filter="+url.QueryEscape(filter), nil, 200)["spaceEvents"].([]any)
@@ -580,6 +580,78 @@ func TestEventTypeFilterRequired(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestFiltersRejectUndocumentedGrammar(t *testing.T) {
+	for _, tc := range []struct {
+		path    string
+		filters []string
+	}{
+		{"/v1/spaces/room/spaceEvents", []string{
+			`event_types:"A" AND event_types:"B"`,
+			`(event_types:"A") AND (event_types:"B")`,
+			`event_types:"A" AND start_time > "2026-01-30T10:00:00Z"`,
+			`event_types:"A" AND start_time="2026-01-30T10:00:00Z" OR end_time="2026-01-30T11:00:00Z"`,
+			`event_types:"A" AND unknown="value"`,
+			`event_types:"A" trailing`,
+			`(event_types:"A" OR event_types:"B"`,
+			`event_types:"A")`,
+			`event_types:"A" AND`,
+			`event_types:"A" OR OR event_types:"B"`,
+			`event_types:"A" AND start_time="bad"`,
+		}},
+		{"/v1/spaces/room/messages", []string{
+			`create_time >= "2026-01-30T10:00:00Z"`,
+			`create_time <= "2026-01-30T10:00:00Z"`,
+			`create_time = "2026-01-30T10:00:00Z"`,
+			`create_time > "2026-01-30T10:00:00Z" OR create_time < "2026-01-30T11:00:00Z"`,
+			`create_time > 2026-01-30T10:00:00Z`,
+			`thread.name = "spaces/room/threads/one"`,
+			`thread.name = spaces/room/threads/one AND thread.name = spaces/room/threads/two`,
+			`thread.name = nope`,
+			`text="ignored"`,
+			`create_time > "2026-01-30T10:00:00Z" garbage`,
+		}},
+		{"/v1/subscriptions", []string{
+			`event_types:"A" AND event_types:"B"`,
+			`event_types:"A" OR target_resource="//chat.googleapis.com/spaces/-"`,
+			`event_types:"A" AND target_resource:"//chat.googleapis.com/spaces/-"`,
+			`event_types:"A" AND state="ACTIVE"`,
+			`event_types:"A" AND target_resource="one" AND target_resource="two"`,
+			`event_types:"A" garbage`,
+		}},
+	} {
+		for _, filter := range tc.filters {
+			t.Run(tc.path+"/"+filter, func(t *testing.T) {
+				s := New(t, nil)
+				s.Now = func() time.Time { return time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC) }
+				got := request(t, s, "GET", tc.path+"?filter="+url.QueryEscape(filter), nil, 400)
+				if got["error"].(map[string]any)["status"] != "INVALID_ARGUMENT" {
+					t.Fatalf("invalid filter response: %v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestFilterCamelCaseAliases(t *testing.T) {
+	s := New(t, nil)
+	s.Now = func() time.Time { return time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC) }
+	s.Messages["spaces/room/messages/1"] = &chat.Message{Name: "spaces/room/messages/1", CreateTime: "2026-01-30T11:00:00Z"}
+	s.SpaceEvents["spaces/room"] = []*chat.SpaceEvent{{Name: "spaces/room/spaceEvents/1", EventTime: "2026-01-30T11:00:00Z", EventType: "A"}}
+	s.Subscriptions["subscriptions/1"] = &events.Subscription{Name: "subscriptions/1", TargetResource: "//chat.googleapis.com/spaces/room", EventTypes: []string{"A"}, State: "ACTIVE"}
+	for _, tc := range []struct{ path, key, filter string }{
+		{"/v1/spaces/room/messages", "messages", `createTime > "2026-01-30T10:00:00Z" AND createTime < "2026-01-30T12:00:00Z"`},
+		{"/v1/spaces/room/spaceEvents", "spaceEvents", `eventTypes:"A" AND startTime="2026-01-30T10:00:00Z" AND endTime="2026-01-30T11:00:00Z"`},
+		{"/v1/subscriptions", "subscriptions", `(eventTypes:"A" OR eventTypes:"B") AND targetResource="//chat.googleapis.com/spaces/room"`},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			got := request(t, s, "GET", tc.path+"?filter="+url.QueryEscape(tc.filter), nil, 200)
+			if len(got[tc.key].([]any)) != 1 {
+				t.Fatalf("alias filter: %v", got)
+			}
+		})
 	}
 }
 

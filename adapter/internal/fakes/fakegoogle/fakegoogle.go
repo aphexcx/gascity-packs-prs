@@ -228,28 +228,116 @@ func page[T any](s *Server, w http.ResponseWriter, r *http.Request, key string, 
 	s.respond(w, r, 200, result)
 }
 
-// filterValues accepts quoted operands and the documented unquoted thread name.
-// Operators are explicit so an upper bound cannot be mistaken for a lower one.
-func filterValues(filter, operator string, keys ...string) []string {
-	var values []string
-	for _, key := range keys {
-		re := regexp.MustCompile(`(?:^|[\s(])` + regexp.QuoteMeta(key) + `\s*` + regexp.QuoteMeta(operator) + `\s*(?:"([^"]+)"|([^\s()"]+))`)
-		for _, m := range re.FindAllStringSubmatch(filter, -1) {
-			values = append(values, m[1]+m[2])
+type queryFilter map[string][]string
+
+var filterToken = regexp.MustCompile(`^(?:[():=<>]|"[^"\r\n]*"|[^\s():=<>!"&|]+)`)
+var threadName = regexp.MustCompile(`^spaces/[^/\s]+/threads/[^/\s]+$`)
+
+// parseFilter consumes the entire documented grammar: AND between constraints,
+// OR only within one event_types group, and optional parentheses on that group.
+// CamelCase field aliases remain supported for older fixtures.
+func parseFilter(raw, route string) (queryFilter, error) {
+	invalid := fmt.Errorf("invalid %s filter", route)
+	var tokens []string
+	for raw = strings.TrimSpace(raw); raw != ""; raw = strings.TrimSpace(raw) {
+		token := filterToken.FindString(raw)
+		if token == "" {
+			return nil, invalid
+		}
+		tokens = append(tokens, token)
+		raw = raw[len(token):]
+	}
+	f := queryFilter{}
+	i := 0
+	take := func(token string) bool {
+		if i < len(tokens) && tokens[i] == token {
+			i++
+			return true
+		}
+		return false
+	}
+	atom := func() (string, error) {
+		if i+3 > len(tokens) {
+			return "", invalid
+		}
+		field, op, value := tokens[i], tokens[i+1], tokens[i+2]
+		i += 3
+		switch field {
+		case "eventTypes":
+			field = "event_types"
+		case "startTime":
+			field = "start_time"
+		case "endTime":
+			field = "end_time"
+		case "createTime":
+			field = "create_time"
+		case "targetResource":
+			field = "target_resource"
+		}
+		quoted := strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`)
+		if quoted {
+			value = value[1 : len(value)-1]
+		}
+		valid := false
+		switch field {
+		case "event_types":
+			valid = route != "messages" && op == ":" && quoted
+		case "target_resource":
+			valid = route == "subscriptions" && op == "=" && quoted
+		case "thread.name":
+			valid = route == "messages" && op == "=" && !quoted && threadName.MatchString(value)
+		case "create_time", "start_time", "end_time":
+			_, err := time.Parse(time.RFC3339Nano, value)
+			valid = quoted && err == nil && ((route == "messages" && field == "create_time" && (op == ">" || op == "<")) || (route == "spaceEvents" && field != "create_time" && op == "="))
+		}
+		key := field + op
+		if !valid || value == "" || (field != "event_types" && len(f[key]) != 0) {
+			return "", invalid
+		}
+		f[key] = append(f[key], value)
+		return field, nil
+	}
+	seenEvents := false
+	for i < len(tokens) {
+		grouped := take("(")
+		field, err := atom()
+		if err != nil || (grouped && field != "event_types") {
+			return nil, invalid
+		}
+		if field == "event_types" {
+			if seenEvents {
+				return nil, invalid // event_types AND event_types is invalid
+			}
+			seenEvents = true
+		}
+		for take("OR") {
+			next, err := atom()
+			if err != nil || field != "event_types" || next != "event_types" {
+				return nil, invalid
+			}
+		}
+		if grouped && !take(")") {
+			return nil, invalid
+		}
+		if i == len(tokens) {
+			break
+		}
+		if !take("AND") || i == len(tokens) {
+			return nil, invalid
 		}
 	}
-	return values
+	if route != "messages" && !seenEvents {
+		return nil, invalid
+	}
+	return f, nil
 }
 
-func filterTime(filter, operator string, keys ...string) (time.Time, error) {
-	values := filterValues(filter, operator, keys...)
-	if len(values) == 0 {
-		return time.Time{}, nil
+func (f queryFilter) time(key string) time.Time {
+	if len(f[key]) == 0 {
+		return time.Time{}
 	}
-	if len(values) > 1 {
-		return time.Time{}, fmt.Errorf("multiple %s bounds", keys[0])
-	}
-	return time.Parse(time.RFC3339Nano, values[0])
+	when, _ := time.Parse(time.RFC3339Nano, f[key][0]) // validated by parseFilter
+	return when
 }
 
 func matches(values []string, value string) bool {
@@ -303,13 +391,12 @@ func (s *Server) subscriptions(w http.ResponseWriter, r *http.Request, path stri
 			}
 			s.newOperation(w, r, &sub)
 		case http.MethodGet:
-			filter := r.URL.Query().Get("filter")
-			targets := filterValues(filter, "=", "target_resource", "targetResource")
-			types := filterValues(filter, ":", "event_types", "eventTypes")
-			if len(types) == 0 {
-				s.fail(w, 400, "INVALID_ARGUMENT", "at least one event_types filter is required")
+			filter, err := parseFilter(r.URL.Query().Get("filter"), "subscriptions")
+			if err != nil {
+				s.fail(w, 400, "INVALID_ARGUMENT", err.Error())
 				return
 			}
+			targets, types := filter["target_resource="], filter["event_types:"]
 			list := make([]*events.Subscription, 0)
 			for _, sub := range s.Subscriptions {
 				if !matches(targets, sub.TargetResource) {
@@ -549,14 +636,13 @@ func (s *Server) createMessage(w http.ResponseWriter, r *http.Request, space str
 }
 
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request, space string) {
-	filter := r.URL.Query().Get("filter")
-	threads := filterValues(filter, "=", "thread.name")
-	since, err := filterTime(filter, ">", "create_time", "createTime")
-	until, endErr := filterTime(filter, "<", "create_time", "createTime")
-	if err != nil || endErr != nil || len(threads) > 1 {
-		s.fail(w, 400, "INVALID_ARGUMENT", "invalid create_time or thread.name filter")
+	filter, err := parseFilter(r.URL.Query().Get("filter"), "messages")
+	if err != nil {
+		s.fail(w, 400, "INVALID_ARGUMENT", err.Error())
 		return
 	}
+	threads := filter["thread.name="]
+	since, until := filter.time("create_time>"), filter.time("create_time<")
 	list := make([]*chat.Message, 0)
 	for name, m := range s.Messages {
 		if !strings.HasPrefix(name, space+"/messages/") {
@@ -602,16 +688,15 @@ func singularEvent(typ string) string {
 }
 
 func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request, space string) {
-	filter := r.URL.Query().Get("filter")
-	types := filterValues(filter, ":", "event_types", "eventTypes")
-	if len(types) == 0 {
-		s.fail(w, 400, "INVALID_ARGUMENT", "at least one event_types filter is required")
+	filter, err := parseFilter(r.URL.Query().Get("filter"), "spaceEvents")
+	if err != nil {
+		s.fail(w, 400, "INVALID_ARGUMENT", err.Error())
 		return
 	}
-	since, err := filterTime(filter, "=", "start_time", "startTime")
-	until, endErr := filterTime(filter, "=", "end_time", "endTime")
+	types := filter["event_types:"]
+	since, until := filter.time("start_time="), filter.time("end_time=")
 	earliest := s.now().Add(-28 * 24 * time.Hour)
-	if err != nil || endErr != nil || (!since.IsZero() && since.Before(earliest)) {
+	if !since.IsZero() && since.Before(earliest) {
 		s.fail(w, 400, "INVALID_ARGUMENT", "invalid time filter or start_time older than 28 days")
 		return
 	}
