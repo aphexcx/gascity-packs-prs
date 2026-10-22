@@ -1593,6 +1593,38 @@ func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
 	}
 }
 
+func TestNoBindingAtDeadlineDoesNotLeaveAnAutomaticSend(t *testing.T) {
+	f := setup(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		go func() { <-ctx.Done(); f.mu.Unlock() }()
+		respond(w, 422, map[string]string{"code": "validation-failed", "detail": "no active binding for conversation spaces/room"})
+	}))
+	defer h.Close()
+	f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "binding-deadline"}
+	result, err := f.s.command(ctx, p, nil)
+	if !errors.Is(err, context.DeadlineExceeded) || result.Delivered || result.FailureKind != "transient" || result.RetryAfter == 0 {
+		t.Fatalf("deadline before direct send: %+v %v", result, err)
+	}
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	*f.l = *l
+	f.mu.Unlock()
+	f.s.SetClients(f.options.Chat, f.options.GC)
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if v := f.l.Sends[p.IdempotencyKey]; v.RecordPending || v.Receipt == nil || v.Receipt.FailureKind != "transient" || f.count() != 0 {
+		t.Fatalf("deadline left an automatic send: %+v sends=%d", v, f.count())
+	}
+}
+
 func TestUnrecordableReceiptClearsPendingAtCommitAndAfterRestart(t *testing.T) {
 	for _, mode := range []string{"receipt-commit", "old-crash-window"} {
 		t.Run(mode, func(t *testing.T) {

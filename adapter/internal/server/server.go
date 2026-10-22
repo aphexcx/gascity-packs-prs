@@ -970,7 +970,7 @@ func detail(err error) string {
 }
 func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string, result CommandResult) (CommandResult, error) {
 	result.Reason = reason
-	if err := s.update(ctx, func(l *ledger.Ledger) error {
+	if err := s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		v.NotRecordable = true
 		v.RecordingFailureKind = ""
