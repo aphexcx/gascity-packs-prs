@@ -648,6 +648,9 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 			writeJSON(t, tokenFile, savedToken("original"))
 			before, _ := os.ReadFile(tokenFile)
 			if scenario == "write failure" {
+				if os.Geteuid() == 0 {
+					t.Skip("root bypasses the directory permission failure")
+				}
 				if err := os.Chmod(filepath.Dir(tokenFile), 0500); err != nil {
 					t.Fatal(err)
 				}
@@ -1259,6 +1262,7 @@ func TestRunAuthRefusesUnsafeTokenPath(t *testing.T) {
 	for _, kind := range []string{"symlink", "directory"} {
 		t.Run(kind, func(t *testing.T) {
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Error("unsafe token path reached the exchange endpoint")
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","scope":%q}`, strings.Join(testScopes, " "))
 			})
@@ -1271,7 +1275,14 @@ func TestRunAuthRefusesUnsafeTokenPath(t *testing.T) {
 			} else if err := os.Mkdir(tokenFile, 0700); err != nil {
 				t.Fatal(err)
 			}
-			err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			var stdout bytes.Buffer
+			err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, &stdout, func(raw string) error {
+				t.Error("unsafe token path reached browser consent")
+				return browserCallback(raw, "example-code", "", "")
+			})
+			if stdout.Len() != 0 {
+				t.Errorf("unsafe token path printed a consent URL: %s", stdout.String())
+			}
 			if err == nil || !strings.Contains(err.Error(), tokenFile) || !strings.Contains(err.Error(), "not a regular file") {
 				t.Fatalf("unsafe token error = %v", err)
 			}

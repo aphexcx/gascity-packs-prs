@@ -531,6 +531,9 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := checkTokenPath(tokenFile); err != nil {
+		return err
+	}
 	cfg, err := loadConfig(clientFile, ep, scopes)
 	if err != nil {
 		return err
@@ -667,6 +670,8 @@ func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	if err := checkTokenPath(path); err != nil {
 		return err
 	}
+	// A path change after Lstat cannot redirect the write: Rename replaces a
+	// symlink itself, rather than following it to overwrite the target.
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("replace token %s: %w", path, err)
 	}
