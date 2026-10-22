@@ -190,14 +190,125 @@ func TestRefreshTransientRetry(t *testing.T) {
 	}
 }
 
+func TestClientUnauthorizedRefreshesRevokedToken(t *testing.T) {
+	var refreshes, requests atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":"invalid_grant"}`)
+			return
+		}
+		requests.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		fmt.Fprint(w, "revoked")
+	})
+	writeJSON(t, tokenFile, savedToken("revoked"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	client, err := s.Client(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.Get(ep.ChatAPIBase + "/resource")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil || res.StatusCode != http.StatusUnauthorized || string(body) != "revoked" || refreshes.Load() != 0 || requests.Load() != 1 {
+		t.Fatalf("401 was altered or retried: response=%v body=%q err=%v refreshes=%d requests=%d", res, body, err, refreshes.Load(), requests.Load())
+	}
+	res, err = client.Get(ep.ChatAPIBase + "/resource")
+	if res != nil {
+		res.Body.Close()
+	}
+	if !errors.Is(err, ErrNeedsSignIn) || s.State() != NeedsSignIn || refreshes.Load() != 1 || requests.Load() != 1 {
+		t.Fatalf("revocation: err=%v state=%v refreshes=%d requests=%d", err, s.State(), refreshes.Load(), requests.Load())
+	}
+}
+
+func TestClientStaleUnauthorizedKeepsRefreshedToken(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	defer finish()
+	var refreshes atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			refreshes.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer old" {
+			t.Errorf("stale request authorization = %q", r.Header.Get("Authorization"))
+		}
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	writeJSON(t, tokenFile, savedToken("old"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	client, err := s.Client(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		res, err := client.Get(ep.ChatAPIBase + "/resource")
+		if res != nil {
+			res.Body.Close()
+		}
+		done <- err
+	}()
+	waitSignal(t, started)
+	s.mu.Lock()
+	expired := *s.current
+	expired.Expiry = time.Now().Add(-time.Hour)
+	s.current = &expired
+	s.mu.Unlock()
+	if _, err := s.TokenSource(t.Context()).Token(); err != nil {
+		t.Fatal(err)
+	}
+	finish()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "fresh" || !tok.Valid() || refreshes.Load() != 1 || s.State() != Ready {
+		t.Fatalf("stale 401 invalidated replacement: token=%+v err=%v refreshes=%d state=%v", tok, err, refreshes.Load(), s.State())
+	}
+}
+
+func TestSourceInvalidate(t *testing.T) {
+	var refreshes atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		refreshes.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+	})
+	s := mustSource(t, clientFile, tokenFile, ep)
+	s.Invalidate() // Missing credentials remain missing.
+	if s.State() != Missing {
+		t.Fatalf("missing credential state = %v", s.State())
+	}
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s = mustSource(t, clientFile, tokenFile, ep)
+	s.Invalidate()
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "fresh" || refreshes.Load() != 1 || s.State() != Ready {
+		t.Fatalf("invalidation: token=%+v err=%v refreshes=%d state=%v", tok, err, refreshes.Load(), s.State())
+	}
+}
+
 func TestClientRequestBoundsRefresh(t *testing.T) {
-	for _, stalledBody := range []bool{false, true} {
-		t.Run(fmt.Sprintf("stalledBody=%v", stalledBody), func(t *testing.T) {
+	for _, scenario := range []string{"stalled headers", "stalled body", "deadline before refresh"} {
+		t.Run(scenario, func(t *testing.T) {
 			started := make(chan struct{})
 			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
 				io.Copy(io.Discard, r.Body)
 				close(started)
-				if stalledBody {
+				if scenario == "stalled body" {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
 					w.(http.Flusher).Flush()
@@ -213,22 +324,40 @@ func TestClientRequestBoundsRefresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			s.current.Expiry = time.Now().Add(-time.Hour)
-			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			timeout := 100 * time.Millisecond
+			if scenario == "deadline before refresh" {
+				timeout = -time.Second
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), timeout)
 			defer cancel()
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/resource", nil)
 			done := make(chan error, 1)
 			start := time.Now()
 			go func() { _, err := client.Do(req); done <- err }()
-			waitSignal(t, started)
+			timer := time.NewTimer(500 * time.Millisecond)
+			defer timer.Stop()
+			var requestErr error
+			completed := false
 			select {
-			case err := <-done:
-				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 500*time.Millisecond {
-					t.Fatalf("request deadline: elapsed=%v error=%v", time.Since(start), err)
-				}
-			case <-time.After(500 * time.Millisecond):
-				stop()
+			case <-started:
+			case requestErr = <-done:
+				completed = true // The deadline can expire before the handler starts.
+			case <-timer.C:
+				cancel()
 				<-done
 				t.Fatal("request deadline did not interrupt refresh")
+			}
+			if !completed {
+				select {
+				case requestErr = <-done:
+				case <-timer.C:
+					cancel()
+					<-done
+					t.Fatal("request deadline did not interrupt refresh")
+				}
+			}
+			if !errors.Is(requestErr, context.DeadlineExceeded) || time.Since(start) > 500*time.Millisecond {
+				t.Fatalf("request deadline: elapsed=%v error=%v", time.Since(start), requestErr)
 			}
 		})
 	}
@@ -333,6 +462,131 @@ func TestClientOutlivesConstructionContext(t *testing.T) {
 	res.Body.Close()
 	if req.Header.Get("Authorization") != "" {
 		t.Fatal("transport modified the caller's headers")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
+
+type closeTrackingBody struct {
+	io.Reader
+	closed bool
+}
+
+func (b *closeTrackingBody) Close() error { b.closed = true; return nil }
+
+func TestTokenFailureClosesRequestBody(t *testing.T) {
+	body := &closeTrackingBody{Reader: strings.NewReader("payload")}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://example/resource", body)
+	transport := &tokenTransport{
+		token: func(context.Context) (*oauth2.Token, error) { return nil, ErrNeedsSignIn },
+		base: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			t.Error("request sent without a token")
+			return nil, errors.New("unexpected request")
+		}),
+	}
+	res, err := transport.RoundTrip(req)
+	if res != nil || !errors.Is(err, ErrNeedsSignIn) || !body.closed {
+		t.Fatalf("token failure: response=%v err=%v bodyClosed=%v", res, err, body.closed)
+	}
+}
+
+func TestClientRequestRefreshUsesOAuthHTTPClient(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("request bypassed the custom HTTP client")
+		w.WriteHeader(http.StatusBadRequest)
+	})
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	refreshes, requests := 0, 0
+	custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.Body != nil {
+			defer req.Body.Close()
+		}
+		body := `{}`
+		if req.URL.Path == "/token" {
+			refreshes++
+			body = `{"access_token":"fresh","expires_in":3600}`
+		} else {
+			requests++
+			if req.Header.Get("Authorization") != "Bearer fresh" {
+				t.Errorf("request token = %q", req.Header.Get("Authorization"))
+			}
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	ctx, cancel := context.WithCancel(context.WithValue(t.Context(), oauth2.HTTPClient, custom))
+	client, err := s.Client(ctx)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Invalidate()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.ChatAPIBase+"/resource", nil)
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if refreshes != 1 || requests != 1 {
+		t.Fatalf("custom transport: refreshes=%d requests=%d", refreshes, requests)
+	}
+}
+
+func TestRunAuthExchangeContextSentinels(t *testing.T) {
+	for _, sentinel := range []error{context.Canceled, context.DeadlineExceeded} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				t.Error("exchange bypassed the custom HTTP client")
+			})
+			custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				req.Body.Close()
+				return nil, sentinel
+			})}
+			ctx := context.WithValue(t.Context(), oauth2.HTTPClient, custom)
+			err := RunAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard,
+				func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+			if !errors.Is(err, sentinel) || ctx.Err() != nil {
+				t.Fatalf("exchange sentinel: err=%v ctx.Err=%v", err, ctx.Err())
+			}
+		})
+	}
+}
+
+type readerFunc func([]byte) (int, error)
+
+func (f readerFunc) Read(p []byte) (int, error) { return f(p) }
+
+func TestRefreshRestoresContextErrorAfterLastBodyFailure(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("refresh bypassed the custom HTTP client")
+	})
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	s := mustSource(t, clientFile, tokenFile, ep)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	calls := 0
+	custom := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.Body.Close()
+		calls++
+		status := http.StatusServiceUnavailable
+		body := io.NopCloser(strings.NewReader(`{"error":"temporarily_unavailable"}`))
+		if calls == 3 {
+			status = http.StatusOK
+			body = io.NopCloser(readerFunc(func([]byte) (int, error) {
+				cancel()
+				return 0, context.Canceled
+			}))
+		}
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: body}, nil
+	})}
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, custom)
+	_, err := s.TokenSource(ctx).Token()
+	if !errors.Is(err, context.Canceled) || calls != 3 {
+		t.Fatalf("last body failure: err=%v calls=%d", err, calls)
 	}
 }
 
@@ -612,6 +866,93 @@ func browserCallback(raw, code, denied, stateOverride string) error {
 	return err
 }
 
+type delayedWriteListener struct {
+	net.Listener
+	started chan struct{}
+	release <-chan struct{}
+	closed  chan struct{}
+}
+
+func (l *delayedWriteListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &delayedWriteConn{Conn: conn, listener: l}, nil
+}
+
+type delayedWriteConn struct {
+	net.Conn
+	listener *delayedWriteListener
+	write    sync.Once
+	close    sync.Once
+}
+
+func (c *delayedWriteConn) Write(p []byte) (int, error) {
+	c.write.Do(func() { close(c.listener.started) })
+	<-c.listener.release
+	return c.Conn.Write(p)
+}
+
+func (c *delayedWriteConn) Close() error {
+	c.close.Do(func() { close(c.listener.closed) })
+	return c.Conn.Close()
+}
+
+func TestRunAuthFinishesCallbackPageBeforeShutdown(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("denied consent reached token exchange")
+	})
+	started, release, closed := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	finish := sync.OnceFunc(func() { close(release) })
+	defer finish()
+	listen := func(ctx context.Context, network, address string) (net.Listener, error) {
+		listener, err := (&net.ListenConfig{}).Listen(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &delayedWriteListener{Listener: listener, started: started, release: release, closed: closed}, nil
+	}
+	page := make(chan error, 1)
+	auth := make(chan error, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	go func() {
+		auth <- runAuth(ctx, clientFile, tokenFile, ep, testScopes, io.Discard, func(raw string) error {
+			go func() {
+				u, _ := url.Parse(raw)
+				redirect, _ := url.Parse(u.Query().Get("redirect_uri"))
+				redirect.RawQuery = url.Values{"state": {u.Query().Get("state")}, "error": {"access_denied"}}.Encode()
+				req, _ := http.NewRequestWithContext(ctx, http.MethodGet, redirect.String(), nil)
+				res, err := http.DefaultClient.Do(req)
+				if err == nil {
+					var body []byte
+					body, err = io.ReadAll(res.Body)
+					res.Body.Close()
+					if err == nil && string(body) != "Consent received. You can close this window and return to the terminal.\n" {
+						err = fmt.Errorf("callback page = %q", body)
+					}
+				}
+				page <- err
+			}()
+			return nil
+		}, listen)
+	}()
+	waitSignal(t, started)
+	select {
+	case <-closed:
+		t.Error("callback connection closed before its page was written")
+	case <-time.After(50 * time.Millisecond):
+	}
+	finish()
+	if err := <-page; err != nil {
+		t.Errorf("callback page failed: %v", err)
+	}
+	if err := <-auth; err == nil || !strings.Contains(err.Error(), "access_denied") {
+		t.Errorf("auth denial = %v", err)
+	}
+}
+
 func TestRunAuthFailuresPreserveToken(t *testing.T) {
 	for _, scenario := range []string{"partial scopes", "missing scope field", "denied", "cancel", "cancel during exchange", "write failure", "no refresh token"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -703,6 +1044,26 @@ func TestRunAuthCancelCreatesNothing(t *testing.T) {
 	assertNoAuthTemps(t, tokenFile)
 }
 
+func TestLoopbackBindFailureIsActionable(t *testing.T) {
+	listener, err := listenLoopback(t.Context(), func(ctx context.Context, network, address string) (net.Listener, error) {
+		if network != "tcp" || address != "127.0.0.1:0" {
+			t.Fatalf("listen address = %s %s", network, address)
+		}
+		return nil, syscall.EADDRNOTAVAIL
+	})
+	if listener != nil || !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		t.Fatalf("bind result: listener=%v err=%v", listener, err)
+	}
+	for _, hint := range []string{"127.0.0.1:0", "loopback interface", "ephemeral ports", "firewall"} {
+		if !strings.Contains(err.Error(), hint) {
+			t.Errorf("bind error %q lacks %q", err, hint)
+		}
+	}
+	if strings.Contains(err.Error(), "another port") {
+		t.Errorf("bind error suggests an unavailable option: %v", err)
+	}
+}
+
 func TestRunAuthExchangeErrorSanitized(t *testing.T) {
 	for _, tc := range []struct {
 		status int
@@ -748,6 +1109,18 @@ func TestRunAuthExchangeBodyDeadline(t *testing.T) {
 	}
 }
 
+func TestRunAuthPlainHTTPBehindHTTPS(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("TLS request unexpectedly reached the HTTP handler")
+	})
+	ep.OAuthTokenURL = strings.Replace(ep.OAuthTokenURL, "http://", "https://", 1)
+	err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, io.Discard,
+		func(raw string) error { return browserCallback(raw, "example-code", "", "") })
+	if err == nil || !strings.Contains(err.Error(), "plain HTTP server behind an https URL") {
+		t.Fatalf("exchange error = %v", err)
+	}
+}
+
 func TestWatchRetriesTransientValidation(t *testing.T) {
 	var calls atomic.Int32
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
@@ -763,6 +1136,41 @@ func TestWatchRetriesTransientValidation(t *testing.T) {
 	waitSignal(t, reloaded)
 	if s.State() != Ready || calls.Load() != 2 {
 		t.Fatalf("transient validation prevented recovery: state=%v calls=%d", s.State(), calls.Load())
+	}
+}
+
+func TestWatchCancellationDuringValidationDoesNotWarn(t *testing.T) {
+	started := make(chan struct{})
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	writeJSON(t, tokenFile+".new", savedToken("replacement"))
+	if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Watch(ctx, func() { t.Error("canceled validation installed a token") })
+	}()
+	defer func() { cancel(); waitSignal(t, done) }()
+	waitSignal(t, started)
+	cancel()
+	waitSignal(t, done)
+	if logs.Len() != 0 {
+		t.Fatalf("shutdown logged credential rejection: %s", logs.String())
+	}
+	tok, err := s.TokenSource(t.Context()).Token()
+	if err != nil || tok.AccessToken != "original" || s.State() != Ready {
+		t.Fatalf("shutdown changed credential: token=%+v err=%v state=%v", tok, err, s.State())
 	}
 }
 
@@ -793,8 +1201,13 @@ func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 			defer close(finishRefresh)
 			expired := savedToken("expired")
 			expired.Expiry = time.Now().Add(-time.Hour)
-			writeJSON(t, tokenFile, expired)
+			writeJSON(t, tokenFile, savedToken("cached"))
 			s := mustSource(t, clientFile, tokenFile, ep)
+			client, err := s.Client(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.current = expired
 			completed := make(chan error, 1)
 			go func() {
 				tok, err := s.TokenSource(t.Context()).Token()
@@ -810,6 +1223,16 @@ func TestWatchRecoveryWinsOverOldRefresh(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitSignal(t, reloaded)
+			// A request can use the validated replacement even while the old
+			// credential's refresh still holds the refresh gate.
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/resource", nil)
+			res, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("valid cached token waited for stalled refresh: %v", err)
+			}
+			res.Body.Close()
 			finishRefresh <- struct{}{}
 			select {
 			case err := <-completed:
@@ -1006,10 +1429,13 @@ func TestTransientClassification(t *testing.T) {
 		{"permanent URL", &url.Error{Op: "Get", URL: "unsupported://example", Err: errors.New("unsupported protocol scheme")}, false},
 		{"invalid port", &url.Error{Op: "Get", URL: "http://example:99999", Err: &net.OpError{Op: "dial", Err: &net.AddrError{Err: "invalid port", Addr: "99999"}}}, false},
 		{"invalid TLS certificate", &url.Error{Op: "Get", URL: "https://example", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
+		{"plain HTTP behind HTTPS", &url.Error{Op: "Post", URL: "https://example", Err: tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}}, false},
+		{"HTTP scheme mismatch", &url.Error{Op: "Post", URL: "https://example", Err: http.ErrSchemeMismatch}, false},
 		{"missing file", &os.PathError{Op: "open", Path: "token.json", Err: os.ErrNotExist}, false},
 		{"malformed JSON", &json.SyntaxError{}, false},
 		{"empty token file", emptyTokenErr, false},
 		{"chat 429", validationError(429), true},
+		{"chat 408", validationError(408), true},
 		{"chat 503", validationError(503), true},
 		{"chat 401", validationError(401), false},
 		{"oauth 429", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 429}}, true},
@@ -1362,6 +1788,7 @@ func TestWriteTokenSyncsDirectoryAfterRename(t *testing.T) {
 	}{
 		{"success", nil},
 		{"unsupported directory sync", syscall.ENOTSUP},
+		{"unsupported Linux directory sync", syscall.EINVAL},
 		{"failed directory sync", syscall.EIO},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1394,7 +1821,7 @@ func TestWriteTokenSyncsDirectoryAfterRename(t *testing.T) {
 				return f.Sync()
 			})
 			if tc.syncErr == syscall.EIO {
-				if !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), filepath.Dir(path)) {
+				if !errors.Is(err, syscall.EIO) || !strings.Contains(err.Error(), fmt.Sprintf("token written to %s but its directory could not be synced", path)) {
 					t.Errorf("directory sync failure = %v", err)
 				}
 			} else if err != nil {

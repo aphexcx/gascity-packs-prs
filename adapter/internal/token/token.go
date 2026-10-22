@@ -101,6 +101,31 @@ func (s *Source) State() State {
 	return s.state
 }
 
+// Invalidate expires the cached access token so the next call refreshes it.
+// A permanent refresh failure then moves State to NeedsSignIn.
+func (s *Source) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.expireLocked()
+}
+
+func (s *Source) invalidateSent(accessToken string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.current != nil && s.current.AccessToken == accessToken {
+		s.expireLocked()
+	}
+}
+
+// expireLocked replaces the token rather than mutating one a refresh may use.
+func (s *Source) expireLocked() {
+	if s.current != nil {
+		expired := *s.current
+		expired.Expiry = time.Now().Add(-time.Hour)
+		s.current = &expired
+	}
+}
+
 // Client checks the credential immediately using ctx, but does not retain its
 // cancellation or deadline. Later token acquisition (including waiting for a
 // refresh) uses each request's context. Its transport continues to report
@@ -113,7 +138,7 @@ func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	}
 	// Do not wrap in ReuseTokenSource: Source already caches, and a second
 	// cache would retain the old access token after a validated file replacement.
-	return authenticatedClient(ctx, s.token), nil
+	return authenticatedClient(ctx, s.token, s.invalidateSent), nil
 }
 
 // TokenSource adapts Source to oauth2's context-free interface. The supplied ctx
@@ -133,6 +158,16 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 }
 
 func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if s.state != NeedsSignIn && s.current.Valid() {
+		copy := *s.current
+		s.mu.Unlock()
+		return &copy, nil
+	}
+	s.mu.Unlock()
 	select {
 	case s.refreshGate <- struct{}{}:
 		defer func() { <-s.refreshGate }()
@@ -145,6 +180,14 @@ func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
 		}
 		s.mu.Lock()
 		current, generation, state := s.current, s.generation, s.state
+		// Another refresh or watch reload may have populated the cache while
+		// we waited. Return a copy without reinstalling it after unlocking,
+		// which could otherwise undo a concurrent invalidation.
+		if state != NeedsSignIn && current.Valid() {
+			copy := *current
+			s.mu.Unlock()
+			return &copy, nil
+		}
 		s.mu.Unlock()
 		if current == nil || state == NeedsSignIn {
 			return nil, ErrNeedsSignIn
@@ -235,7 +278,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		defer cancel()
 		tok, err = s.refresh(validationCtx, tok)
 		if err == nil {
-			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, func(context.Context) (*oauth2.Token, error) { return tok, nil }))
+			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, func(context.Context) (*oauth2.Token, error) { return tok, nil }, nil))
 		}
 	}
 	if err != nil {
@@ -248,10 +291,14 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 				s.retryDelay = min(2*s.retryDelay, time.Minute)
 			}
 			s.retryAt = s.now().Add(s.retryDelay)
-			slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err), "retry_after", s.retryDelay)
+			if ctx.Err() == nil {
+				slog.Warn("token validation temporarily failed; will retry", "file", s.tokenFile, "cause", sanitizedCause(err), "retry_after", s.retryDelay)
+			}
 		} else {
 			s.retryAt, s.retryDelay = time.Time{}, 0
-			slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
+			if ctx.Err() == nil {
+				slog.Warn("token replacement rejected; keeping previous credential", "file", s.tokenFile, "cause", sanitizedCause(err))
+			}
 		}
 		return
 	}
@@ -342,7 +389,7 @@ func transient(err error) bool {
 	}
 	var validation validationError
 	if errors.As(err, &validation) {
-		return validation == 429 || validation < 400 || validation >= 500
+		return validation == http.StatusRequestTimeout || validation == http.StatusTooManyRequests || validation < 400 || validation >= 500
 	}
 	var failure *oauth2.RetrieveError
 	if errors.As(err, &failure) {
@@ -367,16 +414,20 @@ func transient(err error) bool {
 		}
 		var address *net.AddrError
 		var verification *tls.CertificateVerificationError
+		var record tls.RecordHeaderError
 		var authority x509.UnknownAuthorityError
 		var hostname x509.HostnameError
 		var certificate x509.CertificateInvalidError
-		if errors.As(err, &address) || errors.As(err, &verification) ||
+		if errors.As(err, &address) || errors.As(err, &verification) || errors.As(err, &record) || errors.Is(err, http.ErrSchemeMismatch) ||
 			errors.As(err, &authority) || errors.As(err, &hostname) || errors.As(err, &certificate) {
 			return false
 		}
 	}
 	// Unknown errors remain retryable. In particular, oauth2 flattens body-read
 	// failures (including deadline exceeded) into strings without an error chain.
+	// oauth2 v0.37.0 also flattens non-JSON 2xx token responses and responses
+	// without access_token. These remain retryable too: matching their message
+	// prefixes would depend on library wording rather than structured errors.
 	return true
 }
 
@@ -422,12 +473,16 @@ func sanitizedCause(err error) string {
 	}
 	var urlError *url.Error
 	if errors.As(err, &urlError) {
+		var record tls.RecordHeaderError
+		if errors.As(err, &record) || errors.Is(err, http.ErrSchemeMismatch) {
+			return "plain HTTP server behind an https URL"
+		}
 		return "invalid endpoint URL"
 	}
 	return "invalid credential or configuration"
 }
 
-func authenticatedClient(ctx context.Context, token func(context.Context) (*oauth2.Token, error)) *http.Client {
+func authenticatedClient(ctx context.Context, token func(context.Context) (*oauth2.Token, error), invalidate func(string)) *http.Client {
 	base := http.DefaultTransport
 	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
 	if client != nil && client.Transport != nil {
@@ -435,13 +490,14 @@ func authenticatedClient(ctx context.Context, token func(context.Context) (*oaut
 	}
 	// Request contexts bound API calls; a total client timeout would also cut
 	// off large media bodies after the headers have already arrived.
-	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client}}
+	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client, invalidate: invalidate}}
 }
 
 type tokenTransport struct {
 	token       func(context.Context) (*oauth2.Token, error)
 	base        http.RoundTripper
 	oauthClient *http.Client
+	invalidate  func(string)
 }
 
 func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -461,7 +517,13 @@ func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	request := req.Clone(req.Context())
 	tok.SetAuthHeader(request)
-	return t.base.RoundTrip(request)
+	response, err := t.base.RoundTrip(request)
+	if err == nil && response.StatusCode == http.StatusUnauthorized && t.invalidate != nil {
+		// Do not replay the request: its caller owns retry policy. A late 401
+		// must not expire a different token installed by a concurrent refresh.
+		t.invalidate(tok.AccessToken)
+	}
+	return response, err
 }
 
 func readToken(path string) (*oauth2.Token, os.FileInfo, error) {
@@ -528,7 +590,13 @@ func loadConfig(path string, ep config.Endpoints, scopes []string) (*oauth2.Conf
 
 // RunAuth performs desktop consent without modifying the existing token until
 // exchange, scope validation and the temporary file write have all succeeded.
+// If directory syncing fails after the atomic rename, the new token is already
+// installed; the returned error reports that partial success explicitly.
 func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoints, scopes []string, stdout io.Writer, open func(string) error) error {
+	return runAuth(ctx, clientFile, tokenFile, ep, scopes, stdout, open, (&net.ListenConfig{}).Listen)
+}
+
+func runAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoints, scopes []string, stdout io.Writer, open func(string) error, listen func(context.Context, string, string) (net.Listener, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -539,10 +607,9 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	if err != nil {
 		return err
 	}
-	const address = "127.0.0.1:0"
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
+	listener, err := listenLoopback(ctx, listen)
 	if err != nil {
-		return fmt.Errorf("OAuth loopback listener %s (port 0 requests a free port): %w; retry with another port", address, err)
+		return err
 	}
 	cfg.RedirectURL = "http://" + listener.Addr().String() + "/callback"
 	state, verifier := oauth2.GenerateVerifier(), oauth2.GenerateVerifier()
@@ -564,13 +631,21 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 		} else if value.code == "" {
 			value.err = errors.New("OAuth callback missing code")
 		}
-		accepted.Do(func() { callback <- value })
 		fmt.Fprintln(w, "Consent received. You can close this window and return to the terminal.")
+		accepted.Do(func() { callback <- value })
 	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
-	defer server.Close()
+	defer func() {
+		// The callback may still be flushing its response after signaling the
+		// exchange. Give it a bounded grace period, even if auth was canceled.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			_ = server.Close()
+		}
+	}()
 	authURL := cfg.AuthCodeURL(state, oauth2.AccessTypeOffline, oauth2.SetAuthURLParam("prompt", "consent"), oauth2.S256ChallengeOption(verifier))
 	if _, err := fmt.Fprintln(stdout, authURL); err != nil {
 		return fmt.Errorf("print OAuth consent URL: %w", err)
@@ -635,6 +710,15 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	return writeToken(ctx, tokenFile, tok)
 }
 
+func listenLoopback(ctx context.Context, listen func(context.Context, string, string) (net.Listener, error)) (net.Listener, error) {
+	const address = "127.0.0.1:0"
+	listener, err := listen(ctx, "tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("OAuth loopback listener %s (port 0 requests a free port): %w; check that the loopback interface is up, ephemeral ports are available, and the firewall permits local listeners", address, err)
+	}
+	return listener, nil
+}
+
 func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {
 	return writeTokenWithSync(ctx, path, tok, (*os.File).Sync)
 }
@@ -685,11 +769,11 @@ func writeTokenWithSync(ctx context.Context, path string, tok *oauth2.Token, syn
 	// success. Some filesystems do not support syncing directory descriptors.
 	dir, err := os.Open(filepath.Dir(path))
 	if err != nil {
-		return fmt.Errorf("open token directory %s: %w", filepath.Dir(path), err)
+		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	defer dir.Close()
-	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) {
-		return fmt.Errorf("sync token directory %s: %w", filepath.Dir(path), err)
+	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EINVAL) {
+		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	return nil
 }
