@@ -439,6 +439,25 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
+func TestTransportFailureIsNotHTTPError(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("closed server received a request")
+	}))
+	s.Close()
+	for name, call := range clientCalls() {
+		t.Run(name, func(t *testing.T) {
+			err := call(t.Context(), checkedClient(t, s.URL))
+			if err == nil {
+				t.Fatal("connection to closed server succeeded")
+			}
+			var responseErr *HTTPError
+			if errors.As(err, &responseErr) {
+				t.Fatalf("transport failure classified as HTTP response: %v", err)
+			}
+		})
+	}
+}
+
 func TestReceiptEscapesPathSegments(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if want := "/proxy/v0/city/example%20city%2F%23%3F/extmsg/inbound/receipts/receipt%2F%3F%23%25"; r.URL.EscapedPath() != want || r.URL.RawQuery != "" {
