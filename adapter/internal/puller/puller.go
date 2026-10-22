@@ -74,8 +74,9 @@ type RunOptions struct {
 	// MediaDir and all its parent directory components must be free of symlinks.
 	MediaDir         string
 	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
-	// InitialBackoff and MaxBackoff bound full-jitter exponential reconnection
-	// delays. Zero uses one second and one minute respectively.
+	// InitialBackoff and MaxBackoff are the initial and maximum ceilings for
+	// full-jitter exponential reconnection delays, drawn from [0, ceiling).
+	// Zero uses ceilings of one second and one minute respectively.
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
 	// MaxDurationPerAckExtension caps each lease extension, bounding how long a
