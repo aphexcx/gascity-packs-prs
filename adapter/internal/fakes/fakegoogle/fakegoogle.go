@@ -3,6 +3,7 @@
 package fakegoogle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -54,6 +55,14 @@ type Server struct {
 	operations map[string]*operation
 	requests   map[string]string
 	lastWrite  map[string]time.Time
+	uploads    map[string]*resumableUpload
+}
+
+type resumableUpload struct {
+	parent string
+	data   []byte
+	total  int64  // -1 until a total size is supplied
+	name   string // populated only after completion
 }
 
 type operation struct {
@@ -73,7 +82,7 @@ func New(t testing.TB, publisher *pubsub.Publisher) *Server {
 		Spaces: map[string]*chat.Space{}, Messages: map[string]*chat.Message{},
 		Reactions: map[string]*chat.Reaction{}, Subscriptions: map[string]*events.Subscription{},
 		SpaceEvents: map[string][]*chat.SpaceEvent{}, Media: map[string][]byte{},
-		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}}
+		operations: map[string]*operation{}, requests: map[string]string{}, lastWrite: map[string]time.Time{}, uploads: map[string]*resumableUpload{}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
 	return s
@@ -161,6 +170,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.respond(w, r, 200, &op.result)
 	case path == "subscriptions" || strings.HasPrefix(path, "subscriptions/"):
 		s.subscriptions(w, r, path)
+	case strings.HasPrefix(r.URL.Path, "/upload/session/") && (r.Method == http.MethodPut || r.Method == http.MethodPost):
+		s.uploadChunk(w, r)
 	case strings.HasPrefix(r.URL.Path, "/upload/v1/") && strings.HasSuffix(path, "attachments:upload") && r.Method == http.MethodPost:
 		s.upload(w, r)
 	case strings.HasPrefix(path, "media/") && r.Method == http.MethodGet:
@@ -773,6 +784,26 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, 404, "NOT_FOUND", "space not found")
 		return
 	}
+	if r.URL.Query().Get("uploadType") == "resumable" {
+		var metadata chat.UploadAttachmentRequest
+		if !s.decode(w, r, &metadata) {
+			return
+		}
+		upload := &resumableUpload{parent: parent, total: -1}
+		if raw := r.Header.Get("X-Upload-Content-Length"); raw != "" {
+			total, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || total < 0 || total > maxUploadBytes {
+				s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload size")
+				return
+			}
+			upload.total = total
+		}
+		path := "/upload/session/" + s.id()
+		s.uploads[path] = upload
+		w.Header().Set("Location", s.URL()+path)
+		s.respond(w, r, 200, map[string]any{})
+		return
+	}
 	kind, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		s.fail(w, 400, "INVALID_ARGUMENT", "invalid content type")
@@ -807,6 +838,77 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	name := parent + "/attachments/" + s.id()
 	s.Media[name] = data
 	s.respond(w, r, 200, &chat.UploadAttachmentResponse{AttachmentDataRef: &chat.AttachmentDataRef{ResourceName: name}})
+}
+
+const maxUploadBytes = 200 << 20
+
+var contentRange = regexp.MustCompile(`^bytes (?:([0-9]+)-([0-9]+)|(\*))/([0-9]+|\*)$`)
+
+func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
+	upload := s.uploads[r.URL.Path]
+	if upload == nil {
+		s.fail(w, 404, "NOT_FOUND", "upload session not found")
+		return
+	}
+	rangeParts := contentRange.FindStringSubmatch(r.Header.Get("Content-Range"))
+	if rangeParts == nil {
+		s.fail(w, 400, "INVALID_ARGUMENT", "invalid Content-Range")
+		return
+	}
+	total := upload.total
+	if rangeParts[4] != "*" {
+		value, err := strconv.ParseInt(rangeParts[4], 10, 64)
+		if err != nil || value > maxUploadBytes || (total >= 0 && total != value) {
+			s.fail(w, 400, "INVALID_ARGUMENT", "inconsistent upload size")
+			return
+		}
+		total = value
+	}
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
+	if err != nil || len(data) > maxUploadBytes {
+		s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload chunk")
+		return
+	}
+	if rangeParts[3] == "*" {
+		if len(data) != 0 || (total >= 0 && int64(len(upload.data)) > total) {
+			s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload status query")
+			return
+		}
+	} else {
+		start, startErr := strconv.ParseInt(rangeParts[1], 10, 64)
+		end, endErr := strconv.ParseInt(rangeParts[2], 10, 64)
+		if startErr != nil || endErr != nil || end < start || end >= maxUploadBytes || end-start+1 != int64(len(data)) || (total >= 0 && end >= total) {
+			s.fail(w, 400, "INVALID_ARGUMENT", "chunk does not match Content-Range")
+			return
+		}
+		switch {
+		case start == int64(len(upload.data)) && upload.name == "":
+			upload.data = append(upload.data, data...)
+		case end < int64(len(upload.data)) && bytes.Equal(upload.data[start:end+1], data):
+			// A lost response may cause an identical chunk to be retried.
+		default:
+			s.fail(w, 400, "INVALID_ARGUMENT", "chunk is not contiguous with uploaded data")
+			return
+		}
+	}
+	upload.total = total
+	if total >= 0 && int64(len(upload.data)) == total {
+		if upload.name == "" {
+			upload.name = upload.parent + "/attachments/" + s.id()
+			s.Media[upload.name] = upload.data
+		}
+		s.respond(w, r, 200, &chat.UploadAttachmentResponse{AttachmentDataRef: &chat.AttachmentDataRef{ResourceName: upload.name}})
+		return
+	}
+	if len(upload.data) > 0 {
+		w.Header().Set("Range", fmt.Sprintf("bytes=0-%d", len(upload.data)-1))
+	}
+	status := 308 // Google's Resume Incomplete, not a redirect.
+	if r.Header.Get("X-GUploader-No-308") == "yes" {
+		w.Header().Set("X-HTTP-Status-Code-Override", "308")
+		status = 200
+	}
+	s.respond(w, r, status, map[string]any{})
 }
 
 // Emit publishes a binary-mode CloudEvent. For a batch event resource is a slice

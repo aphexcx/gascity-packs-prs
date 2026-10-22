@@ -536,6 +536,94 @@ func TestReactionsAndMedia(t *testing.T) {
 	request(t, s, "GET", "/v1/media/missing?alt=media", nil, 404)
 }
 
+func TestResumableUploadRoundTripAboveDefaultChunk(t *testing.T) {
+	s := New(t, nil)
+	s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	api, err := chat.NewService(context.Background(), option.WithEndpoint(s.URL()+"/"), option.WithHTTPClient(http.DefaultClient))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte("0123456789abcdef"), (17<<20)/16)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	attachment, err := api.Media.Upload("spaces/room", &chat.UploadAttachmentRequest{Filename: "example.bin"}).Media(bytes.NewReader(data)).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("resumable upload: %v", err)
+	}
+	if attachment.AttachmentDataRef == nil {
+		t.Fatal("upload omitted attachment data reference")
+	}
+	media, err := api.Media.Download(attachment.AttachmentDataRef.ResourceName).Download()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer media.Body.Close()
+	got, err := io.ReadAll(media.Body)
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("download = %d bytes, want %d identical bytes: %v", len(got), len(data), err)
+	}
+}
+
+func TestResumableUploadPUTChunks(t *testing.T) {
+	s := New(t, nil)
+	s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room", SpaceType: "SPACE"}
+	init, err := http.Post(s.URL()+"/upload/v1/spaces/room/attachments:upload?uploadType=resumable", "application/json", strings.NewReader(`{"filename":"example.txt"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	init.Body.Close()
+	location := init.Header.Get("Location")
+	if init.StatusCode != 200 || location == "" {
+		t.Fatalf("resumable initialization: status %d, Location %q", init.StatusCode, location)
+	}
+	put := func(contentRange, data string, status int) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest("PUT", location, strings.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Range", contentRange)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		if resp.StatusCode != status {
+			t.Fatalf("chunk %s: status %d, want %d", contentRange, resp.StatusCode, status)
+		}
+		return resp
+	}
+	put("bytes 3-5/6", "def", 400) // gaps cannot silently corrupt the file
+	first := put("bytes 0-2/*", "abc", 308)
+	if first.Header.Get("Range") != "bytes=0-2" {
+		t.Fatalf("chunk range: %v", first.Header)
+	}
+	put("bytes 0-2/*", "abc", 308) // retry does not append twice
+	put("bytes 3-5/6", "de", 400)  // mismatched byte count
+	final := put("bytes 3-5/6", "def", 200)
+	var attachment chat.UploadAttachmentResponse
+	if err := json.NewDecoder(final.Body).Decode(&attachment); err != nil {
+		t.Fatal(err)
+	}
+	if attachment.AttachmentDataRef == nil {
+		t.Fatal("missing final attachment reference")
+	}
+	media, err := http.Get(s.URL() + "/v1/media/" + attachment.AttachmentDataRef.ResourceName + "?alt=media")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer media.Body.Close()
+	got, err := io.ReadAll(media.Body)
+	if err != nil || string(got) != "abcdef" {
+		t.Fatalf("download: %q, %v", got, err)
+	}
+	probe := put("bytes */6", "", 200)
+	var repeated chat.UploadAttachmentResponse
+	if err := json.NewDecoder(probe.Body).Decode(&repeated); err != nil || repeated.AttachmentDataRef == nil || repeated.AttachmentDataRef.ResourceName != attachment.AttachmentDataRef.ResourceName {
+		t.Fatalf("completed session probe: %+v, %v", repeated, err)
+	}
+}
+
 func TestNamedSpaceReplyOptions(t *testing.T) {
 	for _, option := range []string{"", "MESSAGE_REPLY_OPTION_UNSPECIFIED", "REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD", "REPLY_MESSAGE_OR_FAIL"} {
 		for _, exists := range []bool{false, true} {
