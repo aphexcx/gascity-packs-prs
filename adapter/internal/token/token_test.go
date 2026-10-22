@@ -892,6 +892,9 @@ func TestWatchBacksOffTransientValidation(t *testing.T) {
 	reloads := 0
 	s.reload(t.Context(), func() { reloads++ })
 	wantCalls++
+	if calls.Load() != wantCalls || reloads != 1 {
+		t.Fatalf("new revision did not retry after one poll: calls=%d want=%d reloads=%d", calls.Load(), wantCalls, reloads)
+	}
 	now = now.Add(time.Hour)
 	s.reload(t.Context(), func() { reloads++ })
 	if calls.Load() != wantCalls || reloads != 1 || s.State() != Ready || s.retryDelay != 0 {

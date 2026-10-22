@@ -99,6 +99,8 @@ func (s *Source) State() State {
 
 // Client checks the credential immediately. Its transport continues to report
 // permanent refresh failures through Source.State on later requests as well.
+// The client has no total or response-header timeout: callers must set a context
+// deadline on every request to bound the API call and response body transfer.
 func (s *Source) Client(ctx context.Context) (*http.Client, error) {
 	ts := s.TokenSource(ctx)
 	if _, err := ts.Token(); err != nil {
@@ -156,7 +158,9 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 }
 
 // Watch blocks until cancellation. Call it once per Source. An invalid file is
-// logged once per revision; transient validation failures retry on a later poll.
+// logged once per revision. Transient failures retry with exponential backoff
+// from the poll interval up to one minute, with one warning per attempt; success
+// or a new file revision resets the backoff.
 // Both paths retain the previous token and its state until validation succeeds.
 func (s *Source) Watch(ctx context.Context, onReload func()) {
 	ticker := time.NewTicker(s.watchInterval)
