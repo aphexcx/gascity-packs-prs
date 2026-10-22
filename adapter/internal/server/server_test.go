@@ -821,6 +821,50 @@ func TestCachedReceiptNeedsNeitherCredentialsNorAnotherSave(t *testing.T) {
 	}
 }
 
+func TestCachedCommandOutcomePrecedesReadinessInventoryAndWrites(t *testing.T) {
+	for _, route := range []string{"publish", "upload"} {
+		for _, mode := range []string{"not-ready", "save-failure", "unrecorded", "unbound"} {
+			t.Run(route+"/"+mode, func(t *testing.T) {
+				f := setup(t)
+				if mode != "unbound" {
+					f.gc.Bind(conversation("spaces/dm"), "session")
+				}
+				if mode == "unrecorded" {
+					f.gc.Configure(func(g *fakegc.Server) { g.FailTranscript = true })
+				}
+				cmd := command("") // Include derived keys and the DM conversation kind.
+				cmd["conversation_id"] = "spaces/dm"
+				if route == "upload" {
+					file := filepath.Join(f.cfg.Endpoints.UploadRoot, "data.txt")
+					if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					cmd["path"] = file
+				}
+				_, raw, _ := f.call(t, "/commands/"+route, cmd)
+				first := decode[CommandResult](t, raw)
+				if !first.Delivered {
+					t.Fatalf("first: %+v", first)
+				}
+				// Cached outcomes must not require inventory or a successful save.
+				f.mu.Lock()
+				f.l.Spaces = map[string]*ledger.SpaceState{}
+				f.mu.Unlock()
+				f.g.Configure(func(g *fakegoogle.Server) { g.Spaces = map[string]*api.Space{} })
+				f.s.opts.LedgerPath = filepath.Join(f.cfg.Endpoints.UploadRoot, "absent", "state.json")
+				if mode != "save-failure" {
+					f.s.SetHealth(Health{State: "needs-sign-in"})
+				}
+				_, raw, _ = f.call(t, "/commands/"+route, cmd)
+				got := decode[CommandResult](t, raw)
+				if !got.Delivered || got.Recorded != first.Recorded || got.MessageID != first.MessageID || got.Key != first.Key || f.count() != 1 {
+					t.Fatalf("lost outcome: first=%+v retry=%+v", first, got)
+				}
+			})
+		}
+	}
+}
+
 func TestUploadDeliverySurvivesFailedRecordingCallback(t *testing.T) {
 	f := setup(t)
 	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -838,6 +882,24 @@ func TestUploadDeliverySurvivesFailedRecordingCallback(t *testing.T) {
 	r := decode[CommandResult](t, raw)
 	if !r.Delivered || r.Recorded || r.MessageID == "" || f.count() != 1 {
 		t.Fatalf("%+v", r)
+	}
+}
+
+func TestRecordingSuccessRemainsReportedWhenSaveFails(t *testing.T) {
+	f := setup(t)
+	f.gc.Bind(conversation("spaces/room"), "session")
+	f.gc.Configure(func(g *fakegc.Server) { g.FailTranscript = true })
+	_, raw, _ := f.call(t, "/commands/publish", command("recorded"))
+	first := decode[CommandResult](t, raw)
+	if !first.Delivered || first.Recorded {
+		t.Fatalf("first: %+v", first)
+	}
+	f.gc.Configure(func(g *fakegc.Server) { g.FailTranscript = false })
+	f.s.opts.LedgerPath = filepath.Join(f.cfg.Endpoints.UploadRoot, "absent", "state.json")
+	_, raw, _ = f.call(t, "/commands/publish", command("recorded"))
+	got := decode[CommandResult](t, raw)
+	if !got.Delivered || !got.Recorded || got.MessageID != first.MessageID || got.Reason == "" || f.count() != 1 {
+		t.Fatalf("lost known gc outcome: %+v", got)
 	}
 }
 

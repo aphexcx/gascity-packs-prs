@@ -537,27 +537,6 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, err)
 		return
 	}
-	if err := s.available(); err != nil {
-		respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
-		return
-	}
-	// A DM's gc binding is distinct from a room binding. Resolve inventory first.
-	if _, err := s.named(r.Context(), p.Conversation.ConversationID); err != nil {
-		respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
-		return
-	}
-	l, err := s.snapshot()
-	if err != nil {
-		problem(w, 500, err)
-		return
-	}
-	if l.Spaces[p.Conversation.ConversationID].Kind == "dm" {
-		p.Conversation.Kind = "dm"
-	}
-	if cmd.IdempotencyKey == "" {
-		p.IdempotencyKey = ""
-		p.IdempotencyKey = keyFor(p)
-	}
 	var upload *ledger.SendUpload
 	if r.URL.Path == "/commands/upload" {
 		if cmd.Path == "" {
@@ -565,16 +544,73 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		upload = &ledger.SendUpload{Path: cmd.Path}
-		if cmd.IdempotencyKey == "" {
-			sum := sha256.Sum256([]byte(p.IdempotencyKey + "\x00" + cmd.Path))
-			p.IdempotencyKey = "derived-" + hex.EncodeToString(sum[:])
+	}
+	// A derived key includes the conversation kind. Probe both possible kinds
+	// before inventory so a saved DM outcome survives missing credentials or
+	// stale space inventory as well as one with an explicit key.
+	l, err := s.snapshot()
+	if err != nil {
+		respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
+		return
+	}
+	found := false
+	for _, kind := range []string{"room", "dm"} {
+		p.Conversation.Kind = kind
+		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload)
+		if l.Sends[p.IdempotencyKey] != nil {
+			found = true
+			break
 		}
+	}
+	if !found {
+		if err := s.available(); err != nil {
+			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
+			return
+		}
+		// A DM's gc binding is distinct from a room binding.
+		if _, err := s.named(r.Context(), p.Conversation.ConversationID); err != nil {
+			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error()})
+			return
+		}
+		l, err = s.snapshot()
+		if err != nil {
+			problem(w, 500, err)
+			return
+		}
+		p.Conversation.Kind = l.Spaces[p.Conversation.ConversationID].Kind
+		p.IdempotencyKey = commandKey(p, cmd.IdempotencyKey, upload)
 	}
 	result, _ := s.command(r.Context(), p, upload)
 	respond(w, 200, result)
 }
 
+func commandKey(p wire.PublishRequest, explicit string, upload *ledger.SendUpload) string {
+	if explicit != "" {
+		return explicit
+	}
+	p.IdempotencyKey = ""
+	key := keyFor(p)
+	if upload != nil {
+		sum := sha256.Sum256([]byte(key + "\x00" + upload.Path))
+		key = "derived-" + hex.EncodeToString(sum[:])
+	}
+	return key
+}
+
+func commandOutcome(send *ledger.SendState) CommandResult {
+	result := CommandResult{Key: send.Key, Recorded: send.Recorded, Reason: send.RecordingReason}
+	if r := send.Receipt; r != nil {
+		result.Delivered, result.MessageID = r.Delivered, r.MessageID
+		result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
+	}
+	return result
+}
+
 func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload) (CommandResult, error) {
+	return s.runCommand(ctx, p, upload, false)
+}
+
+func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, automatic bool) (CommandResult, error) {
 	result := CommandResult{Key: p.IdempotencyKey}
 	unlock, err := s.lock(ctx, "command:"+p.IdempotencyKey)
 	if err != nil {
@@ -582,37 +618,57 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 		return result, err
 	}
 	defer unlock()
-	// Only hold the send lock for preparation; gc recursively calls /publish.
-	sendUnlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
-	if err == nil {
-		err = s.prepare(p, upload, true)
-		sendUnlock()
-	}
-	if err != nil {
-		result.Reason = err.Error()
-		return result, err
-	}
 	l, err := s.snapshot()
 	if err != nil {
 		result.Reason = err.Error()
 		return result, err
 	}
 	send := l.Sends[p.IdempotencyKey]
-	if send.Request != nil {
-		p = *send.Request
+	if send != nil {
+		if send.Space != p.Conversation.ConversationID || (send.Request != nil && send.Request.SessionID != p.SessionID) {
+			err := errors.New("idempotency key belongs to another conversation or session")
+			result.Reason = err.Error()
+			return result, err
+		}
+		result = commandOutcome(send)
+		// Re-check under the command lock: a caller may have finished or
+		// rejected this intent since RetryPending took its snapshot.
+		if (automatic && !send.RecordPending) || send.Recorded || (result.Delivered && send.NotRecordable) {
+			return result, nil
+		}
+		if send.Request != nil {
+			p = *send.Request
+		}
 	}
-	if send.Receipt != nil {
-		result.Delivered = send.Receipt.Delivered
-		result.MessageID = send.Receipt.MessageID
-	}
-	if send.Recorded {
-		result.Recorded = true
-		return result, nil
+	if !result.Delivered {
+		if err := s.available(); err != nil {
+			result.Reason = err.Error()
+			return result, err
+		}
+		// Only hold the send lock for preparation; gc recursively calls /publish.
+		sendUnlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
+		if err == nil {
+			err = s.prepare(p, upload, true)
+			sendUnlock()
+		}
+		if err != nil {
+			result.Reason = err.Error()
+			return result, err
+		}
+		l, err = s.snapshot()
+		if err != nil {
+			result.Reason = err.Error()
+			return result, err
+		}
+		send = l.Sends[p.IdempotencyKey]
+		if send.Request != nil {
+			p = *send.Request
+		}
 	}
 	if send.NotRecordable || p.SessionID == "" {
 		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason))
 	}
-	if send.Upload != nil {
+	if send.Upload != nil && !result.Delivered {
 		r, e := s.publish(ctx, p, send.Upload)
 		result.Delivered = r.Delivered
 		result.MessageID = r.MessageID
@@ -681,7 +737,6 @@ func (s *Server) command(ctx context.Context, p wire.PublishRequest, upload *led
 		return nil
 	})
 	if err != nil {
-		result.Recorded = false
 		result.Reason = err.Error()
 	}
 	return result, err
@@ -766,7 +821,7 @@ func (s *Server) RetryPending(ctx context.Context) error {
 	var failures []error
 	for _, key := range keys {
 		ctx, cancel := context.WithTimeout(ctx, publishBudget)
-		_, err := s.command(ctx, *l.Sends[key].Request, l.Sends[key].Upload)
+		_, err := s.runCommand(ctx, *l.Sends[key].Request, l.Sends[key].Upload, true)
 		cancel()
 		if err != nil {
 			failures = append(failures, err)
