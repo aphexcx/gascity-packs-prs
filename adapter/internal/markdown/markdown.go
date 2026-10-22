@@ -224,7 +224,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
-				if end := emphasisEnd(s, i+n, marker, noCodeCloser); end >= 0 {
+				end := emphasisEnd(s, i+n, marker, noCodeCloser)
+				if end >= 0 {
 					if heading {
 						chat = strings.TrimPrefix(chat, "*")
 					}
@@ -236,7 +237,9 @@ func formatInline(s string, heading, allowLinks bool) string {
 					i = end + n
 					continue
 				}
-				noCloser[marker] = true
+				if end != emphasisReopened {
+					noCloser[marker] = true
+				}
 			}
 			out.WriteString(marker)
 			i += n
@@ -283,6 +286,9 @@ func codeSpanEnd(s string, start int, noCloser map[int]int) int {
 	return start + n
 }
 
+// A later opener must be tried on its own, without memoizing a failed search.
+const emphasisReopened = -2
+
 func emphasisEnd(s string, start int, marker string, noCodeCloser map[int]int) int {
 	for i := start; i < len(s); {
 		switch {
@@ -293,6 +299,9 @@ func emphasisEnd(s string, start int, marker string, noCodeCloser map[int]int) i
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
 			previous, _ := utf8.DecodeLastRuneInString(s[:i])
+			if n == len(marker) && unicode.IsSpace(previous) && i+n < len(s) && !spaceAt(s[i+n:]) {
+				return emphasisReopened
+			}
 			if n == len(marker) && i > start && !unicode.IsSpace(previous) && !(marker[0] == '_' && wordAt(s[i+n:])) {
 				return i
 			}

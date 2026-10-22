@@ -69,6 +69,10 @@ func TestToChat(t *testing.T) {
 		{"heading literal hashes", "# Title#", "*Title#*"},
 		{"heading escaped hash", "# Title \\#", "*Title \\#*"},
 		{"nested emphasis", "**bold _italic_** and *soft*", "*bold _italic_* and _soft_"},
+		{"emphasis after multiplication", "2*3 and *note*", "2*3 and _note_"},
+		// The subset leaves an abandoned opener literal and pairs the later one.
+		{"nearest emphasis opener", "*a *b* c*", "*a _b_ c*"},
+		{"emphasis after bare URL", "https://x/a_b*c and *x*", "https://x/a_b*c and _x_"},
 		{"code in emphasis", "**bold `*code*`**", "*bold `*code*`*"},
 		{"plain text", "日本語 👋\n> quote\n1. item\n+ item\n---\n", "日本語 👋\n> quote\n1. item\n+ item\n---\n"},
 		{"literal underscores", "snake_case_name and file__name__part", "snake_case_name and file__name__part"},
