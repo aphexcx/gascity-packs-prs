@@ -399,12 +399,8 @@ func TestCreateMessageLearnsIdentityForReactionRemoval(t *testing.T) {
 	if _, _, err := c.CreateMessage(context.Background(), "spaces/room", "hello", "", "identity", true); err != nil {
 		t.Fatal(err)
 	}
-	identity, ok := any(c).(interface{ IdentityUserID() string })
-	if !ok {
-		t.Fatal("missing identity accessor")
-	}
-	if identity.IdentityUserID() != own {
-		t.Fatalf("identity = %q", identity.IdentityUserID())
+	if c.IdentityUserID() != own {
+		t.Fatalf("identity = %q", c.IdentityUserID())
 	}
 }
 
@@ -485,7 +481,7 @@ func TestMediaRejectsSymlinksAndEscapes(t *testing.T) {
 }
 
 func TestMediaRootAllowsSymlinkedParent(t *testing.T) {
-	c, s, dir := fixture(t)
+	c, _, dir := fixture(t)
 	parent := t.TempDir()
 	alias := filepath.Join(parent, "parent-link")
 	if err := os.Symlink(dir, alias); err != nil {
@@ -511,7 +507,6 @@ func TestMediaRootAllowsSymlinkedParent(t *testing.T) {
 	if err := os.Symlink(root, filepath.Join(root, "inside-link")); err != nil {
 		t.Fatal(err)
 	}
-	s.Media["spaces/room/attachments/root-test"] = []byte("data")
 	for _, suffix := range []string{"inside-link/source", "./../root/source"} {
 		if _, err := c.UploadAttachment(context.Background(), "spaces/room", root+"/"+suffix); err == nil {
 			t.Fatalf("accepted %s", suffix)
@@ -607,12 +602,12 @@ func TestLargeUploadQuotaPolicy(t *testing.T) {
 			}
 			clock = useTestClock(c)
 			c.retryBound = 3 * time.Second
-			// Also bound old SDK retries in the regression's failing version.
-			ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
-			if !exhausted {
-				cancel()
-				ctx = context.Background()
+			if exhausted {
+				c.retryBound = 500 * time.Millisecond
 			}
+			// The injected wait bound drives the assertion; a generous real deadline
+			// is only a guard if SDK chunk retries are accidentally reintroduced.
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			ref, err := c.UploadAttachment(ctx, "spaces/room", path)
 			if exhausted {
