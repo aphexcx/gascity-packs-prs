@@ -83,6 +83,7 @@ type Manager struct {
 	recoveryNeeded  chan struct{}
 	pending         *api.Operation
 	pendingKind     string
+	scopeReloaded   bool
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
 	ambiguousState  ledger.SubscriptionState
@@ -119,6 +120,17 @@ func (m *Manager) RecoveryNeeded() <-chan struct{} { return m.recoveryNeeded }
 // Errors (including lost responses) leave the caller responsible for retrying
 // with backoff; RenewLoop does this automatically. No ambiguous read is absence.
 func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, error) {
+	return m.reconcile(ctx, false)
+}
+
+// TokenReloaded is called by the app after validating and installing a new
+// credential. It permits one scope-revoked reactivation and reconciles under
+// the same gate as lifecycle events and RenewLoop.
+func (m *Manager) TokenReloaded(ctx context.Context) (ledger.SubscriptionState, error) {
+	return m.reconcile(ctx, true)
+}
+
+func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (ledger.SubscriptionState, error) {
 	select {
 	case m.gate <- struct{}{}:
 		defer func() { <-m.gate }()
@@ -128,6 +140,8 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 	if err := ctx.Err(); err != nil {
 		return ledger.SubscriptionState{}, err
 	}
+	m.scopeReloaded = tokenReloaded
+	defer func() { m.scopeReloaded = false }()
 	m.ledgerMu.Lock()
 	saved := m.ledger.Subscription
 	m.ledgerMu.Unlock()
@@ -250,8 +264,16 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 	return m.reconcileExisting(ctx, sub)
 }
 
-func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (ledger.SubscriptionState, error) {
-	state, err := m.persist(sub, time.Time{})
+func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) (state ledger.SubscriptionState, err error) {
+	if sub.State == "SUSPENDED" {
+		m.log.WarnContext(ctx, "subscription suspended", "name", sub.Name, "state", sub.State, "reason", sub.SuspensionReason)
+		defer func() {
+			if err != nil {
+				err = fmt.Errorf("events: subscription %s suspended (%s): %w", sub.Name, sub.SuspensionReason, err)
+			}
+		}()
+	}
+	state, err = m.persist(sub, time.Time{})
 	if err != nil {
 		return state, err
 	}
@@ -274,6 +296,12 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		m.pendingKind = "renew"
 		op, err = m.service.Subscriptions.Patch(sub.Name, &api.Subscription{Ttl: "0s"}).UpdateMask("ttl").Context(ctx).Do()
 	case "SUSPENDED":
+		if sub.SuspensionReason == "USER_SCOPE_REVOKED" || sub.SuspensionReason == "APP_SCOPE_REVOKED" {
+			if !m.scopeReloaded {
+				return state, errors.New("events: awaiting validated token reload before reactivation")
+			}
+			m.scopeReloaded = false
+		}
 		m.pendingKind = "reactivate"
 		op, err = m.service.Subscriptions.Reactivate(sub.Name, &api.ReactivateSubscriptionRequest{}).Context(ctx).Do()
 	default:

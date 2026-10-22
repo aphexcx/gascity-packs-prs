@@ -1,6 +1,7 @@
 package events
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -760,5 +761,77 @@ func TestResumedCreatePollIsBoundedWithoutDuplicateCreation(t *testing.T) {
 	}
 	if f.count("POST", "/v1/subscriptions") != 1 {
 		t.Fatal("pending create must not be replaced")
+	}
+}
+
+func TestSuspensionReasonReportedInErrorAndLog(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewTextHandler(&logs, nil))
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if strings.HasSuffix(r.URL.Path, ":reactivate") {
+			return jsonResponse(403, `{"error":{"code":403,"message":"permission denied"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for range 2 { // The ambiguity hold must keep the actionable reason, too.
+		_, err := f.manager.Reconcile(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(err.Error(), first.Name) {
+			t.Fatalf("suspension error = %v", err)
+		}
+	}
+	if !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), first.Name) {
+		t.Fatalf("suspension log = %q", logs.String())
+	}
+}
+
+func TestScopeRevocationWaitsForTokenReload(t *testing.T) {
+	for _, reason := range []string{"USER_SCOPE_REVOKED", "APP_SCOPE_REVOKED"} {
+		t.Run(reason, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			<-f.manager.RecoveryNeeded()
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = reason
+			})
+			for range 2 {
+				_, err := f.manager.Reconcile(context.Background())
+				if err == nil || !strings.Contains(err.Error(), reason) {
+					t.Fatalf("scope suspension error = %v", err)
+				}
+				f.clock.advance(time.Minute)
+			}
+			if f.count("POST", "/v1/"+first.Name+":reactivate") != 0 {
+				t.Fatal("reactivation attempted before credential reload")
+			}
+			reloader, ok := any(f.manager).(interface {
+				TokenReloaded(context.Context) (ledger.SubscriptionState, error)
+			})
+			if !ok {
+				t.Fatal("missing token-reload entry point")
+			}
+			got, err := reloader.TokenReloaded(context.Background())
+			if err != nil || got.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+				t.Fatalf("reload state=%+v error=%v", got, err)
+			}
+			select {
+			case <-f.manager.RecoveryNeeded():
+			default:
+				t.Fatal("reactivation after reload did not request recovery")
+			}
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = reason
+			})
+			if _, err := f.manager.Reconcile(context.Background()); err == nil {
+				t.Fatal("a later scope revocation needs a new reload")
+			}
+		})
 	}
 }
