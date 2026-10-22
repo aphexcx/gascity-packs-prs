@@ -281,7 +281,11 @@ func TestDeliveryOutcomes(t *testing.T) {
 				}
 			}
 			change = f.l.Changes[messageName]
-			if change.Status != "committed" || f.l.Counters["turns:"+space] != 1 {
+			wantTurns := int64(1)
+			if status == "no_route" {
+				wantTurns = 0
+			}
+			if change.Status != "committed" || f.l.Counters["turns:"+space] != wantTurns {
 				t.Fatalf("terminal: %+v, %v", change, f.l.Counters)
 			}
 			want := 1
@@ -533,7 +537,11 @@ func TestRetriesExhaustedAndPendingFailureRetries(t *testing.T) {
 			if status == "no_route" {
 				want = 1
 			}
-			if len(f.gc.Inbound()) != want || f.l.Changes[messageName].Status != "committed" || f.l.Counters["turns:"+space] != 1 {
+			wantTurns := int64(1)
+			if status == "no_route" {
+				wantTurns = 0
+			}
+			if len(f.gc.Inbound()) != want || f.l.Changes[messageName].Status != "committed" || f.l.Counters["turns:"+space] != wantTurns {
 				t.Fatal("concluded receipt not honored")
 			}
 		})
@@ -1132,6 +1140,119 @@ func TestExistingSpaceInheritsWakeDefault(t *testing.T) {
 			}
 			if f.l.Spaces[space].Wake != "mentions" {
 				t.Fatalf("wake default not retained: %+v", f.l.Spaces[space])
+			}
+		})
+	}
+}
+
+func TestChangeRemovedDuringPOSTDoesNotPanic(t *testing.T) {
+	for _, status := range []int{200, 422, 503, 0} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					t.Errorf("removed change panicked: %v", recovered)
+				}
+			}()
+			f := setup(t)
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Model an operator removing the change while the network is in flight.
+				f.opts.LedgerMu.Lock()
+				delete(f.l.Changes, messageName)
+				err := f.l.Save(f.opts.LedgerPath)
+				f.opts.LedgerMu.Unlock()
+				if err != nil {
+					t.Error(err)
+				}
+				if status == 0 {
+					conn, _, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					conn.Close()
+					return
+				}
+				w.WriteHeader(status)
+				io.WriteString(w, `{"delivery":{"status":"delivered"}}`)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := f.p.Handle(context.Background(), event("removed", "message.created", message()))
+			if status == 503 {
+				if out != puller.Nack || err == nil {
+					t.Fatalf("retryable response: %v %v", out, err)
+				}
+			} else if out != puller.Ack || err != nil {
+				t.Fatalf("removed change: %v %v", out, err)
+			}
+			if f.l.Changes[messageName] != nil || f.l.Unresolved[messageName] != nil || f.l.Counters["turns:"+space] != 0 {
+				t.Fatal("removed change was resurrected or counted")
+			}
+		})
+	}
+}
+
+func TestHandleChangeUsesWakePolicyAndCatchUpMarker(t *testing.T) {
+	for _, wake := range []config.WakePolicy{config.WakeAll, config.WakeMentions} {
+		t.Run(string(wake), func(t *testing.T) {
+			f := setup(t)
+			f.opts.Config.Settings.Defaults.Wake = wake
+			catchup, ok := any(f.p).(interface {
+				HandleChange(context.Context, puller.Change) (puller.Outcome, error)
+			})
+			if !ok {
+				t.Fatal("Processor has no exported catch-up entry")
+			}
+			c := puller.Change{Kind: "message.created", Space: space, Message: message()}
+			out, err := catchup.HandleChange(context.Background(), c)
+			if out != puller.Ack || err != nil {
+				t.Fatalf("catch-up: %v %v", out, err)
+			}
+			handle(t, f, event("live-duplicate", c.Kind, c.Message))
+			want := 1
+			if wake == config.WakeMentions {
+				want = 0
+			}
+			if len(f.gc.Inbound()) != want || f.l.Counters["turns:"+space] != int64(want) {
+				t.Fatalf("catch-up wake: %+v", f.gc.Inbound())
+			}
+			if want == 1 && (f.gc.Inbound()[0].Text != "[catch-up]\nhello" || f.gc.Inbound()[0].ProviderMessageID != messageName) {
+				t.Fatalf("catch-up mapping: %+v", f.gc.Inbound()[0])
+			}
+		})
+	}
+}
+
+func TestCatchUpReactionMarkerBelongsToCurrentChange(t *testing.T) {
+	for _, catchUpDelete := range []bool{true, false} {
+		t.Run(fmt.Sprint(catchUpDelete), func(t *testing.T) {
+			f := setup(t)
+			f.l.Messages[messageName] = &ledger.MessageState{Mine: true}
+			r := &api.Reaction{Name: messageName + "/reactions/first", User: &api.User{Name: "users/456"}, Emoji: &api.Emoji{Unicode: "👍"}}
+			c := puller.Change{Kind: "reaction.created", Space: space, Reaction: r}
+			if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+				t.Fatalf("create: %v %v", out, err)
+			}
+			c.Kind = "reaction.deleted"
+			c.Reaction = &api.Reaction{Name: r.Name}
+			if catchUpDelete {
+				if out, err := f.p.HandleChange(context.Background(), c); out != puller.Ack || err != nil {
+					t.Fatalf("delete: %v %v", out, err)
+				}
+			} else {
+				handle(t, f, &puller.Event{PubSubID: "live-delete", Changes: []puller.Change{c}})
+			}
+			want := "reaction deleted: 👍 on " + messageName
+			if catchUpDelete {
+				want = "[catch-up]\n" + want
+			}
+			if got := f.gc.Inbound()[1].Text; got != want {
+				t.Fatalf("delete marker: %q, want %q", got, want)
 			}
 		})
 	}

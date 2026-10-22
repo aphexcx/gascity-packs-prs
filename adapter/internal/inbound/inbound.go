@@ -87,6 +87,18 @@ func New(opts Options) (*Processor, error) {
 // Network requests never hold LedgerMu. Handle and Poll serialize their work,
 // including live and catch-up callers, and waiting callers honor cancellation.
 func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcome, error) {
+	return p.handle(ctx, ev, false)
+}
+
+// HandleChange feeds one catch-up change through the same validation, wake
+// policy, dedup and delivery path as live events. Its durable turn includes a
+// [catch-up] header; no synthetic transport ID is needed. As with Handle, Ack
+// can include a durable pending receipt, whose resolution belongs to Poll.
+func (p *Processor) HandleChange(ctx context.Context, c puller.Change) (puller.Outcome, error) {
+	return p.handle(ctx, &puller.Event{Changes: []puller.Change{c}}, true)
+}
+
+func (p *Processor) handle(ctx context.Context, ev *puller.Event, catchUp bool) (puller.Outcome, error) {
 	if err := p.enter(ctx); err != nil {
 		return puller.Nack, err
 	}
@@ -115,7 +127,7 @@ func (p *Processor) Handle(ctx context.Context, ev *puller.Event) (puller.Outcom
 		if err := ctx.Err(); err != nil {
 			return puller.Nack, err
 		}
-		if err := p.change(ctx, c); err != nil {
+		if err := p.change(ctx, c, catchUp); err != nil {
 			return puller.Nack, err
 		}
 	}
@@ -309,7 +321,7 @@ func validate(c puller.Change) error {
 	return nil
 }
 
-func (p *Processor) change(ctx context.Context, c puller.Change) error {
+func (p *Processor) change(ctx context.Context, c puller.Change, catchUp bool) error {
 	switch {
 	case strings.HasPrefix(c.Kind, "membership."):
 		m := c.Membership
@@ -322,9 +334,9 @@ func (p *Processor) change(ctx context.Context, c puller.Change) error {
 			}
 		})
 	case strings.HasPrefix(c.Kind, "reaction."):
-		return p.reaction(ctx, c)
+		return p.reaction(ctx, c, catchUp)
 	default:
-		return p.message(ctx, c)
+		return p.message(ctx, c, catchUp)
 	}
 }
 
@@ -382,7 +394,7 @@ func spaceKind(s *api.Space) string {
 	return ""
 }
 
-func (p *Processor) message(ctx context.Context, c puller.Change) error {
+func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) error {
 	m := c.Message
 	id := m.Name
 	l, err := p.snapshot()
@@ -430,14 +442,14 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 	}
 	// Deleting a never-observed message still needs a tombstone, but no turn.
 	if c.Kind == "message.deleted" && previous == nil {
-		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local")
+		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp)
 	}
 	s, err := p.space(ctx, c.Space, m.Space)
 	if err != nil {
 		if permanentLookup(err) {
 			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
 			w.Text = renderMentions(m)
-			return p.record(c, id, w, &state, nil, "space unavailable")
+			return p.record(c, id, w, &state, nil, "space unavailable", catchUp)
 		}
 		return errors.New("inbound: space lookup failed")
 	}
@@ -476,13 +488,13 @@ func (p *Processor) message(ctx context.Context, c puller.Change) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := p.record(c, id, w, &state, s, local); err != nil {
+	if err := p.record(c, id, w, &state, s, local, catchUp); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
 }
 
-func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
+func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool) error {
 	r := c.Reaction
 	action := strings.TrimPrefix(c.Kind, "reaction.")
 	id := r.Name + "#" + action
@@ -501,7 +513,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 			if permanentLookup(err) {
 				w := p.envelope(id, c.Space, "", r.User, "")
 				w.Text = reactionText(r, action, parent)
-				return p.record(c, id, w, nil, nil, "parent unavailable")
+				return p.record(c, id, w, nil, nil, "parent unavailable", catchUp)
 			}
 			return errors.New("inbound: reaction parent lookup failed")
 		}
@@ -515,7 +527,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 		if permanentLookup(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
-			return p.record(c, id, w, state, nil, "space unavailable")
+			return p.record(c, id, w, state, nil, "space unavailable", catchUp)
 		}
 		return errors.New("inbound: space lookup failed")
 	}
@@ -526,7 +538,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 			var original wire.InboundMessage
 			if json.Unmarshal([]byte(created.Event), &original) == nil {
 				w.Actor = original.Actor
-				w.Text = strings.Replace(original.Text, "reaction created:", "reaction deleted:", 1)
+				w.Text = strings.Replace(strings.TrimPrefix(original.Text, "[catch-up]\n"), "reaction created:", "reaction deleted:", 1)
 			}
 		}
 	}
@@ -534,7 +546,7 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change) error {
 	if !state.Mine {
 		local = "local"
 	}
-	if err := p.record(c, id, w, state, s, local); err != nil {
+	if err := p.record(c, id, w, state, s, local, catchUp); err != nil {
 		return err
 	}
 	return p.resume(ctx, id)
@@ -564,7 +576,10 @@ func (p *Processor) envelope(id, space, kind string, user *api.User, thread stri
 		Actor: a, ReplyToMessageID: thread, ReceivedAt: p.opts.Now().UTC()}
 }
 
-func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string) error {
+func (p *Processor) record(c puller.Change, id string, w wire.InboundMessage, state *ledger.MessageState, space *ledger.SpaceState, local string, catchUp bool) error {
+	if catchUp {
+		w.Text = "[catch-up]\n" + w.Text
+	}
 	data, err := json.Marshal(w)
 	if err != nil {
 		return errors.New("inbound: encode turn failed")
@@ -638,8 +653,18 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 		}
 		// Persist the attempt before crossing the process boundary. A crash or
 		// lost response after this point is ambiguous, never safe to repost.
-		if err := p.update(func(l *ledger.Ledger) { l.Changes[id].Attempts++; l.Changes[id].Reason = "" }); err != nil {
+		attempted := false
+		if err := p.update(func(l *ledger.Ledger) {
+			if c := l.Changes[id]; c != nil {
+				c.Attempts++
+				c.Reason = ""
+				attempted = true
+			}
+		}); err != nil {
 			return err
+		}
+		if !attempted {
+			return nil
 		}
 		r, err := p.opts.GC.Inbound(ctx, w)
 		if err != nil {
@@ -647,7 +672,12 @@ func (p *Processor) resume(ctx context.Context, id string) error {
 			answered := errors.As(err, &responseErr)
 			var op *net.OpError
 			if (answered && (responseErr.StatusCode >= 500 || responseErr.StatusCode == 429)) || (errors.As(err, &op) && op.Op == "dial") {
-				if err := p.update(func(l *ledger.Ledger) { l.Changes[id].Attempts--; l.Changes[id].Reason = "retry" }); err != nil {
+				if err := p.update(func(l *ledger.Ledger) {
+					if c := l.Changes[id]; c != nil {
+						c.Attempts--
+						c.Reason = "retry"
+					}
+				}); err != nil {
 					return err
 				}
 				return errors.New("inbound: gc temporarily unavailable; retry POST")
@@ -706,15 +736,19 @@ func (p *Processor) outcome(id, status, receipt string) error {
 	case "delivered", "no_route", "pending", "failed", "partial":
 		return p.update(func(l *ledger.Ledger) {
 			c := l.Changes[id]
+			if c == nil {
+				return
+			}
 			if receipt != "" {
 				c.ReceiptID = receipt
 			}
 			switch status {
 			case "delivered", "no_route":
 				if c.Status != "committed" {
-					l.Counters["turns:"+c.Space]++
 					if status == "no_route" {
 						l.Counters["no_route:"+c.Space]++
+					} else {
+						l.Counters["turns:"+c.Space]++
 					}
 				}
 				c.Status = "committed"
@@ -732,13 +766,18 @@ func (p *Processor) outcome(id, status, receipt string) error {
 }
 
 func (p *Processor) unresolved(id, reason string) error {
+	recorded := false
 	err := p.update(func(l *ledger.Ledger) {
 		c := l.Changes[id]
+		if c == nil {
+			return
+		}
 		c.Status = "unresolved"
 		c.Reason = reason
 		l.Unresolved[id] = c
+		recorded = true
 	})
-	if err == nil {
+	if err == nil && recorded {
 		p.opts.Logger.Warn("inbound delivery unresolved", "change", id, "cause", reason)
 	}
 	return err
