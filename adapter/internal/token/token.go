@@ -596,10 +596,9 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 	if err != nil {
 		return err
 	}
-	const address = "127.0.0.1:0"
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", address)
+	listener, err := listenLoopback(ctx, (&net.ListenConfig{}).Listen)
 	if err != nil {
-		return fmt.Errorf("OAuth loopback listener %s (port 0 requests a free port): %w; retry with another port", address, err)
+		return err
 	}
 	cfg.RedirectURL = "http://" + listener.Addr().String() + "/callback"
 	state, verifier := oauth2.GenerateVerifier(), oauth2.GenerateVerifier()
@@ -690,6 +689,15 @@ func RunAuth(ctx context.Context, clientFile, tokenFile string, ep config.Endpoi
 		return errors.New("OAuth consent returned no refresh_token; repeat consent with offline access")
 	}
 	return writeToken(ctx, tokenFile, tok)
+}
+
+func listenLoopback(ctx context.Context, listen func(context.Context, string, string) (net.Listener, error)) (net.Listener, error) {
+	const address = "127.0.0.1:0"
+	listener, err := listen(ctx, "tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("OAuth loopback listener %s (port 0 requests a free port): %w; check that the loopback interface is up, ephemeral ports are available, and the firewall permits local listeners", address, err)
+	}
+	return listener, nil
 }
 
 func writeToken(ctx context.Context, path string, tok *oauth2.Token) error {

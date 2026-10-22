@@ -814,6 +814,26 @@ func TestRunAuthCancelCreatesNothing(t *testing.T) {
 	assertNoAuthTemps(t, tokenFile)
 }
 
+func TestLoopbackBindFailureIsActionable(t *testing.T) {
+	listener, err := listenLoopback(t.Context(), func(ctx context.Context, network, address string) (net.Listener, error) {
+		if network != "tcp" || address != "127.0.0.1:0" {
+			t.Fatalf("listen address = %s %s", network, address)
+		}
+		return nil, syscall.EADDRNOTAVAIL
+	})
+	if listener != nil || !errors.Is(err, syscall.EADDRNOTAVAIL) {
+		t.Fatalf("bind result: listener=%v err=%v", listener, err)
+	}
+	for _, hint := range []string{"127.0.0.1:0", "loopback interface", "ephemeral ports", "firewall"} {
+		if !strings.Contains(err.Error(), hint) {
+			t.Errorf("bind error %q lacks %q", err, hint)
+		}
+	}
+	if strings.Contains(err.Error(), "another port") {
+		t.Errorf("bind error suggests an unavailable option: %v", err)
+	}
+}
+
 func TestRunAuthExchangeErrorSanitized(t *testing.T) {
 	for _, tc := range []struct {
 		status int
