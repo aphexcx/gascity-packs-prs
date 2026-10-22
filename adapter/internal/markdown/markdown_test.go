@@ -28,6 +28,7 @@ func TestToChat(t *testing.T) {
 		{"fenced code", "```go\n**b**\n- x\n# title\n[x](url)\n```\n**after**", "```go\n**b**\n- x\n# title\n[x](url)\n```\n*after*"},
 		{"dash bullet", "- one\n  - two\n", "* one\n  * two\n"},
 		{"star bullet", "* one\n* **two**", "* one\n* *two*"},
+		{"spaced thematic break", "- - -\n* * *", "- - -\n* * *"},
 		{"link", "[text](https://example.com)", "<https://example.com|text>"},
 		{"link destination pipe", "[t](https://example.com/a|b)", "<https://example.com/a%7Cb|t>"},
 		{"link destination angle", "[t](https://example.com/a>b)", "<https://example.com/a%3Eb|t>"},
@@ -49,6 +50,8 @@ func TestToChat(t *testing.T) {
 		{"escaped link backslash", `[text](a\\) **after**`, `<a\\|text> *after*`},
 		{"unclosed nested destination", "[text](a(b) **after**", "[text](a(b) *after*"},
 		{"format link label", "[**text**](https://example.com)", "<https://example.com|*text*>"},
+		{"link label closing angle", "[a>b](u)", "<u|a%3Eb>"},
+		{"formatted link label closing angle", "[**a>b**](u)", "<u|*a%3Eb*>"},
 		{"literal brackets before link", "array[0] then [text](url)", "array[0] then <url|text>"},
 		{"nested link label", "[a [nested] label](url)", "<url|a [nested] label>"},
 		{"links inside label stay literal", "[outer [inner](v) **bold**](u)", "<u|outer [inner](v) *bold*>"},
@@ -56,8 +59,13 @@ func TestToChat(t *testing.T) {
 		{"image inside label stays literal", "[![**B**](x)](u)", "<u|![**B**](x)>"},
 		{"nested destination inside label stays literal", "[t [x](a*b*c)](u)", "<u|t [x](a*b*c)>"},
 		{"image unchanged", "![**alt**](image.png) and **text**", "![**alt**](image.png) and *text*"},
+		{"escaped image marker becomes link", `\![a](u)`, `\!<u|a>`},
+		{"escaped image marker formats label", `\![**a**](u)`, `\!<u|*a*>`},
+		{"escaped backslash before image", `\\![a](u)`, `\\![a](u)`},
+		{"escaped backslash and image marker", `\\\![a](u)`, `\\\!<u|a>`},
 		{"link with code bracket", "[`]` label](url)", "<url|`]` label>"},
 		{"heading", "# Title\n## Subtitle\n###### Small\n", "*Title*\n*Subtitle*\n*Small*\n"},
+		{"tabbed heading", "#\tTitle\n##\t**Subtitle** #\t", "*Title*\n*Subtitle*"},
 		{"heading trailing space", "# Title  ", "*Title*"},
 		{"heading closing hashes", "# Title #", "*Title*"},
 		{"heading bold", "# **Bold** title", "*Bold title*"},
@@ -123,9 +131,6 @@ func TestToChatCodeSpanBlockBoundaries(t *testing.T) {
 		t.Run("block boundary "+boundary, func(t *testing.T) {
 			input := "a `b\n" + boundary + "\n**c** `"
 			renderedBoundary := strings.ReplaceAll(boundary, "**quote**", "*quote*")
-			if boundary == " - - - " {
-				renderedBoundary = " * - - " // Retain the supported dash-bullet conversion.
-			}
 			want := "a `b\n" + renderedBoundary + "\n*c* `"
 			if got := ToChat(input); got != want {
 				t.Fatalf("ToChat(%q) = %q, want %q", input, got, want)

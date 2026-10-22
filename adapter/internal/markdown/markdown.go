@@ -69,11 +69,11 @@ func ToChat(md string) string {
 			heading++
 		}
 		switch {
-		case heading > 0 && heading <= 6 && strings.HasPrefix(body[heading:], " "):
+		case heading > 0 && heading <= 6 && heading < len(body) && (body[heading] == ' ' || body[heading] == '\t'):
 			if content := headingContent(body[heading+1:]); content != "" {
 				out.WriteString("*" + inline(content, true) + "*")
 			}
-		case strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* "):
+		case !blockBoundaryLine(body) && (strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* ")):
 			out.WriteString("* " + inline(body[2:], false))
 		default:
 			out.WriteString(inline(body, false))
@@ -192,8 +192,10 @@ func formatInline(s string, heading, allowLinks bool) string {
 	lastCodeRun := indexCodeRuns(s, 0)
 	labels := linkLabelEnds(s, lastCodeRun)
 	destinations := parenthesisEnds(s)
+	escapedByte := -1
 	for i := 0; i < len(s); {
 		if s[i] == '\\' && i+1 < len(s) {
+			escapedByte = i + 1
 			end := escapedEnd(s, i)
 			out.WriteString(s[i:end])
 			i = end
@@ -207,13 +209,14 @@ func formatInline(s string, heading, allowLinks bool) string {
 		}
 		if s[i] == '[' {
 			if label, url, end, ok := link(s, i, labels, destinations); ok {
-				if !allowLinks || (i > 0 && s[i-1] == '!') {
+				if !allowLinks || (i > 0 && s[i-1] == '!' && escapedByte != i-1) {
 					out.WriteString(s[i:end])
 				} else {
 					// Links cannot nest in link text. Keep nested link syntax
 					// literal while still formatting emphasis and code in the
 					// rest of the label, without recursing into nested links.
-					out.WriteString("<" + url + "|" + formatInline(label, heading, false) + ">")
+					label = strings.ReplaceAll(formatInline(label, heading, false), ">", "%3E")
+					out.WriteString("<" + url + "|" + label + ">")
 				}
 				i = end
 				continue
