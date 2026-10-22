@@ -1769,3 +1769,57 @@ func TestStateReconciliationCanRetryWithoutReplacingStateAgain(t *testing.T) {
 		t.Fatalf("reconcile retry: %d %s, calls=%d counter=%d", code, raw, calls, f.l.Counters["reconcile"])
 	}
 }
+
+func TestConcurrentRecoveryChecksHealthUnderExclusiveGate(t *testing.T) {
+	f := setup(t)
+	replacements := 0
+	f.s.opts.StateChanged = func(ctx context.Context) error {
+		replacements++
+		if err := f.s.update(ctx, func(l *ledger.Ledger) error {
+			l.Counters["recovered"] = 1
+			return nil
+		}); err != nil {
+			return err
+		}
+		f.s.SetHealth(Health{State: "ready"})
+		return nil
+	}
+	f.s.SetHealth(Health{State: "recovery-required"})
+	// Freeze the health read so both requests overlap at the authorization
+	// boundary. One must hold the recovery gate and the other must be refused
+	// before either can consume the old recovery-required health value.
+	f.s.mu.Lock()
+	results := make(chan int, 2)
+	for range 2 {
+		go func() {
+			w := httptest.NewRecorder()
+			f.s.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/state", strings.NewReader(`{"action":"reset"}`)))
+			results <- w.Code
+		}()
+	}
+	var codes []int
+	select {
+	case code := <-results:
+		codes = append(codes, code)
+		if code != 409 {
+			t.Errorf("overlapping recovery = %d, want 409", code)
+		}
+	case <-time.After(time.Second):
+		t.Error("concurrent recovery read health before taking the exclusive gate")
+	}
+	f.s.mu.Unlock()
+	for len(codes) < 2 {
+		select {
+		case code := <-results:
+			codes = append(codes, code)
+		case <-time.After(5 * time.Second):
+			t.Fatal("recovery did not finish")
+		}
+	}
+	if codes[0]+codes[1] != 200+409 || replacements != 1 || f.l.Counters["recovered"] != 1 {
+		t.Fatalf("recovery replaced state again: statuses=%v replacements=%d state=%+v", codes, replacements, f.l.Counters)
+	}
+	if code, raw, _ := f.call(t, "/state", map[string]string{"action": "reset"}); code != 409 {
+		t.Fatalf("recovered state replaced: %d %s", code, raw)
+	}
+}

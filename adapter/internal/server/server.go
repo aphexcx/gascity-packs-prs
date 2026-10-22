@@ -1463,16 +1463,17 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, errors.New("action restore or reset required"))
 		return
 	}
-	// Recovery is an operator action while delivery is stopped, never a live reset.
-	if s.Health().State != "recovery-required" {
-		problem(w, 409, errors.New("state restore/reset requires recovery-required health"))
-		return
-	}
 	if !s.stateGate.TryLock() {
 		problem(w, 409, errors.New("delivery is still in flight; retry state recovery"))
 		return
 	}
 	defer s.stateGate.Unlock()
+	// Check under the exclusive gate: another recovery may have completed
+	// since this request arrived. Never authorize a reset from stale health.
+	if s.Health().State != "recovery-required" {
+		problem(w, 409, errors.New("state restore/reset requires recovery-required health"))
+		return
+	}
 	if v.Action == "reset" {
 		v.File = ""
 	}
