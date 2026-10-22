@@ -76,8 +76,8 @@ type Config struct {
 	SecretsDir string
 }
 
-// Load reads KEY=VALUE secrets and TOML settings. A missing settings file uses
-// defaults; missing secrets and malformed files are errors. Endpoint overrides
+// Load reads KEY=VALUE secrets and TOML settings. Omitted settings use defaults;
+// both files must exist and be well formed. Endpoint overrides
 // and gc's service coordinates come from the process environment.
 func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	values, err := readEnv(envFile)
@@ -110,7 +110,7 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	c.Settings.Media.MaxBytes = 209715200
 	c.Settings.CatchupBudget = 50
 	metadata, err := toml.DecodeFile(settingsFile, &c.Settings)
-	if err != nil && !os.IsNotExist(err) {
+	if err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
 	}
 	if unknown := metadata.Undecoded(); len(unknown) > 0 {

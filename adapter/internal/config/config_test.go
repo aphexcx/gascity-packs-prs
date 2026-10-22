@@ -85,11 +85,12 @@ func configFixture(t *testing.T) (env, settings, dir string) {
 	}
 	env = filepath.Join(dir, "env")
 	settings = filepath.Join(dir, "..", "config.toml")
+	writeFixture(t, settings, "")
 	writeFixture(t, env, "\n # a comment\nGCHAT_PROJECT_ID = 'proj'\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE=\"client=one #literal.json\"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\n")
 	return
 }
 
-func TestMissingSettingsDefaults(t *testing.T) {
+func TestEmptySettingsDefaults(t *testing.T) {
 	env, settings, dir := configFixture(t)
 	c, err := Load(env, settings, dir)
 	if err != nil {
@@ -280,11 +281,20 @@ func TestFileReadErrors(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), env+".missing") {
 		t.Fatalf("missing env: %v", err)
 	}
+	settings = filepath.Join(dir, "settings-directory")
 	if err := os.Mkdir(settings, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	_, err = Load(env, settings, dir)
 	if err == nil || !strings.Contains(err.Error(), settings) {
 		t.Fatalf("unreadable settings: %v", err)
+	}
+}
+
+func TestMissingSettingsNamesFile(t *testing.T) {
+	env, settings, dir := configFixture(t)
+	_, err := Load(env, settings+".missing", dir)
+	if err == nil || !strings.Contains(err.Error(), settings+".missing") {
+		t.Fatalf("want missing settings file error, got %v", err)
 	}
 }
