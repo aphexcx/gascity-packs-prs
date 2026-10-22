@@ -307,6 +307,37 @@ type outboundReceipt struct {
 	Metadata     map[string]string
 }
 
+// These untagged records mirror gc's public OutboundResult fields.
+type deliveryContext struct {
+	ID                string
+	SchemaVersion     int
+	SessionID         string
+	Conversation      wire.Conversation
+	BindingGeneration int64
+	LastPublishedAt   time.Time
+	LastMessageID     string
+	SourceSessionID   string
+	Metadata          map[string]string
+}
+
+type transcriptEntry struct {
+	ID                string
+	SchemaVersion     int
+	Conversation      wire.Conversation
+	Sequence          int64
+	Kind              string
+	Provenance        string
+	ProviderMessageID string
+	Actor             wire.Actor
+	Text              string
+	ExplicitTarget    string
+	ReplyToMessageID  string
+	Attachments       []wire.Attachment
+	SourceSessionID   string
+	CreatedAt         time.Time
+	Metadata          map[string]string
+}
+
 func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	var request wire.OutboundRequest
 	if !decode(w, r, &request) {
@@ -372,16 +403,21 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	}
 	result := struct {
 		Receipt         outboundReceipt
-		TranscriptEntry *map[string]any
+		DeliveryContext *deliveryContext
+		TranscriptEntry *transcriptEntry
 	}{
 		Receipt: outboundReceipt{MessageID: receipt.MessageID, Conversation: receipt.Conversation, Delivered: receipt.Delivered, FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter, Metadata: receipt.Metadata},
 	}
 	s.mu.Lock()
 	failTranscript := s.FailTranscript
-	s.mu.Unlock()
-	if receipt.Delivered && !failTranscript {
-		entry := map[string]any{"session_id": request.SessionID, "message_id": receipt.MessageID, "text": request.Text}
-		result.TranscriptEntry = &entry
+	now := s.now()
+	if receipt.Delivered {
+		result.DeliveryContext = &deliveryContext{SessionID: request.SessionID, Conversation: request.Conversation, BindingGeneration: 1, LastPublishedAt: now, LastMessageID: receipt.MessageID, SourceSessionID: request.SessionID}
 	}
+	if receipt.Delivered && !failTranscript {
+		s.sequence++
+		result.TranscriptEntry = &transcriptEntry{ID: fmt.Sprintf("transcript-%d", s.sequence), SchemaVersion: 1, Conversation: request.Conversation, Sequence: int64(s.sequence), Kind: "outbound", Provenance: "live", ProviderMessageID: receipt.MessageID, Text: request.Text, SourceSessionID: request.SessionID, CreatedAt: now}
+	}
+	s.mu.Unlock()
 	respond(w, 200, result)
 }

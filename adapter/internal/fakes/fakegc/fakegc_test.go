@@ -297,10 +297,26 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 	if result["Receipt"].(map[string]any)["Delivered"] != true || result["TranscriptEntry"] == nil || result["receipt"] != nil {
 		t.Fatalf("outbound shape: %v", result)
 	}
+	entry := result["TranscriptEntry"].(map[string]any)
+	for _, key := range []string{"ID", "SchemaVersion", "Conversation", "Sequence", "Kind", "Provenance", "ProviderMessageID", "Actor", "Text", "ExplicitTarget", "ReplyToMessageID", "Attachments", "SourceSessionID", "CreatedAt", "Metadata"} {
+		if _, ok := entry[key]; !ok {
+			t.Errorf("transcript missing %s: %v", key, entry)
+		}
+	}
+	if len(entry) != 16 || entry["SourceSessionID"] != "session" || entry["ProviderMessageID"] != "spaces/room/messages/one" || entry["Text"] != "hello" {
+		t.Errorf("transcript shape: %v", entry)
+	}
+	dc, ok := result["DeliveryContext"].(map[string]any)
+	if !ok || len(dc) != 9 || dc["SessionID"] != "session" || dc["LastMessageID"] != "spaces/room/messages/one" || dc["SourceSessionID"] != "session" || dc["LastPublishedAt"] == nil || dc["BindingGeneration"] == nil || dc["Conversation"] == nil || dc["ID"] == nil || dc["SchemaVersion"] == nil {
+		t.Errorf("delivery context shape: %v", result)
+	}
 	s.Configure(func(s *Server) { s.FailTranscript = true })
 	failed := call(t, s, "POST", "outbound", req, true, 200)
 	if failed["Receipt"].(map[string]any)["Delivered"] != true || failed["TranscriptEntry"] != nil {
 		t.Fatalf("transcript failure: %v", failed)
+	}
+	if failed["DeliveryContext"] == nil {
+		t.Fatal("transcript failure lost delivery context")
 	}
 	s.Configure(func(s *Server) { s.FailTranscript = false })
 	callbackStatus = 429
