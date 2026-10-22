@@ -1,0 +1,181 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gchat-adapter/internal/ledger"
+)
+
+func TestStateOfflineRestoreAndReset(t *testing.T) {
+	for _, action := range []string{"restore", "reset"} {
+		t.Run(action, func(t *testing.T) {
+			env, state, _ := stateFixture(t)
+			backup := filepath.Join(t.TempDir(), "backup.json")
+			l := ledger.New()
+			l.Counters["restored"] = 9
+			if err := l.Save(backup); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"state", action}
+			if action == "restore" {
+				args = append(args, backup)
+			}
+			var stdout, stderr bytes.Buffer
+			if code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil); code != 0 {
+				t.Fatalf("exit=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+			}
+			saved, err := ledger.Load(state, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := int64(0)
+			if action == "restore" {
+				want = 9
+			}
+			if saved.Counters["restored"] != want || saved.Counters["original"] != 0 || !ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("unexpected ledger/marker after %s: %+v", action, saved)
+			}
+			if action == "reset" && !strings.Contains(stderr.String(), "messages from the gap may be lost or duplicated") {
+				t.Fatalf("reset warning missing: %q", &stderr)
+			}
+			if !strings.Contains(stdout.String(), "state ") {
+				t.Fatalf("missing confirmation: %q", &stdout)
+			}
+		})
+	}
+}
+
+func TestStateInvalidRestorePreservesCurrent(t *testing.T) {
+	for _, contents := range []string{"not json", `{"version":99}`, "missing"} {
+		t.Run(contents, func(t *testing.T) {
+			env, state, _ := stateFixture(t)
+			before, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			backup := filepath.Join(t.TempDir(), "backup.json")
+			if contents != "missing" {
+				writeFile(t, backup, contents)
+			}
+			var stdout, stderr bytes.Buffer
+			code := run(t.Context(), []string{"state", "restore", backup}, &stdout, &stderr, envAt(env), nil)
+			after, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code != 1 || !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("invalid backup changed state: exit=%d stderr=%q", code, &stderr)
+			}
+		})
+	}
+}
+
+func TestStateRunningService(t *testing.T) {
+	for _, tc := range []struct {
+		name, action string
+		force        bool
+		status       int
+	}{
+		{"refuse reset", "reset", false, 0},
+		{"refuse restore", "restore", false, 0},
+		{"forced reset", "reset", true, 200},
+		{"forced restore", "restore", true, 200},
+		{"healthy refusal", "reset", true, 409},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			env, state, socket := stateFixture(t)
+			before, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ln, err := net.Listen("unix", socket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			requests := make(chan map[string]string, 2)
+			srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/state" {
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
+				}
+				var request map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+				}
+				requests <- request
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				if tc.status == 409 {
+					fmt.Fprint(w, `{"error":"state restore/reset requires recovery-required health"}`)
+				} else {
+					fmt.Fprint(w, `{"state":"initializing","reason":"state restored"}`)
+				}
+			})}
+			go func() { _ = srv.Serve(ln) }()
+			t.Cleanup(func() { _ = srv.Close() })
+			args := []string{"state", tc.action}
+			backup, err := filepath.Abs("test-backup.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.action == "restore" {
+				args = append(args, "test-backup.json")
+			}
+			if tc.force {
+				args = append(args, "--force")
+			}
+			var stdout, stderr bytes.Buffer
+			code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil)
+			after, err := os.ReadFile(state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, after) || ledger.Established(filepath.Dir(env)) {
+				t.Fatalf("CLI changed running service ledger: exit=%d stderr=%q", code, &stderr)
+			}
+			if tc.force {
+				select {
+				case request := <-requests:
+					if request["action"] != tc.action || (tc.action == "restore" && request["file"] != backup) {
+						t.Fatalf("state request=%v", request)
+					}
+				default:
+					t.Fatalf("force did not contact service: exit=%d stderr=%q", code, &stderr)
+				}
+				if (code == 0) != (tc.status == 200) || (tc.status == 409 && !strings.Contains(stderr.String(), "recovery-required")) {
+					t.Fatalf("exit=%d stdout=%q stderr=%q", code, &stdout, &stderr)
+				}
+			} else if code != 1 || len(requests) != 0 || !strings.Contains(stderr.String(), "--force") {
+				t.Fatalf("running service not refused: exit=%d stderr=%q", code, &stderr)
+			}
+		})
+	}
+}
+
+func stateFixture(t *testing.T) (env, state, socket string) {
+	t.Helper()
+	env, _ = authFixture(t, "http://127.0.0.1:1")
+	state = filepath.Join(filepath.Dir(env), "..", "state.json")
+	l := ledger.New()
+	l.Counters["original"] = 4
+	if err := l.Save(state); err != nil {
+		t.Fatal(err)
+	}
+	// Keep Unix socket paths beneath macOS's 104-byte limit.
+	dir, err := os.MkdirTemp("/tmp", "gchat-state-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socket = filepath.Join(dir, "service.sock")
+	t.Setenv("GC_SERVICE_SOCKET", socket)
+	t.Setenv("GCHAT_STATE_FILE", state)
+	return
+}

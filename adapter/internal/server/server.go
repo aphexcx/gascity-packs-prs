@@ -60,6 +60,8 @@ type Options struct {
 	// LastEvent returns the app's last observed event time, including skipped
 	// events. It must be safe to call concurrently with event processing.
 	LastEvent func() time.Time
+	// SubscriptionStatus is a nonblocking snapshot from the subscription manager.
+	SubscriptionStatus func() (int, time.Time, ledger.SubscriptionState, error)
 	// StateChanged asks the app to reconcile after a restore or reset. The app
 	// must quiesce its other ledger consumers while invoking the state route.
 	// It runs under the state gate and must tolerate retries: after an error,
@@ -124,6 +126,28 @@ func New(opts Options) (*Server, error) {
 
 func (s *Server) Close()             { s.cancel() }
 func (s *Server) SetHealth(h Health) { s.mu.Lock(); defer s.mu.Unlock(); s.health = h }
+
+// Drain waits for requests and an already-running recovery sweep to finish.
+// The app sets initializing health before calling it, so no new delivery starts.
+// Health and status remain reachable while credential clients are replaced.
+func (s *Server) Drain(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if s.stateGate.TryLock() {
+			s.stateGate.Unlock()
+			return nil
+		}
+		t := time.NewTimer(5 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+}
 
 // SetConfig publishes a validated config reload to future requests. The app
 // separately rebuilds clients and reloads inbound policy using the same config.
@@ -1442,7 +1466,13 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			lastEvent = at.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	respond(w, 200, map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent})
+	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
+	if s.opts.SubscriptionStatus != nil {
+		failures, next, state, err := s.opts.SubscriptionStatus()
+		kind, code := logCause(err)
+		status["subscription_retry"] = map[string]any{"failures": failures, "next_attempt": next, "cause_kind": kind, "http_status": code, "state": state.State}
+	}
+	respond(w, 200, status)
 }
 
 func (s *Server) resolve(w http.ResponseWriter, r *http.Request) {

@@ -29,14 +29,15 @@ type Space = googlechat.Space
 // Client belongs to one authenticated identity. Do not reuse it after switching
 // credentials: its reaction ownership and rate limits belong to that identity.
 type Client struct {
-	api              *googlechat.Service
-	limits           Limiter
-	timing           timing
-	retryBound       time.Duration
-	ep               config.Endpoints
-	identityMu       sync.RWMutex
-	identityUserID   string
-	identityMismatch error
+	api                    *googlechat.Service
+	limits                 Limiter
+	timing                 timing
+	retryBound             time.Duration
+	ep                     config.Endpoints
+	identityMu             sync.RWMutex
+	identityUserID         string
+	observedIdentityUserID string
+	identityMismatch       error
 }
 
 func New(ctx context.Context, httpClient *http.Client, ep config.Endpoints) (*Client, error) {
@@ -63,6 +64,12 @@ func (c *Client) SetIdentityUserID(id string) error {
 	}
 	c.identityMu.Lock()
 	defer c.identityMu.Unlock()
+	return c.setIdentityUserID(id)
+}
+
+// setIdentityUserID requires identityMu; observation and conflict detection
+// must become visible together to the app's persistence snapshot.
+func (c *Client) setIdentityUserID(id string) error {
 	if c.identityUserID != "" && c.identityUserID != id {
 		if c.identityMismatch == nil {
 			c.identityMismatch = localError{errors.New("chat: identity user ID mismatch; rebuild the client before deleting reactions")}
@@ -80,7 +87,10 @@ var validUserID = regexp.MustCompile(`^users/[0-9]+$`)
 // still disables reaction removal until the app rebuilds this client.
 func (c *Client) learnIdentityUserID(id string) {
 	if validUserID.MatchString(id) {
-		_ = c.SetIdentityUserID(id)
+		c.identityMu.Lock()
+		defer c.identityMu.Unlock()
+		c.observedIdentityUserID = id
+		_ = c.setIdentityUserID(id)
 	}
 }
 
@@ -102,6 +112,19 @@ func (c *Client) IdentityUserID() string {
 	c.identityMu.RLock()
 	defer c.identityMu.RUnlock()
 	return c.identityUserID
+}
+
+// ObservedIdentityUserID lets the app persist the server-observed identity and
+// rebuild after a conflict. IdentityUserID deliberately retains its original
+// value so a conflicted client cannot silently change reaction ownership.
+func (c *Client) ObservedIdentityUserID() (id string, conflicted bool) {
+	c.identityMu.RLock()
+	defer c.identityMu.RUnlock()
+	id = c.observedIdentityUserID
+	if id == "" {
+		id = c.identityUserID
+	}
+	return id, c.identityMismatch != nil
 }
 
 func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
