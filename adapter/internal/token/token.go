@@ -42,7 +42,7 @@ type Source struct {
 	config        *oauth2.Config
 	tokenFile     string
 	mu            sync.Mutex
-	refreshMu     sync.Mutex
+	refreshGate   chan struct{}
 	current       *oauth2.Token
 	state         State
 	generation    uint64
@@ -55,6 +55,9 @@ type Source struct {
 	validateFn    func(context.Context, *http.Client) error
 }
 
+// New loads the credential files without retaining a lifecycle context. Watch's
+// context controls its polling and validation; Client uses each HTTP request's
+// context for token acquisition and refresh, independently of the watcher.
 func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*Source, error) {
 	if strings.TrimSpace(ep.ChatAPIBase) == "" {
 		return nil, errors.New("ChatAPIBase is required for credential validation")
@@ -63,7 +66,7 @@ func New(clientFile, tokenFile string, ep config.Endpoints, scopes []string) (*S
 	if err != nil {
 		return nil, err
 	}
-	s := &Source{config: cfg, tokenFile: tokenFile, state: Missing,
+	s := &Source{config: cfg, tokenFile: tokenFile, state: Missing, refreshGate: make(chan struct{}, 1),
 		watchInterval: 2 * time.Second, now: time.Now, refreshDelay: 200 * time.Millisecond}
 	s.validateFn = func(ctx context.Context, client *http.Client) error {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(ep.ChatAPIBase, "/")+"/v1/spaces?pageSize=1", nil)
@@ -97,20 +100,24 @@ func (s *Source) State() State {
 	return s.state
 }
 
-// Client checks the credential immediately. Its transport continues to report
+// Client checks the credential immediately using ctx, but does not retain its
+// cancellation or deadline. Later token acquisition (including waiting for a
+// refresh) uses each request's context. Its transport continues to report
 // permanent refresh failures through Source.State on later requests as well.
 // The client has no total or response-header timeout: callers must set a context
 // deadline on every request to bound the API call and response body transfer.
 func (s *Source) Client(ctx context.Context) (*http.Client, error) {
-	ts := s.TokenSource(ctx)
-	if _, err := ts.Token(); err != nil {
+	if _, err := s.token(ctx); err != nil {
 		return nil, err
 	}
-	// Do not wrap ts in ReuseTokenSource: Source already caches, and a second
+	// Do not wrap in ReuseTokenSource: Source already caches, and a second
 	// cache would retain the old access token after a validated file replacement.
-	return authenticatedClient(ctx, ts), nil
+	return authenticatedClient(ctx, s.token), nil
 }
 
+// TokenSource adapts Source to oauth2's context-free interface. The supplied ctx
+// bounds every Token call on this adapter, including its wait for a refresh.
+// HTTP callers should use Client to acquire tokens with each request's context.
 func (s *Source) TokenSource(ctx context.Context) oauth2.TokenSource {
 	return &sourceToken{source: s, ctx: ctx}
 }
@@ -121,11 +128,18 @@ type sourceToken struct {
 }
 
 func (ts *sourceToken) Token() (*oauth2.Token, error) {
-	s := ts.source
-	s.refreshMu.Lock()
-	defer s.refreshMu.Unlock()
+	return ts.source.token(ts.ctx)
+}
+
+func (s *Source) token(ctx context.Context) (*oauth2.Token, error) {
+	select {
+	case s.refreshGate <- struct{}{}:
+		defer func() { <-s.refreshGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	for {
-		if err := ts.ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		s.mu.Lock()
@@ -134,7 +148,7 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 		if current == nil || state == NeedsSignIn {
 			return nil, ErrNeedsSignIn
 		}
-		tok, err := s.refresh(ts.ctx, current)
+		tok, err := s.refresh(ctx, current)
 		s.mu.Lock()
 		if generation != s.generation {
 			// A watch reload won the race. Neither a token nor an error from the
@@ -220,7 +234,7 @@ func (s *Source) reload(ctx context.Context, onReload func()) {
 		defer cancel()
 		tok, err = s.refresh(validationCtx, tok)
 		if err == nil {
-			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, oauth2.StaticTokenSource(tok)))
+			err = s.validateFn(validationCtx, authenticatedClient(validationCtx, func(context.Context) (*oauth2.Token, error) { return tok, nil }))
 		}
 	}
 	if err != nil {
@@ -272,6 +286,11 @@ func (s *Source) refresh(ctx context.Context, current *oauth2.Token) (*oauth2.To
 		tok, err := ts.Token()
 		if err == nil {
 			return tok, nil
+		}
+		// oauth2 flattens response-body read errors, so restore the context
+		// sentinel before classifying or sanitizing a canceled exchange.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
 		}
 		var failure *oauth2.RetrieveError
 		if errors.As(err, &failure) {
@@ -401,14 +420,41 @@ func sanitizedCause(err error) string {
 	return "invalid credential or configuration"
 }
 
-func authenticatedClient(ctx context.Context, ts oauth2.TokenSource) *http.Client {
+func authenticatedClient(ctx context.Context, token func(context.Context) (*oauth2.Token, error)) *http.Client {
 	base := http.DefaultTransport
-	if client, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && client.Transport != nil {
+	client, _ := ctx.Value(oauth2.HTTPClient).(*http.Client)
+	if client != nil && client.Transport != nil {
 		base = client.Transport
 	}
 	// Request contexts bound API calls; a total client timeout would also cut
 	// off large media bodies after the headers have already arrived.
-	return &http.Client{Transport: &oauth2.Transport{Source: ts, Base: base}}
+	return &http.Client{Transport: &tokenTransport{token: token, base: base, oauthClient: client}}
+}
+
+type tokenTransport struct {
+	token       func(context.Context) (*oauth2.Token, error)
+	base        http.RoundTripper
+	oauthClient *http.Client
+}
+
+func (t *tokenTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ctx := req.Context()
+	// Preserve endpoint transport overrides without retaining the construction
+	// context's cancellation, deadline, or other request-scoped values.
+	if t.oauthClient != nil {
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, t.oauthClient)
+	}
+	tok, err := t.token(ctx)
+	if err != nil {
+		// RoundTripper owns the request body, even when no HTTP call is made.
+		if req.Body != nil {
+			req.Body.Close()
+		}
+		return nil, err
+	}
+	request := req.Clone(req.Context())
+	tok.SetAuthHeader(request)
+	return t.base.RoundTrip(request)
 }
 
 func readToken(path string) (*oauth2.Token, os.FileInfo, error) {

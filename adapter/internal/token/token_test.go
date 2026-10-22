@@ -190,6 +190,195 @@ func TestRefreshTransientRetry(t *testing.T) {
 	}
 }
 
+func TestClientRequestBoundsRefresh(t *testing.T) {
+	for _, stalledBody := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stalledBody=%v", stalledBody), func(t *testing.T) {
+			started := make(chan struct{})
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				io.Copy(io.Discard, r.Body)
+				close(started)
+				if stalledBody {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					w.(http.Flusher).Flush()
+				}
+				<-r.Context().Done()
+			})
+			writeJSON(t, tokenFile, savedToken("cached"))
+			s := mustSource(t, clientFile, tokenFile, ep)
+			construction, stop := context.WithCancel(t.Context())
+			defer stop()
+			client, err := s.Client(construction)
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.current.Expiry = time.Now().Add(-time.Hour)
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/resource", nil)
+			done := make(chan error, 1)
+			start := time.Now()
+			go func() { _, err := client.Do(req); done <- err }()
+			waitSignal(t, started)
+			select {
+			case err := <-done:
+				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 500*time.Millisecond {
+					t.Fatalf("request deadline: elapsed=%v error=%v", time.Since(start), err)
+				}
+			case <-time.After(500 * time.Millisecond):
+				stop()
+				<-done
+				t.Fatal("request deadline did not interrupt refresh")
+			}
+		})
+	}
+}
+
+type waitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (c *waitContext) Done() <-chan struct{} {
+	c.once.Do(func() { close(c.waiting) })
+	return c.Context.Done()
+}
+
+func TestRefreshWaiterCanCancel(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		calls.Add(1)
+		close(started)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+	})
+	defer close(release)
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	s := mustSource(t, clientFile, tokenFile, ep)
+	first := make(chan error, 1)
+	go func() { _, err := s.TokenSource(t.Context()).Token(); first <- err }()
+	waitSignal(t, started)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	waiter := &waitContext{Context: ctx, waiting: make(chan struct{})}
+	second := make(chan error, 1)
+	go func() { _, err := s.TokenSource(waiter).Token(); second <- err }()
+	waitSignal(t, waiter.waiting)
+	cancel()
+	select {
+	case err := <-second:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter cancellation = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("canceled waiter is blocked by another refresh")
+	}
+	select {
+	case err := <-first:
+		t.Fatalf("waiter cancellation interrupted the first refresh: %v", err)
+	default:
+	}
+	release <- struct{}{}
+	if err := <-first; err != nil || calls.Load() != 1 {
+		t.Fatalf("first refresh: error=%v requests=%d", err, calls.Load())
+	}
+}
+
+func TestTokenCancellationDuringRefresh(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		cancel()
+		<-r.Context().Done()
+	})
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	s := mustSource(t, clientFile, tokenFile, ep)
+	if _, err := s.TokenSource(ctx).Token(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("refresh cancellation = %v", err)
+	}
+}
+
+func TestClientOutlivesConstructionContext(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer cached" {
+			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		}
+	})
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	ctx, cancel := context.WithCancel(t.Context())
+	client, err := s.Client(ctx)
+	cancel()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.ChatAPIBase, nil)
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if req.Header.Get("Authorization") != "" {
+		t.Fatal("transport modified the caller's headers")
+	}
+}
+
+func TestConcurrentClientsShareOneRefresh(t *testing.T) {
+	var calls atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			calls.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"access_token":"fresh","expires_in":3600}`)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer fresh" {
+			t.Errorf("authorization = %q", r.Header.Get("Authorization"))
+		}
+	})
+	writeJSON(t, tokenFile, savedToken("cached"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	client, err := s.Client(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.current.Expiry = time.Now().Add(-time.Hour)
+	start, done := make(chan struct{}), make(chan error, 32)
+	for range 32 {
+		go func() {
+			<-start
+			req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ep.ChatAPIBase, nil)
+			res, err := client.Do(req)
+			if err == nil {
+				res.Body.Close()
+			}
+			done <- err
+		}()
+	}
+	close(start)
+	for range 32 {
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("refresh requests = %d, want 1", calls.Load())
+	}
+}
+
 func TestRefreshErrorsDoNotExposeResponseBodies(t *testing.T) {
 	for _, operation := range []string{"Token", "Client"} {
 		t.Run(operation, func(t *testing.T) {
