@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -715,7 +716,7 @@ func TestRunAckExtensionOption(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithCancel(f.ctx)
 	cancel()
-	for _, duration := range []time.Duration{-time.Second, time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
+	for _, duration := range []time.Duration{-time.Second, time.Second, 9 * time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
 		t.Run(duration.String(), func(t *testing.T) {
 			f.sub.ReceiveSettings.MaxDurationPerAckExtension = 30 * time.Second
 			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: duration})
@@ -732,6 +733,52 @@ func TestRunAckExtensionOption(t *testing.T) {
 			}
 			if got := f.sub.ReceiveSettings.MaxDurationPerAckExtension; got != want {
 				t.Fatalf("ack extension=%v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestRunRejectsMinimumAckExtensionAboveMaximum(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	cancel()
+	for _, tc := range []struct {
+		name                     string
+		minimum, maximum, option time.Duration
+		invalid                  bool
+	}{
+		{"option cap", 20 * time.Second, time.Minute, 10 * time.Second, true},
+		{"preserved cap", 20 * time.Second, 10 * time.Second, 0, true},
+		{"equal", 10 * time.Second, time.Minute, 10 * time.Second, false},
+		{"below", 10 * time.Second, time.Minute, 20 * time.Second, false},
+		{"override raises cap", 20 * time.Second, 10 * time.Second, 20 * time.Second, false},
+		{"disabled minimum", -time.Second, time.Minute, 10 * time.Second, false},
+		{"default minimum", 0, time.Minute, 10 * time.Second, false},
+		{"no explicit cap", 20 * time.Second, 0, 0, false},
+		{"disabled cap", 20 * time.Second, -time.Second, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f.sub.ReceiveSettings = pubsub.ReceiveSettings{
+				MinDurationPerAckExtension: tc.minimum,
+				MaxDurationPerAckExtension: tc.maximum,
+				NumGoroutines:              3,
+				MaxOutstandingMessages:     4,
+				ShutdownOptions: &pubsub.ShutdownOptions{
+					Behavior: pubsub.ShutdownBehaviorNackImmediately, Timeout: time.Second,
+				},
+			}
+			before := f.sub.ReceiveSettings
+			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: tc.option})
+			if (err != nil) != tc.invalid {
+				t.Fatalf("Run: %v, want invalid=%t", err, tc.invalid)
+			}
+			if tc.invalid {
+				if !strings.Contains(err.Error(), "MinDurationPerAckExtension") || !strings.Contains(err.Error(), "MaxDurationPerAckExtension") {
+					t.Errorf("error does not explain conflicting settings: %v", err)
+				}
+				if !reflect.DeepEqual(f.sub.ReceiveSettings, before) {
+					t.Error("invalid configuration mutated subscriber settings")
+				}
 			}
 		})
 	}
@@ -1000,9 +1047,118 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 	}
 }
 
-func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
+func TestRunQuarantineRecoversDuringRun(t *testing.T) {
+	t.Parallel()
+	for _, scenario := range []string{"removed", "replaced", "startup repaired"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			parent := filepath.Join(quarantineTempDir(t), "media")
+			if scenario == "startup repaired" {
+				if err := os.WriteFile(parent, []byte("keep"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var recorded atomic.Int32
+			f.run(t, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, RunOptions{
+				MediaDir: filepath.Join(parent, "inbound"),
+				RecordQuarantine: func(_ context.Context, ev *Event, path string, _ error) error {
+					data, err := os.ReadFile(path)
+					if err != nil || string(data) != string(ev.Raw) {
+						return fmt.Errorf("quarantine not retained at %s: %v", path, err)
+					}
+					recorded.Add(1)
+					return nil
+				},
+			})
+			// An ordinary event proves startup has completed, even if storage
+			// could not be opened. The next event must recover in this same Run.
+			f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+			waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks == 1 })
+			quarantinePath := filepath.Join(parent, "quarantine")
+			switch scenario {
+			case "removed":
+				if err := os.Remove(quarantinePath); err != nil {
+					t.Fatal(err)
+				}
+			case "replaced":
+				if err := os.Rename(quarantinePath, filepath.Join(parent, "retained")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(quarantinePath, 0700); err != nil {
+					t.Fatal(err)
+				}
+			case "startup repaired":
+				if err := os.Rename(parent, parent+".saved"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for i := 0; i < 2; i++ {
+				raw := []byte(`{"message":`)
+				id, err := f.publisher.Publish(f.ctx, &pubsub.Message{Data: raw, Attributes: map[string]string{"ce-type": "google.workspace.chat.message.v1.created"}}).Get(f.ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(f.ctx, time.Second)
+				defer cancel()
+				waitFor(t, ctx, func() bool { return f.server.Message(id).Acks == 1 })
+				if m := f.server.Message(id); m.Deliveries != 1 {
+					t.Fatalf("recovery required redelivery: %+v", m)
+				}
+				data, err := os.ReadFile(filepath.Join(quarantinePath, id+".json"))
+				if err != nil || string(data) != string(raw) {
+					t.Fatalf("configured quarantine: %q, %v", data, err)
+				}
+			}
+			if recorded.Load() != 2 {
+				t.Fatalf("recorded=%d, want 2", recorded.Load())
+			}
+		})
+	}
+}
+
+func TestRunClosesQuarantineRoot(t *testing.T) {
+	// Keep garbage collection from hiding an omitted explicit Close. This test
+	// is serial, so other tests cannot change the descriptor count concurrently.
+	previousGCPercent := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(previousGCPercent)
+	fdDir := "/proc/self/fd"
+	if _, err := os.Stat(fdDir); errors.Is(err, os.ErrNotExist) {
+		fdDir = "/dev/fd"
+	}
+	count := func() int {
+		t.Helper()
+		entries, err := os.ReadDir(fdDir)
+		if errors.Is(err, os.ErrNotExist) {
+			t.Skip("descriptor enumeration is unavailable on this platform")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	opts := RunOptions{
+		MediaDir:         filepath.Join(quarantineTempDir(t), "inbound"),
+		RecordQuarantine: func(context.Context, *Event, string, error) error { return nil },
+	}
+	before := count()
+	for i := 0; i < 50; i++ {
+		if err := Run(ctx, &pubsub.Subscriber{}, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := count(); after > before {
+		t.Fatalf("open descriptors grew across 50 Runs: %d -> %d", before, after)
+	}
+}
+
+func TestRunQuarantineRejectsReplacedSymlink(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	parent := quarantineTempDir(t)
+	var recorded atomic.Int32
 	f.run(t, func(context.Context, *Event) (Outcome, error) { return Quarantine, nil }, RunOptions{
 		MediaDir: filepath.Join(parent, "inbound"),
 		RecordQuarantine: func(_ context.Context, ev *Event, path string, _ error) error {
@@ -1010,6 +1166,7 @@ func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
 			if err != nil || string(data) != string(ev.Raw) {
 				return fmt.Errorf("quarantine not retained at %s: %v", path, err)
 			}
+			recorded.Add(1)
 			return nil
 		},
 	})
@@ -1018,8 +1175,7 @@ func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
 	if err := os.Rename(filepath.Join(parent, "quarantine"), filepath.Join(parent, "retained")); err != nil {
 		t.Fatal(err)
 	}
-	// Keep the returned path usable for the recorder while proving later writes
-	// do not walk/reopen it: a fresh walk would reject this relative symlink.
+	// Even a symlink to the previously verified directory must be refused.
 	if err := os.Symlink("retained", filepath.Join(parent, "quarantine")); err != nil {
 		t.Fatal(err)
 	}
@@ -1028,10 +1184,17 @@ func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
 	defer cancel()
 	waitFor(t, ctx, func() bool {
 		messages := f.server.Messages()
-		return len(messages) == 2 && messages[0].Acks == 1 && messages[1].Acks == 1
+		if len(messages) != 2 {
+			return false
+		}
+		for _, msg := range messages {
+			if msg.Deliveries >= 2 {
+				return true
+			}
+		}
+		return false
 	})
-	files, err := os.ReadDir(filepath.Join(parent, "retained"))
-	if err != nil || len(files) != 2 {
-		t.Fatalf("quarantine root not reused: %v, %v", files, err)
+	if recorded.Load() != 1 {
+		t.Fatalf("recorded quarantine through a symlink: %d", recorded.Load())
 	}
 }
