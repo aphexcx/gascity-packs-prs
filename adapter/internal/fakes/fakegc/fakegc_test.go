@@ -1,0 +1,212 @@
+package fakegc
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"gchat-adapter/internal/wire"
+)
+
+func call(t *testing.T, s *Server, method, path string, body any, header bool, status int) map[string]any {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(method, s.URL()+"/v0/city/examplecity/extmsg/"+path, bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header {
+		req.Header.Set(wire.RequestHeader, "example")
+	}
+	req.Header.Set("Content-Type", "application/json")
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.StatusCode != status {
+		t.Fatalf("%s: status %d want %d: %s", path, r.StatusCode, status, data)
+	}
+	var result map[string]any
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func conversation() wire.Conversation {
+	return wire.Conversation{ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/room", Kind: "room"}
+}
+func inbound(id string) wire.InboundEnvelope {
+	return wire.InboundEnvelope{Message: wire.InboundMessage{ProviderMessageID: id, Conversation: conversation(), Actor: wire.Actor{ID: "users/example"}, Text: id, ReceivedAt: time.Now()}}
+}
+
+func TestMutationAndScopeRequirements(t *testing.T) {
+	s := New(t)
+	reg := wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: "http://127.0.0.1:1/adapter", Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}}
+	call(t, s, "POST", "adapters", reg, false, 400)
+	call(t, s, "POST", "adapters", reg, true, 200)
+	call(t, s, "POST", "inbound", inbound("one"), false, 400)
+	bad := inbound("bad")
+	bad.Message.Conversation.ScopeID = ""
+	call(t, s, "POST", "inbound", bad, true, 400)
+	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, false, 400)
+	call(t, s, "POST", "outbound", wire.OutboundRequest{}, true, 400)
+	reg.CallbackURL = "/relative"
+	call(t, s, "POST", "adapters", reg, true, 400)
+	if len(s.Inbound()) != 0 || len(s.Published()) != 0 {
+		t.Fatal("invalid requests were accepted")
+	}
+}
+
+func TestInboundStatusesReceiptsAndRetention(t *testing.T) {
+	s := New(t)
+	for _, status := range []string{"delivered", "failed", "partial", "no_route", "pending"} {
+		s.Configure(func(s *Server) { s.NextDelivery = status })
+		result := call(t, s, "POST", "inbound", inbound(status), true, 200)
+		delivery := result["delivery"].(map[string]any)
+		if delivery["status"] != status {
+			t.Fatalf("status: %v", result)
+		}
+		if status != "pending" {
+			continue
+		}
+		id := delivery["receipt_id"].(string)
+		poll := func() map[string]any { return call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200) }
+		if poll()["state"] != "pending" {
+			t.Fatal("receipt not pending")
+		}
+		s.Advance(2 * time.Hour)
+		if poll()["state"] != "pending" {
+			t.Fatal("pending receipt expired")
+		}
+		receipt := wire.ReceiptResponse{State: "concluded"}
+		receipt.Delivery.Status = "delivered"
+		s.SetReceipt(id, receipt)
+		s.Advance(time.Hour - time.Second)
+		concluded := poll()
+		if concluded["state"] != "concluded" || concluded["delivery"].(map[string]any)["status"] != "delivered" {
+			t.Fatalf("concluded: %v", concluded)
+		}
+		s.Advance(time.Second)
+		if poll()["state"] != "unknown" {
+			t.Fatal("receipt retained beyond one hour")
+		}
+	}
+	if got := s.Inbound(); len(got) != 5 || got[0].Text != "delivered" || got[4].Text != "pending" {
+		t.Fatalf("inbound order: %+v", got)
+	}
+	// NextDelivery is a one-shot script; the default remains delivered.
+	defaultResult := call(t, s, "POST", "inbound", inbound("default"), true, 200)
+	if defaultResult["delivery"].(map[string]any)["status"] != "delivered" {
+		t.Fatal("script was not consumed")
+	}
+	s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+	result := call(t, s, "POST", "inbound", inbound("evicted"), true, 200)
+	id := result["delivery"].(map[string]any)["receipt_id"].(string)
+	s.EvictReceipt(id)
+	if call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200)["state"] != "unknown" {
+		t.Fatal("not evicted")
+	}
+	if call(t, s, "GET", "inbound/receipts/missing", nil, false, 200)["state"] != "unknown" {
+		t.Fatal("missing receipt")
+	}
+}
+
+func TestInboundDedupIgnoresDedupKey(t *testing.T) {
+	s := New(t)
+	m := inbound("same")
+	m.Message.DedupKey = "first"
+	call(t, s, "POST", "inbound", m, true, 200)
+	s.Configure(func(s *Server) { s.NextDelivery = "failed" })
+	m.Message.DedupKey = "different"
+	duplicate := call(t, s, "POST", "inbound", m, true, 200)
+	if duplicate["delivery"].(map[string]any)["status"] != "delivered" {
+		t.Fatal("duplicate redelivered")
+	}
+	m.Message.ProviderMessageID = "second"
+	newMessage := call(t, s, "POST", "inbound", m, true, 200)
+	if newMessage["delivery"].(map[string]any)["status"] != "failed" {
+		t.Fatal("different message deduplicated")
+	}
+	retry := call(t, s, "POST", "inbound", m, true, 200)
+	if retry["delivery"].(map[string]any)["status"] != "delivered" {
+		t.Fatal("failed delivery not retried")
+	}
+	s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+	m = inbound("pending")
+	one := call(t, s, "POST", "inbound", m, true, 200)
+	two := call(t, s, "POST", "inbound", m, true, 200)
+	if one["delivery"].(map[string]any)["receipt_id"] != two["delivery"].(map[string]any)["receipt_id"] {
+		t.Fatal("pending receipt changed on duplicate")
+	}
+}
+
+func TestOutboundCallbackAndTranscript(t *testing.T) {
+	s := New(t)
+	callbackStatus := 200
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/adapter/publish" {
+			t.Errorf("callback path: %s", r.URL.Path)
+		}
+		var p wire.PublishRequest
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			t.Error(err)
+		}
+		if p.Conversation.ScopeID != "examplecity" || p.IdempotencyKey != "stable" || p.Text != "hello" {
+			t.Errorf("callback: %+v", p)
+		}
+		w.WriteHeader(callbackStatus)
+		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{MessageID: "spaces/room/messages/one", Conversation: p.Conversation, Delivered: true, RetryAfter: int64(time.Second), Metadata: map[string]string{"parts": "1"}})
+	}))
+	defer callback.Close()
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter"}, true, 200)
+	req := wire.OutboundRequest{SessionID: "session", Conversation: conversation(), Text: "hello", IdempotencyKey: "stable", ReplyToMessageID: "spaces/room/threads/one"}
+	result := call(t, s, "POST", "outbound", req, true, 200)
+	if result["Receipt"].(map[string]any)["Delivered"] != true || result["TranscriptEntry"] == nil || result["receipt"] != nil {
+		t.Fatalf("outbound shape: %v", result)
+	}
+	s.Configure(func(s *Server) { s.FailTranscript = true })
+	failed := call(t, s, "POST", "outbound", req, true, 200)
+	if failed["Receipt"].(map[string]any)["Delivered"] != true || failed["TranscriptEntry"] != nil {
+		t.Fatalf("transcript failure: %v", failed)
+	}
+	s.Configure(func(s *Server) { s.FailTranscript = false })
+	callbackStatus = 429
+	discarded := call(t, s, "POST", "outbound", req, true, 200)
+	receipt := discarded["Receipt"].(map[string]any)
+	if receipt["Delivered"] != false || receipt["MessageID"] == "spaces/room/messages/one" || receipt["RetryAfter"] == float64(time.Second) || discarded["TranscriptEntry"] != nil {
+		t.Fatalf("non-2xx body used: %v", discarded)
+	}
+	if got := s.Published(); len(got) != 3 || got[0].ReplyToMessageID != req.ReplyToMessageID || got[2].IdempotencyKey != "stable" {
+		t.Fatalf("published callbacks: %+v", got)
+	}
+}
+
+func TestUndeliveredCallbackReceiptPreservesHints(t *testing.T) {
+	s := New(t)
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), FailureKind: "rate_limited", RetryAfter: int64(2 * time.Second), Metadata: map[string]string{"parts": "0"}})
+	}))
+	defer callback.Close()
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+	result := call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, true, 200)
+	receipt := result["Receipt"].(map[string]any)
+	if receipt["Delivered"] != false || receipt["FailureKind"] != "rate_limited" || receipt["RetryAfter"] != float64(2*time.Second) || result["TranscriptEntry"] != nil {
+		t.Fatalf("hints: %v", result)
+	}
+	if len(s.Published()) != 1 {
+		t.Fatal("gc retried the callback")
+	}
+}
