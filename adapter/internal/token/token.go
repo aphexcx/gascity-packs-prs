@@ -150,7 +150,19 @@ func (ts *sourceToken) Token() (*oauth2.Token, error) {
 		}
 		s.mu.Unlock()
 		if err != nil {
-			return nil, err
+			// Public callers may put this error in a status or health response.
+			// Keep actionable sentinels, but never return an endpoint's body,
+			// description, or URL from a transient failure.
+			switch {
+			case errors.Is(err, ErrNeedsSignIn):
+				return nil, err // refresh already sanitizes permanent OAuth errors.
+			case errors.Is(err, context.Canceled):
+				return nil, context.Canceled
+			case errors.Is(err, context.DeadlineExceeded):
+				return nil, context.DeadlineExceeded
+			default:
+				return nil, fmt.Errorf("OAuth refresh failed: %s", sanitizedCause(err))
+			}
 		}
 		copy := *tok
 		return &copy, nil

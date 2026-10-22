@@ -190,6 +190,41 @@ func TestRefreshTransientRetry(t *testing.T) {
 	}
 }
 
+func TestRefreshErrorsDoNotExposeResponseBodies(t *testing.T) {
+	for _, operation := range []string{"Token", "Client"} {
+		t.Run(operation, func(t *testing.T) {
+			var calls atomic.Int32
+			clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprint(w, `{"error_description":"response-body-secret","access_token":"token-secret"}`)
+			})
+			expired := savedToken("expired")
+			expired.Expiry = time.Now().Add(-time.Hour)
+			writeJSON(t, tokenFile, expired)
+			s := mustSource(t, clientFile, tokenFile, ep)
+			for range 2 {
+				var err error
+				if operation == "Client" {
+					_, err = s.Client(t.Context())
+				} else {
+					_, err = s.TokenSource(t.Context()).Token()
+				}
+				if err == nil || !strings.Contains(err.Error(), "500") || strings.Contains(err.Error(), "secret") || strings.Contains(err.Error(), "error_description") {
+					t.Errorf("unsafe refresh error: %v", err)
+				}
+				if s.State() != Ready || errors.Is(err, ErrNeedsSignIn) {
+					t.Fatalf("transient refresh changed state: %v, %v", s.State(), err)
+				}
+			}
+			if calls.Load() != 6 {
+				t.Fatalf("transient refresh retries = %d, want 6", calls.Load())
+			}
+		})
+	}
+}
+
 func startWatch(t *testing.T, s *Source) <-chan struct{} {
 	t.Helper()
 	s.watchInterval = 10 * time.Millisecond
