@@ -534,7 +534,10 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
 			if p.NextUpper.After(s.MessageCursor) {
-				reported = r.begin(s, p.NextUpper).Reported
+				next := r.begin(s, p.NextUpper)
+				next.ListingAbsent = p.ListingAbsent
+				s.PageToken = encode(next)
+				reported = next.Reported
 				if reported {
 					l.Counters["unrecoverable:"+name]++
 				}

@@ -825,6 +825,34 @@ func TestListedForbiddenSpaceStaysHeldAcrossFreezes(t *testing.T) {
 	}
 }
 
+func TestQueuedIntervalKeepsAbsentListingUntilRejoin(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	f.addMessage("spaces/room", 1, frozen.Add(-30*time.Second))
+	f.freeze(t)
+	if err := f.r.enumerate(context.Background(), "spaces/room"); err != nil {
+		t.Fatal(err)
+	}
+	delete(f.google.Spaces, "spaces/room")
+	upper := frozen.Add(time.Minute)
+	if err := f.r.Freeze(context.Background(), upper); err != nil {
+		t.Fatal(err)
+	}
+	f.onRequest = func(*http.Request) error { return &googleapi.Error{Code: 403, Message: "not a member"} }
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 1 || n != 0 {
+		t.Fatalf("queued unavailable interval = (%d, %d, %v)", d, n, err)
+	}
+	f.addSpace("spaces/room", false)
+	f.onRequest = nil
+	if err := f.r.Freeze(context.Background(), upper); err != nil {
+		t.Fatal(err)
+	}
+	f.pass(t, 0, 0)
+	if !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(upper) || len(f.gc.Inbound()) != 1 {
+		t.Fatal("queued interval forgot the absent listing and stayed held after rejoin")
+	}
+}
+
 func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)
