@@ -218,7 +218,8 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 }
 
 // Run owns sub until cancellation or a fatal receive error; do not use sub
-// concurrently. Exactly one streaming-pull connection and one in-flight handler
+// concurrently. Cancel ctx before closing the client. A closed client returns
+// codes.Canceled when ctx is still live. Exactly one connection and one handler
 // keep the ledger updates serialized. The Pub/Sub client automatically retries
 // in-stream failures and extends leases while the callback is running. Run
 // reconnects after recoverable Receive errors with full-jitter backoff. Fatal
@@ -326,7 +327,7 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 
 func recoverableReceiveError(err error) bool {
 	switch status.Code(err) {
-	case codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument:
+	case codes.Canceled, codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument:
 		return false
 	default:
 		// Includes non-status transport errors (Unknown). Only the application

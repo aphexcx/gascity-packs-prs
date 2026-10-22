@@ -605,6 +605,40 @@ func TestRunReturnsPermissionDenied(t *testing.T) {
 	}
 }
 
+func TestRunReturnsCanceledWhenClientCloses(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	started := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) {
+			started <- struct{}{}
+			return Ack, nil
+		}, &recordingLogger{}, RunOptions{InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	}()
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("handler never started")
+	}
+	waitFor(t, ctx, func() bool { return f.server.Messages()[0].Acks == 1 })
+	if err := f.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Canceled || ctx.Err() != nil {
+			t.Fatalf("closed client under live ctx: Run=%v, ctx=%v", err, ctx.Err())
+		}
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("Run kept retrying after the client closed")
+	}
+}
+
 func TestReceiveErrorClassification(t *testing.T) {
 	for _, code := range []codes.Code{codes.ResourceExhausted, codes.Unavailable, codes.Internal, codes.DeadlineExceeded, codes.Aborted, codes.Unknown} {
 		if !recoverableReceiveError(status.Error(code, "retry")) {
@@ -614,7 +648,7 @@ func TestReceiveErrorClassification(t *testing.T) {
 	if !recoverableReceiveError(errors.New("transport disconnected")) {
 		t.Error("non-status transport errors must reconnect")
 	}
-	for _, code := range []codes.Code{codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument} {
+	for _, code := range []codes.Code{codes.Canceled, codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument} {
 		if recoverableReceiveError(status.Error(code, "fatal")) {
 			t.Errorf("%s must return to the application", code)
 		}
