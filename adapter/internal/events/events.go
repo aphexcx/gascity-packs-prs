@@ -80,9 +80,11 @@ type Manager struct {
 	log      *slog.Logger
 	// gate serializes renewals and lifecycle deliveries, including their reads.
 	gate            chan struct{}
+	recoveryNeeded  chan struct{}
 	pending         *api.Operation
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
+	ambiguousState  ledger.SubscriptionState
 	scheduledName   string
 	scheduledExpiry time.Time
 	renewAt         time.Time
@@ -98,10 +100,21 @@ func New(opts Options) (*Manager, error) {
 	if opts.Log == nil {
 		opts.Log = slog.Default()
 	}
-	return &Manager{service: opts.Service, topic: opts.Topic, types: slices.Clone(EventTypes), ledger: opts.Ledger, path: opts.LedgerPath, ledgerMu: opts.LedgerMu, clock: opts.Clock, log: opts.Log, gate: make(chan struct{}, 1)}, nil
+	return &Manager{
+		service: opts.Service, topic: opts.Topic, types: slices.Clone(EventTypes),
+		ledger: opts.Ledger, path: opts.LedgerPath, ledgerMu: opts.LedgerMu,
+		clock: opts.Clock, log: opts.Log, gate: make(chan struct{}, 1),
+		recoveryNeeded: make(chan struct{}, 1),
+	}, nil
 }
 
-// Reconcile makes at most one mutation, after an authoritative get or discovery.
+// RecoveryNeeded signals that a creation or reactivation was durably observed.
+// The app must consume this channel to schedule catch-up, including recoveries
+// performed by RenewLoop. Signals coalesce while catch-up is pending; the app
+// must also perform startup catch-up because notifications are not durable.
+func (m *Manager) RecoveryNeeded() <-chan struct{} { return m.recoveryNeeded }
+
+// Reconcile mutates only after an authoritative get or discovery.
 // Errors (including lost responses) leave the caller responsible for retrying
 // with backoff; RenewLoop does this automatically. No ambiguous read is absence.
 func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, error) {
@@ -124,7 +137,20 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 	// A known operation survives a polling timeout in memory. First reconcile
 	// Google's resource, then resume waiting instead of issuing another mutation.
 	if m.pending != nil {
-		return m.finish(ctx, m.pending)
+		state, err := m.finish(ctx, m.pending)
+		if err != nil {
+			return state, err
+		}
+		// A retained operation response is a snapshot. State may have changed
+		// after completion while this process was backing off.
+		sub, err = m.lookup(ctx, state.Name)
+		if err != nil {
+			return state, err
+		}
+		if sub == nil {
+			return state, errors.New("events: subscription disappeared after operation completion")
+		}
+		return m.reconcileExisting(ctx, sub)
 	}
 	if sub == nil {
 		if m.clock.Now().Before(m.ambiguousUntil) {
@@ -137,6 +163,7 @@ func (m *Manager) Reconcile(ctx context.Context) (ledger.SubscriptionState, erro
 		}
 		if err != nil {
 			m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
+			m.ambiguousState = ledger.SubscriptionState{}
 			return saved, fmt.Errorf("events: create: %w", err)
 		}
 		return m.finish(ctx, op)
@@ -199,6 +226,8 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 		return ledger.SubscriptionState{}, err
 	}
 	if sub == nil {
+		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
+		m.ambiguousState = ledger.SubscriptionState{}
 		return ledger.SubscriptionState{}, errors.New("events: ALREADY_EXISTS but subscription is not yet discoverable")
 	}
 	return m.reconcileExisting(ctx, sub)
@@ -209,11 +238,17 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 	if err != nil {
 		return state, err
 	}
+	if state != m.ambiguousState {
+		m.ambiguousUntil = time.Time{}
+	}
 	if sub.Reconciling {
 		return state, errors.New("events: subscription is still reconciling")
 	}
 	if sub.State == "ACTIVE" && m.clock.Now().Before(m.renewAt) {
 		return state, nil
+	}
+	if m.clock.Now().Before(m.ambiguousUntil) {
+		return state, errors.New("events: awaiting authoritative change after an ambiguous mutation")
 	}
 	m.mutationStarted = m.clock.Now()
 	var op *api.Operation
@@ -226,6 +261,8 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		return state, fmt.Errorf("events: unsupported subscription state %q", sub.State)
 	}
 	if err != nil {
+		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
+		m.ambiguousState = state
 		return state, fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
 	}
 	return m.finish(ctx, op)
@@ -252,6 +289,11 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 		}
 		next, err := m.service.Operations.Get(op.Name).Context(ctx).Do()
 		if err != nil {
+			if isHTTP(err, http.StatusNotFound) {
+				// Operation retention is not subscription retention. The next
+				// attempt must reconcile the resource instead of polling forever.
+				m.pending = nil
+			}
 			return ledger.SubscriptionState{}, fmt.Errorf("events: poll %s: %w", op.Name, err)
 		}
 		op = next
@@ -268,7 +310,15 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 	if err := json.Unmarshal(op.Response, &sub); err != nil {
 		return ledger.SubscriptionState{}, fmt.Errorf("events: decode operation: %w", err)
 	}
-	return m.persist(&sub, m.mutationStarted)
+	state, err := m.persist(&sub, m.mutationStarted)
+	if err != nil {
+		return state, err
+	}
+	m.ambiguousUntil = time.Time{}
+	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
+		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
+	}
+	return state, nil
 }
 
 func (m *Manager) validate(sub *api.Subscription) (time.Time, error) {
@@ -304,6 +354,12 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	if err != nil {
 		return previous, fmt.Errorf("events: persist subscription: %w", err)
 	}
+	if state.State == "ACTIVE" && (previous.Name != state.Name || previous.State == "SUSPENDED") {
+		select {
+		case m.recoveryNeeded <- struct{}{}:
+		default:
+		}
+	}
 	if m.scheduledName != sub.Name || !m.scheduledExpiry.Equal(expiry) {
 		// A create/renew's start time measures the returned TTL even when its
 		// Operation takes a while. Discovery can use Google's update/create
@@ -321,7 +377,6 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 		m.renewAt = expiry.Add(-ttl / 4)
 		m.scheduledName, m.scheduledExpiry = sub.Name, expiry
 	}
-	m.ambiguousUntil = time.Time{}
 	return state, nil
 }
 

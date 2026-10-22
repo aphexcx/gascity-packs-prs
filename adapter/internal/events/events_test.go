@@ -327,3 +327,370 @@ func TestReadFailureNeverCreates(t *testing.T) {
 		})
 	}
 }
+
+func TestLostRenewalResponseThenDiscovery(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.server.Configure(func(s *fakegoogle.Server) { s.DropNextResponse = true; s.OperationDelay = time.Minute })
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("lost renewal response must be reported")
+	}
+	// A successful GET of the old expiry does not prove the pending renewal
+	// failed. Allow it to settle before another mutation.
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("pending renewal must retry with backoff")
+	}
+	if f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatal("ambiguous renewal was repeated before discovery could settle")
+	}
+	f.clock.advance(time.Minute)
+	got := f.reconcile()
+	if got.Expiry != first.Expiry.Add(3*time.Hour) || f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatalf("lost renewal discovery = %+v", got)
+	}
+}
+
+func TestLostDelayedCreateDoesNotRepeatWhilePending(t *testing.T) {
+	f := setup(t)
+	f.server.DropNextResponse = true
+	f.server.OperationDelay = time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected lost response")
+	}
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected retryable ambiguity")
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("repeated pending create")
+	}
+	f.clock.advance(time.Minute)
+	f.reconcile()
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("did not discover delayed create")
+	}
+}
+
+func TestAlreadyExistsWithoutVisibleSubscriptionBacksOff(t *testing.T) {
+	f := setup(t)
+	f.server.CreateReturnsAlreadyExists = true
+	for range 2 {
+		if _, err := f.manager.Reconcile(context.Background()); err == nil {
+			t.Fatal("expected not yet discoverable")
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("repeated create while ALREADY_EXISTS is unresolved")
+	}
+}
+
+func TestOperationTimeoutResumesKnownOperation(t *testing.T) {
+	f := setup(t)
+	start := f.clock.Now()
+	f.server.OperationDelay = 3 * time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout = %v", err)
+	}
+	if !f.clock.Now().Equal(start.Add(2*time.Minute)) || f.ledger.Subscription.Name != "" {
+		t.Fatal("timeout must bound polling without persisting a pending result")
+	}
+	got := f.reconcile()
+	if got.Expiry != start.Add(4*time.Hour) || f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatalf("resumed result = %+v", got)
+	}
+}
+
+func TestOperationSuspendedResultRemainsRetryable(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.server.OperationDelay = 10 * time.Second
+	f.clock.onSleep = func(time.Duration) error { f.server.SuspendSubscription(first.Name); return nil }
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("renewal completed suspended; must retry reconciliation instead of sleeping until next renewal")
+	}
+	if f.ledger.Subscription.State != "SUSPENDED" {
+		t.Fatal("authoritative suspended state not persisted")
+	}
+}
+
+func TestPersistenceFailureDiscoveredOnRetry(t *testing.T) {
+	f := setup(t)
+	validPath := f.manager.path
+	f.manager.path = filepath.Join(t.TempDir(), "missing", "state.json")
+	if _, err := f.manager.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	if f.ledger.Subscription.Name != "" {
+		t.Fatal("unsaved state leaked into ledger")
+	}
+	f.manager.path = validPath
+	f.reconcile()
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("persistence failure caused duplicate create")
+	}
+}
+
+func TestSavedMissingNameDiscoversReplacement(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.ledger.Subscription.Name = "subscriptions/missing"
+	got := f.reconcile()
+	if got.Name != first.Name || f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("stale ledger should discover existing replacement")
+	}
+}
+
+func TestDiscoveryReadsAllPagesAndRejectsIncompatibleSubscriptions(t *testing.T) {
+	for _, wrong := range []string{"topic", "events", "payload", "expiry", "multiple"} {
+		t.Run(wrong, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			f.ledger.Subscription = ledger.SubscriptionState{}
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.PageSize = 1
+				sub := s.Subscriptions[first.Name]
+				switch wrong {
+				case "topic":
+					sub.NotificationEndpoint.PubsubTopic = "projects/example/topics/other"
+				case "events":
+					sub.EventTypes = []string{EventTypes[0]}
+				case "payload":
+					sub.PayloadOptions.IncludeResource = false
+				case "expiry":
+					sub.ExpireTime = "invalid"
+				case "multiple":
+					other := *sub
+					other.Name = "subscriptions/second"
+					s.Subscriptions[other.Name] = &other
+				}
+			})
+			if _, err := f.manager.Reconcile(context.Background()); err == nil {
+				t.Fatal("unsafe subscription adoption")
+			}
+			if f.count("POST", "/v1/subscriptions") != 1 {
+				t.Fatal("incompatible subscription is not absence")
+			}
+			if wrong == "multiple" && f.requests[len(f.requests)-1].URL.Query().Get("pageToken") == "" {
+				t.Fatal("did not inspect subsequent discovery page")
+			}
+		})
+	}
+}
+
+func TestRenewLoopClockJumps(t *testing.T) {
+	for _, jump := range []time.Duration{-time.Hour, 2 * time.Hour} {
+		t.Run(jump.String(), func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			start := f.clock.Now()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			jumped := false
+			f.clock.onSleep = func(d time.Duration) error {
+				if !jumped {
+					f.clock.advance(jump)
+					jumped = true
+				}
+				if f.count("PATCH", "/v1/"+first.Name) > 0 {
+					cancel()
+					return ctx.Err()
+				}
+				if f.clock.Now().After(start.Add(3 * time.Hour)) {
+					t.Fatal("missed renewal after clock jump")
+				}
+				return nil
+			}
+			f.hook = func(r *http.Request) (*http.Response, error) {
+				if r.Method == "PATCH" && f.clock.Now() != start.Add(3*time.Hour) {
+					t.Errorf("renewal at %v", f.clock.Now())
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			}
+			f.manager.RenewLoop(ctx)
+		})
+	}
+}
+
+func TestRenewLoopRetriesWithBoundedBackoff(t *testing.T) {
+	f := setup(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	f.clock.onSleep = func(time.Duration) error {
+		if len(f.clock.sleeps) == 10 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second, 2 * time.Minute, 2 * time.Minute, 2 * time.Minute}) {
+		t.Fatalf("backoff = %v", f.clock.sleeps)
+	}
+	if f.count("POST", "/v1/subscriptions") != 0 {
+		t.Fatal("created on lookup failure")
+	}
+}
+
+func TestCancellationAndUnknownLifecycle(t *testing.T) {
+	f := setup(t)
+	if err := f.manager.HandleLifecycle(context.Background(), "google.workspace.chat.message.v1.created"); err != nil || len(f.requests) != 0 {
+		t.Fatal("unrelated event triggered reconciliation")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := f.manager.Reconcile(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel = %v", err)
+	}
+	f.manager.RenewLoop(ctx)
+	if len(f.requests) != 0 {
+		t.Fatal("canceled work made requests")
+	}
+	f.server.OperationDelay = time.Minute
+	f.clock.onSleep = func(time.Duration) error { return context.Canceled }
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("poll cancel = %v", err)
+	}
+}
+
+func TestResumedOperationCannotOverwriteNewerSuspension(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = 3 * time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	f.clock.advance(time.Minute)
+	f.server.Advance(0) // complete the operation before the later suspension
+	f.server.SuspendSubscription()
+	f.server.Configure(func(s *fakegoogle.Server) { s.OperationDelay = 0 })
+	got := f.reconcile()
+	if f.count("POST", "/v1/"+got.Name+":reactivate") != 1 {
+		t.Fatal("stale operation result hid an authoritative suspension")
+	}
+}
+
+func TestExpiredOperationRecordDoesNotPreventReconciliation(t *testing.T) {
+	f := setup(t)
+	f.server.OperationDelay = 3 * time.Minute
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	f.clock.advance(time.Minute)
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(r.URL.Path, "/v1/operations/") {
+			return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"error":{"code":404,"message":"operation record expired"}}`))}, nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	_, _ = f.manager.Reconcile(context.Background())
+	got := f.reconcile()
+	if got.Name == "" || f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("missing operation record prevented discovery")
+	}
+}
+
+func TestConcurrentReconcilesCreateOnce(t *testing.T) {
+	f := setup(t)
+	errs := make(chan error, 12)
+	for range 12 {
+		go func() { _, err := f.manager.Reconcile(context.Background()); errs <- err }()
+	}
+	for range 12 {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("concurrent reconciliation created more than once")
+	}
+}
+
+func TestRenewalUsesReturnedTTL(t *testing.T) {
+	f := setup(t)
+	start := f.clock.Now()
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		response, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil || r.Method != "POST" || r.URL.Path != "/v1/subscriptions" {
+			return response, err
+		}
+		var op api.Operation
+		if err := json.NewDecoder(response.Body).Decode(&op); err != nil {
+			return nil, err
+		}
+		response.Body.Close()
+		var sub api.Subscription
+		if err := json.Unmarshal(op.Response, &sub); err != nil {
+			return nil, err
+		}
+		sub.ExpireTime = start.Add(2 * time.Hour).Format(time.RFC3339Nano)
+		f.server.Configure(func(s *fakegoogle.Server) { s.Subscriptions[sub.Name].ExpireTime = sub.ExpireTime })
+		data, err := json.Marshal(sub)
+		if err != nil {
+			return nil, err
+		}
+		op.Response = data
+		data, err = json.Marshal(op)
+		if err != nil {
+			return nil, err
+		}
+		response.Body = io.NopCloser(strings.NewReader(string(data)))
+		return response, nil
+	}
+	first := f.reconcile()
+	if first.Expiry != start.Add(2*time.Hour) {
+		t.Fatal("computed expiry instead of preserving returned expiry")
+	}
+	f.clock.advance(90*time.Minute - time.Nanosecond)
+	f.reconcile()
+	if f.count("PATCH", "/v1/"+first.Name) != 0 {
+		t.Fatal("renewed using a fixed maximum instead of returned TTL")
+	}
+	f.clock.advance(time.Nanosecond)
+	f.reconcile()
+	if f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatal("did not renew at 75% of returned TTL")
+	}
+}
+
+func TestRecoveryNotificationsFollowDurableCreationAndReactivation(t *testing.T) {
+	f := setup(t)
+	assertRecovery := func(want bool) {
+		t.Helper()
+		select {
+		case <-f.manager.RecoveryNeeded():
+			if !want {
+				t.Fatal("healthy reconciliation requested catch-up")
+			}
+			disk, err := ledger.Load(f.path, true)
+			if err != nil || disk.Subscription.State != "ACTIVE" {
+				t.Fatalf("recovery signaled before durable active state: %v", err)
+			}
+		default:
+			if want {
+				t.Fatal("recovery did not request catch-up")
+			}
+		}
+	}
+	first := f.reconcile()
+	assertRecovery(true)
+	f.reconcile()
+	assertRecovery(false)
+	f.clock.advance(3 * time.Hour)
+	f.reconcile()
+	assertRecovery(false)
+	f.server.SuspendSubscription(first.Name)
+	f.reconcile()
+	assertRecovery(true)
+	f.clock.advance(4 * time.Hour)
+	f.reconcile()
+	assertRecovery(true)
+	// Recovery obligations coalesce and never stall reconciliation if the app
+	// is already catching up. Startup independently catches up after a crash.
+	f.server.SuspendSubscription()
+	f.reconcile()
+	f.server.SuspendSubscription()
+	f.reconcile()
+	assertRecovery(true)
+	assertRecovery(false)
+}
