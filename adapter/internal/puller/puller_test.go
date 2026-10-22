@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -715,7 +716,7 @@ func TestRunAckExtensionOption(t *testing.T) {
 	f := newFixture(t)
 	ctx, cancel := context.WithCancel(f.ctx)
 	cancel()
-	for _, duration := range []time.Duration{-time.Second, time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
+	for _, duration := range []time.Duration{-time.Second, time.Second, 9 * time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
 		t.Run(duration.String(), func(t *testing.T) {
 			f.sub.ReceiveSettings.MaxDurationPerAckExtension = 30 * time.Second
 			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: duration})
@@ -1112,6 +1113,43 @@ func TestRunQuarantineRecoversDuringRun(t *testing.T) {
 				t.Fatalf("recorded=%d, want 2", recorded.Load())
 			}
 		})
+	}
+}
+
+func TestRunClosesQuarantineRoot(t *testing.T) {
+	// Keep garbage collection from hiding an omitted explicit Close. This test
+	// is serial, so other tests cannot change the descriptor count concurrently.
+	previousGCPercent := debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(previousGCPercent)
+	fdDir := "/proc/self/fd"
+	if _, err := os.Stat(fdDir); errors.Is(err, os.ErrNotExist) {
+		fdDir = "/dev/fd"
+	}
+	count := func() int {
+		t.Helper()
+		entries, err := os.ReadDir(fdDir)
+		if errors.Is(err, os.ErrNotExist) {
+			t.Skip("descriptor enumeration is unavailable on this platform")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(entries)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	opts := RunOptions{
+		MediaDir:         filepath.Join(quarantineTempDir(t), "inbound"),
+		RecordQuarantine: func(context.Context, *Event, string, error) error { return nil },
+	}
+	before := count()
+	for i := 0; i < 50; i++ {
+		if err := Run(ctx, &pubsub.Subscriber{}, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, opts); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := count(); after > before {
+		t.Fatalf("open descriptors grew across 50 Runs: %d -> %d", before, after)
 	}
 }
 

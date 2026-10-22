@@ -555,6 +555,9 @@ func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
 		return nil, err
 	}
 	opened, err := child.Stat(".")
+	// Coverage gap: no deterministic swap between Lstat and OpenRoot is
+	// injected here. Symlink and between-delivery rotation tests do not pin
+	// this identity check; doing so needs an opening seam or filesystem hook.
 	if err == nil && !os.SameFile(info, opened) {
 		err = fmt.Errorf("quarantine directory changed while opening: %s", name)
 	}
