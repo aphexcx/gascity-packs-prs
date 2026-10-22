@@ -1902,7 +1902,7 @@ func TestLocalRecordsDoNotCountOrWarnUnavailable(t *testing.T) {
 			f.google.Configure(func(s *fakegoogle.Server) { delete(s.Spaces, space) })
 			var err error
 			if strings.HasSuffix(tc.name, "permanent") {
-				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "PRIVATE", 400) }))
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "PRIVATE", http.StatusBadRequest) }))
 				defer s.Close()
 				f.opts.Config.Endpoints.ChatAPIBase = s.URL
 				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
@@ -1969,7 +1969,7 @@ func TestLateReceiptLookupFailureGetsDurableGrace(t *testing.T) {
 				if r.Method == http.MethodGet {
 					n := lookups.Add(1)
 					if n == 1 || second == "lookup_error" {
-						http.Error(w, "PRIVATE RECEIPT", 503)
+						http.Error(w, "PRIVATE RECEIPT", http.StatusServiceUnavailable)
 						return
 					}
 				}
@@ -2047,7 +2047,7 @@ func TestLateReceiptLookupFailuresMustBeConsecutive(t *testing.T) {
 			fail.Store(true)
 			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet && fail.Load() {
-					http.Error(w, "lookup failed", 503)
+					http.Error(w, "lookup failed", http.StatusServiceUnavailable)
 					return
 				}
 				proxy.ServeHTTP(w, r)
@@ -2135,7 +2135,7 @@ func TestCanceledLateReceiptLookupKeepsPendingState(t *testing.T) {
 					if !usedGrace || n > 1 {
 						cancel()
 					}
-					http.Error(w, "PRIVATE RECEIPT", 503)
+					http.Error(w, "PRIVATE RECEIPT", http.StatusServiceUnavailable)
 					return
 				}
 				proxy.ServeHTTP(w, r)
