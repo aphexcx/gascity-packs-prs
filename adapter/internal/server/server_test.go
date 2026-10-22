@@ -2270,10 +2270,16 @@ func testGCRestartRecovers(t *testing.T, cityNotRunning bool) {
 			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if strings.HasSuffix(r.URL.Path, "/adapters") {
 					registrations.Add(1)
-					entered <- struct{}{}
+					select {
+					case entered <- struct{}{}:
+					default:
+					}
 					<-release
 					proxy.ServeHTTP(w, r)
-					registered <- struct{}{}
+					select {
+					case registered <- struct{}{}:
+					default:
+					}
 					return
 				}
 				if strings.HasSuffix(r.URL.Path, "/outbound") {
