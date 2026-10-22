@@ -624,7 +624,7 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)
 	for i := 0; i < 20; i++ {
-		f.addMessage("spaces/room", i, frozen.Add(-time.Minute))
+		f.addMessage("spaces/room", i, frozen.Add(-30*time.Second))
 	}
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
@@ -633,8 +633,8 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 		}
 		return nil
 	}
-	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 17 {
-		t.Fatalf("left space Pass = (%d, %d, %v), want (0, 17, error)", d, n, err)
+	if d, n, err := f.r.Pass(context.Background()); err == nil || d != 0 || n != 0 {
+		t.Fatalf("left space Pass = (%d, %d, %v), want (0, 0, error)", d, n, err)
 	}
 	if len(f.gc.Inbound()) != 0 || f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 {
 		t.Fatal("left space posted or unavailable counter missing")
@@ -646,17 +646,25 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(saved.Changes) != 17 {
+		t.Fatalf("saved page not retained locally: %d changes", len(saved.Changes))
+	}
+	for _, c := range saved.Changes {
+		if c.Status != "committed" || !strings.Contains(c.Reason, "space unavailable: not_found (HTTP 403)") || c.Event == "" {
+			t.Fatalf("unavailable record lost status/cause/payload: %+v", c)
+		}
+	}
 	*f.opts.Ledger = *saved
 	f.newRunner(t)
 	requests := len(f.requests)
-	f.pass(t, 0, 17)
+	f.pass(t, 0, 0)
 	if len(f.requests) != requests {
 		t.Fatal("requested unavailable space after restart")
 	}
 	delete(f.google.Spaces, "spaces/room")
 	f.freeze(t)
 	requests = len(f.requests)
-	f.pass(t, 0, 17)
+	f.pass(t, 0, 0)
 	if len(f.requests) != requests || len(f.gc.Inbound()) != 0 || strings.Count(f.logs.String(), "level=WARN") != 1 {
 		t.Fatal("absent space was retried, posted, or warned again")
 	}
@@ -667,7 +675,17 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 	f.addSpace("spaces/room", false)
 	f.onRequest = nil
 	f.freeze(t)
-	f.pass(t, 20, 0)
+	f.pass(t, 3, 0)
+	// The overlap can list the old page again after rejoining. Local retention
+	// stays terminal even when Google returns the resource with different text.
+	f.google.Messages["spaces/room/messages/m0000"].Text = "changed while away"
+	if err := f.r.Freeze(context.Background(), frozen.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	f.pass(t, 0, 0)
+	if len(f.gc.Inbound()) != 3 {
+		t.Fatal("locally retained page posted after rejoining")
+	}
 }
 
 func TestHistoryCredentialsHoldSavedPage(t *testing.T) {

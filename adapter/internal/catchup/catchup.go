@@ -55,8 +55,8 @@ type progress struct {
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
 	NextUpper    time.Time `json:"next_upper,omitzero"`
-	// Access failures retain the backlog and cursors. Only a fresh listing in
-	// Freeze clears Unavailable; credential failures can retry after sign-in.
+	// Access loss retains records locally and holds cursors. Only a fresh
+	// listing in Freeze clears Unavailable; credentials can retry after sign-in.
 	Unavailable string `json:"unavailable,omitempty"`
 	Credentials string `json:"credentials,omitempty"`
 }
@@ -421,6 +421,11 @@ func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered
 		if err := json.Unmarshal([]byte(s.Backlog[index]), &item); err != nil {
 			return delivered, errors.New("catchup: invalid durable backlog")
 		}
+		// An overlap after rejoining must never post history already retained
+		// locally when access was lost, even if its resource payload changed.
+		if retained := before.Changes[unavailableID(item)]; retained != nil && retained.Status == "committed" {
+			item.Handled = true
+		}
 		if !item.Handled {
 			if *budget <= 0 {
 				break
@@ -621,6 +626,19 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 		if err != nil {
 			return err
 		}
+		if kind != "auth" {
+			for _, raw := range s.Backlog {
+				var item queuedChange
+				if err := json.Unmarshal([]byte(raw), &item); err != nil {
+					return errors.New("catchup: invalid durable backlog")
+				}
+				id := unavailableID(item)
+				if l.Changes[id] == nil {
+					l.Changes[id] = &ledger.ChangeState{ID: id, Space: name, Kind: "catchup.unavailable", Status: "committed", Created: r.opts.Now().UTC(), Event: raw, Reason: "space unavailable: " + summary}
+				}
+			}
+			s.Backlog = nil
+		}
 		s.PageToken = encode(p)
 		if first {
 			l.Counters[key+name]++
@@ -634,6 +652,19 @@ func (r *Runner) holdAccess(name string, p progress, cause error) error {
 		r.opts.Logger.Warn("catch-up access unavailable", "space", name, "cause", summary)
 	}
 	return held
+}
+
+// This is a local history-retention key, not an inbound provider-message ID.
+// Bind it to the resource and its stream time, excluding mutable message text.
+func unavailableID(item queuedChange) string {
+	resource := item.Malformed
+	if item.Change.Message != nil {
+		resource = item.Change.Message.Name
+	} else if item.Change.Reaction != nil {
+		resource = item.Change.Reaction.Name
+	}
+	key := encode([]string{item.Change.Kind, resource, item.At.UTC().Format(time.RFC3339Nano)})
+	return fmt.Sprintf("catchup:unavailable:%x", sha256.Sum256([]byte(key)))
 }
 
 func (r *Runner) report(name string) {
