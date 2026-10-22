@@ -24,6 +24,7 @@ type Secrets struct {
 	ServiceURLPrefix string // GC_SERVICE_URL_PREFIX (set by gc)
 }
 
+// Endpoints holds effective values: named process environment overrides, then settings, then defaults; Settings carries the file as decoded.
 type Endpoints struct {
 	ChatAPIBase    string // GCHAT_CHAT_API_BASE,    default https://chat.googleapis.com
 	EventsAPIBase  string // GCHAT_EVENTS_API_BASE,  default https://workspaceevents.googleapis.com
@@ -46,28 +47,28 @@ const (
 type Identity struct {
 	Name      string `toml:"name"`
 	Agent     string `toml:"agent"`
-	TokenFile string `toml:"token_file"`
+	TokenFile string `toml:"token_file,omitempty"`
 }
 
 type Space struct {
 	ID   string     `toml:"id"`
-	Wake WakePolicy `toml:"wake"`
+	Wake WakePolicy `toml:"wake,omitempty"`
 }
 
 type Media struct {
-	InboundDir string `toml:"inbound_dir"`
-	UploadRoot string `toml:"upload_root"`
-	MaxBytes   int64  `toml:"max_bytes"`
+	InboundDir string `toml:"inbound_dir,omitempty"`
+	UploadRoot string `toml:"upload_root,omitempty"`
+	MaxBytes   int64  `toml:"max_bytes,omitzero"`
 }
 
 type Settings struct {
 	Defaults struct {
-		Wake WakePolicy `toml:"wake"`
+		Wake WakePolicy `toml:"wake,omitempty"`
 	} `toml:"defaults"`
 	Identities    []Identity `toml:"identity"`
 	Spaces        []Space    `toml:"space"`
-	Media         Media      `toml:"media"`          // as decoded; effective values are in Endpoints
-	CatchupBudget int        `toml:"catchup_budget"` // per space per pass, default 50
+	Media         Media      `toml:"media"`                   // as decoded; effective values are in Endpoints
+	CatchupBudget int        `toml:"catchup_budget,omitzero"` // per space per pass, default 50
 }
 
 type Config struct {
@@ -77,9 +78,10 @@ type Config struct {
 	SecretsDir string
 }
 
-// Load reads KEY=VALUE secrets and TOML settings. Omitted settings use defaults;
-// both files must exist and be well formed. Endpoint overrides
-// and gc's service coordinates come from the process environment.
+// Load reads KEY=VALUE secrets and TOML settings, preserving Settings as decoded.
+// Methods and Endpoints provide effective defaults. Both files must exist and be
+// well formed. Endpoint overrides and gc's service coordinates come from the
+// process environment.
 func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	values, err := readEnv(envFile)
 	if err != nil {
@@ -107,8 +109,6 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if !filepath.IsAbs(c.Secrets.TokenFile) {
 		c.Secrets.TokenFile = filepath.Join(secretsDir, c.Secrets.TokenFile)
 	}
-	c.Settings.Defaults.Wake = WakeAll
-	c.Settings.CatchupBudget = 50
 	metadata, err := toml.DecodeFile(settingsFile, &c.Settings)
 	if err != nil {
 		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
@@ -116,23 +116,16 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if unknown := metadata.Undecoded(); len(unknown) > 0 {
 		return nil, fmt.Errorf("settings %s: unknown key %s", settingsFile, unknown[0])
 	}
-	if len(c.Settings.Identities) == 0 {
-		c.Settings.Identities = []Identity{{Name: "default", Agent: "mayor"}}
-	}
 	mediaMaxBytes := int64(209715200)
 	if metadata.IsDefined("media", "max_bytes") {
 		mediaMaxBytes = c.Settings.Media.MaxBytes
 	}
-	if err := c.validateSettings(mediaMaxBytes); err != nil {
-		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
+	catchupBudget := 50
+	if metadata.IsDefined("catchup_budget") {
+		catchupBudget = c.Settings.CatchupBudget
 	}
-	for i := range c.Settings.Identities {
-		identity := &c.Settings.Identities[i]
-		if identity.TokenFile == "" {
-			identity.TokenFile = c.Secrets.TokenFile
-		} else if !filepath.IsAbs(identity.TokenFile) {
-			identity.TokenFile = filepath.Join(secretsDir, identity.TokenFile)
-		}
+	if err := c.validateSettings(mediaMaxBytes, catchupBudget); err != nil {
+		return nil, fmt.Errorf("settings %s: %w", settingsFile, err)
 	}
 	city, err := cityPath(secretsDir)
 	if err != nil {
@@ -159,24 +152,54 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	return c, nil
 }
 
-// Wake returns a space override, or the default when no override is set.
+// Wake returns a space override, then Settings.Defaults.Wake, then WakeAll.
 func (c *Config) Wake(spaceID string) WakePolicy {
 	for _, space := range c.Settings.Spaces {
 		if space.ID == spaceID && space.Wake != "" {
 			return space.Wake
 		}
 	}
-	return c.Settings.Defaults.Wake
+	if c.Settings.Defaults.Wake != "" {
+		return c.Settings.Defaults.Wake
+	}
+	return WakeAll
 }
 
-// Identity returns the first configured identity. Load always provides one.
+// CatchupBudget returns the configured budget per space per pass, or 50 if omitted.
+func (c *Config) CatchupBudget() int {
+	if c.Settings.CatchupBudget != 0 {
+		return c.Settings.CatchupBudget
+	}
+	return 50
+}
+
+// Identities returns a fresh slice with resolved token paths, or the default
+// identity when none are configured. Settings is never modified.
+func (c *Config) Identities() []Identity {
+	if len(c.Settings.Identities) == 0 {
+		return []Identity{{Name: "default", Agent: "mayor", TokenFile: c.Secrets.TokenFile}}
+	}
+	identities := make([]Identity, len(c.Settings.Identities))
+	copy(identities, c.Settings.Identities)
+	for i := range identities {
+		identity := &identities[i]
+		if identity.TokenFile == "" {
+			identity.TokenFile = c.Secrets.TokenFile
+		} else if !filepath.IsAbs(identity.TokenFile) {
+			identity.TokenFile = filepath.Join(c.SecretsDir, identity.TokenFile)
+		}
+	}
+	return identities
+}
+
+// Identity returns the first effective identity, including the default if omitted.
 func (c *Config) Identity() Identity {
-	return c.Settings.Identities[0]
+	return c.Identities()[0]
 }
 
-func (c *Config) validateSettings(mediaMaxBytes int64) error {
+func (c *Config) validateSettings(mediaMaxBytes int64, catchupBudget int) error {
 	validWake := func(wake WakePolicy) bool { return wake == WakeAll || wake == WakeMentions }
-	if !validWake(c.Settings.Defaults.Wake) {
+	if c.Settings.Defaults.Wake != "" && !validWake(c.Settings.Defaults.Wake) {
 		return fmt.Errorf("defaults.wake must be all or mentions")
 	}
 	for i, space := range c.Settings.Spaces {
@@ -198,7 +221,7 @@ func (c *Config) validateSettings(mediaMaxBytes int64) error {
 	if mediaMaxBytes <= 0 {
 		return fmt.Errorf("media.max_bytes must be positive")
 	}
-	if c.Settings.CatchupBudget <= 0 {
+	if catchupBudget <= 0 {
 		return fmt.Errorf("catchup_budget must be positive")
 	}
 	return nil
