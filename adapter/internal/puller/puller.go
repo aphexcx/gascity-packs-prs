@@ -247,8 +247,8 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 // return promptly on context cancellation.
 // A negative MaxExtension (the client's disable setting) is refused: any
 // nonpositive value is replaced by the client default so handling extends leases.
-// A quarantine storage/record failure always nacks. Without MediaDir quarantine
-// fails closed, so callers should supply their configured directory at startup.
+// An unrecovered quarantine storage failure or a record failure nacks. Without
+// MediaDir quarantine fails closed, so callers should supply it at startup.
 // The quarantine directory is verified at startup and its handle is reused.
 // Before returning a recorded path, its configured location must still name
 // the opened directory. A missing store, changed directory or write failure

@@ -1048,6 +1048,7 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 }
 
 func TestRunQuarantineRecoversDuringRun(t *testing.T) {
+	t.Parallel()
 	for _, scenario := range []string{"removed", "replaced", "startup repaired"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Parallel()
@@ -1154,6 +1155,7 @@ func TestRunClosesQuarantineRoot(t *testing.T) {
 }
 
 func TestRunQuarantineRejectsReplacedSymlink(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	parent := quarantineTempDir(t)
 	var recorded atomic.Int32
