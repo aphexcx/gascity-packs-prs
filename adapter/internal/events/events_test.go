@@ -531,7 +531,7 @@ func TestRenewLoopRetriesWithBoundedBackoff(t *testing.T) {
 		return nil
 	}
 	f.manager.RenewLoop(ctx)
-	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, 64 * time.Second, 2 * time.Minute, 2 * time.Minute, 2 * time.Minute}) {
+	if !reflect.DeepEqual(f.clock.sleeps, []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second, 32 * time.Second, time.Minute, 4 * time.Second, time.Minute, time.Minute}) {
 		t.Fatalf("backoff = %v", f.clock.sleeps)
 	}
 	if f.count("POST", "/v1/subscriptions") != 0 {
@@ -791,6 +791,30 @@ func TestSuspensionReasonReportedInErrorAndLog(t *testing.T) {
 	}
 }
 
+func TestReactivationLogsSuspensionBeforeRecovery(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	var logs bytes.Buffer
+	f.manager.log = slog.New(slog.NewJSONHandler(&logs, nil))
+	f.reconcile()
+	decoder := json.NewDecoder(&logs)
+	var entries []map[string]any
+	for decoder.More() {
+		var entry map[string]any
+		if err := decoder.Decode(&entry); err != nil {
+			t.Fatal(err)
+		}
+		entries = append(entries, entry)
+	}
+	if len(entries) != 2 || entries[0]["level"] != "WARN" || entries[0]["reason"] != "ENDPOINT_PERMISSION_DENIED" || entries[1]["level"] != "INFO" || entries[1]["action"] != "reactivate" || entries[1]["state"] != "ACTIVE" {
+		t.Fatalf("want suspension warning followed only by recovery: %v", entries)
+	}
+}
+
 func TestScopeRevocationWaitsForTokenReload(t *testing.T) {
 	for _, reason := range []string{"USER_SCOPE_REVOKED", "APP_SCOPE_REVOKED"} {
 		t.Run(reason, func(t *testing.T) {
@@ -941,7 +965,7 @@ func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
 	f.clock.onSleep = func(delay time.Duration) error {
 		attempts++
 		last, failures, next, _ := reader.Status()
-		if last == nil || failures != attempts || !next.Equal(f.clock.Now().Add(delay)) {
+		if last == nil || failures != len(f.requests) || delay != min(next.Sub(f.clock.Now()), time.Minute) {
 			t.Errorf("retry schedule disagrees with status: %v %d %v delay=%v", last, failures, next, delay)
 		}
 		if attempts == 10 {
@@ -953,9 +977,87 @@ func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
 	f.manager.RenewLoop(ctx)
 }
 
+type callbackHandler struct {
+	slog.Handler
+	onError func()
+}
+
+func (h callbackHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level == slog.LevelError {
+		h.onError()
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func TestRenewLoopRechecksScheduleAfterConcurrentRecovery(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	failed, recovered := make(chan struct{}), make(chan struct{})
+	f.manager.log = slog.New(callbackHandler{
+		Handler: slog.NewTextHandler(io.Discard, nil),
+		onError: func() { close(failed); <-recovered },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.clock.onSleep = func(delay time.Duration) error {
+		if delay != time.Minute {
+			t.Errorf("recovered renewal wait = %v; want one minute", delay)
+		}
+		cancel()
+		return ctx.Err()
+	}
+	done := make(chan struct{})
+	go func() { defer close(done); f.manager.RenewLoop(ctx) }()
+	<-failed // The loop has failed and is about to read its retry schedule.
+	f.hook = nil
+	state, err := f.manager.Reconcile(context.Background())
+	close(recovered)
+	<-done
+	if err != nil || state != first {
+		t.Fatalf("concurrent recovery: state=%+v error=%v", state, err)
+	}
+}
+
+func TestRenewLoopAdoptsRecoveryScheduleDuringBackoff(t *testing.T) {
+	f := setup(t)
+	f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	for range 7 {
+		_, _ = f.manager.Reconcile(context.Background())
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	requestsAfterRecovery := 0
+	f.clock.onSleep = func(delay time.Duration) error {
+		if delay != time.Minute {
+			t.Errorf("long wait did not recheck in one minute: %v", delay)
+		}
+		if len(f.clock.sleeps) == 1 {
+			f.hook = nil
+			f.reconcile()
+			requestsAfterRecovery = len(f.requests)
+		} else if len(f.requests) != requestsAfterRecovery {
+			t.Error("loop retried on the obsolete backoff schedule after recovery")
+		}
+		if len(f.clock.sleeps) == 3 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+}
+
 func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
 	f := setup(t)
 	f.reconcile()
+	// A fixed old timestamp distinguishes a rewrite even if the filesystem
+	// reuses the inode or has coarse timestamp resolution.
+	stamp := time.Unix(123456789, 0)
+	if err := os.Chtimes(f.path, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
 	before, err := os.Stat(f.path)
 	if err != nil {
 		t.Fatal(err)
@@ -968,7 +1070,7 @@ func TestUnchangedSubscriptionDoesNotRewriteLedger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !os.SameFile(before, after) {
+	if !before.ModTime().Equal(after.ModTime()) || before.Size() != after.Size() {
 		t.Fatal("unchanged subscription rewrote the ledger")
 	}
 }
@@ -1060,6 +1162,162 @@ func TestResumedReactivationReportsSuspensionReason(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") || !strings.Contains(logs.String(), "ENDPOINT_PERMISSION_DENIED") {
 		t.Fatalf("resumed suspension error=%v log=%s", err, logs.String())
 	}
+	_, _ = f.manager.Reconcile(context.Background())
+	if f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+		t.Fatal("retained operation was replaced while its subscription still exists")
+	}
+}
+
+func TestStuckRenewalPersistsAuthoritativeSuspension(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.clock.advance(3 * time.Hour)
+	f.server.Configure(func(s *fakegoogle.Server) { s.OperationDelay = time.Hour })
+	if _, err := f.manager.Reconcile(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("initial renewal = %v", err)
+	}
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "ENDPOINT_PERMISSION_DENIED"
+	})
+	got, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ENDPOINT_PERMISSION_DENIED") {
+		t.Fatalf("stuck renewal = %v", err)
+	}
+	want := first
+	want.State = "SUSPENDED"
+	last, _, _, state := f.manager.Status()
+	disk, loadErr := ledger.Load(f.path, true)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if got != want || state != want || disk.Subscription != want || f.ledger.Subscription != want || last != err {
+		t.Fatalf("stale suspended state: returned=%+v status=%+v disk=%+v memory=%+v last=%v", got, state, disk.Subscription, f.ledger.Subscription, last)
+	}
+	if f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatal("stuck renewal was replaced")
+	}
+}
+
+func TestTokenReloadWhileActiveDoesNotAuthorizeLaterRevocation(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	if _, err := f.manager.TokenReloaded(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	_, err := f.manager.Reconcile(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "awaiting validated token reload") || f.count("POST", "/v1/"+first.Name+":reactivate") != 0 {
+		t.Fatalf("active reload authorized a later revocation: %v", err)
+	}
+}
+
+func TestReactivationAuthorizationFailureRequiresAnotherReload(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code int
+		body string
+	}{
+		{"http401", 401, `{"error":{"code":401,"message":"unauthenticated"}}`},
+		{"http403", 403, `{"error":{"code":403,"message":"permission denied"}}`},
+		{"operation7", 200, `{"name":"operations/denied","done":true,"error":{"code":7,"message":"permission denied"}}`},
+		{"operation16", 200, `{"name":"operations/denied","done":true,"error":{"code":16,"message":"unauthenticated"}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			f.server.Configure(func(s *fakegoogle.Server) {
+				s.Subscriptions[first.Name].State = "SUSPENDED"
+				s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+			})
+			f.hook = func(r *http.Request) (*http.Response, error) {
+				if strings.HasSuffix(r.URL.Path, ":reactivate") {
+					return jsonResponse(tc.code, tc.body), nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			}
+			if _, err := f.manager.TokenReloaded(context.Background()); err == nil {
+				t.Fatal("expected authorization failure")
+			}
+			f.hook = nil
+			f.clock.advance(operationTimeout)
+			_, err := f.manager.Reconcile(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "awaiting validated token reload") || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+				t.Fatalf("authorization failure did not clear permission: %v", err)
+			}
+			state, err := f.manager.TokenReloaded(context.Background())
+			if err != nil || state.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 2 {
+				t.Fatalf("new reload failed to restore permission: state=%+v error=%v", state, err)
+			}
+		})
+	}
+}
+
+func TestInactiveIncompatibleSubscriptionDoesNotBlockDiscovery(t *testing.T) {
+	for _, source := range []string{"lookup", "discover"} {
+		for _, inactive := range []string{"deleted", "expired"} {
+			t.Run(source+"/"+inactive, func(t *testing.T) {
+				f := setup(t)
+				first := f.reconcile()
+				var valid api.Subscription
+				f.server.Configure(func(s *fakegoogle.Server) { valid = *s.Subscriptions[first.Name] })
+				obsolete := valid
+				obsolete.Name = "subscriptions/obsolete"
+				obsolete.NotificationEndpoint = &api.NotificationEndpoint{PubsubTopic: "projects/example/topics/obsolete"}
+				if inactive == "deleted" {
+					obsolete.State, obsolete.ExpireTime = "DELETED", ""
+				} else {
+					obsolete.ExpireTime = f.clock.Now().Format(time.RFC3339Nano)
+				}
+				if source == "lookup" {
+					f.ledger.Subscription.Name = obsolete.Name
+				} else {
+					f.ledger.Subscription = ledger.SubscriptionState{}
+				}
+				f.hook = func(r *http.Request) (*http.Response, error) {
+					var value any
+					switch r.URL.Path {
+					case "/v1/" + obsolete.Name:
+						value = &obsolete
+					case "/v1/subscriptions":
+						value = &api.ListSubscriptionsResponse{Subscriptions: []*api.Subscription{&obsolete, &valid}}
+					default:
+						return http.DefaultTransport.RoundTrip(r)
+					}
+					body, err := json.Marshal(value)
+					return jsonResponse(200, string(body)), err
+				}
+				got := f.reconcile()
+				if got != first || f.count("POST", "/v1/subscriptions") != 1 {
+					t.Fatalf("failed to adopt the live subscription: %+v", got)
+				}
+			})
+		}
+	}
+}
+
+func TestCancelledLifecycleDoesNotChangeSharedBackoff(t *testing.T) {
+	f := setup(t)
+	want := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	_, wantErr := f.manager.Reconcile(context.Background())
+	wantNext := f.clock.Now().Add(time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		cancel()
+		return nil, r.Context().Err()
+	}
+	if err := f.manager.HandleLifecycle(ctx, "subscription.suspended"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled lifecycle = %v", err)
+	}
+	last, failures, next, state := f.manager.Status()
+	if last != wantErr || failures != 1 || next != wantNext || state != want {
+		t.Fatalf("caller cancellation changed shared backoff: %v %d %v %+v", last, failures, next, state)
+	}
 }
 
 func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
@@ -1085,21 +1343,110 @@ func TestTokenReloadSurvivesTransientReactivationFailure(t *testing.T) {
 	}
 }
 
+func TestTokenReloadLatchedWhenWaitingContextExpires(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.Configure(func(s *fakegoogle.Server) {
+		s.Subscriptions[first.Name].State = "SUSPENDED"
+		s.Subscriptions[first.Name].SuspensionReason = "USER_SCOPE_REVOKED"
+	})
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		once.Do(func() { close(entered); <-release })
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.manager.Reconcile(context.Background()); done <- err }()
+	<-entered
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, reloadErr := f.manager.TokenReloaded(ctx)
+	close(release)
+	if err := <-done; err == nil {
+		t.Error("reconcile preceding reload unexpectedly reactivated")
+	}
+	if !errors.Is(reloadErr, context.DeadlineExceeded) {
+		t.Fatalf("waiting reload = %v", reloadErr)
+	}
+	got, err := f.manager.Reconcile(context.Background())
+	if err != nil || got.State != "ACTIVE" || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 {
+		t.Fatalf("reload lost while waiting: state=%+v error=%v", got, err)
+	}
+}
+
 func TestStatusSerializesWithConcurrentReconcile(t *testing.T) {
 	f := setup(t)
+	want := f.reconcile()
+	requests := 0 // The reconcile gate serializes transport calls.
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		requests++
+		if requests%10 == 0 {
+			return http.DefaultTransport.RoundTrip(r)
+		}
+		return nil, errors.New("unavailable")
+	}
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Go(func() {
-			if _, err := f.manager.Reconcile(context.Background()); err != nil {
-				t.Error(err)
+			for range 20 {
+				// Exercise both persistence snapshots and result snapshots.
+				_, _ = f.manager.Reconcile(context.Background())
 			}
 		})
 		wg.Go(func() {
-			last, failures, next, state := f.manager.Status()
-			if last != nil || failures != 0 || (state.Name != "" && next.IsZero()) {
-				t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+			for range 1000 {
+				last, failures, next, state := f.manager.Status()
+				wantNext := want.Expiry.Add(-time.Hour)
+				if failures > 0 {
+					wantNext = f.clock.Now().Add(min(time.Second<<min(failures-1, 7), operationTimeout))
+				}
+				if (last == nil) != (failures == 0) || !next.Equal(wantNext) || state != want {
+					t.Errorf("inconsistent concurrent status: %v %d %v %+v", last, failures, next, state)
+				}
 			}
 		})
 	}
 	wg.Wait()
+}
+
+func TestStatusReturnsLastResultDuringBlockedReconcile(t *testing.T) {
+	f := setup(t)
+	want := f.reconcile()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	_, wantErr := f.manager.Reconcile(context.Background())
+	wantNext := f.clock.Now().Add(time.Second)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		close(entered)
+		<-release
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := f.manager.Reconcile(context.Background()); done <- err }()
+	<-entered
+	defer func() {
+		unblock()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		last, failures, next, state := f.manager.Status()
+		if last != wantErr || failures != 1 || next != wantNext || state != want {
+			t.Errorf("blocked reconcile changed status: %v %d %v %+v", last, failures, next, state)
+		}
+	}()
+	select {
+	case <-read:
+	case <-time.After(time.Second):
+		// Release and join both goroutines before reporting the failure.
+		unblock()
+		<-read
+		t.Fatal("Status waited for the in-flight reconciliation")
+	}
 }
