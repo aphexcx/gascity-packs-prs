@@ -867,3 +867,87 @@ func TestIncompatibilityNamesSubscriptionFieldAndValue(t *testing.T) {
 		})
 	}
 }
+
+type statusReader interface {
+	Status() (error, int, time.Time, ledger.SubscriptionState)
+}
+
+func TestStatusExposesFailuresBackoffAndRecovery(t *testing.T) {
+	f := setup(t)
+	reader, ok := any(f.manager).(statusReader)
+	if !ok {
+		t.Fatal("missing subscription status accessor")
+	}
+	last, failures, next, state := reader.Status()
+	if last != nil || failures != 0 || !next.IsZero() || state.Name != "" {
+		t.Fatalf("initial status: %v %d %v %+v", last, failures, next, state)
+	}
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" {
+			return jsonResponse(403, `{"error":{"code":403,"message":"admin approval missing"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for i := 1; i <= 10; i++ {
+		if _, err := f.manager.Reconcile(context.Background()); err == nil {
+			t.Fatal("create failure not reported")
+		}
+		last, failures, next, state = reader.Status()
+		wantDelay := min(time.Second<<(i-1), 2*time.Minute)
+		if last == nil || !strings.Contains(last.Error(), "admin approval missing") || failures != i || !next.Equal(f.clock.Now().Add(wantDelay)) || state.Name != "" {
+			t.Fatalf("failure %d status: %v %d %v %+v", i, last, failures, next, state)
+		}
+		f.clock.advance(wantDelay)
+	}
+	f.hook = nil
+	f.clock.advance(2 * time.Minute)
+	got := f.reconcile()
+	last, failures, next, state = reader.Status()
+	if last != nil || failures != 0 || !next.Equal(f.manager.renewAt) || state != got {
+		t.Fatalf("recovered status: %v %d %v %+v", last, failures, next, state)
+	}
+}
+
+func TestMutationHoldPreservesOriginalCause(t *testing.T) {
+	f := setup(t)
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		if r.Method == "POST" {
+			return jsonResponse(403, `{"error":{"code":403,"message":"admin approval missing"}}`), nil
+		}
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	for range 2 {
+		_, err := f.manager.Reconcile(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "admin approval missing") || !isHTTP(err, http.StatusForbidden) {
+			t.Fatalf("failure cause lost: %v", err)
+		}
+	}
+	if f.count("POST", "/v1/subscriptions") != 1 {
+		t.Fatal("hold repeated create")
+	}
+}
+
+func TestRenewLoopStatusMatchesRetrySchedule(t *testing.T) {
+	f := setup(t)
+	reader, ok := any(f.manager).(statusReader)
+	if !ok {
+		t.Fatal("missing subscription status accessor")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	attempts := 0
+	f.clock.onSleep = func(delay time.Duration) error {
+		attempts++
+		last, failures, next, _ := reader.Status()
+		if last == nil || failures != attempts || !next.Equal(f.clock.Now().Add(delay)) {
+			t.Errorf("retry schedule disagrees with status: %v %d %v delay=%v", last, failures, next, delay)
+		}
+		if attempts == 10 {
+			cancel()
+			return ctx.Err()
+		}
+		return nil
+	}
+	f.manager.RenewLoop(ctx)
+}

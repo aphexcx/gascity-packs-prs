@@ -87,6 +87,11 @@ type Manager struct {
 	mutationStarted time.Time
 	ambiguousUntil  time.Time
 	ambiguousState  ledger.SubscriptionState
+	ambiguousCause  error
+	lastError       error
+	failures        int
+	retryDelay      time.Duration
+	nextAttempt     time.Time
 	scheduledName   string
 	scheduledExpiry time.Time
 	renewAt         time.Time
@@ -130,7 +135,7 @@ func (m *Manager) TokenReloaded(ctx context.Context) (ledger.SubscriptionState, 
 	return m.reconcile(ctx, true)
 }
 
-func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (ledger.SubscriptionState, error) {
+func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (_ ledger.SubscriptionState, resultErr error) {
 	select {
 	case m.gate <- struct{}{}:
 		defer func() { <-m.gate }()
@@ -140,6 +145,7 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (ledger.Sub
 	if err := ctx.Err(); err != nil {
 		return ledger.SubscriptionState{}, err
 	}
+	defer func() { m.recordResult(resultErr) }()
 	m.scopeReloaded = tokenReloaded
 	defer func() { m.scopeReloaded = false }()
 	m.ledgerMu.Lock()
@@ -184,7 +190,7 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (ledger.Sub
 	}
 	if sub == nil {
 		if m.clock.Now().Before(m.ambiguousUntil) {
-			return saved, errors.New("events: awaiting discovery after an ambiguous mutation")
+			return saved, m.holdError("events: awaiting discovery after a failed mutation")
 		}
 		m.mutationStarted = m.clock.Now()
 		m.pendingKind = "create"
@@ -195,7 +201,8 @@ func (m *Manager) reconcile(ctx context.Context, tokenReloaded bool) (ledger.Sub
 		if err != nil {
 			m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 			m.ambiguousState = ledger.SubscriptionState{}
-			return saved, fmt.Errorf("events: create: %w", err)
+			m.ambiguousCause = fmt.Errorf("events: create: %w", err)
+			return saved, m.ambiguousCause
 		}
 		return m.finish(ctx, op)
 	}
@@ -259,7 +266,8 @@ func (m *Manager) adopt(ctx context.Context) (ledger.SubscriptionState, error) {
 	if sub == nil {
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = ledger.SubscriptionState{}
-		return ledger.SubscriptionState{}, errors.New("events: ALREADY_EXISTS but subscription is not yet discoverable")
+		m.ambiguousCause = errors.New("events: ALREADY_EXISTS but subscription is not yet discoverable")
+		return ledger.SubscriptionState{}, m.ambiguousCause
 	}
 	return m.reconcileExisting(ctx, sub)
 }
@@ -279,6 +287,7 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 	}
 	if state != m.ambiguousState {
 		m.ambiguousUntil = time.Time{}
+		m.ambiguousCause = nil
 	}
 	if sub.Reconciling {
 		return state, errors.New("events: subscription is still reconciling")
@@ -287,7 +296,7 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 		return state, nil
 	}
 	if m.clock.Now().Before(m.ambiguousUntil) {
-		return state, errors.New("events: awaiting authoritative change after an ambiguous mutation")
+		return state, m.holdError("events: awaiting authoritative change after a failed mutation")
 	}
 	m.mutationStarted = m.clock.Now()
 	var op *api.Operation
@@ -310,7 +319,8 @@ func (m *Manager) reconcileExisting(ctx context.Context, sub *api.Subscription) 
 	if err != nil {
 		m.ambiguousUntil = m.clock.Now().Add(operationTimeout)
 		m.ambiguousState = state
-		return state, fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
+		m.ambiguousCause = fmt.Errorf("events: reconcile %s: %w", sub.Name, err)
+		return state, m.ambiguousCause
 	}
 	return m.finish(ctx, op)
 }
@@ -381,6 +391,7 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 		return state, err
 	}
 	m.ambiguousUntil = time.Time{}
+	m.ambiguousCause = nil
 	if state.State != "ACTIVE" || sub.Reconciling || !m.clock.Now().Before(state.Expiry) {
 		return state, errors.New("events: completed operation did not leave an active, unexpired subscription")
 	}
@@ -469,11 +480,48 @@ func (m *Manager) persist(sub *api.Subscription, started time.Time) (ledger.Subs
 	return state, nil
 }
 
+// Status returns the last reconciliation error, consecutive failures, scheduled
+// next attempt, and last durably observed subscription. It shares the reconcile
+// gate and ledger lock, so callers receive one consistent snapshot. Before the
+// first attempt the error, count, and next attempt are zero. RenewLoop consumes
+// this schedule; direct Reconcile callers remain responsible for retrying.
+func (m *Manager) Status() (error, int, time.Time, ledger.SubscriptionState) {
+	m.gate <- struct{}{}
+	defer func() { <-m.gate }()
+	m.ledgerMu.Lock()
+	state := m.ledger.Subscription
+	m.ledgerMu.Unlock()
+	return m.lastError, m.failures, m.nextAttempt, state
+}
+
+// recordResult and holdError are only called under gate.
+func (m *Manager) recordResult(err error) {
+	m.lastError = err
+	if err == nil {
+		m.failures, m.retryDelay = 0, 0
+		m.nextAttempt = m.renewAt
+		return
+	}
+	m.failures++
+	if m.retryDelay == 0 {
+		m.retryDelay = time.Second
+	} else {
+		m.retryDelay = min(2*m.retryDelay, operationTimeout)
+	}
+	m.nextAttempt = m.clock.Now().Add(m.retryDelay)
+}
+
+func (m *Manager) holdError(message string) error {
+	if m.ambiguousCause != nil {
+		return fmt.Errorf("%s: %w", message, m.ambiguousCause)
+	}
+	return errors.New(message)
+}
+
 // RenewLoop retries failures with exponential backoff up to two minutes. Long
 // waits recheck wall time and the latest schedule at least once a minute, so
 // clock jumps and lifecycle-driven renewal cannot leave a stale relative timer.
 func (m *Manager) RenewLoop(ctx context.Context) {
-	backoff := time.Second
 	for ctx.Err() == nil {
 		_, err := m.Reconcile(ctx)
 		if err != nil {
@@ -481,13 +529,12 @@ func (m *Manager) RenewLoop(ctx context.Context) {
 				return
 			}
 			m.log.ErrorContext(ctx, "subscription reconciliation failed", "cause", err)
-			if m.clock.Sleep(ctx, backoff) != nil {
+			_, _, next, _ := m.Status()
+			if m.clock.Sleep(ctx, max(0, next.Sub(m.clock.Now()))) != nil {
 				return
 			}
-			backoff = min(backoff*2, operationTimeout)
 			continue
 		}
-		backoff = time.Second
 		for ctx.Err() == nil {
 			select {
 			case m.gate <- struct{}{}:
