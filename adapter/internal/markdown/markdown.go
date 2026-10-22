@@ -450,7 +450,9 @@ func (f *codeFence) closes(line string) bool {
 // Empty text returns nil. For nonempty text, limit must be at least utf8.UTFMax;
 // smaller limits panic. If no fenced cut fits, or reopening and closing a fence
 // would consume more than half the limit, a hard rune-boundary cut without
-// synthetic wrappers guarantees progress. A complete message that fits,
+// synthetic wrappers guarantees progress. A hard cut also removes the preceding
+// part's synthetic closer if its matching reopener cannot be retained.
+// A complete message that fits,
 // including an unclosed fence, is unchanged.
 func Split(text string, limit int) []string {
 	if text == "" {
