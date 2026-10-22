@@ -628,3 +628,45 @@ func TestTransientClassification(t *testing.T) {
 		})
 	}
 }
+
+func TestClientAllowsSlowBody(t *testing.T) {
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "first ")
+		w.(http.Flusher).Flush()
+		timer := time.NewTimer(200 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			fmt.Fprint(w, "last")
+		case <-r.Context().Done():
+		}
+	})
+	writeJSON(t, tokenFile, savedToken("original"))
+	s := mustSource(t, clientFile, tokenFile, ep)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 100 * time.Millisecond
+	defer transport.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: transport})
+	client, err := s.Client(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Timeout != 0 {
+		t.Errorf("client has whole-body timeout %v", client.Timeout)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.ChatAPIBase+"/media", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil || string(body) != "first last" {
+		t.Fatalf("slow body = %q, error = %v", body, err)
+	}
+}

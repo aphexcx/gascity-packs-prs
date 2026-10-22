@@ -320,7 +320,9 @@ func authenticatedClient(ctx context.Context, ts oauth2.TokenSource) *http.Clien
 	if client, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && client.Transport != nil {
 		base = client.Transport
 	}
-	return &http.Client{Transport: &oauth2.Transport{Source: ts, Base: base}, Timeout: 30 * time.Second}
+	// Request contexts bound API calls; a total client timeout would also cut
+	// off large media bodies after the headers have already arrived.
+	return &http.Client{Transport: &oauth2.Transport{Source: ts, Base: base}}
 }
 
 func readToken(path string) (*oauth2.Token, os.FileInfo, error) {
