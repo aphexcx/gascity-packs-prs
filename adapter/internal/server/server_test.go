@@ -11,10 +11,13 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1480,6 +1483,221 @@ func TestUndeliveredCommandNeverRetriesAutomatically(t *testing.T) {
 				t.Fatalf("caller retry: %+v", got)
 			}
 		})
+	}
+}
+
+// Reload the ledger into a fresh server so recovery tests cannot pass using
+// state that never reached disk. The old server is idle and remains cleanup-owned.
+func (f *fixture) restart(t *testing.T) {
+	t.Helper()
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := f.options
+	opts.Ledger, opts.LedgerMu = l, new(sync.Mutex)
+	s, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	s.SetHealth(Health{State: "ready"})
+	h := httptest.NewServer(s)
+	t.Cleanup(h.Close)
+	if err := opts.GC.Register(t.Context(), wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: h.URL}); err != nil {
+		t.Fatal(err)
+	}
+	f.s, f.l, f.mu, f.url = s, l, opts.LedgerMu, h.URL
+}
+
+func (f *fixture) assertPending(t *testing.T, key string, pending bool) {
+	t.Helper()
+	l, err := ledger.Load(f.options.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := l.Sends[key]
+	if v == nil || v.RecordPending != pending || (pending && v.Receipt != nil) {
+		t.Fatalf("persisted recovery state: %+v; want pending=%v, no failed receipt while pending", v, pending)
+	}
+	_, raw, _ := f.call(t, "/status", nil)
+	want := float64(0)
+	if pending {
+		want = 1
+	}
+	if status := decode[map[string]any](t, raw); status["unrecorded"] != want {
+		t.Fatalf("status pending count: %s", raw)
+	}
+}
+
+func TestInterruptedCommandRetriesTransientGCFailureAfterRestart(t *testing.T) {
+	for _, mode := range []string{"503", "408", "429", "transport", "canceled", "receipt"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "interrupted"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			f.restart(t)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var calls atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/outbound") && calls.Add(1) == 1 {
+					switch mode {
+					case "transport":
+						conn, _, err := w.(http.Hijacker).Hijack()
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						_ = conn.Close()
+					case "canceled":
+						_, _ = io.Copy(io.Discard, r.Body)
+						cancel()
+						<-r.Context().Done()
+					case "receipt":
+						var out wire.OutboundResult
+						out.Receipt.FailureKind, out.Receipt.RetryAfter = "transient", int64(time.Second)
+						respond(w, 200, out)
+					default:
+						w.Header().Set("Retry-After", "60")
+						w.WriteHeader(map[string]int{"503": 503, "408": 408, "429": 429}[mode])
+					}
+					return
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			f.options.GC = gcclient.New(h.URL, "examplecity")
+			f.s.SetClients(f.options.Chat, f.options.GC)
+			if err := f.s.RetryPending(ctx); err == nil {
+				t.Error("transient recovery failure was not returned")
+			} else if mode == "canceled" && !errors.Is(err, context.Canceled) {
+				t.Errorf("cancellation lost: %v", err)
+			}
+			f.assertPending(t, p.IdempotencyKey, true)
+			f.restart(t)
+			if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			f.assertPending(t, p.IdempotencyKey, false)
+			if got := commandOutcome(f.l.Sends[p.IdempotencyKey]); !got.Delivered || !got.Recorded || f.count() != 1 || calls.Load() != 2 {
+				t.Fatalf("recovery: %+v; Google sends=%d gc calls=%d", got, f.count(), calls.Load())
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || calls.Load() != 2 {
+				t.Fatalf("completed intent retried: %v calls=%d", err, calls.Load())
+			}
+		})
+	}
+}
+
+func TestInterruptedDirectCommandRetriesTransientChatFailureAfterRestart(t *testing.T) {
+	for _, mode := range []string{"upload", "unbound", "no-session"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "interrupted"}
+			var upload *ledger.SendUpload
+			if mode == "upload" {
+				f.gc.Bind(p.Conversation, p.SessionID)
+				file := filepath.Join(f.cfg.Endpoints.UploadRoot, "data.txt")
+				if err := os.WriteFile(file, []byte("data"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				upload = &ledger.SendUpload{Path: file}
+			} else if mode == "no-session" {
+				p.SessionID = ""
+			}
+			if err := f.s.prepare(t.Context(), p, upload, true); err != nil {
+				t.Fatal(err)
+			}
+			f.restart(t)
+			var attempts atomic.Int32
+			c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "POST" {
+					attempts.Add(1)
+					return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			if err := f.s.RetryPending(t.Context()); err == nil {
+				t.Error("transient Chat recovery failure was not returned")
+			}
+			if attempts.Load() != 1 || f.count() != 0 {
+				t.Fatalf("unexpected attempts=%d sends=%d", attempts.Load(), f.count())
+			}
+			f.assertPending(t, p.IdempotencyKey, true)
+			f.restart(t)
+			if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			f.assertPending(t, p.IdempotencyKey, false)
+			if got := commandOutcome(f.l.Sends[p.IdempotencyKey]); !got.Delivered || got.Recorded != (mode == "upload") || f.count() != 1 {
+				t.Fatalf("recovery: %+v; Google sends=%d", got, f.count())
+			}
+		})
+	}
+}
+
+func TestInterruptedCommandDefiniteRejectionStopsAutomaticRecovery(t *testing.T) {
+	f := setup(t)
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "rejected-interrupted"}
+	f.gc.Bind(p.Conversation, "another-session")
+	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	f.restart(t)
+	if err := f.s.RetryPending(t.Context()); !gcclient.IsWrongOwner(err) {
+		t.Fatalf("expected definite rejection: %v", err)
+	}
+	f.assertPending(t, p.IdempotencyKey, false)
+	want := commandOutcome(f.l.Sends[p.IdempotencyKey])
+	if want.Delivered || want.Recorded || want.FailureKind != "permanent" || want.Reason == "" {
+		t.Fatalf("returned failure: %+v", want)
+	}
+	f.restart(t)
+	f.gc.Bind(p.Conversation, p.SessionID)
+	for range 2 {
+		if err := f.s.RetryPending(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := commandOutcome(f.l.Sends[p.IdempotencyKey]); got != want || f.count() != 0 {
+		t.Fatalf("definite rejection retried or lost: %+v sends=%d", got, f.count())
+	}
+}
+
+func TestInterruptedCommandPreparationTimeoutRemainsPending(t *testing.T) {
+	f := setup(t)
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "interrupted"}
+	f.gc.Bind(p.Conversation, p.SessionID)
+	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	release, err := f.s.lock(t.Context(), "send:"+p.IdempotencyKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if err := f.s.RetryPending(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected preparation timeout: %v", err)
+	}
+	f.assertPending(t, p.IdempotencyKey, true)
+	f.restart(t)
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := commandOutcome(f.l.Sends[p.IdempotencyKey]); !got.Delivered || !got.Recorded || f.count() != 1 {
+		t.Fatalf("recovery: %+v sends=%d", got, f.count())
 	}
 }
 

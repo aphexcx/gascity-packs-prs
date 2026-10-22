@@ -401,6 +401,13 @@ func permanent(p wire.PublishRequest) wire.PublishReceipt {
 	return wire.PublishReceipt{Conversation: p.Conversation, FailureKind: "permanent"}
 }
 
+// No caller has accepted responsibility for an automatic attempt's transient
+// failure. Keep its durable intent until a sweep succeeds or definitely fails.
+// An absent classification is ambiguous, not evidence of a definite rejection.
+func retryAutomatically(automatic bool, receipt wire.PublishReceipt) bool {
+	return automatic && !receipt.Delivered && (receipt.FailureKind == "" || receipt.FailureKind == "transient" || receipt.FailureKind == "rate_limited")
+}
+
 // Log identifiers and classification only. Error strings and HTTP bodies may
 // contain credentials, URLs with tokens, or message text and must never be logged.
 func logCause(err error) (string, int) {
@@ -799,7 +806,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	if !result.Delivered {
 		if err := s.available(); err != nil {
 			if send != nil {
-				return s.failPreparedCommand(ctx, p, err)
+				return s.failPreparedCommand(ctx, p, err, automatic)
 			}
 			result.Reason = err.Error()
 			return result, err
@@ -812,14 +819,14 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 		if err != nil {
 			if send != nil {
-				return s.failPreparedCommand(ctx, p, err)
+				return s.failPreparedCommand(ctx, p, err, automatic)
 			}
 			result.Reason = err.Error()
 			return result, err
 		}
 		l, err = s.snapshot(ctx)
 		if err != nil {
-			return s.failPreparedCommand(ctx, p, err)
+			return s.failPreparedCommand(ctx, p, err, automatic)
 		}
 		send = l.Sends[p.IdempotencyKey]
 		result = commandOutcome(send)
@@ -828,7 +835,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 	}
 	if (send.NotRecordable && send.RecordingFailureKind == "") || p.SessionID == "" {
-		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result)
+		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result, automatic)
 	}
 	if send.Upload != nil && !result.Delivered {
 		r, e := s.publish(ctx, p, send.Upload)
@@ -839,6 +846,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		if e != nil || !r.Delivered {
 			if e != nil {
 				result.Reason = e.Error()
+			}
+			if retryAutomatically(automatic, r) {
+				return result, e
 			}
 			return result, errors.Join(e, s.stopRetry(ctx, p, r, result.Reason))
 		}
@@ -871,14 +881,14 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		}
 	}
 	if gcclient.IsNoBinding(err) {
-		return s.direct(ctx, p, send.Upload, detail(err), result)
+		return s.direct(ctx, p, send.Upload, detail(err), result, automatic)
 	}
 	if err != nil {
 		s.ObserveGCError(err)
 		result.Reason = detail(err)
-		// Once a failure is returned, retries belong to the caller. Allow a
-		// bounded local settlement even if the gc request exhausted its ctx;
-		// this context performs no network calls or additional delivery.
+		// A caller owns its returned failures; automatic attempts retain
+		// transient failures for the next sweep. Settlement is bounded and
+		// independent of the request, with no network calls or delivery.
 		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 		defer cancel()
 		// A lost gc response can follow a durable callback receipt.
@@ -892,7 +902,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		if !result.Delivered {
 			r := failure(p, err)
 			result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
-			err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
+			if !retryAutomatically(automatic, r) {
+				err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
+			}
 		} else {
 			// Delivery is durable; only recording failed. Definite rejections
 			// belong to the caller, while ambiguous recording failures recover.
@@ -930,6 +942,11 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 				result.Reason = "gc did not deliver the message"
 			}
 		}
+		if retryAutomatically(automatic, wire.PublishReceipt{Delivered: result.Delivered, FailureKind: result.FailureKind}) {
+			// A 200 gc result can carry a transient callback failure. Reconcile
+			// the durable receipt above before leaving this intent pending.
+			return errors.New(result.Reason)
+		}
 		v.Recorded = result.Recorded
 		v.RecordPending = result.Delivered && !result.Recorded
 		v.NotRecordable = false
@@ -946,11 +963,15 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	return result, err
 }
 
-// A returned preparation failure also ends an existing intent's automatic
-// delivery obligation. This includes cancellation just after prepare saved it.
-func (s *Server) failPreparedCommand(ctx context.Context, p wire.PublishRequest, cause error) (CommandResult, error) {
+// Preparation failures follow the same retry ownership rule as delivery errors,
+// including cancellation just after prepare saved the intent.
+func (s *Server) failPreparedCommand(ctx context.Context, p wire.PublishRequest, cause error, automatic bool) (CommandResult, error) {
 	receipt := failure(p, cause)
 	result := CommandResult{Key: p.IdempotencyKey, Reason: cause.Error(), FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter}
+	if retryAutomatically(automatic, receipt) {
+		s.logOutcome("command_prepare", p, receipt, cause)
+		return result, cause
+	}
 	err := s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		if v.Receipt != nil && v.Receipt.Delivered {
@@ -993,7 +1014,7 @@ func detail(err error) string {
 	}
 	return err.Error()
 }
-func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string, result CommandResult) (CommandResult, error) {
+func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledger.SendUpload, reason string, result CommandResult, automatic bool) (CommandResult, error) {
 	result.Reason = reason
 	if err := s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
@@ -1017,7 +1038,9 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 	if err != nil {
 		result.Reason = err.Error()
 	}
-	err = errors.Join(err, s.stopRetry(ctx, p, r, result.Reason))
+	if !retryAutomatically(automatic, r) {
+		err = errors.Join(err, s.stopRetry(ctx, p, r, result.Reason))
+	}
 	return result, err
 }
 
