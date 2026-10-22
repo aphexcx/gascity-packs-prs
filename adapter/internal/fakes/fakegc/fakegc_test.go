@@ -40,6 +40,9 @@ func call(t *testing.T, s *Server, method, path string, body any, header bool, s
 	if r.StatusCode != status {
 		t.Fatalf("%s: status %d want %d: %s", path, r.StatusCode, status, data)
 	}
+	if status >= 400 && r.Header.Get("Content-Type") != "application/problem+json" {
+		t.Errorf("error content type = %q", r.Header.Get("Content-Type"))
+	}
 	var result map[string]any
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
@@ -379,7 +382,16 @@ func TestOutboundRequiresSessionBindingAndAdapter(t *testing.T) {
 			if invalid == "scope_id" {
 				req.Conversation.ScopeID = ""
 			}
-			call(t, s, "POST", "outbound", req, true, 422)
+			got := call(t, s, "POST", "outbound", req, true, 422)
+			if got["type"] != "urn:gascity:error:validation-failed" || got["title"] != "Validation Failed" || got["status"] != float64(422) || got["code"] != "validation-failed" || got["detail"] == nil || got["error"] != nil {
+				t.Errorf("problem envelope: %v", got)
+			}
+			if invalid == "binding" && got["detail"] != "no active binding for conversation gchat/spaces/room" {
+				t.Errorf("no binding detail: %v", got)
+			}
+			if invalid == "owner" && got["detail"] != `session "other-session" does not own binding for conversation gchat/spaces/room (bound to session)` {
+				t.Errorf("wrong owner detail: %v", got)
+			}
 			if len(s.Published()) != 0 {
 				t.Fatal("invalid outbound invoked callback")
 			}

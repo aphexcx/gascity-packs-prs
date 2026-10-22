@@ -148,7 +148,18 @@ func respond(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 func fail(w http.ResponseWriter, status int, message string) {
-	respond(w, status, map[string]any{"error": message})
+	code, title := "invalid-request", "Invalid Request"
+	switch status {
+	case 403:
+		code, title = "forbidden", "Forbidden"
+	case 422:
+		code, title = "validation-failed", "Validation Failed"
+	case 500:
+		code, title = "internal", "Internal Server Error"
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"type": "urn:gascity:error:" + code, "title": title, "status": status, "detail": message, "code": code})
 }
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	if err := json.NewDecoder(r.Body).Decode(value); err != nil {
@@ -313,12 +324,16 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 		s.published = append(s.published, callback)
 	}
 	s.mu.Unlock()
-	if !ok {
-		fail(w, 422, "adapter not registered")
+	if owner == "" {
+		fail(w, 422, fmt.Sprintf("no active binding for conversation %s/%s", request.Conversation.Provider, request.Conversation.ConversationID))
 		return
 	}
-	if owner == "" || owner != request.SessionID {
-		fail(w, 422, "session does not own an active conversation binding")
+	if owner != request.SessionID {
+		fail(w, 422, fmt.Sprintf("session %q does not own binding for conversation %s/%s (bound to %s)", request.SessionID, request.Conversation.Provider, request.Conversation.ConversationID, owner))
+		return
+	}
+	if !ok {
+		fail(w, 422, fmt.Sprintf("no adapter for %s/%s", request.Conversation.Provider, request.Conversation.AccountID))
 		return
 	}
 	body, _ := json.Marshal(callback)
