@@ -14,11 +14,22 @@ Media and upload directories are created privately and canonicalized with
 `filepath.EvalSymlinks` before clients are constructed. This resolves macOS
 `/tmp` and `/var` aliases; subsequent attachment access still rejects symlinks.
 
-The canonical Chat user ID is persisted in the ledger. A fresh ledger learns it
-from the first successful outbound message or reaction. Until then, inbound
-changes are retained at Google and catch-up waits; status explains the hold.
-If a create response contradicts the stored identity, the observed ID is saved
-and the client is rebuilt before it can remove reactions under that identity.
+Consent requests `openid` alongside the Chat and Pub/Sub scopes. The token
+file stores the ID token's subject as `identity_user_id` (`users/<numeric id>`),
+and `auth --check` prints it. The adapter seeds the ledger identity before
+inbound processing, so the first DM needs no preceding outbound message.
+Legacy token files still learn from an outbound response and warn once to run
+`gc gchat auth`. If a create response contradicts the seeded identity, the
+observed ID is saved and the client rebuilt; the observed ID then wins.
+
+A rejected access token triggers a refresh before requiring sign-in. Permanent
+refresh failure, or two consecutive credential rejections within five minutes
+despite refresh, holds delivery until a validated token replacement.
+
+Catch-up runs at startup and after subscription recovery. Unfinished intervals
+retry with backoff; completed recovery stays idle. An hourly inventory refresh
+can discover rejoined spaces and retry held history. Live messages arrive on
+the Pub/Sub stream.
 
 Offline state commands reserve the service socket while replacing the ledger.
 The default socket is `adapter.sock` beside the ledger when `GC_SERVICE_SOCKET`
