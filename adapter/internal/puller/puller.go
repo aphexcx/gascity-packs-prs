@@ -267,7 +267,7 @@ func quarantine(mediaDir string, ev *Event) (string, error) {
 		return "", errors.New("quarantine requires Pub/Sub message ID")
 	}
 	dir := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := durableDirectory(dir); err != nil {
 		return "", err
 	}
 	// Escape the untrusted transport ID into one filename, including any slash.
@@ -290,13 +290,44 @@ func quarantine(mediaDir string, ev *Event) (string, error) {
 	if err := os.Rename(f.Name(), path); err != nil {
 		return "", err
 	}
-	d, err := os.Open(dir)
-	if err != nil {
-		return "", err
-	}
-	defer d.Close()
-	if err := d.Sync(); err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return "", err
 	}
 	return path, nil
+}
+
+// Create ancestors one at a time, persisting each directory's parent entry
+// before creating its children. Also sync the parent of an existing directory:
+// it may have been created by a previous attempt whose sync failed.
+func durableDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		parent := filepath.Dir(path)
+		if parent == path {
+			return err
+		}
+		if err := durableDirectory(parent); err != nil {
+			return err
+		}
+		if err := os.Mkdir(path, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("quarantine path is not a directory (symlinks are refused): %s", path)
+	}
+	return syncDirectory(filepath.Dir(path))
+}
+
+func syncDirectory(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
 }

@@ -329,3 +329,123 @@ func TestRunQuarantineRecordFailureRedelivers(t *testing.T) {
 		t.Fatal("quarantine record failure was acked")
 	}
 }
+
+func TestRunExtendsLeaseUntilWholeBatchHandled(t *testing.T) {
+	f := newFixture(t)
+	f.sub.ReceiveSettings.MinDurationPerAckExtension = 10 * time.Second
+	f.sub.ReceiveSettings.MaxDurationPerAckExtension = 10 * time.Second
+	started := make(chan struct{})
+	release := make(chan struct{})
+	f.run(t, func(ctx context.Context, ev *Event) (Outcome, error) {
+		if len(ev.Changes) != 3 {
+			return Nack, errors.New("batch was not expanded")
+		}
+		close(started)
+		// Simulate the final change waiting for its terminal delivery outcome.
+		select {
+		case <-release:
+			return Ack, nil
+		case <-ctx.Done():
+			return Nack, ctx.Err()
+		}
+	})
+	f.google.Emit("google.workspace.chat.message.v1.batchCreated", []*chat.Message{
+		{Name: "spaces/room/messages/one"}, {Name: "spaces/room/messages/two"}, {Name: "spaces/room/messages/three"},
+	}, "spaces/room")
+	select {
+	case <-started:
+	case <-f.ctx.Done():
+		t.Fatal("handler never started")
+	}
+	// Require both the receipt extension and a later renewal while blocked.
+	waitFor(t, f.ctx, func() bool {
+		m := f.server.Messages()[0]
+		extensions := 0
+		for _, modack := range m.Modacks {
+			if modack.AckDeadline > 0 {
+				extensions++
+			}
+		}
+		return extensions >= 2
+	})
+	m := f.server.Messages()[0]
+	if m.Acks != 0 || m.Deliveries != 1 {
+		t.Fatalf("premature ack or expired lease: %+v", m)
+	}
+	close(release)
+	waitFor(t, f.ctx, func() bool { return f.server.Messages()[0].Acks == 1 })
+}
+
+func TestRunQuarantineWriteFailureRedelivers(t *testing.T) {
+	f := newFixture(t)
+	parent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(parent, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var calls, records atomic.Int32
+	f.run(t, func(context.Context, *Event) (Outcome, error) {
+		if calls.Add(1) == 1 {
+			return Quarantine, nil
+		}
+		return Ack, nil
+	}, RunOptions{MediaDir: filepath.Join(parent, "inbound"), RecordQuarantine: func(context.Context, *Event, string, error) error {
+		records.Add(1)
+		return nil
+	}})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks > 0 })
+	if calls.Load() != 2 || records.Load() != 0 {
+		t.Fatalf("calls=%d records=%d", calls.Load(), records.Load())
+	}
+	data, err := os.ReadFile(parent)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("existing file modified: %q, %v", data, err)
+	}
+}
+
+func TestRunCancellationReleasesHandler(t *testing.T) {
+	f := newFixture(t)
+	started := make(chan struct{})
+	f.run(t, func(ctx context.Context, _ *Event) (Outcome, error) {
+		close(started)
+		<-ctx.Done()
+		return Nack, ctx.Err()
+	})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-started:
+	case <-f.ctx.Done():
+		t.Fatal("handler never started")
+	}
+	// fixture cleanup cancels Run and checks that it exits before closing pstest.
+}
+
+func TestQuarantineRejectsSymlinkDirectory(t *testing.T) {
+	parent, target := t.TempDir(), t.TempDir()
+	if err := os.Symlink(target, filepath.Join(parent, "quarantine")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := quarantine(filepath.Join(parent, "inbound"), &Event{PubSubID: "one", Raw: []byte("payload")}); err == nil {
+		t.Fatal("quarantine followed symlink outside its directory")
+	}
+	files, err := os.ReadDir(target)
+	if err != nil || len(files) != 0 {
+		t.Fatalf("wrote through symlink: %v, %v", files, err)
+	}
+}
+
+func TestQuarantineCreatesParentsAndEscapesID(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "nested", "media")
+	ev := &Event{PubSubID: "../outside", Raw: []byte("preserve exact bytes")}
+	path, err := quarantine(filepath.Join(parent, "inbound"), ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(path) != filepath.Join(parent, "quarantine") {
+		t.Fatalf("path escaped: %s", path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != string(ev.Raw) {
+		t.Fatalf("payload: %q, %v", data, err)
+	}
+}
