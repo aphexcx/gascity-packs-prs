@@ -539,6 +539,101 @@ func injectPullErrors(code codes.Code, failures int, attempts chan<- time.Time) 
 	})
 }
 
+type interruptedPullStream struct {
+	grpc.ClientStream
+	interrupt <-chan struct{}
+	received  bool
+}
+
+func (s *interruptedPullStream) RecvMsg(msg any) error {
+	if !s.received {
+		s.received = true
+		return s.ClientStream.RecvMsg(msg)
+	}
+	select {
+	case <-s.interrupt:
+		return status.Error(codes.ResourceExhausted, "injected mid-handler failure")
+	case <-s.Context().Done():
+		return s.Context().Err()
+	}
+}
+
+// Fail the first stream after a real delivery; later streams use pstest intact.
+func interruptFirstPull(interrupt <-chan struct{}, attempts chan<- time.Time) grpc.DialOption {
+	var calls atomic.Int32
+	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
+			return stream, err
+		}
+		attempts <- time.Now()
+		if calls.Add(1) == 1 {
+			return &interruptedPullStream{ClientStream: stream, interrupt: interrupt}, nil
+		}
+		return stream, nil
+	})
+}
+
+func TestRunWaitsForHandlerDespiteTimedShutdown(t *testing.T) {
+	interrupt := make(chan struct{})
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, interruptFirstPull(interrupt, attempts))
+	f.sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{
+		Behavior: pubsub.ShutdownBehaviorNackImmediately, Timeout: 10 * time.Millisecond,
+	}
+	started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	var calls, active, maxActive atomic.Int32
+	f.run(t, func(ctx context.Context, _ *Event) (Outcome, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := maxActive.Load(); n > old; old = maxActive.Load() {
+			if maxActive.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			<-release // A handler may still be finishing durable work after cancellation.
+		}
+		return Ack, nil
+	}, RunOptions{InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	defer finish()
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-started:
+	case <-f.ctx.Done():
+		t.Fatal("handler never started")
+	}
+	<-attempts
+	close(interrupt)
+	select {
+	case <-canceled:
+	case <-f.ctx.Done():
+		t.Fatal("stream failure did not cancel the handler")
+	}
+	// The caller's timeout has expired, but Run must still be waiting for the
+	// first handler instead of starting another Receive (and another handler).
+	select {
+	case <-attempts:
+		waitFor(t, f.ctx, func() bool { return maxActive.Load() > 1 })
+		t.Fatalf("reconnected before handler finished: maxActive=%d", maxActive.Load())
+	case <-time.After(100 * time.Millisecond):
+	}
+	if calls.Load() != 1 || maxActive.Load() != 1 {
+		t.Fatalf("calls=%d maxActive=%d", calls.Load(), maxActive.Load())
+	}
+	finish()
+	select {
+	case <-attempts:
+	case <-f.ctx.Done():
+		t.Fatal("Run did not reconnect after the handler finished")
+	}
+}
+
 func TestRunReconnectsAfterQuotaFailures(t *testing.T) {
 	attempts := make(chan time.Time, 10)
 	f := newFixture(t, injectPullErrors(codes.ResourceExhausted, 2, attempts))

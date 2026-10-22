@@ -264,6 +264,9 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	}
 	sub.ReceiveSettings.NumGoroutines = 1
 	sub.ReceiveSettings.MaxOutstandingMessages = 1
+	// Timed shutdown may return before the handler finishes, allowing the next
+	// Receive to overlap it. Always wait for processing to drain on reconnect.
+	sub.ReceiveSettings.ShutdownOptions = nil
 	if sub.ReceiveSettings.MaxExtension <= 0 {
 		sub.ReceiveSettings.MaxExtension = pubsub.DefaultReceiveSettings.MaxExtension
 	}
