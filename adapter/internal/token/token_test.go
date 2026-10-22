@@ -208,8 +208,11 @@ func TestWatchAtomicReplacementAndCreation(t *testing.T) {
 				validations.Add(1)
 				fmt.Fprint(w, `{"spaces":[]}`)
 			})
+			original := savedToken("original000")
+			replacementToken := savedToken("replacement")
+			replacementToken.Expiry = original.Expiry
 			if !missing {
-				writeJSON(t, tokenFile, savedToken("original"))
+				writeJSON(t, tokenFile, original)
 			}
 			s := mustSource(t, clientFile, tokenFile, ep)
 			if missing && s.State() != Missing {
@@ -217,7 +220,7 @@ func TestWatchAtomicReplacementAndCreation(t *testing.T) {
 			}
 			reloaded := startWatch(t, s)
 			replacement := tokenFile + ".new"
-			writeJSON(t, replacement, savedToken("replacement"))
+			writeJSON(t, replacement, replacementToken)
 			if info, err := os.Stat(tokenFile); err == nil {
 				// A rename must be detected even if the writer preserves mtime.
 				if err := os.Chtimes(replacement, info.ModTime(), info.ModTime()); err != nil {
@@ -245,38 +248,29 @@ func TestWatchAtomicReplacementAndCreation(t *testing.T) {
 }
 
 func TestWatchInvalidReplacementKeepsOldToken(t *testing.T) {
-	validated := make(chan struct{}, 10)
+	var validations atomic.Int32
 	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
-		validated <- struct{}{}
+		validations.Add(1)
 		w.WriteHeader(http.StatusUnauthorized)
 	})
 	writeJSON(t, tokenFile, savedToken("original"))
 	s := mustSource(t, clientFile, tokenFile, ep)
-	reloaded := startWatch(t, s)
 	writeJSON(t, tokenFile+".new", savedToken("invalid"))
 	if err := os.Rename(tokenFile+".new", tokenFile); err != nil {
 		t.Fatal(err)
 	}
-	waitSignal(t, validated)
-	select {
-	case <-reloaded:
-		t.Fatal("invalid replacement was installed")
-	case <-time.After(50 * time.Millisecond):
-	}
+	reload := func() { t.Error("invalid replacement was installed") }
+	s.reload(t.Context(), reload)
 	tok, err := s.TokenSource(t.Context()).Token()
-	if err != nil || tok.AccessToken != "original" || s.State() != Ready {
-		t.Fatalf("lost original: token=%+v error=%v state=%v", tok, err, s.State())
+	if err != nil || tok.AccessToken != "original" || s.State() != Ready || validations.Load() != 1 {
+		t.Fatalf("lost original: token=%+v error=%v state=%v validations=%d", tok, err, s.State(), validations.Load())
 	}
 	if err := os.WriteFile(tokenFile, []byte(`{invalid`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-reloaded:
-		t.Fatal("malformed replacement was installed")
-	case <-time.After(50 * time.Millisecond):
-	}
+	s.reload(t.Context(), reload)
 	tok, err = s.TokenSource(t.Context()).Token()
-	if err != nil || tok.AccessToken != "original" {
+	if err != nil || tok.AccessToken != "original" || validations.Load() != 1 {
 		t.Fatalf("malformed replacement lost original: %+v, %v", tok, err)
 	}
 }
@@ -300,6 +294,10 @@ func TestRunAuth(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"access_token":"signed-in","refresh_token":"new-refresh","expires_in":3600,"scope":%q}`, strings.Join(testScopes, " "))
 	})
+	writeJSON(t, clientFile, map[string]any{"installed": map[string]any{
+		"client_id": "example", "client_secret": "example-secret",
+		"auth_uri": "unsupported://example/authorize", "token_uri": "unsupported://example/token",
+	}})
 	writeJSON(t, tokenFile, savedToken("original"))
 	var stdout bytes.Buffer
 	err := RunAuth(t.Context(), clientFile, tokenFile, ep, testScopes, &stdout, func(raw string) error {
@@ -380,6 +378,7 @@ func TestRunAuthFailuresPreserveToken(t *testing.T) {
 				exchanges.Add(1)
 				if scenario == "cancel during exchange" {
 					cancel()
+					<-r.Context().Done()
 					return
 				}
 				w.Header().Set("Content-Type", "application/json")
