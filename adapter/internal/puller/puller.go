@@ -24,9 +24,13 @@ import (
 )
 
 type Event struct {
-	PubSubID, CloudEventID, Type, Subject string
-	Changes                               []Change
-	Raw                                   []byte
+	PubSubID string
+	// CloudEventID may be empty when ce-id is absent. Deduplication must treat
+	// an empty value as absent and fall back to PubSubID.
+	CloudEventID  string
+	Type, Subject string
+	Changes       []Change
+	Raw           []byte
 }
 
 type Change struct {
@@ -51,6 +55,7 @@ const (
 // with a recovery obligation. A transient error overrides Ack. An error with
 // Quarantine describes the permanent failure and is recorded with the raw data.
 // Run invokes Handler synchronously, keeping the client's lease management alive.
+// Returned errors are logged verbatim as the cause and must not quote message text.
 type Handler func(context.Context, *Event) (Outcome, error)
 
 // Logger is implemented by slog.Logger. A nil logger uses slog.Default().
@@ -64,6 +69,7 @@ type Logger interface {
 // The optional callback lets the application persist quarantine status in its
 // ledger. It must be idempotent by PubSubID: failed writes are redelivered.
 type RunOptions struct {
+	// MediaDir and all its parent directory components must be free of symlinks.
 	MediaDir         string
 	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
 	// InitialBackoff and MaxBackoff bound full-jitter exponential reconnection
@@ -218,6 +224,8 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 // reconnects after recoverable Receive errors with full-jitter backoff. Fatal
 // permission, authentication, configuration and missing-subscription errors
 // return to the application for credential/subscription reconciliation.
+// A negative MaxExtension (the client's disable setting) is refused: any
+// nonpositive value is replaced by the client default so handling extends leases.
 // A quarantine storage/record failure always nacks. Without MediaDir quarantine
 // fails closed, so callers should supply their configured directory at startup.
 func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
