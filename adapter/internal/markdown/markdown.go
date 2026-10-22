@@ -213,7 +213,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 					// Links cannot nest in link text. Keep nested link syntax
 					// literal while still formatting emphasis and code in the
 					// rest of the label, without recursing into nested links.
-					out.WriteString("<" + chatDestination(url) + "|" + formatInline(label, heading, false) + ">")
+					out.WriteString("<" + url + "|" + formatInline(label, heading, false) + ">")
 				}
 				i = end
 				continue
@@ -370,31 +370,47 @@ func link(s string, start int, labels, destinations map[int]int) (label, url str
 	if !found {
 		return
 	}
-	return s[start+1 : closeLabel], s[closeLabel+2 : closeURL], closeURL + 1, true
+	url, ok = chatDestination(s[closeLabel+2 : closeURL])
+	if !ok {
+		return
+	}
+	return s[start+1 : closeLabel], url, closeURL + 1, true
 }
 
-func chatDestination(s string) string {
-	angle := strings.HasPrefix(s, "<")
+func chatDestination(s string) (string, bool) {
+	angleEnd := -1
+	if strings.HasPrefix(s, "<") {
+		for i := 1; i < len(s); i++ {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if s[i] == '>' {
+				angleEnd = i
+				break
+			}
+		}
+	}
+	if angleEnd >= 0 {
+		if angleEnd+1 < len(s) && !strings.ContainsRune(" \t\r\n", rune(s[angleEnd+1])) {
+			return "", false // An angle destination cannot have an attached suffix.
+		}
+		s = s[1:angleEnd] // Spaces inside <...> belong to the destination.
+	}
 	for i := 0; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++
 			continue
 		}
-		if angle {
-			if s[i] == '>' {
-				s = s[1:i] // Spaces inside <...> belong to the destination.
-				break
-			}
-			continue
-		}
-		if s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n' {
+		if angleEnd < 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
 			s = s[:i] // Optional Markdown titles are not part of the URL.
 			break
 		}
 	}
 	// These delimiters have structural meaning in Chat's <url|label> syntax.
 	s = strings.ReplaceAll(s, "|", "%7C")
-	return strings.ReplaceAll(s, ">", "%3E")
+	s = strings.ReplaceAll(s, "<", "%3C")
+	return strings.ReplaceAll(s, ">", "%3E"), true
 }
 
 type codeFence struct {
