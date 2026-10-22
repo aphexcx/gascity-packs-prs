@@ -53,6 +53,7 @@ type progress struct {
 	MessageLower time.Time `json:"message_lower"`
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
+	NextUpper    time.Time `json:"next_upper,omitempty"`
 }
 
 type queuedChange struct {
@@ -91,8 +92,8 @@ func New(opts Options) (*Runner, error) {
 }
 
 // Freeze refreshes all spaces and starts intervals before the live stream runs.
-// An unfinished interval survives a restart unchanged; once drained, the next
-// Freeze can recover from its committed cursors through a newer upper bound.
+// An unfinished interval survives a restart unchanged. A newer Freeze queues
+// its upper bound so Pass also recovers the gap through the latest restart.
 func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	if err := r.enter(ctx); err != nil {
 		return err
@@ -124,26 +125,23 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 		}
 		for name, s := range l.Spaces {
 			if !s.FrozenUpper.IsZero() {
+				p, err := decodeProgress(s.PageToken)
+				if err != nil {
+					return err
+				}
+				if now.After(s.FrozenUpper) && now.After(p.NextUpper) {
+					p.NextUpper = now.UTC()
+					s.PageToken = encode(p)
+				}
 				continue
 			}
 			if now.Before(s.MessageCursor) || now.Before(s.EventCursor) {
 				return errors.New("catchup: upper bound precedes a committed cursor")
 			}
-			p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
-			// A small margin keeps the request inside Google's moving 28-day
-			// retention boundary while it travels. Any known lost interval is
-			// explicitly reported; message history has no such 28-day limit.
-			earliest := r.opts.Now().UTC().Add(-28*24*time.Hour + time.Minute)
-			if p.EventLower.Before(earliest) {
-				p.EventLower = earliest
-				if !s.EventCursor.IsZero() && s.EventCursor.Before(earliest) {
-					p.Reported = true
-					l.Counters["unrecoverable:"+name]++
-					reported = append(reported, name)
-				}
+			if r.begin(s, now).Reported {
+				l.Counters["unrecoverable:"+name]++
+				reported = append(reported, name)
 			}
-			s.FrozenUpper = now.UTC()
-			s.PageToken = encode(p)
 		}
 		return nil
 	})
@@ -153,6 +151,19 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 		}
 	}
 	return err
+}
+
+func (r *Runner) begin(s *ledger.SpaceState, upper time.Time) progress {
+	p := progress{Version: 1, Phase: "messages", MessageLower: overlap(s.MessageCursor), EventLower: overlap(s.EventCursor)}
+	// Keep inside the moving retention boundary while the request travels.
+	// Message history has no 28-day limit. Report any known lost event interval.
+	earliest := r.opts.Now().UTC().Add(-28*24*time.Hour + time.Minute)
+	if p.EventLower.Before(earliest) {
+		p.EventLower = earliest
+		p.Reported = !s.EventCursor.IsZero() && s.EventCursor.Before(earliest)
+	}
+	s.FrozenUpper, s.PageToken = upper.UTC(), encode(p)
+	return p
 }
 
 // Pass enumerates each interval into a durable backlog and delivers at most the
@@ -182,14 +193,29 @@ func (r *Runner) Pass(ctx context.Context) (delivered, remaining int, err error)
 			failures = append(failures, err)
 			break
 		}
-		if err := r.enumerate(ctx, name); err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		n, err := r.drain(ctx, name)
-		delivered += n
-		if err != nil {
-			failures = append(failures, err)
+		budget := r.budget
+		for {
+			if err := r.enumerate(ctx, name); err != nil {
+				failures = append(failures, err)
+				break
+			}
+			n, err := r.drain(ctx, name, &budget)
+			delivered += n
+			if err != nil {
+				failures = append(failures, err)
+				break
+			}
+			current, err := r.snapshot()
+			if err != nil {
+				failures = append(failures, err)
+				break
+			}
+			s := current.Spaces[name]
+			if s.FrozenUpper.IsZero() || len(s.Backlog) > 0 {
+				break
+			}
+			// A queued restart interval starts here, sharing this pass's budget.
+			// Enumerate even at zero budget so remaining exposes its backlog.
 		}
 	}
 	l, err = r.snapshot()
@@ -296,8 +322,8 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 	}
 }
 
-func (r *Runner) drain(ctx context.Context, name string) (delivered int, err error) {
-	used, index := 0, 0
+func (r *Runner) drain(ctx context.Context, name string, budget *int) (delivered int, err error) {
+	index := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return delivered, err
@@ -315,7 +341,7 @@ func (r *Runner) drain(ctx context.Context, name string) (delivered int, err err
 			return delivered, errors.New("catchup: invalid durable backlog")
 		}
 		if !item.Handled {
-			if used >= r.budget {
+			if *budget <= 0 {
 				break
 			}
 			outcome := puller.Quarantine
@@ -349,7 +375,7 @@ func (r *Runner) drain(ctx context.Context, name string) (delivered int, err err
 			case "own", "local", "wake_policy", "space unavailable":
 				continue
 			}
-			used++
+			*budget--
 			if c.Status == "committed" && c.Reason == "delivered" {
 				delivered++
 			}
@@ -376,15 +402,29 @@ func (r *Runner) drain(ctx context.Context, name string) (delivered int, err err
 			index++
 		}
 	}
+	reported := false
 	err = r.update(func(l *ledger.Ledger) error {
 		s := l.Spaces[name]
 		if len(s.Backlog) == 0 {
 			// enumerate returned only after both streams' last pages were saved.
+			p, err := decodeProgress(s.PageToken)
+			if err != nil {
+				return err
+			}
 			s.MessageCursor, s.EventCursor = s.FrozenUpper, s.FrozenUpper
 			s.PageToken, s.FrozenUpper = "", time.Time{}
+			if p.NextUpper.After(s.MessageCursor) {
+				reported = r.begin(s, p.NextUpper).Reported
+				if reported {
+					l.Counters["unrecoverable:"+name]++
+				}
+			}
 		}
 		return nil
 	})
+	if err == nil && reported {
+		r.report(name)
+	}
 	return delivered, err
 }
 

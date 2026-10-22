@@ -361,3 +361,23 @@ func TestOverlapAndLocalChangesDoNotConsumeDeliveryBudget(t *testing.T) {
 	f.pass(t, 1, 1)
 	f.pass(t, 1, 0)
 }
+
+func TestRestartAlsoRecoversThroughTheNewFreezeTime(t *testing.T) {
+	f := setup(t)
+	f.opts.Config.Settings.CatchupBudget = 1
+	f.newRunner(t)
+	f.addSpace("spaces/room", true)
+	f.addMessage("spaces/room", 1, frozen.Add(-time.Minute))
+	f.addMessage("spaces/room", 2, frozen.Add(time.Minute))
+	f.freeze(t)
+	next := frozen.Add(time.Hour)
+	f.google.Now = func() time.Time { return next }
+	if err := f.r.Freeze(context.Background(), next); err != nil {
+		t.Fatal(err)
+	}
+	f.pass(t, 1, 1)
+	f.pass(t, 1, 0)
+	if !f.opts.Ledger.Spaces["spaces/room"].MessageCursor.Equal(next) || len(f.gc.Inbound()) != 2 {
+		t.Fatal("restart gap was not recovered")
+	}
+}
