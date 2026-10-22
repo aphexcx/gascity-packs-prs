@@ -618,6 +618,9 @@ func TestEmitOverStreamingPull(t *testing.T) {
 		{"google.workspace.chat.reaction.v1.created", &chat.Reaction{Name: "spaces/room/messages/1/reactions/1"}, "reaction"},
 		{"google.workspace.chat.membership.v1.created", &chat.Membership{Name: "spaces/room/members/1"}, "membership"},
 		{"google.workspace.chat.message.v1.batchCreated", []*chat.Message{{Name: "spaces/room/messages/2"}, {Name: "spaces/room/messages/3"}}, "messages"},
+		{"google.workspace.events.subscription.v1.expirationReminder", &events.Subscription{Name: "subscriptions/lifecycle"}, "subscription"},
+		{"google.workspace.events.subscription.v1.expired", &events.Subscription{Name: "subscriptions/lifecycle"}, "subscription"},
+		{"google.workspace.events.subscription.v1.suspended", &events.Subscription{Name: "subscriptions/lifecycle"}, "subscription"},
 	}
 	for _, tc := range cases {
 		s.Emit(tc.typ, tc.value, "spaces/room")
@@ -631,7 +634,11 @@ func TestEmitOverStreamingPull(t *testing.T) {
 	for range cases {
 		select {
 		case m := <-received:
-			if m.Attributes["ce-subject"] != "//chat.googleapis.com/spaces/room" || m.Attributes["ce-id"] == "" || seen[m.Attributes["ce-id"]] {
+			subject := "//chat.googleapis.com/spaces/room"
+			if strings.HasPrefix(m.Attributes["ce-type"], "google.workspace.events.subscription.v1.") {
+				subject = "//workspaceevents.googleapis.com/subscriptions/lifecycle"
+			}
+			if m.Attributes["ce-subject"] != subject || m.Attributes["ce-id"] == "" || seen[m.Attributes["ce-id"]] {
 				t.Fatalf("attributes: %v", m.Attributes)
 			}
 			seen[m.Attributes["ce-id"]] = true

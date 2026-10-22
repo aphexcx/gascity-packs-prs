@@ -685,7 +685,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 // Emit publishes a binary-mode CloudEvent. For a batch event resource is a slice
 // of resources; each becomes a singular wrapper inside the plural array. The
 // Pub/Sub message data is the event payload, not a second CloudEvent envelope.
-// Subscription lifecycle events use resource directly as their data object.
+// Subscription lifecycle events wrap the subscription and use it as the subject.
 func (s *Server) Emit(eventType string, resource any, space string) {
 	s.t.Helper()
 	if s.publisher == nil {
@@ -698,6 +698,9 @@ func (s *Server) Emit(eventType string, resource any, space string) {
 			wrapper = kind
 			break
 		}
+	}
+	if strings.HasPrefix(eventType, "google.workspace.events.subscription.v1.") {
+		wrapper = "subscription"
 	}
 	body := resource
 	if wrapper != "" {
@@ -726,7 +729,18 @@ func (s *Server) Emit(eventType string, resource any, space string) {
 	when := s.now().Format(time.RFC3339Nano)
 	s.mu.Unlock()
 	subject := space
-	if !strings.HasPrefix(subject, "//") {
+	if wrapper == "subscription" {
+		var payload struct {
+			Subscription struct{ Name string }
+		}
+		_ = json.Unmarshal(data, &payload)
+		if payload.Subscription.Name != "" {
+			subject = payload.Subscription.Name
+		}
+		if !strings.HasPrefix(subject, "//") {
+			subject = "//workspaceevents.googleapis.com/" + subject
+		}
+	} else if !strings.HasPrefix(subject, "//") {
 		subject = "//chat.googleapis.com/" + space
 	}
 	msg := &pubsub.Message{Data: data, Attributes: map[string]string{"ce-type": eventType, "ce-subject": subject, "ce-id": "event-" + id, "ce-time": when, "ce-specversion": "1.0", "ce-source": "//workspaceevents.googleapis.com/subscriptions/example"}}
