@@ -2093,6 +2093,75 @@ func TestLateReceiptLookupFailureGetsDurableGrace(t *testing.T) {
 	}
 }
 
+func TestReceiptLookupGracePreservesConcurrentTerminalChange(t *testing.T) {
+	for _, terminal := range []string{"delivered", "unresolved"} {
+		t.Run(terminal, func(t *testing.T) {
+			f := setup(t)
+			now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+			f.opts.Now = func() time.Time { return now }
+			var err error
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+			handle(t, f, event("concurrent-grace", "message.created", message()))
+			now = now.Add(time.Hour)
+			resolved := make(chan []byte, 1)
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Simulate an operator resolving the change while Poll's receipt
+				// lookup is in flight, after Poll took its pending snapshot.
+				var err error
+				if terminal == "delivered" {
+					err = f.p.outcome(messageName, "delivered", "")
+				} else {
+					err = f.p.unresolved(messageName, "operator retained uncertainty")
+				}
+				if err != nil {
+					t.Error(err)
+				}
+				l, err := f.p.snapshot()
+				if err != nil {
+					t.Error(err)
+				}
+				data, err := json.Marshal(l)
+				if err != nil {
+					t.Error(err)
+				}
+				resolved <- data
+				http.Error(w, "PRIVATE RECEIPT", http.StatusServiceUnavailable)
+			}))
+			defer s.Close()
+			f.opts.GC = gcclient.New(s.URL, "examplecity")
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.p.Poll(context.Background()); err == nil || strings.Contains(err.Error(), "PRIVATE") {
+				t.Fatalf("receipt lookup: %v", err)
+			}
+			var want []byte
+			select {
+			case want = <-resolved:
+			default:
+				t.Fatal("receipt lookup did not run the concurrent resolution")
+			}
+			got, err := json.Marshal(f.l)
+			if err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("grace changed the terminal ledger: %+v (%v)", f.l.Changes[messageName], err)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err = json.Marshal(stored)
+			if err != nil || !bytes.Equal(got, want) || len(f.gc.Inbound()) != 1 {
+				t.Fatalf("terminal resolution not preserved durably: %+v (%v)", stored.Changes[messageName], err)
+			}
+		})
+	}
+}
+
 func TestLateReceiptLookupFailuresMustBeConsecutive(t *testing.T) {
 	for _, intermediateError := range []bool{false, true} {
 		t.Run(fmt.Sprint(intermediateError), func(t *testing.T) {
