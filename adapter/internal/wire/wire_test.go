@@ -63,3 +63,55 @@ func TestRegistrationCapabilitiesPascalCase(t *testing.T) {
 		t.Fatalf("got %s\nwant %s", b, want)
 	}
 }
+
+// These response fixtures follow gc's InboundResult, InboundReceiptStatus,
+// and OutboundResult, whose outer and nested keys deliberately differ in case.
+func TestInboundResponseJSON(t *testing.T) {
+	var response InboundResponse
+	if err := json.Unmarshal([]byte(`{"Message":{},"delivery":{"receipt_id":"ir-1","status":"pending","delivered_bytes":0,"expected_bytes":10}}`), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Delivery.Status != "pending" || response.Delivery.ReceiptID != "ir-1" {
+		t.Fatalf("delivery: %+v", response.Delivery)
+	}
+}
+
+func TestReceiptResponseJSON(t *testing.T) {
+	for _, tc := range []struct{ body, state, status string }{
+		{`{"receipt_id":"ir-1","state":"pending"}`, "pending", ""},
+		{`{"receipt_id":"ir-1","state":"concluded","delivery":{"receipt_id":"ir-1","status":"delivered"}}`, "concluded", "delivered"},
+		{`{"receipt_id":"ir-1","state":"concluded","delivery":{"receipt_id":"ir-1","status":"pending"}}`, "concluded", "pending"},
+		{`{"receipt_id":"ir-1","state":"unknown"}`, "unknown", ""},
+	} {
+		t.Run(tc.state+"/"+tc.status, func(t *testing.T) {
+			var response ReceiptResponse
+			if err := json.Unmarshal([]byte(tc.body), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.State != tc.state || response.Delivery.Status != tc.status {
+				t.Fatalf("receipt: %+v", response)
+			}
+		})
+	}
+}
+
+func TestOutboundResultJSON(t *testing.T) {
+	for _, tc := range []struct {
+		entry    string
+		recorded bool
+	}{
+		{"null", false},
+		{`{"id":"entry-1"}`, true},
+	} {
+		t.Run(tc.entry, func(t *testing.T) {
+			body := `{"Receipt":{"Delivered":true,"MessageID":"spaces/AAA/messages/BBB"},"DeliveryContext":null,"TranscriptEntry":` + tc.entry + `}`
+			var result OutboundResult
+			if err := json.Unmarshal([]byte(body), &result); err != nil {
+				t.Fatal(err)
+			}
+			if !result.Receipt.Delivered || result.Receipt.MessageID != "spaces/AAA/messages/BBB" || (result.TranscriptEntry != nil) != tc.recorded {
+				t.Fatalf("result: %+v", result)
+			}
+		})
+	}
+}
