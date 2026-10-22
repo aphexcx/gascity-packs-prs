@@ -768,6 +768,63 @@ func TestLeftSpaceHoldsSavedHistoryUntilListedAgain(t *testing.T) {
 	}
 }
 
+func TestListedForbiddenSpaceStaysHeldAcrossFreezes(t *testing.T) {
+	f := setup(t)
+	f.pageSize = 2
+	f.addSpace("spaces/room", true)
+	for i := 0; i < 3; i++ {
+		f.addMessage("spaces/room", i, frozen.Add(-30*time.Second))
+	}
+	f.freeze(t)
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/messages") && r.URL.Query().Get("pageToken") == "2" {
+			return &googleapi.Error{Code: 403, Message: "not a member"}
+		}
+		return nil
+	}
+	if _, _, err := f.r.Pass(context.Background()); err == nil {
+		t.Fatal("missing forbidden history error")
+	}
+	for i := 1; i <= 2; i++ {
+		// Reload the ledger as well as the runner: the hold must survive restart.
+		saved, err := ledger.Load(f.opts.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*f.opts.Ledger = *saved
+		f.newRunner(t)
+		if err := f.r.Freeze(context.Background(), frozen.Add(time.Duration(i)*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		requests := len(f.requests)
+		f.pass(t, 0, 0)
+		if len(f.requests) != requests || f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 {
+			t.Fatalf("listed forbidden space retried or re-reported: requests=%d counters=%v logs=%s", len(f.requests)-requests, f.opts.Ledger.Counters, f.logs.String())
+		}
+		if len(f.opts.Ledger.Changes) != 2 || len(f.gc.Inbound()) != 0 {
+			t.Fatal("retained history changed while forbidden")
+		}
+	}
+	delete(f.google.Spaces, "spaces/room")
+	f.freeze(t)
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	*f.opts.Ledger = *saved
+	f.newRunner(t)
+	f.addSpace("spaces/room", false)
+	f.onRequest = nil
+	f.freeze(t)
+	f.pass(t, 1, 0)
+	if f.opts.Ledger.Counters["unavailable:spaces/room"] != 1 || strings.Count(f.logs.String(), "level=WARN") != 1 || len(f.gc.Inbound()) != 1 {
+		t.Fatal("rejoin repeated warnings or retained deliveries")
+	}
+	if !f.opts.Ledger.Spaces["spaces/room"].EventCursor.Equal(frozen.Add(2 * time.Minute)) {
+		t.Fatal("rejoin failed to complete the queued interval")
+	}
+}
+
 func TestHistoryCredentialsHoldSavedPage(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)

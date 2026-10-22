@@ -55,10 +55,12 @@ type progress struct {
 	EventLower   time.Time `json:"event_lower"`
 	Reported     bool      `json:"reported,omitempty"`
 	NextUpper    time.Time `json:"next_upper,omitzero"`
-	// Access loss retains records locally and holds cursors. Only a fresh
-	// listing in Freeze clears Unavailable; credentials can retry after sign-in.
-	Unavailable string `json:"unavailable,omitempty"`
-	Credentials string `json:"credentials,omitempty"`
+	// Access loss retains records locally and holds cursors. Freeze must see
+	// the space absent then present before retrying it; credentials can retry
+	// after sign-in. ListingAbsent survives restart along with the hold.
+	Unavailable   string `json:"unavailable,omitempty"`
+	Credentials   string `json:"credentials,omitempty"`
+	ListingAbsent bool   `json:"listing_absent,omitempty"`
 }
 
 type queuedChange struct {
@@ -116,7 +118,9 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 	}
 	var reported, clockAhead []string
 	err = r.update(func(l *ledger.Ledger) error {
+		listed := make(map[string]bool, len(spaces))
 		for _, space := range spaces {
+			listed[space.Name] = true
 			s := l.Spaces[space.Name]
 			if s == nil {
 				s = &ledger.SpaceState{Wake: string(r.opts.Config.Wake(space.Name))}
@@ -130,14 +134,6 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 			} else {
 				s.Kind = "room"
 			}
-			if !s.FrozenUpper.IsZero() {
-				p, err := decodeProgress(s.PageToken)
-				if err != nil {
-					return err
-				}
-				p.Unavailable = ""
-				s.PageToken = encode(p)
-			}
 		}
 		for name, s := range l.Spaces {
 			if s == nil {
@@ -148,17 +144,24 @@ func (r *Runner) Freeze(ctx context.Context, now time.Time) error {
 				if err != nil {
 					return err
 				}
+				if listed[name] && p.ListingAbsent {
+					p.Unavailable = ""
+				}
+				p.ListingAbsent = !listed[name]
 				if now.After(s.FrozenUpper) && now.After(p.NextUpper) {
 					p.NextUpper = now.UTC()
-					s.PageToken = encode(p)
 				}
+				s.PageToken = encode(p)
 				continue
 			}
 			if now.Before(s.MessageCursor) || now.Before(s.EventCursor) {
 				clockAhead = append(clockAhead, name)
 				continue
 			}
-			if r.begin(s, now).Reported {
+			p := r.begin(s, now)
+			p.ListingAbsent = !listed[name]
+			s.PageToken = encode(p)
+			if p.Reported {
 				l.Counters["unrecoverable:"+name]++
 				reported = append(reported, name)
 			}
