@@ -1324,3 +1324,46 @@ func TestCanceledCommandFailureIsCallerOwned(t *testing.T) {
 		t.Fatal("canceled command was delivered automatically")
 	}
 }
+
+func TestUnrecordableReceiptClearsPendingAtCommitAndAfterRestart(t *testing.T) {
+	for _, mode := range []string{"receipt-commit", "old-crash-window"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "unrecordable"}
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.update(t.Context(), func(l *ledger.Ledger) error {
+				l.Sends[p.IdempotencyKey].NotRecordable = true
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if !f.send(t, p).Delivered {
+				t.Fatal("send failed")
+			}
+			if mode == "old-crash-window" {
+				if err := f.s.update(t.Context(), func(l *ledger.Ledger) error {
+					l.Sends[p.IdempotencyKey].RecordPending = true
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if err := f.s.RetryPending(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if l.Sends[p.IdempotencyKey].RecordPending || f.count() != 1 || len(f.gc.Published()) != 0 {
+				t.Fatalf("unrecordable send still pending: %+v", l.Sends[p.IdempotencyKey])
+			}
+			_, raw, _ := f.call(t, "/status", nil)
+			if decode[map[string]any](t, raw)["unrecorded"] != float64(0) {
+				t.Fatalf("status: %s", raw)
+			}
+		})
+	}
+}

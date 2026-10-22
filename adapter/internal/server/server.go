@@ -569,6 +569,9 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 			v.RecordPending = true
 		}
 		v.Receipt = &receipt
+		if v.NotRecordable || v.Recorded {
+			v.RecordPending = false
+		}
 		return nil
 	}); err != nil {
 		return failure(p, err), err
@@ -737,6 +740,15 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			return result, err
 		}
 		result = commandOutcome(send)
+		// Repair receipts written by older versions between their receipt
+		// commit and the separate pending-flag clear.
+		if send.RecordPending && (send.Recorded || (result.Delivered && send.NotRecordable)) {
+			err := s.update(ctx, func(l *ledger.Ledger) error {
+				l.Sends[p.IdempotencyKey].RecordPending = false
+				return nil
+			})
+			return result, err
+		}
 		// Re-check under the command lock: a caller may have finished or
 		// rejected this intent since RetryPending took its snapshot.
 		if (automatic && !send.RecordPending) || send.Recorded || (result.Delivered && send.NotRecordable) {
@@ -915,9 +927,6 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 		result.Reason = err.Error()
 	}
 	err = errors.Join(err, s.stopRetry(ctx, p, r, result.Reason))
-	if err == nil && r.Delivered {
-		err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[p.IdempotencyKey].RecordPending = false; return nil })
-	}
 	return result, err
 }
 
