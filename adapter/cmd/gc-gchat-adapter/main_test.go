@@ -242,10 +242,10 @@ func authFixture(t *testing.T, endpoint string) (string, string) {
 	clientFile := filepath.Join(dir, "client.json")
 	writeFile(t, clientFile, `{"installed":{"client_id":"example-client","client_secret":"example-secret"}}`)
 	env := filepath.Join(dir, "env")
-	writeFile(t, env, "GCHAT_PROJECT_ID=example\nGCHAT_PUBSUB_TOPIC=projects/example/topics/chat\nGCHAT_PUBSUB_SUBSCRIPTION=projects/example/subscriptions/chat\nGCHAT_OAUTH_CLIENT_FILE="+clientFile+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\n")
+	writeFile(t, env, "GCHAT_PROJECT_ID=example\nGCHAT_PUBSUB_TOPIC=projects/example/topics/chat\nGCHAT_PUBSUB_SUBSCRIPTION=projects/example/subscriptions/chat\nGCHAT_OAUTH_CLIENT_FILE="+clientFile+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\nGCHAT_OAUTH_AUTH_URL="+endpoint+"/authorize\nGCHAT_OAUTH_TOKEN_URL="+endpoint+"/token\n")
 	t.Setenv("GCHAT_CHAT_API_BASE", endpoint)
-	t.Setenv("GCHAT_OAUTH_AUTH_URL", endpoint+"/authorize")
-	t.Setenv("GCHAT_OAUTH_TOKEN_URL", endpoint+"/token")
+	t.Setenv("GCHAT_OAUTH_AUTH_URL", "")
+	t.Setenv("GCHAT_OAUTH_TOKEN_URL", "")
 	return env, filepath.Join(dir, "token.json")
 }
 

@@ -36,6 +36,31 @@ func TestMissingEnvFileNamesPathAndRequiredKeys(t *testing.T) {
 	}
 }
 
+func TestAuthEndpointOverridesInSecretsFile(t *testing.T) {
+	env, _, dir := configFixture(t)
+	body, err := os.ReadFile(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, env, string(body)+"GCHAT_OAUTH_AUTH_URL=http://127.0.0.1:1/authorize\nGCHAT_OAUTH_TOKEN_URL=http://127.0.0.1:1/token\n")
+	c, err := Load(env, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Endpoints.OAuthAuthURL != "http://127.0.0.1:1/authorize" || c.Endpoints.OAuthTokenURL != "http://127.0.0.1:1/token" {
+		t.Fatalf("file endpoint overrides ignored: %+v", c.Endpoints)
+	}
+	t.Setenv("GCHAT_OAUTH_AUTH_URL", "http://127.0.0.1:2/authorize")
+	t.Setenv("GCHAT_OAUTH_TOKEN_URL", "http://127.0.0.1:2/token")
+	c, err = Load(env, "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Endpoints.OAuthAuthURL != "http://127.0.0.1:2/authorize" || c.Endpoints.OAuthTokenURL != "http://127.0.0.1:2/token" {
+		t.Fatalf("process overrides lost precedence: %+v", c.Endpoints)
+	}
+}
+
 func TestLoadSecretsAndSettings(t *testing.T) {
 	dir := t.TempDir()
 	env := filepath.Join(dir, "env")
