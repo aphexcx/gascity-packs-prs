@@ -55,6 +55,8 @@ const (
 // with a recovery obligation. A transient error overrides Ack. An error with
 // Quarantine describes the permanent failure and is recorded with the raw data.
 // Run invokes Handler synchronously, keeping the client's lease management alive.
+// Handlers must be idempotent by PubSubID: the client drops an Ack issued after
+// its stream fails, so even successful handling can repeat after the stream lease.
 // Returned errors are logged verbatim as the cause and must not quote message text.
 type Handler func(context.Context, *Event) (Outcome, error)
 
@@ -72,10 +74,15 @@ type RunOptions struct {
 	// MediaDir and all its parent directory components must be free of symlinks.
 	MediaDir         string
 	RecordQuarantine func(ctx context.Context, ev *Event, path string, cause error) error
-	// InitialBackoff and MaxBackoff bound full-jitter exponential reconnection
-	// delays. Zero uses one second and one minute respectively.
+	// InitialBackoff and MaxBackoff are the initial and maximum ceilings for
+	// full-jitter exponential reconnection delays, drawn from [0, ceiling).
+	// Zero uses ceilings of one second and one minute respectively.
 	InitialBackoff time.Duration
 	MaxBackoff     time.Duration
+	// MaxDurationPerAckExtension caps each lease extension, bounding how long a
+	// dropped ack can delay redelivery after a reconnect. Zero preserves sub's
+	// setting (and the client default); a positive value must be 10s to 600s.
+	MaxDurationPerAckExtension time.Duration
 }
 
 // Decode reads a binary-mode CloudEvent: ce-* attributes carry the envelope and
@@ -218,16 +225,23 @@ func decodeChange(raw json.RawMessage, resource, action string) (Change, error) 
 }
 
 // Run owns sub until cancellation or a fatal receive error; do not use sub
-// concurrently. Exactly one streaming-pull connection and one in-flight handler
+// concurrently. Cancel ctx before closing the client. A closed client returns
+// codes.Canceled when ctx is still live. Exactly one connection and one handler
 // keep the ledger updates serialized. The Pub/Sub client automatically retries
 // in-stream failures and extends leases while the callback is running. Run
 // reconnects after recoverable Receive errors with full-jitter backoff. Fatal
 // permission, authentication, configuration and missing-subscription errors
 // return to the application for credential/subscription reconciliation.
+// Handlers must be idempotent by PubSubID: an Ack during a failed stream is
+// dropped, and the message is redelivered after its lease even if handling
+// succeeded. MaxDurationPerAckExtension can shorten that redelivery delay.
 // A negative MaxExtension (the client's disable setting) is refused: any
 // nonpositive value is replaced by the client default so handling extends leases.
 // A quarantine storage/record failure always nacks. Without MediaDir quarantine
 // fails closed, so callers should supply their configured directory at startup.
+// The quarantine directory is verified and opened once per Run. A startup
+// storage failure warns and disables quarantine for this Run; other events can
+// still be handled. Restart Run after repairing the directory.
 func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, options ...RunOptions) error {
 	if sub == nil || h == nil {
 		return errors.New("puller requires a subscriber and handler")
@@ -242,9 +256,15 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if log == nil {
 		log = slog.Default()
 	}
+	storage, storageErr := openQuarantine(opts.MediaDir)
+	if storageErr == nil {
+		defer storage.root.Close()
+	}
 	var warnings []string
 	if opts.MediaDir == "" {
 		warnings = append(warnings, "MediaDir is empty: malformed events and Quarantine outcomes will be nacked")
+	} else if storageErr != nil {
+		warnings = append(warnings, fmt.Sprintf("quarantine storage unavailable: %v; malformed events and Quarantine outcomes will be nacked", storageErr))
 	}
 	if opts.RecordQuarantine == nil {
 		warnings = append(warnings, "RecordQuarantine is nil: quarantines will not be counted")
@@ -261,8 +281,17 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if opts.InitialBackoff < 0 || opts.MaxBackoff < opts.InitialBackoff {
 		return errors.New("puller backoff requires 0 < InitialBackoff <= MaxBackoff")
 	}
+	if d := opts.MaxDurationPerAckExtension; d != 0 && (d < 10*time.Second || d > 600*time.Second) {
+		return errors.New("puller MaxDurationPerAckExtension must be zero or between 10s and 600s")
+	}
 	sub.ReceiveSettings.NumGoroutines = 1
 	sub.ReceiveSettings.MaxOutstandingMessages = 1
+	// Timed shutdown may return before the handler finishes, allowing the next
+	// Receive to overlap it. Always wait for processing to drain on reconnect.
+	sub.ReceiveSettings.ShutdownOptions = nil
+	if opts.MaxDurationPerAckExtension != 0 {
+		sub.ReceiveSettings.MaxDurationPerAckExtension = opts.MaxDurationPerAckExtension
+	}
 	if sub.ReceiveSettings.MaxExtension <= 0 {
 		sub.ReceiveSettings.MaxExtension = pubsub.DefaultReceiveSettings.MaxExtension
 	}
@@ -280,7 +309,11 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 			outcome, err = h(ctx, ev)
 		}
 		if outcome == Quarantine {
-			path, writeErr := quarantine(opts.MediaDir, ev)
+			var path string
+			writeErr := storageErr
+			if writeErr == nil {
+				path, writeErr = storage.write(ev)
+			}
 			if writeErr == nil && opts.RecordQuarantine != nil {
 				writeErr = opts.RecordQuarantine(ctx, ev, path, err)
 			}
@@ -326,7 +359,7 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 
 func recoverableReceiveError(err error) bool {
 	switch status.Code(err) {
-	case codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument:
+	case codes.Canceled, codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument:
 		return false
 	default:
 		// Includes non-status transport errors (Unknown). Only the application
@@ -352,29 +385,33 @@ func (b *receiveBackoff) pause(stretch time.Duration, delivered bool) time.Durat
 	return delay
 }
 
-func quarantine(mediaDir string, ev *Event) (string, error) {
+type quarantineStore struct {
+	root *os.Root
+	path string
+}
+
+func openQuarantine(mediaDir string) (*quarantineStore, error) {
 	if mediaDir == "" {
-		return "", errors.New("quarantine requires MediaDir")
+		return nil, errors.New("quarantine requires MediaDir")
 	}
+	path := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
+	root, err := openDurableDirectory(path)
+	if err != nil {
+		return nil, err
+	}
+	return &quarantineStore{root: root, path: path}, nil
+}
+
+func (q *quarantineStore) write(ev *Event) (string, error) {
 	if ev.PubSubID == "" {
 		return "", errors.New("quarantine requires Pub/Sub message ID")
 	}
-	parent, err := openDurableDirectory(filepath.Dir(filepath.Clean(mediaDir)))
-	if err != nil {
-		return "", err
-	}
-	defer parent.Close()
-	root, err := openDurableChild(parent, "quarantine")
-	if err != nil {
-		return "", err
-	}
-	defer root.Close()
 	// Escape the untrusted transport ID into one filename, including any slash.
 	name := url.PathEscape(ev.PubSubID) + ".json"
-	if err := writeQuarantine(root, name, ev.Raw); err != nil {
+	if err := writeQuarantine(q.root, name, ev.Raw); err != nil {
 		return "", err
 	}
-	return filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine", name), nil
+	return filepath.Join(q.path, name), nil
 }
 
 func writeQuarantine(root *os.Root, name string, raw []byte) error {
@@ -424,17 +461,25 @@ func openDurableDirectory(path string) (*os.Root, error) {
 		}
 		root = child
 	}
+	// Check the final directory's durability before accepting any events.
+	if err := syncDirectory(root); err != nil {
+		root.Close()
+		return nil, err
+	}
 	return root, nil
 }
 
-// Persist each parent entry, including existing directories that may have been
-// created by an earlier attempt whose sync failed, before creating children.
+// Sync a parent only when this call created an entry in it. Existing ancestors
+// need identity verification but do not need to be opened again for fsync.
 func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
+	created := false
 	info, err := parent.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		if err := parent.Mkdir(name, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+		err = parent.Mkdir(name, 0700)
+		if err != nil && !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
+		created = err == nil
 		info, err = parent.Lstat(name)
 	}
 	if err != nil {
@@ -451,7 +496,7 @@ func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
 	if err == nil && !os.SameFile(info, opened) {
 		err = fmt.Errorf("quarantine directory changed while opening: %s", name)
 	}
-	if err == nil {
+	if err == nil && created {
 		err = syncDirectory(parent)
 	}
 	if err != nil {

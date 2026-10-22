@@ -27,6 +27,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestMain(m *testing.M) {
+	// pstest's minimum is process-global. Set it once so independent servers
+	// can exercise nack/ack scenarios concurrently without changing it in flight.
+	pstest.SetMinAckDeadline(time.Second)
+	code := m.Run()
+	pstest.ResetMinAckDeadline()
+	os.Exit(code)
+}
+
 func TestDecodeSingularAndBatch(t *testing.T) {
 	for _, resource := range []struct{ kind, name string }{
 		{"message", "spaces/room/messages/one"},
@@ -154,8 +163,6 @@ func newFixture(t *testing.T, dialOptions ...grpc.DialOption) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
-	pstest.SetMinAckDeadline(time.Second)
-	t.Cleanup(pstest.ResetMinAckDeadline)
 	srv := pstest.NewServer()
 	t.Cleanup(func() { _ = srv.Close() })
 	conn, err := grpc.NewClient(srv.Addr, append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))...)
@@ -176,6 +183,8 @@ func newFixture(t *testing.T, dialOptions ...grpc.DialOption) *fixture {
 		t.Fatal(err)
 	}
 	publisher := client.Publisher(topic)
+	// Puller tests do not exercise publisher batching; send each fixture now.
+	publisher.PublishSettings.CountThreshold = 1
 	t.Cleanup(publisher.Stop)
 	f := &fixture{ctx: ctx, server: srv, client: client, sub: client.Subscriber(sub), publisher: publisher, google: fakegoogle.New(t, publisher)}
 	return f
@@ -254,6 +263,7 @@ func TestRunNackRedelivers(t *testing.T) {
 		{"nack", Nack, nil}, {"handler error", Ack, errors.New("temporary")}, {"invalid outcome", Outcome(99), nil},
 	} {
 		t.Run(result.name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			var calls atomic.Int32
 			f.run(t, func(_ context.Context, ev *Event) (Outcome, error) {
@@ -275,6 +285,7 @@ func TestRunNackRedelivers(t *testing.T) {
 func TestRunQuarantine(t *testing.T) {
 	for _, malformed := range []bool{false, true} {
 		t.Run(fmt.Sprint(malformed), func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			mediaDir := filepath.Join(quarantineTempDir(t), "inbound")
 			var handled, recorded atomic.Int32
@@ -483,6 +494,34 @@ func TestQuarantineRejectsSymlinkAncestorOnFirstAndLaterWrites(t *testing.T) {
 	}
 }
 
+func TestQuarantineRejectsRelativeSymlinks(t *testing.T) {
+	for _, name := range []string{"media", "quarantine"} {
+		t.Run(name, func(t *testing.T) {
+			parent := quarantineTempDir(t)
+			real := filepath.Join(parent, "real")
+			if err := os.Mkdir(real, 0700); err != nil {
+				t.Fatal(err)
+			}
+			// os.Root permits this target inside the parent; only our Lstat
+			// check refuses it. Absolute targets would be refused by os.Root.
+			if err := os.Symlink("real", filepath.Join(parent, name)); err != nil {
+				t.Fatal(err)
+			}
+			mediaDir := filepath.Join(parent, "inbound")
+			if name == "media" {
+				mediaDir = filepath.Join(parent, "media", "inbound")
+			}
+			if _, err := quarantine(mediaDir, &Event{PubSubID: "one", Raw: []byte("private")}); err == nil {
+				t.Fatal("quarantine accepted a relative symlink")
+			}
+			files, err := os.ReadDir(real)
+			if err != nil || len(files) != 0 {
+				t.Fatalf("wrote through relative symlink: %v, %v", files, err)
+			}
+		})
+	}
+}
+
 type logRecord struct {
 	level, message string
 	attrs          map[string]any
@@ -537,6 +576,165 @@ func injectPullErrors(code codes.Code, failures int, attempts chan<- time.Time) 
 		}
 		return stream, nil
 	})
+}
+
+type interruptedPullStream struct {
+	grpc.ClientStream
+	interrupt <-chan struct{}
+	received  bool
+}
+
+func (s *interruptedPullStream) RecvMsg(msg any) error {
+	if !s.received {
+		s.received = true
+		return s.ClientStream.RecvMsg(msg)
+	}
+	select {
+	case <-s.interrupt:
+		return status.Error(codes.ResourceExhausted, "injected mid-handler failure")
+	case <-s.Context().Done():
+		return s.Context().Err()
+	}
+}
+
+// Fail the first stream after a real delivery; later streams use pstest intact.
+func interruptFirstPull(interrupt <-chan struct{}, attempts chan<- time.Time) grpc.DialOption {
+	var calls atomic.Int32
+	return grpc.WithStreamInterceptor(func(ctx context.Context, desc *grpc.StreamDesc, cc *grpc.ClientConn, method string, streamer grpc.Streamer, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+		stream, err := streamer(ctx, desc, cc, method, opts...)
+		if err != nil || method != "/google.pubsub.v1.Subscriber/StreamingPull" {
+			return stream, err
+		}
+		attempts <- time.Now()
+		if calls.Add(1) == 1 {
+			return &interruptedPullStream{ClientStream: stream, interrupt: interrupt}, nil
+		}
+		return stream, nil
+	})
+}
+
+func TestRunWaitsForHandlerDespiteTimedShutdown(t *testing.T) {
+	interrupt := make(chan struct{})
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, interruptFirstPull(interrupt, attempts))
+	f.sub.ReceiveSettings.ShutdownOptions = &pubsub.ShutdownOptions{
+		Behavior: pubsub.ShutdownBehaviorNackImmediately, Timeout: 10 * time.Millisecond,
+	}
+	started, canceled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	finish := func() { releaseOnce.Do(func() { close(release) }) }
+	var calls, active, maxActive atomic.Int32
+	f.run(t, func(ctx context.Context, _ *Event) (Outcome, error) {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for old := maxActive.Load(); n > old; old = maxActive.Load() {
+			if maxActive.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		if calls.Add(1) == 1 {
+			close(started)
+			<-ctx.Done()
+			close(canceled)
+			<-release // A handler may still be finishing durable work after cancellation.
+		}
+		return Ack, nil
+	}, RunOptions{InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	defer finish()
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-started:
+	case <-f.ctx.Done():
+		t.Fatal("handler never started")
+	}
+	<-attempts
+	close(interrupt)
+	select {
+	case <-canceled:
+	case <-f.ctx.Done():
+		t.Fatal("stream failure did not cancel the handler")
+	}
+	// The caller's timeout has expired, but Run must still be waiting for the
+	// first handler instead of starting another Receive (and another handler).
+	select {
+	case <-attempts:
+		waitFor(t, f.ctx, func() bool { return maxActive.Load() > 1 })
+		t.Fatalf("reconnected before handler finished: maxActive=%d", maxActive.Load())
+	case <-time.After(100 * time.Millisecond):
+	}
+	if calls.Load() != 1 || maxActive.Load() != 1 {
+		t.Fatalf("calls=%d maxActive=%d", calls.Load(), maxActive.Load())
+	}
+	finish()
+	select {
+	case <-attempts:
+	case <-f.ctx.Done():
+		t.Fatal("Run did not reconnect after the handler finished")
+	}
+}
+
+func TestRunRedeliversAfterAckDuringReconnect(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Pub/Sub's minimum per-extension lease is ten seconds")
+	}
+	interrupt := make(chan struct{})
+	attempts := make(chan time.Time, 10)
+	f := newFixture(t, interruptFirstPull(interrupt, attempts))
+	// The Run option must override a caller's longer cap.
+	f.sub.ReceiveSettings.MaxDurationPerAckExtension = time.Minute
+	var calls, active atomic.Int32
+	ids := make(chan string, 2)
+	f.run(t, func(ctx context.Context, ev *Event) (Outcome, error) {
+		if n := active.Add(1); n != 1 {
+			t.Errorf("overlapping handlers: %d", n)
+		}
+		defer active.Add(-1)
+		ids <- ev.PubSubID
+		if calls.Add(1) == 1 {
+			close(interrupt)
+			<-ctx.Done()
+			// The failed stream drops this Ack even though handling succeeded.
+		}
+		return Ack, nil
+	}, RunOptions{
+		InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		MaxDurationPerAckExtension: 10 * time.Second,
+	})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks > 0 })
+	m := f.server.Messages()[0]
+	if calls.Load() != 2 || m.Deliveries != 2 || m.Acks != 1 {
+		t.Fatalf("calls=%d deliveries=%d acks=%d", calls.Load(), m.Deliveries, m.Acks)
+	}
+	if first, second := <-ids, <-ids; first != second || first == "" {
+		t.Fatalf("redelivery changed PubSubID: %q, %q", first, second)
+	}
+}
+
+func TestRunAckExtensionOption(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	cancel()
+	for _, duration := range []time.Duration{-time.Second, time.Second, 10 * time.Second, 600 * time.Second, 601 * time.Second, 0} {
+		t.Run(duration.String(), func(t *testing.T) {
+			f.sub.ReceiveSettings.MaxDurationPerAckExtension = 30 * time.Second
+			err := Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) { return Ack, nil }, &recordingLogger{}, RunOptions{MaxDurationPerAckExtension: duration})
+			invalid := duration != 0 && (duration < 10*time.Second || duration > 600*time.Second)
+			if (err != nil) != invalid {
+				t.Fatalf("Run: %v, want invalid=%t", err, invalid)
+			}
+			if invalid {
+				return
+			}
+			want := duration
+			if want == 0 {
+				want = 30 * time.Second
+			}
+			if got := f.sub.ReceiveSettings.MaxDurationPerAckExtension; got != want {
+				t.Fatalf("ack extension=%v, want %v", got, want)
+			}
+		})
+	}
 }
 
 func TestRunReconnectsAfterQuotaFailures(t *testing.T) {
@@ -605,6 +803,39 @@ func TestRunReturnsPermissionDenied(t *testing.T) {
 	}
 }
 
+func TestRunReturnsCanceledWhenClientCloses(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(f.ctx)
+	defer cancel()
+	started := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, f.sub, func(context.Context, *Event) (Outcome, error) {
+			started <- struct{}{}
+			return Ack, nil
+		}, &recordingLogger{}, RunOptions{InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond})
+	}()
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("handler never started")
+	}
+	if err := f.client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if status.Code(err) != codes.Canceled || ctx.Err() != nil {
+			t.Fatalf("closed client under live ctx: Run=%v, ctx=%v", err, ctx.Err())
+		}
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("Run kept retrying after the client closed")
+	}
+}
+
 func TestReceiveErrorClassification(t *testing.T) {
 	for _, code := range []codes.Code{codes.ResourceExhausted, codes.Unavailable, codes.Internal, codes.DeadlineExceeded, codes.Aborted, codes.Unknown} {
 		if !recoverableReceiveError(status.Error(code, "retry")) {
@@ -614,7 +845,7 @@ func TestReceiveErrorClassification(t *testing.T) {
 	if !recoverableReceiveError(errors.New("transport disconnected")) {
 		t.Error("non-status transport errors must reconnect")
 	}
-	for _, code := range []codes.Code{codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument} {
+	for _, code := range []codes.Code{codes.Canceled, codes.PermissionDenied, codes.NotFound, codes.Unauthenticated, codes.FailedPrecondition, codes.InvalidArgument} {
 		if recoverableReceiveError(status.Error(code, "fatal")) {
 			t.Errorf("%s must return to the application", code)
 		}
@@ -628,6 +859,11 @@ func TestReceiveBackoffGrowthCapAndReset(t *testing.T) {
 			if delay := b.pause(0, false); delay < 0 || delay >= bound*time.Second {
 				t.Fatalf("delay %v exceeds bound %v", delay, bound*time.Second)
 			}
+			// Random samples below a ceiling cannot prove growth or a cap.
+			// current is the NEXT draw's ceiling after pause has advanced it.
+			if want := min(2*bound*time.Second, time.Minute); b.current != want {
+				t.Fatalf("next ceiling=%v after %v, want %v", b.current, bound*time.Second, want)
+			}
 		}
 		stretch := time.Duration(0)
 		if !delivered {
@@ -635,6 +871,9 @@ func TestReceiveBackoffGrowthCapAndReset(t *testing.T) {
 		}
 		if delay := b.pause(stretch, delivered); delay < 0 || delay >= time.Second {
 			t.Errorf("backoff did not reset: %v", delay)
+		}
+		if b.current != 2*time.Second {
+			t.Errorf("next ceiling after reset=%v, want 2s", b.current)
 		}
 	}
 }
@@ -680,6 +919,15 @@ func quarantineTempDir(t *testing.T) string {
 	return path
 }
 
+func quarantine(mediaDir string, ev *Event) (string, error) {
+	store, err := openQuarantine(mediaDir)
+	if err != nil {
+		return "", err
+	}
+	defer store.root.Close()
+	return store.write(ev)
+}
+
 func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) {
 	parent, outside := quarantineTempDir(t), quarantineTempDir(t)
 	media := filepath.Join(parent, "media")
@@ -711,6 +959,10 @@ func TestQuarantineWriteStaysOnVerifiedDirectoryAfterAncestorSwap(t *testing.T) 
 func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 	f := newFixture(t)
 	record := func(context.Context, *Event, string, error) error { return nil }
+	unusable := filepath.Join(quarantineTempDir(t), "not-a-directory")
+	if err := os.WriteFile(unusable, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name    string
 		options []RunOptions
@@ -720,6 +972,7 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 		{"missing directory", []RunOptions{{RecordQuarantine: record}}, []string{"MediaDir", "nacked"}},
 		{"missing recorder", []RunOptions{{MediaDir: quarantineTempDir(t)}}, []string{"RecordQuarantine", "not be counted"}},
 		{"complete", []RunOptions{{MediaDir: quarantineTempDir(t), RecordQuarantine: record}}, nil},
+		{"unusable parent", []RunOptions{{MediaDir: filepath.Join(unusable, "inbound"), RecordQuarantine: record}}, []string{"quarantine", "not a directory", "nacked"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(f.ctx)
@@ -744,5 +997,41 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRunReusesVerifiedQuarantineRoot(t *testing.T) {
+	f := newFixture(t)
+	parent := quarantineTempDir(t)
+	f.run(t, func(context.Context, *Event) (Outcome, error) { return Quarantine, nil }, RunOptions{
+		MediaDir: filepath.Join(parent, "inbound"),
+		RecordQuarantine: func(_ context.Context, ev *Event, path string, _ error) error {
+			data, err := os.ReadFile(path)
+			if err != nil || string(data) != string(ev.Raw) {
+				return fmt.Errorf("quarantine not retained at %s: %v", path, err)
+			}
+			return nil
+		},
+	})
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/one"}, "spaces/room")
+	waitFor(t, f.ctx, func() bool { m := f.server.Messages(); return len(m) == 1 && m[0].Acks == 1 })
+	if err := os.Rename(filepath.Join(parent, "quarantine"), filepath.Join(parent, "retained")); err != nil {
+		t.Fatal(err)
+	}
+	// Keep the returned path usable for the recorder while proving later writes
+	// do not walk/reopen it: a fresh walk would reject this relative symlink.
+	if err := os.Symlink("retained", filepath.Join(parent, "quarantine")); err != nil {
+		t.Fatal(err)
+	}
+	f.google.Emit("google.workspace.chat.message.v1.created", &chat.Message{Name: "spaces/room/messages/two"}, "spaces/room")
+	ctx, cancel := context.WithTimeout(f.ctx, time.Second)
+	defer cancel()
+	waitFor(t, ctx, func() bool {
+		messages := f.server.Messages()
+		return len(messages) == 2 && messages[0].Acks == 1 && messages[1].Acks == 1
+	})
+	files, err := os.ReadDir(filepath.Join(parent, "retained"))
+	if err != nil || len(files) != 2 {
+		t.Fatalf("quarantine root not reused: %v, %v", files, err)
 	}
 }
