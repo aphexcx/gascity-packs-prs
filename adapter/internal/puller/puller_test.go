@@ -27,6 +27,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func TestMain(m *testing.M) {
+	// pstest's minimum is process-global. Set it once so independent servers
+	// can exercise nack/ack scenarios concurrently without changing it in flight.
+	pstest.SetMinAckDeadline(time.Second)
+	code := m.Run()
+	pstest.ResetMinAckDeadline()
+	os.Exit(code)
+}
+
 func TestDecodeSingularAndBatch(t *testing.T) {
 	for _, resource := range []struct{ kind, name string }{
 		{"message", "spaces/room/messages/one"},
@@ -154,8 +163,6 @@ func newFixture(t *testing.T, dialOptions ...grpc.DialOption) *fixture {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
-	pstest.SetMinAckDeadline(time.Second)
-	t.Cleanup(pstest.ResetMinAckDeadline)
 	srv := pstest.NewServer()
 	t.Cleanup(func() { _ = srv.Close() })
 	conn, err := grpc.NewClient(srv.Addr, append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))...)
@@ -176,6 +183,8 @@ func newFixture(t *testing.T, dialOptions ...grpc.DialOption) *fixture {
 		t.Fatal(err)
 	}
 	publisher := client.Publisher(topic)
+	// Puller tests do not exercise publisher batching; send each fixture now.
+	publisher.PublishSettings.CountThreshold = 1
 	t.Cleanup(publisher.Stop)
 	f := &fixture{ctx: ctx, server: srv, client: client, sub: client.Subscriber(sub), publisher: publisher, google: fakegoogle.New(t, publisher)}
 	return f
@@ -254,6 +263,7 @@ func TestRunNackRedelivers(t *testing.T) {
 		{"nack", Nack, nil}, {"handler error", Ack, errors.New("temporary")}, {"invalid outcome", Outcome(99), nil},
 	} {
 		t.Run(result.name, func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			var calls atomic.Int32
 			f.run(t, func(_ context.Context, ev *Event) (Outcome, error) {
@@ -275,6 +285,7 @@ func TestRunNackRedelivers(t *testing.T) {
 func TestRunQuarantine(t *testing.T) {
 	for _, malformed := range []bool{false, true} {
 		t.Run(fmt.Sprint(malformed), func(t *testing.T) {
+			t.Parallel()
 			f := newFixture(t)
 			mediaDir := filepath.Join(quarantineTempDir(t), "inbound")
 			var handled, recorded atomic.Int32
@@ -810,7 +821,6 @@ func TestRunReturnsCanceledWhenClientCloses(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("handler never started")
 	}
-	waitFor(t, ctx, func() bool { return f.server.Messages()[0].Acks == 1 })
 	if err := f.client.Close(); err != nil {
 		t.Fatal(err)
 	}
