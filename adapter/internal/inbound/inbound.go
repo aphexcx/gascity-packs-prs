@@ -489,17 +489,6 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	if c.Kind == "message.deleted" && previous == nil {
 		return p.record(c, id, wire.InboundMessage{}, &state, nil, "local", catchUp)
 	}
-	s, err := p.space(ctx, c.Space, m.Space)
-	if err != nil {
-		if unavailableSpace(err) {
-			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
-			w.Text = renderMentions(m)
-			return p.record(c, id, w, &state, nil, retainedReason("space unavailable", err), catchUp)
-		}
-		return lookupError("space", err)
-	}
-	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
-	w.Text = renderMentions(m)
 	forwarded := false
 	for _, change := range l.Changes {
 		if change.Message == m.Name && strings.HasPrefix(change.Kind, "message.") && change.Reason != "local" && change.Reason != "own" && change.Reason != "wake_policy" && !strings.HasPrefix(change.Reason, "space unavailable") {
@@ -510,7 +499,25 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 	local := ""
 	if state.Mine {
 		local = "own"
-	} else if c.Kind == "message.deleted" {
+	} else if c.Kind == "message.deleted" && !forwarded {
+		local = "local"
+	}
+	s, err := p.space(ctx, c.Space, m.Space)
+	if err != nil {
+		if unavailableSpace(err) {
+			w := p.envelope(id, c.Space, "", m.Sender, state.Thread)
+			w.Text = renderMentions(m)
+			reason := local
+			if reason == "" {
+				reason = retainedReason("space unavailable", err)
+			}
+			return p.record(c, id, w, &state, nil, reason, catchUp)
+		}
+		return lookupError("space", err)
+	}
+	w := p.envelope(id, c.Space, s.Kind, m.Sender, state.Thread)
+	w.Text = renderMentions(m)
+	if c.Kind == "message.deleted" && !state.Mine {
 		w.Text = "deleted"
 		if base != nil {
 			var original wire.InboundMessage
@@ -518,10 +525,7 @@ func (p *Processor) message(ctx context.Context, c puller.Change, catchUp bool) 
 				w.Actor = original.Actor
 			}
 		}
-		if !forwarded {
-			local = "local"
-		}
-	} else if !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
+	} else if local == "" && !forwarded && s.Kind != "dm" && s.Wake == "mentions" && !mentions(m, p.identity()) {
 		local = "wake_policy"
 	}
 	if c.Kind == "message.updated" && id != m.Name {
@@ -572,7 +576,11 @@ func (p *Processor) reaction(ctx context.Context, c puller.Change, catchUp bool)
 		if unavailableSpace(err) {
 			w := p.envelope(id, c.Space, "", r.User, state.Thread)
 			w.Text = reactionText(r, action, parent)
-			return p.record(c, id, w, state, nil, retainedReason("space unavailable", err), catchUp)
+			reason := "local"
+			if state.Mine {
+				reason = retainedReason("space unavailable", err)
+			}
+			return p.record(c, id, w, state, nil, reason, catchUp)
 		}
 		return lookupError("space", err)
 	}

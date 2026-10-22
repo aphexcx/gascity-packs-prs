@@ -1875,3 +1875,69 @@ func TestStoppedCityPOSTRetriesOnlyExactDiscriminator(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalRecordsDoNotCountOrWarnUnavailable(t *testing.T) {
+	for _, tc := range []struct{ name, reason string }{
+		{"own_unlisted", "own"}, {"reaction_unlisted", "local"},
+		{"own_permanent", "own"}, {"reaction_permanent", "local"},
+		{"wake_policy", "wake_policy"}, {"local_delete", "local"},
+		{"known_local_delete", "local"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			f.google.Configure(func(s *fakegoogle.Server) { delete(s.Spaces, space) })
+			var err error
+			if strings.HasSuffix(tc.name, "permanent") {
+				s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "PRIVATE", 400) }))
+				defer s.Close()
+				f.opts.Config.Endpoints.ChatAPIBase = s.URL
+				f.opts.Chat, err = chat.New(context.Background(), http.DefaultClient, f.opts.Config.Endpoints)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.p, err = New(f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := message()
+			m.Space = nil
+			ev := event("local-counter", "message.created", m)
+			id := messageName
+			switch {
+			case strings.HasPrefix(tc.name, "own"):
+				m.Sender.Name = identity
+			case strings.HasPrefix(tc.name, "reaction"):
+				f.l.Messages[messageName] = &ledger.MessageState{Mine: false}
+				r := &api.Reaction{Name: messageName + "/reactions/one"}
+				ev.Changes = []puller.Change{{Kind: "reaction.created", Space: space, Reaction: r}}
+				id = r.Name + "#created"
+			case tc.name == "wake_policy":
+				f.l.Spaces[space] = &ledger.SpaceState{Kind: "room", Wake: "mentions"}
+			default:
+				ev.Changes[0].Kind = "message.deleted"
+				id += "#deleted"
+				if tc.name == "known_local_delete" {
+					f.l.Messages[messageName] = &ledger.MessageState{}
+					f.l.Changes[messageName] = &ledger.ChangeState{ID: messageName, Message: messageName, Kind: "message.created", Status: "committed", Reason: "wake_policy"}
+				}
+			}
+			handle(t, f, ev)
+			ev.PubSubID = "local-counter-again"
+			handle(t, f, ev)
+			if len(f.gc.Inbound()) != 0 || logs.Len() != 0 || len(f.l.Counters) != 0 {
+				t.Fatalf("local record counted or warned: counters=%v logs=%s", f.l.Counters, logs.String())
+			}
+			c := f.l.Changes[id]
+			if c == nil || c.Reason != tc.reason || c.Status != "committed" {
+				t.Fatalf("local record: %+v", c)
+			}
+			stored, err := ledger.Load(f.opts.LedgerPath, true)
+			if err != nil || len(stored.Counters) != 0 || stored.Changes[id].Reason != tc.reason {
+				t.Fatalf("local record not durable: %v", err)
+			}
+		})
+	}
+}
