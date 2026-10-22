@@ -27,7 +27,8 @@ type Server struct {
 	NextDelivery string
 	Receipts     map[string]wire.ReceiptResponse
 	// Bindings maps each active conversation binding to its owning session.
-	// Outbound fixtures must populate this explicitly before publishing.
+	// Outbound fixtures must populate this before publishing. Use Bind for
+	// synchronized updates while clients are running.
 	Bindings       map[wire.Conversation]string
 	FailTranscript bool
 	Now            func() time.Time
@@ -70,6 +71,19 @@ func (s *Server) Advance(d time.Duration) {
 	s.Configure(func(s *Server) { s.observeReceipts(); s.offset += d })
 }
 func (s *Server) now() time.Time { return s.Now().Add(s.offset) }
+
+// Bind sets the owning session, replacing any equivalent conversation binding.
+func (s *Server) Bind(conv wire.Conversation, sessionID string) {
+	s.Configure(func(s *Server) {
+		conv = normalizeConversation(conv)
+		for existing := range s.Bindings {
+			if normalizeConversation(existing) == conv {
+				delete(s.Bindings, existing)
+			}
+		}
+		s.Bindings[conv] = sessionID
+	})
+}
 
 // Inbound returns all accepted POSTs, including duplicate attempts, in order.
 func (s *Server) Inbound() []wire.InboundMessage {
@@ -225,6 +239,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		message := envelope.Message
+		message.Conversation = normalizeConversation(message.Conversation)
 		if !validConversation(message.Conversation) || message.ProviderMessageID == "" {
 			fail(w, 400, "message identity and conversation including scope_id are required")
 			return
@@ -300,6 +315,16 @@ func validConversation(c wire.Conversation) bool {
 	return c.ScopeID != "" && c.Provider != "" && c.AccountID != "" && c.ConversationID != "" && (c.Kind == "dm" || c.Kind == "room" || c.Kind == "thread")
 }
 
+func normalizeConversation(c wire.Conversation) wire.Conversation {
+	c.ScopeID = strings.TrimSpace(c.ScopeID)
+	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
+	c.AccountID = strings.TrimSpace(c.AccountID)
+	c.ConversationID = strings.TrimSpace(c.ConversationID)
+	c.ParentConversationID = strings.TrimSpace(c.ParentConversationID)
+	c.Kind = strings.ToLower(strings.TrimSpace(c.Kind))
+	return c
+}
+
 // outboundReceipt mirrors gc's PascalCase result, which is distinct from the
 // adapter's snake_case callback receipt. Keep the retry hints for HTTP 2xx only.
 type outboundReceipt struct {
@@ -347,6 +372,7 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	if !decode(w, r, &request) {
 		return
 	}
+	request.Conversation = normalizeConversation(request.Conversation)
 	if request.SessionID == "" || !validConversation(request.Conversation) {
 		fail(w, 422, "session_id and conversation including scope_id are required")
 		return
@@ -354,7 +380,13 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 	callback := wire.PublishRequest{SessionID: request.SessionID, Conversation: request.Conversation, Text: request.Text, ReplyToMessageID: request.ReplyToMessageID, IdempotencyKey: request.IdempotencyKey}
 	s.mu.Lock()
 	registration, ok := s.registrations[registrationKey(city, request.Conversation.Provider, request.Conversation.AccountID)]
-	owner := s.Bindings[request.Conversation]
+	owner := ""
+	for conv, session := range s.Bindings {
+		if normalizeConversation(conv) == request.Conversation {
+			owner = session
+			break
+		}
+	}
 	if ok && owner == request.SessionID {
 		s.published = append(s.published, callback)
 	}

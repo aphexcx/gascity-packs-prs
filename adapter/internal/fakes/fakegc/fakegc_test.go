@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -621,5 +622,44 @@ func TestReceiptRetainedAtExactlyOneHour(t *testing.T) {
 	s.Advance(time.Nanosecond)
 	if got := call(t, s, "GET", "inbound/receipts/"+id, nil, false, 200); got["state"] != "unknown" {
 		t.Fatalf("receipt retained past boundary: %v", got)
+	}
+}
+
+func TestConversationIdentityNormalization(t *testing.T) {
+	s := New(t)
+	c := conversation()
+	c.ScopeID = " examplecity "
+	c.Provider = " GCHAT "
+	c.AccountID = " example "
+	c.ConversationID = " spaces/room "
+	c.ParentConversationID = " "
+	c.Kind = " ROOM "
+	s.Configure(func(s *Server) { s.Bindings[c] = "session" })
+	callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), Delivered: true})
+	}))
+	defer callback.Close()
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+	for _, conv := range []wire.Conversation{conversation(), c} {
+		call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conv}, true, 200)
+	}
+	// Bind replaces an equivalent legacy map fixture and is safe during calls.
+	s.Bind(c, "new-session")
+	var writers sync.WaitGroup
+	writers.Go(func() {
+		for range 100 {
+			s.Bind(c, "new-session")
+		}
+	})
+	for range 10 {
+		call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "new-session", Conversation: conversation()}, true, 200)
+	}
+	writers.Wait()
+	m := inbound("normalized")
+	m.Message.Conversation = c
+	call(t, s, "POST", "inbound", m, true, 200)
+	duplicate := call(t, s, "POST", "inbound", inbound("normalized"), true, 200)
+	if duplicate["delivery"].(map[string]any)["status"] != "no_route" {
+		t.Fatalf("normalized conversation was not deduplicated: %v", duplicate)
 	}
 }
