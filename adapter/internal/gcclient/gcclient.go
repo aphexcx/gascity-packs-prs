@@ -36,14 +36,18 @@ func New(base, city string) *Client {
 	}
 }
 
-// HTTPError retains gc's status and response body, including problem details.
+// HTTPError retains gc's status and up to 64 KiB of its response body.
 type HTTPError struct {
 	StatusCode int
 	Body       string
 }
 
 func (e *HTTPError) Error() string {
-	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, e.Body)
+	summary := e.Body
+	if len(summary) > 256 {
+		summary = summary[:256] + "..."
+	}
+	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, summary)
 }
 
 func (c *Client) Register(ctx context.Context, reg wire.Registration) error {
@@ -89,7 +93,11 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 		return fmt.Errorf("gc %s %s: %w", method, path, err)
 	}
 	defer resp.Body.Close()
-	data, readErr := io.ReadAll(resp.Body)
+	var responseBody io.Reader = resp.Body
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		responseBody = io.LimitReader(resp.Body, 64<<10)
+	}
+	data, readErr := io.ReadAll(responseBody)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data)}
 		if readErr != nil {

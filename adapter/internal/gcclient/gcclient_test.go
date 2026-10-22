@@ -245,6 +245,40 @@ func TestHTTPErrorIncludesStatusAndBody(t *testing.T) {
 	}
 }
 
+func TestHTTPErrorBoundsForeignBody(t *testing.T) {
+	body := strings.Repeat("x", 1<<20)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(s.Close)
+	err := New(s.URL, "examplecity").Register(t.Context(), wire.Registration{})
+	var responseErr *HTTPError
+	if !errors.As(err, &responseErr) {
+		t.Fatalf("error type = %T, want *HTTPError", err)
+	}
+	if len(responseErr.Body) > 64<<10 || responseErr.Body != body[:64<<10] {
+		t.Errorf("retained body length = %d, want first 64 KiB", len(responseErr.Body))
+	}
+	message := err.Error()
+	if len(message) > 300 || !strings.HasPrefix(message, "gc API: HTTP 502: x") || !strings.HasSuffix(message, "...") {
+		t.Errorf("error message length = %d, want short status/body summary with ellipsis", len(message))
+	}
+}
+
+func TestSuccessfulResponseIsNotTruncated(t *testing.T) {
+	want := wire.InboundResponse{}
+	want.Delivery.Status = strings.Repeat("x", 65<<10)
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(want)
+	}))
+	t.Cleanup(s.Close)
+	got, err := New(s.URL, "examplecity").Inbound(t.Context(), inbound("message"))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("response truncated: status length = %d, error = %v", len(got.Delivery.Status), err)
+	}
+}
+
 func TestMalformedResponse(t *testing.T) {
 	for name, call := range clientCalls() {
 		if name == "register" { // Registration only needs a successful status.
