@@ -56,13 +56,13 @@ func inbound(id string) wire.InboundEnvelope {
 func TestMutationAndScopeRequirements(t *testing.T) {
 	s := New(t)
 	reg := wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: "http://127.0.0.1:1/adapter", Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}}
-	call(t, s, "POST", "adapters", reg, false, 400)
+	call(t, s, "POST", "adapters", reg, false, 403)
 	call(t, s, "POST", "adapters", reg, true, 200)
-	call(t, s, "POST", "inbound", inbound("one"), false, 400)
+	call(t, s, "POST", "inbound", inbound("one"), false, 403)
 	bad := inbound("bad")
 	bad.Message.Conversation.ScopeID = ""
 	call(t, s, "POST", "inbound", bad, true, 400)
-	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, false, 400)
+	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, false, 403)
 	missingScope := conversation()
 	missingScope.ScopeID = ""
 	call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: missingScope}, true, 400)

@@ -158,7 +158,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	city := parts[2]
 	path := strings.Join(parts[4:], "/")
 	if r.Method != http.MethodGet && r.Header.Get(wire.RequestHeader) == "" {
-		fail(w, 400, "X-GC-Request is required")
+		fail(w, 403, "X-GC-Request is required")
 		return
 	}
 	if path == "outbound" && r.Method == http.MethodPost {
