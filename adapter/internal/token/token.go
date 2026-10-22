@@ -348,6 +348,12 @@ func transient(err error) bool {
 		if permanentOAuthCode(failure.ErrorCode) {
 			return false
 		}
+		if failure.Response != nil && failure.ErrorCode != "temporarily_unavailable" && failure.ErrorCode != "server_error" {
+			status := failure.Response.StatusCode
+			if status >= 400 && status < 500 && status != http.StatusRequestTimeout && status != http.StatusTooManyRequests {
+				return false
+			}
+		}
 	}
 	// URL errors can wrap transport failures, including HTTP/2 stream resets
 	// that do not implement net.Error. Reject only known configuration failures.

@@ -979,6 +979,12 @@ func TestNewRejectsEmptyChatAPIBase(t *testing.T) {
 }
 
 func TestTransientClassification(t *testing.T) {
+	emptyFile := filepath.Join(t.TempDir(), "token.json")
+	writeJSON(t, emptyFile, map[string]any{})
+	_, _, emptyTokenErr := readToken(emptyFile)
+	if emptyTokenErr == nil {
+		t.Fatal("empty token file was accepted")
+	}
 	for _, tc := range []struct {
 		name string
 		err  error
@@ -999,10 +1005,15 @@ func TestTransientClassification(t *testing.T) {
 		{"invalid TLS certificate", &url.Error{Op: "Get", URL: "https://example", Err: &tls.CertificateVerificationError{Err: x509.UnknownAuthorityError{}}}, false},
 		{"missing file", &os.PathError{Op: "open", Path: "token.json", Err: os.ErrNotExist}, false},
 		{"malformed JSON", &json.SyntaxError{}, false},
+		{"empty token file", emptyTokenErr, false},
 		{"chat 429", validationError(429), true},
 		{"chat 503", validationError(503), true},
 		{"chat 401", validationError(401), false},
 		{"oauth 429", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 429}}, true},
+		{"oauth 408", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 408}}, true},
+		{"oauth 404", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 404}}, false},
+		{"oauth unknown code 400", &oauth2.RetrieveError{ErrorCode: "unexpected", Response: &http.Response{StatusCode: 400}}, false},
+		{"oauth temporary code 400", &oauth2.RetrieveError{ErrorCode: "temporarily_unavailable", Response: &http.Response{StatusCode: 400}}, true},
 		{"oauth 503", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 503}}, true},
 		{"oauth policy", &oauth2.RetrieveError{ErrorCode: "admin_policy_enforced", Response: &http.Response{StatusCode: 503}}, false},
 	} {
@@ -1011,6 +1022,34 @@ func TestTransientClassification(t *testing.T) {
 				t.Errorf("transient(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestWatchTokenEndpoint404ObservedOnce(t *testing.T) {
+	var calls atomic.Int32
+	clientFile, tokenFile, ep := fixture(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, "token-secret")
+	})
+	s := mustSource(t, clientFile, tokenFile, ep)
+	expired := savedToken("expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	writeJSON(t, tokenFile, expired)
+	now := time.Now()
+	s.now = func() time.Time { return now }
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(previous)
+	for range 3 {
+		s.reload(t.Context(), func() { t.Error("invalid token accepted") })
+		now = now.Add(time.Hour)
+	}
+	if calls.Load() != 1 || strings.Count(logs.String(), "WARN") != 1 ||
+		!strings.Contains(logs.String(), "OAuth unrecognized (HTTP 404)") ||
+		strings.Contains(logs.String(), "temporarily") || strings.Contains(logs.String(), "token-secret") {
+		t.Fatalf("permanent endpoint failure: calls=%d logs=%s", calls.Load(), logs.String())
 	}
 }
 
