@@ -336,15 +336,12 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		if info.Size() > limit {
 			return localError{errors.New("file exceeds media limit")}
 		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return localError{err}
-		}
 		// Stream one multipart request, including for Chat's 200 MB maximum.
 		// SDK resumable chunks retry 429s internally without Retry-After and lose
 		// the HTTP error on deadline. Keep every retry under our policy instead.
 		transferCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
-		stream := &uploadReader{reader: file, remaining: limit, cancel: cancel}
+		stream := newUploadReader(file, limit, cancel)
 		result, err = c.api.Media.Upload(space, &googlechat.UploadAttachmentRequest{Filename: filepath.Base(path)}).Media(stream, googleapi.ChunkSize(0)).Context(transferCtx).Do()
 		// The SDK formats source errors as strings. Preserve the local byte-limit
 		// error so a growing file cannot yield a success or a transient receipt.
@@ -370,6 +367,11 @@ type uploadReader struct {
 	cancel    context.CancelFunc
 	mu        sync.Mutex
 	err       error
+}
+
+func newUploadReader(file *os.File, limit int64, cancel context.CancelFunc) *uploadReader {
+	// Each SDK pipe gets its own offset, including any earlier pipe still exiting.
+	return &uploadReader{reader: io.NewSectionReader(file, 0, limit+1), remaining: limit, cancel: cancel}
 }
 
 func (r *uploadReader) Err() error {
@@ -406,7 +408,7 @@ func (r *uploadReader) Read(p []byte) (int, error) {
 
 // DownloadMedia creates a new private file below MediaDir, never overwrites an
 // existing file, and removes an incomplete download. The caller creates parent
-// directories and only uses dest after success. No path component may be a link.
+// directories and only uses dest after success. No component below MediaDir may be a link.
 func (c *Client) DownloadMedia(ctx context.Context, resourceName, dest string, maxBytes int64) (n int64, err error) {
 	if maxBytes <= 0 {
 		return 0, localError{errors.New("chat: positive download byte limit required")}
@@ -583,7 +585,7 @@ func (c *Client) retry(ctx context.Context, safe bool, call func(context.Context
 	deadline := c.timing.Now().Add(bound)
 	remaining := func() time.Duration {
 		d := deadline.Sub(c.timing.Now())
-		if realDeadline, ok := ctx.Deadline(); ok && time.Until(realDeadline) < d {
+		if realDeadline, ok := ctx.Deadline(); c.timing.now == nil && ok && time.Until(realDeadline) < d {
 			d = time.Until(realDeadline)
 		}
 		return d

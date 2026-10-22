@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
+	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +72,27 @@ func TestRetryBudgetUsesClock(t *testing.T) {
 	if calls != 3 || f.Now().Sub(start) != 4*time.Second || kind != "rate_limited" || hint != 2*time.Second || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("calls=%d elapsed=%v kind=%s hint=%v err=%v", calls, f.Now().Sub(start), kind, hint, err)
 	}
+}
+
+func TestInjectedRetryBudgetIgnoresWallClockElapsed(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		c := &Client{retryBound: 5 * time.Second}
+		clock := useTestClock(c)
+		start := clock.Now()
+		calls := 0
+		err := c.retry(context.Background(), true, func(context.Context) error {
+			calls++
+			if calls == 1 {
+				// Real elapsed time must not shorten the injected backoff budget.
+				time.Sleep(3 * time.Second)
+				return &googleapi.Error{Code: 429, Header: http.Header{"Retry-After": []string{"3"}}}
+			}
+			return nil
+		})
+		if err != nil || calls != 2 || clock.Now().Sub(start) != 3*time.Second {
+			t.Fatalf("calls=%d fake elapsed=%v err=%v", calls, clock.Now().Sub(start), err)
+		}
+	})
 }
 
 func TestLimiterUsesClock(t *testing.T) {
@@ -600,6 +624,19 @@ func TestMediaRootAllowsSymlinkedParent(t *testing.T) {
 			t.Fatalf("accepted %s", suffix)
 		}
 	}
+	// Resolving only symlinked ancestors is insufficient: the root can be a link.
+	rootLink := filepath.Join(parent, "root-link")
+	if err := os.Symlink(root, rootLink); err != nil {
+		t.Fatal(err)
+	}
+	c.ep.UploadRoot, c.ep.MediaDir = rootLink, rootLink
+	ref, err = c.UploadAttachment(context.Background(), "spaces/room", filepath.Join(rootLink, "source"))
+	if err != nil {
+		t.Fatalf("upload through root symlink: %v", err)
+	}
+	if n, err := c.DownloadMedia(context.Background(), ref.ResourceName, filepath.Join(rootLink, "root-link-dest"), 10); err != nil || n != 4 {
+		t.Fatalf("download through root symlink: %d %v", n, err)
+	}
 }
 
 func TestMediaRejectsDotDotWithinRoot(t *testing.T) {
@@ -640,6 +677,9 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 	_, err = c.UploadAttachment(context.Background(), "spaces/room", path)
 	if err == nil || !strings.Contains(err.Error(), "growing.txt") {
 		t.Fatalf("oversize upload: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("requests=%d, want only the attempt before growth", calls)
 	}
 	s.Configure(func(s *fakegoogle.Server) {
 		if len(s.Media) != 0 {
@@ -761,6 +801,113 @@ func TestLargeUploadClientByteLimit(t *testing.T) {
 				t.Fatalf("client sent oversize file (%d requests)", requests)
 			}
 		})
+	}
+}
+
+func TestHTTP2UploadGrowthNeverCompletesPart(t *testing.T) {
+	const size = 8 << 20
+	dir := t.TempDir()
+	path := filepath.Join(dir, "growing.bin")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), size), 0600); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		protocol int
+		bytes    int64
+		err      error
+	}
+	done := make(chan result, 1)
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := result{protocol: r.ProtoMajor}
+		defer func() { done <- got }()
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, err = file.Write([]byte("x"))
+		file.Close()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		reader := multipart.NewReader(r.Body, params["boundary"])
+		metadata, err := reader.NextPart()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if _, err := io.Copy(io.Discard, metadata); err != nil {
+			t.Error(err)
+			return
+		}
+		part, err := reader.NextPart()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		got.bytes, got.err = io.Copy(io.Discard, part)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"attachmentDataRef":{"resourceName":"spaces/room/attachments/1"}}`)
+	}))
+	s.EnableHTTP2 = true
+	s.StartTLS()
+	defer s.Close()
+	c, err := New(context.Background(), s.Client(), config.Endpoints{ChatAPIBase: s.URL, UploadRoot: dir, MediaMaxBytes: size})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ref, err := c.UploadAttachment(ctx, "spaces/room", path)
+	if kind, _ := Classify(err); kind != "permanent" || ref != nil {
+		t.Fatalf("growing upload: ref=%v err=%v", ref, err)
+	}
+	select {
+	case got := <-done:
+		if got.protocol != 2 {
+			t.Fatalf("want HTTP/2, got HTTP/%d", got.protocol)
+		}
+		if got.err == nil {
+			t.Fatalf("server parsed a complete truncated part: %d bytes", got.bytes)
+		}
+	case <-ctx.Done():
+		t.Fatal("server did not finish reading the canceled upload")
+	}
+}
+
+func TestUploadAttemptsHaveIndependentOffsets(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source")
+	if err := os.WriteFile(path, []byte("abcdef"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := newUploadReader(file, 6, cancel)
+	var prefix [2]byte
+	if _, err := io.ReadFull(first, prefix[:]); err != nil || string(prefix[:]) != "ab" {
+		t.Fatalf("first prefix=%q err=%v", prefix, err)
+	}
+	second := newUploadReader(file, 6, cancel)
+	// An earlier SDK pipe can still be reading when the next attempt starts.
+	if got, err := io.ReadAll(second); err != nil || string(got) != "abcdef" {
+		t.Errorf("second attempt=%q err=%v", got, err)
+	}
+	if got, err := io.ReadAll(first); err != nil || string(got) != "cdef" {
+		t.Errorf("first remainder=%q err=%v", got, err)
+	}
+	if err := ctx.Err(); err != nil {
+		t.Errorf("in-limit attempts canceled: %v", err)
 	}
 }
 
