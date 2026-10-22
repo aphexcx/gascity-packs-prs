@@ -6,10 +6,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,18 +38,68 @@ func New(base, city string) *Client {
 	}
 }
 
+// Problem is gc's RFC 9457 error envelope, including its machine-readable code.
+type Problem struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+	Code   string `json:"code"`
+}
+
 // HTTPError retains gc's status and up to 64 KiB of its response body.
+// Problem is populated best-effort, regardless of the response content type.
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	Problem    *Problem
 }
 
 func (e *HTTPError) Error() string {
 	summary := e.Body
+	if e.Problem != nil {
+		summary = e.Problem.Code + ": " + e.Problem.Detail
+	}
 	if len(summary) > 256 {
 		summary = summary[:256] + "..."
 	}
 	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, summary)
+}
+
+// Code returns the problem code, or an empty string when no problem was parsed.
+func (e *HTTPError) Code() string {
+	if e == nil || e.Problem == nil {
+		return ""
+	}
+	return e.Problem.Code
+}
+
+// IsNoBinding reports whether gc rejected an outbound request with no binding.
+// gc internal/extmsg/outbound.go:137-146 emits this detail for both an absent
+// caller session and a caller that has no matching group route.
+func IsNoBinding(err error) bool {
+	return strings.HasPrefix(bindingDetail(err), "no active binding for conversation ")
+}
+
+// IsWrongOwner reports whether the outbound caller does not own the binding.
+// gc internal/extmsg/outbound.go:109-110,129-130 uses the same detail prefix for
+// agent and session bindings, with the caller session formatted using %q.
+func IsWrongOwner(err error) bool {
+	rest, ok := strings.CutPrefix(bindingDetail(err), "session ")
+	if !ok {
+		return false
+	}
+	session, quoteErr := strconv.QuotedPrefix(rest)
+	return quoteErr == nil && strings.HasPrefix(rest[len(session):], " does not own binding for conversation ")
+}
+
+func bindingDetail(err error) string {
+	var responseErr *HTTPError
+	if errors.As(err, &responseErr) && responseErr != nil &&
+		responseErr.StatusCode == http.StatusUnprocessableEntity && responseErr.Code() == "validation-failed" {
+		return responseErr.Problem.Detail
+	}
+	return ""
 }
 
 func (c *Client) Register(ctx context.Context, reg wire.Registration) error {
@@ -100,6 +152,10 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	data, readErr := io.ReadAll(responseBody)
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data)}
+		var problem Problem
+		if json.Unmarshal(data, &problem) == nil && problem != (Problem{}) {
+			err.Problem = &problem
+		}
 		if readErr != nil {
 			return fmt.Errorf("%w (read response: %w)", err, readErr)
 		}
