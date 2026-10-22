@@ -73,7 +73,7 @@ func ToChat(md string) string {
 			if content := headingContent(body[heading+1:]); content != "" {
 				out.WriteString("*" + inline(content, true) + "*")
 			}
-		case !blockBoundaryLine(body) && (strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* ")):
+		case !thematicBreakLine(body) && (strings.HasPrefix(body, "- ") || strings.HasPrefix(body, "* ")):
 			out.WriteString("* " + inline(body[2:], false))
 		default:
 			out.WriteString(inline(body, false))
@@ -146,6 +146,14 @@ func blockBoundaryLine(line string) bool {
 		if body[0] == '=' {
 			return false
 		}
+	}
+	return thematicBreakLine(body)
+}
+
+func thematicBreakLine(line string) bool {
+	body := strings.TrimLeft(line, " ")
+	if len(line)-len(body) > 3 || body == "" || !strings.ContainsRune("-*_", rune(body[0])) {
+		return false
 	}
 	count := 0
 	for _, c := range body {
@@ -496,9 +504,8 @@ func (f *codeFence) closes(line string) bool {
 // smaller limits panic. If no fenced cut fits, or reopening and closing a fence
 // would consume more than half the limit, a hard rune-boundary cut without
 // synthetic wrappers guarantees progress. A hard cut also removes the preceding
-// part's synthetic closer if its matching reopener cannot be retained.
-// A complete message that fits,
-// including an unclosed fence, is unchanged.
+// part's synthetic closer if its matching reopener cannot be retained. A complete
+// message that fits, including an unclosed fence, is unchanged.
 func Split(text string, limit int) []string {
 	if text == "" {
 		return nil

@@ -19,6 +19,7 @@ func TestToChat(t *testing.T) {
 		{"italic underscores", "_italic_", "_italic_"},
 		{"strikethrough", "~~gone~~", "~gone~"},
 		{"inline code", "`**bold** _italic_ ~~gone~~ [x](url)`", "`**bold** _italic_ ~~gone~~ [x](url)`"},
+		{"backslash before code closer", "`**a**\\` **b**", "`**a**\\` *b*"},
 		{"multiline code", "`a\n**b**`", "`a\n**b**`"},
 		{"multiline code search resets after paragraph", "a \\``\n\nb `x\n**y**` **z**", "a \\``\n\nb `x\n**y**` *z*"},
 		{"multiline code search resets after fence", "a \\``\n```\nfence\n```\nb `x\n**y**` **z**", "a \\``\n```\nfence\n```\nb `x\n**y**` *z*"},
@@ -27,6 +28,7 @@ func TestToChat(t *testing.T) {
 		{"code span containing backtick", "``a ` **b**`` and **c**", "``a ` **b**`` and *c*"},
 		{"fenced code", "```go\n**b**\n- x\n# title\n[x](url)\n```\n**after**", "```go\n**b**\n- x\n# title\n[x](url)\n```\n*after*"},
 		{"dash bullet", "- one\n  - two\n", "* one\n  * two\n"},
+		{"empty dash bullet", "- one\n- \n- three", "* one\n* \n* three"},
 		{"star bullet", "* one\n* **two**", "* one\n* *two*"},
 		{"spaced thematic break", "- - -\n* * *", "- - -\n* * *"},
 		{"link", "[text](https://example.com)", "<https://example.com|text>"},
@@ -85,6 +87,7 @@ func TestToChat(t *testing.T) {
 		{"heading escaped hash", "# Title \\#", "*Title \\#*"},
 		{"nested emphasis", "**bold _italic_** and *soft*", "*bold _italic_* and _soft_"},
 		{"emphasis after multiplication", "2*3 and *note*", "2*3 and _note_"},
+		{"spaced marker does not reopen emphasis", "*5 * 3 is 15*", "_5 * 3 is 15_"},
 		// The subset leaves an abandoned opener literal and pairs the later one.
 		{"nearest emphasis opener", "*a *b* c*", "*a _b_ c*"},
 		{"emphasis after bare URL", "https://x/a_b*c and *x*", "https://x/a_b*c and _x_"},
@@ -205,7 +208,8 @@ func TestToChatUnclosedOpenersLinearTime(t *testing.T) {
 		},
 		struct{ name, input, want string }{"multiline escaped backticks", multiline, multiline},
 	)
-	// The larger case also exceeds the bound before indexing on fast machines.
+	// Only the 1 MB case exceeds the bound before indexing on fast machines;
+	// the 128 KB case also checks the requested input size.
 	for _, size := range []int{128000, 1000000} {
 		distinct := runs.String() + strings.Repeat("x", size-runs.Len())
 		tests = append(tests, struct{ name, input, want string }{
