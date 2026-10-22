@@ -772,7 +772,7 @@ func writeTokenWithSync(ctx context.Context, path string, tok *oauth2.Token, syn
 		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	defer dir.Close()
-	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) {
+	if err := syncFile(dir); err != nil && !errors.Is(err, syscall.ENOTSUP) && !errors.Is(err, syscall.EINVAL) {
 		return fmt.Errorf("token written to %s but its directory could not be synced: %w", path, err)
 	}
 	return nil

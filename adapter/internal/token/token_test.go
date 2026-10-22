@@ -1788,6 +1788,7 @@ func TestWriteTokenSyncsDirectoryAfterRename(t *testing.T) {
 	}{
 		{"success", nil},
 		{"unsupported directory sync", syscall.ENOTSUP},
+		{"unsupported Linux directory sync", syscall.EINVAL},
 		{"failed directory sync", syscall.EIO},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
