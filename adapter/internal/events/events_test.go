@@ -835,3 +835,35 @@ func TestScopeRevocationWaitsForTokenReload(t *testing.T) {
 		})
 	}
 }
+
+func TestIncompatibilityNamesSubscriptionFieldAndValue(t *testing.T) {
+	for _, tc := range []struct {
+		field, value string
+		mutate       func(*api.Subscription)
+	}{
+		{"targetResource", "spaces/wrong", func(s *api.Subscription) { s.TargetResource = "spaces/wrong" }},
+		{"notificationEndpoint.pubsubTopic", "topics/wrong", func(s *api.Subscription) { s.NotificationEndpoint.PubsubTopic = "topics/wrong" }},
+		{"notificationEndpoint", "<nil>", func(s *api.Subscription) { s.NotificationEndpoint = nil }},
+		{"payloadOptions.includeResource", "false", func(s *api.Subscription) { s.PayloadOptions.IncludeResource = false }},
+		{"payloadOptions", "<nil>", func(s *api.Subscription) { s.PayloadOptions = nil }},
+		{"payloadOptions.fieldMask", "message.name", func(s *api.Subscription) { s.PayloadOptions.FieldMask = "message.name" }},
+		{"eventTypes", EventTypes[1], func(s *api.Subscription) { s.EventTypes = []string{EventTypes[0]} }},
+		{"expireTime", "invalid-time", func(s *api.Subscription) { s.ExpireTime = "invalid-time" }},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			f := setup(t)
+			first := f.reconcile()
+			var sub api.Subscription
+			f.server.Configure(func(s *fakegoogle.Server) { tc.mutate(s.Subscriptions[first.Name]); sub = *s.Subscriptions[first.Name] })
+			_, err := f.manager.validate(&sub)
+			if err == nil {
+				t.Fatal("accepted incompatible subscription")
+			}
+			for _, want := range []string{first.Name, tc.field, tc.value} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q omits %q", err, want)
+				}
+			}
+		})
+	}
+}

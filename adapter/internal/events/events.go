@@ -388,23 +388,40 @@ func (m *Manager) finish(ctx context.Context, op *api.Operation) (ledger.Subscri
 }
 
 func (m *Manager) validate(sub *api.Subscription) (time.Time, error) {
-	if sub == nil || sub.Name == "" || sub.TargetResource != Target || sub.NotificationEndpoint == nil || sub.NotificationEndpoint.PubsubTopic != m.topic || sub.PayloadOptions == nil || !sub.PayloadOptions.IncludeResource {
-		return time.Time{}, errors.New("events: subscription has missing or incompatible resource, topic or payload options")
+	if sub == nil {
+		return time.Time{}, errors.New("events: subscription is <nil>")
+	}
+	incompatible := func(field string, value any) (time.Time, error) {
+		return time.Time{}, fmt.Errorf("events: subscription %q has incompatible %s=%v; remove the incompatible subscription manually", sub.Name, field, value)
+	}
+	switch {
+	case sub.Name == "":
+		return incompatible("name", `""`)
+	case sub.TargetResource != Target:
+		return incompatible("targetResource", sub.TargetResource)
+	case sub.NotificationEndpoint == nil:
+		return incompatible("notificationEndpoint", nil)
+	case sub.NotificationEndpoint.PubsubTopic != m.topic:
+		return incompatible("notificationEndpoint.pubsubTopic", sub.NotificationEndpoint.PubsubTopic)
+	case sub.PayloadOptions == nil:
+		return incompatible("payloadOptions", nil)
+	case !sub.PayloadOptions.IncludeResource:
+		return incompatible("payloadOptions.includeResource", sub.PayloadOptions.IncludeResource)
 	}
 	// The API's patch updateMask only permits expiry, TTL and event types;
 	// payload options cannot be repaired here. Refuse adoption (and duplicate
 	// creation) until the operator removes the incompatible subscription.
 	if sub.PayloadOptions.FieldMask != "" {
-		return time.Time{}, fmt.Errorf("events: subscription %s has incompatible payloadOptions.fieldMask %q", sub.Name, sub.PayloadOptions.FieldMask)
+		return incompatible("payloadOptions.fieldMask", sub.PayloadOptions.FieldMask)
 	}
 	for _, typ := range m.types {
 		if !slices.Contains(sub.EventTypes, typ) {
-			return time.Time{}, fmt.Errorf("events: subscription %s lacks event type %s", sub.Name, typ)
+			return incompatible("eventTypes", fmt.Sprintf("%v (missing %s)", sub.EventTypes, typ))
 		}
 	}
 	expiry, err := time.Parse(time.RFC3339Nano, sub.ExpireTime)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("events: invalid subscription expiry: %w", err)
+		return time.Time{}, fmt.Errorf("events: subscription %q has invalid expireTime=%q: %w", sub.Name, sub.ExpireTime, err)
 	}
 	return expiry, nil
 }
