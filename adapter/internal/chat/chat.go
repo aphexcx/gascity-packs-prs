@@ -30,6 +30,8 @@ type Space = googlechat.Space
 type Client struct {
 	api            *googlechat.Service
 	limits         Limiter
+	timing         timing
+	retryBound     time.Duration
 	ep             config.Endpoints
 	identityMu     sync.RWMutex
 	identityUserID string
@@ -71,7 +73,7 @@ func (c *Client) ListSpaces(ctx context.Context) ([]Space, error) {
 	call := c.api.Spaces.List().PageSize(1000)
 	for {
 		var result *googlechat.ListSpacesResponse
-		err := retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
+		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
 		if err != nil {
 			return nil, err
 		}
@@ -104,7 +106,7 @@ func (c *Client) CreateMessageWithAttachments(ctx context.Context, space, text, 
 		call.MessageReplyOption("REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD")
 	}
 	var result *googlechat.Message
-	err = retry(ctx, requestID != "", func(ctx context.Context) error {
+	err = c.retry(ctx, requestID != "", func(ctx context.Context) error {
 		if err := c.limits.WaitWrite(ctx, space); err != nil {
 			return err
 		}
@@ -138,7 +140,7 @@ func (c *Client) ListMessages(ctx context.Context, space string, since time.Time
 	call := c.api.Spaces.Messages.List(space).PageSize(1000).OrderBy("create_time asc").Filter(strings.Join(filters, " AND "))
 	for {
 		var result *googlechat.ListMessagesResponse
-		err := retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
+		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
 		if err != nil {
 			return err
 		}
@@ -156,7 +158,7 @@ var validThread = regexp.MustCompile(`^spaces/[A-Za-z0-9_-]+/threads/[A-Za-z0-9_
 
 func (c *Client) GetMessage(ctx context.Context, name string) (*googlechat.Message, error) {
 	var result *googlechat.Message
-	err := retry(ctx, true, func(ctx context.Context) error {
+	err := c.retry(ctx, true, func(ctx context.Context) error {
 		var err error
 		result, err = c.api.Spaces.Messages.Get(name).Context(ctx).Do()
 		return err
@@ -179,7 +181,7 @@ func (c *Client) ListSpaceEvents(ctx context.Context, space string, since time.T
 	call := c.api.Spaces.SpaceEvents.List(space).PageSize(1000).Filter(filter)
 	for {
 		var result *googlechat.ListSpaceEventsResponse
-		err := retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
+		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
 		if err != nil {
 			return err
 		}
@@ -197,7 +199,7 @@ func (c *Client) CreateReaction(ctx context.Context, message, emoji string) (str
 	var result *googlechat.Reaction
 	// Reaction creates have no request ID. Only confirmed quota rejections are
 	// retried, never an ambiguous transport failure after the server accepted it.
-	err := retry(ctx, false, func(ctx context.Context) error {
+	err := c.retry(ctx, false, func(ctx context.Context) error {
 		if err := c.limits.WaitReaction(ctx); err != nil {
 			return err
 		}
@@ -230,7 +232,7 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 	var names []string
 	for {
 		var result *googlechat.ListReactionsResponse
-		err := retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
+		err := c.retry(ctx, true, func(ctx context.Context) error { var err error; result, err = call.Context(ctx).Do(); return err })
 		if err != nil {
 			return err
 		}
@@ -245,7 +247,7 @@ func (c *Client) DeleteReaction(ctx context.Context, message, emoji string) erro
 		call.PageToken(result.NextPageToken)
 	}
 	for _, name := range names {
-		err := retry(ctx, true, func(ctx context.Context) error {
+		err := c.retry(ctx, true, func(ctx context.Context) error {
 			if err := c.limits.WaitReaction(ctx); err != nil {
 				return err
 			}
@@ -282,7 +284,7 @@ func (c *Client) UploadAttachment(ctx context.Context, space, path string) (*goo
 		return nil, fmt.Errorf("upload %q: %w", path, localError{errors.New("file exceeds media limit")})
 	}
 	var result *googlechat.UploadAttachmentResponse
-	err = retry(ctx, false, func(waitCtx context.Context) error {
+	err = c.retry(ctx, false, func(waitCtx context.Context) error {
 		if err := c.limits.WaitWrite(waitCtx, space); err != nil {
 			return err
 		}
@@ -342,7 +344,7 @@ func (c *Client) DownloadMedia(ctx context.Context, resourceName, dest string, m
 	var response *http.Response
 	// Transfers, including reading the body after retry returns, use the caller's
 	// deadline. Only pacing and retries are bounded by the publish wait budget.
-	err = retry(ctx, true, func(_ context.Context) error {
+	err = c.retry(ctx, true, func(_ context.Context) error {
 		var err error
 		response, err = c.api.Media.Download(resourceName).Context(ctx).Download()
 		return err
@@ -447,6 +449,10 @@ func (e localError) Unwrap() error { return e.error }
 // Classify maps errors to gc receipt kinds. Retry-After accepts both delay
 // seconds and an HTTP date; malformed or past hints produce a zero delay.
 func Classify(err error) (kind string, retryAfter time.Duration) {
+	return classifyAt(err, time.Now())
+}
+
+func classifyAt(err error, now time.Time) (kind string, retryAfter time.Duration) {
 	if err == nil {
 		return "", 0
 	}
@@ -455,8 +461,8 @@ func Classify(err error) (kind string, retryAfter time.Duration) {
 		hint := apiErr.Header.Get("Retry-After")
 		if seconds, e := strconv.ParseInt(hint, 10, 64); e == nil && seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
 			retryAfter = time.Duration(seconds) * time.Second
-		} else if when, e := http.ParseTime(hint); e == nil && time.Until(when) > 0 {
-			retryAfter = time.Until(when)
+		} else if when, e := http.ParseTime(hint); e == nil && when.After(now) {
+			retryAfter = when.Sub(now)
 		}
 		switch {
 		case apiErr.Code == 429:
@@ -484,14 +490,29 @@ func Classify(err error) (kind string, retryAfter time.Duration) {
 // media calls use the caller's context for I/O so large transfers can finish.
 // Only safe operations retry ambiguous failures. A deadline preserves the last
 // API error and retry hint.
-func retry(ctx context.Context, safe bool, call func(context.Context) error) error {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+func (c *Client) retry(ctx context.Context, safe bool, call func(context.Context) error) error {
+	bound := c.retryBound
+	if bound <= 0 {
+		bound = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, bound)
 	defer cancel()
+	deadline := c.timing.Now().Add(bound)
+	remaining := func() time.Duration {
+		d := deadline.Sub(c.timing.Now())
+		if realDeadline, ok := ctx.Deadline(); ok && time.Until(realDeadline) < d {
+			d = time.Until(realDeadline)
+		}
+		return d
+	}
 	backoff := time.Second
 	var last error
 	for {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(last, err)
+		}
+		if remaining() <= 0 {
+			return errors.Join(last, context.DeadlineExceeded)
 		}
 		err := call(ctx)
 		if err == nil {
@@ -500,7 +521,7 @@ func retry(ctx context.Context, safe bool, call func(context.Context) error) err
 		if ctx.Err() != nil {
 			return errors.Join(last, err, ctx.Err())
 		}
-		kind, hint := Classify(err)
+		kind, hint := classifyAt(err, c.timing.Now())
 		if kind != "rate_limited" && !(kind == "transient" && safe) {
 			return err
 		}
@@ -508,7 +529,12 @@ func retry(ctx context.Context, safe bool, call func(context.Context) error) err
 		if hint < backoff {
 			hint = backoff
 		}
-		if err := wait(ctx, hint); err != nil {
+		// Return the server's error immediately if the required wait cannot fit.
+		// In particular, never discard Retry-After for a bare deadline error.
+		if hint >= remaining() {
+			return errors.Join(last, context.DeadlineExceeded)
+		}
+		if err := c.timing.Sleep(ctx, hint); err != nil {
 			return errors.Join(last, err)
 		}
 		if backoff < 8*time.Second {
@@ -517,11 +543,32 @@ func retry(ctx context.Context, safe bool, call func(context.Context) error) err
 	}
 }
 
+// timing defaults to real time. Tests can supply a shared clock and sleep before
+// using a client or limiter, including when fake HTTP servers run concurrently.
+type timing struct {
+	now   func() time.Time
+	sleep func(context.Context, time.Duration) error
+}
+
+func (t timing) Now() time.Time {
+	if t.now != nil {
+		return t.now()
+	}
+	return time.Now()
+}
+func (t timing) Sleep(ctx context.Context, d time.Duration) error {
+	if t.sleep != nil {
+		return t.sleep(ctx, d)
+	}
+	return wait(ctx, d)
+}
+
 // Limiter is usable as a zero value and safe for concurrent callers. Writes to
 // distinct spaces are independent; reactions share an identity-wide 5/s gate.
 // No burst is allowed. Canceled waiters do not consume future capacity.
 type Limiter struct {
 	mu        sync.Mutex
+	timing    timing
 	spaces    map[string]*pace
 	reactions *pace
 }
@@ -562,8 +609,8 @@ func (l *Limiter) acquire(ctx context.Context, space string, reaction bool) erro
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if delay := time.Until(p.next); delay > 0 {
-		if err := wait(ctx, delay); err != nil {
+	if delay := p.next.Sub(l.timing.Now()); delay > 0 {
+		if err := l.timing.Sleep(ctx, delay); err != nil {
 			return err
 		}
 	}
@@ -571,7 +618,7 @@ func (l *Limiter) acquire(ctx context.Context, space string, reaction bool) erro
 	if reaction {
 		interval = time.Second / 5
 	}
-	p.next = time.Now().Add(interval)
+	p.next = l.timing.Now().Add(interval)
 	return nil
 }
 

@@ -24,6 +24,69 @@ type transportFunc func(*http.Request) (*http.Response, error)
 
 func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (f *testClock) Now() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.now
+}
+
+func (f *testClock) Sleep(ctx context.Context, d time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	f.now = f.now.Add(d)
+	f.mu.Unlock()
+	return nil
+}
+
+func useTestClock(c *Client) *testClock {
+	f := &testClock{now: time.Now()}
+	c.timing = timing{now: f.Now, sleep: f.Sleep}
+	c.limits.timing = c.timing
+	return f
+}
+
+func TestRetryBudgetUsesClock(t *testing.T) {
+	c := &Client{}
+	f := useTestClock(c)
+	c.retryBound = 5 * time.Second
+	start := f.Now()
+	calls := 0
+	err := c.retry(context.Background(), true, func(context.Context) error {
+		calls++
+		return &googleapi.Error{Code: 429, Header: http.Header{"Retry-After": []string{"2"}}}
+	})
+	kind, hint := Classify(err)
+	if calls != 3 || f.Now().Sub(start) != 4*time.Second || kind != "rate_limited" || hint != 2*time.Second || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("calls=%d elapsed=%v kind=%s hint=%v err=%v", calls, f.Now().Sub(start), kind, hint, err)
+	}
+}
+
+func TestLimiterUsesClock(t *testing.T) {
+	c := &Client{}
+	f := useTestClock(c)
+	start := f.Now()
+	for i := 0; i < 3; i++ {
+		if err := c.limits.WaitWrite(context.Background(), "spaces/room"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 6; i++ {
+		if err := c.limits.WaitReaction(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if elapsed := f.Now().Sub(start); elapsed != 3*time.Second {
+		t.Fatalf("elapsed = %v", elapsed)
+	}
+}
+
 type contextBody struct {
 	ctx context.Context
 	io.ReadCloser
@@ -131,6 +194,8 @@ func fixture(t *testing.T) (*Client, *fakegoogle.Server, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clock := useTestClock(c)
+	s.Now = clock.Now
 	return c, s, dir
 }
 
@@ -238,6 +303,7 @@ func TestReactionsDeleteOnlyOwnAcrossPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	useTestClock(c)
 	if err := c.SetIdentityUserID("users/example"); err != nil {
 		t.Fatal(err)
 	}
@@ -351,6 +417,7 @@ func TestUploadLimitStillAppliesAfterQuotaRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	useTestClock(c)
 	_, err = c.UploadAttachment(context.Background(), "spaces/room", path)
 	if err == nil || !strings.Contains(err.Error(), "growing.txt") {
 		t.Fatalf("oversize upload: %v", err)
@@ -452,10 +519,9 @@ func TestClientRateLimitAndDeadlineHint(t *testing.T) {
 	}
 	// Freeze server time: the next write still sees a quota failure. Its hint must
 	// survive the caller's deadline, rather than becoming an unclassified timeout.
-	s.Configure(func(s *fakegoogle.Server) { frozen := time.Now(); s.Now = func() time.Time { return frozen } })
-	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
-	defer cancel()
-	_, _, err := c.CreateMessage(ctx, "spaces/room", "limited", "", "limited", true)
+	s.Configure(func(s *fakegoogle.Server) { frozen := c.timing.Now(); s.Now = func() time.Time { return frozen } })
+	c.retryBound = 1200 * time.Millisecond
+	_, _, err := c.CreateMessage(context.Background(), "spaces/room", "limited", "", "limited", true)
 	kind, hint := Classify(err)
 	if kind != "rate_limited" || hint != time.Second || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("quota deadline: %v %s %v", err, kind, hint)
@@ -476,14 +542,15 @@ func TestRetryHintAndLostResponse(t *testing.T) {
 	})
 	// The transport scripts a server quota response before forwarding to the fake.
 	var first time.Time
+	var clock *testClock
 	calls := 0
 	httpClient := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 		calls++
 		if calls == 1 {
-			first = time.Now()
+			first = clock.Now()
 			return &http.Response{StatusCode: 429, Header: http.Header{"Retry-After": []string{"2"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":429,"message":"quota"}}`)), Request: r}, nil
 		}
-		if time.Since(first) < 2*time.Second {
+		if clock.Now().Sub(first) < 2*time.Second {
 			t.Error("retried before Retry-After")
 		}
 		return http.DefaultTransport.RoundTrip(r)
@@ -492,6 +559,7 @@ func TestRetryHintAndLostResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clock = useTestClock(c)
 	if _, _, err = c.CreateMessage(context.Background(), "spaces/dm", "retry", "", "hint", false); err != nil {
 		t.Fatal(err)
 	}
