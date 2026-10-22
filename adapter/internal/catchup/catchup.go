@@ -283,7 +283,7 @@ func (r *Runner) enumerate(ctx context.Context, name string) error {
 			earliest := r.opts.Now().UTC().Add(-28 * 24 * time.Hour)
 			if p.EventLower.Before(earliest) {
 				p.EventLower, p.Token = earliest.Add(time.Minute), ""
-				if err := r.saveProgress(name, p, true); err != nil {
+				if err := r.saveProgress(name, p, !s.EventCursor.IsZero()); err != nil {
 					return err
 				}
 				continue

@@ -260,6 +260,20 @@ func TestNewSpaceUsesDefaultWake(t *testing.T) {
 	f.pass(t, 1, 0)
 }
 
+func TestDelayedNewSpaceDoesNotReportHistoryLoss(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/joined", false)
+	f.addMessage("spaces/joined", 1, frozen.Add(-time.Minute))
+	f.freeze(t)
+	f.opts.Now = func() time.Time { return frozen.Add(2 * time.Minute) }
+	f.google.Now = f.opts.Now
+	f.newRunner(t)
+	f.pass(t, 1, 0)
+	if f.opts.Ledger.Counters["unrecoverable:spaces/joined"] != 0 || strings.Contains(f.logs.String(), "level=WARN") {
+		t.Fatalf("zero cursor reported lost history: %v %s", f.opts.Ledger.Counters, f.logs.String())
+	}
+}
+
 func TestOldMessageEditRecoveredFromSpaceEvents(t *testing.T) {
 	f := setup(t)
 	f.addSpace("spaces/room", true)
