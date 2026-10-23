@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"gchat-adapter/internal/fakes/fakegc"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -64,7 +66,7 @@ func TestAuthEndpointOverridesInSecretsFile(t *testing.T) {
 func TestLoadSecretsAndSettings(t *testing.T) {
 	dir := t.TempDir()
 	env := filepath.Join(dir, "env")
-	os.WriteFile(env, []byte("GCHAT_PROJECT_ID=proj\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE="+filepath.Join(dir, "client.json")+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\n"), 0o600)
+	os.WriteFile(env, []byte("GCHAT_PROJECT_ID=proj\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE="+filepath.Join(dir, "client.json")+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL="+fakegc.New(t).URL()+"\n"), 0o600)
 	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
 [defaults]
 wake = "mentions"
@@ -141,7 +143,7 @@ func configFixture(t *testing.T) (env, settings, dir string) {
 	env = filepath.Join(dir, "env")
 	settings = filepath.Join(dir, "..", "config.toml")
 	writeFixture(t, settings, "")
-	writeFixture(t, env, "\n # a comment\nGCHAT_PROJECT_ID = 'proj'\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE=\"client=one #literal.json\"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\n")
+	writeFixture(t, env, "\n # a comment\nGCHAT_PROJECT_ID = 'proj'\nGCHAT_PUBSUB_TOPIC=projects/proj/topics/t\nGCHAT_PUBSUB_SUBSCRIPTION=projects/proj/subscriptions/s\nGCHAT_OAUTH_CLIENT_FILE=\"client=one #literal.json\"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL="+fakegc.New(t).URL()+"\n")
 	return
 }
 

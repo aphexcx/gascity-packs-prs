@@ -173,6 +173,9 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 		MediaMaxBytes: mediaMaxBytes,
 		StateFile:     endpoint("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
 	}
+	if !filepath.IsAbs(c.Endpoints.StateFile) {
+		c.Endpoints.StateFile = filepath.Join(filepath.Dir(envFile), c.Endpoints.StateFile)
+	}
 	return c, nil
 }
 
