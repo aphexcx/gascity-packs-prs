@@ -4,6 +4,11 @@
 service. The binary also accepts `auth`, `auth --check`, `version`,
 `state restore <file>`, and `state reset`.
 
+`serve`, `auth`, and `state` all load endpoint and path overrides from the
+resolved env file, including `GCHAT_STATE_FILE`, `GCHAT_MEDIA_DIR`,
+`GCHAT_UPLOAD_ROOT`, `GCHAT_CHAT_API_BASE`, `GCHAT_EVENTS_API_BASE`, and
+`GCHAT_PUBSUB_ENDPOINT`. Nonempty process environment values take precedence.
+
 The socket serves health immediately while initialization and catch-up run in
 the background. Health stays HTTP 200 with `X-GC-Health: degraded` until ready.
 Token replacements are validated by the token watcher; accepted replacements

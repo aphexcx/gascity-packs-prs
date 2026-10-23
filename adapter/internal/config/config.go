@@ -26,7 +26,7 @@ type Secrets struct {
 }
 
 // Endpoints holds effective values: named process environment overrides, then
-// settings (or secrets-file OAuth URLs), then defaults. Settings stays as decoded.
+// env-file overrides, then settings, then defaults. Settings stays as decoded.
 type Endpoints struct {
 	ChatAPIBase    string // GCHAT_CHAT_API_BASE,    default https://chat.googleapis.com
 	EventsAPIBase  string // GCHAT_EVENTS_API_BASE,  default https://workspaceevents.googleapis.com
@@ -83,8 +83,8 @@ type Config struct {
 // Load reads KEY=VALUE secrets and TOML settings, preserving Settings as decoded.
 // Methods and Endpoints provide effective defaults. An empty settingsFile uses
 // defaults; a specified file must exist and be well formed. Endpoint overrides
-// and gc's service coordinates come from the process environment. OAuth endpoint
-// URLs can also be set in the secrets file for standalone auth, at lower priority.
+// are loaded from the env file for every subcommand, with nonempty process
+// overrides taking precedence. gc's service coordinates remain process-only.
 func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	values, err := readEnv(envFile)
 	required := []string{"GCHAT_PROJECT_ID", "GCHAT_PUBSUB_TOPIC", "GCHAT_PUBSUB_SUBSCRIPTION", "GCHAT_OAUTH_CLIENT_FILE", "GC_CITY_NAME", "GC_API_BASE_URL"}
@@ -157,15 +157,21 @@ func Load(envFile, settingsFile, secretsDir string) (*Config, error) {
 	if tokenURL == "" {
 		tokenURL = "https://oauth2.googleapis.com/token"
 	}
+	endpoint := func(key, fallback string) string {
+		if value := values[key]; value != "" {
+			fallback = value
+		}
+		return envOr(key, fallback)
+	}
 	c.Endpoints = Endpoints{
-		ChatAPIBase:    envOr("GCHAT_CHAT_API_BASE", "https://chat.googleapis.com"),
-		EventsAPIBase:  envOr("GCHAT_EVENTS_API_BASE", "https://workspaceevents.googleapis.com"),
-		PubSubEndpoint: os.Getenv("GCHAT_PUBSUB_ENDPOINT"),
-		OAuthAuthURL:   envOr("GCHAT_OAUTH_AUTH_URL", authURL),
-		OAuthTokenURL:  envOr("GCHAT_OAUTH_TOKEN_URL", tokenURL),
-		MediaDir:       envOr("GCHAT_MEDIA_DIR", mediaDir), UploadRoot: envOr("GCHAT_UPLOAD_ROOT", uploadRoot),
+		ChatAPIBase:    endpoint("GCHAT_CHAT_API_BASE", "https://chat.googleapis.com"),
+		EventsAPIBase:  endpoint("GCHAT_EVENTS_API_BASE", "https://workspaceevents.googleapis.com"),
+		PubSubEndpoint: endpoint("GCHAT_PUBSUB_ENDPOINT", ""),
+		OAuthAuthURL:   endpoint("GCHAT_OAUTH_AUTH_URL", authURL),
+		OAuthTokenURL:  endpoint("GCHAT_OAUTH_TOKEN_URL", tokenURL),
+		MediaDir:       endpoint("GCHAT_MEDIA_DIR", mediaDir), UploadRoot: endpoint("GCHAT_UPLOAD_ROOT", uploadRoot),
 		MediaMaxBytes: mediaMaxBytes,
-		StateFile:     envOr("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
+		StateFile:     endpoint("GCHAT_STATE_FILE", filepath.Join(secretsDir, "..", "state.json")),
 	}
 	return c, nil
 }

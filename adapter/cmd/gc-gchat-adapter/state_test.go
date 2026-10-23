@@ -55,6 +55,34 @@ func TestStateOfflineRestoreAndReset(t *testing.T) {
 	}
 }
 
+func TestStateFileOverrideInEnvFile(t *testing.T) {
+	env, original, socket := stateFixture(t)
+	path := filepath.Join(filepath.Dir(socket), "configured.json")
+	l := ledger.New()
+	l.Counters["original"] = 9
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, env, string(contents)+"GCHAT_STATE_FILE="+path+"\n")
+	t.Setenv("GCHAT_STATE_FILE", "")
+	var out, errOut bytes.Buffer
+	if code := run(t.Context(), []string{"state", "reset"}, &out, &errOut, envAt(env), nil); code != 0 {
+		t.Fatalf("reset: %d %s", code, &errOut)
+	}
+	reset, err := ledger.Load(path, true)
+	if err != nil || reset.Counters["original"] != 0 {
+		t.Fatalf("env-file ledger not reset: %v %+v", err, reset)
+	}
+	kept, err := ledger.Load(original, true)
+	if err != nil || kept.Counters["original"] != 4 {
+		t.Fatalf("default ledger changed: %v %+v", err, kept)
+	}
+}
+
 func TestStateInvalidRestorePreservesCurrent(t *testing.T) {
 	for _, contents := range []string{"not json", `{"version":99}`, "missing"} {
 		t.Run(contents, func(t *testing.T) {
