@@ -867,24 +867,33 @@ func scenariosRecovery(t *testing.T) {
 		f.history(3000, "spaces/room", time.Now().Add(-time.Minute))
 		f.start()
 		f.health("catching-up", 10*time.Second)
-		eventually(t, 20*time.Second, func() bool { var n int; _ = json.Unmarshal(f.status()["backlog"], &n); return n > 50 })
+		var backlog int
+		eventually(t, 20*time.Second, func() bool { _ = json.Unmarshal(f.status()["backlog"], &backlog); return backlog > 50 })
 		deadline := time.Now().Add(20 * time.Minute)
-		reported := 0
+		if packageDeadline, ok := t.Deadline(); ok {
+			// Durable recovery uses the package budget, reserving time for later scenarios and shutdown.
+			deadline = packageDeadline.Add(-3 * time.Minute)
+		}
+		drained := false
+		delivered, reported := 0, 0
 		for time.Now().Before(deadline) {
 			status := f.status()
-			var n int
-			_ = json.Unmarshal(status["backlog"], &n)
+			_ = json.Unmarshal(status["backlog"], &backlog)
 			var counters map[string]int64
 			_ = json.Unmarshal(status["counters"], &counters)
-			delivered := int(counters["turns:spaces/room"])
+			delivered = int(counters["turns:spaces/room"])
 			if delivered >= reported+500 {
-				t.Logf("catch-up delivered %d/3000; retained backlog %d", delivered, n)
+				t.Logf("catch-up delivered %d/3000; retained backlog %d", delivered, backlog)
 				reported = (delivered / 500) * 500
 			}
-			if n == 0 {
+			if backlog == 0 {
+				drained = true
 				break
 			}
 			time.Sleep(250 * time.Millisecond)
+		}
+		if !drained {
+			t.Fatalf("catch-up did not drain before test budget: delivered %d/3000; retained backlog %d", delivered, backlog)
 		}
 		f.health("ready", 10*time.Second)
 		posts := f.gc.Inbound()
