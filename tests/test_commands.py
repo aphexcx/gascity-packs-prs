@@ -118,6 +118,8 @@ class ProxyFixture(unittest.TestCase):
                 status, response = owner.responses.get(path.path, (404, {"error": "unexpected route"}))
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
+                if status == 302:
+                    self.send_header("Location", f"http://127.0.0.1:{owner.server.server_port}/redirect-target")
                 self.end_headers()
                 self.wfile.write(json.dumps(response).encode())
 
@@ -145,6 +147,21 @@ class ProxyFixture(unittest.TestCase):
 
 
 class ProxyCommandsTest(ProxyFixture):
+    def test_large_body_streams_without_argv_limit(self):
+        body = self.root / "large.txt"
+        body.write_text("text\n" * 300000)
+        self.respond("/commands/publish", {"delivered": True, "recorded": True})
+        result = self.run_command("publish", "--conversation-id", "spaces/AAAA", "--body-file", str(body))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.requests[-1][3]["text"], body.read_text())
+
+    def test_missing_body_file_fails_before_reply_lookup(self):
+        self.env["GC_SESSION_NAME"] = "example"
+        result = self.run_command("reply-current", "--body-file", str(self.root / "missing"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("body file", result.stderr)
+        self.assertEqual(self.requests, [])
+
     def test_publish_preserves_body_and_reuses_supplied_key(self):
         body = self.root / "body with spaces.txt"
         body.write_text('hello "example"\nsecond line\n')
@@ -257,6 +274,7 @@ class ProxyCommandsTest(ProxyFixture):
                 result = self.run_command("spaces")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(reason, result.stderr)
+                self.assertFalse(any(request[1] == "/redirect-target" for request in self.requests))
 
     def test_status_separates_pending_unresolved_and_retained_counters(self):
         self.respond("/status", {"health": {"state": "catching-up", "reason": "history"},

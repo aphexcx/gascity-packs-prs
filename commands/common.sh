@@ -32,6 +32,11 @@ gchat_post() {
         -H 'Content-Type: application/json' -H 'X-GC-Request: gc-gchat' \
         --data-binary "$2" "$gchat_service_url/$1"
 }
+gchat_post_stream() {
+    gchat_http -X POST \
+        -H 'Content-Type: application/json' -H 'X-GC-Request: gc-gchat' \
+        --data-binary @- "$gchat_service_url/$1"
+}
 gchat_session() {
     if [ -n "$session" ]; then return; fi
     session=${GC_SESSION_ID:-}

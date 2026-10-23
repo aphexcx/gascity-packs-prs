@@ -33,22 +33,25 @@ elif [ -n "$file" ]; then
     gchat_die '--file is only supported by upload'
 fi
 if [ "$mode" != reply-current ] && [ -z "$conversation" ]; then gchat_die '--conversation-id is required'; fi
+if [ -n "$body_file" ]; then
+    [ -f "$body_file" ] && [ -r "$body_file" ] || gchat_die "body file is not readable: $body_file"
+fi
 gchat_init
 gchat_session
 if [ -z "$conversation" ]; then gchat_reply_target; fi
-if [ -n "$body_file" ]; then
-    [ -f "$body_file" ] || gchat_die "body file not found: $body_file"
-    text_json=$(jq -Rs . < "$body_file")
-else
-    text_json=$(jq -n --arg text "$body" '$text')
-fi
 if [ -z "$key" ]; then key=gchat-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); fi
 # Print before sending: even a lost HTTP response leaves a key for a safe retry.
 printf 'Idempotency key: %s\n' "$key" >&2
-payload=$(jq -n --arg session "$session" --arg conversation "$conversation" --arg thread "$thread" \
-    --argjson text "$text_json" --arg path "$file" --arg key "$key" \
-    '{session_id:$session, conversation_id:$conversation, thread:$thread, text:$text, path:$path, idempotency_key:$key}')
+gchat_payload() {
+    jq -Rs --arg session "$session" --arg conversation "$conversation" --arg thread "$thread" \
+        --arg path "$file" --arg key "$key" \
+        '{session_id:$session, conversation_id:$conversation, thread:$thread, text:., path:$path, idempotency_key:$key}'
+}
 route=commands/publish
 if [ "$mode" = upload ]; then route=commands/upload; fi
-result=$(gchat_post "$route" "$payload")
+if [ -n "$body_file" ]; then
+    result=$(gchat_payload < "$body_file" | gchat_post_stream "$route")
+else
+    result=$(printf '%s' "$body" | gchat_payload | gchat_post_stream "$route")
+fi
 gchat_send_result "$result"
