@@ -120,44 +120,64 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 			defer a.stateMu.Unlock()
 		}
 		s.ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 25 * time.Second, IdleTimeout: time.Minute}
+	}), BaseContext: func(net.Listener) context.Context { return serviceCtx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 25 * time.Second, IdleTimeout: time.Minute}
 	httpDone := make(chan error, 1)
 	go func() { httpDone <- h.Serve(ln) }()
 	workerDone := make(chan error, 1)
 	go func() { workerDone <- a.run(serviceCtx) }()
 	var result error
+	workerStopped := false
 	select {
 	case result = <-workerDone:
+		workerStopped = true
 	case err = <-httpDone:
 		if !errors.Is(err, http.ErrServerClosed) {
 			result = err
 		}
-		cancel()
-		result = errors.Join(result, <-workerDone)
 	case <-ctx.Done():
-		cancel()
-		result = <-workerDone
 	}
 	cancel()
+	// gc allows only two seconds before SIGKILL. Stop intake and checkpoint
+	// before waiting on any request or worker; request contexts share cancellation.
+	_ = ln.Close()
 	s.Close()
-	shutdownCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	result = errors.Join(result, a.saveShutdownState(cfg.Endpoints.StateFile))
+	shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
 	defer stop()
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		_ = h.Close()
-		result = errors.Join(result, err)
-	}
-	if a.loaded.Load() {
-		if c := a.chatClient.Load(); c != nil {
-			if err := a.persistIdentity(c); err != nil && !errors.Is(err, errIdentityChanged) {
-				result = errors.Join(result, err)
-			}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			result = errors.Join(result, err)
 		}
-		a.mu.Lock()
-		err := a.l.Save(a.cfg.Endpoints.StateFile)
-		a.mu.Unlock()
-		result = errors.Join(result, err)
+	}
+	if !workerStopped {
+		select {
+		case err := <-workerDone:
+			workerStopped = true
+			result = errors.Join(result, err)
+		case <-shutdownCtx.Done():
+		}
+	}
+	// Capture any completion during the drain without depending on it for the
+	// first durable checkpoint. The original path is immutable across reloads.
+	if workerStopped && shutdownCtx.Err() == nil {
+		result = errors.Join(result, a.saveShutdownState(cfg.Endpoints.StateFile))
 	}
 	return result
+}
+
+func (a *application) saveShutdownState(path string) error {
+	if !a.loaded.Load() {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if c := a.chatClient.Load(); c != nil {
+		if id, _ := c.ObservedIdentityUserID(); id != "" {
+			a.l.IdentityUserID = id
+		}
+	}
+	return a.l.Save(path)
 }
 
 func prepareSocket(path string) error {

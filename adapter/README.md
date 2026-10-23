@@ -15,6 +15,11 @@ Token replacements are validated by the token watcher; accepted replacements
 drain current work and rebuild the clients. Settings file changes are validated
 before replacing the active settings.
 
+On SIGTERM the adapter stops intake and saves the ledger immediately, then
+drains requests and workers for at most one second before exiting. Request
+contexts are canceled with the service, keeping shutdown inside gc's two-second
+SIGKILL window even when an outbound request is stuck.
+
 Media and upload directories are created privately and canonicalized with
 `filepath.EvalSymlinks` before clients are constructed. This resolves macOS
 `/tmp` and `/var` aliases; subsequent attachment access still rejects symlinks.
