@@ -178,6 +178,74 @@ func TestSubscriptionRecoveryResetsFailureThresholdAndNoticeDedup(t *testing.T) 
 	}
 }
 
+func TestSubscriptionMonitorResetsNoticesWhileGCUnavailable(t *testing.T) {
+	f := newFixture(t, false)
+	f.replaceIdentityToken(t, "users/123456")
+	var code atomic.Int32
+	u, err := url.Parse(f.cfg.Endpoints.EventsAPIBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(u)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status := code.Load(); status != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(int(status))
+			fmt.Fprintf(w, `{"error":{"code":%d,"message":"quota temporarily exceeded"}}`, status)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(endpoint.Close)
+	f.cfg.Endpoints.EventsAPIBase = endpoint.URL
+	a, source := generationFixture(t, f)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- a.generation(ctx, source, false, new(atomic.Bool)) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Errorf("generation shutdown: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("generation did not shut down")
+		}
+	})
+	waitFor(t, 5*time.Second, func() bool { return a.s.Health().State == "ready" })
+	m := a.manager.Load()
+	a.gcDown.Store(true)
+	for incident := 1; incident <= 2; incident++ {
+		code.Store(http.StatusTooManyRequests)
+		for range 3 {
+			if _, err := m.Reconcile(ctx); err == nil {
+				t.Fatal("quota failure not reported")
+			}
+		}
+		select {
+		case n := <-a.notices:
+			if n.kind != "subscription" || !strings.Contains(n.message, "HTTP 429") {
+				t.Fatalf("incident %d: incorrect notice: %+v", incident, n)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("incident %d: monitor did not notify after three failures", incident)
+		}
+		if incident == 1 {
+			code.Store(0)
+			state, err := m.Reconcile(ctx)
+			if err != nil || state.State != "ACTIVE" {
+				t.Fatalf("subscription recovery: state=%+v err=%v", state, err)
+			}
+			// This health transition proves the monitor observed the recovered
+			// subscription while overall readiness remained blocked by GC.
+			waitFor(t, 3*time.Second, func() bool {
+				return a.s.Health().Reason == "gc unavailable; deliveries retained for retry"
+			})
+		}
+	}
+}
+
 func TestSubscriptionReasonsParseCurrentGoogleErrorDetails(t *testing.T) {
 	for _, tc := range []struct{ reason, want string }{{"SERVICE_DISABLED", "Workspace Events API not enabled"}, {"IAM_PERMISSION_DENIED", "topic Publisher IAM permission denied"}} {
 		t.Run(tc.reason, func(t *testing.T) {

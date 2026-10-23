@@ -130,6 +130,10 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			if subscriptionCredentialsError(last) || source.State() == token.NeedsSignIn {
 				return token.ErrNeedsSignIn
 			}
+			if failures == 0 && state.State == "ACTIVE" {
+				// Subscription recovery is independent of GC and history readiness.
+				a.subscriptionRecovered()
+			}
 			if failures > 0 {
 				a.subscriptionFailure(last)
 			} else if a.gcDown.Load() {
@@ -139,7 +143,6 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			} else if c.IdentityUserID() == "" && a.lastEvent.Load() != 0 {
 				a.health("catching-up", "Chat identity not yet known; run gc gchat auth")
 			} else if caught.Load() {
-				a.subscriptionRecovered()
 				a.health("ready", "")
 			}
 		}
