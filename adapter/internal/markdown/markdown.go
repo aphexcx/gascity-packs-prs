@@ -251,7 +251,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 			n := runLength(s[i:])
 			marker := s[i : i+n]
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
-			if chat != "" && !noCloser[marker] && i+n < len(s) && !spaceAt(s[i+n:]) && !(s[i] == '_' && wordBefore(s[:i])) {
+			canOpen, _ := delimiterFlanking(s, i, n)
+			if chat != "" && !noCloser[marker] && canOpen && !(s[i] == '_' && wordBefore(s[:i])) {
 				end := emphasisEnd(s, i+n, marker, lastCodeRun)
 				if end >= 0 {
 					if heading {
@@ -341,11 +342,11 @@ func emphasisEnd(s string, start int, marker string, lastCodeRun map[int]int) in
 			i = codeSpanEnd(s, i, lastCodeRun)
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
-			previous, _ := utf8.DecodeLastRuneInString(s[:i])
-			if n == len(marker) && unicode.IsSpace(previous) && i+n < len(s) && !spaceAt(s[i+n:]) {
+			canOpen, canClose := delimiterFlanking(s, i, n)
+			if n == len(marker) && canOpen && !canClose {
 				return emphasisReopened
 			}
-			if n == len(marker) && i > start && !unicode.IsSpace(previous) && !(marker[0] == '_' && wordAt(s[i+n:])) {
+			if n == len(marker) && i > start && canClose && !(marker[0] == '_' && wordAt(s[i+n:])) {
 				return i
 			}
 			i += n
@@ -356,9 +357,24 @@ func emphasisEnd(s string, start int, marker string, lastCodeRun map[int]int) in
 	return -1
 }
 
-func spaceAt(s string) bool {
-	r, _ := utf8.DecodeRuneInString(s)
-	return unicode.IsSpace(r)
+// CommonMark flanking treats text boundaries as whitespace and includes ASCII
+// symbol characters (such as + and $) in its punctuation definition.
+func delimiterFlanking(s string, start, n int) (canOpen, canClose bool) {
+	before, after := rune(' '), rune(' ')
+	if start > 0 {
+		before, _ = utf8.DecodeLastRuneInString(s[:start])
+	}
+	if start+n < len(s) {
+		after, _ = utf8.DecodeRuneInString(s[start+n:])
+	}
+	beforeSpace, afterSpace := unicode.IsSpace(before), unicode.IsSpace(after)
+	beforePunct, afterPunct := punctuation(before), punctuation(after)
+	return !afterSpace && (!afterPunct || beforeSpace || beforePunct),
+		!beforeSpace && (!beforePunct || afterSpace || afterPunct)
+}
+
+func punctuation(r rune) bool {
+	return unicode.IsPunct(r) || r >= '!' && r <= '/' || r >= ':' && r <= '@' || r >= '[' && r <= '`' || r >= '{' && r <= '~'
 }
 
 func wordAt(s string) bool {

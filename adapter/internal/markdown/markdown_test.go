@@ -87,6 +87,12 @@ func TestToChat(t *testing.T) {
 		{"heading escaped hash", "# Title \\#", "*Title \\#*"},
 		{"nested emphasis", "**bold _italic_** and *soft*", "*bold _italic_* and _soft_"},
 		{"emphasis after multiplication", "2*3 and *note*", "2*3 and _note_"},
+		{"punctuation cannot close emphasis", "(2*3)*4", "(2*3)*4"},
+		{"punctuation cannot open emphasis", "a*(*b", "a*(*b"},
+		{"unicode punctuation cannot close emphasis", "（2*3）*4", "（2*3）*4"},
+		{"unicode punctuation cannot open emphasis", "a*（*b", "a*（*b"},
+		{"punctuation surrounds emphasis", "(*word*) and **bold**!", "(_word_) and *bold*!"},
+		{"ascii symbols count as punctuation", "(2*3+$*4", "(2*3+$*4"},
 		{"spaced marker does not reopen emphasis", "*5 * 3 is 15*", "_5 * 3 is 15_"},
 		// The subset leaves an abandoned opener literal and pairs the later one.
 		{"nearest emphasis opener", "*a *b* c*", "*a _b_ c*"},
