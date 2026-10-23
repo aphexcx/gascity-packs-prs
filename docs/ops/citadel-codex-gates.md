@@ -50,9 +50,19 @@ Install `gascity/assets/scripts/codex-gate.sh` at
 `~/city/assets/ops/mayor-tools/codex-gate.sh`. Provision the city profile first.
 
 ```bash
-codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT"
+codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS"
 codex-gate.sh exec "$PROMPT_FILE" -C "$REPO" --output "$REVIEW_OUTPUT"
 ```
+
+Set `REVIEW_CLASS` to the bead's recorded class: QUICK, STANDARD, DEEP or SAFETY.
+The class is never defaulted; a review without `--class` or `--bead` refuses
+with rc 2. Alternatively, `--bead "$BEAD"` reads `gc.review_class` from the bead.
+SAFETY returns CLEAN only with no finding at any severity, including MINORs,
+as required by the repository's SAFETY review text. `--evidence-dir DIR` takes
+an existing absolute directory for evidence outside the repository; this rig's
+beads keep it under `/Users/tailor512/city/assets/ops/pr-evidence/<bead>/`.
+`--raw` keeps Codex's bytes; the default strips trailing whitespace so a
+committed `.out` passes `git diff --check`.
 
 Both modes use `-p city -m gpt-6-astra`, read-only execution, `-C`,
 `--skip-git-repo-check`, and `/dev/null` stdin. `--model MODEL` explicitly
