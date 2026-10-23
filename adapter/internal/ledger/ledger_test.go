@@ -536,3 +536,61 @@ func jsonKeyError(value any) error {
 	}
 	return nil
 }
+
+func TestCloneIsolatesEveryMutableRecord(t *testing.T) {
+	l := ledger.New()
+	l.Spaces["space"] = &ledger.SpaceState{Backlog: []string{"first"}}
+	l.Messages["message"] = &ledger.MessageState{Thread: "thread"}
+	change := &ledger.ChangeState{ID: "change", Reason: "original"}
+	l.Changes["change"] = change
+	l.Unresolved["change"] = change
+	l.Sends["send"] = &ledger.SendState{Parts: []ledger.SendPart{{Text: "part"}}, Request: &wire.PublishRequest{Metadata: map[string]string{"request": "original"}}, Receipt: &wire.PublishReceipt{Metadata: map[string]string{"receipt": "original"}}, Upload: &ledger.SendUpload{Path: "original"}}
+	l.Quarantine = []ledger.QuarantinedEvent{{Reason: "original"}}
+	l.Counters["counter"] = 1
+	l.Spaces["nil"], l.Messages["nil"], l.Changes["nil"], l.Unresolved["nil"], l.Sends["nil"] = nil, nil, nil, nil, nil
+	for i := range 10000 {
+		l.Transport.Add(fmt.Sprint(i))
+	}
+	before, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := l.Clone()
+	if !reflect.DeepEqual(l, copied) {
+		t.Fatal("clone changed ledger contents")
+	}
+	copied.Spaces["space"].Backlog[0] = "changed"
+	copied.Messages["message"].Thread = "changed"
+	copied.Changes["change"].Reason = "changed"
+	copied.Unresolved["change"].Event = "changed"
+	copied.Sends["send"].Parts[0].Text = "changed"
+	copied.Sends["send"].Request.Metadata["request"] = "changed"
+	copied.Sends["send"].Receipt.Metadata["receipt"] = "changed"
+	copied.Sends["send"].Upload.Path = "changed"
+	copied.Quarantine[0].Reason = "changed"
+	copied.Counters["counter"] = 2
+	copied.Transport.Add("replacement")
+	copied.Spaces["extra"] = &ledger.SpaceState{}
+	copied.Messages["extra"] = &ledger.MessageState{}
+	copied.Changes["extra"] = &ledger.ChangeState{}
+	copied.Unresolved["extra"] = &ledger.ChangeState{}
+	copied.Sends["extra"] = &ledger.SendState{}
+	if !l.Transport.Seen("0") || l.Transport.Seen("replacement") || copied.Transport.Seen("0") {
+		t.Fatal("transport dedup ring shares storage")
+	}
+	after, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("mutating snapshot changed original ledger")
+	}
+}
+
+func TestClonePreservesNilAndEmptyCollections(t *testing.T) {
+	for _, l := range []*ledger.Ledger{nil, {}, ledger.New()} {
+		if copied := l.Clone(); !reflect.DeepEqual(l, copied) {
+			t.Fatalf("clone did not preserve zero values: %#v -> %#v", l, copied)
+		}
+	}
+}

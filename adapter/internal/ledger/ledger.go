@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"gchat-adapter/internal/wire"
@@ -270,7 +272,7 @@ func (l *Ledger) Save(path string) error {
 	if err := l.validate(); err != nil {
 		return fmt.Errorf("save ledger %s: %w", path, err)
 	}
-	data, err := json.MarshalIndent(l, "", "  ")
+	data, err := json.Marshal(l)
 	if err != nil {
 		return fmt.Errorf("encode ledger %s: %w", path, err)
 	}
@@ -356,4 +358,66 @@ func MarkEstablished(secretsDir string) error {
 		return fmt.Errorf("mark ledger established: %w", err)
 	}
 	return syncDir(secretsDir)
+}
+
+// Clone returns an independent in-memory snapshot. Immutable strings are shared;
+// mutable maps, slices and pointed-to records are copied. Callers must hold the
+// same lock used for ledger mutations while cloning. Persistence still goes
+// through Save, including validation and atomic, synced replacement.
+func (l *Ledger) Clone() *Ledger {
+	if l == nil {
+		return nil
+	}
+	out := *l
+	out.Spaces = copyRecords(l.Spaces)
+	for _, space := range out.Spaces {
+		if space != nil {
+			space.Backlog = slices.Clone(space.Backlog)
+		}
+	}
+	out.Messages = copyRecords(l.Messages)
+	out.Changes = copyRecords(l.Changes)
+	out.Unresolved = copyRecords(l.Unresolved)
+	out.Sends = copyRecords(l.Sends)
+	for _, send := range out.Sends {
+		if send == nil {
+			continue
+		}
+		send.Parts = slices.Clone(send.Parts)
+		if send.Receipt != nil {
+			r := *send.Receipt
+			r.Metadata = maps.Clone(r.Metadata)
+			send.Receipt = &r
+		}
+		if send.Request != nil {
+			r := *send.Request
+			r.Metadata = maps.Clone(r.Metadata)
+			send.Request = &r
+		}
+		if send.Upload != nil {
+			u := *send.Upload
+			send.Upload = &u
+		}
+	}
+	out.Transport.ids = slices.Clone(l.Transport.ids)
+	out.Transport.seen = maps.Clone(l.Transport.seen)
+	out.Quarantine = slices.Clone(l.Quarantine)
+	out.Counters = maps.Clone(l.Counters)
+	return &out
+}
+
+func copyRecords[T any](records map[string]*T) map[string]*T {
+	if records == nil {
+		return nil
+	}
+	out := make(map[string]*T, len(records))
+	for key, value := range records {
+		if value == nil {
+			out[key] = nil
+			continue
+		}
+		copy := *value
+		out[key] = &copy
+	}
+	return out
 }
