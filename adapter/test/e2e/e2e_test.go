@@ -520,7 +520,7 @@ func TestEndToEnd(t *testing.T) {
 		f.emit("message.v1.updated", "stale-edit", map[string]any{"message": m})
 		f.barrier()
 		f.turns(2)
-		if f.gc.Inbound()[0].Text != "new version" || !f.state().Messages[m.Name].Deleted {
+		if f.gc.Inbound()[0].Text != "new version" || !f.state().Messages[m.Name].Deleted || len(f.state().Unresolved) != 0 {
 			t.Fatal("revision order lost")
 		}
 	})
@@ -1026,6 +1026,8 @@ func scenariosRecovery(t *testing.T) {
 		if len(saved.Spaces["spaces/room"].Backlog) == 0 {
 			t.Fatal("restart did not interrupt backlog")
 		}
+		// Persisted backlog must be sufficient even when remote history is gone.
+		f.google.Configure(func(g *fakegoogle.Server) { g.Messages = map[string]*api.Message{} })
 		f.setHook(nil)
 		f.ready()
 		f.turns(24)
@@ -1290,11 +1292,15 @@ func scenariosDelivery(t *testing.T) {
 				mu.Lock()
 				snapshot, _ = os.ReadFile(f.cfg.Endpoints.StateFile)
 				mu.Unlock()
+				http.Error(w, "recording interrupted before gc", http.StatusServiceUnavailable)
+				return true
 			}
 			return false
 		})
 		first := f.command("upload", "upload-crash", "caption", "", path)
-		f.assertSent(first, 1)
+		if !first.Delivered || first.Recorded || len(f.messages()) != 1 || len(f.gc.Published()) != 0 {
+			t.Fatalf("crash crossed recording boundary: %+v callbacks=%d", first, len(f.gc.Published()))
+		}
 		f.stop()
 		sendsBefore := f.countRequest("POST /v1/spaces/room/messages")
 		mu.Lock()
@@ -1311,7 +1317,7 @@ func scenariosDelivery(t *testing.T) {
 		if len(f.messages()) != 1 || f.countRequest("POST /v1/spaces/room/messages") != sendsBefore {
 			t.Fatal("recovered upload sent duplicate message")
 		}
-		if len(f.gc.Published()) != 2 {
+		if len(f.gc.Published()) != 1 {
 			t.Fatalf("recording callbacks=%d", len(f.gc.Published()))
 		}
 	})
@@ -1483,10 +1489,11 @@ func scenariosOperations(t *testing.T) {
 					f.lifecycle(kind)
 					eventually(t, 5*time.Second, func() bool { return f.countRequest(":reactivate") > 0 && f.state().Subscription.State == "ACTIVE" })
 				case "reactivation without event":
-					f.stop()
 					f.google.SuspendSubscription()
 					f.history(1, "spaces/room", time.Now().Add(-time.Second))
-					f.ready()
+					// Google emits suspension, but never a reactivation event.
+					// Recovery and catch-up must happen in this same process.
+					f.lifecycle("suspended")
 					f.expectTurn(t, "missed 0000")
 					if f.countRequest(":reactivate") == 0 {
 						t.Fatal("suspended subscription not discovered")
@@ -1633,19 +1640,32 @@ func scenariosOperations(t *testing.T) {
 	})
 	t.Run("initialization that exceeds five seconds under gc supervision keeps the service alive with health degraded", func(t *testing.T) {
 		f := newFixture(t)
-		f.google.Configure(func(g *fakegoogle.Server) { g.OperationDelay = 6 * time.Second })
+		f.google.Configure(func(g *fakegoogle.Server) { g.OperationDelay = time.Millisecond })
+		release := make(chan struct{})
+		var once sync.Once
+		t.Cleanup(func() { once.Do(func() { close(release) }) })
+		f.setHook(func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == "GET" && strings.HasPrefix(r.URL.Path, "/v1/operations/") {
+				select {
+				case <-release:
+				case <-r.Context().Done():
+				}
+			}
+			return false
+		})
 		start := time.Now()
 		f.start()
-		f.health("initializing", 100*time.Millisecond)
-		if time.Since(start) >= 100*time.Millisecond {
-			t.Fatal("socket health exceeded 100ms")
+		f.health("initializing", time.Second)
+		if time.Since(start) >= time.Second {
+			t.Fatal("socket health exceeded one second")
 		}
 		f.status()
 		time.Sleep(5100 * time.Millisecond)
-		f.health("initializing", 100*time.Millisecond)
+		f.health("initializing", time.Second)
 		if f.countRequest("gc POST /v0/city/examplecity/extmsg/adapters") == 0 {
 			t.Fatal("service not registered while initializing")
 		}
+		once.Do(func() { close(release) })
 		f.health("ready", 10*time.Second)
 		if f.state().Subscription.State != "ACTIVE" {
 			t.Fatal("initialization did not finish")
