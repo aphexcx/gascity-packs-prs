@@ -829,11 +829,18 @@ func scenariosRecovery(t *testing.T) {
 		f.history(3, "spaces/room", time.Now().Add(-time.Second))
 		f.google.Advance(5 * time.Hour)
 		var blocked atomic.Bool
+		var recoveryChecks atomic.Int32
 		blocked.Store(true)
 		f.setHook(func(w http.ResponseWriter, r *http.Request) bool {
-			if strings.HasSuffix(r.URL.Path, "/inbound") && blocked.Load() {
-				http.Error(w, "outage", http.StatusServiceUnavailable)
-				return true
+			if strings.HasSuffix(r.URL.Path, "/inbound") {
+				if blocked.Load() {
+					http.Error(w, "outage", http.StatusServiceUnavailable)
+					return true
+				}
+				recoveryChecks.Add(1)
+				if !f.state().Spaces["spaces/room"].MessageCursor.Equal(old) {
+					t.Error("cursor advanced before a recovered record was handled")
+				}
 			}
 			return false
 		})
@@ -850,7 +857,7 @@ func scenariosRecovery(t *testing.T) {
 		f.health("ready", 20*time.Second)
 		f.turns(4)
 		s := f.state().Spaces["spaces/room"]
-		if !s.MessageCursor.After(old) || len(s.Backlog) != 0 {
+		if !s.MessageCursor.After(old) || len(s.Backlog) != 0 || recoveryChecks.Load() == 0 {
 			t.Fatal("cursor did not settle")
 		}
 		for _, v := range f.gc.Inbound()[1:] {
@@ -1385,7 +1392,7 @@ func (f *fixture) outbound(key, text string) wire.OutboundResult {
 	return result
 }
 func scenariosOperations(t *testing.T) {
-	t.Run("quota exhaustion and a queue delay beyond gc's deadline return the specified undelivered receipt with its retry hint decoded by real gc", func(t *testing.T) {
+	t.Run("quota exhaustion and a queue delay beyond gc's deadline return the specified undelivered receipt with its retry hint decoded by the fake gc", func(t *testing.T) {
 		// Task 16 owns the real-gc contract. Here both the production wire receipt
 		// and fakegc's strict callback decoder are exercised over actual HTTP.
 		for _, kind := range []string{"quota exhaustion", "queue deadline"} {
