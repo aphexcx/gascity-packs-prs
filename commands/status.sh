@@ -23,10 +23,10 @@ printf '%s\n' "$result" | jq -r '
     "Deliveries (only unresolved IDs can be resolved):",
     ((.deliveries // [])[] | "  \(.status) \(.id): \(.reason // "")"),
     "Spaces:", ((.spaces // {}) | to_entries | sort_by(.key)[] |
-        "  \(.key): wake=\(.value.wake) backlog=\((.value.backlog // []) | length)",
+        "  \(.key): wake=\(.value.wake) backlog=\(.value.backlog_count // ((.value.backlog // []) | length))",
         ((.value.page_token // "" | fromjson?) // {} |
             if (.unavailable // "") != "" then
-                "    History held: \(.unavailable); retry at the first inventory refresh after \(.access_retry_after // "one hour") or after an observed rejoin"
+                "    History held: \(.unavailable); retry at the first inventory refresh after \(.access_retry_after // "one hour"), after an observed rejoin, on restart, or after subscription recovery"
             else empty end)),
     "Retained unavailable records are counted under unavailable:<space>; resolve cannot replay them."
 '

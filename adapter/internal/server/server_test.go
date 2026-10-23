@@ -1220,6 +1220,13 @@ func TestDefiniteRecordingRefusalStopsAutomaticRecovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if v := l.Sends[p.IdempotencyKey]; v.RecordPending || !v.NotRecordable || v.RecordingFailureKind == "" {
+				t.Fatalf("refusal was not durable before sweep: %+v", v)
+			}
+			_, statusBody, _ := f.call(t, "/status", nil)
+			if decode[map[string]any](t, statusBody)["unrecorded"] != float64(0) {
+				t.Fatalf("refusal remains pending: %s", statusBody)
+			}
 			f.mu.Lock()
 			*f.l = *l
 			f.mu.Unlock()
@@ -1246,6 +1253,13 @@ func TestDefiniteRecordingRefusalStopsAutomaticRecovery(t *testing.T) {
 			got := decode[CommandResult](t, raw)
 			if !got.Delivered || !got.Recorded || got.MessageID != first.MessageID || got.Reason != "" || got.FailureKind != "" || f.count() != 1 {
 				t.Fatalf("explicit recording retry: %+v", got)
+			}
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v := saved.Sends[p.IdempotencyKey]; v.NotRecordable || v.RecordingFailureKind != "" {
+				t.Fatalf("successful recording retained refusal: %+v", v)
 			}
 		})
 	}

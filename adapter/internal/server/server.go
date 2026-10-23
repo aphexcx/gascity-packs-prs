@@ -441,9 +441,11 @@ func logCause(err error) (string, int) {
 			kind = "rate_limited"
 		case gcErr.StatusCode == 401 || gcErr.StatusCode == 403:
 			kind = "auth"
+		case gcclient.IsCityNotRunning(err):
+			kind = "transient"
 		case gcErr.StatusCode == 404:
 			kind = "not_found"
-		case gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408:
+		case gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 409:
 			kind = "permanent"
 		}
 		return kind, gcErr.StatusCode
@@ -856,6 +858,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			p = *send.Request
 		}
 	}
+	s.logOutcome("command_prepare", p, wire.PublishReceipt{Delivered: true}, nil)
 	if p.SessionID == "" {
 		return s.direct(ctx, p, send.Upload, noBindingReason(""), result, automatic)
 	}
@@ -900,9 +903,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		if err != nil {
 			s.logOutcome("gc_outbound", p, s.failure(p, err), err)
 		} else {
-			// This boundary tracks gc transport/rejection recovery; delivery
-			// failures from its callback are logged by publish itself.
-			s.logOutcome("gc_outbound", p, wire.PublishReceipt{Delivered: true, MessageID: result.MessageID}, nil)
+			// A 200 result can carry a failed callback even when that callback
+			// never reached this process. Account for every failed attempt.
+			s.logOutcome("gc_outbound", p, wire.PublishReceipt{Delivered: result.Delivered, MessageID: result.MessageID, FailureKind: result.FailureKind}, nil)
 		}
 	}
 	if gcclient.IsNoBinding(err) {
@@ -914,40 +917,36 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 		// A caller owns its returned failures; automatic attempts retain
 		// transient failures for the next sweep. Settlement is bounded and
 		// independent of the request, with no network calls or delivery.
-		settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
-		defer cancel()
-		// A lost gc response can follow a durable callback receipt.
-		if l, e := s.snapshot(settleCtx); e == nil {
-			if r := l.Sends[p.IdempotencyKey].Receipt; r != nil && r.Delivered {
+		settleErr := s.settle(ctx, func(l *ledger.Ledger) error {
+			v := l.Sends[p.IdempotencyKey]
+			// Read the callback outcome and settle under the same ledger lock.
+			if r := v.Receipt; r != nil && r.Delivered {
 				result.Delivered = true
 				result.MessageID = r.MessageID
 				result.FailureKind, result.RetryAfter = "", 0
 			}
-		}
-		if !result.Delivered {
-			r := s.failure(p, err)
-			result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
-			if !retryAutomatically(automatic, r) {
-				err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
-			}
-		} else {
-			// Delivery is durable; only recording failed. Definite rejections
-			// belong to the caller, while ambiguous recording failures recover.
-			var gcErr *gcclient.HTTPError
-			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429 && !s.isNoAdapter(err) && !gcclient.IsCityNotRunning(err)
-			if definite {
-				result.FailureKind = s.failure(p, err).FailureKind
-			}
-			err = errors.Join(err, s.settle(ctx, func(l *ledger.Ledger) error {
-				v := l.Sends[p.IdempotencyKey]
+			if !result.Delivered {
+				r := s.failure(p, err)
+				result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
+				if !retryAutomatically(automatic, r) {
+					v.Receipt, v.RecordPending, v.RecordingReason = &r, false, result.Reason
+				}
+			} else {
+				// Delivery is durable; only recording failed. Definite rejections
+				// belong to the caller, while ambiguous recording failures recover.
+				var gcErr *gcclient.HTTPError
+				definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429 && !s.isNoAdapter(err) && !gcclient.IsCityNotRunning(err)
+				if definite {
+					result.FailureKind = s.failure(p, err).FailureKind
+				}
 				v.RecordPending = !definite && !v.Recorded
 				v.NotRecordable = definite
 				v.RecordingReason = result.Reason
 				v.RecordingFailureKind = result.FailureKind
-				return nil
-			}))
-		}
-		return result, err
+			}
+			return nil
+		})
+		return result, errors.Join(err, settleErr)
 	}
 	err = s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
@@ -993,15 +992,15 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 func (s *Server) failPreparedCommand(ctx context.Context, p wire.PublishRequest, cause error, automatic bool) (CommandResult, error) {
 	receipt := s.failure(p, cause)
 	result := CommandResult{Key: p.IdempotencyKey, Reason: cause.Error(), FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter}
-	if retryAutomatically(automatic, receipt) {
-		s.logOutcome("command_prepare", p, receipt, cause)
-		return result, cause
-	}
+	s.logOutcome("command_prepare", p, receipt, cause)
 	err := s.settle(ctx, func(l *ledger.Ledger) error {
 		v := l.Sends[p.IdempotencyKey]
 		if v.Receipt != nil && v.Receipt.Delivered {
 			// A concurrent callback may have completed while preparation waited.
 			result = commandOutcome(v)
+			return nil
+		}
+		if retryAutomatically(automatic, receipt) {
 			return nil
 		}
 		v.Receipt = &receipt
@@ -1469,8 +1468,15 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	backlog := 0
 	pending := 0
-	for _, v := range l.Spaces {
+	type spaceStatus struct {
+		*ledger.SpaceState
+		Backlog      []string `json:"backlog,omitempty"`
+		BacklogCount int      `json:"backlog_count"`
+	}
+	spaces := make(map[string]spaceStatus, len(l.Spaces))
+	for name, v := range l.Spaces {
 		backlog += len(v.Backlog)
+		spaces[name] = spaceStatus{SpaceState: v, BacklogCount: len(v.Backlog)}
 	}
 	for _, v := range l.Sends {
 		if v.RecordPending {
@@ -1504,11 +1510,14 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			lastEvent = at.UTC().Format(time.RFC3339Nano)
 		}
 	}
-	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
+	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
 	status["pending"], status["deliveries"] = inFlight, deliveries
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)
+		if code == http.StatusForbidden || code == http.StatusNotFound {
+			kind = "subscription-refused"
+		}
 		status["subscription_retry"] = map[string]any{"failures": failures, "next_attempt": next, "cause_kind": kind, "http_status": code, "state": state.State}
 	}
 	respond(w, 200, status)
