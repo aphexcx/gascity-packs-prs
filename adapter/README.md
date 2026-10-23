@@ -35,6 +35,8 @@ If a create response contradicts the seeded identity, the
 observed ID is saved and the client rebuilt; the observed ID then wins across
 restarts. The ledger's `identity_seed` records the token subject separately;
 only a new subject (new consent) replaces the observed identity with a new seed.
+The first upgrade of a seedless ledger seeds once from the token and logs that
+upgrade explicitly; an old observed identity can change on that first start.
 
 A rejected access token triggers a refresh before requiring sign-in. Permanent
 refresh failure, or two consecutive credential rejections within five minutes
@@ -49,7 +51,7 @@ Publisher on the topic. Reconciliation follows the subscriber's backoff
 recovered` on success. These failures do not ask for sign-in.
 
 Credential and subscription notices go to `[[identity]].agent` (default
-`mayor`), with a stable mail `--dedup` key per city, identity, and notice kind.
+`mayor`), with a stable mail `--dedup` key per city, identity, notice kind and cause.
 Dedup suppresses repeats across restarts while the prior notice remains in the
 recipient's mailbox. Startup registers once; a healthy run resets connection
 restart backoff for the next interruption.
@@ -67,6 +69,14 @@ records its socket there. Offline state commands take the same lock and refuse
 while it is held, including under gc when the shell has no `GC_SERVICE_SOCKET`.
 `--force` uses the recorded socket to request `/state`; the service must be in
 `recovery-required`. An unheld lock file is stale and does not block recovery.
-Never delete the lock file to bypass a running service. The standalone socket
+Never delete the lock file to bypass a running service. If it was removed or
+replaced, restart the service: ownership loss permanently revokes the old
+process's saves, even if the path later reappears. The standalone socket
 defaults to `adapter.sock` beside the ledger. Reset reports that gap messages
 may be lost or duplicated; the CLI replaces the ledger only while holding the lock. Use `gc gchat state` for recovery through the running service's proxy.
+
+The OAuth listener requests an ephemeral loopback port; bind failure ends that
+auth attempt with an actionable error. It does not retry another port inside
+the same attempt. A Pub/Sub `codes.Canceled` response under a still-live context
+is fatal to that Receive run, so the app restarts the stream with backoff;
+cancellation of the caller context ends the run normally.

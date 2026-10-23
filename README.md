@@ -40,12 +40,13 @@ inbound delivery before the first outbound message.
 ## Install
 
 Requirements: gc with schema-2 packs, `proxy_process` services and the extmsg
-API; Go 1.27.2 or newer for builds; POSIX sh, curl, jq, and the standard `od`
+API; a Unix platform with advisory file locks; Go 1.27.2 or newer for builds;
+POSIX sh, curl, jq, and the standard `od`
 and `tr` utilities. Python 3 is needed only for the wrapper tests. The source
 module is independent; no global Go install step is required.
 
 1. Place the pack at `packs/gchat`. Import it under the binding `gchat` in the
-   city's configuration (adjust the source path if stored elsewhere):
+   city's `pack.toml` (adjust the source path if stored elsewhere):
 
    ```toml
    [imports.gchat]
@@ -70,14 +71,16 @@ module is independent; no global Go install step is required.
    The pack's doctor stops at the first failure: secrets, token refresh,
    subscription `ACTIVE`, then a gchat default route in `gc config show --json`.
 
-For a city whose gc API uses another port, export `GC_API_BASE_URL` in the
-calling shell as well as writing it in the secrets file. Ordinary commands
-never source secrets; their API default is `http://127.0.0.1:8372`.
+gc supplies `GC_API_BASE_URL` to pack commands. Ordinary commands never source
+secrets; the service reads its own configured API base from the env file.
 
 Live checklist after installation: list spaces; DM round trip; a message in an
 `all` space; a mention in a `mentions` space; a reply in the correct thread;
 a file and a reaction each way; join a new space and receive its first message;
 observe subscription renewal; restart and observe catch-up; measure latency.
+Verify a paginated catch-up clamped to the 28-day event window, including an
+event near the moving retention boundary between pages. Compare the
+`identity_user_id` from `auth --check` with the first created message's sender.
 Explicitly verify DM threading: this version sends `thread.name` without the
 named-space reply option, and the live test must confirm Google's behavior.
 
@@ -145,6 +148,8 @@ Optional endpoint/path overrides for tests and private deployments:
 `GCHAT_UPLOAD_ROOT`, `GCHAT_STATE_FILE`. Export overrides in the service process;
 OAuth URLs can also be read from the env file by standalone auth. The Pub/Sub
 endpoint override uses an insecure connection intended for an in-memory fake.
+A relative `GCHAT_STATE_FILE` resolves beside the env file, consistently for
+the service and offline recovery commands.
 
 ## Commands
 
@@ -162,7 +167,9 @@ endpoint override uses an insecure connection intended for an in-memory fake.
 | `gc gchat state restore FILE\|reset` | Request recovery through the running service's `/state` endpoint. |
 
 Text commands accept `--body TEXT` or `--body-file PATH`. File contents retain
-trailing newlines. `reply-current` uses `--session`, then `GC_SESSION_ID`, then
+trailing newlines and stream through the wrapper without becoming process
+arguments. The service accepts at most 4 MiB of JSON per command; escaping adds
+to the body size. `reply-current` uses `--session`, then `GC_SESSION_ID`, then
 a `GC_SESSION_NAME` lookup. Its inbound search uses the last two hours, at most
 500 events, and only the gchat provider; pass the target explicitly if older
 or outside that window. Pass `--thread` from the inbound turn to preserve its
@@ -199,6 +206,14 @@ per cause. Run `auth` again; accepted token replacements resume work. Old token
 files without `identity_user_id` warn once to re-run auth and can otherwise
 learn the identity from the first outbound response. An observed sender that
 disagrees with the consent seed wins, with one log entry.
+On the first upgrade from a ledger without `identity_seed`, the token seeds
+the identity once, replacing any old observed identity. Later starts retain
+an observed identity until the consent subject changes.
+
+Subscription 403/404 failures notify `[[identity]].agent` (default `mayor`)
+with setup guidance and a sanitized cause. Notice dedup includes the cause,
+so an earlier incident cannot hide a different setup failure. Transient
+subscription errors retry without sending a setup notice.
 
 ### Delivery uncertainty
 
@@ -233,7 +248,8 @@ deliveries never advance them. Backlog drains over repeated budgeted passes.
 When Google refuses a space's history, status shows `History held` and its
 reason; `unavailable:<space>` and a WARN appear for each new hold, not every
 retry. The first hourly inventory refresh at least one hour after the last
-denial retries it, as does an observed listing rejoin. A successful page clears
+denial retries it, as do an observed listing rejoin, service restart, and
+subscription recovery. A successful page clears
 the hold. Only records after the held page then post; records already enumerated
 before the hold remain committed `catchup.unavailable` records and cannot be
 replayed by `resolve`.
@@ -242,7 +258,9 @@ Google retains space events for 28 days. `unrecoverable:<space>` is reported
 once per interval when a known event cursor is older than the local 28-day
 boundary; retained records still deliver. A space first discovered during the
 outage has no old cursor and reports no such loss. A clamped request omits its
-start time and requests Google's retained window. Older unavailable history
+start time and requests Google's retained window. The same omission applies
+within five minutes of the boundary to tolerate clock skew, without changing
+the persisted bound or the loss-reporting rule. Older unavailable history
 cannot be reconstructed by this adapter.
 
 Outbound parts and receipts are persisted before gc recording. Restart recovery
@@ -254,7 +272,9 @@ conversation's other sessions: gc deduplicates the transcript, not that
 notification.
 
 At startup the adapter registers with gc and re-registers after a refused
-connection or gc's no-adapter 422. Its registration key is
+connection, gc's no-adapter 422, or its restart-time city-not-running 404.
+An already-running registration retry keeps its backoff, up to 60 seconds.
+Its registration key is
 `gchat-register-<sha256(body)>`. gc caches it per city for 30 minutes. An
 identical registration within 30 minutes of a manual `DELETE /extmsg/adapters`
 replays cached success without registering again: restart the city or wait
@@ -262,12 +282,20 @@ replays cached success without registering again: restart the city or wait
 
 ### Ledger recovery
 
-Back up `<city>/.gc/services/gchat/state.json` with its `secrets/established`
+Back up `<city>/.gc/services/gchat/state.json` with its `secrets/.gchat-established`
 marker. The ledger owns delivery outcomes, multipart progress and acknowledged
 backlog. A corrupt ledger, or a missing ledger after the marker was created,
 enters `recovery-required` and preserves the bad bytes. Health, status and state
 remain reachable; publishing returns a typed transient failure and new events
 are not acknowledged.
+
+The state file is a complete compact JSON document, atomically replaced and
+fsynced on every save. Whitespace is insignificant: older indented JSON ledgers
+load unchanged, including pending sends, unresolved turns, and backlog. Typed
+in-memory clones isolate mutations before saving. Every save still rewrites the
+whole ledger; large catch-up runs incur disk and serialization cost. Keep enough
+free space for the current file and its replacement, and back up the JSON rather
+than depending on its indentation.
 
 Use `gc gchat state restore /absolute/path/backup.json` to request recovery
 through the service, or explicitly choose `gc gchat state reset`, which warns
@@ -277,9 +305,30 @@ If reconciliation fails, retry the same restore/reset request.
 
 For offline recovery, **stop the service first** (gc users stop the city or
 service), set `GC_GCHAT_ADAPTER_ENV` to its env file, then run the adapter binary's
-`state restore FILE` or `state reset`. This version's offline guard detects only
-the standalone socket beside the ledger; gc normally supplies a private socket
-elsewhere. Do not rely on that guard to detect a running gc-supervised service.
+`state restore FILE` or `state reset`. The service holds `<ledger>.lock` and
+records its socket there; offline commands take the same lock even when gc uses
+a private socket elsewhere. `--force` routes recovery to that running service.
+Never delete the lock file. If it was removed or replaced, restart the service:
+the old process permanently refuses further saves and requires recovery. An
+unheld lock file is stale and does not block recovery.
+
+### Text formatting
+
+This release converts its supported Markdown subset to Chat markup before
+splitting messages at 32,000 bytes, preserving code and source whitespace.
+The pinned Chat client exposes `Message.MarkupSyntax`, including
+`MARKUP_SYNTAX_MARKDOWN`. Switching modes still needs live user-auth checks for
+code spans, fences, links, lists and block quotes, and split/rejoin tests for
+each. A per-message setting is safer than changing a shared app default across
+cities. Keep the Chat markup default for this release; the Markdown mode is not
+enabled by the adapter.
+
+The converter is a subset, not a full CommonMark parser. Quoted fences are
+ordinary text: markers inside them can be converted, and splitting does not
+add quoted fence wrappers. In rare nested emphasis, an inner opener of the
+same marker inside a different-marker pair can leave the outer opener literal.
+Backticks in link destinations can also affect later code/link lookahead.
+Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 
 ## Troubleshooting
 
@@ -302,6 +351,11 @@ elsewhere. Do not rely on that guard to detect a running gc-supervised service.
 
 Validate source changes with `gc lint packs/gchat`, shellcheck and `bash -n`
 on every shell script, and the Python wrapper tests in `tests/`. From `adapter/`,
-run `gofmt -l .`, `go vet ./...`, `staticcheck ./...` and `go test ./... -count=1`.
-The integration fixtures use in-process fakes; the real-gc contract test is
-opt-in via `GC_BIN` when that test is present.
+run `gofmt -l .`, `go vet ./...`, and `staticcheck ./...`.
+Use `go test ./... -count=1 -timeout=30m` for the full suite and
+`go test -race ./... -count=1 -timeout=45m` for a full race run. The 3,000-message
+recovery test performs real durable writes and needs that explicit budget.
+The integration fixtures use in-process fakes. `GC_BIN=/absolute/path/gc
+go test ./test/contract -count=1 -timeout=2m` runs the real-gc contract in an
+isolated temporary city on an ephemeral port, including a failed delivery's
+retry hint. It never needs a running city's API.
