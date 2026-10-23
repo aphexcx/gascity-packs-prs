@@ -82,6 +82,7 @@ type Manager struct {
 	// gate serializes renewals and lifecycle deliveries, including their reads.
 	gate            chan struct{}
 	recoveryNeeded  chan struct{}
+	failureRecovery chan struct{}
 	pending         *api.Operation
 	pendingKind     string
 	scopeReloaded   bool
@@ -125,8 +126,9 @@ func New(opts Options) (*Manager, error) {
 		service: opts.Service, topic: opts.Topic, types: slices.Clone(EventTypes),
 		ledger: opts.Ledger, path: opts.LedgerPath, ledgerMu: opts.LedgerMu,
 		clock: opts.Clock, log: opts.Log, gate: make(chan struct{}, 1),
-		recoveryNeeded: make(chan struct{}, 1),
-		status:         statusSnapshot{state: state},
+		recoveryNeeded:  make(chan struct{}, 1),
+		failureRecovery: make(chan struct{}, 1),
+		status:          statusSnapshot{state: state},
 	}, nil
 }
 
@@ -135,6 +137,11 @@ func New(opts Options) (*Manager, error) {
 // performed by RenewLoop. Signals coalesce while catch-up is pending; the app
 // must also perform startup catch-up because notifications are not durable.
 func (m *Manager) RecoveryNeeded() <-chan struct{} { return m.recoveryNeeded }
+
+// FailureRecovered signals a successful reconciliation after failures. Signals
+// coalesce until consumed and survive subsequent failures, so status polling
+// cannot miss an incident boundary. This signal is independent of catch-up.
+func (m *Manager) FailureRecovered() <-chan struct{} { return m.failureRecovery }
 
 // Reconcile mutates only after an authoritative get or discovery.
 // Errors (including lost responses) leave the caller responsible for retrying
@@ -572,9 +579,16 @@ func (m *Manager) Status() (error, int, time.Time, ledger.SubscriptionState) {
 
 // recordResult and holdError are only called under gate.
 func (m *Manager) recordResult(err error) {
+	recovered := err == nil && m.failures > 0
 	defer func() {
 		m.statusMu.Lock()
 		m.status.err, m.status.failures, m.status.next = m.lastError, m.failures, m.nextAttempt
+		if recovered {
+			select {
+			case m.failureRecovery <- struct{}{}:
+			default:
+			}
+		}
 		m.statusMu.Unlock()
 	}()
 	m.lastError = err

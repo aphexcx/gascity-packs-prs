@@ -1003,6 +1003,55 @@ func TestStatusExposesFailuresBackoffAndRecovery(t *testing.T) {
 	}
 }
 
+func TestFailureRecoverySignalSurvivesLaterFailures(t *testing.T) {
+	f := setup(t)
+	assertQuiet := func() {
+		t.Helper()
+		select {
+		case <-f.manager.FailureRecovered():
+			t.Fatal("unexpected failure recovery signal")
+		default:
+		}
+	}
+	assertQuiet()
+	f.reconcile()
+	// Creating the subscription requests catch-up, but does not recover an
+	// earlier failure. The two signals have independent consumers.
+	<-f.manager.RecoveryNeeded()
+	assertQuiet()
+	fail := func() {
+		t.Helper()
+		f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+		if _, err := f.manager.Reconcile(t.Context()); err == nil {
+			t.Fatal("failed reconciliation succeeded")
+		}
+	}
+	fail()
+	assertQuiet()
+	for range 2 {
+		f.hook = nil
+		f.reconcile()
+		fail()
+	}
+	// Repeated recoveries coalesce, and a subsequent failure does not erase
+	// the pending signal even when the app never observed healthy status.
+	select {
+	case <-f.manager.FailureRecovered():
+	default:
+		t.Fatal("later failures lost the pending recovery signal")
+	}
+	assertQuiet()
+	f.hook = nil
+	f.reconcile()
+	select {
+	case <-f.manager.FailureRecovered():
+	default:
+		t.Fatal("next recovery did not signal after consumption")
+	}
+	f.reconcile()
+	assertQuiet()
+}
+
 func TestMutationHoldPreservesOriginalCause(t *testing.T) {
 	f := setup(t)
 	f.hook = func(r *http.Request) (*http.Response, error) {

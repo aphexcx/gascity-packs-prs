@@ -63,6 +63,13 @@ func (a *application) subscriptionFailure(err error) {
 	var ge *googleapi.Error
 	notify := errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404)
 	if m := a.manager.Load(); m != nil {
+		// A successful reconcile may have been followed by more failures
+		// between monitor ticks. Preserve that incident boundary for dedup.
+		select {
+		case <-m.FailureRecovered():
+			a.subscriptionRecovered()
+		default:
+		}
 		// The manager counts completed attempts and resets on success. Reading
 		// its count keeps monitor polls from counting the same failure again.
 		_, failures, _, _ := m.Status()
@@ -74,6 +81,14 @@ func (a *application) subscriptionFailure(err error) {
 }
 
 func (a *application) subscriptionRecovered() {
+	// Healthy monitor ticks and startup retries also consume the signal;
+	// leaving it queued could clear dedup twice for the same recovery.
+	if m := a.manager.Load(); m != nil {
+		select {
+		case <-m.FailureRecovered():
+		default:
+		}
+	}
 	a.noticeMu.Lock()
 	hadFailure := false
 	for key := range a.notified {

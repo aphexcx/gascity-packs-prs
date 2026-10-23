@@ -246,6 +246,40 @@ func TestSubscriptionMonitorResetsNoticesWhileGCUnavailable(t *testing.T) {
 	}
 }
 
+func TestSubscriptionRecoveryBetweenObservationsResetsNoticeDedup(t *testing.T) {
+	a, m, code := subscriptionNoticeFixture(t)
+	for incident := 1; incident <= 2; incident++ {
+		code.Store(http.StatusTooManyRequests)
+		var last error
+		for range 3 {
+			_, last = m.Reconcile(t.Context())
+			if last == nil {
+				t.Fatal("quota failure not reported")
+			}
+		}
+		// The app observes only failed status, even though the subscription
+		// recovered between these incidents before failing three more times.
+		a.subscriptionFailure(last)
+		if len(a.notices) != 1 {
+			t.Fatalf("incident %d: got %d notices, want 1", incident, len(a.notices))
+		}
+		<-a.notices
+		for range 5 {
+			a.subscriptionFailure(last)
+		}
+		if len(a.notices) != 0 {
+			t.Fatalf("incident %d: polling duplicated the notice", incident)
+		}
+		if incident == 1 {
+			code.Store(0)
+			state, err := m.Reconcile(t.Context())
+			if err != nil || state.State != "ACTIVE" {
+				t.Fatalf("subscription recovery: state=%+v err=%v", state, err)
+			}
+		}
+	}
+}
+
 func TestSubscriptionReasonsParseCurrentGoogleErrorDetails(t *testing.T) {
 	for _, tc := range []struct{ reason, want string }{{"SERVICE_DISABLED", "Workspace Events API not enabled"}, {"IAM_PERMISSION_DENIED", "topic Publisher IAM permission denied"}} {
 		t.Run(tc.reason, func(t *testing.T) {
