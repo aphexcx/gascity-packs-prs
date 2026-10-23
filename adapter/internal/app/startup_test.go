@@ -51,16 +51,17 @@ func TestStartupRegistersOnce(t *testing.T) {
 }
 
 func TestDefaultNoticeUsesConfiguredAgentAndDedup(t *testing.T) {
+	f := newFixture(t, false)
 	dir := t.TempDir()
 	argsFile := filepath.Join(dir, "mail-args")
 	// This fake executable receives arguments only; no real mail is sent.
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$GCHAT_TEST_MAIL_ARGS.tmp\"\nmv -f \"$GCHAT_TEST_MAIL_ARGS.tmp\" \"$GCHAT_TEST_MAIL_ARGS\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "gc"), []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GC_BIN", filepath.Join(dir, "gc"))
 	t.Setenv("GCHAT_TEST_MAIL_ARGS", argsFile)
-	f := newFixture(t, false)
 	f.cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "support", TokenFile: f.cfg.Secrets.TokenFile}}
 	// f.start substitutes Notify; call the runtime directly to test its default.
 	startDefaultNotifier(t, f)

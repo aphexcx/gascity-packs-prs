@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,8 +16,59 @@ import (
 
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"google.golang.org/api/googleapi"
 	workspace "google.golang.org/api/workspaceevents/v1"
 )
+
+func TestSubscriptionNoticesOnlyForActionableRefusalsAndEachCause(t *testing.T) {
+	f := newFixture(t, false)
+	a, _ := generationFixture(t, f)
+	for _, err := range []error{errors.New("temporary network failure"), &googleapi.Error{Code: 429}, &googleapi.Error{Code: 500}} {
+		a.subscriptionFailure(err)
+	}
+	if len(a.notices) != 0 {
+		t.Fatal("transient subscription failure notified operator")
+	}
+	disabled := &googleapi.Error{Code: 403, Errors: []googleapi.ErrorItem{{Reason: "accessNotConfigured"}}}
+	iam := &googleapi.Error{Code: 403, Errors: []googleapi.ErrorItem{{Reason: "iamPermissionDenied"}}}
+	a.subscriptionFailure(disabled)
+	a.subscriptionFailure(disabled)
+	a.subscriptionFailure(iam)
+	if len(a.notices) != 2 {
+		t.Fatalf("want one notice per distinct cause; got %d", len(a.notices))
+	}
+	first, second := <-a.notices, <-a.notices
+	if first.dedup == second.dedup {
+		t.Fatal("different causes share mail dedup key")
+	}
+	a.subscriptionRecovered()
+	a.subscriptionFailure(disabled)
+	if len(a.notices) != 1 {
+		t.Fatal("recovery did not reset incident dedup")
+	}
+}
+
+func TestSubscriptionReasonsParseCurrentGoogleErrorDetails(t *testing.T) {
+	for _, tc := range []struct{ reason, want string }{{"SERVICE_DISABLED", "Workspace Events API not enabled"}, {"IAM_PERMISSION_DENIED", "topic Publisher IAM permission denied"}} {
+		t.Run(tc.reason, func(t *testing.T) {
+			err := &googleapi.Error{Code: 403, Message: "private-secret", Details: []any{map[string]any{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": tc.reason, "metadata": map[string]any{"secret": "private-secret"}}}}
+			got := subscriptionReason(err)
+			if !strings.Contains(got, tc.want) || strings.Contains(got, "private-secret") {
+				t.Fatalf("unsafe or imprecise reason: %s", got)
+			}
+		})
+	}
+}
+
+func TestSubscriptionLogSanitizesNestedGroups(t *testing.T) {
+	var logs logBuffer
+	l := slog.New(subscriptionLogHandler{slog.NewJSONHandler(&logs, nil)})
+	err := &googleapi.Error{Code: 403, Message: "private-secret"}
+	l.WithGroup("outer").With(slog.Group("bound", slog.Group("nested", slog.Any("error", err)))).Warn("reconcile", slog.Group("call", slog.Any("error", err)))
+	if strings.Contains(logs.String(), "private-secret") || strings.Count(logs.String(), "subscription refused:") != 2 {
+		t.Fatalf("nested error escaped sanitization: %s", logs.String())
+	}
+}
 
 func TestSubscriptionRefusalRetriesWithoutSignIn(t *testing.T) {
 	for _, code := range []int{403, 404} {

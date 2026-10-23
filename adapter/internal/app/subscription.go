@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/token"
@@ -33,12 +34,22 @@ func subscriptionReason(err error) string {
 		}
 		// Only known provider reason codes are rendered. Free-form messages,
 		// response bodies and metadata can contain credentials or private URLs.
-		for _, item := range ge.Errors {
-			switch item.Reason {
+		setCause := func(reason string) {
+			switch reason {
 			case "accessNotConfigured", "SERVICE_DISABLED":
 				cause = "Workspace Events API not enabled"
 			case "iamPermissionDenied", "IAM_PERMISSION_DENIED":
 				cause = "topic Publisher IAM permission denied"
+			}
+		}
+		for _, item := range ge.Errors {
+			setCause(item.Reason)
+		}
+		for _, detail := range ge.Details {
+			if info, ok := detail.(map[string]any); ok && info["@type"] == "type.googleapis.com/google.rpc.ErrorInfo" {
+				if reason, ok := info["reason"].(string); ok {
+					setCause(reason)
+				}
 			}
 		}
 		return fmt.Sprintf("subscription refused: %s (HTTP %d)", cause, ge.Code)
@@ -49,13 +60,21 @@ func subscriptionReason(err error) string {
 func (a *application) subscriptionFailure(err error) {
 	reason := subscriptionReason(err)
 	a.health("catching-up", reason)
-	a.notice("subscription", reason)
+	var ge *googleapi.Error
+	if errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404) {
+		a.notice("subscription", reason)
+	}
 }
 
 func (a *application) subscriptionRecovered() {
 	a.noticeMu.Lock()
-	hadFailure := a.notified["subscription"]
-	delete(a.notified, "subscription")
+	hadFailure := false
+	for key := range a.notified {
+		if key == "subscription" || strings.HasPrefix(key, "subscription:") {
+			hadFailure = true
+			delete(a.notified, key)
+		}
+	}
 	a.noticeMu.Unlock()
 	if hadFailure {
 		a.log.Info("subscription recovered", "operation", "subscription")
@@ -67,6 +86,16 @@ func (a *application) subscriptionRecovered() {
 type subscriptionLogHandler struct{ slog.Handler }
 
 func safeSubscriptionAttr(a slog.Attr) slog.Attr {
+	a.Value = a.Value.Resolve()
+	if a.Value.Kind() == slog.KindGroup {
+		attrs := a.Value.Group()
+		clean := make([]slog.Attr, len(attrs))
+		for i, child := range attrs {
+			clean[i] = safeSubscriptionAttr(child)
+		}
+		a.Value = slog.GroupValue(clean...)
+		return a
+	}
 	if err, ok := a.Value.Any().(error); ok {
 		return slog.String(a.Key, subscriptionReason(err))
 	}

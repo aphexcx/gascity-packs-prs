@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"os"
 	"os/exec"
 	"sync/atomic"
 	"time"
@@ -118,10 +121,13 @@ type notification struct{ kind, message, agent, dedup string }
 func (a *application) notice(kind string, details ...string) {
 	a.noticeMu.Lock()
 	defer a.noticeMu.Unlock()
-	if a.notified[kind] {
+	key := kind
+	if len(details) > 0 {
+		key += fmt.Sprintf(":%x", sha256.Sum256([]byte(details[0])))
+	}
+	if a.notified[key] {
 		return
 	}
-	a.notified[kind] = true
 	message := "Subscription reconciliation failed; inspect gc gchat status and the README Google-side setup checklist (enabled APIs and topic Publisher IAM)."
 	if kind == "credentials" {
 		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
@@ -129,7 +135,8 @@ func (a *application) notice(kind string, details ...string) {
 		message = details[0] + ". " + message
 	}
 	select {
-	case a.notices <- notification{kind: kind, message: message, agent: a.cfg.Identity().Agent, dedup: "gchat:" + a.cfg.Secrets.CityName + ":" + a.cfg.Identity().Name + ":" + kind}:
+	case a.notices <- notification{kind: kind, message: message, agent: a.cfg.Identity().Agent, dedup: "gchat:" + a.cfg.Secrets.CityName + ":" + a.cfg.Identity().Name + ":" + key}:
+		a.notified[key] = true
 	default:
 	}
 }
@@ -144,7 +151,11 @@ func (a *application) notifyLoop(ctx context.Context) {
 			if a.opts.Notify != nil {
 				err = a.opts.Notify(nctx, "gchat: "+notice.kind, notice.message)
 			} else {
-				err = exec.CommandContext(nctx, "gc", "mail", "send", notice.agent, "--dedup", notice.dedup, "-s", "gchat: "+notice.kind, "-m", notice.message).Run()
+				bin := os.Getenv("GC_BIN")
+				if bin == "" {
+					bin = "gc"
+				}
+				err = exec.CommandContext(nctx, bin, "mail", "send", notice.agent, "--dedup", notice.dedup, "-s", "gchat: "+notice.kind, "-m", notice.message).Run()
 			}
 			cancel()
 			if err != nil {
