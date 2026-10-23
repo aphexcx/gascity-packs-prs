@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -20,6 +21,64 @@ import (
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/ledger"
 )
+
+// changeState checks cancellation after acquiring ownership and immediately
+// before saving. Replace the lock at that deterministic boundary, without a
+// timing race or a production-only hook for the offline command.
+type stateSaveContext struct {
+	context.Context
+	beforeSave func()
+}
+
+func (c stateSaveContext) Err() error {
+	c.beforeSave()
+	return c.Context.Err()
+}
+
+func TestOfflineStateSaveRefusesLostLock(t *testing.T) {
+	for _, action := range []string{"reset", "restore"} {
+		for _, replacement := range []bool{false, true} {
+			t.Run(action+"/"+map[bool]string{false: "missing", true: "replaced"}[replacement], func(t *testing.T) {
+				env, state, _ := stateFixture(t)
+				cfg, err := config.Load(env, "", filepath.Dir(env))
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := os.ReadFile(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				backup := filepath.Join(t.TempDir(), "backup.json")
+				if err := ledger.New().Save(backup); err != nil {
+					t.Fatal(err)
+				}
+				called := false
+				ctx := stateSaveContext{Context: t.Context(), beforeSave: func() {
+					if called {
+						return
+					}
+					called = true
+					if err := os.Rename(state+".lock", state+".lock.old"); err != nil {
+						t.Fatal(err)
+					}
+					if replacement {
+						writeFile(t, state+".lock", "another owner\n")
+					}
+				}}
+				if err := changeState(ctx, cfg, action, backup, false); !errors.Is(err, app.ErrStateLockLost) {
+					t.Fatalf("offline save after lock loss: %v", err)
+				}
+				if !called {
+					t.Fatal("did not reach the save boundary")
+				}
+				after, err := os.ReadFile(state)
+				if err != nil || !bytes.Equal(before, after) {
+					t.Fatalf("refused save changed the ledger: %v", err)
+				}
+			})
+		}
+	}
+}
 
 func TestStateAgainstGCService(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "adapter")
