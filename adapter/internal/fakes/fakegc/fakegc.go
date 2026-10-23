@@ -43,6 +43,7 @@ type Server struct {
 	registrations map[string]wire.Registration
 	inbound       []wire.InboundMessage
 	published     []wire.PublishRequest
+	transcripts   map[string]*transcriptEntry
 	dedup         map[string]wire.InboundResponse
 	receiptKeys   map[string]string
 	receiptCities map[string]string
@@ -55,7 +56,7 @@ func New(t testing.TB) *Server {
 		Bindings:      map[wire.Conversation]string{},
 		registrations: map[string]wire.Registration{}, dedup: map[string]wire.InboundResponse{},
 		receiptKeys: map[string]string{}, receiptCities: map[string]string{}, concludedAt: map[string]time.Time{},
-		client: &http.Client{Timeout: 30 * time.Second}}
+		transcripts: map[string]*transcriptEntry{}, client: &http.Client{Timeout: 30 * time.Second}}
 	s.http = httptest.NewServer(http.HandlerFunc(s.serve))
 	t.Cleanup(s.Close)
 	return s
@@ -116,6 +117,8 @@ func clone[T any](value T) T {
 	return copy
 }
 
+// SetReceipt changes a receipt previously issued by POST /inbound. A new ID
+// has no issuing city and remains unknown over HTTP until an inbound creates it.
 func (s *Server) SetReceipt(id string, receipt wire.ReceiptResponse) {
 	s.Configure(func(s *Server) { s.Receipts[id] = receipt })
 }
@@ -177,6 +180,8 @@ func fail(w http.ResponseWriter, status int, message string) {
 	switch status {
 	case 403:
 		code, title = "forbidden", "Forbidden"
+	case 404:
+		code, title = "not-found", "Not Found"
 	case 422:
 		code, title = "validation-failed", "Validation Failed"
 	case 500:
@@ -254,13 +259,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			registration.Name = registration.Provider + "/" + registration.AccountID
 		}
 		s.registrations[registrationKey(city, registration.Provider, registration.AccountID)] = registration
-		respond(w, 200, map[string]any{"status": "registered", "provider": registration.Provider, "account_id": registration.AccountID, "name": registration.Name})
+		respond(w, 201, map[string]any{"status": "registered", "provider": registration.Provider, "account_id": registration.AccountID, "name": registration.Name})
 	case path == "inbound" && r.Method == http.MethodPost:
 		var envelope wire.InboundEnvelope
 		if !decode(w, r, &envelope) {
 			return
 		}
 		message := envelope.Message
+		message.ProviderMessageID = strings.TrimSpace(message.ProviderMessageID)
 		message.Conversation = normalizeConversation(message.Conversation)
 		if !validConversation(message.Conversation) || message.ProviderMessageID == "" {
 			fail(w, 400, "message identity and conversation including scope_id are required")
@@ -395,7 +401,11 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 		return
 	}
 	request.Conversation = normalizeConversation(request.Conversation)
-	if request.SessionID == "" || !validConversation(request.Conversation) {
+	if request.SessionID == "" {
+		fail(w, 422, "validation failed")
+		return
+	}
+	if !validConversation(request.Conversation) {
 		fail(w, 422, "session_id and conversation including scope_id are required")
 		return
 	}
@@ -473,8 +483,20 @@ func (s *Server) outbound(w http.ResponseWriter, r *http.Request, city string) {
 		result.DeliveryContext = &deliveryContext{SessionID: request.SessionID, Conversation: request.Conversation, BindingGeneration: 1, LastPublishedAt: now, LastMessageID: receipt.MessageID, SourceSessionID: request.SessionID}
 	}
 	if receipt.Delivered && !failTranscript {
-		s.sequence++
-		result.TranscriptEntry = &transcriptEntry{ID: fmt.Sprintf("transcript-%d", s.sequence), SchemaVersion: 1, Conversation: request.Conversation, Sequence: int64(s.sequence), Kind: "outbound", Provenance: "live", ProviderMessageID: receipt.MessageID, Text: request.Text, SourceSessionID: request.SessionID, CreatedAt: now}
+		keyData, _ := json.Marshal(struct {
+			City         string
+			Conversation wire.Conversation
+			MessageID    string
+		}{city, request.Conversation, receipt.MessageID})
+		key := string(keyData)
+		result.TranscriptEntry = s.transcripts[key]
+		if result.TranscriptEntry == nil || receipt.MessageID == "" {
+			s.sequence++
+			result.TranscriptEntry = &transcriptEntry{ID: fmt.Sprintf("transcript-%d", s.sequence), SchemaVersion: 1, Conversation: request.Conversation, Sequence: int64(s.sequence), Kind: "outbound", Provenance: "live", ProviderMessageID: receipt.MessageID, Text: request.Text, SourceSessionID: request.SessionID, CreatedAt: now}
+			if receipt.MessageID != "" {
+				s.transcripts[key] = result.TranscriptEntry
+			}
+		}
 	}
 	s.mu.Unlock()
 	respond(w, 200, result)

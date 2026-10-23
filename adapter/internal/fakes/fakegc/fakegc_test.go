@@ -67,7 +67,7 @@ func TestMutationAndScopeRequirements(t *testing.T) {
 	s := New(t)
 	reg := wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: "http://127.0.0.1:1/adapter", Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}}
 	call(t, s, "POST", "adapters", reg, false, 403)
-	registered := call(t, s, "POST", "adapters", reg, true, 200)
+	registered := call(t, s, "POST", "adapters", reg, true, 201)
 	if registered["name"] != "gchat/example" {
 		t.Fatalf("default adapter name: %v", registered)
 	}
@@ -269,7 +269,7 @@ func TestCallbackRejectsInvalidWireValueTypes(t *testing.T) {
 			s.Bindings[conversation()] = "session"
 			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
 			defer callback.Close()
-			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 			if result["Receipt"].(map[string]any)["Delivered"] != false || result["TranscriptEntry"] != nil {
 				t.Fatalf("malformed receipt accepted: %v", result)
@@ -297,7 +297,7 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{MessageID: "spaces/room/messages/one", Conversation: p.Conversation, Delivered: true, RetryAfter: int64(time.Second), Metadata: map[string]string{"parts": "1"}})
 	}))
 	defer callback.Close()
-	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter"}, true, 200)
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter"}, true, 201)
 	req := wire.OutboundRequest{SessionID: "session", Conversation: conversation(), Text: "hello", IdempotencyKey: "stable", ReplyToMessageID: "spaces/room/threads/one"}
 	result := call(t, s, "POST", "outbound", req, true, 200)
 	if result["Receipt"].(map[string]any)["Delivered"] != true || result["TranscriptEntry"] == nil || result["receipt"] != nil {
@@ -316,6 +316,10 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 	if !ok || len(dc) != 9 || dc["SessionID"] != "session" || dc["LastMessageID"] != "spaces/room/messages/one" || dc["SourceSessionID"] != "session" || dc["LastPublishedAt"] == nil || dc["BindingGeneration"] == nil || dc["Conversation"] == nil || dc["ID"] == nil || dc["SchemaVersion"] == nil {
 		t.Errorf("delivery context shape: %v", result)
 	}
+	again := call(t, s, "POST", "outbound", req, true, 200)
+	if again["TranscriptEntry"].(map[string]any)["ID"] != entry["ID"] {
+		t.Fatal("duplicate provider message appended a new transcript entry")
+	}
 	s.Configure(func(s *Server) { s.FailTranscript = true })
 	failed := call(t, s, "POST", "outbound", req, true, 200)
 	if failed["Receipt"].(map[string]any)["Delivered"] != true || failed["TranscriptEntry"] != nil {
@@ -331,7 +335,7 @@ func TestOutboundCallbackAndTranscript(t *testing.T) {
 	if receipt["Delivered"] != false || receipt["MessageID"] == "spaces/room/messages/one" || receipt["RetryAfter"] == float64(time.Second) || discarded["TranscriptEntry"] != nil {
 		t.Fatalf("non-2xx body used: %v", discarded)
 	}
-	if got := s.Published(); len(got) != 3 || got[0].ReplyToMessageID != req.ReplyToMessageID || got[2].IdempotencyKey != "stable" {
+	if got := s.Published(); len(got) != 4 || got[0].ReplyToMessageID != req.ReplyToMessageID || got[2].IdempotencyKey != "stable" {
 		t.Fatalf("published callbacks: %+v", got)
 	}
 }
@@ -343,7 +347,7 @@ func TestUndeliveredCallbackReceiptPreservesHints(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), FailureKind: "rate_limited", RetryAfter: int64(2 * time.Second), Metadata: map[string]string{"parts": "0"}})
 	}))
 	defer callback.Close()
-	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 	result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 	receipt := result["Receipt"].(map[string]any)
 	if receipt["Delivered"] != false || receipt["FailureKind"] != "rate_limited" || receipt["RetryAfter"] != float64(2*time.Second) || result["TranscriptEntry"] != nil {
@@ -370,7 +374,7 @@ func TestCallbackFailureClassification(t *testing.T) {
 			if tc.status == 0 {
 				callback.Close()
 			}
-			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 			receipt := result["Receipt"].(map[string]any)
 			if receipt["FailureKind"] != tc.kind || receipt["Delivered"] != false || receipt["MessageID"] != "" || receipt["RetryAfter"] != float64(0) || receipt["Metadata"] != nil || result["TranscriptEntry"] != nil {
@@ -389,7 +393,7 @@ func TestOutboundRequiresSessionBindingAndAdapter(t *testing.T) {
 			}))
 			defer callback.Close()
 			if invalid != "adapter" {
-				call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+				call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 			}
 			if invalid != "binding" {
 				s.Bindings[conversation()] = "session"
@@ -430,7 +434,7 @@ func TestCallbackURLIsConcatenatedVerbatim(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), Delivered: true})
 	}))
 	defer callback.Close()
-	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter/"}, true, 200)
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL + "/adapter/"}, true, 201)
 	call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 	if path := <-paths; path != "/adapter//publish" {
 		t.Fatalf("callback path %q, want verbatim /adapter//publish", path)
@@ -520,7 +524,7 @@ func TestRegistrationResponseAndValidation(t *testing.T) {
 		t.Run("missing/"+missing, func(t *testing.T) {
 			s := New(t)
 			reg := wire.Registration{Provider: "gchat", AccountID: "example", Name: "example adapter", CallbackURL: "http://127.0.0.1:1/adapter"}
-			status := 200
+			status := 201
 			if missing != "" {
 				status = 422
 			}
@@ -531,7 +535,7 @@ func TestRegistrationResponseAndValidation(t *testing.T) {
 				reg.AccountID = ""
 			}
 			got := call(t, s, "POST", "adapters", reg, true, status)
-			if status == 200 && (got["status"] != "registered" || got["provider"] != reg.Provider || got["account_id"] != reg.AccountID || got["name"] != reg.Name) {
+			if status == 201 && (got["status"] != "registered" || got["provider"] != reg.Provider || got["account_id"] != reg.AccountID || got["name"] != reg.Name) {
 				t.Fatalf("registration response: %v", got)
 			}
 		})
@@ -575,7 +579,7 @@ func TestCallbackRequiresBoundedCompleteJSON(t *testing.T) {
 			s.Bindings[conversation()] = "session"
 			callback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, tc.body) }))
 			defer callback.Close()
-			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+			call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 			result := call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conversation()}, true, 200)
 			receipt := result["Receipt"].(map[string]any)
 			if receipt["Delivered"] != false || receipt["FailureKind"] != "transient" || result["TranscriptEntry"] != nil {
@@ -639,7 +643,7 @@ func TestConversationIdentityNormalization(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(wire.PublishReceipt{Conversation: conversation(), Delivered: true})
 	}))
 	defer callback.Close()
-	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 200)
+	call(t, s, "POST", "adapters", wire.Registration{Provider: "gchat", AccountID: "example", CallbackURL: callback.URL}, true, 201)
 	for _, conv := range []wire.Conversation{conversation(), c} {
 		call(t, s, "POST", "outbound", wire.OutboundRequest{SessionID: "session", Conversation: conv}, true, 200)
 	}
@@ -661,5 +665,27 @@ func TestConversationIdentityNormalization(t *testing.T) {
 	duplicate := call(t, s, "POST", "inbound", inbound("normalized"), true, 200)
 	if duplicate["delivery"].(map[string]any)["status"] != "no_route" {
 		t.Fatalf("normalized conversation was not deduplicated: %v", duplicate)
+	}
+}
+
+func TestInboundMessageIDWhitespaceMatchesRealGC(t *testing.T) {
+	s := New(t)
+	s.Configure(func(s *Server) { s.NextDelivery = "pending" })
+	first := call(t, s, "POST", "inbound", inbound(" message "), true, 200)
+	second := call(t, s, "POST", "inbound", inbound("message"), true, 200)
+	if first["delivery"].(map[string]any)["receipt_id"] != second["delivery"].(map[string]any)["receipt_id"] {
+		t.Fatal("message id was not normalized for dedup")
+	}
+	call(t, s, "POST", "inbound", inbound(" \t "), true, 400)
+}
+func TestNotFoundAndEmptySessionProblems(t *testing.T) {
+	s := New(t)
+	missing := call(t, s, "GET", "absent", nil, false, 404)
+	if missing["code"] != "not-found" {
+		t.Fatalf("not-found problem: %v", missing)
+	}
+	empty := call(t, s, "POST", "outbound", wire.OutboundRequest{Conversation: conversation()}, true, 422)
+	if empty["detail"] != "validation failed" {
+		t.Fatalf("empty session problem: %v", empty)
 	}
 }
