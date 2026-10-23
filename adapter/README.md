@@ -31,8 +31,11 @@ retry with backoff; completed recovery stays idle. An hourly inventory refresh
 can discover rejoined spaces and retry held history. Live messages arrive on
 the Pub/Sub stream.
 
-Offline state commands reserve the service socket while replacing the ledger.
-The default socket is `adapter.sock` beside the ledger when `GC_SERVICE_SOCKET`
-is unset. With a live socket, `--force` requests the service's `/state` recovery
-operation; the service must be in `recovery-required`. Reset reports that gap
-messages may be lost or duplicated. No live ledger is overwritten by the CLI.
+The service holds an advisory lock on `<ledger>.lock` for its lifetime and
+records its socket there. Offline state commands take the same lock and refuse
+while it is held, including under gc when the shell has no `GC_SERVICE_SOCKET`.
+`--force` uses the recorded socket to request `/state`; the service must be in
+`recovery-required`. An unheld lock file is stale and does not block recovery.
+Never delete the lock file to bypass a running service. The standalone socket
+defaults to `adapter.sock` beside the ledger. Reset reports that gap messages
+may be lost or duplicated; the CLI replaces the ledger only while holding the lock.

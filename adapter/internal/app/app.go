@@ -76,6 +76,14 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if opts.Notify == nil {
 		opts.Notify = notifyMayor
 	}
+	lock, err := LockState(cfg.Endpoints.StateFile)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
+		return err
+	}
 	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan string, 8), notified: map[string]bool{}}
 	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
@@ -175,7 +183,7 @@ func prepareSocket(path string) error {
 	if !errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("app: cannot verify stale socket %s: %w", path, err)
 	}
-	return os.Remove(path)
+	return RemoveSocket(path, info)
 }
 
 func (a *application) health(state, reason string) {
