@@ -269,6 +269,15 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if log == nil {
 		log = slog.Default()
 	}
+	// Freeze relative configuration before the first open, including retries
+	// after a startup failure or a later process working-directory change.
+	if opts.MediaDir != "" {
+		var err error
+		opts.MediaDir, err = filepath.Abs(opts.MediaDir)
+		if err != nil {
+			return fmt.Errorf("resolve quarantine MediaDir: %w", err)
+		}
+	}
 	storage, storageErr := openQuarantine(opts.MediaDir)
 	defer func() {
 		if storage != nil {
@@ -279,7 +288,7 @@ func Run(ctx context.Context, sub *pubsub.Subscriber, h Handler, log Logger, opt
 	if opts.MediaDir == "" {
 		warnings = append(warnings, "MediaDir is empty: malformed events and Quarantine outcomes will be nacked")
 	} else if storageErr != nil {
-		warnings = append(warnings, fmt.Sprintf("quarantine storage unavailable: %v; malformed events and Quarantine outcomes will be nacked", storageErr))
+		warnings = append(warnings, fmt.Sprintf("quarantine storage unavailable: %v; recovery will be attempted on each quarantine; events will be nacked only if recovery fails", storageErr))
 	}
 	if opts.RecordQuarantine == nil {
 		warnings = append(warnings, "RecordQuarantine is nil: quarantines will not be counted")
@@ -425,8 +434,19 @@ func (b *receiveBackoff) pause(stretch time.Duration, delivered bool) time.Durat
 	return delay
 }
 
+// quarantineDirectory keeps writes anchored to the opened directory. The
+// interface also lets tests rotate real directories at exact I/O boundaries.
+type quarantineDirectory interface {
+	Stat(string) (os.FileInfo, error)
+	Open(string) (*os.File, error)
+	OpenFile(string, int, os.FileMode) (*os.File, error)
+	Rename(string, string) error
+	Remove(string) error
+	Close() error
+}
+
 type quarantineStore struct {
-	root *os.Root
+	root quarantineDirectory
 	path string
 }
 
@@ -434,7 +454,10 @@ func openQuarantine(mediaDir string) (*quarantineStore, error) {
 	if mediaDir == "" {
 		return nil, errors.New("quarantine requires MediaDir")
 	}
-	path := filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine")
+	path, err := filepath.Abs(filepath.Join(filepath.Dir(filepath.Clean(mediaDir)), "quarantine"))
+	if err != nil {
+		return nil, err
+	}
 	root, err := openDurableDirectory(path)
 	if err != nil {
 		return nil, err
@@ -462,6 +485,16 @@ func (q *quarantineStore) write(ev *Event) (string, error) {
 }
 
 func (q *quarantineStore) verifyPath() error {
+	// SameFile alone cannot detect a parent changed to a symlink pointing back
+	// into the opened tree. Recheck the resolved absolute path as well. Writes
+	// remain anchored to the open root even if a swap races these checks.
+	resolved, err := filepath.EvalSymlinks(q.path)
+	if err != nil {
+		return err
+	}
+	if resolved != q.path {
+		return fmt.Errorf("quarantine path contains a symlink: %s", q.path)
+	}
 	info, err := os.Lstat(q.path)
 	if err != nil {
 		return err
@@ -476,7 +509,7 @@ func (q *quarantineStore) verifyPath() error {
 	return nil
 }
 
-func writeQuarantine(root *os.Root, name string, raw []byte) error {
+func writeQuarantine(root quarantineDirectory, name string, raw []byte) error {
 	temp := ".event-" + cryptorand.Text() + ".tmp"
 	f, err := root.OpenFile(temp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {

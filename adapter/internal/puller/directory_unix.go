@@ -82,7 +82,9 @@ func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
 	return child, nil
 }
 
-func syncDirectory(root *os.Root) error {
+func syncDirectory(root interface {
+	Open(string) (*os.File, error)
+}) error {
 	d, err := root.Open(".")
 	if err != nil {
 		return err

@@ -14,6 +14,8 @@ func openDurableDirectory(path string) (*os.Root, error) {
 func openDurableChild(parent *os.Root, name string) (*os.Root, error) {
 	return nil, errors.New("secure quarantine access requires Unix")
 }
-func syncDirectory(root *os.Root) error {
+func syncDirectory(root interface {
+	Open(string) (*os.File, error)
+}) error {
 	return errors.New("secure quarantine durability requires Unix")
 }

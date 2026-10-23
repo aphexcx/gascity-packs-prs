@@ -1019,7 +1019,7 @@ func TestRunWarnsOnceForIncompleteQuarantineConfiguration(t *testing.T) {
 		{"missing directory", []RunOptions{{RecordQuarantine: record}}, []string{"MediaDir", "nacked"}},
 		{"missing recorder", []RunOptions{{MediaDir: quarantineTempDir(t)}}, []string{"RecordQuarantine", "not be counted"}},
 		{"complete", []RunOptions{{MediaDir: quarantineTempDir(t), RecordQuarantine: record}}, nil},
-		{"unusable parent", []RunOptions{{MediaDir: filepath.Join(unusable, "inbound"), RecordQuarantine: record}}, []string{"quarantine", "not a directory", "nacked"}},
+		{"unusable parent", []RunOptions{{MediaDir: filepath.Join(unusable, "inbound"), RecordQuarantine: record}}, []string{"quarantine", "not a directory", "recovery will be attempted", "nacked only if recovery fails"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(f.ctx)
@@ -1196,5 +1196,112 @@ func TestRunQuarantineRejectsReplacedSymlink(t *testing.T) {
 	})
 	if recorded.Load() != 1 {
 		t.Fatalf("recorded quarantine through a symlink: %d", recorded.Load())
+	}
+}
+
+func TestQuarantineResolvesAbsolutePathAtOpen(t *testing.T) {
+	first, other := quarantineTempDir(t), quarantineTempDir(t)
+	t.Chdir(first)
+	store, err := openQuarantine("inbound")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.root.Close()
+	t.Chdir(other)
+	path, err := store.write(&Event{PubSubID: "one", Raw: []byte("private")})
+	want := filepath.Join(first, "quarantine", "one.json")
+	if err != nil || path != want {
+		t.Fatalf("write after cwd change: path=%q want=%q err=%v", path, want, err)
+	}
+	if data, err := os.ReadFile(want); err != nil || string(data) != "private" {
+		t.Fatalf("original directory data=%q err=%v", data, err)
+	}
+}
+
+func TestQuarantineRefusesParentSymlinkEvenToSameDirectory(t *testing.T) {
+	base := quarantineTempDir(t)
+	parent := filepath.Join(base, "parent")
+	store, err := openQuarantine(filepath.Join(parent, "inbound"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.root.Close()
+	moved := filepath.Join(base, "moved")
+	if err := os.Rename(parent, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, parent); err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.write(&Event{PubSubID: "one", Raw: []byte("private")})
+	if err == nil || path != "" {
+		t.Fatalf("accepted parent symlink: path=%q err=%v", path, err)
+	}
+	if _, err := os.Stat(filepath.Join(moved, "quarantine", "one.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pre-write verification did not prevent write: %v", err)
+	}
+}
+
+// Rotate the real directory at the rename boundary to avoid timing-dependent
+// tests of the post-write pathname check.
+type rotatingQuarantineDirectory struct {
+	*os.Root
+	onRename func()
+	writes   int
+}
+
+func (d *rotatingQuarantineDirectory) OpenFile(name string, flags int, mode os.FileMode) (*os.File, error) {
+	d.writes++
+	return d.Root.OpenFile(name, flags, mode)
+}
+func (d *rotatingQuarantineDirectory) Rename(old, next string) error {
+	if err := d.Root.Rename(old, next); err != nil {
+		return err
+	}
+	if d.onRename != nil {
+		d.onRename()
+	}
+	return nil
+}
+
+func TestQuarantineChecksPathBeforeAndAfterWrite(t *testing.T) {
+	for _, boundary := range []string{"before", "after"} {
+		t.Run(boundary, func(t *testing.T) {
+			base := quarantineTempDir(t)
+			store, err := openQuarantine(filepath.Join(base, "inbound"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.root.Close()
+			directory := &rotatingQuarantineDirectory{Root: store.root.(*os.Root)}
+			store.root = directory
+			retained := filepath.Join(base, "retained")
+			rotate := func() {
+				if err := os.Rename(store.path, retained); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(store.path, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if boundary == "before" {
+				rotate()
+			} else {
+				directory.onRename = rotate
+			}
+			path, err := store.write(&Event{PubSubID: "one", Raw: []byte("private")})
+			if err == nil || path != "" {
+				t.Fatalf("%s write returned stale path=%q err=%v", boundary, path, err)
+			}
+			if boundary == "before" && directory.writes != 0 {
+				t.Fatalf("precheck allowed %d writes", directory.writes)
+			}
+			if boundary == "after" {
+				data, err := os.ReadFile(filepath.Join(retained, "one.json"))
+				if err != nil || string(data) != "private" {
+					t.Fatalf("anchored write: data=%q err=%v", data, err)
+				}
+			}
+		})
 	}
 }
