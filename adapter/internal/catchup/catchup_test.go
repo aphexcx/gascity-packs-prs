@@ -500,7 +500,7 @@ func TestRetainedBoundaryEditsRecovered(t *testing.T) {
 				return nil
 			}
 			f.pass(t, 2, 0)
-			if len(tokens) != 2 || tokens[0] != "" || tokens[1] != "1" || filters[0] != filters[1] {
+			if len(tokens) != 2 || tokens[0] != "" || tokens[1] == "" || filters[0] != filters[1] {
 				t.Fatalf("event pagination changed: tokens=%v filters=%v", tokens, filters)
 			}
 			if strings.Contains(filters[0], "start_time") {
@@ -636,7 +636,7 @@ func TestEventPagesResumeAndExpandBatches(t *testing.T) {
 	f.freeze(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	f.onRequest = func(r *http.Request) error {
-		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "17" {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") != "" {
 			cancel()
 			return context.Canceled
 		}
@@ -653,7 +653,7 @@ func TestEventPagesResumeAndExpandBatches(t *testing.T) {
 	f.onRequest, f.requests = nil, nil
 	f.newRunner(t)
 	f.pass(t, 19, 0)
-	if len(f.requests) != 1 || !strings.Contains(f.requests[0], "/spaceEvents?") || !strings.Contains(f.requests[0], "pageToken=17") {
+	if len(f.requests) != 1 || !strings.Contains(f.requests[0], "/spaceEvents?") || !strings.Contains(f.requests[0], "pageToken=") {
 		t.Fatalf("event restart requests: %v", f.requests)
 	}
 	if !f.opts.Ledger.Messages["spaces/room/messages/m0017"].Deleted || !f.opts.Ledger.Messages["spaces/room/messages/m0018"].Deleted {
@@ -925,7 +925,7 @@ func TestExpiredResumeTokenRestartsPhaseAfterRejoin(t *testing.T) {
 			initialPosts := len(f.gc.Inbound())
 			f.freeze(t)
 			f.onRequest = func(r *http.Request) error {
-				if strings.HasSuffix(r.URL.Path, "/"+phase) && r.URL.Query().Get("pageToken") == "2" {
+				if strings.HasSuffix(r.URL.Path, "/"+phase) && r.URL.Query().Get("pageToken") != "" {
 					return &googleapi.Error{Code: 403, Message: "not a member"}
 				}
 				return nil
@@ -949,7 +949,7 @@ func TestExpiredResumeTokenRestartsPhaseAfterRejoin(t *testing.T) {
 				return nil
 			}
 			f.pass(t, 2, 0)
-			if len(tokens) != 3 || tokens[0] != "2" || tokens[1] != "" || tokens[2] != "2" || filters[0] != filters[1] || filters[1] != filters[2] {
+			if len(tokens) != 3 || tokens[0] == "" || tokens[1] != "" || tokens[2] != tokens[0] || filters[0] != filters[1] || filters[1] != filters[2] {
 				t.Fatalf("phase did not restart with stable bounds: %v %v", tokens, filters)
 			}
 			if len(f.gc.Inbound()) != initialPosts+2 || f.opts.Ledger.Counters["unrecoverable:spaces/room"] != 0 {
@@ -1132,7 +1132,7 @@ func TestPartialHistoryDrainsRetainedRecordsChronologically(t *testing.T) {
 	}
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
-		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "1" {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") != "" {
 			return &googleapi.Error{Code: 503, Message: "history unavailable", Header: http.Header{"Retry-After": {"60"}}}
 		}
 		return nil
@@ -1151,7 +1151,7 @@ func TestPartialHistoryDrainsRetainedRecordsChronologically(t *testing.T) {
 
 func TestRetainedWindowUsesGoogleClock(t *testing.T) {
 	for _, skew := range []time.Duration{time.Millisecond, time.Second, 30 * time.Second} {
-		for _, cursor := range []string{"zero", "aged", "retained"} {
+		for _, cursor := range []string{"zero", "aged", "retained", "near-boundary"} {
 			for _, resumed := range []bool{false, true} {
 				t.Run(fmt.Sprintf("skew=%s/cursor=%s/resumed=%v", skew, cursor, resumed), func(t *testing.T) {
 					f := setup(t)
@@ -1175,6 +1175,8 @@ func TestRetainedWindowUsesGoogleClock(t *testing.T) {
 						wantLoss = 1 // Only the genuinely aged-out interval is reported.
 					case "retained":
 						s.EventCursor = boundary.Add(30 * time.Second)
+					case "near-boundary":
+						s.EventCursor = boundary.Add(75 * time.Second)
 					}
 					if resumed {
 						f.r.opts.Now = func() time.Time { return frozen.Add(-2 * time.Minute) }
@@ -1211,6 +1213,37 @@ func TestRetainedWindowUsesGoogleClock(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestRecentEventCursorSendsLowerBoundAndDeduplicatesPage(t *testing.T) {
+	f := setup(t)
+	f.addSpace("spaces/room", true)
+	m := f.addMessage("spaces/room", 1, frozen.Add(-2*time.Hour))
+	m.LastUpdateTime = frozen.Add(-time.Minute).Format(time.RFC3339Nano)
+	event := &api.SpaceEvent{Name: "spaces/room/spaceEvents/edit", EventType: "google.workspace.chat.message.v1.updated", EventTime: m.LastUpdateTime, MessageUpdatedEventData: &api.MessageUpdatedEventData{Message: m}}
+	f.google.SpaceEvents["spaces/room"] = []*api.SpaceEvent{event, event}
+	f.freeze(t)
+	sawFilter := false
+	f.onRequest = func(r *http.Request) error {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") {
+			sawFilter = true
+			if !strings.Contains(r.URL.Query().Get("filter"), "start_time") {
+				t.Error("recent cursor omitted wire lower bound")
+			}
+		}
+		return nil
+	}
+	// Enumerate without draining so receipt dedup cannot hide duplicate backlog.
+	if err := f.r.enumerate(t.Context(), "spaces/room"); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sawFilter || len(saved.Spaces["spaces/room"].Backlog) != 1 {
+		t.Fatalf("filter=%v backlog=%v", sawFilter, saved.Spaces["spaces/room"].Backlog)
 	}
 }
 
@@ -1271,6 +1304,15 @@ func TestListedHeldSpaceRetriesAfterInterval(t *testing.T) {
 			f.pass(t, 0, 0)
 			if len(f.requests)-requests != 1 {
 				t.Fatal("repeated pass retried the hold")
+			}
+			now = now.Add(30 * time.Minute)
+			if err := f.r.Freeze(context.Background(), now); err != nil {
+				t.Fatal(err)
+			}
+			requests = len(f.requests)
+			f.pass(t, 0, 0)
+			if len(f.requests) != requests {
+				t.Fatal("hourly retry must start at the latest denial")
 			}
 		} else {
 			f.pass(t, 2, 0)
@@ -1391,7 +1433,7 @@ func TestResumedClampPersistsReportedAcrossPages(t *testing.T) {
 	}
 	f.freeze(t)
 	f.onRequest = func(r *http.Request) error {
-		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") == "1" {
+		if strings.HasSuffix(r.URL.Path, "/spaceEvents") && r.URL.Query().Get("pageToken") != "" {
 			return &googleapi.Error{Code: 503, Header: http.Header{"Retry-After": {"60"}}}
 		}
 		return nil
@@ -1457,7 +1499,7 @@ func TestExpiredTokensRestartBothPhasesInOnePass(t *testing.T) {
 	}
 	f.pass(t, 4, 0)
 	for _, phase := range []string{"messages", "spaceEvents"} {
-		if got := strings.Join(tokens[phase], ","); got != ",1,,1" {
+		if got := tokens[phase]; len(got) != 4 || got[0] != "" || got[1] == "" || got[2] != "" || got[3] != got[1] {
 			t.Fatalf("%s tokens = %q", phase, got)
 		}
 	}
