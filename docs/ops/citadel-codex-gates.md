@@ -67,8 +67,9 @@ beads keep it under `/Users/tailor512/city/assets/ops/pr-evidence/<bead>/`.
 committed `.out` passes `git diff --check`.
 
 Both modes use `-p city -m gpt-6-astra`, read-only execution, `-C`,
-`--skip-git-repo-check`, and `/dev/null` stdin. `--model MODEL` explicitly
-overrides both the normal model and the optional review model. Review mode
+and `--skip-git-repo-check`; the prompt and the contract reach Codex on stdin.
+`--model MODEL` explicitly overrides both the normal model and the optional
+review model. Review mode
 resolves REF and HEAD to commit IDs, computes their merge base, and asks
 `codex exec` for a review of that immutable delta at the selected class.
 Native `codex review` formats its own findings and did not honor the requested
@@ -76,11 +77,19 @@ VERDICT line in a live test, so both helper modes use exec's separate
 final-answer file.
 The caller's output file receives that answer; `FILE.log` holds the transcript.
 The helper accepts exactly one final standalone `VERDICT: CLEAN` or
-`VERDICT: BLOCK` line. Exit codes are 0 for CLEAN, 1 for BLOCK, 2 for invalid
-verdict/usage; Codex invocation failures retain their exit status and leave the
-answer file empty. A stale CLEAN answer is cleared before each invocation.
-Review mode rejects empty committed deltas and worktrees with staged, modified,
-or untracked files before invoking Codex. Commit changes before review and keep
+`VERDICT: BLOCK` line. Exit codes are 0 for CLEAN, 1 for BLOCK, 2 for a missing
+or invalid verdict, a refused delta or a usage error, 3 if Codex crashes or exits
+non-zero without a provider error (or the helper is terminated), and 4 for a
+provider error or refusal, with details in `FILE.refusal` beside `FILE`.
+When the helper exits without an answer, `FILE` holds one `FAILED:` or `REFUSED:`
+line behind the audit header. For a real run with `FILE` established,
+`FILE.reason` explains the exit status and `FILE.rc` is written last on every
+exit path, so a waiter never hangs. Before a real run, old side files are removed
+and `FILE.rc` publication is armed; no stale CLEAN survives an exit.
+Review mode rejects empty committed deltas and reviews a pristine detached
+worktree at the selected head. It ignores untracked files and refuses
+uncommitted changes to tracked files unless `--head` is given, when the caller's
+working tree is not consulted. Commit changes before review and keep
 prompt/output files outside the reviewed worktree.
 
 Codex QUICK reviews supplement the required Fable adversarial review for
