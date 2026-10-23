@@ -14,6 +14,18 @@ from urllib.parse import parse_qs, urlsplit
 PACK = Path(__file__).resolve().parents[1]
 
 
+class FixtureIsolationTest(unittest.TestCase):
+    def test_no_go_fixture_names_live_ports_or_executes_gc_directly(self):
+        for source in (PACK / "adapter").rglob("*_test.go"):
+            if "contract" in source.parts:
+                continue  # The isolated real-binary test is explicitly opt-in.
+            text = source.read_text()
+            for port in (8372, 8447):
+                self.assertNotIn(":" + str(port), text, str(source))
+            self.assertNotIn('exec.Command("gc"', text, str(source))
+            self.assertNotIn('exec.CommandContext(t.Context(), "gc"', text, str(source))
+
+
 class CommandHelpTest(unittest.TestCase):
     def test_every_command_has_gc_help_with_its_options(self):
         for command in (PACK / "commands").glob("*/command.toml"):

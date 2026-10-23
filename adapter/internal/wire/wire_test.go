@@ -51,14 +51,14 @@ func TestRegistrationCapabilitiesPascalCase(t *testing.T) {
 	// Keep the golden fixture's literal angle brackets; both forms are valid JSON.
 	encoder.SetEscapeHTML(false)
 	err := encoder.Encode(Registration{Provider: "gchat", AccountID: "example", Name: "gchat adapter",
-		CallbackURL:       "http://127.0.0.1:8372/v0/city/examplecity/svc/gchat",
+		CallbackURL:       "http://example.invalid/v0/city/examplecity/svc/gchat",
 		Capabilities:      Capabilities{SupportsAttachments: true, MaxMessageLength: 32000},
 		ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	b := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
-	want := `{"provider":"gchat","account_id":"example","name":"gchat adapter","callback_url":"http://127.0.0.1:8372/v0/city/examplecity/svc/gchat","capabilities":{"SupportsAttachments":true,"SupportsChildConversations":false,"MaxMessageLength":32000},"reply_instructions":"gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}`
+	want := `{"provider":"gchat","account_id":"example","name":"gchat adapter","callback_url":"http://example.invalid/v0/city/examplecity/svc/gchat","capabilities":{"SupportsAttachments":true,"SupportsChildConversations":false,"MaxMessageLength":32000},"reply_instructions":"gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}`
 	if string(b) != want {
 		t.Fatalf("got %s\nwant %s", b, want)
 	}

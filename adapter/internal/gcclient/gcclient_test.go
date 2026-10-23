@@ -75,11 +75,13 @@ func TestRegistrationKeyTracksCallbackAndSurvivesClientRestart(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer s.Close()
+	other := httptest.NewServer(http.NotFoundHandler())
+	defer other.Close()
 	callbacks := []string{
-		"http://127.0.0.1:8372/svc/gchat",
-		"http://127.0.0.1:8372/svc/gchat", // fresh client, identical configuration
-		"http://127.0.0.1:8373/svc/gchat", // changed callback base
-		"http://127.0.0.1:8372/svc/other", // changed service prefix
+		s.URL + "/svc/gchat",
+		s.URL + "/svc/gchat",     // fresh client, identical configuration
+		other.URL + "/svc/gchat", // changed callback base
+		s.URL + "/svc/other",     // changed service prefix
 	}
 	for _, callback := range callbacks {
 		if err := New(s.URL, "examplecity").Register(t.Context(), registration(callback)); err != nil {
