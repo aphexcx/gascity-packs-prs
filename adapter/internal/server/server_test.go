@@ -1708,7 +1708,7 @@ func TestLateCallbackRearmsTranscriptRecovery(t *testing.T) {
 	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.stopRetry(t.Context(), p, failure(p, errors.New("gc unavailable")), "gc unavailable"); err != nil {
+	if err := f.s.stopRetry(t.Context(), p, f.s.failure(p, errors.New("gc unavailable")), "gc unavailable"); err != nil {
 		t.Fatal(err)
 	}
 	// The callback outlived gc's failed response. Its success must re-arm
@@ -1831,7 +1831,7 @@ func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
 			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 				t.Fatal(err)
 			}
-			receipt := failure(p, errors.New("unavailable"))
+			receipt := f.s.failure(p, errors.New("unavailable"))
 			var entry *map[string]any
 			if delivered {
 				receipt = f.send(t, p)
@@ -2110,7 +2110,7 @@ func TestFailureLogRecoveryTrackingIsBounded(t *testing.T) {
 	for i := range 1100 {
 		p := wire.PublishRequest{Conversation: conversation("spaces/room"), IdempotencyKey: fmt.Sprint(i)}
 		err := errors.New("failure")
-		f.s.logPublish(p, failure(p, err), err)
+		f.s.logPublish(p, f.s.failure(p, err), err)
 	}
 	if len(f.s.publishFailures) > 1024 {
 		t.Fatalf("unbounded recovery tracking: %d entries", len(f.s.publishFailures))
@@ -2227,5 +2227,437 @@ func TestConcurrentRecoveryChecksHealthUnderExclusiveGate(t *testing.T) {
 	}
 	if code, raw, _ := f.call(t, "/state", map[string]string{"action": "reset"}); code != 409 {
 		t.Fatalf("recovered state replaced: %d %s", code, raw)
+	}
+}
+
+func TestNoAdapterAfterGCRestartRecovers(t *testing.T) {
+	testGCRestartRecovers(t, false)
+}
+
+func TestCityNotRunningAfterGCRestartRecovers(t *testing.T) {
+	testGCRestartRecovers(t, true)
+}
+
+func testGCRestartRecovers(t *testing.T, cityNotRunning bool) {
+	t.Helper()
+	status, code, detail := 422, "validation-failed", "no adapter for gchat/example"
+	if cityNotRunning {
+		status, code, detail = 404, "city-not-found", "not_found: city not found or not running: examplecity"
+	}
+	for _, mode := range []string{"interrupted", "caller", "delivered"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			var logs bytes.Buffer
+			f.s.opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "gc-restart"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			if mode != "caller" {
+				if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+					t.Fatal(err)
+				}
+				if mode == "delivered" && !f.send(t, p).Delivered {
+					t.Fatal("could not seed delivered send awaiting recording")
+				}
+			}
+			f.gc.ForgetRegistrations()
+			f.gc.Configure(func(g *fakegc.Server) { g.CityNotRunning = cityNotRunning })
+
+			// Hold re-registration so all assertions observe gc's restart window.
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			entered, release, registered := make(chan struct{}, 1), make(chan struct{}), make(chan struct{}, 1)
+			var registrations, outbound atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/adapters") {
+					registrations.Add(1)
+					select {
+					case entered <- struct{}{}:
+					default:
+					}
+					<-release
+					proxy.ServeHTTP(w, r)
+					select {
+					case registered <- struct{}{}:
+					default:
+					}
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/outbound") {
+					outbound.Add(1)
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
+			defer unblock()
+			f.s.mu.Lock()
+			f.s.cfg.Secrets.GCAPIBase = f.url
+			f.s.mu.Unlock()
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var restartErr error
+			if mode == "caller" {
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				got := decode[CommandResult](t, raw)
+				if got.Delivered || got.FailureKind != "transient" || got.RetryAfter != int64(time.Second) {
+					t.Errorf("caller restart failure: %+v", got)
+				}
+			} else {
+				restartErr = f.s.RetryPending(ctx)
+				var responseErr *gcclient.HTTPError
+				if !errors.As(restartErr, &responseErr) || responseErr.StatusCode != status || responseErr.Problem.Code != code || responseErr.Problem.Detail != detail {
+					t.Fatalf("restart error not returned: %v", restartErr)
+				}
+			}
+			cancel() // Registration must outlive the failed attempt's context.
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[p.IdempotencyKey]
+			if v.RecordPending != (mode != "caller") || v.NotRecordable {
+				t.Errorf("restart recovery state: %+v", v)
+			}
+			if mode == "interrupted" && v.Receipt != nil {
+				t.Errorf("interrupted send settled: %+v", v.Receipt)
+			}
+			lines := strings.Split(strings.TrimSpace(logs.String()), "\n")
+			if len(lines) != 1 {
+				t.Errorf("want one WARN: %s", logs.String())
+			} else if line := decode[map[string]any](t, []byte(lines[0])); line["level"] != "WARN" || line["operation"] != "gc_outbound" || line["cause_kind"] != "transient" || line["http_status"] != float64(status) {
+				t.Errorf("restart warning: %s", logs.String())
+			}
+			select {
+			case <-entered:
+			case <-time.After(time.Second):
+				t.Fatal("restart error did not trigger registration")
+			}
+			if restartErr == nil {
+				restartErr = &gcclient.HTTPError{StatusCode: status, Problem: &gcclient.Problem{Code: code, Detail: detail}}
+			}
+			for range 10 {
+				f.s.ObserveGCError(restartErr)
+			}
+			f.gc.Configure(func(g *fakegc.Server) { g.CityNotRunning = false })
+			unblock()
+			select {
+			case <-registered:
+			case <-time.After(time.Second):
+				t.Fatal("registration did not survive attempt cancellation")
+			}
+			if mode == "caller" {
+				if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 1 {
+					t.Fatalf("caller failure retried automatically: %v calls=%d", err, outbound.Load())
+				}
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				if got := decode[CommandResult](t, raw); !got.Delivered || !got.Recorded {
+					t.Fatalf("caller recovery: %+v", got)
+				}
+			} else if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			got := commandOutcome(f.l.Sends[p.IdempotencyKey])
+			if !got.Delivered || !got.Recorded || f.count() != 1 || outbound.Load() != 2 || registrations.Load() != 1 {
+				t.Fatalf("recovery: %+v Google=%d gc=%d registrations=%d", got, f.count(), outbound.Load(), registrations.Load())
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 2 {
+				t.Fatalf("completed intent retried: %v calls=%d", err, outbound.Load())
+			}
+		})
+	}
+}
+
+func TestUnboundTransientRetryRechecksBinding(t *testing.T) {
+	for _, mode := range []string{"sweep", "explicit", "still-unbound"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "unbound-transient"}
+			const reason = "no active binding for conversation gchat/spaces/room"
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var calls atomic.Int32
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/outbound") && calls.Add(1) == 2 {
+					// Inspect the durable re-arm before gc supplies the new outcome.
+					saved, err := ledger.Load(f.options.LedgerPath, true)
+					if err != nil {
+						t.Error(err)
+					} else if v := saved.Sends[p.IdempotencyKey]; v.NotRecordable || !v.RecordPending || v.RecordingReason != reason {
+						t.Errorf("re-arm lost binding diagnostic or retained direct shortcut: %+v", v)
+					}
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			f.options.GC = gcclient.New(h.URL, "examplecity")
+			var attempts atomic.Int32
+			c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == "POST" {
+					attempts.Add(1)
+					return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":503,"message":"temporarily unavailable"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.s.RetryPending(t.Context()); err == nil {
+				t.Fatal("transient Chat error not returned")
+			}
+			f.assertPending(t, p.IdempotencyKey, true)
+			v := f.l.Sends[p.IdempotencyKey]
+			if !v.NotRecordable || v.RecordingReason != reason || calls.Load() != 1 || attempts.Load() != 1 || f.count() != 0 {
+				t.Fatalf("first unbound attempt: %+v; gc=%d attempts=%d Google=%d", v, calls.Load(), attempts.Load(), f.count())
+			}
+			f.restart(t) // Reload the no-binding decision from disk, with healthy Chat.
+			if mode != "still-unbound" {
+				f.gc.Bind(p.Conversation, p.SessionID)
+			}
+			if mode == "explicit" {
+				_, raw, _ := f.call(t, "/commands/publish", command(p.IdempotencyKey))
+				if got := decode[CommandResult](t, raw); !got.Delivered || !got.Recorded {
+					t.Errorf("explicit same-key retry: %+v", got)
+				}
+			} else if err := f.s.RetryPending(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			f.assertPending(t, p.IdempotencyKey, false)
+			got := commandOutcome(f.l.Sends[p.IdempotencyKey])
+			if !got.Delivered || got.Recorded != (mode != "still-unbound") || calls.Load() != 2 || f.count() != 1 {
+				t.Fatalf("binding recheck: %+v; gc=%d Google=%d", got, calls.Load(), f.count())
+			}
+			if mode == "still-unbound" && got.Reason != reason {
+				t.Fatalf("no-binding diagnostic changed: %q", got.Reason)
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || calls.Load() != 2 || f.count() != 1 {
+				t.Fatalf("completed intent retried: %v; gc=%d Google=%d", err, calls.Load(), f.count())
+			}
+		})
+	}
+}
+
+func TestFullGCRestartSequenceDeliversOnce(t *testing.T) {
+	f := setup(t)
+	p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "recover me", IdempotencyKey: "full-restart"}
+	f.gc.Bind(p.Conversation, p.SessionID)
+	if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	f.gc.ForgetRegistrations()
+	f.gc.Configure(func(g *fakegc.Server) { g.CityNotRunning = true })
+
+	// Keep the registrar from racing past any of the restart windows.
+	f.s.regGate <- struct{}{}
+	var gateOnce sync.Once
+	releaseGate := func() { gateOnce.Do(func() { <-f.s.regGate }) }
+	defer releaseGate()
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closed.Close()
+	f.s.SetClients(f.options.Chat, gcclient.New(closed.URL, "examplecity"))
+	if err := f.s.RetryPending(t.Context()); !errors.Is(err, syscall.ECONNREFUSED) {
+		t.Fatalf("refused phase: %v", err)
+	}
+	f.assertPending(t, p.IdempotencyKey, true)
+
+	target, _ := url.Parse(f.gc.URL())
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	failed, registered, release := make(chan int, 1), make(chan struct{}, 1), make(chan struct{})
+	var registrations, outbound atomic.Int32
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/adapters") {
+			if registrations.Add(1) == 1 {
+				recorder := httptest.NewRecorder()
+				proxy.ServeHTTP(recorder, r)
+				for key, values := range recorder.Header() {
+					w.Header()[key] = values
+				}
+				w.WriteHeader(recorder.Code)
+				_, _ = w.Write(recorder.Body.Bytes())
+				failed <- recorder.Code
+				return
+			}
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+			proxy.ServeHTTP(w, r)
+			select {
+			case registered <- struct{}{}:
+			default:
+			}
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/outbound") {
+			outbound.Add(1)
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer h.Close()
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	f.s.mu.Lock()
+	f.s.cfg.Secrets.GCAPIBase = f.url
+	f.s.mu.Unlock()
+	f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+	releaseGate()
+	select {
+	case status := <-failed:
+		if status != 404 {
+			t.Fatalf("registration during city startup: %d", status)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("registrar did not try the starting city")
+	}
+	for _, status := range []int{404, 422} {
+		if status == 422 {
+			f.gc.Configure(func(g *fakegc.Server) { g.CityNotRunning = false })
+		}
+		err := f.s.RetryPending(t.Context())
+		var responseErr *gcclient.HTTPError
+		if !errors.As(err, &responseErr) || responseErr.StatusCode != status {
+			t.Fatalf("restart phase %d: %v", status, err)
+		}
+		f.assertPending(t, p.IdempotencyKey, true)
+		if f.count() != 0 {
+			t.Fatal("delivered before city and registration recovered")
+		}
+	}
+	unblock()
+	select {
+	case <-registered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration did not recover")
+	}
+	if err := f.s.RetryPending(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := commandOutcome(f.l.Sends[p.IdempotencyKey]); !got.Delivered || !got.Recorded || f.count() != 1 || outbound.Load() != 3 || registrations.Load() != 2 {
+		t.Fatalf("recovery: %+v Google=%d gc=%d registrations=%d", got, f.count(), outbound.Load(), registrations.Load())
+	}
+	f.assertPending(t, p.IdempotencyKey, false)
+	if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 3 || f.count() != 1 {
+		t.Fatalf("completed intent retried: %v gc=%d Google=%d", err, outbound.Load(), f.count())
+	}
+}
+
+func TestCallerDirectRetryReportsBindingReason(t *testing.T) {
+	for _, session := range []string{"", "session"} {
+		t.Run("session="+session, func(t *testing.T) {
+			f := setup(t)
+			c, err := chat.New(t.Context(), &http.Client{Transport: roundTrip(func(r *http.Request) (*http.Response, error) {
+				if r.Method == http.MethodPost {
+					return &http.Response{StatusCode: 503, Header: http.Header{"Retry-After": []string{"60"}}, Body: io.NopCloser(strings.NewReader(`{"error":{"code":503,"message":"temporarily unavailable"}}`)), Request: r}, nil
+				}
+				return http.DefaultTransport.RoundTrip(r)
+			})}, f.cfg.Endpoints)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.s.SetClients(c, f.options.GC)
+			cmd := command("caller-direct-retry")
+			cmd["session_id"] = session
+			_, raw, _ := f.call(t, "/commands/publish", cmd)
+			first := decode[CommandResult](t, raw)
+			if first.Delivered || first.FailureKind != "transient" || !strings.Contains(first.Reason, "temporarily unavailable") {
+				t.Fatalf("first attempt: %+v", first)
+			}
+			f.restart(t) // Reload the caller-owned failure, then retry with healthy Chat.
+			_, raw, _ = f.call(t, "/commands/publish", cmd)
+			got := decode[CommandResult](t, raw)
+			want := "no active binding: session_id is empty"
+			if session != "" {
+				want = "no active binding for conversation gchat/spaces/room"
+			}
+			if !got.Delivered || got.Recorded || got.Reason != want || f.count() != 1 {
+				t.Fatalf("retry: %+v Google=%d; want reason %q", got, f.count(), want)
+			}
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[first.Key]
+			if v.RecordingReason != want || !v.NotRecordable || v.RecordPending {
+				t.Fatalf("saved binding reason: %+v", v)
+			}
+		})
+	}
+}
+
+func TestPreviousAccountIsDefiniteAndDoesNotRegister(t *testing.T) {
+	for _, delivered := range []bool{false, true} {
+		t.Run(fmt.Sprintf("delivered=%v", delivered), func(t *testing.T) {
+			f := setup(t)
+			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "previous account", IdempotencyKey: "previous-account"}
+			f.gc.Bind(p.Conversation, p.SessionID)
+			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
+				t.Fatal(err)
+			}
+			if delivered && !f.send(t, p).Delivered {
+				t.Fatal("could not seed delivered send awaiting recording")
+			}
+			// A configuration rename leaves the saved intent under its old account.
+			f.s.mu.Lock()
+			f.s.cfg.Settings.Identities = []config.Identity{{Name: "renamed", Agent: "mayor"}}
+			f.s.mu.Unlock()
+			f.gc.ForgetRegistrations()
+			if err := f.options.GC.Register(t.Context(), wire.Registration{Provider: "gchat", AccountID: "renamed", CallbackURL: f.url}); err != nil {
+				t.Fatal(err)
+			}
+			target, _ := url.Parse(f.gc.URL())
+			proxy := httputil.NewSingleHostReverseProxy(target)
+			var registrations, outbound atomic.Int32
+			release := make(chan struct{})
+			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.HasSuffix(r.URL.Path, "/adapters") {
+					registrations.Add(1)
+					<-release
+				}
+				if strings.HasSuffix(r.URL.Path, "/outbound") {
+					outbound.Add(1)
+				}
+				proxy.ServeHTTP(w, r)
+			}))
+			defer h.Close()
+			defer close(release)
+			f.s.SetClients(f.options.Chat, gcclient.New(h.URL, "examplecity"))
+			err := f.s.RetryPending(t.Context())
+			var responseErr *gcclient.HTTPError
+			if !errors.As(err, &responseErr) || responseErr.StatusCode != 422 || responseErr.Problem.Detail != "no adapter for gchat/example" {
+				t.Fatalf("previous account rejection: %v", err)
+			}
+			saved, err := ledger.Load(f.options.LedgerPath, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v := saved.Sends[p.IdempotencyKey]
+			got := commandOutcome(v)
+			if v.RecordPending || got.FailureKind != "permanent" || got.Delivered != delivered || (delivered && !v.NotRecordable) {
+				t.Errorf("previous account retained for retry: %+v outcome=%+v", v, got)
+			}
+			if err := f.s.RetryPending(t.Context()); err != nil || outbound.Load() != 1 {
+				t.Errorf("definite rejection retried: %v gc=%d", err, outbound.Load())
+			}
+			f.s.mu.RLock()
+			registering := f.s.registering
+			f.s.mu.RUnlock()
+			if registering || registrations.Load() != 0 {
+				t.Errorf("previous account triggered registration: registering=%v calls=%d", registering, registrations.Load())
+			}
+			wantMessages := 0
+			if delivered {
+				wantMessages = 1
+			}
+			if f.count() != wantMessages {
+				t.Fatalf("previous account sent to Google: %d", f.count())
+			}
+		})
 	}
 }

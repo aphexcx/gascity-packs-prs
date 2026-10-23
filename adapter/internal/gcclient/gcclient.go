@@ -93,14 +93,32 @@ func (e *HTTPError) Code() string {
 // gc internal/extmsg/outbound.go:137-146 emits this detail for both an absent
 // caller session and a caller that has no matching group route.
 func IsNoBinding(err error) bool {
-	return strings.HasPrefix(bindingDetail(err), "no active binding for conversation ")
+	return strings.HasPrefix(validationDetail(err), "no active binding for conversation ")
+}
+
+// IsNoAdapter identifies a missing in-memory adapter registration after a gc
+// restart. gc internal/extmsg/outbound.go emits "no adapter for <provider>/<account>",
+// returned by the outbound API as 422 validation-failed. Only a missing current
+// account can recover by re-registering; an intent from a renamed account cannot.
+func IsNoAdapter(err error, accountID string) bool {
+	return validationDetail(err) == "no adapter for gchat/"+accountID
+}
+
+// IsCityNotRunning identifies the supervisor's startup window before its city
+// is running. gc internal/api/city_scope.go emits this 404 city-not-found detail
+// for city-scoped requests, including adapter registration and outbound sends.
+func IsCityNotRunning(err error) bool {
+	var responseErr *HTTPError
+	return errors.As(err, &responseErr) && responseErr != nil &&
+		responseErr.StatusCode == http.StatusNotFound && responseErr.Code() == "city-not-found" &&
+		strings.HasPrefix(responseErr.Problem.Detail, "not_found: city not found or not running: ")
 }
 
 // IsWrongOwner reports whether the outbound caller does not own the binding.
 // gc internal/extmsg/outbound.go:109-110,129-130 uses the same detail prefix for
 // agent and session bindings, with the caller session formatted using %q.
 func IsWrongOwner(err error) bool {
-	rest, ok := strings.CutPrefix(bindingDetail(err), "session ")
+	rest, ok := strings.CutPrefix(validationDetail(err), "session ")
 	if !ok {
 		return false
 	}
@@ -108,7 +126,7 @@ func IsWrongOwner(err error) bool {
 	return quoteErr == nil && strings.HasPrefix(rest[len(session):], " does not own binding for conversation ")
 }
 
-func bindingDetail(err error) string {
+func validationDetail(err error) string {
 	var responseErr *HTTPError
 	if errors.As(err, &responseErr) && responseErr != nil &&
 		responseErr.StatusCode == http.StatusUnprocessableEntity && responseErr.Code() == "validation-failed" {

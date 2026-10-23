@@ -218,7 +218,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				_ = body(w, r, &p)
 				_ = s.normalize(&p)
 				err := errors.New("state recovery in progress")
-				receipt := failure(p, err)
+				receipt := s.failure(p, err)
 				s.logPublish(p, receipt, err)
 				respond(w, 200, receipt)
 			} else {
@@ -407,12 +407,12 @@ func validSpace(space string) bool {
 	parts := strings.Split(space, "/")
 	return len(parts) == 2 && parts[0] == "spaces" && parts[1] != "" && parts[1] != "." && parts[1] != ".."
 }
-func failure(p wire.PublishRequest, err error) wire.PublishReceipt {
+func (s *Server) failure(p wire.PublishRequest, err error) wire.PublishReceipt {
 	kind, delay := chat.Classify(err)
 	var gcErr *gcclient.HTTPError
 	if errors.As(err, &gcErr) {
 		kind, delay = chat.Classify(&googleapi.Error{Code: gcErr.StatusCode, Header: http.Header{"Retry-After": []string{gcErr.RetryAfter}}})
-		if gcErr.StatusCode == http.StatusRequestTimeout {
+		if gcErr.StatusCode == http.StatusRequestTimeout || s.isNoAdapter(err) || gcclient.IsCityNotRunning(err) {
 			kind = "transient"
 		}
 	}
@@ -522,10 +522,14 @@ func (s *Server) prepare(ctx context.Context, p wire.PublishRequest, upload *led
 				return errors.New("idempotency key already belongs to another session")
 			}
 			if record && !old.Recorded && (old.Receipt == nil || !old.Receipt.Delivered) {
-				// Only an explicit command retry re-arms a rejected intent.
+				// A command retry or recovery sweep re-arms an undelivered
+				// intent. A session may have gained a binding since the last
+				// attempt; ask gc again, retaining the diagnostic until then.
 				old.RecordPending = true
 				old.Receipt = nil
-				old.RecordingReason = ""
+				if old.Request != nil && old.Request.SessionID != "" {
+					old.NotRecordable = false
+				}
 			}
 			return nil
 		}
@@ -546,12 +550,12 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 	defer func() { s.logPublish(p, receipt, err) }()
 	unlock, err := s.lock(ctx, "send:"+p.IdempotencyKey)
 	if err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	defer unlock()
 	l, err := s.snapshot(ctx)
 	if err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	if old := l.Sends[p.IdempotencyKey]; old != nil {
 		if old.Space != p.Conversation.ConversationID || (old.Request != nil && old.Request.SessionID != p.SessionID) {
@@ -562,14 +566,14 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 	}
 	if err = s.available(); err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	if err = s.prepare(ctx, p, upload, false); err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	l, err = s.snapshot(ctx)
 	if err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	send := l.Sends[p.IdempotencyKey]
 	if send.Request != nil {
@@ -581,17 +585,17 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 	c, _ := s.clients()
 	named, err := s.named(ctx, send.Space)
 	if err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	if send.Upload != nil && send.Parts[0].MessageName == "" && send.Upload.ResourceName == "" && send.Upload.UploadToken == "" {
 		ref, e := c.UploadAttachment(ctx, send.Space, send.Upload.Path)
 		if e != nil {
-			return failure(p, e), e
+			return s.failure(p, e), e
 		}
 		send.Upload.ResourceName = ref.ResourceName
 		send.Upload.UploadToken = ref.AttachmentUploadToken
 		if err = s.update(ctx, func(l *ledger.Ledger) error { l.Sends[send.Key].Upload = send.Upload; return nil }); err != nil {
-			return failure(p, err), err
+			return s.failure(p, err), err
 		}
 	}
 	for i, part := range send.Parts {
@@ -604,7 +608,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 		name, thread, e := c.CreateMessageWithAttachments(ctx, send.Space, part.Text, send.Thread, part.RequestID, named, attachments)
 		if e != nil {
-			return failure(p, e), e
+			return s.failure(p, e), e
 		}
 		send.Parts[i].MessageName = name
 		send.Thread = thread
@@ -622,7 +626,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 			m.Thread = thread
 			return nil
 		}); err != nil {
-			return failure(p, err), err
+			return s.failure(p, err), err
 		}
 	}
 	receipt = wire.PublishReceipt{MessageID: send.Parts[0].MessageName, Conversation: p.Conversation, Delivered: true, Metadata: map[string]string{"thread": send.Thread, "parts": strconv.Itoa(len(send.Parts))}}
@@ -639,7 +643,7 @@ func (s *Server) publish(ctx context.Context, p wire.PublishRequest, upload *led
 		}
 		return nil
 	}); err != nil {
-		return failure(p, err), err
+		return s.failure(p, err), err
 	}
 	return receipt, nil
 }
@@ -743,7 +747,7 @@ func (s *Server) commandHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// A DM's gc binding is distinct from a room binding.
 		if _, err := s.named(r.Context(), p.Conversation.ConversationID); err != nil {
-			r := failure(p, err)
+			r := s.failure(p, err)
 			respond(w, 200, CommandResult{Key: p.IdempotencyKey, Reason: err.Error(), FailureKind: r.FailureKind, RetryAfter: r.RetryAfter})
 			return
 		}
@@ -858,7 +862,10 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			p = *send.Request
 		}
 	}
-	if (send.NotRecordable && send.RecordingFailureKind == "") || p.SessionID == "" {
+	if p.SessionID == "" {
+		return s.direct(ctx, p, send.Upload, noBindingReason(""), result, automatic)
+	}
+	if send.NotRecordable && send.RecordingFailureKind == "" {
 		return s.direct(ctx, p, send.Upload, noBindingReason(send.RecordingReason), result, automatic)
 	}
 	if send.Upload != nil && !result.Delivered {
@@ -897,7 +904,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 	}
 	if !gcclient.IsNoBinding(err) {
 		if err != nil {
-			s.logOutcome("gc_outbound", p, failure(p, err), err)
+			s.logOutcome("gc_outbound", p, s.failure(p, err), err)
 		} else {
 			// This boundary tracks gc transport/rejection recovery; delivery
 			// failures from its callback are logged by publish itself.
@@ -924,7 +931,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			}
 		}
 		if !result.Delivered {
-			r := failure(p, err)
+			r := s.failure(p, err)
 			result.FailureKind, result.RetryAfter = r.FailureKind, r.RetryAfter
 			if !retryAutomatically(automatic, r) {
 				err = errors.Join(err, s.stopRetry(settleCtx, p, r, result.Reason))
@@ -933,9 +940,9 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 			// Delivery is durable; only recording failed. Definite rejections
 			// belong to the caller, while ambiguous recording failures recover.
 			var gcErr *gcclient.HTTPError
-			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429
+			definite := errors.As(err, &gcErr) && gcErr.StatusCode >= 400 && gcErr.StatusCode < 500 && gcErr.StatusCode != 408 && gcErr.StatusCode != 429 && !s.isNoAdapter(err) && !gcclient.IsCityNotRunning(err)
 			if definite {
-				result.FailureKind = failure(p, err).FailureKind
+				result.FailureKind = s.failure(p, err).FailureKind
 			}
 			err = errors.Join(err, s.settle(ctx, func(l *ledger.Ledger) error {
 				v := l.Sends[p.IdempotencyKey]
@@ -990,7 +997,7 @@ func (s *Server) runCommand(ctx context.Context, p wire.PublishRequest, upload *
 // Preparation failures follow the same retry ownership rule as delivery errors,
 // including cancellation just after prepare saved the intent.
 func (s *Server) failPreparedCommand(ctx context.Context, p wire.PublishRequest, cause error, automatic bool) (CommandResult, error) {
-	receipt := failure(p, cause)
+	receipt := s.failure(p, cause)
 	result := CommandResult{Key: p.IdempotencyKey, Reason: cause.Error(), FailureKind: receipt.FailureKind, RetryAfter: receipt.RetryAfter}
 	if retryAutomatically(automatic, receipt) {
 		s.logOutcome("command_prepare", p, receipt, cause)
@@ -1154,10 +1161,16 @@ func (s *Server) Register(ctx context.Context) error {
 	}
 }
 
+// Use the configured identity, not the account persisted in an older intent.
+func (s *Server) isNoAdapter(err error) bool {
+	cfg := s.configuration()
+	return gcclient.IsNoAdapter(err, cfg.Identity().Name)
+}
+
 // ObserveGCError is also available to app-owned gc call sites (inbound/poll).
 // Re-registration uses service lifetime, not the failed request's deadline.
 func (s *Server) ObserveGCError(err error) {
-	if !errors.Is(err, syscall.ECONNREFUSED) {
+	if !errors.Is(err, syscall.ECONNREFUSED) && !s.isNoAdapter(err) && !gcclient.IsCityNotRunning(err) {
 		return
 	}
 	// Coalesce without blocking the failed command or accumulating waiters.
