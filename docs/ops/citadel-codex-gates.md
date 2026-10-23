@@ -46,8 +46,10 @@ plugin catalogue or plugin skill entries.
 
 ## Gate helper
 
-Install `gascity/assets/scripts/codex-gate.sh` at
-`~/city/assets/ops/mayor-tools/codex-gate.sh`. Provision the city profile first.
+Use the updated city helper (ci-cmju0n, 2026-10-23) at
+`~/city/assets/ops/mayor-tools/codex-gate.sh`. The repository copy at
+`gascity/assets/scripts/codex-gate.sh` lacks the options below; do not install
+it over the city helper. Provision the city profile first.
 
 ```bash
 codex-gate.sh review --base origin/main -C "$REPO" --output "$REVIEW_OUTPUT" --class "$REVIEW_CLASS"
@@ -68,9 +70,10 @@ Both modes use `-p city -m gpt-6-astra`, read-only execution, `-C`,
 `--skip-git-repo-check`, and `/dev/null` stdin. `--model MODEL` explicitly
 overrides both the normal model and the optional review model. Review mode
 resolves REF and HEAD to commit IDs, computes their merge base, and asks
-`codex exec` for a QUICK review of that immutable delta. Native `codex review`
-formats its own findings and did not honor the requested VERDICT line in a live
-test, so both helper modes use exec's separate final-answer file.
+`codex exec` for a review of that immutable delta at the selected class.
+Native `codex review` formats its own findings and did not honor the requested
+VERDICT line in a live test, so both helper modes use exec's separate
+final-answer file.
 The caller's output file receives that answer; `FILE.log` holds the transcript.
 The helper accepts exactly one final standalone `VERDICT: CLEAN` or
 `VERDICT: BLOCK` line. Exit codes are 0 for CLEAN, 1 for BLOCK, 2 for invalid
