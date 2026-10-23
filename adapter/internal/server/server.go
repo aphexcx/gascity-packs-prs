@@ -1473,6 +1473,27 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 			pending++
 		}
 	}
+	// Status, rather than reason text, determines what is still in flight and
+	// what an operator can resolve. Do not include the persisted message body.
+	type delivery struct {
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		Reason    string `json:"reason"`
+		ReceiptID string `json:"receipt_id,omitempty"`
+	}
+	deliveries := make([]delivery, 0)
+	inFlight := 0
+	for _, change := range l.Changes {
+		switch change.Status {
+		case "intent", "pending":
+			inFlight++
+		case "unresolved":
+		default:
+			continue
+		}
+		deliveries = append(deliveries, delivery{change.ID, change.Status, change.Reason, change.ReceiptID})
+	}
+	sort.Slice(deliveries, func(i, j int) bool { return deliveries[i].ID < deliveries[j].ID })
 	var lastEvent any
 	if s.opts.LastEvent != nil {
 		if at := s.opts.LastEvent(); !at.IsZero() {
@@ -1480,6 +1501,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	status := map[string]any{"health": s.Health(), "subscription": l.Subscription, "spaces": l.Spaces, "backlog": backlog, "counters": l.Counters, "unresolved": len(l.Unresolved), "unrecorded": pending, "quarantine": len(l.Quarantine), "last_event_time": lastEvent}
+	status["pending"], status["deliveries"] = inFlight, deliveries
 	if s.opts.SubscriptionStatus != nil {
 		failures, next, state, err := s.opts.SubscriptionStatus()
 		kind, code := logCause(err)

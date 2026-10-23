@@ -35,4 +35,7 @@ Offline state commands reserve the service socket while replacing the ledger.
 The default socket is `adapter.sock` beside the ledger when `GC_SERVICE_SOCKET`
 is unset. With a live socket, `--force` requests the service's `/state` recovery
 operation; the service must be in `recovery-required`. Reset reports that gap
-messages may be lost or duplicated. No live ledger is overwritten by the CLI.
+messages may be lost or duplicated. Stop the service before offline restore or
+reset: this guard detects the standalone socket, but gc normally gives the
+service a private socket path. Use `gc gchat state` for recovery through the
+running service's proxy, or stop the city/service before using the offline CLI.
