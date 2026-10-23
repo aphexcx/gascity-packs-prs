@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/ledger"
 )
 
@@ -66,5 +67,28 @@ func TestPersistedIdentitySeedSurvivesRestart(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "credential identity changed"); n != 1 {
 		t.Fatalf("new consent logs=%d: %s", n, logs.String())
+	}
+}
+
+func TestShutdownDuringReseedDoesNotPersistPreviousClient(t *testing.T) {
+	f := newFixture(t, false)
+	a := &application{cfg: f.cfg, l: ledger.New(), log: slog.Default()}
+	old := &chat.Client{}
+	if err := old.SetIdentityUserID("users/111"); err != nil {
+		t.Fatal(err)
+	}
+	a.chatClient.Store(old)
+	a.loaded.Store(true)
+	if err := a.seedIdentity("users/333"); err != nil {
+		t.Fatal(err)
+	}
+	// SIGTERM can arrive after the new seed is saved but before the new client
+	// has been installed. The previous consent must not overwrite the new one.
+	if err := a.saveShutdownState(f.cfg.Endpoints.StateFile); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := ledger.Load(f.cfg.Endpoints.StateFile, true)
+	if err != nil || saved.IdentityUserID != "users/333" || saved.IdentitySeed != "users/333" {
+		t.Fatalf("shutdown restored prior consent: %v %+v", err, saved)
 	}
 }

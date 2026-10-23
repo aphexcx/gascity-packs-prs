@@ -30,6 +30,9 @@ func (a *application) seedIdentity(id string) error {
 		a.l.IdentityUserID, a.l.IdentitySeed = previous, previousSeed
 		return err
 	}
+	// Shutdown may checkpoint before the generation installs its new client.
+	// Once a new consent is durable, the previous client cannot supply identity.
+	a.chatClient.Store(nil)
 	if previous != "" && previous != id {
 		a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
 	}
