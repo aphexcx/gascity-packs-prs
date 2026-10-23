@@ -10,7 +10,8 @@ import (
 
 // ToChat translates only the supported formatting, leaving code and unrelated
 // text (including whitespace) intact. Generated Chat markers are never parsed
-// again as Markdown.
+// again as Markdown. Only unquoted fences protect their contents from conversion;
+// fences nested in block quotes are outside this subset and remain ordinary text.
 func ToChat(md string) string {
 	var out strings.Builder
 	var fence *codeFence
@@ -131,9 +132,6 @@ func blockBoundaryLine(line string) bool {
 	if len(line)-len(body) > 3 || body == "" {
 		return false
 	}
-	if body[0] == '>' {
-		return true
-	}
 	if !strings.ContainsRune("-=*_", rune(body[0])) {
 		return false
 	}
@@ -204,7 +202,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 	var out strings.Builder
 	// Cache failed emphasis searches and index bracket pairs so unmatched
 	// openers do not repeatedly scan the suffix. Known subset limitation:
-	// these lookaheads scan link destinations too, while rendering skips them.
+	// code-run and bracket indexes see link destinations, while rendering skips them.
 	// A backtick in a destination can therefore hide later emphasis or labels
 	// (for example, [a](x`) [b](y) ` leaves the second link literal).
 	noCloser := make(map[string]bool)
@@ -331,6 +329,9 @@ func codeSpanEnd(s string, start int, lastCodeRun map[int]int) int {
 }
 
 // A later opener must be tried on its own, without memoizing a failed search.
+// This is a nearest-opener subset, not a full delimiter stack: a same-marker
+// opener inside a different-marker pair can abandon an outer opener (for
+// example, *see **the *thing** now*). Code spans and link candidates are skipped.
 const emphasisReopened = -2
 
 func emphasisEnd(s string, start int, marker string, lastCodeRun, labels, destinations map[int]int) int {
@@ -570,7 +571,8 @@ func (f *codeFence) closes(line string) bool {
 // would consume more than half the limit, a hard rune-boundary cut without
 // synthetic wrappers guarantees progress. A hard cut also removes the preceding
 // part's synthetic closer if its matching reopener cannot be retained. A complete
-// message that fits, including an unclosed fence, is unchanged.
+// message that fits, including an unclosed fence, is unchanged. Quoted fences
+// are outside the supported subset and split as ordinary text without wrappers.
 func Split(text string, limit int) []string {
 	if text == "" {
 		return nil
