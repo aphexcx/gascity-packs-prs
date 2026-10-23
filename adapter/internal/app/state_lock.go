@@ -37,11 +37,11 @@ func LockState(path string) (*StateLock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
+	f, err := openStateLock(path)
 	if err != nil {
 		return nil, fmt.Errorf("open state lock: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := tryStateLock(f); err != nil {
 		defer f.Close()
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			data, readErr := io.ReadAll(io.LimitReader(f, 4096))
