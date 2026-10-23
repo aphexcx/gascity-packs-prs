@@ -211,10 +211,27 @@ func TestRealGCContract(t *testing.T) {
 	if err := gcclient.New(gc.base, "example-missing-city").Register(t.Context(), reg); !gcclient.IsCityNotRunning(err) {
 		t.Fatalf("missing city: %v", err)
 	}
-	if err := client.Register(t.Context(), reg); err != nil {
+	// Observe the real response without replacing the production registration
+	// builder or client: Register deliberately accepts any successful 2xx.
+	gcURL, err := url.Parse(gc.base)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Log("registration: production builder/client accepted by real gc")
+	registrationProxy := httputil.NewSingleHostReverseProxy(gcURL)
+	var registrationStatus atomic.Int32
+	registrationProxy.ModifyResponse = func(resp *http.Response) error {
+		registrationStatus.Store(int32(resp.StatusCode))
+		return nil
+	}
+	registrationObserver := httptest.NewServer(registrationProxy)
+	t.Cleanup(registrationObserver.Close)
+	if err := gcclient.New(registrationObserver.URL, "examplecity").Register(t.Context(), reg); err != nil {
+		t.Fatal(err)
+	}
+	if got := registrationStatus.Load(); got != http.StatusCreated {
+		t.Fatalf("registration status = %d, want 201", got)
+	}
+	t.Log("registration: production builder/client accepted by real gc with HTTP 201")
 	result, err := client.Outbound(t.Context(), outbound)
 	if err != nil || !result.Receipt.Delivered || result.Receipt.MessageID == "" || result.TranscriptEntry == nil {
 		t.Fatalf("outbound result: %+v %v", result, err)
