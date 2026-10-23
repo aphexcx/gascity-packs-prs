@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,9 @@ func TestCatchupCadence(t *testing.T) {
 				hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					body, code := "{}", 200
 					switch {
+					case r.URL.Path == "/v1/subscriptions":
+						data, _ := json.Marshal(&workspace.ListSubscriptionsResponse{Subscriptions: []*workspace.Subscription{{Name: "subscriptions/recovered", State: "ACTIVE", TargetResource: events.Target, EventTypes: events.EventTypes, PayloadOptions: &workspace.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &workspace.NotificationEndpoint{PubsubTopic: "projects/example/topics/chat"}, ExpireTime: time.Now().Add(4 * time.Hour).UTC().Format(time.RFC3339Nano)}}})
+						body = string(data)
 					case r.URL.Path == "/v1/spaces":
 						lists.Add(1)
 						body = `{"spaces":[{"name":"spaces/room","spaceType":"SPACE"}]}`
@@ -115,6 +119,14 @@ func TestCatchupCadence(t *testing.T) {
 				}
 				if held && messages.Load() <= beforeMessages {
 					t.Fatal("hourly inventory did not retry held space")
+				}
+				beforeMessages, beforeHistory = messages.Load(), history.Load()
+				if _, err := m.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				if messages.Load() != beforeMessages+1 || history.Load() != beforeHistory+1 || !caught.Load() {
+					t.Fatal("RecoveryNeeded did not run a complete history pass")
 				}
 				cancel()
 				<-done
