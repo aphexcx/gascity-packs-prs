@@ -38,6 +38,8 @@ func (e *RecoveryError) Is(target error) bool { return target == ErrRecoveryRequ
 func (e *RecoveryError) Unwrap() error        { return e.Err }
 
 type Ledger struct {
+	saveGuard func() error
+
 	Version        int                      `json:"version"`
 	IdentityUserID string                   `json:"identity_user_id,omitempty"`
 	IdentitySeed   string                   `json:"identity_seed,omitempty"`
@@ -265,10 +267,20 @@ func hasNullRecord[T any](records map[string]*T) bool {
 	return false
 }
 
+// SetSaveGuard installs a process-local ownership check before every write.
+// Like mutations, installation must be serialized by the caller. Clone retains
+// the guard; JSON persistence deliberately does not serialize it.
+func (l *Ledger) SetSaveGuard(guard func() error) { l.saveGuard = guard }
+
 // Save writes and syncs path.tmp before atomically replacing path, then syncs
 // the containing directory. Callers create the parent directory first. Failed
 // writes and renames remove the temporary file, reporting any cleanup error.
 func (l *Ledger) Save(path string) error {
+	if l.saveGuard != nil {
+		if err := l.saveGuard(); err != nil {
+			return fmt.Errorf("save ledger %s: %w", path, err)
+		}
+	}
 	if err := l.validate(); err != nil {
 		return fmt.Errorf("save ledger %s: %w", path, err)
 	}

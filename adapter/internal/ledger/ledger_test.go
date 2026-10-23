@@ -594,3 +594,30 @@ func TestClonePreservesNilAndEmptyCollections(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveGuardPreventsReplacementAndSurvivesClone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	l := ledger.New()
+	if err := l.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost := errors.New("ledger lock ownership lost")
+	l.SetSaveGuard(func() error { return lost })
+	for _, candidate := range []*ledger.Ledger{l, l.Clone()} {
+		candidate.Counters["changed"] = 1
+		if err := candidate.Save(path); !errors.Is(err, lost) {
+			t.Fatalf("save without ownership: %v", err)
+		}
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("guard changed persisted ledger: %v", err)
+	}
+	if _, err := os.Lstat(path + ".tmp"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("guard created temporary file: %v", err)
+	}
+}
