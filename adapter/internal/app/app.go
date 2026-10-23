@@ -52,7 +52,7 @@ type application struct {
 	lastEvent     atomic.Int64
 	gcDown        atomic.Bool
 	resume        chan struct{}
-	notices       chan string
+	notices       chan notification
 	noticeMu      sync.Mutex
 	notified      map[string]bool
 	legacyWarning sync.Once
@@ -83,7 +83,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
 		return err
 	}
-	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan string, 8), notified: map[string]bool{}}
+	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
 	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)

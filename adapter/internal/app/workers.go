@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -66,7 +67,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	if err != nil {
 		return err
 	}
-	m, err := events.New(events.Options{Service: es, Topic: a.cfg.Secrets.Topic, Ledger: a.l, LedgerPath: a.cfg.Endpoints.StateFile, LedgerMu: &a.mu, Log: a.log})
+	m, err := events.New(events.Options{Service: es, Topic: a.cfg.Secrets.Topic, Ledger: a.l, LedgerPath: a.cfg.Endpoints.StateFile, LedgerMu: &a.mu, Log: slog.New(subscriptionLogHandler{a.log.Handler()})})
 	if err != nil {
 		return err
 	}
@@ -129,15 +130,11 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 				return err
 			}
 			last, failures, _, state := m.Status()
-			if credentialsError(last) || source.State() == token.NeedsSignIn {
+			if subscriptionCredentialsError(last) || source.State() == token.NeedsSignIn {
 				return token.ErrNeedsSignIn
 			}
 			if failures > 0 {
-				a.health("catching-up", safeReason("subscription reconciliation pending", last))
-				var ge *googleapi.Error
-				if errors.As(last, &ge) && ge.Code >= 400 && ge.Code < 500 {
-					a.notice("subscription")
-				}
+				a.subscriptionFailure(last)
 			} else if a.gcDown.Load() {
 				a.health("catching-up", "gc unavailable; deliveries retained for retry")
 			} else if state.State != "ACTIVE" {
@@ -145,6 +142,7 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 			} else if c.IdentityUserID() == "" && a.lastEvent.Load() != 0 {
 				a.health("catching-up", "Chat identity not yet known; run gc gchat auth")
 			} else if caught.Load() {
+				a.subscriptionRecovered()
 				a.health("ready", "")
 			}
 		}
@@ -334,20 +332,31 @@ func (a *application) retry(ctx context.Context, op string, fn func() error) err
 	for ceiling := time.Second; ; ceiling = min(2*ceiling, time.Minute) {
 		err := fn()
 		if err == nil {
+			if op == "subscription" {
+				a.subscriptionRecovered()
+			}
 			return nil
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if credentialsError(err) {
+		if (op == "subscription" && subscriptionCredentialsError(err)) || (op != "subscription" && credentialsError(err)) {
 			return err
 		}
-		a.log.Warn("initialization deferred", "operation", op, "cause", safeReason("retrying", err))
-		var ge *googleapi.Error
-		if op == "subscription" && errors.As(err, &ge) && ge.Code >= 400 && ge.Code < 500 {
-			a.notice("subscription")
+		cause := safeReason("retrying", err)
+		if op == "subscription" {
+			cause = subscriptionReason(err)
 		}
-		if err = sleep(ctx, ceiling/2+time.Duration(rand.Int64N(int64(ceiling/2)))); err != nil {
+		a.log.Warn("initialization deferred", "operation", op, "cause", cause)
+		delay := ceiling/2 + time.Duration(rand.Int64N(int64(ceiling/2)))
+		if op == "subscription" {
+			a.subscriptionFailure(err)
+			if m := a.manager.Load(); m != nil {
+				_, _, next, _ := m.Status()
+				delay = max(time.Until(next), 0)
+			}
+		}
+		if err = sleep(ctx, delay); err != nil {
 			return err
 		}
 	}

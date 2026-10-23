@@ -28,6 +28,14 @@ A rejected access token triggers a refresh before requiring sign-in. Permanent
 refresh failure, or two consecutive credential rejections within five minutes
 despite refresh, holds delivery until a validated token replacement.
 
+Workspace Events API 403/404 responses are subscription setup failures, shown
+as `catching-up` with `subscription refused: <sanitized cause>`. They send one
+subscription notice per incident, including the cause and the README setup
+checklist: enable the Workspace Events API and grant the Chat service account
+Publisher on the topic. Reconciliation follows the subscriber's backoff
+(including discovery after ambiguous mutations), and logs `subscription
+recovered` on success. These failures do not ask for sign-in.
+
 Catch-up runs at startup and after subscription recovery. Unfinished intervals
 retry with backoff; completed recovery stays idle. An hourly inventory refresh
 can discover rejoined spaces and retry held history. Live messages arrive on

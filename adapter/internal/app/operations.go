@@ -110,15 +110,23 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 	}
 }
 
-func (a *application) notice(kind string) {
+type notification struct{ kind, message string }
+
+func (a *application) notice(kind string, details ...string) {
 	a.noticeMu.Lock()
 	defer a.noticeMu.Unlock()
 	if a.notified[kind] {
 		return
 	}
 	a.notified[kind] = true
+	message := "Subscription reconciliation failed; inspect gc gchat status and the README Google-side setup checklist (enabled APIs and topic Publisher IAM)."
+	if kind == "credentials" {
+		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
+	} else if len(details) > 0 {
+		message = details[0] + ". " + message
+	}
 	select {
-	case a.notices <- kind:
+	case a.notices <- notification{kind, message}:
 	default:
 	}
 }
@@ -127,13 +135,9 @@ func (a *application) notifyLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case kind := <-a.notices:
-			message := "Subscription reconciliation failed; inspect gc gchat status."
-			if kind == "credentials" {
-				message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
-			}
+		case notice := <-a.notices:
 			nctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := a.opts.Notify(nctx, "gchat: "+kind, message)
+			err := a.opts.Notify(nctx, "gchat: "+notice.kind, notice.message)
 			cancel()
 			if err != nil {
 				a.log.Warn("operator notification failed", "operation", "notify")
