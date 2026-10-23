@@ -29,7 +29,9 @@ file stores the ID token's subject as `identity_user_id` (`users/<numeric id>`),
 and `auth --check` prints it. The adapter seeds the ledger identity before
 inbound processing, so the first DM needs no preceding outbound message.
 Legacy token files still learn from an outbound response and warn once to run
-`gc gchat auth`. If a create response contradicts the seeded identity, the
+`gc gchat auth`. Without a persisted identity they hold inbound events at
+Google until renewed consent or the first outbound response establishes it.
+If a create response contradicts the seeded identity, the
 observed ID is saved and the client rebuilt; the observed ID then wins across
 restarts. The ledger's `identity_seed` records the token subject separately;
 only a new subject (new consent) replaces the observed identity with a new seed.
@@ -53,9 +55,12 @@ recipient's mailbox. Startup registers once; a healthy run resets connection
 restart backoff for the next interruption.
 
 Catch-up runs at startup and after subscription recovery. Unfinished intervals
-retry with backoff; completed recovery stays idle. An hourly inventory refresh
-can discover rejoined spaces and retry held history. Live messages arrive on
-the Pub/Sub stream.
+retry with backoff. Once an hour the adapter performs a full history sweep:
+one paginated spaces inventory plus message and space-event history lists for
+each eligible space, including those with completed recovery. This discovers
+rejoined spaces and retries held history; `/status` and health name it
+`hourly history sweep` while it runs. Between sweeps and recovery work, live
+messages arrive on the Pub/Sub stream without periodic history reads.
 
 The service holds an advisory lock on `<ledger>.lock` for its lifetime and
 records its socket there. Offline state commands take the same lock and refuse

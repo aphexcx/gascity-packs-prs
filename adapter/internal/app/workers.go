@@ -274,9 +274,10 @@ func (a *application) catchup(ctx context.Context, r *catchup.Runner, m *events.
 			pass = a.frozenHistory()
 			caught.Store(!pass)
 		case <-inventory.C:
-			// Only the hourly inventory can discover rejoined/held spaces in
-			// the absence of a subscription recovery notification. Completed
-			// intervals otherwise stay idle; inbound arrives on the stream.
+			// Freeze opens an interval for every eligible space. This is an
+			// hourly history sweep, including spaces whose recovery completed.
+			caught.Store(false)
+			a.health("catching-up", "hourly history sweep")
 			if err := a.retry(ctx, "freeze", func() error { return r.Freeze(ctx, time.Now()) }); err != nil {
 				return err
 			}

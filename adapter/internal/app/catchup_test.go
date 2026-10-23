@@ -117,8 +117,15 @@ func TestCatchupCadence(t *testing.T) {
 				if lists.Load() != beforeLists+1 {
 					t.Fatalf("hourly inventory calls=%d want 1", lists.Load()-beforeLists)
 				}
-				if held && messages.Load() <= beforeMessages {
-					t.Fatal("hourly inventory did not retry held space")
+				intervals := int32(1)
+				if held {
+					intervals = 2
+				} // finish the held interval, then the new sweep interval
+				if messages.Load() != beforeMessages+intervals || history.Load() != beforeHistory+intervals {
+					t.Fatalf("hourly sweep calls: messages %d->%d events %d->%d", beforeMessages, messages.Load(), beforeHistory, history.Load())
+				}
+				if a.s.Health().Reason != "hourly history sweep" {
+					t.Fatalf("hourly sweep not named in status: %+v", a.s.Health())
 				}
 				beforeMessages, beforeHistory = messages.Load(), history.Load()
 				if _, err := m.Reconcile(ctx); err != nil {
