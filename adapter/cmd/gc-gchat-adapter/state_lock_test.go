@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +23,7 @@ import (
 
 func TestStateAgainstGCService(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "adapter")
-	build := exec.Command(filepath.Join(runtime.GOROOT(), "bin", "go"), "build", "-o", bin, "./cmd/gc-gchat-adapter")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/gc-gchat-adapter")
 	build.Dir = "../.."
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, out)

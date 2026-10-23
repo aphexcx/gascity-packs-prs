@@ -256,9 +256,8 @@ func TestRealGCContract(t *testing.T) {
 }
 
 type gcProcess struct {
-	root, base, city, bin string
-	env                   []string
-	client                *http.Client
+	root, base string
+	client     *http.Client
 }
 
 func startGC(t *testing.T, bin string) *gcProcess {
