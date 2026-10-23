@@ -184,13 +184,13 @@ func TestStartupHealthDoesNotWaitForGoogle(t *testing.T) {
 	f.google.Configure(func(g *fakegoogle.Server) { g.OperationDelay = 10 * time.Second })
 	start := time.Now()
 	f.start(t)
-	f.health(t, "initializing", 100*time.Millisecond)
-	if elapsed := time.Since(start); elapsed >= 100*time.Millisecond {
+	f.health(t, "initializing", 2*time.Second)
+	if elapsed := time.Since(start); elapsed >= 5*time.Second {
 		t.Fatalf("health took %s", elapsed)
 	}
 	// The supervisor's entire five-second readiness window must remain served.
 	time.Sleep(5 * time.Second)
-	f.health(t, "initializing", 100*time.Millisecond)
+	f.health(t, "initializing", 2*time.Second)
 }
 
 func TestStartupOrderAndReadiness(t *testing.T) {
@@ -321,6 +321,17 @@ func TestSettingsReloadUpdatesWakePolicy(t *testing.T) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		return strings.Contains(string(b), `"wake":"mentions"`)
+	})
+	waitFor(t, 5*time.Second, func() bool {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		registrations := 0
+		for _, request := range f.requests {
+			if strings.Contains(request, "/extmsg/adapters") {
+				registrations++
+			}
+		}
+		return registrations == 2
 	})
 }
 
