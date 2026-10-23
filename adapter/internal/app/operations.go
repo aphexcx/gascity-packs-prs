@@ -20,21 +20,22 @@ func (a *application) seedIdentity(id string) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if id == a.credentialIdentity && a.l.IdentityUserID != "" {
+	if id == a.l.IdentitySeed && a.l.IdentityUserID != "" {
 		return nil
 	}
 	previous := a.l.IdentityUserID
-	if previous != id {
-		a.l.IdentityUserID = id
-		if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
-			a.l.IdentityUserID = previous
-			return err
-		}
-		if previous != "" {
-			a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
-		}
+	previousSeed := a.l.IdentitySeed
+	a.l.IdentityUserID, a.l.IdentitySeed = id, id
+	if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
+		a.l.IdentityUserID, a.l.IdentitySeed = previous, previousSeed
+		return err
 	}
-	a.credentialIdentity = id
+	// Shutdown may checkpoint before the generation installs its new client.
+	// Once a new consent is durable, the previous client cannot supply identity.
+	a.chatClient.Store(nil)
+	if previous != "" && previous != id {
+		a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
+	}
 	return nil
 }
 
@@ -93,7 +94,7 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 				continue
 			}
 			if a.gcDown.Load() {
-				if err := a.s.Register(ctx); err != nil {
+				if err := a.ensureRegistered(ctx, registered); err != nil {
 					return
 				}
 				a.gcDown.Store(false)
@@ -112,15 +113,23 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 	}
 }
 
-func (a *application) notice(kind string) {
+type notification struct{ kind, message, agent, dedup string }
+
+func (a *application) notice(kind string, details ...string) {
 	a.noticeMu.Lock()
 	defer a.noticeMu.Unlock()
 	if a.notified[kind] {
 		return
 	}
 	a.notified[kind] = true
+	message := "Subscription reconciliation failed; inspect gc gchat status and the README Google-side setup checklist (enabled APIs and topic Publisher IAM)."
+	if kind == "credentials" {
+		message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
+	} else if len(details) > 0 {
+		message = details[0] + ". " + message
+	}
 	select {
-	case a.notices <- kind:
+	case a.notices <- notification{kind: kind, message: message, agent: a.cfg.Identity().Agent, dedup: "gchat:" + a.cfg.Secrets.CityName + ":" + a.cfg.Identity().Name + ":" + kind}:
 	default:
 	}
 }
@@ -129,22 +138,20 @@ func (a *application) notifyLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case kind := <-a.notices:
-			message := "Subscription reconciliation failed; inspect gc gchat status."
-			if kind == "credentials" {
-				message = "Google Chat credentials are missing or revoked; run gc gchat auth. Events remain at Google."
-			}
+		case notice := <-a.notices:
 			nctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := a.opts.Notify(nctx, "gchat: "+kind, message)
+			var err error
+			if a.opts.Notify != nil {
+				err = a.opts.Notify(nctx, "gchat: "+notice.kind, notice.message)
+			} else {
+				err = exec.CommandContext(nctx, "gc", "mail", "send", notice.agent, "--dedup", notice.dedup, "-s", "gchat: "+notice.kind, "-m", notice.message).Run()
+			}
 			cancel()
 			if err != nil {
 				a.log.Warn("operator notification failed", "operation", "notify")
 			}
 		}
 	}
-}
-func notifyMayor(ctx context.Context, subject, body string) error {
-	return exec.CommandContext(ctx, "gc", "mail", "send", "mayor", "-s", subject, "-m", body).Run()
 }
 func signal(ch chan struct{}) {
 	select {

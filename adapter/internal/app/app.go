@@ -51,11 +51,14 @@ type application struct {
 	loaded             atomic.Bool
 	lastEvent          atomic.Int64
 	gcDown             atomic.Bool
+	registrationMu     sync.Mutex
+	registrationNeeded atomic.Bool
+	healthyGeneration  atomic.Bool
+	restartDelay       time.Duration // owned by the run loop
 	resume             chan struct{}
-	notices            chan string
+	notices            chan notification
 	noticeMu           sync.Mutex
 	notified           map[string]bool
-	credentialIdentity string
 	legacyWarning      sync.Once
 }
 
@@ -73,10 +76,15 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
-	if opts.Notify == nil {
-		opts.Notify = notifyMayor
+	lock, err := LockState(cfg.Endpoints.StateFile)
+	if err != nil {
+		return err
 	}
-	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan string, 8), notified: map[string]bool{}}
+	defer lock.Close()
+	if err := lock.RecordSocket(cfg.Secrets.ServiceSocket); err != nil {
+		return err
+	}
+	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
 	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
@@ -113,44 +121,64 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 			defer a.stateMu.Unlock()
 		}
 		s.ServeHTTP(w, r)
-	}), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 25 * time.Second, IdleTimeout: time.Minute}
+	}), BaseContext: func(net.Listener) context.Context { return serviceCtx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 25 * time.Second, IdleTimeout: time.Minute}
 	httpDone := make(chan error, 1)
 	go func() { httpDone <- h.Serve(ln) }()
 	workerDone := make(chan error, 1)
 	go func() { workerDone <- a.run(serviceCtx) }()
 	var result error
+	workerStopped := false
 	select {
 	case result = <-workerDone:
+		workerStopped = true
 	case err = <-httpDone:
 		if !errors.Is(err, http.ErrServerClosed) {
 			result = err
 		}
-		cancel()
-		result = errors.Join(result, <-workerDone)
 	case <-ctx.Done():
-		cancel()
-		result = <-workerDone
 	}
 	cancel()
+	// gc allows only two seconds before SIGKILL. Stop intake and checkpoint
+	// before waiting on any request or worker; request contexts share cancellation.
+	_ = ln.Close()
 	s.Close()
-	shutdownCtx, stop := context.WithTimeout(context.Background(), 30*time.Second)
+	result = errors.Join(result, a.saveShutdownState(cfg.Endpoints.StateFile))
+	shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
 	defer stop()
 	if err := h.Shutdown(shutdownCtx); err != nil {
 		_ = h.Close()
-		result = errors.Join(result, err)
-	}
-	if a.loaded.Load() {
-		if c := a.chatClient.Load(); c != nil {
-			if err := a.persistIdentity(c); err != nil && !errors.Is(err, errIdentityChanged) {
-				result = errors.Join(result, err)
-			}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			result = errors.Join(result, err)
 		}
-		a.mu.Lock()
-		err := a.l.Save(a.cfg.Endpoints.StateFile)
-		a.mu.Unlock()
-		result = errors.Join(result, err)
+	}
+	if !workerStopped {
+		select {
+		case err := <-workerDone:
+			workerStopped = true
+			result = errors.Join(result, err)
+		case <-shutdownCtx.Done():
+		}
+	}
+	// Capture any completion during the drain without depending on it for the
+	// first durable checkpoint. The original path is immutable across reloads.
+	if workerStopped && shutdownCtx.Err() == nil {
+		result = errors.Join(result, a.saveShutdownState(cfg.Endpoints.StateFile))
 	}
 	return result
+}
+
+func (a *application) saveShutdownState(path string) error {
+	if !a.loaded.Load() {
+		return nil
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if c := a.chatClient.Load(); c != nil {
+		if id, _ := c.ObservedIdentityUserID(); id != "" {
+			a.l.IdentityUserID = id
+		}
+	}
+	return a.l.Save(path)
 }
 
 func prepareSocket(path string) error {
@@ -175,13 +203,22 @@ func prepareSocket(path string) error {
 	if !errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("app: cannot verify stale socket %s: %w", path, err)
 	}
-	return os.Remove(path)
+	return RemoveSocket(path, info)
 }
 
 func (a *application) health(state, reason string) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	if state == "ready" {
+		a.healthyGeneration.Store(true)
+	}
+	if a.s.Health() == (server.Health{State: state, Reason: reason}) {
+		return
+	}
 	a.s.SetHealth(server.Health{State: state, Reason: reason})
+	if a.log != nil {
+		a.log.Debug("adapter health changed", "state", state, "reason", reason)
+	}
 }
 
 func (a *application) run(ctx context.Context) error {
@@ -226,9 +263,7 @@ func (a *application) run(ctx context.Context) error {
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	a.s.SetClients(nil, g)
 	auxiliaries.Go(func() {
-		if a.s.Register(ctx) == nil {
-			registered.Store(true)
-		}
+		_ = a.ensureRegistered(ctx, registered)
 	})
 	auxiliaries.Go(func() { a.retryPending(ctx, registered) })
 	var generationCancel context.CancelFunc
@@ -258,7 +293,6 @@ func (a *application) run(ctx context.Context) error {
 	credentialHold := false
 	var lastCredentialFailure time.Time
 	reloaded := false
-	restartDelay := time.Second
 	settingsBytes, _ := os.ReadFile(a.opts.SettingsPath)
 	start := func() {
 		if recovery || credentialHold || generationDone != nil {
@@ -313,7 +347,7 @@ func (a *application) run(ctx context.Context) error {
 			a.noticeMu.Lock()
 			delete(a.notified, "credentials")
 			a.noticeMu.Unlock()
-			restartDelay = time.Second
+			a.restartDelay = time.Second
 			start()
 		case err := <-generationDone:
 			generationCancel()
@@ -364,9 +398,8 @@ func (a *application) run(ctx context.Context) error {
 			} else {
 				a.health("initializing", safeReason("connection interrupted; retrying", err))
 				a.log.Warn("adapter connection interrupted", "operation", "connect", "cause", safeReason("retrying", err))
-				retryTimer = time.NewTimer(restartDelay/2 + time.Duration(rand.Int64N(int64(restartDelay/2))))
+				retryTimer = time.NewTimer(a.nextRestartDelay())
 				retry = retryTimer.C
-				restartDelay = min(restartDelay*2, time.Minute)
 			}
 		case <-retry:
 			retry = nil
@@ -400,6 +433,7 @@ func (a *application) run(ctx context.Context) error {
 						}
 						a.cfg = next
 						a.s.SetConfig(*next)
+						a.registrationNeeded.Store(true)
 						if !recovery {
 							a.mu.Lock()
 							for _, space := range a.l.Spaces {
@@ -419,11 +453,41 @@ func (a *application) run(ctx context.Context) error {
 				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
 				stopGeneration()
 				credentialHold = true
-				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
 				a.notice("credentials")
 			}
 		}
 	}
+}
+
+func (a *application) nextRestartDelay() time.Duration {
+	healthy := a.healthyGeneration.Swap(false)
+	if a.restartDelay == 0 || healthy {
+		a.restartDelay = time.Second
+	}
+	delay := a.restartDelay/2 + time.Duration(rand.Int64N(int64(a.restartDelay/2)))
+	a.restartDelay = min(2*a.restartDelay, time.Minute)
+	return delay
+}
+
+// The initial registration also runs without credentials. Generations join
+// that attempt, rather than posting a second registration at startup.
+func (a *application) ensureRegistered(ctx context.Context, registered *atomic.Bool) error {
+	a.registrationMu.Lock()
+	defer a.registrationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if registered.Load() && !a.gcDown.Load() && !a.registrationNeeded.Load() {
+		return nil
+	}
+	a.registrationNeeded.Store(false)
+	if err := a.s.Register(ctx); err != nil {
+		a.registrationNeeded.Store(true)
+		return err
+	}
+	registered.Store(true)
+	a.gcDown.Store(false)
+	return nil
 }
 
 func watchToken(ctx context.Context, source *token.Source, reload chan struct{}) func() {

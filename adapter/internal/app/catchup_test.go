@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -46,6 +47,9 @@ func TestCatchupCadence(t *testing.T) {
 				hc := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					body, code := "{}", 200
 					switch {
+					case r.URL.Path == "/v1/subscriptions":
+						data, _ := json.Marshal(&workspace.ListSubscriptionsResponse{Subscriptions: []*workspace.Subscription{{Name: "subscriptions/recovered", State: "ACTIVE", TargetResource: events.Target, EventTypes: events.EventTypes, PayloadOptions: &workspace.PayloadOptions{IncludeResource: true}, NotificationEndpoint: &workspace.NotificationEndpoint{PubsubTopic: "projects/example/topics/chat"}, ExpireTime: time.Now().Add(4 * time.Hour).UTC().Format(time.RFC3339Nano)}}})
+						body = string(data)
 					case r.URL.Path == "/v1/spaces":
 						lists.Add(1)
 						body = `{"spaces":[{"name":"spaces/room","spaceType":"SPACE"}]}`
@@ -113,8 +117,23 @@ func TestCatchupCadence(t *testing.T) {
 				if lists.Load() != beforeLists+1 {
 					t.Fatalf("hourly inventory calls=%d want 1", lists.Load()-beforeLists)
 				}
-				if held && messages.Load() <= beforeMessages {
-					t.Fatal("hourly inventory did not retry held space")
+				intervals := int32(1)
+				if held {
+					intervals = 2
+				} // finish the held interval, then the new sweep interval
+				if messages.Load() != beforeMessages+intervals || history.Load() != beforeHistory+intervals {
+					t.Fatalf("hourly sweep calls: messages %d->%d events %d->%d", beforeMessages, messages.Load(), beforeHistory, history.Load())
+				}
+				if a.s.Health().Reason != "hourly history sweep" {
+					t.Fatalf("hourly sweep not named in status: %+v", a.s.Health())
+				}
+				beforeMessages, beforeHistory = messages.Load(), history.Load()
+				if _, err := m.Reconcile(ctx); err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				if messages.Load() != beforeMessages+1 || history.Load() != beforeHistory+1 || !caught.Load() {
+					t.Fatal("RecoveryNeeded did not run a complete history pass")
 				}
 				cancel()
 				<-done

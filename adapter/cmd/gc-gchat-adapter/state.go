@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"gchat-adapter/internal/app"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/ledger"
 )
@@ -70,6 +71,15 @@ func runState(ctx context.Context, args []string, stdout, stderr io.Writer, gete
 }
 
 func changeState(ctx context.Context, cfg *config.Config, action, backup string, force bool) error {
+	lock, err := app.LockState(cfg.Endpoints.StateFile)
+	if err != nil {
+		var held *app.StateLockedError
+		if force && errors.As(err, &held) && held.Socket != "" {
+			return requestState(ctx, held.Socket, action, backup)
+		}
+		return err
+	}
+	defer lock.Close()
 	socket := cfg.Secrets.ServiceSocket
 	if socket == "" {
 		socket = filepath.Join(filepath.Dir(cfg.Endpoints.StateFile), "adapter.sock")
@@ -146,14 +156,7 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 }
 
 func removeStateSocket(socket string, expected os.FileInfo) error {
-	current, err := os.Lstat(socket)
-	if err != nil {
-		return err
-	}
-	if current.Mode()&os.ModeSocket == 0 || !os.SameFile(expected, current) {
-		return fmt.Errorf("state socket path %s changed", socket)
-	}
-	return os.Remove(socket)
+	return app.RemoveSocket(socket, expected)
 }
 
 func requestState(ctx context.Context, socket, action, backup string) error {
