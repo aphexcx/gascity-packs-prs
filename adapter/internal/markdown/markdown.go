@@ -227,8 +227,8 @@ func formatInline(s string, heading, allowLinks bool) string {
 			continue
 		}
 		if s[i] == '[' {
-			if label, url, end, ok := link(s, i, labels, destinations); ok {
-				if !allowLinks || (i > 0 && s[i-1] == '!' && escapedByte != i-1) {
+			if label, url, end, ok := link(s, i, labels, destinations); end > 0 {
+				if !ok || !allowLinks || (i > 0 && s[i-1] == '!' && escapedByte != i-1) {
 					out.WriteString(s[i:end])
 				} else {
 					// Links cannot nest in link text. Keep nested link syntax
@@ -438,14 +438,18 @@ func link(s string, start int, labels, destinations map[int]int) (label, url str
 	if !found {
 		return
 	}
+	// Retain the complete candidate even when its destination is invalid so
+	// rendering cannot rewrite its label or discard malformed title text.
+	end = closeURL + 1
 	url, ok = chatDestination(s[closeLabel+2 : closeURL])
-	if !ok {
-		return
-	}
-	return s[start+1 : closeLabel], url, closeURL + 1, true
+	return s[start+1 : closeLabel], url, end, ok
 }
 
 func chatDestination(s string) (string, bool) {
+	// Even a code span spanning physical lines must not hide a newline here.
+	if strings.ContainsAny(s, "\r\n") {
+		return "", false
+	}
 	s = strings.TrimLeft(s, " \t")
 	angleEnd := -1
 	if strings.HasPrefix(s, "<") {
@@ -460,26 +464,63 @@ func chatDestination(s string) (string, bool) {
 			}
 		}
 	}
+	destination, title := s, ""
 	if angleEnd >= 0 {
-		if angleEnd+1 < len(s) && !strings.ContainsRune(" \t\r\n", rune(s[angleEnd+1])) {
+		if angleEnd+1 < len(s) && s[angleEnd+1] != ' ' && s[angleEnd+1] != '\t' {
 			return "", false // An angle destination cannot have an attached suffix.
 		}
-		s = s[1:angleEnd] // Spaces inside <...> belong to the destination.
+		destination, title = s[1:angleEnd], s[angleEnd+1:]
+	} else {
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\\' && i+1 < len(s) {
+				i++
+				continue
+			}
+			if s[i] == ' ' || s[i] == '\t' {
+				destination, title = s[:i], s[i:]
+				break
+			}
+		}
 	}
-	for i := 0; i < len(s); i++ {
+	if destination == "" || !linkTitle(strings.Trim(title, " \t")) {
+		return "", false
+	}
+	// These delimiters have structural meaning in Chat's <url|label> syntax.
+	destination = strings.ReplaceAll(destination, "|", "%7C")
+	destination = strings.ReplaceAll(destination, "<", "%3C")
+	return strings.ReplaceAll(destination, ">", "%3E"), true
+}
+
+// A title is optional, but arbitrary trailing destination text is never one.
+// Recognize quoted or parenthesized titles with backslash-escaped delimiters.
+func linkTitle(s string) bool {
+	if s == "" {
+		return true
+	}
+	if len(s) < 2 {
+		return false
+	}
+	closer := s[0]
+	switch closer {
+	case '"', '\'':
+	case '(':
+		closer = ')'
+	default:
+		return false
+	}
+	for i := 1; i < len(s); i++ {
 		if s[i] == '\\' && i+1 < len(s) {
 			i++
 			continue
 		}
-		if angleEnd < 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
-			s = s[:i] // Optional Markdown titles are not part of the URL.
-			break
+		if s[i] == closer {
+			return i == len(s)-1
+		}
+		if closer == ')' && s[i] == '(' {
+			return false
 		}
 	}
-	// These delimiters have structural meaning in Chat's <url|label> syntax.
-	s = strings.ReplaceAll(s, "|", "%7C")
-	s = strings.ReplaceAll(s, "<", "%3C")
-	return strings.ReplaceAll(s, ">", "%3E"), true
+	return false
 }
 
 type codeFence struct {
