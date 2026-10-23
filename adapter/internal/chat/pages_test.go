@@ -35,14 +35,11 @@ func TestHistoryPages(t *testing.T) {
 				lower = time.Time{}
 			}
 			calls := 0
+			token := ""
 			h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 				calls++
 				q := r.URL.Query()
-				wantToken := ""
-				if calls == 2 {
-					wantToken = "1000"
-				}
-				if q.Get("pageToken") != wantToken || q.Get("pageSize") != "1000" {
+				if q.Get("pageToken") != token || q.Get("pageSize") != "1000" {
 					t.Errorf("page parameters: %v", q)
 				}
 				wantFilter := `create_time > "2026-10-22T11:00:00Z" AND create_time < "2026-10-22T12:00:00Z" AND thread.name = ` + thread
@@ -63,7 +60,6 @@ func TestHistoryPages(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			token := ""
 			for i, want := range []int{1000, 1} {
 				var n int
 				if events {
@@ -75,7 +71,7 @@ func TestHistoryPages(t *testing.T) {
 					page, token, err = c.ListMessagesPage(context.Background(), space, lower, upper, thread, token)
 					n = len(page)
 				}
-				if err != nil || n != want || (i == 0 && token != "1000") || (i == 1 && token != "") {
+				if err != nil || n != want || (i == 0 && token == "") || (i == 1 && token != "") {
 					t.Fatalf("page %d: n=%d token=%q err=%v", i, n, token, err)
 				}
 			}
@@ -90,30 +86,28 @@ func TestHistoryPageRetriesAndCredentials(t *testing.T) {
 	for _, events := range []bool{false, true} {
 		for _, status := range []int{429, 503, 401, 403} {
 			t.Run(fmt.Sprintf("events=%v/status=%d", events, status), func(t *testing.T) {
-				s := fakegoogle.New(t, nil)
 				now := time.Now().UTC()
-				s.Spaces["spaces/room"] = &api.Space{Name: "spaces/room"}
 				calls := 0
 				h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
 					calls++
-					if r.URL.Query().Get("pageToken") != "0" {
+					if r.URL.Query().Get("pageToken") != "opaque-resume-token" {
 						t.Error("retry lost page token")
 					}
 					if calls == 1 {
 						return &http.Response{StatusCode: status, Header: http.Header{"Retry-After": []string{"2"}}, Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"error":{"code":%d,"message":"credential or quota"}}`, status))), Request: r}, nil
 					}
-					return http.DefaultTransport.RoundTrip(r)
+					return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"messages":[],"spaceEvents":[]}`)), Request: r}, nil
 				})}
-				c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: s.URL()})
+				c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: "https://chat.invalid"})
 				if err != nil {
 					t.Fatal(err)
 				}
 				clock := useTestClock(c)
 				start := clock.Now()
 				if events {
-					_, _, err = c.ListSpaceEventsPage(context.Background(), "spaces/room", now.Add(-time.Hour), now, []string{"google.workspace.chat.message.v1.updated"}, "0")
+					_, _, err = c.ListSpaceEventsPage(context.Background(), "spaces/room", now.Add(-time.Hour), now, []string{"google.workspace.chat.message.v1.updated"}, "opaque-resume-token")
 				} else {
-					_, _, err = c.ListMessagesPage(context.Background(), "spaces/room", now.Add(-time.Hour), now, "", "0")
+					_, _, err = c.ListMessagesPage(context.Background(), "spaces/room", now.Add(-time.Hour), now, "", "opaque-resume-token")
 				}
 				if status == 401 || status == 403 {
 					kind, _ := Classify(err)
