@@ -1600,7 +1600,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		err = s.update(r.Context(), func(current *ledger.Ledger) error { *current = *l; return nil })
+		err = s.update(r.Context(), func(current *ledger.Ledger) error { current.Replace(l); return nil })
 		if err != nil {
 			problem(w, 500, err)
 			return

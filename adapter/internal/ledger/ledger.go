@@ -272,6 +272,14 @@ func hasNullRecord[T any](records map[string]*T) bool {
 // the guard; JSON persistence deliberately does not serialize it.
 func (l *Ledger) SetSaveGuard(guard func() error) { l.saveGuard = guard }
 
+// Replace installs restored state without relinquishing this process's guard.
+// The caller must serialize access and relinquish ownership of replacement.
+func (l *Ledger) Replace(replacement *Ledger) {
+	guard := l.saveGuard
+	*l = *replacement
+	l.saveGuard = guard
+}
+
 // Save writes and syncs path.tmp before atomically replacing path, then syncs
 // the containing directory. Callers create the parent directory first. Failed
 // writes and renames remove the temporary file, reporting any cleanup error.

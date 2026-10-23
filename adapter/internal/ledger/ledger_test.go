@@ -607,6 +607,7 @@ func TestSaveGuardPreventsReplacementAndSurvivesClone(t *testing.T) {
 	}
 	lost := errors.New("ledger lock ownership lost")
 	l.SetSaveGuard(func() error { return lost })
+	l.Replace(ledger.New())
 	for _, candidate := range []*ledger.Ledger{l, l.Clone()} {
 		candidate.Counters["changed"] = 1
 		if err := candidate.Save(path); !errors.Is(err, lost) {
