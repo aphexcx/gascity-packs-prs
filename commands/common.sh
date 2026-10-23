@@ -13,11 +13,22 @@ gchat_init() {
     gchat_city_url=${gchat_api%/}/v0/city/$(gchat_uri "$GC_CITY_NAME")
     gchat_service_url=$gchat_city_url/svc/gchat
 }
-gchat_get() {
-    curl -fsS --connect-timeout 5 --max-time 45 "$1"
+gchat_http() {
+    # Keep the server's explanation on errors, and never follow a redirect or
+    # mistake its response for a successful mutation. No automatic retries.
+    gchat_response=$(curl -sS --connect-timeout 5 --max-time 45 -w '\n%{http_code}' "$@") || return $?
+    gchat_newline='
+'
+    gchat_code=${gchat_response##*"$gchat_newline"}
+    gchat_body=${gchat_response%"$gchat_newline"*}
+    case $gchat_code in
+        2??) printf '%s\n' "$gchat_body" ;;
+        *) gchat_die "HTTP $gchat_code: $gchat_body" ;;
+    esac
 }
+gchat_get() { gchat_http "$1"; }
 gchat_post() {
-    curl -fsS --connect-timeout 5 --max-time 45 -X POST \
+    gchat_http -X POST \
         -H 'Content-Type: application/json' -H 'X-GC-Request: gc-gchat' \
         --data-binary "$2" "$gchat_service_url/$1"
 }

@@ -228,9 +228,12 @@ class ProxyCommandsTest(ProxyFixture):
             result = self.run_command(verb, *args)
             self.assertNotEqual(result.returncode, 0, (verb, result.stdout))
         self.assertEqual(self.requests, [])
-        self.respond("/spaces", {"error": "initializing"}, 503)
-        result = self.run_command("spaces")
-        self.assertNotEqual(result.returncode, 0)
+        for status, reason in [(503, "initializing"), (302, "redirected")]:
+            with self.subTest(http_status=status):
+                self.respond("/spaces", {"error": reason}, status)
+                result = self.run_command("spaces")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason, result.stderr)
 
     def test_status_separates_pending_unresolved_and_retained_counters(self):
         self.respond("/status", {"health": {"state": "catching-up", "reason": "history"},
