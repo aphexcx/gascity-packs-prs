@@ -5,6 +5,7 @@ package fakegoogle
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -49,6 +50,8 @@ type Server struct {
 	Subscriptions              map[string]*events.Subscription
 	SpaceEvents                map[string][]*chat.SpaceEvent
 	Media                      map[string][]byte
+	// MaxUploadBytes lowers the normal 200 MiB limit for small boundary tests.
+	MaxUploadBytes int64
 
 	mu         sync.Mutex
 	http       *httptest.Server
@@ -779,7 +782,45 @@ func (s *Server) spaceEvents(w http.ResponseWriter, r *http.Request, space strin
 		}
 		return a.Before(b)
 	})
-	page(s, w, r, "spaceEvents", list)
+	// Retention can remove earlier events between pages. Resume from the last
+	// event's ordered position, never an offset into the shrinking result set.
+	if token := r.URL.Query().Get("pageToken"); token != "" {
+		raw, err := base64.RawURLEncoding.DecodeString(token)
+		var position [2]string
+		if err != nil || json.Unmarshal(raw, &position) != nil || position[1] == "" {
+			s.fail(w, 400, "INVALID_ARGUMENT", "invalid pageToken")
+			return
+		}
+		after, err := time.Parse(time.RFC3339Nano, position[0])
+		if err != nil {
+			s.fail(w, 400, "INVALID_ARGUMENT", "invalid pageToken")
+			return
+		}
+		start := sort.Search(len(list), func(i int) bool {
+			when, _ := time.Parse(time.RFC3339Nano, list[i].EventTime)
+			return when.After(after) || (when.Equal(after) && list[i].Name > position[1])
+		})
+		list = list[start:]
+	}
+	limit := s.PageSize
+	if limit <= 0 {
+		limit = 100
+	}
+	if raw := r.URL.Query().Get("pageSize"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n <= 0 {
+			s.fail(w, 400, "INVALID_ARGUMENT", "invalid pageSize")
+			return
+		}
+		limit = n
+	}
+	result := map[string]any{"spaceEvents": list[:min(limit, len(list))]}
+	if len(list) > limit {
+		last := list[limit-1]
+		raw, _ := json.Marshal([2]string{last.EventTime, last.Name})
+		result["nextPageToken"] = base64.RawURLEncoding.EncodeToString(raw)
+	}
+	s.respond(w, r, 200, result)
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
@@ -796,7 +837,7 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		upload := &resumableUpload{parent: parent, total: -1}
 		if raw := r.Header.Get("X-Upload-Content-Length"); raw != "" {
 			total, err := strconv.ParseInt(raw, 10, 64)
-			if err != nil || total < 0 || total > maxUploadBytes {
+			if err != nil || total < 0 || total > s.mediaLimit() {
 				s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload size")
 				return
 			}
@@ -831,15 +872,15 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 			s.fail(w, 400, "INVALID_ARGUMENT", "missing upload data")
 			return
 		}
-		data, err = io.ReadAll(io.LimitReader(part, maxUploadBytes+1))
+		data, err = io.ReadAll(io.LimitReader(part, s.mediaLimit()+1))
 	} else {
-		data, err = io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
+		data, err = io.ReadAll(io.LimitReader(r.Body, s.mediaLimit()+1))
 	}
 	if err != nil {
 		s.fail(w, 400, "INVALID_ARGUMENT", err.Error())
 		return
 	}
-	if len(data) > maxUploadBytes {
+	if int64(len(data)) > s.mediaLimit() {
 		s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload size")
 		return
 	}
@@ -849,6 +890,13 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 }
 
 const maxUploadBytes = 200 << 20
+
+func (s *Server) mediaLimit() int64 {
+	if s.MaxUploadBytes > 0 && s.MaxUploadBytes < maxUploadBytes {
+		return s.MaxUploadBytes
+	}
+	return maxUploadBytes
+}
 
 var contentRange = regexp.MustCompile(`^bytes (?:([0-9]+)-([0-9]+)|(\*))/([0-9]+|\*)$`)
 
@@ -866,14 +914,14 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	total := upload.total
 	if rangeParts[4] != "*" {
 		value, err := strconv.ParseInt(rangeParts[4], 10, 64)
-		if err != nil || value > maxUploadBytes || value < int64(len(upload.data)) || (total >= 0 && total != value) {
+		if err != nil || value > s.mediaLimit() || value < int64(len(upload.data)) || (total >= 0 && total != value) {
 			s.fail(w, 400, "INVALID_ARGUMENT", "inconsistent upload size")
 			return
 		}
 		total = value
 	}
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxUploadBytes+1))
-	if err != nil || len(data) > maxUploadBytes {
+	data, err := io.ReadAll(io.LimitReader(r.Body, s.mediaLimit()+1))
+	if err != nil || int64(len(data)) > s.mediaLimit() {
 		s.fail(w, 400, "INVALID_ARGUMENT", "invalid upload chunk")
 		return
 	}
@@ -885,7 +933,7 @@ func (s *Server) uploadChunk(w http.ResponseWriter, r *http.Request) {
 	} else {
 		start, startErr := strconv.ParseInt(rangeParts[1], 10, 64)
 		end, endErr := strconv.ParseInt(rangeParts[2], 10, 64)
-		if startErr != nil || endErr != nil || end < start || end >= maxUploadBytes || end-start+1 != int64(len(data)) || (total >= 0 && end >= total) {
+		if startErr != nil || endErr != nil || end < start || end >= s.mediaLimit() || end-start+1 != int64(len(data)) || (total >= 0 && end >= total) {
 			s.fail(w, 400, "INVALID_ARGUMENT", "chunk does not match Content-Range")
 			return
 		}

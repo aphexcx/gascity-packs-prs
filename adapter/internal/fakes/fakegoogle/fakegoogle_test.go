@@ -583,7 +583,8 @@ func TestSimpleUploadRejectsOversizeMedia(t *testing.T) {
 		t.Run(fmt.Sprintf("multipart=%v", multipart), func(t *testing.T) {
 			s := New(t, nil)
 			s.Spaces["spaces/room"] = &chat.Space{Name: "spaces/room"}
-			var body io.Reader = io.LimitReader(zeroReader{}, maxUploadBytes+1)
+			s.MaxUploadBytes = 1024
+			var body io.Reader = io.LimitReader(zeroReader{}, s.MaxUploadBytes+1)
 			contentType := "application/octet-stream"
 			if multipart {
 				contentType = "multipart/related; boundary=upload-boundary"
@@ -1033,5 +1034,42 @@ func TestEmitCanRespectSubscriptions(t *testing.T) {
 				t.Fatalf("published %d messages, want %d", got, want)
 			}
 		})
+	}
+}
+
+func TestSpaceEventsPaginationSurvivesSlidingWindow(t *testing.T) {
+	s := New(t, nil)
+	now := time.Date(2026, 1, 30, 12, 0, 0, 0, time.UTC)
+	s.Now = func() time.Time { return now }
+	const created = "google.workspace.chat.message.v1.created"
+	for i, age := range []time.Duration{28*24*time.Hour - time.Second, time.Hour, time.Hour} {
+		s.SpaceEvents["spaces/room"] = append(s.SpaceEvents["spaces/room"], &chat.SpaceEvent{Name: fmt.Sprintf("spaces/room/spaceEvents/%d", i), EventTime: now.Add(-age).Format(time.RFC3339Nano), EventType: created})
+	}
+	path := "/v1/spaces/room/spaceEvents?filter=" + url.QueryEscape(`event_types:"`+created+`" AND end_time="`+now.Format(time.RFC3339Nano)+`"`) + "&pageSize=1"
+	first := request(t, s, "GET", path, nil, 200)
+	s.Advance(2 * time.Second)
+	second := request(t, s, "GET", path+"&pageToken="+url.QueryEscape(first["nextPageToken"].(string)), nil, 200)
+	if got := second["spaceEvents"].([]any)[0].(map[string]any)["name"]; got != "spaces/room/spaceEvents/1" {
+		t.Fatalf("sliding window skipped event: %v", second)
+	}
+	third := request(t, s, "GET", path+"&pageToken="+url.QueryEscape(second["nextPageToken"].(string)), nil, 200)
+	if got := third["spaceEvents"].([]any)[0].(map[string]any)["name"]; got != "spaces/room/spaceEvents/2" || third["nextPageToken"] != nil {
+		t.Fatalf("equal-time event lost: %v", third)
+	}
+}
+
+func TestSubscriptionSnakeCaseOrFilter(t *testing.T) {
+	s := New(t, nil)
+	for name, target := range map[string]string{"a": "spaces/-", "b": "spaces/-", "other": "spaces/other"} {
+		typ := "google.workspace.chat.message.v1.created"
+		if name == "b" {
+			typ = "google.workspace.chat.reaction.v1.created"
+		}
+		s.Subscriptions["subscriptions/"+name] = &events.Subscription{Name: "subscriptions/" + name, TargetResource: "//chat.googleapis.com/" + target, EventTypes: []string{typ}, State: "ACTIVE"}
+	}
+	filter := `(event_types:"google.workspace.chat.message.v1.created" OR event_types:"google.workspace.chat.reaction.v1.created") AND target_resource="//chat.googleapis.com/spaces/-"`
+	result := request(t, s, "GET", "/v1/subscriptions?filter="+url.QueryEscape(filter), nil, 200)
+	if got := result["subscriptions"].([]any); len(got) != 2 || got[0].(map[string]any)["name"] != "subscriptions/a" || got[1].(map[string]any)["name"] != "subscriptions/b" {
+		t.Fatalf("filter result: %v", result)
 	}
 }
