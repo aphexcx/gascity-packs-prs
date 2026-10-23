@@ -75,7 +75,7 @@ func TestSubscriptionRetryStatusSnapshot(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Retry.Failures != 3 || !got.Retry.Next.Equal(next) || got.Retry.Kind != "auth" || got.Retry.Code != 403 || got.Retry.State != "SUSPENDED" {
+	if got.Retry.Failures != 3 || !got.Retry.Next.Equal(next) || got.Retry.Kind != "subscription-refused" || got.Retry.Code != 403 || got.Retry.State != "SUSPENDED" {
 		t.Fatalf("retry snapshot: %s", data)
 	}
 }

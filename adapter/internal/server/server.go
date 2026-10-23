@@ -1052,6 +1052,7 @@ func (s *Server) direct(ctx context.Context, p wire.PublishRequest, upload *ledg
 		return result, err
 	}
 	if result.Delivered {
+		result.FailureKind, result.RetryAfter = "", 0
 		return result, nil
 	}
 	r, err := s.publish(ctx, p, upload)
