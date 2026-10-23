@@ -181,6 +181,13 @@ func TestDeliveredReceiptSurvivesRearmAndNoBinding(t *testing.T) {
 		if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 			t.Fatal(err)
 		}
+		prepared, err := ledger.Load(f.options.LedgerPath, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v := prepared.Sends[p.IdempotencyKey]; v.Receipt == nil || !v.Receipt.Delivered || v.Receipt.MessageID != first.MessageID || v.RecordPending {
+			t.Fatalf("prepare reset an already-delivered callback: %+v", v)
+		}
 		if err := f.s.update(t.Context(), func(l *ledger.Ledger) error {
 			v := l.Sends[p.IdempotencyKey]
 			v.NotRecordable, v.RecordingFailureKind = true, "auth"
