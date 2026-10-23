@@ -14,6 +14,17 @@ from urllib.parse import parse_qs, urlsplit
 PACK = Path(__file__).resolve().parents[1]
 
 
+class CommandHelpTest(unittest.TestCase):
+    def test_every_command_has_gc_help_with_its_options(self):
+        for command in (PACK / "commands").glob("*/command.toml"):
+            with self.subTest(command=command.parent.name):
+                help_file = command.with_name("help.md")
+                self.assertTrue(help_file.is_file(), str(help_file))
+                text = help_file.read_text()
+                self.assertIn("gc gchat " + command.parent.name, text)
+                self.assertIn("--", text)
+
+
 class AuthCommandTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
