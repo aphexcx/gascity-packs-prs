@@ -210,10 +210,12 @@ On the first upgrade from a ledger without `identity_seed`, the token seeds
 the identity once, replacing any old observed identity. Later starts retain
 an observed identity until the consent subject changes.
 
-Subscription 403/404 failures notify `[[identity]].agent` (default `mayor`)
-with setup guidance and a sanitized cause. Notice dedup includes the cause,
-so an earlier incident cannot hide a different setup failure. Transient
-subscription errors retry without sending a setup notice.
+Subscription 403/404 failures immediately notify `[[identity]].agent` (default
+`mayor`) with setup guidance and a sanitized cause. Other subscription failures,
+including quota errors, retry with backoff and notify after three consecutive
+failed reconciliation attempts; isolated transient failures stay quiet. Status
+polls do not count as attempts. Notices deduplicate by cause until subscription
+recovery, which clears the failure count and notice deduplication.
 
 ### Delivery uncertainty
 
@@ -327,6 +329,9 @@ The converter is a subset, not a full CommonMark parser. Quoted fences are
 ordinary text: markers inside them can be converted, and splitting does not
 add quoted fence wrappers. In rare nested emphasis, an inner opener of the
 same marker inside a different-marker pair can leave the outer opener literal.
+Same-marker nesting also differs from CommonMark: `*(*foo*)*` renders the outer
+markers as Chat bold. Backslash escapes pass through unchanged; a backslash
+does not protect a following formatting marker from conversion.
 Backticks in link destinations can also affect later code/link lookahead.
 Use unquoted fenced blocks and simple emphasis when exact presentation matters.
 
@@ -358,4 +363,5 @@ recovery test performs real durable writes and needs that explicit budget.
 The integration fixtures use in-process fakes. `GC_BIN=/absolute/path/gc
 go test ./test/contract -count=1 -timeout=2m` runs the real-gc contract in an
 isolated temporary city on an ephemeral port, including a failed delivery's
-retry hint. It never needs a running city's API.
+retry hint. The real `gc init` requires `lsof` on `PATH`. It never needs a
+running city's API.

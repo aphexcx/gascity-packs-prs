@@ -61,7 +61,14 @@ func (a *application) subscriptionFailure(err error) {
 	reason := subscriptionReason(err)
 	a.health("catching-up", reason)
 	var ge *googleapi.Error
-	if errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404) {
+	notify := errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404)
+	if m := a.manager.Load(); m != nil {
+		// The manager counts completed attempts and resets on success. Reading
+		// its count keeps monitor polls from counting the same failure again.
+		_, failures, _, _ := m.Status()
+		notify = notify || failures >= 3
+	}
+	if notify {
 		a.notice("subscription", reason)
 	}
 }

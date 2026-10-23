@@ -17,14 +17,16 @@ import (
 	"gchat-adapter/internal/events"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 	workspace "google.golang.org/api/workspaceevents/v1"
 )
 
-func TestSubscriptionNoticesOnlyForActionableRefusalsAndEachCause(t *testing.T) {
+func TestSubscriptionNoticesForIsolatedErrorsAndEachRefusalCause(t *testing.T) {
 	f := newFixture(t, false)
 	a, _ := generationFixture(t, f)
 	for _, err := range []error{errors.New("temporary network failure"), &googleapi.Error{Code: 429}, &googleapi.Error{Code: 500}} {
 		a.subscriptionFailure(err)
+		a.subscriptionRecovered()
 	}
 	if len(a.notices) != 0 {
 		t.Fatal("transient subscription failure notified operator")
@@ -45,6 +47,134 @@ func TestSubscriptionNoticesOnlyForActionableRefusalsAndEachCause(t *testing.T) 
 	a.subscriptionFailure(disabled)
 	if len(a.notices) != 1 {
 		t.Fatal("recovery did not reset incident dedup")
+	}
+}
+
+// Use the real manager's completed reconciliation count, as both the startup
+// retry loop and the steady-state monitor do. Requests stay on local fakes.
+func subscriptionNoticeFixture(t *testing.T) (*application, *events.Manager, *atomic.Int32) {
+	t.Helper()
+	f := newFixture(t, false)
+	a, _ := generationFixture(t, f)
+	code := new(atomic.Int32)
+	code.Store(http.StatusTooManyRequests)
+	u, err := url.Parse(f.cfg.Endpoints.EventsAPIBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(u)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status := code.Load(); status != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(int(status))
+			fmt.Fprintf(w, `{"error":{"code":%d,"message":"private-provider-message"}}`, status)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(endpoint.Close)
+	service, err := workspace.NewService(t.Context(), option.WithHTTPClient(endpoint.Client()), option.WithEndpoint(endpoint.URL+"/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := events.New(events.Options{Service: service, Topic: f.cfg.Secrets.Topic, Ledger: a.l, LedgerPath: f.cfg.Endpoints.StateFile, LedgerMu: &a.mu, Log: a.log})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.manager.Store(m)
+	return a, m, code
+}
+
+func TestSubscriptionNoticeAfterThreeConsecutiveFailures(t *testing.T) {
+	a, m, _ := subscriptionNoticeFixture(t)
+	for attempt := 1; attempt <= 5; attempt++ {
+		_, err := m.Reconcile(t.Context())
+		if err == nil {
+			t.Fatal("quota failure not reported")
+		}
+		a.subscriptionFailure(err)
+		want := 0
+		if attempt == 3 {
+			want = 1
+		}
+		if len(a.notices) != want {
+			t.Fatalf("attempt %d: got %d notices, want %d", attempt, len(a.notices), want)
+		}
+		if want == 1 {
+			n := <-a.notices
+			if n.kind != "subscription" || !strings.Contains(n.message, "HTTP 429") || !strings.Contains(n.message, "README") || strings.Contains(n.message, "private-provider-message") {
+				t.Fatalf("incorrect quota notice: %+v", n)
+			}
+		}
+	}
+}
+
+func TestSubscriptionFailurePollingDoesNotAdvanceThreshold(t *testing.T) {
+	a, m, _ := subscriptionNoticeFixture(t)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if _, err := m.Reconcile(t.Context()); err == nil {
+			t.Fatal("quota failure not reported")
+		}
+		for range 5 {
+			last, _, _, _ := m.Status()
+			a.subscriptionFailure(last)
+		}
+		if len(a.notices) != 0 {
+			t.Fatalf("polling failure %d triggered a notice", attempt)
+		}
+	}
+	_, err := m.Reconcile(t.Context())
+	if err == nil {
+		t.Fatal("quota failure not reported")
+	}
+	a.subscriptionFailure(err)
+	if len(a.notices) != 1 {
+		t.Fatal("third reconciliation failure did not trigger a notice")
+	}
+}
+
+func TestSubscriptionRecoveryResetsFailureThresholdAndNoticeDedup(t *testing.T) {
+	for _, initialFailures := range []int{1, 3} {
+		t.Run(fmt.Sprint(initialFailures), func(t *testing.T) {
+			a, m, code := subscriptionNoticeFixture(t)
+			for range initialFailures {
+				_, err := m.Reconcile(t.Context())
+				if err == nil {
+					t.Fatal("quota failure not reported")
+				}
+				a.subscriptionFailure(err)
+			}
+			if initialFailures == 3 {
+				if len(a.notices) != 1 {
+					t.Fatal("initial incident did not trigger a notice")
+				}
+				<-a.notices
+			}
+			code.Store(0)
+			if _, err := m.Reconcile(t.Context()); err != nil {
+				t.Fatalf("subscription recovery: %v", err)
+			}
+			a.subscriptionRecovered()
+			_, failures, _, _ := m.Status()
+			if failures != 0 {
+				t.Fatalf("recovery retained %d consecutive failures", failures)
+			}
+			code.Store(http.StatusTooManyRequests)
+			for attempt := 1; attempt <= 3; attempt++ {
+				_, err := m.Reconcile(t.Context())
+				if err == nil {
+					t.Fatal("quota failure not reported after recovery")
+				}
+				a.subscriptionFailure(err)
+				want := 0
+				if attempt == 3 {
+					want = 1
+				}
+				if len(a.notices) != want {
+					t.Fatalf("attempt %d after recovery: got %d notices, want %d", attempt, len(a.notices), want)
+				}
+			}
+		})
 	}
 }
 
