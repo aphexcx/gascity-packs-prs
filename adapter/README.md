@@ -46,6 +46,12 @@ Publisher on the topic. Reconciliation follows the subscriber's backoff
 (including discovery after ambiguous mutations), and logs `subscription
 recovered` on success. These failures do not ask for sign-in.
 
+Credential and subscription notices go to `[[identity]].agent` (default
+`mayor`), with a stable mail `--dedup` key per city, identity, and notice kind.
+Dedup suppresses repeats across restarts while the prior notice remains in the
+recipient's mailbox. Startup registers once; a healthy run resets connection
+restart backoff for the next interruption.
+
 Catch-up runs at startup and after subscription recovery. Unfinished intervals
 retry with backoff; completed recovery stays idle. An hourly inventory refresh
 can discover rejoined spaces and retry held history. Live messages arrive on

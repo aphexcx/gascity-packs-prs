@@ -91,7 +91,7 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 				continue
 			}
 			if a.gcDown.Load() {
-				if err := a.s.Register(ctx); err != nil {
+				if err := a.ensureRegistered(ctx, registered); err != nil {
 					return
 				}
 				a.gcDown.Store(false)
@@ -110,7 +110,7 @@ func (a *application) retryPending(ctx context.Context, registered *atomic.Bool)
 	}
 }
 
-type notification struct{ kind, message string }
+type notification struct{ kind, message, agent, dedup string }
 
 func (a *application) notice(kind string, details ...string) {
 	a.noticeMu.Lock()
@@ -126,7 +126,7 @@ func (a *application) notice(kind string, details ...string) {
 		message = details[0] + ". " + message
 	}
 	select {
-	case a.notices <- notification{kind, message}:
+	case a.notices <- notification{kind: kind, message: message, agent: a.cfg.Identity().Agent, dedup: "gchat:" + a.cfg.Secrets.CityName + ":" + a.cfg.Identity().Name + ":" + kind}:
 	default:
 	}
 }
@@ -137,16 +137,18 @@ func (a *application) notifyLoop(ctx context.Context) {
 			return
 		case notice := <-a.notices:
 			nctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			err := a.opts.Notify(nctx, "gchat: "+notice.kind, notice.message)
+			var err error
+			if a.opts.Notify != nil {
+				err = a.opts.Notify(nctx, "gchat: "+notice.kind, notice.message)
+			} else {
+				err = exec.CommandContext(nctx, "gc", "mail", "send", notice.agent, "--dedup", notice.dedup, "-s", "gchat: "+notice.kind, "-m", notice.message).Run()
+			}
 			cancel()
 			if err != nil {
 				a.log.Warn("operator notification failed", "operation", "notify")
 			}
 		}
 	}
-}
-func notifyMayor(ctx context.Context, subject, body string) error {
-	return exec.CommandContext(ctx, "gc", "mail", "send", "mayor", "-s", subject, "-m", body).Run()
 }
 func signal(ch chan struct{}) {
 	select {

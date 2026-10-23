@@ -34,13 +34,10 @@ func (a *application) generation(ctx context.Context, source *token.Source, relo
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
-	a.s.SetClients(nil, g)
 	g.SetConnectionRefusedHandler(func(err error) { a.gcDown.Store(true); a.s.ObserveGCError(err) })
-	if err := a.s.Register(ctx); err != nil {
+	if err := a.ensureRegistered(ctx, registered); err != nil {
 		return err
 	}
-	registered.Store(true)
-	a.gcDown.Store(false)
 	hc, err := source.Client(ctx)
 	if err != nil {
 		return err

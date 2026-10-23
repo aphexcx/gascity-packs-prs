@@ -39,23 +39,27 @@ type Options struct {
 var errIdentityChanged = errors.New("app: observed identity changed; rebuilding client")
 
 type application struct {
-	cfg           *config.Config
-	opts          Options
-	log           *slog.Logger
-	l             *ledger.Ledger
-	mu            sync.Mutex
-	stateMu       sync.Mutex // excludes app health transitions during POST /state
-	s             *server.Server
-	manager       atomic.Pointer[events.Manager]
-	chatClient    atomic.Pointer[chat.Client]
-	loaded        atomic.Bool
-	lastEvent     atomic.Int64
-	gcDown        atomic.Bool
-	resume        chan struct{}
-	notices       chan notification
-	noticeMu      sync.Mutex
-	notified      map[string]bool
-	legacyWarning sync.Once
+	cfg                *config.Config
+	opts               Options
+	log                *slog.Logger
+	l                  *ledger.Ledger
+	mu                 sync.Mutex
+	stateMu            sync.Mutex // excludes app health transitions during POST /state
+	s                  *server.Server
+	manager            atomic.Pointer[events.Manager]
+	chatClient         atomic.Pointer[chat.Client]
+	loaded             atomic.Bool
+	lastEvent          atomic.Int64
+	gcDown             atomic.Bool
+	registrationMu     sync.Mutex
+	registrationNeeded atomic.Bool
+	healthyGeneration  atomic.Bool
+	restartDelay       time.Duration // owned by the run loop
+	resume             chan struct{}
+	notices            chan notification
+	noticeMu           sync.Mutex
+	notified           map[string]bool
+	legacyWarning      sync.Once
 }
 
 func Run(ctx context.Context, cfg *config.Config) error { return RunWithOptions(ctx, cfg, Options{}) }
@@ -71,9 +75,6 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	}
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
-	}
-	if opts.Notify == nil {
-		opts.Notify = notifyMayor
 	}
 	lock, err := LockState(cfg.Endpoints.StateFile)
 	if err != nil {
@@ -208,7 +209,16 @@ func prepareSocket(path string) error {
 func (a *application) health(state, reason string) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	if state == "ready" {
+		a.healthyGeneration.Store(true)
+	}
+	if a.s.Health() == (server.Health{State: state, Reason: reason}) {
+		return
+	}
 	a.s.SetHealth(server.Health{State: state, Reason: reason})
+	if a.log != nil {
+		a.log.Debug("adapter health changed", "state", state, "reason", reason)
+	}
 }
 
 func (a *application) run(ctx context.Context) error {
@@ -253,9 +263,7 @@ func (a *application) run(ctx context.Context) error {
 	g := gcclient.New(a.cfg.Secrets.GCAPIBase, a.cfg.Secrets.CityName)
 	a.s.SetClients(nil, g)
 	auxiliaries.Go(func() {
-		if a.s.Register(ctx) == nil {
-			registered.Store(true)
-		}
+		_ = a.ensureRegistered(ctx, registered)
 	})
 	auxiliaries.Go(func() { a.retryPending(ctx, registered) })
 	var generationCancel context.CancelFunc
@@ -285,7 +293,6 @@ func (a *application) run(ctx context.Context) error {
 	credentialHold := false
 	var lastCredentialFailure time.Time
 	reloaded := false
-	restartDelay := time.Second
 	settingsBytes, _ := os.ReadFile(a.opts.SettingsPath)
 	start := func() {
 		if recovery || credentialHold || generationDone != nil {
@@ -340,7 +347,7 @@ func (a *application) run(ctx context.Context) error {
 			a.noticeMu.Lock()
 			delete(a.notified, "credentials")
 			a.noticeMu.Unlock()
-			restartDelay = time.Second
+			a.restartDelay = time.Second
 			start()
 		case err := <-generationDone:
 			generationCancel()
@@ -391,9 +398,8 @@ func (a *application) run(ctx context.Context) error {
 			} else {
 				a.health("initializing", safeReason("connection interrupted; retrying", err))
 				a.log.Warn("adapter connection interrupted", "operation", "connect", "cause", safeReason("retrying", err))
-				retryTimer = time.NewTimer(restartDelay/2 + time.Duration(rand.Int64N(int64(restartDelay/2))))
+				retryTimer = time.NewTimer(a.nextRestartDelay())
 				retry = retryTimer.C
-				restartDelay = min(restartDelay*2, time.Minute)
 			}
 		case <-retry:
 			retry = nil
@@ -427,6 +433,7 @@ func (a *application) run(ctx context.Context) error {
 						}
 						a.cfg = next
 						a.s.SetConfig(*next)
+						a.registrationNeeded.Store(true)
 						if !recovery {
 							a.mu.Lock()
 							for _, space := range a.l.Spaces {
@@ -446,11 +453,41 @@ func (a *application) run(ctx context.Context) error {
 				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
 				stopGeneration()
 				credentialHold = true
-				a.health("needs-sign-in", "credential rejected; run gc gchat auth")
 				a.notice("credentials")
 			}
 		}
 	}
+}
+
+func (a *application) nextRestartDelay() time.Duration {
+	healthy := a.healthyGeneration.Swap(false)
+	if a.restartDelay == 0 || healthy {
+		a.restartDelay = time.Second
+	}
+	delay := a.restartDelay/2 + time.Duration(rand.Int64N(int64(a.restartDelay/2)))
+	a.restartDelay = min(2*a.restartDelay, time.Minute)
+	return delay
+}
+
+// The initial registration also runs without credentials. Generations join
+// that attempt, rather than posting a second registration at startup.
+func (a *application) ensureRegistered(ctx context.Context, registered *atomic.Bool) error {
+	a.registrationMu.Lock()
+	defer a.registrationMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if registered.Load() && !a.gcDown.Load() && !a.registrationNeeded.Load() {
+		return nil
+	}
+	a.registrationNeeded.Store(false)
+	if err := a.s.Register(ctx); err != nil {
+		a.registrationNeeded.Store(true)
+		return err
+	}
+	registered.Store(true)
+	a.gcDown.Store(false)
+	return nil
 }
 
 func watchToken(ctx context.Context, source *token.Source, reload chan struct{}) func() {
