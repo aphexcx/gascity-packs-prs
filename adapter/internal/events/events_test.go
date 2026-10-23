@@ -1594,3 +1594,56 @@ func TestStatusReturnsLastResultDuringBlockedReconcile(t *testing.T) {
 		t.Fatal("Status waited for the in-flight reconciliation")
 	}
 }
+
+func TestCancelledLifecycleAfterGetPreservesSharedBackoff(t *testing.T) {
+	f := setup(t)
+	want := f.reconcile()
+	f.clock.advance(3*time.Hour + time.Minute)
+	f.hook = func(*http.Request) (*http.Response, error) { return nil, errors.New("unavailable") }
+	_, wantErr := f.manager.Reconcile(context.Background())
+	_, wantFailures, wantNext, _ := f.manager.Status()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.hook = func(r *http.Request) (*http.Response, error) {
+		response, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil || r.Method != "GET" {
+			return response, err
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		cancel()
+		return response, nil
+	}
+	if err := f.manager.HandleLifecycle(ctx, "subscription.expirationReminder"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("lifecycle=%v", err)
+	}
+	last, failures, next, state := f.manager.Status()
+	if last != wantErr || failures != wantFailures || next != wantNext || state != want {
+		t.Fatalf("completed GET shortened shared backoff: %v %d %v %+v; want next=%v", last, failures, next, state, wantNext)
+	}
+}
+
+func TestRenewLoopReactivatesAfterRenewalTimeWithoutBackoff(t *testing.T) {
+	f := setup(t)
+	first := f.reconcile()
+	f.server.SuspendSubscription(first.Name)
+	f.clock.advance(3*time.Hour + time.Minute)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.clock.onSleep = func(d time.Duration) error {
+		if f.count("PATCH", "/v1/"+first.Name) != 1 {
+			t.Fatalf("slept %v before renewing reactivated subscription", d)
+		}
+		cancel()
+		return ctx.Err()
+	}
+	f.manager.RenewLoop(ctx)
+	last, failures, _, state := f.manager.Status()
+	if last != nil || failures != 0 || state.State != "ACTIVE" || !state.Expiry.After(first.Expiry) || f.count("POST", "/v1/"+first.Name+":reactivate") != 1 || f.count("PATCH", "/v1/"+first.Name) != 1 {
+		t.Fatalf("reactivation/renewal: err=%v failures=%d state=%+v requests=%v", last, failures, state, f.requests)
+	}
+}
