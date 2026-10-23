@@ -253,7 +253,7 @@ func formatInline(s string, heading, allowLinks bool) string {
 			chat := map[string]string{"**": "*", "__": "*", "*": "_", "_": "_", "~~": "~", "***": "*_", "___": "*_"}[marker]
 			canOpen, _ := delimiterFlanking(s, i, n)
 			if chat != "" && !noCloser[marker] && canOpen && !(s[i] == '_' && wordBefore(s[:i])) {
-				end := emphasisEnd(s, i+n, marker, lastCodeRun)
+				end := emphasisEnd(s, i+n, marker, lastCodeRun, labels, destinations)
 				if end >= 0 {
 					if heading {
 						chat = strings.TrimPrefix(chat, "*")
@@ -333,13 +333,21 @@ func codeSpanEnd(s string, start int, lastCodeRun map[int]int) int {
 // A later opener must be tried on its own, without memoizing a failed search.
 const emphasisReopened = -2
 
-func emphasisEnd(s string, start int, marker string, lastCodeRun map[int]int) int {
+func emphasisEnd(s string, start int, marker string, lastCodeRun, labels, destinations map[int]int) int {
 	for i := start; i < len(s); {
 		switch {
 		case s[i] == '\\' && i+1 < len(s):
 			i = escapedEnd(s, i)
 		case s[i] == '`':
 			i = codeSpanEnd(s, i, lastCodeRun)
+		case s[i] == '[':
+			// Labels and destinations are rendered as one span, including malformed
+			// candidates retained literally; their delimiters cannot close an outer run.
+			if _, _, end, _ := link(s, i, labels, destinations); end > 0 {
+				i = end
+			} else {
+				i++
+			}
 		case s[i] == marker[0]:
 			n := runLength(s[i:])
 			canOpen, canClose := delimiterFlanking(s, i, n)
