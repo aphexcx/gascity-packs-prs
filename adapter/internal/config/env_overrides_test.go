@@ -7,6 +7,17 @@ import (
 	"testing"
 )
 
+func TestDefaultStateFileRetainsSecretsDirectoryBase(t *testing.T) {
+	env, settings, _ := configFixture(t)
+	c, err := Load(env, settings, "relative-secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join("relative-secrets", "..", "state.json"); c.Endpoints.StateFile != want {
+		t.Fatalf("default state path=%q want %q", c.Endpoints.StateFile, want)
+	}
+}
+
 func TestRelativeStateFileUsesEnvFileDirectory(t *testing.T) {
 	for _, process := range []bool{false, true} {
 		t.Run(map[bool]string{false: "file", true: "process"}[process], func(t *testing.T) {
