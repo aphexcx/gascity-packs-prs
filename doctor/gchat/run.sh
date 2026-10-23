@@ -1,5 +1,7 @@
 #!/bin/sh
 set -eu
+# gc doctor reserves exit 2 for a failed check (exit 1 is only a warning).
+trap 'if [ "$?" -ne 0 ]; then exit 2; fi' 0
 : "${GC_PACK_DIR:?gchat doctor: missing Gas City pack context}"
 # shellcheck source-path=SCRIPTDIR source=../../commands/runtime.sh
 . "$GC_PACK_DIR/commands/runtime.sh"
@@ -15,7 +17,7 @@ gchat_build
 # The binary resolves identity.token_file overrides, checks the token exists,
 # and forces a refresh even when its cached access token is still valid.
 if check=$("$GC_PACK_DIR/adapter/gc-gchat-adapter" auth --check 2>&1); then
-    printf '%s\n' "$check"
+    : # Keep successful auth output out of the first-failure headline.
 else
     gchat_die "token check failed: $check"
 fi
