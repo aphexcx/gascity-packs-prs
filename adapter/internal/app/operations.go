@@ -20,21 +20,19 @@ func (a *application) seedIdentity(id string) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if id == a.credentialIdentity && a.l.IdentityUserID != "" {
+	if id == a.l.IdentitySeed && a.l.IdentityUserID != "" {
 		return nil
 	}
 	previous := a.l.IdentityUserID
-	if previous != id {
-		a.l.IdentityUserID = id
-		if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
-			a.l.IdentityUserID = previous
-			return err
-		}
-		if previous != "" {
-			a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
-		}
+	previousSeed := a.l.IdentitySeed
+	a.l.IdentityUserID, a.l.IdentitySeed = id, id
+	if err := a.l.Save(a.cfg.Endpoints.StateFile); err != nil {
+		a.l.IdentityUserID, a.l.IdentitySeed = previous, previousSeed
+		return err
 	}
-	a.credentialIdentity = id
+	if previous != "" && previous != id {
+		a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
+	}
 	return nil
 }
 

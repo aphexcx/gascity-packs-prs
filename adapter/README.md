@@ -20,7 +20,9 @@ and `auth --check` prints it. The adapter seeds the ledger identity before
 inbound processing, so the first DM needs no preceding outbound message.
 Legacy token files still learn from an outbound response and warn once to run
 `gc gchat auth`. If a create response contradicts the seeded identity, the
-observed ID is saved and the client rebuilt; the observed ID then wins.
+observed ID is saved and the client rebuilt; the observed ID then wins across
+restarts. The ledger's `identity_seed` records the token subject separately;
+only a new subject (new consent) replaces the observed identity with a new seed.
 
 A rejected access token triggers a refresh before requiring sign-in. Permanent
 refresh failure, or two consecutive credential rejections within five minutes

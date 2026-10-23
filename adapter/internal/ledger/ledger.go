@@ -38,6 +38,7 @@ func (e *RecoveryError) Unwrap() error        { return e.Err }
 type Ledger struct {
 	Version        int                      `json:"version"`
 	IdentityUserID string                   `json:"identity_user_id,omitempty"`
+	IdentitySeed   string                   `json:"identity_seed,omitempty"`
 	Subscription   SubscriptionState        `json:"subscription"`
 	Spaces         map[string]*SpaceState   `json:"spaces"`
 	Transport      TransportDedup           `json:"transport"`
