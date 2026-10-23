@@ -56,8 +56,13 @@ func TestStateHandlerRefusesLostLockBeforeRecovery(t *testing.T) {
 	}()
 	t.Cleanup(func() {
 		cancel()
-		if err := <-done; err != nil && !errors.Is(err, ErrStateLockLost) {
-			t.Errorf("Run: %v", err)
+		select {
+		case err := <-done:
+			if err != nil && !errors.Is(err, ErrStateLockLost) {
+				t.Errorf("Run: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("Run did not shut down after lock loss")
 		}
 	})
 	f.health(t, "needs-sign-in", 3*time.Second)
