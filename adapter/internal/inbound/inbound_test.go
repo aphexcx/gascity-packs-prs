@@ -2347,3 +2347,34 @@ func TestCanceledLateReceiptLookupKeepsPendingState(t *testing.T) {
 		})
 	}
 }
+
+// Large retained-history backlogs must not serialize the whole ledger merely
+// to obtain an isolated in-memory view. The budget leaves room for one copied
+// object per message/change plus map storage, but catches JSON round trips.
+func TestSnapshotBacklogAllocationBudget(t *testing.T) {
+	l := ledger.New()
+	l.Spaces["spaces/room"] = &ledger.SpaceState{Backlog: make([]string, 3000)}
+	for i := range 3000 {
+		id := fmt.Sprintf("spaces/room/messages/%d", i)
+		l.Messages[id] = &ledger.MessageState{Thread: "spaces/room/threads/one"}
+		l.Changes[id] = &ledger.ChangeState{ID: id, Message: id, Event: `{"text":"retained history"}`}
+		l.Spaces["spaces/room"].Backlog[i] = id
+	}
+	var snapshot *ledger.Ledger
+	allocs := testing.AllocsPerRun(1, func() {
+		var err error
+		snapshot, err = copyLedger(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 12000 {
+		t.Fatalf("snapshot of 3000-message backlog allocated %.0f objects; budget 12000", allocs)
+	}
+	snapshot.Spaces["spaces/room"].Backlog[0] = "changed"
+	snapshot.Messages["spaces/room/messages/0"].Thread = "changed"
+	snapshot.Changes["spaces/room/messages/0"].Event = "changed"
+	if l.Spaces["spaces/room"].Backlog[0] == "changed" || l.Messages["spaces/room/messages/0"].Thread == "changed" || l.Changes["spaces/room/messages/0"].Event == "changed" {
+		t.Fatal("snapshot aliases durable state")
+	}
+}

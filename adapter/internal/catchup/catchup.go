@@ -771,15 +771,7 @@ func (r *Runner) enter(ctx context.Context) error {
 func (r *Runner) leave() { <-r.gate }
 
 func clone(l *ledger.Ledger) (*ledger.Ledger, error) {
-	b, err := json.Marshal(l)
-	if err != nil {
-		return nil, errors.New("catchup: ledger snapshot failed")
-	}
-	var copy ledger.Ledger
-	if err := json.Unmarshal(b, &copy); err != nil {
-		return nil, errors.New("catchup: ledger snapshot failed")
-	}
-	return &copy, nil
+	return l.Clone(), nil
 }
 
 func (r *Runner) snapshot() (*ledger.Ledger, error) {

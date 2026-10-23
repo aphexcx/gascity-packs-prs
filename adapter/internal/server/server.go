@@ -276,13 +276,7 @@ func (s *Server) available() error {
 }
 
 func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
-	b, err := json.Marshal(l)
-	if err != nil {
-		return nil, err
-	}
-	var out ledger.Ledger
-	err = json.Unmarshal(b, &out)
-	return &out, err
+	return l.Clone(), nil
 }
 
 // Other consumers share a sync.Mutex, so use TryLock with a cancellable wait

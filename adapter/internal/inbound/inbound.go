@@ -289,15 +289,7 @@ func (p *Processor) snapshot() (*ledger.Ledger, error) {
 	return copyLedger(p.opts.Ledger)
 }
 func copyLedger(l *ledger.Ledger) (*ledger.Ledger, error) {
-	b, err := json.Marshal(l)
-	if err != nil {
-		return nil, errors.New("inbound: ledger snapshot failed")
-	}
-	var result ledger.Ledger
-	if err := json.Unmarshal(b, &result); err != nil {
-		return nil, errors.New("inbound: ledger snapshot failed")
-	}
-	return &result, nil
+	return l.Clone(), nil
 }
 
 func validate(c puller.Change) error {
