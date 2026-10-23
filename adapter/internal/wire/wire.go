@@ -116,10 +116,12 @@ type OutboundRequest struct {
 // delivered but did not record.
 type OutboundResult struct {
 	Receipt struct {
-		Delivered   bool   `json:"Delivered"`
-		MessageID   string `json:"MessageID"`
-		FailureKind string `json:"FailureKind"`
-		RetryAfter  int64  `json:"RetryAfter"`
+		Conversation Conversation      `json:"Conversation"`
+		Metadata     map[string]string `json:"Metadata"`
+		Delivered    bool              `json:"Delivered"`
+		MessageID    string            `json:"MessageID"`
+		FailureKind  string            `json:"FailureKind"`
+		RetryAfter   int64             `json:"RetryAfter"`
 	} `json:"Receipt"`
 	TranscriptEntry *map[string]any `json:"TranscriptEntry"`
 }

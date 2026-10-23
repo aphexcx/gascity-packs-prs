@@ -9,11 +9,15 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -21,7 +25,10 @@ import (
 	"gchat-adapter/internal/chat"
 	"gchat-adapter/internal/config"
 	"gchat-adapter/internal/fakes/fakegoogle"
+	"gchat-adapter/internal/gcclient"
+	"gchat-adapter/internal/inbound"
 	"gchat-adapter/internal/ledger"
+	"gchat-adapter/internal/puller"
 	"gchat-adapter/internal/server"
 	"gchat-adapter/internal/wire"
 	api "google.golang.org/api/chat/v1"
@@ -37,17 +44,37 @@ func TestRealGCContract(t *testing.T) {
 	}
 	gc := startGC(t, bin)
 	google := fakegoogle.New(t, nil)
+	target, err := url.Parse(google.URL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	var quota atomic.Bool
+	googleAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if quota.Load() && r.Method == http.MethodPost && r.URL.Path == "/v1/spaces/room/messages" {
+			w.Header().Set("Retry-After", "60")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = io.WriteString(w, `{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","message":"quota"}}`)
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	t.Cleanup(googleAPI.Close)
 	google.Configure(func(g *fakegoogle.Server) {
 		g.Spaces["spaces/room"] = &api.Space{Name: "spaces/room", SpaceType: "SPACE"}
 		g.Messages["spaces/room/messages/inbound"] = &api.Message{
 			Name: "spaces/room/messages/inbound", Text: "hello from Chat",
-			Thread: &api.Thread{Name: "spaces/room/threads/example"},
+			Space:      &api.Space{Name: "spaces/room", SpaceType: "SPACE"},
+			Sender:     &api.User{Name: "users/example", DisplayName: "Example", Type: "HUMAN"},
+			CreateTime: time.Now().UTC().Format(time.RFC3339Nano),
+			Thread:     &api.Thread{Name: "spaces/room/threads/example"},
 		}
 	})
 	cfg := &config.Config{
 		Secrets:    config.Secrets{CityName: "examplecity", GCAPIBase: gc.base},
 		SecretsDir: gc.root,
-		Endpoints:  config.Endpoints{ChatAPIBase: google.URL(), StateFile: filepath.Join(gc.root, "state.json")},
+		Endpoints:  config.Endpoints{ChatAPIBase: googleAPI.URL, StateFile: filepath.Join(gc.root, "state.json")},
 	}
 	cfg.Settings.Identities = []config.Identity{{Name: "example", Agent: "example"}}
 	chatClient, err := chat.New(t.Context(), gc.client, cfg.Endpoints)
@@ -57,8 +84,10 @@ func TestRealGCContract(t *testing.T) {
 	if err := chatClient.SetIdentityUserID(fakegoogle.UserID); err != nil {
 		t.Fatal(err)
 	}
+	state, stateMu := ledger.New(), new(sync.Mutex)
+	client := gcclient.New(gc.base, "examplecity")
 	adapter, err := server.New(server.Options{
-		Config: cfg, Ledger: ledger.New(), LedgerMu: new(sync.Mutex),
+		Config: cfg, Ledger: state, LedgerMu: stateMu,
 		LedgerPath: cfg.Endpoints.StateFile, Chat: chatClient,
 	})
 	if err != nil {
@@ -99,71 +128,101 @@ func TestRealGCContract(t *testing.T) {
 	}))
 	t.Cleanup(handler.Close)
 
-	reg := wire.Registration{
-		Provider: "gchat", AccountID: "example", CallbackURL: handler.URL,
-		Capabilities:      wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000},
-		ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>",
+	reg, err := server.Registration(cfg, handler.URL)
+	if err != nil {
+		t.Fatal(err)
 	}
-	registered := decode[struct {
-		Status    string `json:"status"`
-		Provider  string `json:"provider"`
-		AccountID string `json:"account_id"`
-	}](t, gc.post(t, "adapters", reg, http.StatusCreated))
-	if registered.Status != "registered" || registered.Provider != reg.Provider || registered.AccountID != reg.AccountID {
-		t.Fatalf("registration was not accepted: %+v", registered)
+	processor, err := inbound.New(inbound.Options{Config: cfg, Ledger: state, LedgerMu: stateMu,
+		LedgerPath: cfg.Endpoints.StateFile, GC: client, Chat: chatClient, IdentityUserID: fakegoogle.UserID})
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Log("registration: HTTP 201 with wire.Registration and PascalCase capabilities")
+	var fixture *api.Message
+	google.Configure(func(g *fakegoogle.Server) { copy := *g.Messages["spaces/room/messages/inbound"]; fixture = &copy })
+	outcome, err := processor.Handle(t.Context(), &puller.Event{PubSubID: "example-event", Changes: []puller.Change{{Kind: "message.created", Space: "spaces/room", Message: fixture}}})
+	if err != nil || outcome != puller.Ack {
+		t.Fatalf("production inbound mapping: %v %v", outcome, err)
+	}
+	change := state.Changes[fixture.Name]
+	if change == nil || change.Status != "committed" || change.ReceiptID == "" {
+		t.Fatalf("no_route not committed: %+v", change)
+	}
+	mapped := decode[wire.InboundMessage](t, []byte(change.Event))
+	conversation := mapped.Conversation
+	if conversation.Kind != "room" || conversation.ScopeID != "examplecity" {
+		t.Fatalf("mapped conversation: %+v", conversation)
+	}
+	receipt, err := client.Receipt(t.Context(), change.ReceiptID)
+	if err != nil || receipt.State != "concluded" || receipt.Delivery.Status != "no_route" {
+		t.Fatalf("inbound receipt: %+v %v", receipt, err)
+	}
+	// A real unknown receipt must remain an unresolved delivery obligation.
+	state.Changes["unknown"] = &ledger.ChangeState{ID: "unknown", Status: "pending", ReceiptID: "absent-receipt", Created: time.Now()}
+	if err := processor.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if state.Changes["unknown"].Status != "unresolved" {
+		t.Fatalf("unknown receipt lost: %+v", state.Changes["unknown"])
+	}
+	t.Log("inbound: production mapper/client accepted; no_route concluded; unknown receipt retained unresolved")
 
-	conversation := wire.Conversation{
-		ScopeID: "examplecity", Provider: "gchat", AccountID: "example", ConversationID: "spaces/room", Kind: "room",
+	// A real session under the isolated fake runtime survives reconciliation.
+	gc.request(t, http.MethodPost, "/v0/city/examplecity/sessions", map[string]string{
+		"kind": "provider", "name": "example", "alias": "example-contract",
+	}, http.StatusAccepted)
+	sessionID := ""
+	until := time.NewTimer(10 * time.Second)
+	defer until.Stop()
+	for sessionID == "" {
+		sessions := decode[struct {
+			Items []struct {
+				ID    string `json:"id"`
+				Alias string `json:"alias"`
+				State string `json:"state"`
+			} `json:"items"`
+		}](t, gc.get(t, "/v0/city/examplecity/sessions"))
+		for _, candidate := range sessions.Items {
+			if candidate.Alias == "example-contract" && candidate.State != "creating" && candidate.State != "closed" {
+				sessionID = candidate.ID
+			}
+		}
+		if sessionID != "" {
+			break
+		}
+		select {
+		case <-until.C:
+			t.Fatalf("session did not become available: %+v", sessions)
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-	inbound := wire.InboundEnvelope{Message: wire.InboundMessage{
-		ProviderMessageID: "spaces/room/messages/inbound", Conversation: conversation,
-		Actor: wire.Actor{ID: "users/example", DisplayName: "Example"}, Text: "hello from Chat",
-		ReplyToMessageID: "spaces/room/threads/example", ReceivedAt: time.Now().UTC(),
-	}}
-	// No default route or running agent is needed to prove acceptance. gc
-	// reports the definite no_route delivery outcome and a concluded receipt.
-	accepted := decode[wire.InboundResponse](t, gc.post(t, "inbound", inbound, http.StatusOK))
-	if accepted.Delivery.Status != "no_route" || accepted.Delivery.ReceiptID == "" {
-		t.Fatalf("inbound delivery object: %+v", accepted.Delivery)
-	}
-	receipt := decode[wire.ReceiptResponse](t, gc.get(t, "inbound/receipts/"+accepted.Delivery.ReceiptID))
-	if receipt.State != "concluded" || receipt.Delivery.Status != "no_route" {
-		t.Fatalf("inbound receipt: %+v", receipt)
-	}
-	t.Log("inbound: HTTP 200, delivery=no_route, receipt=concluded")
 
-	// gc supports a pure session-ID binding without starting an agent. This
-	// exercises real outbound authorization and transcript persistence while
-	// avoiding any inference process or provider credentials.
-	const sessionID = "example-session"
 	gc.post(t, "bind", struct {
 		Conversation wire.Conversation `json:"conversation"`
 		SessionID    string            `json:"session_id"`
 	}{conversation, sessionID}, http.StatusOK)
 	outbound := wire.OutboundRequest{
 		SessionID: sessionID, Conversation: conversation, Text: "hello from gc",
-		ReplyToMessageID: inbound.Message.ReplyToMessageID, IdempotencyKey: "example-publish",
+		ReplyToMessageID: mapped.ReplyToMessageID, IdempotencyKey: "example-publish",
 	}
-	resultBody := gc.post(t, "outbound", outbound, http.StatusOK)
-	result := decode[wire.OutboundResult](t, resultBody)
-	if !result.Receipt.Delivered || result.Receipt.MessageID == "" || result.TranscriptEntry == nil {
-		t.Fatalf("outbound receipt/transcript not decoded: %s", resultBody)
+
+	if _, err := client.Outbound(t.Context(), outbound); !gcclient.IsNoAdapter(err, "example") {
+		t.Fatalf("before registration: %v", err)
 	}
-	// OutboundResult only models fields the command client uses. Independently
-	// inspect gc's returned receipt to pin its string-valued metadata contract.
-	full := decode[struct {
-		Receipt struct {
-			Conversation wire.Conversation `json:"Conversation"`
-			Metadata     map[string]string `json:"Metadata"`
-		} `json:"Receipt"`
-	}](t, resultBody)
-	if full.Receipt.Conversation != conversation || !reflect.DeepEqual(full.Receipt.Metadata, map[string]string{
-		"thread": outbound.ReplyToMessageID, "parts": "1",
-	}) {
-		t.Fatalf("gc lost receipt scope or string metadata: %s", resultBody)
+	if err := gcclient.New(gc.base, "example-missing-city").Register(t.Context(), reg); !gcclient.IsCityNotRunning(err) {
+		t.Fatalf("missing city: %v", err)
 	}
+	if err := client.Register(t.Context(), reg); err != nil {
+		t.Fatal(err)
+	}
+	t.Log("registration: production builder/client accepted by real gc")
+	result, err := client.Outbound(t.Context(), outbound)
+	if err != nil || !result.Receipt.Delivered || result.Receipt.MessageID == "" || result.TranscriptEntry == nil {
+		t.Fatalf("outbound result: %+v %v", result, err)
+	}
+	if result.Receipt.Conversation != conversation || !reflect.DeepEqual(result.Receipt.Metadata, map[string]string{"thread": outbound.ReplyToMessageID, "parts": "1"}) {
+		t.Fatalf("receipt scope/metadata: %+v", result)
+	}
+
 	select {
 	case got := <-callbacks:
 		if got.header == "" {
@@ -182,15 +241,24 @@ func TestRealGCContract(t *testing.T) {
 	google.Configure(func(g *fakegoogle.Server) {
 		message := g.Messages[result.Receipt.MessageID]
 		if len(g.Messages) != 2 || message == nil || message.Text != outbound.Text || message.Thread == nil || message.Thread.Name != outbound.ReplyToMessageID {
-			t.Errorf("expected one Google reply alongside the inbound fixture, got %+v", g.Messages)
+			t.Fatalf("expected one Google reply alongside the inbound fixture, got %+v", g.Messages)
 		}
 	})
 	t.Log("outbound: real /publish callback with X-GC-Request; Receipt.Delivered=true; scope, message ID, thread and parts=\"1\" preserved; transcript recorded")
+	quota.Store(true)
+	outbound.IdempotencyKey = "example-quota"
+	result, err = client.Outbound(t.Context(), outbound)
+	if err != nil || result.Receipt.Delivered || result.Receipt.FailureKind != "rate_limited" || result.Receipt.RetryAfter != int64(60*time.Second) {
+		t.Fatalf("real gc failed receipt decode: %+v %v", result, err)
+	}
+	t.Log("outbound: real gc decoded rate_limited receipt and 60-second retry hint")
+
 }
 
 type gcProcess struct {
-	root, base string
-	client     *http.Client
+	root, base, city, bin string
+	env                   []string
+	client                *http.Client
 }
 
 func startGC(t *testing.T, bin string) *gcProcess {
@@ -219,6 +287,37 @@ func startGC(t *testing.T, bin string) *gcProcess {
 			t.Fatal(err)
 		}
 	}
+
+	writeFile(t, filepath.Join(root, "gitconfig"), "[user]\nname = example\nemail = example@example.invalid\n[beads]\nrole = maintainer\n")
+	// Deliberately do not inherit GC_*, BEADS_*, credentials, proxies, git
+	// overrides or session identity from the lane running this test.
+	env := []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + root, "TMPDIR=" + root,
+		"GC_HOME=" + gcHome, "XDG_RUNTIME_DIR=" + runtimeDir,
+		"XDG_CONFIG_HOME=" + filepath.Join(root, "config"), "XDG_CACHE_HOME=" + filepath.Join(root, "cache"),
+		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "gitconfig"), "GIT_CONFIG_NOSYSTEM=1",
+		"DOLT_ROOT_PATH=" + root, "GC_BEADS=file", "GC_DOLT=skip", "GC_SESSION=fake", "GC_SUPERVISOR_LOG_TEE=0",
+	}
+	configPath := filepath.Join(root, "city-input.toml")
+	writeFile(t, configPath, `[workspace]
+name = "examplecity"
+provider = "example"
+[providers.example]
+base = "builtin:claude"
+command = "/usr/bin/true"
+resume_command = "/usr/bin/true"
+[beads]
+provider = "file"
+`)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	init := exec.CommandContext(ctx, bin, "init", "--file", configPath, "--no-start", city)
+	init.Dir, init.Env, init.WaitDelay = root, env, 2*time.Second
+	initLog := new(boundedLog)
+	init.Stdout, init.Stderr = initLog, initLog
+	if err := init.Run(); err != nil {
+		t.Fatalf("gc init: %v\n%s", err, initLog.String())
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -228,25 +327,6 @@ func startGC(t *testing.T, bin string) *gcProcess {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(gcHome, "supervisor.toml"), fmt.Sprintf("[supervisor]\nport = %d\nbind = \"127.0.0.1\"\nallow_mutations = true\n", port))
-	writeFile(t, filepath.Join(root, "gitconfig"), "[user]\nname = example\nemail = example@example.invalid\n[beads]\nrole = maintainer\n")
-	// Deliberately do not inherit GC_*, BEADS_*, credentials, proxies, git
-	// overrides or session identity from the lane running this test.
-	env := []string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"),
-		"GC_HOME=" + gcHome, "XDG_RUNTIME_DIR=" + runtimeDir,
-		"XDG_CONFIG_HOME=" + filepath.Join(root, "config"), "XDG_CACHE_HOME=" + filepath.Join(root, "cache"),
-		"GIT_CONFIG_GLOBAL=" + filepath.Join(root, "gitconfig"), "GIT_CONFIG_NOSYSTEM=1",
-		"DOLT_ROOT_PATH=" + root, "GC_BEADS=file", "GC_DOLT=skip", "GC_SESSION=fake", "GC_SUPERVISOR_LOG_TEE=0",
-	}
-	configPath := filepath.Join(root, "city-input.toml")
-	writeFile(t, configPath, "[workspace]\nname = \"examplecity\"\n[beads]\nprovider = \"file\"\n")
-	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	defer cancel()
-	init := exec.CommandContext(ctx, bin, "init", "--file", configPath, "--no-start", city)
-	init.Dir, init.Env, init.WaitDelay = root, env, 2*time.Second
-	if output, err := init.CombinedOutput(); err != nil {
-		t.Fatalf("gc init: %v\n%s", err, output)
-	}
 	// --no-start avoids launchd/systemd and their ambient environment. The
 	// isolated supervisor reads only this one-city registry at startup.
 	writeFile(t, filepath.Join(gcHome, "cities.toml"), fmt.Sprintf("[[cities]]\npath = %q\nname = \"examplecity\"\n", city))
@@ -254,7 +334,7 @@ func startGC(t *testing.T, bin string) *gcProcess {
 	cmd := exec.CommandContext(ctx, bin, "supervisor", "run")
 	cmd.Dir, cmd.Env = root, env
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-	cmd.WaitDelay = 5 * time.Second
+	cmd.WaitDelay = 15 * time.Second
 	log := new(boundedLog)
 	cmd.Stdout, cmd.Stderr = log, log
 	if err := cmd.Start(); err != nil {
@@ -267,6 +347,10 @@ func startGC(t *testing.T, bin string) *gcProcess {
 	t.Cleanup(func() {
 		stop()
 		<-done
+		t.Logf("supervisor exit: %v", waitErr)
+		if cmd.ProcessState == nil || !cmd.ProcessState.Success() {
+			t.Errorf("supervisor stop: %v", waitErr)
+		}
 		if t.Failed() {
 			t.Logf("supervisor output:\n%s", log.String())
 		}
@@ -281,9 +365,9 @@ func startGC(t *testing.T, bin string) *gcProcess {
 	for {
 		select {
 		case <-done:
-			t.Fatalf("supervisor exited before readiness: %v\n%s", waitErr, log.String())
+			t.Fatalf("supervisor exited before readiness: %v", waitErr)
 		case <-deadline.C:
-			t.Fatalf("temporary city did not become ready\n%s", log.String())
+			t.Fatal("temporary city did not become ready")
 		case <-t.Context().Done():
 			t.Fatal(t.Context().Err())
 		case <-ticker.C:
@@ -292,6 +376,11 @@ func startGC(t *testing.T, bin string) *gcProcess {
 				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				_ = resp.Body.Close()
 				if resp.StatusCode == http.StatusOK {
+					select {
+					case <-done:
+						t.Fatalf("supervisor exited at readiness: %v", waitErr)
+					default:
+					}
 					return gc
 				}
 			}
@@ -319,7 +408,11 @@ func (gc *gcProcess) request(t *testing.T, method, path string, body any, status
 			t.Fatal(err)
 		}
 	}
-	req, err := http.NewRequestWithContext(t.Context(), method, gc.base+"/v0/city/examplecity/extmsg/"+path, bytes.NewReader(data))
+	endpoint := gc.base + "/v0/city/examplecity/extmsg/" + path
+	if strings.HasPrefix(path, "/") {
+		endpoint = gc.base + path
+	}
+	req, err := http.NewRequestWithContext(t.Context(), method, endpoint, bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
