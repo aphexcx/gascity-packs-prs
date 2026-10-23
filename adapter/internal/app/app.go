@@ -60,6 +60,8 @@ type application struct {
 	noticeMu           sync.Mutex
 	notified           map[string]bool
 	legacyWarning      sync.Once
+	stateLock          *StateLock
+	lockWarning        sync.Once
 }
 
 func Run(ctx context.Context, cfg *config.Config) error { return RunWithOptions(ctx, cfg, Options{}) }
@@ -85,6 +87,8 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 		return err
 	}
 	a := &application{cfg: cfg, opts: opts, log: opts.Logger, l: ledger.New(), resume: make(chan struct{}, 1), notices: make(chan notification, 8), notified: map[string]bool{}}
+	a.stateLock = lock
+	a.l.SetSaveGuard(a.checkStateLock)
 	s, err := server.New(server.Options{Config: cfg, Ledger: a.l, LedgerMu: &a.mu, LedgerPath: cfg.Endpoints.StateFile, SettingsPath: opts.SettingsPath, Logger: a.log, LastEvent: func() time.Time {
 		if n := a.lastEvent.Load(); n != 0 {
 			return time.Unix(0, n)
@@ -119,6 +123,10 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 		if r.Method == http.MethodPost && r.URL.Path == "/state" {
 			a.stateMu.Lock()
 			defer a.stateMu.Unlock()
+			if err := a.checkStateLock(); err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
 		}
 		s.ServeHTTP(w, r)
 	}), BaseContext: func(net.Listener) context.Context { return serviceCtx }, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 25 * time.Second, IdleTimeout: time.Minute}
@@ -140,7 +148,6 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 	cancel()
 	// gc allows only two seconds before SIGKILL. Stop intake and checkpoint
 	// before waiting on any request or worker; request contexts share cancellation.
-	_ = ln.Close()
 	s.Close()
 	result = errors.Join(result, a.saveShutdownState(cfg.Endpoints.StateFile))
 	shutdownCtx, stop := context.WithTimeout(context.Background(), time.Second)
@@ -151,6 +158,7 @@ func RunWithOptions(ctx context.Context, cfg *config.Config, opts Options) error
 			result = errors.Join(result, err)
 		}
 	}
+	_ = ln.Close()
 	if !workerStopped {
 		select {
 		case err := <-workerDone:
@@ -209,6 +217,9 @@ func prepareSocket(path string) error {
 func (a *application) health(state, reason string) {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	if a.checkStateLock() != nil {
+		return
+	}
 	if state == "ready" {
 		a.healthyGeneration.Store(true)
 	}
@@ -219,6 +230,26 @@ func (a *application) health(state, reason string) {
 	if a.log != nil {
 		a.log.Debug("adapter health changed", "state", state, "reason", reason)
 	}
+}
+
+// Save callers may already hold the ledger or state mutex. Only the server's
+// independent health mutex is used here, keeping the ownership check reentrant.
+func (a *application) checkStateLock() error {
+	if a.stateLock == nil {
+		return nil
+	}
+	err := a.stateLock.Check()
+	if err != nil {
+		a.lockWarning.Do(func() {
+			if a.log != nil {
+				a.log.Error("state lock ownership lost", "operation", "state_lock")
+			}
+		})
+		if a.s != nil {
+			a.s.SetHealth(server.Health{State: "recovery-required", Reason: err.Error()})
+		}
+	}
+	return err
 }
 
 func (a *application) run(ctx context.Context) error {
@@ -234,6 +265,7 @@ func (a *application) run(ctx context.Context) error {
 	} else {
 		a.mu.Lock()
 		*a.l = *l
+		a.l.SetSaveGuard(a.checkStateLock)
 		err = a.l.Save(a.cfg.Endpoints.StateFile)
 		a.mu.Unlock()
 		if err != nil {
@@ -295,7 +327,7 @@ func (a *application) run(ctx context.Context) error {
 	reloaded := false
 	settingsBytes, _ := os.ReadFile(a.opts.SettingsPath)
 	start := func() {
-		if recovery || credentialHold || generationDone != nil {
+		if a.checkStateLock() != nil || recovery || credentialHold || generationDone != nil {
 			return
 		}
 		if source.State() != token.Ready {
@@ -330,6 +362,9 @@ func (a *application) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case <-a.resume:
+			if a.checkStateLock() != nil {
+				continue
+			}
 			// /state is only admitted while recovery-required, when no generation
 			// owns the ledger. It has already replaced and saved the shared value.
 			recovery = false
@@ -405,6 +440,11 @@ func (a *application) run(ctx context.Context) error {
 			retry = nil
 			start()
 		case <-ticker.C:
+			if a.checkStateLock() != nil {
+				recovery = true
+				stopGeneration()
+				continue
+			}
 			if a.opts.EnvFile != "" && a.opts.SettingsPath != "" {
 				data, readErr := os.ReadFile(a.opts.SettingsPath)
 				if readErr == nil && !bytes.Equal(data, settingsBytes) {

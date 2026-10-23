@@ -363,6 +363,10 @@ func TestStateRunningService(t *testing.T) {
 			})}
 			go func() { _ = srv.Serve(ln) }()
 			t.Cleanup(func() { _ = srv.Close() })
+			socketBefore, err := os.Lstat(socket)
+			if err != nil {
+				t.Fatal(err)
+			}
 			args := []string{"state", tc.action}
 			backup, err := filepath.Abs("test-backup.json")
 			if err != nil {
@@ -376,6 +380,10 @@ func TestStateRunningService(t *testing.T) {
 			}
 			var stdout, stderr bytes.Buffer
 			code := run(t.Context(), args, &stdout, &stderr, envAt(env), nil)
+			socketAfter, socketErr := os.Lstat(socket)
+			if socketErr != nil || !os.SameFile(socketBefore, socketAfter) {
+				t.Fatalf("live socket replaced: %v", socketErr)
+			}
 			after, err := os.ReadFile(state)
 			if err != nil {
 				t.Fatal(err)

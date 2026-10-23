@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ import (
 
 func TestStateAgainstGCService(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "adapter")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/gc-gchat-adapter")
+	build := exec.Command("/opt/homebrew/bin/go", "build", "-o", bin, "./cmd/gc-gchat-adapter")
 	build.Dir = "../.."
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v: %s", err, out)
@@ -108,6 +109,84 @@ func TestStateAgainstGCService(t *testing.T) {
 				t.Fatalf("stopped service: %v %s", err, out)
 			}
 		})
+	}
+}
+
+func TestForcedOfflineResetAfterLockLossSurvivesServiceExit(t *testing.T) {
+	env, state, socket := stateFixture(t)
+	cfg, err := config.Load(env, "", filepath.Dir(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gc's generated socket differs from the operator's fallback socket.
+	cfg.Secrets.ServiceSocket = filepath.Join(filepath.Dir(socket), "generated.sock")
+	cfg.Endpoints.MediaDir = filepath.Join(t.TempDir(), "media")
+	cfg.Endpoints.UploadRoot = filepath.Join(t.TempDir(), "uploads")
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- app.RunWithOptions(ctx, cfg, app.Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(context.Context, string, string) error { return nil }})
+	}()
+	stopped := false
+	t.Cleanup(func() {
+		cancel()
+		if !stopped {
+			<-done
+		}
+	})
+	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", cfg.Secrets.ServiceSocket)
+	}}}
+	defer client.CloseIdleConnections()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		resp, e := client.Get("http://adapter/healthz")
+		if e == nil {
+			var h struct{ State string }
+			_ = json.NewDecoder(resp.Body).Decode(&h)
+			resp.Body.Close()
+			if h.State == "needs-sign-in" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("service did not start")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := os.Rename(state+".lock", state+".lock.old"); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	if code := run(t.Context(), []string{"state", "reset", "--force"}, &out, &errOut, envAt(env), nil); code != 0 {
+		t.Fatalf("offline force reset: %d %s", code, &errOut)
+	}
+	before, err := os.ReadFile(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	<-done
+	stopped = true
+	after, err := os.ReadFile(state)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("service exit undid forced offline reset: %v", err)
+	}
+}
+
+func TestStateLockHeldByOfflineCommandHasNoEmptySocketHint(t *testing.T) {
+	env, state, _ := stateFixture(t)
+	lock, err := app.LockState(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	var out, errOut bytes.Buffer
+	if code := run(t.Context(), []string{"state", "reset", "--force"}, &out, &errOut, envAt(env), nil); code == 0 {
+		t.Fatal("concurrent offline reset succeeded")
+	}
+	if strings.Contains(errOut.String(), "socket") || strings.Contains(errOut.String(), "--force") {
+		t.Fatalf("misleading conflict: %s", &errOut)
 	}
 }
 

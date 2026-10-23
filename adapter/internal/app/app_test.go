@@ -47,6 +47,12 @@ type fixture struct {
 func newFixture(t *testing.T, credential bool) *fixture {
 	t.Helper()
 	dir := t.TempDir()
+	stub := filepath.Join(dir, "gc")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_BIN", stub)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	socketDir, err := os.MkdirTemp("/tmp", "gchat-app-")
 	if err != nil {
 		t.Fatal(err)

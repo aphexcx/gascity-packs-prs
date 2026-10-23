@@ -77,6 +77,9 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 		if force && errors.As(err, &held) && held.Socket != "" {
 			return requestState(ctx, held.Socket, action, backup)
 		}
+		if errors.As(err, &held) && held.Socket != "" {
+			return fmt.Errorf("ledger is in use (service socket %q); stop the service or use --force to request recovery through the service", held.Socket)
+		}
 		return err
 	}
 	defer lock.Close()
@@ -143,6 +146,7 @@ func changeState(ctx context.Context, cfg *config.Config, action, backup string,
 			return fmt.Errorf("restore backup: %w", err)
 		}
 	}
+	l.SetSaveGuard(lock.Check)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

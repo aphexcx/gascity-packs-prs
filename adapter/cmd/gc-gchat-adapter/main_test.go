@@ -19,6 +19,7 @@ import (
 
 	"gchat-adapter/internal/app"
 	"gchat-adapter/internal/config"
+	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/fakes/fakegoogle"
 	"golang.org/x/oauth2"
 )
@@ -334,11 +335,18 @@ func envAt(path string) func(string) string {
 
 func authFixture(t *testing.T, endpoint string) (string, string) {
 	t.Helper()
+	stubDir := t.TempDir()
+	stub := filepath.Join(stubDir, "gc")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GC_BIN", stub)
+	t.Setenv("PATH", stubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	dir := filepath.Join(t.TempDir(), "secrets")
 	clientFile := filepath.Join(dir, "client.json")
 	writeFile(t, clientFile, `{"installed":{"client_id":"example-client","client_secret":"example-secret"}}`)
 	env := filepath.Join(dir, "env")
-	writeFile(t, env, "GCHAT_PROJECT_ID=example\nGCHAT_PUBSUB_TOPIC=projects/example/topics/chat\nGCHAT_PUBSUB_SUBSCRIPTION=projects/example/subscriptions/chat\nGCHAT_OAUTH_CLIENT_FILE="+clientFile+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL=http://127.0.0.1:8372\nGCHAT_OAUTH_AUTH_URL="+endpoint+"/authorize\nGCHAT_OAUTH_TOKEN_URL="+endpoint+"/token\n")
+	writeFile(t, env, "GCHAT_PROJECT_ID=example\nGCHAT_PUBSUB_TOPIC=projects/example/topics/chat\nGCHAT_PUBSUB_SUBSCRIPTION=projects/example/subscriptions/chat\nGCHAT_OAUTH_CLIENT_FILE="+clientFile+"\nGC_CITY_NAME=examplecity\nGC_API_BASE_URL="+fakegc.New(t).URL()+"\nGCHAT_OAUTH_AUTH_URL="+endpoint+"/authorize\nGCHAT_OAUTH_TOKEN_URL="+endpoint+"/token\n")
 	t.Setenv("GCHAT_CHAT_API_BASE", endpoint)
 	t.Setenv("GCHAT_OAUTH_AUTH_URL", "")
 	t.Setenv("GCHAT_OAUTH_TOKEN_URL", "")

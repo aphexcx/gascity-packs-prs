@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +17,70 @@ import (
 	"gchat-adapter/internal/ledger"
 	api "google.golang.org/api/chat/v1"
 )
+
+// A blocked request body ignores context cancellation until its connection is
+// closed. This exercises the actual one-second HTTP drain bound.
+func TestShutdownCheckpointsBeforeDrainingStalledRequestBody(t *testing.T) {
+	f := newFixture(t, true)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx, f.cfg, Options{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Notify: func(context.Context, string, string) error { return nil }})
+	}()
+	stopped := false
+	t.Cleanup(func() {
+		cancel()
+		if !stopped {
+			<-done
+		}
+	})
+	f.health(t, "ready", 5*time.Second)
+	conn, err := net.Dial("unix", f.cfg.Secrets.ServiceSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(4 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = io.WriteString(conn, "POST /publish HTTP/1.1\r\nHost: adapter\r\nContent-Length: 1000\r\nContent-Type: application/json\r\nExpect: 100-continue\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	line, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(line, "100 Continue") {
+		t.Fatalf("handler not reading body: %q %v", line, err)
+	}
+	before, err := os.Stat(f.cfg.Endpoints.StateFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	cancel()
+	waitFor(t, 500*time.Millisecond, func() bool {
+		now, e := os.Stat(f.cfg.Endpoints.StateFile)
+		return e == nil && !os.SameFile(before, now)
+	})
+	select {
+	case err := <-done:
+		stopped = true
+		t.Fatalf("drain ended before body was released or timeout: %v", err)
+	default:
+	}
+	select {
+	case err := <-done:
+		stopped = true
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Until(start.Add(1500 * time.Millisecond))):
+		t.Fatal("HTTP body prevented bounded drain")
+	}
+	if time.Since(start) < 900*time.Millisecond {
+		t.Fatal("request body did not hold the drain open")
+	}
+}
 
 func TestShutdownSavesBeforeDrainingStuckPublish(t *testing.T) {
 	f := newFixture(t, false)
