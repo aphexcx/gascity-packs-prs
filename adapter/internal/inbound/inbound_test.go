@@ -1770,7 +1770,7 @@ func TestLookupHoldCarriesCredentialKind(t *testing.T) {
 				defer cancel()
 				out, err := f.p.Handle(ctx, ev)
 				auth := status == 401 || status == 403
-				kind := map[int]string{401: "auth", 403: "auth", 408: "permanent", 409: "permanent", 503: "transient", 429: "rate_limited"}[status]
+				kind := map[int]string{401: "auth", 403: "auth", 408: "transient", 409: "transient", 503: "transient", 429: "rate_limited"}[status]
 				if out != puller.Nack || err == nil || errors.Is(err, ErrCredentials) != auth {
 					t.Fatalf("hold = %v, %v; credentials=%v", out, err, auth)
 				}
@@ -2376,5 +2376,43 @@ func TestSnapshotBacklogAllocationBudget(t *testing.T) {
 	snapshot.Changes["spaces/room/messages/0"].Event = "changed"
 	if l.Spaces["spaces/room"].Backlog[0] == "changed" || l.Messages["spaces/room/messages/0"].Thread == "changed" || l.Changes["spaces/room/messages/0"].Event == "changed" {
 		t.Fatal("snapshot aliases durable state")
+	}
+}
+
+func TestPendingReceiptDoesNotClearConcurrentResolutionAfterClockRewind(t *testing.T) {
+	f := setup(t)
+	now := time.Date(2026, 10, 22, 10, 0, 0, 0, time.UTC)
+	f.opts.Now = func() time.Time { return now }
+	var err error
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gc.Configure(func(s *fakegc.Server) { s.NextDelivery = "pending" })
+	handle(t, f, event("pending-rewind", "message.created", message()))
+	f.l.Changes[messageName].Reason = receiptLookupGrace
+	now = now.Add(-time.Hour)
+	h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := f.p.unresolved(messageName, "operator retained uncertainty"); err != nil {
+			t.Error(err)
+		}
+		_ = json.NewEncoder(w).Encode(wire.ReceiptResponse{State: "pending"})
+	}))
+	defer h.Close()
+	f.opts.GC = gcclient.New(h.URL, "examplecity")
+	f.p, err = New(f.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := ledger.Load(f.opts.LedgerPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := saved.Changes[messageName]
+	if c.Status != "unresolved" || c.Reason != "operator retained uncertainty" || len(f.gc.Inbound()) != 1 {
+		t.Fatalf("concurrent terminal change overwritten: %+v", c)
 	}
 }

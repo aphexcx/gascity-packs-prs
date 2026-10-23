@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -384,11 +383,7 @@ func unavailableParent(err error) bool {
 
 func permanentLookupFailure(err error) bool {
 	kind, _ := chat.Classify(err)
-	var apiErr *googleapi.Error
-	// The shared classifier calls these permanent, but a lookup timeout or
-	// conflict must hold the event for another delivery instead of retaining it.
-	return kind == "permanent" && (!errors.As(err, &apiErr) ||
-		(apiErr.Code != http.StatusRequestTimeout && apiErr.Code != http.StatusConflict))
+	return kind == "permanent"
 }
 
 // lookupError exposes a safe classifier and status, never Google's response body.
