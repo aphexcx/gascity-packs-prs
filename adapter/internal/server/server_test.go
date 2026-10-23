@@ -2662,3 +2662,19 @@ func TestPreviousAccountIsDefiniteAndDoesNotRegister(t *testing.T) {
 		})
 	}
 }
+
+func TestRegistrationBuilder(t *testing.T) {
+	f := setup(t)
+	reg, err := Registration(f.cfg, f.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Provider != "gchat" || reg.AccountID != "example" || reg.CallbackURL != f.url || !reg.Capabilities.SupportsAttachments || reg.Capabilities.MaxMessageLength != 32000 || !strings.Contains(reg.ReplyInstructions, "reply-current") {
+		t.Fatalf("registration contract: %+v", reg)
+	}
+	for _, base := range []string{"/relative", "file:///tmp/example", ""} {
+		if _, err := Registration(f.cfg, base); err == nil {
+			t.Fatalf("accepted callback %q", base)
+		}
+	}
+}

@@ -1103,6 +1103,17 @@ func (s *Server) RetryPending(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
+// Registration builds the production callback contract for a validated base.
+// Tests may supply an isolated HTTP callback; the service uses its gc proxy URL.
+func Registration(cfg *config.Config, base string) (wire.Registration, error) {
+	base = strings.TrimRight(base, "/")
+	u, err := url.Parse(base)
+	if cfg == nil || err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return wire.Registration{}, errors.New("registrar: absolute gc callback URL required")
+	}
+	return wire.Registration{Provider: "gchat", AccountID: cfg.Identity().Name, CallbackURL: base, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}, ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}, nil
+}
+
 // Register retries with bounded backoff until successful or canceled. The base
 // includes gc's service proxy prefix; gc itself appends /publish.
 func (s *Server) Register(ctx context.Context) error {
@@ -1115,11 +1126,10 @@ func (s *Server) Register(ctx context.Context) error {
 	cfg := s.configuration()
 	base := strings.TrimRight(cfg.Secrets.GCAPIBase, "/") + "/" + strings.Trim(cfg.Secrets.ServiceURLPrefix, "/")
 	base = strings.TrimRight(base, "/")
-	u, err := url.Parse(base)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return errors.New("registrar: absolute gc callback URL required")
+	reg, err := Registration(&cfg, base)
+	if err != nil {
+		return err
 	}
-	reg := wire.Registration{Provider: "gchat", AccountID: cfg.Identity().Name, CallbackURL: base, Capabilities: wire.Capabilities{SupportsAttachments: true, MaxMessageLength: 32000}, ReplyInstructions: "gc gchat reply-current --conversation-id {conversation_id} [--thread {thread_ts}] --body-file <path>"}
 	for delay := time.Second; ; {
 		_, g := s.clients()
 		err := errors.New("gc client is initializing")
