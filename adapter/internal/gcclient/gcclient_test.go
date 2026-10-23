@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"gchat-adapter/internal/fakes/fakegc"
 	"gchat-adapter/internal/wire"
@@ -263,7 +264,7 @@ func TestHTTPErrorIncludesStatusAndBody(t *testing.T) {
 				if !errors.As(err, &responseErr) || responseErr.StatusCode != status || responseErr.Body != body {
 					t.Fatalf("error = %v; want status %d and body %q", err, status, body)
 				}
-				if !strings.Contains(err.Error(), fmt.Sprint(status)) || !strings.Contains(err.Error(), body) {
+				if !strings.Contains(err.Error(), fmt.Sprint(status)) || !strings.Contains(err.Error(), strings.TrimSpace(body)) {
 					t.Fatalf("error message omits response: %v", err)
 				}
 			})
@@ -345,7 +346,7 @@ func TestOutboundBindingProblems(t *testing.T) {
 				t.Fatalf("problem = %+v, code = %q; want %+v", responseErr.Problem, responseErr.Code(), want)
 			}
 			var retained Problem
-			if err := json.Unmarshal([]byte(responseErr.Body), &retained); err != nil || retained != *want {
+			if err := json.Unmarshal([]byte(responseErr.Body), &retained); err != nil || !reflect.DeepEqual(retained, *want) {
 				t.Fatalf("raw body not retained: %q, %v", responseErr.Body, err)
 			}
 			for _, candidate := range []error{err, fmt.Errorf("outbound failed: %w", err)} {
@@ -555,6 +556,32 @@ func TestCityNotRunningProblem(t *testing.T) {
 	} {
 		if IsCityNotRunning(candidate) {
 			t.Errorf("unrelated error classified as city startup: %v", candidate)
+		}
+	}
+}
+
+func TestHTTPErrorSafeUsefulSummary(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"title", `{"title":"Bad gateway","status":502}`, "Bad gateway"},
+		{"body", `{"status":502}`, `{"status":502}`},
+		{"detail", `{"detail":"try later","status":502}`, "try later"},
+		{"validation", `{"title":"Unprocessable Entity","detail":"validation failed","errors":[{"location":"body.callback_url","message":"expected uri"},{"location":"body.account_id","message":"required"}]}`, "Unprocessable Entity: validation failed: body.callback_url: expected uri; body.account_id: required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var problem Problem
+			if err := json.Unmarshal([]byte(tc.body), &problem); err != nil {
+				t.Fatal(err)
+			}
+			got := (&HTTPError{StatusCode: 502, Body: tc.body, Problem: &problem}).Error()
+			if got != "gc API: HTTP 502: "+tc.want {
+				t.Fatalf("summary: %q", got)
+			}
+		})
+	}
+	for _, body := range []string{strings.Repeat("a", 255) + "界", "bad\nforged\rline\x00\x1b", string([]byte{0xff, 0xfe})} {
+		got := (&HTTPError{StatusCode: 502, Body: body}).Error()
+		if !utf8.ValidString(got) || strings.ContainsAny(got, "\n\r\x00\x1b") || len(got) > 300 {
+			t.Fatalf("unsafe summary %q", got)
 		}
 	}
 }

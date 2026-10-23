@@ -17,6 +17,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"gchat-adapter/internal/wire"
 )
@@ -59,6 +61,10 @@ type Problem struct {
 	Status int    `json:"status"`
 	Detail string `json:"detail"`
 	Code   string `json:"code"`
+	Errors []struct {
+		Message  string `json:"message"`
+		Location string `json:"location"`
+	} `json:"errors,omitempty"`
 }
 
 // HTTPError retains gc's status and up to 64 KiB of its response body.
@@ -72,11 +78,51 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	summary := e.Body
-	if e.Problem != nil {
-		summary = e.Problem.Code + ": " + e.Problem.Detail
+
+	if p := e.Problem; p != nil {
+		var parts []string
+		label := p.Code
+		if label == "" {
+			label = p.Title
+		}
+		if label != "" {
+			parts = append(parts, label)
+		}
+		if p.Detail != "" {
+			parts = append(parts, p.Detail)
+		}
+		var fields []string
+		for i, field := range p.Errors {
+			if i >= 3 {
+				break
+			}
+			detail := field.Message
+			if field.Location != "" {
+				detail = field.Location + ": " + detail
+			}
+			if detail != "" {
+				fields = append(fields, detail)
+			}
+		}
+		if len(fields) > 0 {
+			parts = append(parts, strings.Join(fields, "; "))
+		}
+		if len(parts) > 0 {
+			summary = strings.Join(parts, ": ")
+		}
 	}
+	summary = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(summary, "�"))
 	if len(summary) > 256 {
-		summary = summary[:256] + "..."
+		end := 256
+		for !utf8.RuneStart(summary[end]) {
+			end--
+		}
+		summary = summary[:end] + "..."
 	}
 	return fmt.Sprintf("gc API: HTTP %d: %s", e.StatusCode, summary)
 }
@@ -90,8 +136,8 @@ func (e *HTTPError) Code() string {
 }
 
 // IsNoBinding reports whether gc rejected an outbound request with no binding.
-// gc internal/extmsg/outbound.go:137-146 emits this detail for both an absent
-// caller session and a caller that has no matching group route.
+// Over HTTP, only the missing group-route branch reaches this detail. An
+// empty caller session is rejected earlier by request validation (HTTP 422).
 func IsNoBinding(err error) bool {
 	return strings.HasPrefix(validationDetail(err), "no active binding for conversation ")
 }
@@ -202,7 +248,7 @@ func (c *Client) call(ctx context.Context, method, path string, body, result any
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		err := &HTTPError{StatusCode: resp.StatusCode, Body: string(data), RetryAfter: resp.Header.Get("Retry-After")}
 		var problem Problem
-		if json.Unmarshal(data, &problem) == nil && problem != (Problem{}) {
+		if json.Unmarshal(data, &problem) == nil && (problem.Type != "" || problem.Title != "" || problem.Status != 0 || problem.Detail != "" || problem.Code != "" || len(problem.Errors) > 0) {
 			err.Problem = &problem
 		}
 		if readErr != nil {
