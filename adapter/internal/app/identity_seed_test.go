@@ -12,6 +12,25 @@ import (
 	"gchat-adapter/internal/ledger"
 )
 
+func TestSeedlessLegacyLedgerReportsReseedWithoutClaimingNewConsent(t *testing.T) {
+	f := newFixture(t, false)
+	var logs logBuffer
+	a := &application{cfg: f.cfg, l: ledger.New(), log: slog.New(slog.NewTextHandler(&logs, nil))}
+	a.l.IdentityUserID = "users/222"
+	if err := a.seedIdentity("users/111"); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.seedIdentity("users/111"); err != nil {
+		t.Fatal(err)
+	}
+	if a.l.IdentityUserID != "users/111" || a.l.IdentitySeed != "users/111" {
+		t.Fatalf("legacy seed not established: %+v", a.l)
+	}
+	if strings.Contains(logs.String(), "credential identity changed") || strings.Count(logs.String(), "legacy ledger identity re-seeded from credential") != 1 {
+		t.Fatalf("misleading legacy identity log: %s", logs.String())
+	}
+}
+
 func TestPersistedIdentitySeedSurvivesRestart(t *testing.T) {
 	f := newFixture(t, false)
 	f.replaceIdentityToken(t, "users/111")

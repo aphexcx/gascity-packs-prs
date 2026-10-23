@@ -37,7 +37,11 @@ func (a *application) seedIdentity(id string) error {
 	// Once a new consent is durable, the previous client cannot supply identity.
 	a.chatClient.Store(nil)
 	if previous != "" && previous != id {
-		a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
+		if previousSeed == "" {
+			a.log.Warn("legacy ledger identity re-seeded from credential; observed identity will be verified again", "operation", "identity")
+		} else {
+			a.log.Warn("credential identity changed; rebuilding client", "operation", "identity")
+		}
 	}
 	return nil
 }
