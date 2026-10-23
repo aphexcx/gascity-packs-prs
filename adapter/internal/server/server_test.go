@@ -1825,8 +1825,6 @@ func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
 	for _, delivered := range []bool{false, true} {
 		t.Run(fmt.Sprint(delivered), func(t *testing.T) {
 			f := setup(t)
-			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
-			defer cancel()
 			p := wire.PublishRequest{SessionID: "session", Conversation: conversation("spaces/room"), Text: "hello", IdempotencyKey: "settle"}
 			if err := f.s.prepare(t.Context(), p, nil, true); err != nil {
 				t.Fatal(err)
@@ -1837,6 +1835,9 @@ func TestCommandSettlesGCResultAfterRequestCancellation(t *testing.T) {
 				receipt = f.send(t, p)
 				entry = &map[string]any{}
 			}
+			// Start the cancellation budget after setup and the optional Google send.
+			ctx, cancel := context.WithTimeout(t.Context(), 500*time.Millisecond)
+			defer cancel()
 			h := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				// gc answers before the deadline, while another ledger consumer
 				// holds the mutex until the request expires.
