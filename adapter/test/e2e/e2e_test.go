@@ -1134,11 +1134,16 @@ func scenariosDelivery(t *testing.T) {
 					r := wire.ReceiptResponse{State: "concluded"}
 					r.Delivery.Status = "pending"
 					if kind == "aged out" {
+						// The receipt concludes and expires during an outage. Stop
+						// polling before exposing its terminal state, so a legitimate
+						// poll cannot commit delivery between SetReceipt and Advance.
+						f.stop()
 						r.Delivery.Status = "delivered"
 					}
 					f.gc.SetReceipt(f.state().Changes[m.Name].ReceiptID, r)
 					if kind == "aged out" {
 						f.gc.Advance(time.Hour + time.Second)
+						f.ready()
 					}
 				}
 				f.unresolved(m.Name)
