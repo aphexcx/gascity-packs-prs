@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +15,78 @@ import (
 
 	"gchat-adapter/internal/ledger"
 )
+
+func TestLockStateChecksIdentityImmediatelyAfterAcquiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	lock, err := lockState(path, func() {
+		if err := os.Rename(path+".lock", path+".lock.old"); err != nil {
+			t.Fatal(err)
+		}
+		writeFile(t, path+".lock", "another owner\n")
+	})
+	if lock != nil {
+		lock.Close()
+		t.Fatal("acquired a replaced lock path")
+	}
+	// Pin the acquisition check itself: RecordSocket's later Check also refuses
+	// a replacement, but reports ErrStateLockLost after constructing an owner.
+	if err == nil || err.Error() != "state lock path changed or is not a regular file" {
+		t.Fatalf("post-acquisition identity check did not refuse: %v", err)
+	}
+	data, err := os.ReadFile(path + ".lock")
+	if err != nil || string(data) != "another owner\n" {
+		t.Fatalf("replacement owner metadata changed: %q, %v", data, err)
+	}
+	old, err := openStateLock(path + ".lock.old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	if err := tryStateLock(old); err != nil {
+		t.Fatalf("failed acquisition leaked the original lock: %v", err)
+	}
+}
+
+func TestStateHandlerRefusesLostLockBeforeRecovery(t *testing.T) {
+	f := newFixture(t, false)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunWithOptions(ctx, f.cfg, Options{Notify: func(context.Context, string, string) error { return nil }})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil && !errors.Is(err, ErrStateLockLost) {
+			t.Errorf("Run: %v", err)
+		}
+	})
+	f.health(t, "needs-sign-in", 3*time.Second)
+	path := f.cfg.Endpoints.StateFile
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".lock", path+".lock.old"); err != nil {
+		t.Fatal(err)
+	}
+	// Ensure the server's ordinary recovery-state check would allow this request;
+	// otherwise its unrelated 409 could hide a missing ownership pre-check.
+	f.health(t, "recovery-required", 3*time.Second)
+	resp, err := f.client.Post("http://adapter/state", "application/json", strings.NewReader(`{"action":"reset"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	// A ledger SaveGuard failure returns 500 after attempting recovery. The
+	// handler must reject ownership loss before that path with its own 409.
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("state pre-check status = %d, want 409", resp.StatusCode)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("refused recovery changed the ledger: %v", err)
+	}
+}
 
 func TestStateLockExcludesSecondServiceBeforeSocketProbe(t *testing.T) {
 	f := newFixture(t, false)

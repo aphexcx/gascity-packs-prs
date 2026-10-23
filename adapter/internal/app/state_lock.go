@@ -33,6 +33,11 @@ func (e *StateLockedError) Error() string {
 }
 
 func LockState(path string) (*StateLock, error) {
+	return lockState(path, nil)
+}
+
+// afterAcquire lets tests replace the pathname at the acquisition boundary.
+func lockState(path string, afterAcquire func()) (*StateLock, error) {
 	path += ".lock"
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
@@ -51,6 +56,9 @@ func LockState(path string) (*StateLock, error) {
 			return nil, &StateLockedError{Socket: strings.TrimSpace(string(data))}
 		}
 		return nil, fmt.Errorf("acquire state lock: %w", err)
+	}
+	if afterAcquire != nil {
+		afterAcquire()
 	}
 	owned, err := f.Stat()
 	if err == nil {
