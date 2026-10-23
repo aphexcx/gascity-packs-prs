@@ -380,6 +380,8 @@ func TestIdentityRejectsAliases(t *testing.T) {
 	}
 }
 
+// This test and its subtests must remain serial: slog.SetDefault changes the
+// process-wide logger. Cleanup restores it before any parallel tests resume.
 func TestCreateIdentityLearningIsBestEffort(t *testing.T) {
 	for _, reaction := range []bool{false, true} {
 		for _, mismatch := range []bool{false, true} {
@@ -919,7 +921,7 @@ func TestClassify(t *testing.T) {
 		{429, "quota", "rate_limited"}, {401, "unauthorized", "auth"}, {403, "scope missing", "auth"},
 		{403, "The caller is not a member of the space.", "not_found"}, {404, "gone", "not_found"},
 		{403, "The caller is not a member.", "not_found"},
-		{400, "bad", "permanent"}, {409, "conflict", "permanent"}, {500, "server", "transient"}, {503, "down", "transient"},
+		{400, "bad", "permanent"}, {408, "timeout", "transient"}, {409, "conflict", "transient"}, {500, "server", "transient"}, {503, "down", "transient"},
 	} {
 		err := fmt.Errorf("wrapped: %w", &googleapi.Error{Code: tc.code, Message: tc.message, Header: http.Header{"Retry-After": []string{"3"}}})
 		kind, hint := Classify(err)
@@ -1048,5 +1050,52 @@ func TestRetryHintAndLostResponse(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("calls: %d", calls)
+	}
+}
+
+func TestRetryReturnsImmediatelyWhenHintExceedsCallerDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		start := time.Now()
+		c := &Client{}
+		calls := 0
+		err := c.retry(ctx, true, func(context.Context) error {
+			calls++
+			return &googleapi.Error{Code: 429, Header: http.Header{"Retry-After": []string{"1"}}}
+		})
+		if calls != 1 || !time.Now().Equal(start) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("calls=%d elapsed=%v err=%v", calls, time.Since(start), err)
+		}
+	})
+}
+
+func TestDeleteReactionRechecksIdentityAfterPacing(t *testing.T) {
+	deletes := 0
+	h := &http.Client{Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.Method == http.MethodDelete {
+			deletes++
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"reactions":[{"name":"spaces/room/messages/one/reactions/mine","user":{"name":"users/111"},"emoji":{"unicode":"👍"}}]}`))}, nil
+	})}
+	c, err := New(context.Background(), h, config.Endpoints{ChatAPIBase: "https://chat.invalid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock := useTestClock(c)
+	if err := c.SetIdentityUserID("users/111"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.limits.WaitReaction(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	conflicted := false
+	c.limits.timing.sleep = func(ctx context.Context, d time.Duration) error {
+		conflicted = c.SetIdentityUserID("users/222") != nil
+		return clock.Sleep(ctx, d)
+	}
+	err = c.DeleteReaction(context.Background(), "spaces/room/messages/one", "👍")
+	if !conflicted || err == nil || deletes != 0 {
+		t.Fatalf("conflicted=%v deletes=%d err=%v", conflicted, deletes, err)
 	}
 }

@@ -572,6 +572,8 @@ func classifyAt(err error, now time.Time) (kind string, retryAfter time.Duration
 			return "auth", retryAfter
 		case apiErr.Code == 404:
 			return "not_found", retryAfter
+		case apiErr.Code == 408 || apiErr.Code == 409:
+			return "transient", retryAfter
 		case apiErr.Code >= 400 && apiErr.Code < 500:
 			return "permanent", retryAfter
 		default:
