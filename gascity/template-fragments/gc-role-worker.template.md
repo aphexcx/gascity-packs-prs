@@ -178,6 +178,62 @@ Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exi
 record unrecoverable failure as `gc.outcome=fail` plus concise
 `gc.failure_class` and reason.
 
+Before closing a normal work bead, record every known fact using the pack's
+`provenance record` command (Beads 1.3.1 or later). Discover its binding once
+before any close write for **all four outcomes**: shipped, no-op, blocked,
+and abandoned. Try direct `/gascity` imports first, then `gc`, the nested
+binding used by derived packs. Transitive rows have no usable alias, and
+`/gascity/roles` imports supply roles, not commands. Select by help content:
+generic help can exit successfully even when the command is unavailable.
+Run discovery in the same shell call as the record, or save the printed binding
+and substitute it in the record call. Never use an empty binding. If shell
+variables do not persist, set `PROVENANCE_PACK_ALIAS` to that saved binding
+before running the close recipe.
+
+```bash
+PROVENANCE_PACK_ALIAS=
+for candidate in $(gc import list |
+    awk -F '\t' '$1 != "(transitive)" && $2 ~ /\/gascity\/?(#.*)?$/ { print $1 }') gc; do
+  if gc "$candidate" provenance --help 2>/dev/null |
+     grep -Fq "Record or summarize a normal worker's typed close trail"; then
+    PROVENANCE_PACK_ALIAS=$candidate
+    break
+  fi
+done
+[ -n "$PROVENANCE_PACK_ALIAS" ] || {
+  printf '%s\n' \
+    'No gc binding serves provenance: check gc import list and the Gas City pack pin.' >&2
+  exit 1
+}
+printf 'Provenance binding: %s\n' "$PROVENANCE_PACK_ALIAS"
+```
+
+The command writes one typed record per commit, PR, review, evidence directory,
+and work outcome.
+It also writes compatibility metadata and never closes the bead. A recording
+failure stops the close; retry safely after resolving it, or record the
+bead's failure contract. Do not silently close with metadata alone.
+
+For code delivery, set `PR_URL` to the canonical PR URL when one exists (empty
+otherwise), `EVIDENCE_DIR` to the absolute evidence directory when available,
+and `REVIEW_RECORDS` to the absolute path of a JSON file outside the PR branch.
+When there were no reviews, that file's content is `[]`; the variable still
+holds its file path. Each known Codex round, gate, or read is an object:
+
+```json
+{"stage":"codex", "round":1, "verdict":"CLEAN",
+ "sha":"<full reviewed SHA>", "ref":"<review record path or URL>"}
+```
+
+Stages are `codex`, `gate`, and `read`. Include earlier rounds with their own
+SHAs and verdicts; never invent a pending gate's verdict. Use a distinct round
+number and immutable record per review. The summary only uses gate/read
+verdicts for the final commit. See README, Worker close provenance.
+
+<!-- Compatibility: retain gc.work_commit, gc.work_outcome and gc.pr in
+     gascity pack 0.1.x. Drop in 0.2.0 after city readers AND the core close
+     gate migrate. gc.outcome and gc.work_branch remain separate contracts. -->
+
 Set required metadata before closing same claimed bead. Repeat
 `--set-metadata` once per `key=value` assignment. For a shipped change handed
 off from a lane, capture both values while the work branch is still checked
@@ -187,12 +243,20 @@ Workspace rules above and the workflow formula, verify the release, and close
 with `--reason` last:
 
 ```bash
+[ -n "${PROVENANCE_PACK_ALIAS:-}" ] || {
+  printf '%s\n' 'Run the provenance discovery first (or substitute its printed binding).' >&2
+  exit 1
+}
 WORK_COMMIT=$(git rev-parse HEAD) || exit 1
 WORK_BRANCH=$(git branch --show-current) || exit 1
 [ -n "$WORK_BRANCH" ] || {
   printf '%s\n' 'Refusing to write an empty gc.work_branch.' >&2
   exit 1
 }
+gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" \
+  --outcome shipped --commit "$WORK_COMMIT" --pr "$PR_URL" \
+  --reviews "$REVIEW_RECORDS" --evidence-dir "$EVIDENCE_DIR" || exit 1
+# Keep the explicit compatibility assignments for readers of this recipe.
 gc bd update "$CLAIMED_BEAD_ID" \
   --set-metadata 'gc.outcome=pass' \
   --set-metadata 'gc.work_outcome=shipped' \
@@ -204,9 +268,21 @@ RELEASED_BRANCH=$(git -C "$GC_DIR" branch --show-current) || exit 1
 gc bd close "$CLAIMED_BEAD_ID" --reason "Shipped $WORK_COMMIT."
 ```
 
-For work that needed no change, use `--set-metadata 'gc.outcome=pass'` and
-`--set-metadata 'gc.work_outcome=no-op'` on the update instead. Workflow-control
-beads use their step result contract; do not invent a shipped work record for them.
+For work that needed no change, first run the same non-empty binding guard
+that opens the shipped recipe, then run
+`gc "$PROVENANCE_PACK_ALIAS" provenance record "$CLAIMED_BEAD_ID" --outcome no-op`
+(add known PR/review/evidence flags), then use
+`--set-metadata 'gc.outcome=pass'` and `--set-metadata 'gc.work_outcome=no-op'`
+on the update instead.
+
+For blocked or abandoned work, first run that same non-empty binding guard,
+then record the outcome with the same command and known facts before its
+failure close. An unset binding means rerun discovery or restore its printed
+value; it does not change the work outcome. Preserve that work outcome and the
+bead's failure contract (`gc.outcome=fail` unless its contract specifies otherwise).
+Do not manufacture a commit or PR. Workflow-control beads use their step result
+contract; do not invent a shipped work record for them. These workflow-control
+closes do not require this normal-work provenance command.
 
 Review findings, missing tests, or follow-up usually are output, not execution
 failure. If contract requests `gc.outcome=pass` plus verdict, use pass even for
