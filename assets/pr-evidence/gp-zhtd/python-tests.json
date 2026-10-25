@@ -17,7 +17,13 @@
     "-q"
   ],
   "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full",
+  "head": "986cbad3604f0be455b8c29677be3b6760cff4ae",
+  "utc": "2026-10-25T11:07:20.318544+00:00",
   "exit_code": 0,
-  "seconds": 45.79,
-  "test_counts": {}
+  "seconds": 44.01,
+  "test_counts": {
+    "passed": 822,
+    "skipped": 2,
+    "warnings": 2
+  }
 }

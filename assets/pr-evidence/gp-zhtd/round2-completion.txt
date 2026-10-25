@@ -1,0 +1,15 @@
+round2-peer-red: ["go", "test", "-json", "-count=1", "-run", "TestMinimalFailedPeerForwardRecovery", "./..."] exit_code=1
+round2-pagination-red: ["go", "test", "-json", "-count=1", "-run", "TestThreadContext400RepliesRequestCount|TestThreadContextPartialDelivery|TestThreadContextPaginationBound", "./..."] exit_code=1
+round2-regressions-green: ["go", "test", "-json", "-count=1", "-run", "TestMinimalFailedPeerForwardRecovery|TestThreadContext400RepliesRequestCount|TestThreadContextPartialDelivery|TestThreadContextPaginationBound|TestInjectionFullGoldens|TestMinimalInbounds|TestThreadWindow|TestFetchThreadReplies", "./..."] exit_code=0
+round2-recovery-budget: ["go", "test", "-json", "-count=1", "-run", "TestMinimalPeerRecoveryBudgetAndRetry|TestThreadContextPaginationBound", "./..."] exit_code=1
+round2-recovery-budget-green: ["go", "test", "-json", "-count=1", "-run", "TestMinimalPeerRecoveryBudgetAndRetry|TestThreadContextPaginationBound", "./..."] exit_code=0
+round2-cli-vet: ["go", "vet", "./..."] exit_code=0
+round2-adapter-vet: ["go", "vet", "./..."] exit_code=0
+round2-replay-prepare: ["python3", "slack-full/scripts/replay_minimal_injections.py", "--rows", ".gc/scratch/gp-zhtd/baseline/blocks.jsonl", "--output", ".gc/scratch/gp-zhtd/round2/replay-input.jsonl"] exit_code=0
+round2-replay-render: ["go", "test", "-json", "-count=1", "-run", "TestMinimalReplayMeasurement", "./..."] exit_code=0
+python-tests: ["uv", "run", "--python", "3.13", "--with", "pytest", "--with", "pyyaml", "--with", "jsonschema", "python3", "-m", "pytest", "tests", "-q"] exit_code=0
+round2-adapter-race: ["go", "test", "-race", "-count=1", "-json", "./..."] exit_code=0
+round2-self-review-red: ["go", "test", "-json", "-count=1", "-run", "TestMinimalPeerRecoveryOversizedHead|TestThreadContextLargePage", "./..."] exit_code=1
+round2-self-review-green: ["go", "test", "-race", "-json", "-count=1", "-run", "TestMinimalPeerRecovery|TestMinimalFailedPeerForwardRecovery|TestThreadContextLargePage|TestThreadContextPartialDelivery|TestInjectionFullGoldens", "./..."] exit_code=0
+round2-adapter-vet-final: ["go", "vet", "./..."] exit_code=0
+round2-adapter-race-final: ["go", "test", "-race", "-count=1", "-json", "./..."] exit_code=0

@@ -1,0 +1,33 @@
+{
+  "base": "986cbad3604f0be455b8c29677be3b6760cff4ae",
+  "thread_fixture": {
+    "root_messages": 1,
+    "replies": 400,
+    "retained_messages": 20,
+    "requests_before": 21,
+    "requests_after": 1,
+    "page_size_after": 500,
+    "maximum_pages_after": 4,
+    "large_valid_page_bytes": 1221509,
+    "large_page_retained_messages": 20,
+    "timeout_delivers_partial_context": true,
+    "http_429_delivers_partial_context": true,
+    "slack_ratelimited_delivers_partial_context": true
+  },
+  "replay": {
+    "blocks": 575,
+    "members": 657,
+    "batches": 73,
+    "baseline_bytes": 518967,
+    "sinan_full_bytes": 480219,
+    "sinan_compact_bytes": 433644,
+    "minimal_bytes": 321589,
+    "minimal_bytes_change_from_round1": 0,
+    "failed_forward_state_in_historical_replay": false
+  },
+  "python_tests": {
+    "passed": 822,
+    "skipped": 2,
+    "warnings": 2
+  }
+}

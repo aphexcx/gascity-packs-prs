@@ -3257,6 +3257,8 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 			trustedPaths = append(trustedPaths, p.inbound.trustedFilePaths...)
 		}
 		text = strings.Join(units, "\n\n")
+		text, peerItems = minimalPeerRecovery(cfg, channel, text, peerItems)
+		peerDropped = 0
 		env.Attachments, env.trustedFilePaths = attachments, trustedPaths
 		if len(batch) > 1 {
 			env.DedupKey = coalesceBatchDedupKey(batch)

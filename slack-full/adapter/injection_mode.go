@@ -154,6 +154,45 @@ func injectionPeerBlock(cfg config, items []peerContextItem, dropped int) string
 	return formatPeerContextBlock(items, dropped)
 }
 
+// minimalPeerRecovery omits ambient context, but includes failed immediate
+// forwards in FIFO order while the complete reminder fits its usual budget.
+// Return only the included items so a failed delivery can restore them; any
+// deferred items are restored here, including when the current body is large.
+func minimalPeerRecovery(cfg config, channel, text string, items []peerContextItem) (string, []peerContextItem) {
+	var failed []peerContextItem
+	for _, item := range items {
+		if item.FailedForward {
+			failed = append(failed, item)
+		}
+	}
+	result := text
+	for i := range failed {
+		candidate := formatPeerContextBlock(failed[:i+1], 0) + "\n\n" + text
+		if cfg.reminderTextBudget > 0 && len(candidate) > cfg.reminderTextBudget {
+			if i == 0 {
+				// A post larger than the configured budget must not block
+				// the queue forever. Deliver a bounded excerpt when there
+				// is room for its provenance plus a useful text prefix.
+				// Preserve the original item for any transport retry.
+				item := failed[0]
+				item.Text = ""
+				const marker = " …[truncated; read channel]"
+				room := cfg.reminderTextBudget - len(formatPeerContextBlock([]peerContextItem{item}, 0)+"\n\n"+text) - len(marker)
+				if room > 0 && room >= min(64, len(failed[0].Text)) {
+					item.Text = clipRuneSafe(failed[0].Text, room) + marker
+					candidate = formatPeerContextBlock([]peerContextItem{item}, 0) + "\n\n" + text
+					cfg.peerContext.restore(channel, failed[1:], 0)
+					return candidate, failed[:1]
+				}
+			}
+			cfg.peerContext.restore(channel, failed[i:], 0)
+			return result, failed[:i]
+		}
+		result = candidate
+	}
+	return result, failed
+}
+
 // Company mention-only and direct alias callers can bypass processSlackEvent.
 // An explicit in-memory flag avoids guessing whether user text is a reminder.
 func minimalDispatchText(cfg config, msg externalInboundMessage) string {

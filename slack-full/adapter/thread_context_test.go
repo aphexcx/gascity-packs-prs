@@ -1102,7 +1102,7 @@ func TestFetchThreadReplies_QueryAndAuth(t *testing.T) {
 	}
 	if !strings.Contains(gotQuery, "channel=C1") ||
 		!strings.Contains(gotQuery, "ts=1700000100.000000") ||
-		!strings.Contains(gotQuery, "limit=5") {
+		!strings.Contains(gotQuery, fmt.Sprintf("limit=%d", threadContextPageSize)) {
 		t.Errorf("query string %q missing expected fields", gotQuery)
 	}
 }

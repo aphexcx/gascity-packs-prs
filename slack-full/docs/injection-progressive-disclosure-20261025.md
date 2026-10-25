@@ -54,7 +54,11 @@ to the source's 3,500 bytes before implementation was completed.
 oldest-first page. With 25 messages and limit 20, the newest five were absent.
 It now follows cursors, retaining the root plus the newest 19 replies in bounded
 memory; current and later messages are excluded before selecting a window.
-Incomplete pagination fails visibly rather than returning a misleading window.
+Page size is now 500 independently of that retained window, with a four-page
+cap per context fetch. The root-plus-400-replies fixture takes one request,
+down from 21 at the first head. A timeout, rate limit or unfinished pagination
+retains the root and newest replies fetched so far, labels that window
+incomplete, and leaves the delivery watermark unchanged for recovery later.
 Ownership routing scans use a separate paginated existence query, so an early
 own-bot post remains evidence even when outside the newest context window.
 The short-thread golden fixtures remain byte-identical. Regression tests in
@@ -104,6 +108,17 @@ Observed edits and deletions invalidate cached parent excerpts. Reaction
 target lookups keep their original single-page scope; a minimal reaction
 without a known thread root points to the channel rather than its event ts.
 Minimal does not use or advance full mode's delivered-context cache.
+Minimal intentionally renders no ambient-peer count line: the receiving agent
+learns of buffered ambient posts by reading the channel top, as SETUP.md's prompt
+contract requires. Failed immediate peer forwards are delivery recovery, kept
+in a separate queue from ambient context and rendered with label, timestamp,
+clipped text and read-only provenance on a later channel, batch or peer delivery.
+They share the reminder budget; entries that do not fit remain queued, and a
+failed recovery delivery restores them. An oversized first recovery can use a
+budget-clipped excerpt with an explicit read-channel marker, so a small budget
+does not permanently block later entries. Ambient traffic cannot evict them.
+Like the existing peer buffer, this queue is in memory; adapter restarts are
+not durable recovery, and a sustained outage can grow the recovery queue.
 Mention-only ownership recovery can still query Slack for an old thread not
 in the own-thread registry; that routing fallback is preserved.
 
@@ -130,6 +145,9 @@ the unresolved-channel fallback. Captured parent excerpts are retained.
 Already-clipped source messages cannot be reconstructed. Resolved channel
 names, cold parent caches, future traffic, reads and provider tokenization
 change realized savings. This is not billing or deployment evidence.
+Round 2 changes only failed-forward recovery bytes in minimal mode. This
+historical replay has no failed-forward state; its ordinary reminders and
+321,589-byte projection are unchanged. Recovery traffic adds bytes when needed.
 
 `measure_injected_alerts.py` reproduced every baseline byte and all class
 totals. More transcript files now pass the mtime prefilter (83 vs 55), but the

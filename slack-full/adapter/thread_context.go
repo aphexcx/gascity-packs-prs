@@ -35,10 +35,10 @@ import (
 // channel, thread) the ts up-to-which preamble has been delivered;
 // the formatter applies that as a lower bound so each agent's
 // preamble is the delta of peer activity since its last visit.
-// Trade-off: more API calls than gc-px8.5's single-shot policy; one
-// fetch per inbound in a thread. Slack's tier-3 limit on
-// conversations.replies (50/min) is comfortable for typical
-// per-thread cadence.
+// Trade-off: one bounded fetch per inbound in a thread. Page size is
+// independent of the retained context window so long threads do not spend
+// one API request for every 20 messages. Rate limits and timeouts return
+// the context already fetched with an explicit incomplete-window notice.
 
 // defaultThreadContextLimit caps the retained thread window (root plus
 // newest replies). Cursor pages are consumed oldest-first; we want a smaller
@@ -48,6 +48,17 @@ import (
 // (a freshly-mentioned mayor seeing the recent decision-making) and
 // is overrideable via SLACK_THREAD_CONTEXT_LIMIT.
 const defaultThreadContextLimit = 20
+
+// Fetch at most four 500-message pages per inbound, independently of the
+// retained window. An unfinished fetch preserves the newest replies in hand.
+const threadContextPageSize = 500
+const threadContextMaxPages = 4
+
+// A 500-message page can legitimately exceed the old 1 MiB allowance.
+// Keep the body bounded while allowing large ordinary text pages to decode.
+const threadRepliesMaxResponseBytes = 32 << 20
+
+const threadContextIncompleteNotice = "[thread context incomplete — showing fetched replies; read thread for the rest]\n\n"
 
 // threadContextFetchTimeout bounds the conversations.replies HTTP
 // round-trip. Slack's API typically responds in well under a second;
@@ -533,7 +544,8 @@ type slackConversationsRepliesResp struct {
 // root and newest limit-1 replies in chronological order. Optional beforeTS
 // excludes the current and later messages before selecting the retained window.
 // Non-positive limits fall back to defaultThreadContextLimit. A failed or
-// incomplete page returns an error rather than presenting an old window as new.
+// incomplete page returns the retained window AND an error: callers must label
+// the partial context and must not advance the delivered-context watermark.
 func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, limit int, beforeTS ...string) ([]slackThreadMessage, error) {
 	if token == "" {
 		return nil, fmt.Errorf("slack token empty")
@@ -547,7 +559,7 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 	q := url.Values{}
 	q.Set("channel", channel)
 	q.Set("ts", threadTS)
-	q.Set("limit", strconv.Itoa(limit))
+	q.Set("limit", strconv.Itoa(threadContextPageSize))
 	if len(beforeTS) > 0 && beforeTS[0] != "" {
 		q.Set("latest", beforeTS[0])
 		q.Set("inclusive", "false")
@@ -556,12 +568,17 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 	// newest limit-1 replies, using bounded memory while following cursors.
 	var root *slackThreadMessage
 	var recent []slackThreadMessage
+	window := func() []slackThreadMessage {
+		if root != nil {
+			return append([]slackThreadMessage{*root}, recent...)
+		}
+		return recent
+	}
 	seenCursors := map[string]bool{}
-	for {
-
+	for page := 0; page < threadContextMaxPages; page++ {
 		sr, err := fetchThreadRepliesPage(ctx, token, q)
 		if err != nil {
-			return nil, err
+			return window(), err
 		}
 		for i := range sr.Messages {
 			sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
@@ -586,20 +603,17 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 		cursor := strings.TrimSpace(sr.ResponseMetadata.NextCursor)
 		if cursor == "" {
 			if sr.HasMore {
-				return nil, fmt.Errorf("conversations.replies has_more without cursor")
+				return window(), fmt.Errorf("conversations.replies has_more without cursor")
 			}
-			break
+			return window(), nil
 		}
 		if seenCursors[cursor] {
-			return nil, fmt.Errorf("conversations.replies repeated cursor")
+			return window(), fmt.Errorf("conversations.replies repeated cursor")
 		}
 		seenCursors[cursor] = true
 		q.Set("cursor", cursor)
 	}
-	if root != nil {
-		recent = append([]slackThreadMessage{*root}, recent...)
-	}
-	return recent, nil
+	return window(), fmt.Errorf("conversations.replies exceeded %d-page context limit", threadContextMaxPages)
 }
 
 func fetchThreadRepliesPage(ctx context.Context, token string, q url.Values) (slackConversationsRepliesResp, error) {
@@ -614,7 +628,7 @@ func fetchThreadRepliesPage(ctx context.Context, token string, q url.Values) (sl
 	if err != nil {
 		return slackConversationsRepliesResp{}, fmt.Errorf("conversations.replies: %w", err)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, threadRepliesMaxResponseBytes))
 	resp.Body.Close()
 	if err != nil {
 		return slackConversationsRepliesResp{}, fmt.Errorf("read conversations.replies body: %w", err)

@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-json",
+    "-count=1",
+    "-run",
+    "TestMinimalFailedPeerForwardRecovery",
+    "./..."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "head": "986cbad3604f0be455b8c29677be3b6760cff4ae",
+  "utc": "2026-10-25T11:03:02.498361+00:00",
+  "exit_code": 1,
+  "seconds": 3.11,
+  "test_counts": {
+    "fail_including_subtests": 4,
+    "fail_top_level": 1
+  }
+}

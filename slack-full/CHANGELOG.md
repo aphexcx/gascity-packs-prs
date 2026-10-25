@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Thread context pagination** now preserves the root and newest replies
   across cursor pages, instead of losing the newest end of long threads.
   Current/later messages are excluded before selecting an inbound's window.
+  Fetches use 500-message pages and stop after four pages; timeout/rate-limit
+  failures deliver the retained partial window with an incomplete notice.
+- **Mention-only ownership recovery** now follows cursors beyond the first
+  200-message page, so an older own-bot post can establish routing ownership.
+- **Minimal peer recovery** preserves failed immediate forwards separately from
+  ambient context and includes them on later deliveries within the text budget.
 - **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker
   line** (jg-fc1csv). The protected `[thread reply …]` anchor already names
   the thread ts at the head of every thread-reply delivery and gc's

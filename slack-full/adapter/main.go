@@ -4277,6 +4277,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		}
 		if err != nil {
 			log.Printf("thread context fetch failed chan=%s thread=%s target=%q: %v", msg.Channel, msg.ThreadTS, target, err)
+		}
+		if err != nil && len(replies) == 0 {
 			preamble = "Thread parent could not be fetched.\n\n"
 		} else {
 			resolveName := func(id string) string { return resolveUserDisplayName(cfg, id) }
@@ -4316,8 +4318,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			botAuthor := newThreadBotClassifier(cfg, env).classify
 			preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor, &contextWindow)
 			preambleLean = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil, &leanWindow)
-			threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
-			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
+			if err != nil {
+				preamble = threadContextIncompleteNotice + preamble
+				preambleLean = threadContextIncompleteNotice + preambleLean
+			} else {
+				threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
+				cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
+			}
 		}
 	}
 
@@ -4763,6 +4770,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		textForChannel = composed
 		if cfg.minimalInjection() {
 			textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
+			textForChannel, peerItems = minimalPeerRecovery(cfg, msg.Channel, textForChannel, peerItems)
+			peerDropped = 0
 		}
 		if firstHelp && !usedHelp {
 			cfg.replyHelp.unmark(msg.Channel)

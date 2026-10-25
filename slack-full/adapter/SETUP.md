@@ -405,9 +405,11 @@ Knobs:
   thread anchor, new text, attachment descriptions, and one `Context: gc slack
   read --conversation-id <C> --thread-ts <root>` pointer per message. It
   registers `reply-to <root-or-message-ts>` automatically, overriding
-  `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes, buffered peer text and reply
+  `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes, ambient peer text and reply
   how-to blocks are omitted; the peer buffer still drains on delivery. An
   immediately delivered peer post retains its own text and read-only label.
+  Failed immediate forwards remain queued separately and ride a later delivery
+  within the reminder budget; budget-deferred recovery is not discarded.
   Thread context is not fetched in minimal mode. The parent author/first line
   comes from a bounded cache of observed roots; a cold cache keeps the thread
   id alone, and edits/deletions invalidate cached excerpts. A reaction with
