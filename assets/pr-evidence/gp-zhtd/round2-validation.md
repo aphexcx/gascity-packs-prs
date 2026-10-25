@@ -81,3 +81,19 @@ was populated in both modes, but only minimal mode drained it within budget.
 failed forwards for the separate queue only in minimal mode. Full mode keeps
 its original capped ambient FIFO, preserving its existing byte-format and
 eviction behavior. The final review and verification records follow this fix.
+
+At code head `10a9c9122ec11c54f7cb5b598d841b30b7653804`, the complete adapter
+race suite passed again: **1,403 top-level tests, 12,713 with subtests**, one
+opt-in replay skip, no failures (`round2-adapter-race-after-gate.json`).
+Adapter vet passed again (`round2-adapter-vet-after-gate.json`). The focused
+self-review of the gate fix is CLEAN (`round2-self-review-r3.md`). Python and
+CLI code were unchanged after their recorded passing checks.
+
+The second Codex gate is CLEAN for the complete round-2 delta from 986cbad3
+through 10a9c912 (`round2-codex-review-r2.md`). Its one minor finding was also
+fixed: recovery excerpts now reserve space for their marker below the peer
+formatter's 2,000-byte cap and check the final rendered length. The boundary
+fixture reproduced the 10-byte overflow at 2,005 available text bytes, then
+passed with the fix (`round2-minor-red.json`, `round2-minor-green.json`). The
+small follow-up is reviewed separately against 10a9c912; no earlier code is
+outside the two scopes.

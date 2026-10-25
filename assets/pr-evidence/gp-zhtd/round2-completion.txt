@@ -15,3 +15,7 @@ round2-adapter-vet-final: ["go", "vet", "./..."] exit_code=0
 round2-adapter-race-final: ["go", "test", "-race", "-count=1", "-json", "./..."] exit_code=0
 round2-codex-fix-red: ["go", "test", "-json", "-count=1", "-run", "TestFullPeerFailuresRetainAmbientEviction", "./..."] exit_code=1
 round2-codex-fix-green: ["go", "test", "-race", "-json", "-count=1", "-run", "TestFullPeerFailuresRetainAmbientEviction|TestMinimalPeerRecovery|TestMinimalFailedPeerForwardRecovery|TestInjectionFullGoldens|TestPeerContextBuffer", "./..."] exit_code=0
+round2-adapter-vet-after-gate: ["go", "vet", "./..."] exit_code=0
+round2-adapter-race-after-gate: ["go", "test", "-race", "-count=1", "-json", "./..."] exit_code=0
+round2-minor-red: ["go", "test", "-json", "-count=1", "-run", "TestMinimalPeerRecoveryNearFormatterLimit", "./..."] exit_code=1
+round2-minor-green: ["go", "test", "-race", "-json", "-count=1", "-run", "TestMinimalPeerRecovery|TestMinimalFailedPeerForwardRecovery|TestFullPeerFailuresRetainAmbientEviction|TestInjectionFullGoldens|TestMinimalInbounds", "./..."] exit_code=0

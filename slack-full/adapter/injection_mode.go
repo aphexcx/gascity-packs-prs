@@ -178,11 +178,16 @@ func minimalPeerRecovery(cfg config, channel, text string, items []peerContextIt
 				item.Text = ""
 				const marker = " …[truncated; read channel]"
 				room := cfg.reminderTextBudget - len(formatPeerContextBlock([]peerContextItem{item}, 0)+"\n\n"+text) - len(marker)
+				// Leave the whole excerpt below the formatter's own cap so
+				// it cannot clip again and append a second marker.
+				room = min(room, maxPeerContextItemChars-len(marker))
 				if room > 0 && room >= min(64, len(failed[0].Text)) {
 					item.Text = clipRuneSafe(failed[0].Text, room) + marker
 					candidate = formatPeerContextBlock([]peerContextItem{item}, 0) + "\n\n" + text
-					cfg.peerContext.restore(channel, failed[1:], 0)
-					return candidate, failed[:1]
+					if len(candidate) <= cfg.reminderTextBudget {
+						cfg.peerContext.restore(channel, failed[1:], 0)
+						return candidate, failed[:1]
+					}
 				}
 			}
 			cfg.peerContext.restore(channel, failed[i:], 0)

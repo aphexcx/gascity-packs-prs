@@ -186,3 +186,19 @@ func TestFullPeerFailuresRetainAmbientEviction(t *testing.T) {
 		t.Fatalf("full-mode peer context remains blocked: %+v", got)
 	}
 }
+
+func TestMinimalPeerRecoveryNearFormatterLimit(t *testing.T) {
+	for _, available := range []int{2000, 2005, 2014} {
+		t.Run(fmt.Sprint(available), func(t *testing.T) {
+			item := peerContextItem{Channel: "C1", Label: "peer", TS: "100.000001", FailedForward: true}
+			body := "current inbound"
+			overhead := len(formatPeerContextBlock([]peerContextItem{item}, 0) + "\n\n" + body)
+			cfg := config{injectionMode: "minimal", reminderTextBudget: overhead + available, peerContext: newPeerContextBuffer()}
+			item.Text = strings.Repeat("large recovery body ", 200)
+			text, sent := minimalPeerRecovery(cfg, "C1", body, []peerContextItem{item})
+			if len(sent) != 1 || len(text) > cfg.reminderTextBudget || !strings.Contains(text, "truncated; read channel") {
+				t.Fatalf("double clipping: bytes=%d budget=%d sent=%d text=%q", len(text), cfg.reminderTextBudget, len(sent), text)
+			}
+		})
+	}
+}
