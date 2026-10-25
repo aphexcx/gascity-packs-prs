@@ -47,12 +47,20 @@ func minimalReminder(cfg config, msg externalInboundMessage, body, files, anchor
 		header += "\n" + anchor
 	}
 	parts := channelReminderParts{anchor: header, body: body, files: files, ts: msg.ProviderMessageID, channelID: msg.Conversation.ConversationID}
-	text, _, _, _, _ := composeChannelReminderText(parts, "", "", cfg.reminderTextBudget)
 	thread := msg.ReplyToMessageID
 	if thread == "" && !(msg.Actor.IsBot && strings.HasPrefix(msg.Actor.DisplayName, reactionActorPrefix)) {
 		thread = msg.ProviderMessageID
 	}
-	return text + "\n" + contextReadPointer(msg.Conversation.ConversationID, thread)
+	pointer := "\n" + contextReadPointer(msg.Conversation.ConversationID, thread)
+	budget := cfg.reminderTextBudget
+	if budget > 0 {
+		// Reserve the mandatory read pointer before trimming the body. Keep
+		// a positive budget even when the pointer alone exceeds the limit:
+		// zero disables trimming, while protected payload may overflow.
+		budget = max(1, budget-len(pointer))
+	}
+	text, _, _, _, _ := composeChannelReminderText(parts, "", "", budget)
+	return text + pointer
 }
 
 // Cached parents let minimal mode orient a reply without a history fetch.

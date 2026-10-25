@@ -118,9 +118,9 @@ separate commit. No `compact_alerts.go` code was taken.
 | Recorded baseline, 575 blocks | 518,967 | 20,593.93 |
 | Sinan's three commits, default full reply line | 480,219 | 19,056.31 |
 | Sinan plus optional compact reply line | 433,644 | 17,208.10 |
-| Minimal production-renderer replay | 321,649 | 12,763.85 |
+| Minimal production-renderer replay | 321,589 | 12,761.47 |
 
-**ANALYSIS:** minimal projects a 38.02% reduction against the measured baseline,
+**ANALYSIS:** minimal projects a 38.03% reduction against the measured baseline,
 before the cost of on-demand reads. The replay has 657 message members in 575
 blocks, including 73 batches. It passes parsed message units through the Go
 production renderer, preserving the gc envelope/footer and using the compact

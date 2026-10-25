@@ -19,7 +19,10 @@ installed into PATH and no adapter was restarted.
   jsonschema python3 -m pytest tests -q`: **822 passed, 2 skipped**, two existing
   fork-in-a-multithreaded-process deprecation warnings.
 - Offline replay test explicitly enabled and passed for all 575 input blocks;
-  output contains aggregate counts only.
+  output contains aggregate counts only. Rerun at code head 33d6eb76 produced
+  321,589 bytes (60 fewer after the reaction pointer correction), or 12,761.47
+  estimated tokens/day and a projected 38.03% reduction. The note and aggregate
+  reports use this final replay; the earlier headline was 12,763.85/day.
 - Full-mode goldens generated from the immutable 52cbd2f8 originals with a Go
   overlay, then tested against the implementation: human, thread, peer, batch.
 - `git diff --check` passed.
@@ -33,6 +36,10 @@ installed into PATH and no adapter was restarted.
   skip. Adapter vet passed again. The later cache-ordering fix passed four
   focused top-level race tests (14 with subtests), including the cold/warm
   mutation-before-remember regression, minimal paths and full-mode goldens.
+- Codex R2's minor pointer-budget issue was also fixed. Nine focused top-level
+  race tests passed (19 with subtests), including the budget regression,
+  minimal paths, full-mode goldens and all 575 replay blocks. The replay stayed
+  at 321,589 bytes. Fresh reviewer pass 6 was CLEAN.
 
 Each batched check has a JSON completion manifest with command, working
 directory, exit code, duration and available test counts. Manifests were read
@@ -42,6 +49,9 @@ the committed evidence contains no real message text.
 Fresh same-model reviewer pass 1 found four issues; all fixed. Focused pass 2
 was CLEAN. Codex R1 returned BLOCK; all four findings were fixed. Fresh
 reviewer pass 4 found a cache-ordering gap in those fixes; retained tombstones
-address it and pass 5 was CLEAN. The next Codex gate reviews the final code.
+address it and pass 5 was CLEAN. Codex R2 was CLEAN for the entire own delta
+from 52cbd2f8 to 33d6eb76, with one minor budget finding. After fixing it,
+Codex R3 reviews the incremental code, regression and measurement refresh
+against 33d6eb76; the two scopes together cover the final implementation.
 Fable and founder read remain the mayor's gates; this branch is delivered as
 a draft PR with full mode still the default.

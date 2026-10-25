@@ -1,0 +1,18 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-json",
+    "./...",
+    "-run",
+    "^TestMinimalReplayMeasurement$",
+    "-count=1"
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "exit_code": 0,
+  "seconds": 2.65,
+  "test_counts": {
+    "pass": 1,
+    "top_level_pass": 1
+  }
+}

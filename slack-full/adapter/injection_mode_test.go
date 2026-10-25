@@ -539,6 +539,26 @@ func TestReactionTargetStopsAtFirstPage(t *testing.T) {
 	}
 }
 
+func TestMinimalReminderBudgetIncludesPointer(t *testing.T) {
+	body := strings.Repeat("synthetic message ", 1000)
+	msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, Actor: externalActor{ID: "U_TEST"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.1"}
+	for _, budget := range []int{defaultReminderTextBudget, 1000, 1, 0} {
+		got := minimalReminder(config{injectionMode: "minimal", reminderTextBudget: budget}, msg, body, "", "")
+		if !strings.HasSuffix(got, "Context: gc slack read --conversation-id C1 --thread-ts 100.1") || !strings.Contains(got, body[:reminderBodyHeadRunes]) {
+			t.Fatalf("budget %d lost pointer or protected head", budget)
+		}
+		if budget >= 1000 && len(got) > budget {
+			t.Fatalf("budget %d rendered %d bytes", budget, len(got))
+		}
+		if budget > 0 && !strings.Contains(got, "message trimmed") {
+			t.Fatalf("positive budget %d disabled trimming", budget)
+		}
+		if budget == 0 && !strings.Contains(got, body) {
+			t.Fatal("disabled budget clipped body")
+		}
+	}
+}
+
 func TestMinimalReactionWithoutRootUsesChannelPointer(t *testing.T) {
 	capture := &inboundCapture{}
 	gc := httptest.NewServer(capture.handler())
