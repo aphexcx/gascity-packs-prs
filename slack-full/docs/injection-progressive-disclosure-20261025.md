@@ -100,6 +100,9 @@ not immediately present. Read the thread using the pointer; read the channel
 without `--thread-ts` for peer posts. Reply syntax belongs in each agent's
 prompt before enabling the flag. A cold parent cache retains only the thread
 id; keeping a first-line quote cannot require a new history fetch per message.
+Observed edits and deletions invalidate cached parent excerpts. Reaction
+target lookups keep their original single-page scope; a minimal reaction
+without a known thread root points to the channel rather than its event ts.
 Minimal does not use or advance full mode's delivered-context cache.
 Mention-only ownership recovery can still query Slack for an old thread not
 in the own-thread registry; that routing fallback is preserved.

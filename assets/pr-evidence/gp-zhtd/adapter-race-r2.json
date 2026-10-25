@@ -1,0 +1,18 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-race",
+    "-json",
+    "./..."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "exit_code": 0,
+  "seconds": 131.61,
+  "test_counts": {
+    "pass": 12694,
+    "top_level_pass": 1393,
+    "skip": 1,
+    "top_level_skip": 1
+  }
+}

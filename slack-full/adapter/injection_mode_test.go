@@ -443,3 +443,115 @@ func TestMinimalPeerWithoutBotUserIDKeepsBotID(t *testing.T) {
 		t.Fatalf("missing bot coordinate: %+v", got)
 	}
 }
+
+func TestMinimalCompanyMentionPreservesFilesWithOversizedCaption(t *testing.T) {
+	gc := newFakeGC(t)
+	df, bf := baseDirectoryFile(), baseBindingsFile()
+	h := newCompanyHarness(t, gc.server.URL, &df, &bf, 4)
+	h.openBarrier()
+	withMentionOnlyLane(t, h, outsiderBinding())
+	h.gw.cfg.injectionMode = "minimal"
+	h.gw.cfg.reminderTextBudget = defaultReminderTextBudget
+	ev := humanMessage("1700000000.000500", "<@"+companyMOBotUserID+"> "+strings.Repeat("caption ", 1000))
+	ev.Files = []slackFile{{ID: "F_TEST", Name: "synthetic-report.txt", MIMEType: "text/plain"}}
+	admitCompanyRoomMessage(t, h, ev)
+	h.wait()
+	if !awaitWaitGroup(&h.gw.mentionOnlyWG, 3*time.Second) {
+		t.Fatal("mention-only delivery did not finish")
+	}
+	found := false
+	for _, call := range gc.sessionCalls() {
+		if !strings.Contains(call.path, "/session/outsider-session/") {
+			continue
+		}
+		found = true
+		for _, want := range []string{"synthetic-report.txt", "F_TEST", "message trimmed", "Context: gc slack read"} {
+			if !strings.Contains(call.body, want) {
+				t.Fatalf("missing protected content %q", want)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("mention-only session not reached")
+	}
+}
+
+func TestMinimalParentMutationDropsCachedExcerpt(t *testing.T) {
+	for _, subtype := range []string{"message_changed", "message_deleted"} {
+		t.Run(subtype, func(t *testing.T) {
+			capture := &inboundCapture{}
+			gc := httptest.NewServer(capture.handler())
+			defer gc.Close()
+			cfg := coalescingTestConfig(gc.URL, 0)
+			cfg.injectionMode = "minimal"
+			cfg.injectionParents = &injectionParents{}
+			cfg.injectionParents.remember("C1", "100.1", "Parent", "superseded excerpt")
+			raw, _ := json.Marshal(map[string]any{"type": "message", "subtype": subtype, "channel": "C1", "deleted_ts": "100.1", "message": map[string]string{"ts": "100.1", "text": "replacement excerpt"}})
+			processSlackEvent(cfg, nil, nil, nil, nil, nil, slackEventEnvelope{Type: "event_callback", Event: raw}, func() {})
+			reply, _ := json.Marshal(slackMessageEvent{Type: "message", Channel: "C1", User: "U_TEST", TS: "100.2", ThreadTS: "100.1", Text: "synthetic reply"})
+			processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, slackEventEnvelope{Type: "event_callback", Event: reply}, func() {})
+			got := capture.snapshot()
+			if len(got) != 1 || strings.Contains(got[0].Text, "excerpt") || !strings.Contains(got[0].Text, "[reply in thread 100.1]") {
+				t.Fatalf("stale parent or lost thread coordinate: %+v", got)
+			}
+		})
+	}
+}
+
+func TestInjectionParentInvalidationSuppressesLateRemember(t *testing.T) {
+	for _, warm := range []bool{false, true} {
+		c := &injectionParents{}
+		if warm {
+			c.remember("C1", "100.1", "Parent", "old excerpt")
+		}
+		c.invalidateMutation(slackMessageEvent{Subtype: "message_deleted", Channel: "C1", DeletedTS: "100.1"}, nil)
+		// Model an older root handler completing after the deletion handler.
+		c.remember("C1", "100.1", "Parent", "old excerpt")
+		if author, line := c.get("C1", "100.1"); author != "" || line != "" {
+			t.Fatalf("late root restored deleted excerpt (warm=%v)", warm)
+		}
+		for i := 0; i < threadContextCacheMaxEntries; i++ {
+			c.invalidateMutation(slackMessageEvent{Subtype: "message_deleted", Channel: "C1", DeletedTS: fmt.Sprint(i)}, nil)
+		}
+		if len(c.entries) != threadContextCacheMaxEntries {
+			t.Fatalf("unbounded tombstones: %d", len(c.entries))
+		}
+	}
+}
+
+func TestReactionTargetStopsAtFirstPage(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Query().Get("cursor") != "" {
+			http.Error(w, "later page unavailable", http.StatusTooManyRequests)
+			return
+		}
+		page := slackConversationsRepliesResp{OK: true, HasMore: true, Messages: []slackThreadMessage{{TS: "100.1", Text: "synthetic target"}}}
+		page.ResponseMetadata.NextCursor = "page2"
+		json.NewEncoder(w).Encode(page)
+	}))
+	defer srv.Close()
+	withSlackAPIStub(t, srv)
+	snippet, root := fetchReactionTargetContext(config{slackBotToken: "test"}, "C1", "100.1")
+	if snippet != "synthetic target" || root != "" || calls.Load() != 1 {
+		t.Fatalf("target=%q root=%q requests=%d", snippet, root, calls.Load())
+	}
+}
+
+func TestMinimalReactionWithoutRootUsesChannelPointer(t *testing.T) {
+	capture := &inboundCapture{}
+	gc := httptest.NewServer(capture.handler())
+	defer gc.Close()
+	cfg := coalescingTestConfig(gc.URL, 0)
+	cfg.injectionMode = "minimal"
+	p := testPending("C1", "100.299", "reacted to message 100.2")
+	p.inbound.Actor = externalActor{ID: "U_TEST", DisplayName: reactionActorPrefix + "Example", IsBot: true}
+	if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{p}); err != nil {
+		t.Fatal(err)
+	}
+	got := capture.snapshot()
+	if len(got) != 1 || !strings.Contains(got[0].Text, "Context: gc slack read --conversation-id C1") || strings.Contains(got[0].Text, "--thread-ts") {
+		t.Fatalf("reaction pointer names a non-message: %+v", got)
+	}
+}

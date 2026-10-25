@@ -10,7 +10,7 @@ installed into PATH and no adapter was restarted.
 - Focused tests after those fixes passed, including raw/prepared session
   rendering, ownership scanning, deletion windows, spool metadata and receipt
   conclusions.
-- Final adapter `go test -race -json ./...`: **1,388 top-level tests passed,
+- First full adapter `go test -race -json ./...`: **1,388 top-level tests passed,
   12,687 including subtests**, one opt-in replay test skipped; both packages
   passed, no race report.
 - `go vet ./...` passed in both adapter and CLI modules; adapter vet rerun
@@ -28,6 +28,11 @@ installed into PATH and no adapter was restarted.
   the bot id. `go test -race ./... -run
   'TestMinimalPeerWithoutBotUserID|TestMinimalInbounds|TestInjectionFullGoldens'
   -count=1` passed; focused reviewer pass 3 was CLEAN. Full mode is unchanged.
+- After the first Codex gate's four fixes, a second full adapter race run
+  passed **1,393 top-level tests, 12,694 including subtests**, one replay
+  skip. Adapter vet passed again. The later cache-ordering fix passed four
+  focused top-level race tests (14 with subtests), including the cold/warm
+  mutation-before-remember regression, minimal paths and full-mode goldens.
 
 Each batched check has a JSON completion manifest with command, working
 directory, exit code, duration and available test counts. Manifests were read
@@ -35,6 +40,8 @@ before results were reported. Raw test logs remain in ignored lane scratch;
 the committed evidence contains no real message text.
 
 Fresh same-model reviewer pass 1 found four issues; all fixed. Focused pass 2
-was CLEAN. Codex gate evidence is added after its committed-head review.
+was CLEAN. Codex R1 returned BLOCK; all four findings were fixed. Fresh
+reviewer pass 4 found a cache-ordering gap in those fixes; retained tombstones
+address it and pass 5 was CLEAN. The next Codex gate reviews the final code.
 Fable and founder read remain the mayor's gates; this branch is delivered as
 a draft PR with full mode still the default.

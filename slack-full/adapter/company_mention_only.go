@@ -643,7 +643,8 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 	text := rewriteSlackUserMentions(cfg, ev.Text)
 	// Files are not downloaded on this path (the company hydrator owns
 	// file rendering for members); the reminder still names every file.
-	if filesBlock := formatInboundFilesBlock(ev.Files, nil); filesBlock != "" {
+	filesBlock := formatInboundFilesBlock(ev.Files, nil)
+	if filesBlock != "" && !cfg.minimalInjection() {
 		if strings.TrimSpace(text) == "" {
 			text = filesBlock
 		} else {
@@ -669,6 +670,10 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 		ReplyToMessageID: ev.ThreadTS,
 		DedupKey:         "slack-" + ev.TS,
 		ReceivedAt:       time.Now().UTC(),
+	}
+	if cfg.minimalInjection() {
+		inbound.Text = minimalDispatchParts(cfg, inbound, filesBlock)
+		inbound.injectionPrepared = true
 	}
 	// Every selected target is written to the receipt as PENDING before the
 	// first POST (codex r6 re-gate P1): a process that exits mid-run — a

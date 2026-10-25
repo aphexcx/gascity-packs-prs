@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -48,7 +49,7 @@ func minimalReminder(cfg config, msg externalInboundMessage, body, files, anchor
 	parts := channelReminderParts{anchor: header, body: body, files: files, ts: msg.ProviderMessageID, channelID: msg.Conversation.ConversationID}
 	text, _, _, _, _ := composeChannelReminderText(parts, "", "", cfg.reminderTextBudget)
 	thread := msg.ReplyToMessageID
-	if thread == "" {
+	if thread == "" && !(msg.Actor.IsBot && strings.HasPrefix(msg.Actor.DisplayName, reactionActorPrefix)) {
 		thread = msg.ProviderMessageID
 	}
 	return text + "\n" + contextReadPointer(msg.Conversation.ConversationID, thread)
@@ -59,6 +60,7 @@ func minimalReminder(cfg config, msg externalInboundMessage, body, files, anchor
 type injectionParent struct {
 	author, line string
 	touched      time.Time
+	invalidated  bool
 }
 type injectionParents struct {
 	mu      sync.Mutex
@@ -71,12 +73,19 @@ func (c *injectionParents) remember(channel, ts, author, text string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	key := channel + "/" + ts
+	if p := c.entries[key]; p.invalidated && time.Since(p.touched) <= threadContextCacheTTL {
+		return
+	}
+	c.putLocked(key, injectionParent{author: author, line: firstLineClipped(text, threadAnchorParentLineRunes), touched: time.Now()})
+}
+
+func (c *injectionParents) putLocked(key string, p injectionParent) {
 	if c.entries == nil {
 		c.entries = map[string]injectionParent{}
 	}
-	now := time.Now()
-	if len(c.entries) >= threadContextCacheMaxEntries {
-		oldest, stamp := "", now
+	if _, exists := c.entries[key]; !exists && len(c.entries) >= threadContextCacheMaxEntries {
+		oldest, stamp := "", time.Now()
 		for k, v := range c.entries {
 			if !v.touched.After(stamp) {
 				oldest, stamp = k, v.touched
@@ -84,7 +93,7 @@ func (c *injectionParents) remember(channel, ts, author, text string) {
 		}
 		delete(c.entries, oldest)
 	}
-	c.entries[channel+"/"+ts] = injectionParent{author, firstLineClipped(text, threadAnchorParentLineRunes), now}
+	c.entries[key] = p
 }
 
 func (c *injectionParents) get(channel, ts string) (string, string) {
@@ -101,6 +110,35 @@ func (c *injectionParents) get(channel, ts string) (string, string) {
 	return p.author, p.line
 }
 
+// Edits and deletions invalidate the old excerpt; a later reply falls back
+// to its thread id, without fetching history. A bounded tombstone prevents
+// an older root handler from restoring the excerpt after concurrent mutation.
+func (c *injectionParents) invalidateMutation(msg slackMessageEvent, raw json.RawMessage) {
+	if c == nil {
+		return
+	}
+	ts := msg.DeletedTS
+	if msg.Subtype == "message_changed" {
+		var changed struct {
+			Message struct {
+				TS string `json:"ts"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(raw, &changed) != nil {
+			return
+		}
+		ts = changed.Message.TS
+	} else if msg.Subtype != "message_deleted" {
+		return
+	}
+	if msg.Channel == "" || ts == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.putLocked(msg.Channel+"/"+ts, injectionParent{touched: time.Now(), invalidated: true})
+}
+
 func injectionPeerBlock(cfg config, items []peerContextItem, dropped int) string {
 	if cfg.minimalInjection() {
 		return ""
@@ -114,12 +152,16 @@ func minimalDispatchText(cfg config, msg externalInboundMessage) string {
 	if msg.injectionPrepared {
 		return msg.Text
 	}
+	return minimalDispatchParts(cfg, msg, "")
+}
+
+func minimalDispatchParts(cfg config, msg externalInboundMessage, files string) string {
 	anchor := ""
 	if msg.ReplyToMessageID != "" && msg.ReplyToMessageID != msg.ProviderMessageID {
 		author, line := cfg.injectionParents.get(msg.Conversation.ConversationID, msg.ReplyToMessageID)
 		anchor = formatThreadReplyAnchor(msg.ReplyToMessageID, author, line)
 	}
-	return minimalReminder(cfg, msg, msg.Text, "", anchor)
+	return minimalReminder(cfg, msg, msg.Text, files, anchor)
 }
 
 func injectionReplyHelp(cfg config, channel string) bool {

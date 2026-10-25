@@ -410,7 +410,9 @@ Knobs:
   immediately delivered peer post retains its own text and read-only label.
   Thread context is not fetched in minimal mode. The parent author/first line
   comes from a bounded cache of observed roots; a cold cache keeps the thread
-  id alone. Mention-only routing may still scan a historical thread whose
+  id alone, and edits/deletions invalidate cached excerpts. A reaction with
+  no known thread root points to the channel. Mention-only routing may still
+  scan a historical thread whose
   ownership predates the adapter's own-thread registry; this is routing, not
   context injection.
   **Before opting in**, put both contracts in every receiving agent's prompt:

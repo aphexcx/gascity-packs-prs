@@ -3976,6 +3976,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if msg.Type != "message" && msg.Type != "app_mention" {
 		return
 	}
+	if cfg.minimalInjection() {
+		cfg.injectionParents.invalidateMutation(msg, env.Event)
+	}
 	// Bot-authored messages historically dropped here unconditionally,
 	// which made fleet mayors blind to each other's posts (gp-kop). Every
 	// bot post that survives the fail-closed author resolution is now
