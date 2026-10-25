@@ -51,7 +51,8 @@ was CLEAN. Codex R1 returned BLOCK; all four findings were fixed. Fresh
 reviewer pass 4 found a cache-ordering gap in those fixes; retained tombstones
 address it and pass 5 was CLEAN. Codex R2 was CLEAN for the entire own delta
 from 52cbd2f8 to 33d6eb76, with one minor budget finding. After fixing it,
-Codex R3 reviews the incremental code, regression and measurement refresh
-against 33d6eb76; the two scopes together cover the final implementation.
+Codex R3 was CLEAN for the incremental code, regression and measurement
+refresh from 33d6eb76 to ae2b0efb; the two scopes together cover the final
+implementation. The subsequent commit only records review evidence.
 Fable and founder read remain the mayor's gates; this branch is delivered as
 a draft PR with full mode still the default.
