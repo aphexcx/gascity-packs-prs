@@ -73,3 +73,11 @@ the fresh same-model review's second pass is CLEAN (`round2-self-review-r2.md`).
 
 The founder's first-head read, mayor gate and Fable round 2 are handoff gates.
 The PR remains draft; no live adapter mode, process or prompt is changed.
+
+The first Codex gate (`round2-codex-review.md`, base 986cbad3 through 1418310d)
+returned BLOCK for one full-mode regression: the non-evicting recovery queue
+was populated in both modes, but only minimal mode drained it within budget.
+`TestFullPeerFailuresRetainAmbientEviction` reproduced this red; the fix marks
+failed forwards for the separate queue only in minimal mode. Full mode keeps
+its original capped ambient FIFO, preserving its existing byte-format and
+eviction behavior. The final review and verification records follow this fix.

@@ -154,3 +154,35 @@ func TestMinimalPeerRecoveryOversizedHead(t *testing.T) {
 		t.Fatal("later small recovery remains blocked")
 	}
 }
+
+func TestFullPeerFailuresRetainAmbientEviction(t *testing.T) {
+	capture := &inboundCapture{}
+	var reject atomic.Bool
+	reject.Store(true)
+	gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reject.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		capture.handler().ServeHTTP(w, r)
+	}))
+	defer gc.Close()
+	cfg := peerTestConfig(gc.URL, newTestPeerBotsRegistry(t, peerTestAllowlistImmediate), citadelResolver())
+	cfg.reminderTextBudget = defaultReminderTextBudget
+	aliases := newTestHandleAliasRegistry(t)
+	for i := 1; i <= 2; i++ {
+		ts := fmt.Sprintf("100.%06d", i)
+		processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E"+ts, "C_IMM", ts, "", strings.Repeat("large failed post ", 120), peerTestPeerBotID, ""), func() {})
+	}
+	// Full mode keeps its existing capped FIFO: newer ambient context can
+	// evict older failed posts rather than remain behind an oversized block.
+	for i := 0; i < maxPeerContextPerChannel; i++ {
+		cfg.peerContext.add(peerContextItem{Channel: "C_IMM", Label: "ambient", TS: fmt.Sprintf("101.%06d", i), Text: "small ambient post"})
+	}
+	reject.Store(false)
+	processSlackEvent(cfg, aliases, nil, nil, nil, nil, humanEnvelope(t, "E_NEXT", "C_IMM", "102.000001", "new human post"), func() {})
+	got := capture.snapshot()
+	if len(got) != 1 || !strings.Contains(got[0].Text, "small ambient post") || strings.Contains(got[0].Text, "large failed post") {
+		t.Fatalf("full-mode peer context remains blocked: %+v", got)
+	}
+}

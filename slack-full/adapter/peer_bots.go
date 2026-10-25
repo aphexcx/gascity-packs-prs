@@ -659,7 +659,9 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		// must not re-trigger Slack redelivery churn).
 		log.Printf("peer-bot: immediate forward failed chan=%s ts=%s (%v) — buffering instead", msg.Channel, msg.TS, err)
 		cfg.peerContext.restore(msg.Channel, recovery, 0)
-		item.FailedForward = true
+		// Full mode retains its existing capped ambient FIFO and rendering.
+		// Only minimal mode has budget-aware recovery draining.
+		item.FailedForward = cfg.minimalInjection()
 		cfg.peerContext.add(item)
 		return
 	}

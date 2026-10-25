@@ -13,3 +13,5 @@ round2-self-review-red: ["go", "test", "-json", "-count=1", "-run", "TestMinimal
 round2-self-review-green: ["go", "test", "-race", "-json", "-count=1", "-run", "TestMinimalPeerRecovery|TestMinimalFailedPeerForwardRecovery|TestThreadContextLargePage|TestThreadContextPartialDelivery|TestInjectionFullGoldens", "./..."] exit_code=0
 round2-adapter-vet-final: ["go", "vet", "./..."] exit_code=0
 round2-adapter-race-final: ["go", "test", "-race", "-count=1", "-json", "./..."] exit_code=0
+round2-codex-fix-red: ["go", "test", "-json", "-count=1", "-run", "TestFullPeerFailuresRetainAmbientEviction", "./..."] exit_code=1
+round2-codex-fix-green: ["go", "test", "-race", "-json", "-count=1", "-run", "TestFullPeerFailuresRetainAmbientEviction|TestMinimalPeerRecovery|TestMinimalFailedPeerForwardRecovery|TestInjectionFullGoldens|TestPeerContextBuffer", "./..."] exit_code=0
