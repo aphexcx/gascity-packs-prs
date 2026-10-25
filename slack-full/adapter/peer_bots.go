@@ -612,6 +612,11 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		ReceivedAt:       time.Now().UTC(),
 	}
 	if cfg.minimalInjection() {
+		// bots.info can prove the app identity without returning user_id.
+		// Keep the actual bot id as the sender coordinate in that case.
+		if inbound.Actor.ID == "" {
+			inbound.Actor.ID = botID
+		}
 		anchor := ""
 		if msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
 			author, line := cfg.injectionParents.get(msg.Channel, msg.ThreadTS)

@@ -23,6 +23,11 @@ installed into PATH and no adapter was restarted.
 - Full-mode goldens generated from the immutable 52cbd2f8 originals with a Go
   overlay, then tested against the implementation: human, thread, peer, batch.
 - `git diff --check` passed.
+- A final sender-coordinate edge case was fixed after the full race run:
+  peer app identity can resolve without a bot user id. Minimal mode now keeps
+  the bot id. `go test -race ./... -run
+  'TestMinimalPeerWithoutBotUserID|TestMinimalInbounds|TestInjectionFullGoldens'
+  -count=1` passed; focused reviewer pass 3 was CLEAN. Full mode is unchanged.
 
 Each batched check has a JSON completion manifest with command, working
 directory, exit code, duration and available test counts. Manifests were read

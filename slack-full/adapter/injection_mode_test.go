@@ -427,3 +427,19 @@ func TestBatchJournalIncludesDeletedAndUnknownMembers(t *testing.T) {
 		t.Fatalf("false/missing windows: %+v", r.Windows)
 	}
 }
+
+func TestMinimalPeerWithoutBotUserIDKeepsBotID(t *testing.T) {
+	capture := &inboundCapture{}
+	srv := httptest.NewServer(capture.handler())
+	defer srv.Close()
+	resolver := &stubAuthorResolver{info: companyBotInfo{AppID: "A_OTHER"}, outcome: botResolveOK}
+	registry := newTestPeerBotsRegistry(t, `{"peers":[{"label":"Example peer","bot_id":"B_TEST","wake":true}]}`)
+	cfg := peerTestConfig(srv.URL, registry, resolver)
+	cfg.injectionMode = "minimal"
+	cfg.slackAppID = "A_SELF"
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, peerBotEnvelope(t, "message", "E1", "C1", "100.2", "100.1", "synthetic body", "B_TEST", "A_OTHER"), func() {})
+	got := capture.snapshot()
+	if len(got) != 1 || got[0].Actor.ID != "B_TEST" || !strings.Contains(got[0].Text, "B_TEST") {
+		t.Fatalf("missing bot coordinate: %+v", got)
+	}
+}
