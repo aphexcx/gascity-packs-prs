@@ -103,3 +103,10 @@ single-message anchors for threaded batches. Corrected by using production
 batch formatting and adding a parity test against an actual coalescer delivery.
 The corrected replay totals supersede the original 485,075-byte projection.
 `codex-review-r1.md` retains the finding; the follow-up gate checks its correction.
+
+Codex DEEP round 2 reviewed `ab95b2cd..384b8ec4` and returned CLEAN with no
+findings, validated exit 0 and anchored verdict. `codex-review-r2.md`, its `.rc`,
+and `.reason` retain the result. The final source/test head is
+`384b8ec4f2d22b3167edef6db4d7407af1289909`; the following commit adds review
+evidence only. Both gates were read-only and relied on the committed test
+reports; private replay input was not available in their pristine checkout.

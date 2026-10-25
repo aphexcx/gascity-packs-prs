@@ -19,3 +19,5 @@ replay-prepare-corrected: ['python3', 'slack-full/scripts/replay_minimal_injecti
 python-replay-corrected: ['uv', 'run', '--python', '3.13', '--with', 'pytest', '--with', 'pyyaml', '--with', 'jsonschema', 'python3', '-m', 'pytest', 'tests', '-q', '-k', 'replay_minimal']: exit 0
 replay-before-corrected: ['go', 'test', '-overlay', '/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/.gc/scratch/gp-qwc2/baseline-overlay.json', '-count=1', '-json', '-run', 'TestMinimalReplayMeasurement', '.']: exit 0
 replay-after-corrected: ['go', 'test', '-race', '-count=1', '-json', '-run', 'Test(MinimalReplayMeasurement|ReplayContextOutcome|ReplayThreadedBatchParity)', '.']: exit 0
+evidence-diff-check: ['git', 'diff', '--cached', '--check']: exit 0
+evidence-diff-stat: ['git', 'diff', '--cached', '--stat']: exit 0
