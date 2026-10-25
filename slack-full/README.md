@@ -254,6 +254,21 @@ either can travel intact when the pack is mirrored upstream:
 Build commands and CI for both binaries are documented in
 [CONTRIBUTING.md](./CONTRIBUTING.md#build-flow).
 
+The six CLI wrappers use `commands/_cli.sh` to build a missing CLI or replace
+a legacy shell wrapper. Builds use a unique temporary file beside the CLI
+and rename it into place only after success; a failed build leaves the old
+wrapper intact. To build the CLI manually, including over a legacy wrapper:
+
+```sh
+(
+  cd slack-full/cli &&
+  tmp=$(mktemp .gc-slack-cli.build.XXXXXX) &&
+  trap 'rm -f "$tmp"' 0 &&
+  go build -o "$tmp" . &&
+  mv -f "$tmp" gc-slack-cli
+)
+```
+
 ## Architecture (current)
 
 The Go adapter at `slack-full/adapter/gc-slack-adapter`
