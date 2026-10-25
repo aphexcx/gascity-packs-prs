@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import textwrap
 
 import pytest
@@ -182,6 +183,24 @@ def run_gc(
     )
 
 
+def discover_provenance_binding(
+    gc_test_bin: Path, workspace: PromptWorkspace, prompt: str, tmp_path: Path,
+) -> subprocess.CompletedProcess[str]:
+    """Run the rendered close discovery with real gc, without touching a store."""
+    script = "PROVENANCE_PACK_ALIAS=" + prompt.split(
+        "```bash\nPROVENANCE_PACK_ALIAS=", 1
+    )[1].split("```", 1)[0]
+    binary_dir = tmp_path / "real-gc-bin"
+    binary_dir.mkdir()
+    (binary_dir / "gc").symlink_to(gc_test_bin)
+    return subprocess.run(
+        ["sh", "-c", script],
+        cwd=workspace.rig_dir,
+        env={**workspace.env, "PATH": str(binary_dir) + os.pathsep + os.environ["PATH"]},
+        text=True, capture_output=True, timeout=30,
+    )
+
+
 def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert persona_heading in prompt
     assert prompt.count("# GC Role Worker") == 1
@@ -313,6 +332,32 @@ def test_role_prompts_render_public_worker_fragment(
     assert "--claim" in help_result.stdout
     assert "--drain-ack" in help_result.stdout
 
+    discovery = discover_provenance_binding(gc_test_bin, workspace, result.stdout, tmp_path)
+    assert discovery.returncode == 0, discovery.stderr
+    expected_binding = city_binding if pack_path == "gascity" else "gc"
+    assert discovery.stdout.strip() == f"Provenance binding: {expected_binding}"
+    provenance_help = run_gc(gc_test_bin, workspace, expected_binding, "provenance", "--help")
+    assert provenance_help.returncode == 0, provenance_help.stderr
+    assert "Record or summarize a normal worker's typed close trail" in provenance_help.stdout
+
+
+def test_worker_provenance_discovery_fails_without_city_command_import(
+    tmp_path: Path, gc_test_bin: Path,
+) -> None:
+    workspace = write_prompt_workspace(
+        tmp_path, city_binding="gc", city_pack=REPO_ROOT / "gascity",
+    )
+    # Keep the rig roles while removing the city command import entirely.
+    (workspace.city_dir / "pack.toml").write_text(
+        '[pack]\nname = "no-command-import"\nschema = 2\n', encoding="utf-8",
+    )
+    prompt = run_gc(gc_test_bin, workspace, "prime", "--strict", "fixture/gc.implementation-worker")
+    assert prompt.returncode == 0, prompt.stderr
+    discovery = discover_provenance_binding(gc_test_bin, workspace, prompt.stdout, tmp_path)
+    assert discovery.returncode != 0
+    assert "No gc binding serves provenance: check gc import list and the Gas City pack pin." in discovery.stderr
+    assert not discovery.stdout
+
 
 def test_registered_claim_command_dispatches_store_aware_show_and_normalizes_json(
     tmp_path: Path, gc_test_bin: Path
@@ -364,3 +409,183 @@ def test_registered_claim_command_dispatches_store_aware_show_and_normalizes_jso
         "hook --claim --drain-ack --json",
         " ".join(("b" + "d", "show", "bd-123", "--json")),
     ]
+
+
+@pytest.mark.parametrize('binding', ['gc', 'gascity', 'custom'])
+def test_provenance_command_is_available_under_city_import_alias(tmp_path: Path, gc_test_bin: Path, binding: str) -> None:
+    workspace = write_prompt_workspace(tmp_path, city_binding=binding, city_pack=REPO_ROOT / 'gascity')
+    help_result = run_gc(gc_test_bin, workspace, binding, 'provenance', '--help')
+    assert help_result.returncode == 0, help_result.stderr
+    assert "Record or summarize a normal worker's typed close trail" in help_result.stdout
+    result = run_gc(gc_test_bin, workspace, binding, 'provenance', 'record', 'fixture-1', '--outcome', 'shipped', '--commit', 'invalid')
+    assert result.returncode != 0
+    assert 'commit must be a full' in result.stderr
+
+
+@pytest.mark.parametrize(('binding', 'pack_path', 'scope_form'), [
+    (binding, pack_path, scope_form)
+    for binding, pack_path in [
+    ('gc', 'gascity'), ('gascity', 'gascity'), ('custom', 'gascity'),
+    ('bmad', 'bmad'), ('superpowers', 'superpowers'), ('gstack', 'gstack'),
+    ('compound-engineering', 'compound-engineering'), ('profiler', 'profiler'),
+    ] for scope_form in [
+    'environment', 'post-city', 'post-city-equals', 'post-rig',
+    'post-rig-equals', 'pre-city', 'pre-city-rig', 'post-city-rig',
+    ]
+] + [('custom', 'gascity', 'dropped-recipe')])
+def test_provenance_record_and_summary_preserve_explicit_scope(
+    tmp_path: Path, gc_test_bin: Path, binding: str, pack_path: str, scope_form: str,
+) -> None:
+    """Real pack dispatch AND nested gc routing; only the bd store is a fake."""
+    selected_root = tmp_path / 'selected'
+    selected_root.mkdir()
+    workspace = write_prompt_workspace(
+        selected_root, city_binding=binding, city_pack=REPO_ROOT / pack_path,
+    )
+    other_rig = selected_root / 'other'
+    other_rig.mkdir()
+    with (workspace.city_dir / 'city.toml').open('a') as config:
+        config.write('\n[[rigs]]\nname = "other"\n')
+    with (workspace.city_dir / '.gc/site.toml').open('a') as site:
+        site.write('\n[[rig]]\nname = "other"\npath = ' + json.dumps(str(other_rig)) + '\n')
+    for scope in (workspace.city_dir, workspace.rig_dir, other_rig):
+        (scope / '.beads').mkdir()
+
+    ambient = workspace
+    if 'city' in scope_form:
+        ambient_root = tmp_path / 'ambient'
+        ambient_root.mkdir()
+        ambient = write_prompt_workspace(
+            ambient_root, city_binding=binding, city_pack=REPO_ROOT / pack_path,
+        )
+
+    binary_dir = tmp_path / 'bin'
+    binary_dir.mkdir()
+    (binary_dir / 'gc').symlink_to(gc_test_bin)
+    store = binary_dir / ('b' + 'd')
+    state = tmp_path / 'store.json'
+    state.write_text(json.dumps({'calls': [], 'events': []}))
+    store.write_text(f'#!{sys.executable}\n' + textwrap.dedent('''\
+        import json, os, sys
+        from pathlib import Path
+        path = Path(os.environ['PROVENANCE_TEST_STATE'])
+        state = json.loads(path.read_text())
+        args = sys.argv[1:]
+        state['calls'].append({'args': args, 'cwd': str(Path.cwd()),
+                               'city': os.environ.get('GC_CITY'),
+                               'city_path': os.environ.get('GC_CITY_PATH'),
+                               'city_name': os.environ.get('GC_CITY_NAME')})
+        if args == ['show', 'work-1', '--json']:
+            print('[{"id":"work-1"}]')
+        elif args == ['provenance', 'log', 'work-1', '--json']:
+            print(json.dumps(state['events']))
+        elif args[:2] == ['provenance', 'record']:
+            options = dict(zip(args[2::2], args[3::2]))
+            assert options['--issue'] == 'work-1'
+            event = {key: options['--' + key.replace('_', '-')]
+                     for key in ['kind', 'source', 'ref', 'ref_kind', 'payload']}
+            event.update(id=str(len(state['events'])), occurred_at=options['--at'])
+            inserted = os.environ.get('DROP_PROVENANCE') != '1'
+            if inserted:
+                state['events'].append(event)
+            if '--json' in args:
+                print(json.dumps({'id': event['id'], 'inserted': inserted}))
+        elif args[:2] == ['close', 'work-1']:
+            state['closed'] = True
+        elif args[:2] != ['update', 'work-1']:
+            sys.exit('unexpected store argv: ' + repr(args))
+        path.write_text(json.dumps(state))
+    '''))
+    store.chmod(0o755)
+    # Do not inherit live worker store/auth/API routing. Every store process
+    # must be this fixture executable, including recursive gc calls.
+    env = {key: value for key, value in ambient.env.items()
+           if not key.startswith(('GC_', 'BEADS_', 'BD_'))}
+    env.update({
+        'GC_HOME': ambient.env['GC_HOME'], 'GC_CITY': str(ambient.city_dir),
+        'GC_CITY_PATH': str(ambient.city_dir), 'GC_CITY_ROOT': str(ambient.city_dir),
+        'GC_RIG': 'other', 'GC_BEADS': 'bd',
+        'GC_BIN': str(gc_test_bin), 'GC_NO_API': '1',
+        'PATH': str(binary_dir) + os.pathsep + os.environ['PATH'],
+        'PROVENANCE_TEST_STATE': str(state),
+    })
+    if scope_form == 'dropped-recipe':
+        # Execute the shipped recipe through the real gc dispatcher. Only bd
+        # storage is fake: a successful-but-unretained append must prevent
+        # compatibility updates, branch release, and close.
+        subprocess.run(['git', 'init', '-b', 'work-1', str(workspace.rig_dir)], check=True,
+                       capture_output=True)
+        subprocess.run(['git', '-C', str(workspace.rig_dir), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.test', 'commit', '--allow-empty',
+                        '-m', 'fixture'], check=True, capture_output=True)
+        reviews = tmp_path / 'reviews.json'
+        reviews.write_text('[]')
+        env.update(DROP_PROVENANCE='1', CLAIMED_BEAD_ID='work-1',
+                   GC_DIR=str(workspace.rig_dir), GC_RIG='fixture',
+                   PR_URL='https://github.com/owner/repo/pull/123',
+                   REVIEW_RECORDS=str(reviews), EVIDENCE_DIR=str(tmp_path))
+        template = (REPO_ROOT / 'gascity/template-fragments/gc-role-worker.template.md').read_text()
+        discovery = 'PROVENANCE_PACK_ALIAS=' + template.split(
+            '```bash\nPROVENANCE_PACK_ALIAS=', 1)[1].split('```', 1)[0]
+        guard = '[ -n "${PROVENANCE_PACK_ALIAS:-}" ]'
+        close = guard + template.split('```bash\n' + guard, 1)[1].split('```', 1)[0]
+        result = subprocess.run(['sh', '-c', discovery + '\n' + close],
+                                cwd=workspace.rig_dir, env=env, text=True, capture_output=True)
+        assert result.returncode != 0
+        assert 'store did not retain provenance for work-1' in result.stderr
+        stored = json.loads(state.read_text())
+        assert not stored['events']
+        assert not stored.get('closed')
+        assert not any(call['args'][0] in ('update', 'close') for call in stored['calls'])
+        assert subprocess.check_output(['git', '-C', str(workspace.rig_dir), 'branch',
+                                        '--show-current'], text=True).strip() == 'work-1'
+        return
+    city_flags = ['--city', str(workspace.city_dir)]
+    command_binding = binding if pack_path == 'gascity' else 'gc'
+    prefix = [command_binding, 'provenance']
+    if scope_form == 'post-city':
+        prefix += city_flags
+    elif scope_form == 'post-city-equals':
+        prefix += ['--city=' + str(workspace.city_dir)]
+    elif scope_form == 'post-rig':
+        prefix += ['--rig', 'fixture']
+    elif scope_form == 'post-rig-equals':
+        prefix += ['--rig=fixture']
+    elif scope_form == 'pre-city':
+        prefix = [command_binding, *city_flags, 'provenance']
+    elif scope_form == 'pre-city-rig':
+        prefix = [command_binding, *city_flags, '--rig', 'fixture', 'provenance']
+    elif scope_form == 'post-city-rig':
+        prefix += [*city_flags, '--rig=fixture']
+
+    commit = 'a' * 40
+    for args in (
+        ['record', 'work-1', '--outcome', 'shipped', '--commit', commit,
+         '--pr', 'https://github.com/owner/repo/pull/123'],
+        ['summary', 'work-1'],
+    ):
+        result = run_gc(gc_test_bin, ambient, *prefix, *args, env=env)
+        assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == f'PR 123 at {commit}, gate unknown, read unknown'
+    calls = json.loads(state.read_text())['calls']
+    assert len(calls) == 10
+    expected_scope = (workspace.rig_dir if 'rig' in scope_form else
+                      workspace.city_dir if 'city' in scope_form else other_rig)
+    assert all(Path(call['cwd']) == expected_scope.resolve() for call in calls)
+    # Pack dispatch pins these city anchors for environment and pre-leaf scope.
+    # For post-leaf --city, forwarded flags make nested gc pin the anchors.
+    # Explicit flags also preserve rig selection versus city-store scope.
+    assert all(Path(call['city']).resolve() == workspace.city_dir.resolve() for call in calls)
+    assert all(Path(call['city_path']).resolve() == workspace.city_dir.resolve() for call in calls)
+
+
+@pytest.mark.parametrize('option', ['--city', '--rig', '--city=', '--rig='])
+def test_provenance_explicit_scope_missing_value_is_named(
+    tmp_path: Path, gc_test_bin: Path, option: str,
+) -> None:
+    workspace = write_prompt_workspace(
+        tmp_path, city_binding='custom', city_pack=REPO_ROOT / 'gascity',
+    )
+    result = run_gc(gc_test_bin, workspace, 'custom', 'provenance', option)
+    assert result.returncode == 2, result.stderr
+    assert f'missing value for {option.rstrip("=")}' in result.stderr
