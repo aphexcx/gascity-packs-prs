@@ -557,21 +557,13 @@ def session_identity_candidates(session_id: str) -> set[str]:
 # truncation risk up front.
 _INBOUND_SCAN_WINDOWS = ("10m", "2h", "48h")
 
-# Actor display-name prefix the adapter stamps on peer-bot context inbounds
-# (gp-kop; keep in sync with peerActorPrefix in adapter/peer_bots.go). A
-# peer-bot post delivered as read-only context must NEVER become the
-# reply-current / react / upload anchor — no auto-response semantics — so
-# the latest-inbound helpers skip these events and every bot-authored
-# transcript entry.
-_PEER_BOT_ACTOR_PREFIX = "peer-bot "
-
-# Same contract for reaction notifications (gp-by3; keep in sync with
+# Reaction notifications (gp-by3; keep in sync with
 # reactionActorPrefix in adapter/reaction_events.go): a forwarded human
 # reaction is a signal, not a message — anchoring reply-current on one
 # would thread replies at a ts that is no postable message at all.
 _REACTION_ACTOR_PREFIX = "reaction: "
 
-_SYNTHETIC_ACTOR_PREFIXES = (_PEER_BOT_ACTOR_PREFIX, _REACTION_ACTOR_PREFIX)
+_SYNTHETIC_ACTOR_PREFIXES = (_REACTION_ACTOR_PREFIX,)
 
 
 def _is_synthetic_context_event(event: dict[str, Any]) -> bool:
@@ -579,9 +571,12 @@ def _is_synthetic_context_event(event: dict[str, Any]) -> bool:
     return isinstance(actor, str) and actor.startswith(_SYNTHETIC_ACTOR_PREFIXES)
 
 
-def _is_bot_transcript_entry(entry: dict[str, Any]) -> bool:
+def _is_synthetic_context_entry(entry: dict[str, Any]) -> bool:
     actor = entry.get("Actor") or entry.get("actor") or {}
-    return bool(isinstance(actor, dict) and actor.get("is_bot"))
+    if not isinstance(actor, dict):
+        return False
+    name = actor.get("display_name") or actor.get("DisplayName") or ""
+    return isinstance(name, str) and name.startswith(_SYNTHETIC_ACTOR_PREFIXES)
 
 
 def find_latest_inbound_for_session(session_id: str) -> dict[str, Any] | None:
@@ -1055,10 +1050,10 @@ def find_latest_inbound_thread_for_session(
         return mid, (payload.get("thread_ts") or "").strip(), _mention_only_conversation(conv_id)
     items = _transcript_items_desc(conv_id, provider)
     # items are newest-first (order=desc): the first inbound is the latest.
-    # Bot-authored entries (peer-bot context, gp-kop) are skipped: a peer
-    # post must never anchor reply-current threading, react, or upload.
+    # Peer posts are ordinary inbounds. Only synthetic notifications are
+    # skipped: their event timestamps do not identify postable messages.
     for entry in items:
-        if _is_bot_transcript_entry(entry):
+        if _is_synthetic_context_entry(entry):
             continue
         if (entry.get("Kind") or entry.get("kind")) == "inbound":
             mid = (entry.get("ProviderMessageID") or entry.get("provider_message_id") or "").strip()
@@ -1132,15 +1127,15 @@ def find_inbound_thread_by_ts(
     thread_root is the entry's ReplyToMessageID — "" when the inbound
     was a top-level message.
 
-    Returns None when no matching human inbound is in the newest
+    Returns None when no matching inbound is in the newest
     transcript window. Callers must treat a miss as "anchor unknown" and
     fail loudly, NOT as "top-level": older members of a coalesced batch
     have no transcript entry of their own (the batch records one entry
     under the newest ts), and silently posting top-level is exactly the
     misfire this lookup exists to prevent.
 
-    Bot-authored entries are skipped (gp-kop: a peer-bot post must never
-    become a reply anchor).
+    Human and bot inbounds use the same lookup; synthetic notifications
+    are not postable messages and remain excluded.
 
     A mention-only delivery (jg-vobf70) has no transcript entry; callers
     that know the session fall through to
@@ -1156,7 +1151,7 @@ def find_inbound_thread_by_ts(
     kinds = ("room", "dm") if kind not in ("room", "dm") else (
         (kind, "dm") if kind == "room" else (kind, "room"))
     for entry in _transcript_items_desc(conv_id, provider, kinds):
-        if _is_bot_transcript_entry(entry):
+        if _is_synthetic_context_entry(entry):
             continue
         if (entry.get("Kind") or entry.get("kind")) != "inbound":
             continue

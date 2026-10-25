@@ -1,0 +1,14 @@
+{
+  "command": [
+    "git",
+    "diff",
+    "--check",
+    "f507f7189184df2318011cfb4a6de8a82c5dc636",
+    "HEAD"
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex",
+  "exit_code": 0,
+  "seconds": 0.01,
+  "test_events": {},
+  "failed": []
+}

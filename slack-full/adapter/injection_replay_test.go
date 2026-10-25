@@ -21,12 +21,15 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 	}
 	defer f.Close()
 	counts := map[string]int{"blocks": 0, "members": 0, "minimal_bytes": 0}
+	daily := map[string]map[string]int{}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), 4<<20)
 	for scanner.Scan() {
 		var row struct {
-			Head, Foot string
-			Units      []struct {
+			Head, Foot  string
+			Day         string
+			PeerArrival bool `json:"peer_arrival"`
+			Units       []struct {
 				Channel, Sender          string
 				SenderID                 string `json:"sender_id"`
 				TS, Thread, Body, Anchor string
@@ -48,15 +51,34 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 				anchor = formatThreadReplyAnchor(u.Thread, "", "")
 			}
 			texts = append(texts, minimalReminder(cfg, m, u.Body, "", anchor))
+			if row.PeerArrival {
+				full, _, _, _, _ := composeChannelReminderText(channelReminderParts{anchor: anchor, body: u.Body}, "", "", defaultReminderTextBudget)
+				reply := u.Thread
+				if reply == "" {
+					reply = u.TS
+				}
+				foot := strings.Replace(row.Foot, "\nreply-to "+reply+"\n", "\nReply: gc slack reply-current --conversation-id "+u.Channel+" --reply-to "+reply+" --body-file <file>\n", 1)
+				counts["peer_full_bytes"] += len(row.Head + full + foot)
+			}
 			counts["members"]++
 		}
 		counts["blocks"]++
-		counts["minimal_bytes"] += len(row.Head + strings.Join(texts, "\n\n") + row.Foot)
+		bytes := len(row.Head + strings.Join(texts, "\n\n") + row.Foot)
+		counts["minimal_bytes"] += bytes
+		if daily[row.Day] == nil {
+			daily[row.Day] = map[string]int{}
+		}
+		daily[row.Day]["minimal_bytes"] += bytes
+		if row.PeerArrival {
+			counts["peer_minimal_bytes"] += bytes
+			daily[row.Day]["peer_minimal_bytes"] += bytes
+			daily[row.Day]["peer_arrivals"]++
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		t.Fatal(err)
 	}
-	b, err := json.MarshalIndent(counts, "", "  ")
+	b, err := json.MarshalIndent(map[string]any{"totals": counts, "daily": daily}, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}

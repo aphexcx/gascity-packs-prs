@@ -5,200 +5,331 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// Exercise the real event path: the failed peer event is committed, so its
-// recovery must ride a later delivery rather than rely on Slack redelivery.
-func TestMinimalFailedPeerForwardRecovery(t *testing.T) {
-	for _, next := range []string{"human", "peer", "batch"} {
-		t.Run(next, func(t *testing.T) {
-			capture := &inboundCapture{}
-			var reject atomic.Bool
-			reject.Store(true)
-			gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if reject.Load() {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
-				}
-				capture.handler().ServeHTTP(w, r)
-			}))
-			defer gc.Close()
-			cfg := peerTestConfig(gc.URL, newTestPeerBotsRegistry(t, peerTestAllowlistImmediate), citadelResolver())
-			cfg.injectionMode = "minimal"
-			cfg.reminderTextBudget = 3500
-			aliases := newTestHandleAliasRegistry(t)
-			committed := false
-			processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_FAILED", "C_IMM", "100.000001", "", "recover this failed post", peerTestPeerBotID, ""), func() { committed = true })
-			if !committed || len(capture.snapshot()) != 0 {
-				t.Fatal("first peer forward must fail with its event claim committed")
-			}
-			// Ambient traffic must neither evict recovery nor appear in minimal.
-			for i := 0; i < maxPeerContextPerChannel+1; i++ {
-				cfg.peerContext.add(peerContextItem{Channel: "C_IMM", TS: "100.000002", Text: "ambient-only context"})
-			}
-			reject.Store(false)
-			switch next {
-			case "human":
-				processSlackEvent(cfg, aliases, nil, nil, nil, nil, humanEnvelope(t, "E_NEXT", "C_IMM", "100.000003", "next human post"), func() {})
-			case "peer":
-				processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_NEXT", "C_IMM", "100.000003", "", "next peer post", peerTestPeerBotID, ""), func() {})
-			case "batch":
-				msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C_IMM"}, Actor: externalActor{ID: "U_TEST"}, ProviderMessageID: "100.000003", Text: "next batched post"}
-				if err := deliverCoalescedBatch(cfg, "C_IMM", []pendingChannelInbound{{inbound: msg, body: msg.Text}}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			got := capture.snapshot()
-			if len(got) != 1 {
-				t.Fatalf("successful deliveries = %d, want 1", len(got))
-			}
-			for _, want := range []string{"recover this failed post", "peer-bot citadel", "100.000001", "read-only", "not addressed to you"} {
-				if !strings.Contains(got[0].Text, want) {
-					t.Errorf("recovered delivery missing %q", want)
-				}
-			}
-			if strings.Contains(got[0].Text, "ambient-only context") || len(got[0].Text) > cfg.reminderTextBudget {
-				t.Fatal("ambient context leaked or reminder budget exceeded")
-			}
-			if pending, _ := cfg.peerContext.flush("C_IMM"); len(pending) != 0 {
-				b, _ := json.Marshal(pending)
-				t.Fatalf("delivered recovery still queued: %s", b)
-			}
-		})
+func assertNoPeerInstructions(t *testing.T, text string) {
+	t.Helper()
+	for _, retired := range []string{"read-only", "not addressed to you", "do not reply", "do not act", "peer-bot context", "end peer-bot context"} {
+		if strings.Contains(text, retired) {
+			t.Errorf("retired instruction %q in delivery", retired)
+		}
 	}
 }
 
-func TestMinimalPeerRecoveryBudgetAndRetry(t *testing.T) {
-	for _, next := range []string{"human", "peer", "batch"} {
-		t.Run(next, func(t *testing.T) {
-			capture := &inboundCapture{}
-			var reject atomic.Bool
-			gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if reject.Load() {
-					w.WriteHeader(http.StatusServiceUnavailable)
-					return
+func TestFailedPeerForwardRecovery(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		for _, next := range []string{"human", "peer", "batch"} {
+			t.Run(mode+"/"+next, func(t *testing.T) {
+				capture := &inboundCapture{}
+				var reject atomic.Bool
+				reject.Store(true)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if reject.Load() {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					capture.handler().ServeHTTP(w, r)
+				}))
+				defer server.Close()
+				cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+				cfg.injectionMode, cfg.reminderTextBudget = mode, 3500
+				cfg.deliveredIDs = newDeliveredIDs()
+				aliases := newTestHandleAliasRegistry(t)
+				whole := strings.Repeat("报告 ", 320)
+				committed := false
+				processSlackEvent(cfg, aliases, nil, nil, nil, nil,
+					peerBotEnvelope(t, "message", "E_FAIL", "C1", "100.000001", "", whole, peerTestPeerBotID, ""), func() { committed = true })
+				if !committed || len(capture.snapshot()) != 0 {
+					t.Fatal("failed event did not transfer to recovery")
 				}
-				capture.handler().ServeHTTP(w, r)
-			}))
-			defer gc.Close()
-			cfg := peerTestConfig(gc.URL, newTestPeerBotsRegistry(t, peerTestAllowlistImmediate), citadelResolver())
-			cfg.injectionMode = "minimal"
-			cfg.reminderTextBudget = 700
-			cfg.peerContext.add(peerContextItem{Channel: "C_IMM", Label: "first", TS: "100.000001", Text: strings.Repeat("a", 200), FailedForward: true})
-			cfg.peerContext.add(peerContextItem{Channel: "C_IMM", Label: "second", TS: "100.000002", Text: strings.Repeat("b", 200), FailedForward: true})
-			aliases := newTestHandleAliasRegistry(t)
-			deliver := func(n int, body string) {
-				ts := fmt.Sprintf("100.%06d", n)
+				reject.Store(false)
 				switch next {
 				case "human":
-					processSlackEvent(cfg, aliases, nil, nil, nil, nil, humanEnvelope(t, "E"+ts, "C_IMM", ts, body), func() {})
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, humanEnvelope(t, "E_NEXT", "C1", "100.000002", "new human post"), func() {})
 				case "peer":
-					processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E"+ts, "C_IMM", ts, "", body, peerTestPeerBotID, ""), func() {})
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_NEXT", "C1", "100.000002", "", "new peer post", peerTestPeerBotID, ""), func() {})
 				case "batch":
-					msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C_IMM"}, Actor: externalActor{ID: "U_TEST"}, ProviderMessageID: ts, Text: body}
-					_ = deliverCoalescedBatch(cfg, "C_IMM", []pendingChannelInbound{{inbound: msg, body: body}})
+					msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.000002", Text: "new batched post"}
+					if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{{inbound: msg, body: msg.Text}}); err != nil {
+						t.Fatal(err)
+					}
 				}
-			}
-			// A large message defers both recoveries. A failed small delivery
-			// restores the first ahead of the second; later small deliveries
-			// drain them separately instead of stranding an over-budget block.
-			deliver(3, strings.Repeat("large synthetic body ", 30))
-			if strings.Contains(capture.snapshot()[0].Text, "peer-bot first") {
-				t.Fatal("recovery ignored the reminder budget")
-			}
-			reject.Store(true)
-			deliver(4, "small failed delivery")
-			reject.Store(false)
-			deliver(5, "small successful delivery")
-			deliver(6, "another successful delivery")
-			got := capture.snapshot()
-			if len(got) != 3 || !strings.Contains(got[1].Text, "peer-bot first") || strings.Contains(got[1].Text, "peer-bot second") || !strings.Contains(got[2].Text, "peer-bot second") {
-				t.Fatalf("budget deferral or failure lost/reordered recovery: %+v", got)
-			}
-			for _, msg := range got[1:] {
-				if len(msg.Text) > cfg.reminderTextBudget {
-					t.Fatalf("recovery exceeds budget: %d", len(msg.Text))
+				got := capture.snapshot()
+				if len(got) != 1 || !strings.Contains(got[0].Text, whole) || !strings.Contains(got[0].Text, "100.000001") || len(got[0].Text) > cfg.reminderTextBudget {
+					t.Fatalf("whole recovery missing/over budget: %+v", got)
 				}
-			}
-		})
-	}
-}
-
-func TestMinimalPeerRecoveryOversizedHead(t *testing.T) {
-	cfg := config{injectionMode: "minimal", reminderTextBudget: 700, peerContext: newPeerContextBuffer()}
-	first := peerContextItem{Channel: "C1", Label: "first", TS: "100.000001", Text: strings.Repeat("large recovery body ", 60), FailedForward: true}
-	second := peerContextItem{Channel: "C1", Label: "second", TS: "100.000002", Text: "small recovery", FailedForward: true}
-	cfg.peerContext.add(first)
-	cfg.peerContext.add(second)
-	items, _ := cfg.peerContext.flush("C1")
-	text, sent := minimalPeerRecovery(cfg, "C1", "small inbound", items)
-	if len(sent) != 1 || sent[0].Text != first.Text || !strings.Contains(text, "peer-bot first") || !strings.Contains(text, "truncated; read channel") || len(text) > cfg.reminderTextBudget {
-		t.Fatalf("oversized recovery did not make bounded progress: text=%q sent=%+v", text, sent)
-	}
-	// Retry must restore the ORIGINAL body, not the budget-clipped rendering.
-	cfg.peerContext.restore("C1", sent, 0)
-	items, _ = cfg.peerContext.flush("C1")
-	if len(items) != 2 || items[0].Text != first.Text {
-		t.Fatal("recovery retry lost original body or queue ordering")
-	}
-	_, sent = minimalPeerRecovery(cfg, "C1", "small inbound", items)
-	if len(sent) != 1 {
-		t.Fatal("oversized head still blocks recovery")
-	}
-	items, _ = cfg.peerContext.flush("C1")
-	text, sent = minimalPeerRecovery(cfg, "C1", "small inbound", items)
-	if len(sent) != 1 || !strings.Contains(text, "small recovery") {
-		t.Fatal("later small recovery remains blocked")
-	}
-}
-
-func TestFullPeerFailuresRetainAmbientEviction(t *testing.T) {
-	capture := &inboundCapture{}
-	var reject atomic.Bool
-	reject.Store(true)
-	gc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if reject.Load() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
+				assertNoPeerInstructions(t, got[0].Text)
+				if !cfg.deliveredIDs.seen("", "C1", "100.000001") {
+					t.Fatal("recovery not marked delivered")
+				}
+				if pending, _ := cfg.peerContext.flush("C1"); len(pending) != 0 {
+					t.Fatal("successful recovery still pending")
+				}
+			})
 		}
-		capture.handler().ServeHTTP(w, r)
-	}))
-	defer gc.Close()
-	cfg := peerTestConfig(gc.URL, newTestPeerBotsRegistry(t, peerTestAllowlistImmediate), citadelResolver())
-	cfg.reminderTextBudget = defaultReminderTextBudget
-	aliases := newTestHandleAliasRegistry(t)
-	for i := 1; i <= 2; i++ {
-		ts := fmt.Sprintf("100.%06d", i)
-		processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E"+ts, "C_IMM", ts, "", strings.Repeat("large failed post ", 120), peerTestPeerBotID, ""), func() {})
-	}
-	// Full mode keeps its existing capped FIFO: newer ambient context can
-	// evict older failed posts rather than remain behind an oversized block.
-	for i := 0; i < maxPeerContextPerChannel; i++ {
-		cfg.peerContext.add(peerContextItem{Channel: "C_IMM", Label: "ambient", TS: fmt.Sprintf("101.%06d", i), Text: "small ambient post"})
-	}
-	reject.Store(false)
-	processSlackEvent(cfg, aliases, nil, nil, nil, nil, humanEnvelope(t, "E_NEXT", "C_IMM", "102.000001", "new human post"), func() {})
-	got := capture.snapshot()
-	if len(got) != 1 || !strings.Contains(got[0].Text, "small ambient post") || strings.Contains(got[0].Text, "large failed post") {
-		t.Fatalf("full-mode peer context remains blocked: %+v", got)
 	}
 }
 
-func TestMinimalPeerRecoveryNearFormatterLimit(t *testing.T) {
-	for _, available := range []int{2000, 2005, 2014} {
-		t.Run(fmt.Sprint(available), func(t *testing.T) {
-			item := peerContextItem{Channel: "C1", Label: "peer", TS: "100.000001", FailedForward: true}
-			body := "current inbound"
-			overhead := len(formatPeerContextBlock([]peerContextItem{item}, 0) + "\n\n" + body)
-			cfg := config{injectionMode: "minimal", reminderTextBudget: overhead + available, peerContext: newPeerContextBuffer()}
-			item.Text = strings.Repeat("large recovery body ", 200)
-			text, sent := minimalPeerRecovery(cfg, "C1", body, []peerContextItem{item})
-			if len(sent) != 1 || len(text) > cfg.reminderTextBudget || !strings.Contains(text, "truncated; read channel") {
-				t.Fatalf("double clipping: bytes=%d budget=%d sent=%d text=%q", len(text), cfg.reminderTextBudget, len(sent), text)
+func TestPeerRecoveryWholeFIFOCountAndRetry(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := config{injectionMode: mode, peerContext: newPeerContextBuffer()}
+			items := []peerContextItem{
+				{Channel: "C1", Label: "first", TS: "100.1", Text: strings.Repeat("é", 200)},
+				{Channel: "C1", Label: "second", TS: "100.2", Text: strings.Repeat("界", 200)},
 			}
+			body := "new post"
+			cfg.reminderTextBudget = len(formatPeerContextBlock(items[:1], 0) + "\n\n" + body + "\n[1 omitted — awaiting delivery]")
+			text, sent := peerRecovery(cfg, "C1", body, items)
+			if len(sent) != 1 || !strings.Contains(text, items[0].Text) || strings.Contains(text, items[1].Text) || !strings.Contains(text, "[1 omitted — awaiting delivery]") || len(text) > cfg.reminderTextBudget {
+				t.Fatal("FIFO prefix or deferred count incorrect")
+			}
+			cfg.peerContext.restore("C1", sent, 0)
+			retry, _ := cfg.peerContext.flush("C1")
+			if !reflect.DeepEqual(retry, items) {
+				t.Fatal("failed delivery lost/reordered queued posts")
+			}
+			text, sent = peerRecovery(cfg, "C1", strings.Repeat("large", 1000), retry)
+			if len(sent) != 0 || !strings.HasSuffix(text, "[2 omitted — awaiting delivery]") {
+				t.Fatal("oversized new message silently hid deferred posts")
+			}
+			cfg.reminderTextBudget = 0
+			retry, _ = cfg.peerContext.flush("C1")
+			text, sent = peerRecovery(cfg, "C1", body, retry)
+			if len(sent) != 2 || strings.Index(text, items[0].Text) > strings.Index(text, items[1].Text) || strings.Contains(text, "omitted") {
+				t.Fatal("retry did not recover the whole FIFO")
+			}
+			assertNoPeerInstructions(t, text)
 		})
+	}
+}
+
+func TestPeerRecoveryOversizedHeadRemainsVisibleAndWhole(t *testing.T) {
+	cfg := config{reminderTextBudget: 500, peerContext: newPeerContextBuffer()}
+	for i := 0; i < 25; i++ {
+		cfg.peerContext.add(peerContextItem{Channel: "C1", TS: fmt.Sprint(i), Text: strings.Repeat("whole ", 1000)})
+	}
+	items, _ := cfg.peerContext.flush("C1")
+	text, sent := peerRecovery(cfg, "C1", "new post", items)
+	if len(sent) != 0 || !strings.Contains(text, "25 omitted") {
+		t.Fatal("oversized recovery was clipped or silently dropped")
+	}
+	queued, _ := cfg.peerContext.flush("C1")
+	if len(queued) != 25 || queued[0].Text != items[0].Text {
+		t.Fatal("recovery queue lost whole messages")
+	}
+}
+
+func TestFailedPeerAttachmentRecovery(t *testing.T) {
+	testAllowAnyURL(t)
+	fileServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("synthetic file contents"))
+	}))
+	t.Cleanup(fileServer.Close)
+	for _, mode := range []string{"full", "minimal"} {
+		for _, next := range []string{"human", "peer", "batch"} {
+			t.Run(mode+"/"+next, func(t *testing.T) {
+				var reject atomic.Bool
+				reject.Store(true)
+				capture := &inboundCapture{}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if reject.Load() {
+						w.WriteHeader(http.StatusServiceUnavailable)
+						return
+					}
+					capture.handler().ServeHTTP(w, r)
+				}))
+				t.Cleanup(server.Close)
+				cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+				cfg.injectionMode, cfg.inboundFileStore = mode, t.TempDir()
+				cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+				cfg.deliveredIDs = newDeliveredIDs()
+				aliases := newTestHandleAliasRegistry(t)
+				env := peerBotEnvelope(t, "message", "E_FILE", "C1", "1792436306.401379", "", "peer file", peerTestPeerBotID, "")
+				var event slackMessageEvent
+				if err := json.Unmarshal(env.Event, &event); err != nil {
+					t.Fatal(err)
+				}
+				event.Files = []slackFile{{ID: "F1", Name: strings.Repeat("report", 8) + ".txt", URLPrivate: fileServer.URL, MIMEType: "text/plain"}}
+				var err error
+				env.Event, err = json.Marshal(event)
+				if err != nil {
+					t.Fatal(err)
+				}
+				processSlackEvent(cfg, aliases, nil, nil, nil, nil, env, func() {})
+				queued, _ := cfg.peerContext.flush("C1")
+				if len(queued) != 1 || len(queued[0].inbound.Attachments) != 1 {
+					t.Fatal("failed file-bearing peer did not retain its attachment")
+				}
+				want := queued[0].inbound.Attachments[0]
+				path := strings.TrimPrefix(want.URL, "file://")
+				if redactInboundText(path) == path {
+					t.Fatal("fixture must require a trusted path exemption")
+				}
+				cfg.peerContext.restore("C1", queued, 0)
+				reject.Store(false)
+				switch next {
+				case "human":
+					// A mention takes the immediate human channel path with the coalescer enabled.
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, botMentionEnvelope(t, "message", "E_HUMAN", "C1", "1792436307.000002", "", "<@"+testBotUserID+"> next", true), func() {})
+				case "peer":
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_NEXT", "C1", "1792436307.000002", "", "next peer", peerTestPeerBotID, ""), func() {})
+				case "batch":
+					msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "1792436307.000002", Text: "next batch"}
+					if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{{inbound: msg, body: msg.Text}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				got := capture.snapshot()
+				var recovered *externalInboundMessage
+				for i := range got {
+					if got[i].Conversation.ConversationID == "C1" {
+						recovered = &got[i]
+					}
+				}
+				if recovered == nil || len(recovered.Attachments) != 1 || recovered.Attachments[0] != want || !strings.Contains(recovered.Text, path) {
+					t.Fatalf("recovery lost attachment/path: %+v", recovered)
+				}
+			})
+		}
+	}
+}
+
+func TestHeldPeerRecoveryLossPreservesEveryEntry(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		for _, next := range []string{"peer", "batch"} {
+			t.Run(mode+"/"+next, func(t *testing.T) {
+				var posts atomic.Int32
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					if r.Method == http.MethodGet {
+						_, _ = w.Write([]byte(`{"receipt_id":"ir-peer","state":"unknown"}`))
+						return
+					}
+					if posts.Add(1) == 2 {
+						_, _ = w.Write([]byte(`{"TargetSessionID":"fixture","delivery":{"receipt_id":"ir-peer","status":"pending"}}`))
+						return
+					}
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}))
+				t.Cleanup(server.Close)
+				cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+				cfg.injectionMode, cfg.deliveryReceiptGate = mode, true
+				cfg.inboundDeadLetterDir = t.TempDir()
+				cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+				cfg.deliveredIDs = newDeliveredIDs()
+				cfg.receiptFollowUps = fastFollowUps(cfg)
+				aliases := newTestHandleAliasRegistry(t)
+				whole := strings.Repeat("whole peer ", 200)
+				processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_FAIL", "C1", "100.000001", "", whole, peerTestPeerBotID, ""), func() {})
+				if next == "peer" {
+					processSlackEvent(cfg, aliases, nil, nil, nil, nil, peerBotEnvelope(t, "message", "E_HELD", "C1", "100.000002", "", "next peer", peerTestPeerBotID, ""), func() {})
+				} else {
+					msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.000002", Text: "next batch"}
+					if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{{inbound: msg, body: msg.Text}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if !cfg.receiptFollowUps.wait(3 * time.Second) {
+					t.Fatal("held follow-up did not finish")
+				}
+				if posts.Load() != 3 {
+					t.Fatalf("got %d POSTs, want failure, hold, failed repost", posts.Load())
+				}
+				records := readDeadLetterRecords(t, cfg.inboundDeadLetterDir)
+				if len(records) != 2 {
+					t.Fatalf("dead-lettered %d entries, want both messages", len(records))
+				}
+				found := false
+				for _, rec := range records {
+					if rec.Inbound.ProviderMessageID == "100.000001" {
+						found = rec.Inbound.Text == whole && rec.Inbound.Actor.IsBot && strings.Contains(rec.Reason, "lost")
+					}
+				}
+				if !found {
+					t.Fatal("held loss discarded recovered peer provenance or whole body")
+				}
+			})
+		}
+	}
+}
+
+func TestRejectedPeerRecoveryAttachmentCannotPoisonSuccessor(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		for _, firstStatus := range []int{http.StatusServiceUnavailable, http.StatusBadRequest} {
+			t.Run(fmt.Sprintf("%s/initial-%d", mode, firstStatus), func(t *testing.T) {
+				var posts atomic.Int32
+				capture := &inboundCapture{}
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					var req struct {
+						Message externalInboundMessage `json:"message"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						t.Error(err)
+					}
+					if posts.Add(1) == 1 {
+						w.WriteHeader(firstStatus)
+						return
+					}
+					if len(req.Message.Attachments) > 0 {
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					capture.mu.Lock()
+					capture.messages = append(capture.messages, req.Message)
+					capture.mu.Unlock()
+					_, _ = w.Write([]byte(`{"TargetSessionID":"fixture"}`))
+				}))
+				t.Cleanup(server.Close)
+				cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+				cfg.injectionMode = mode
+				cfg.deliveredIDs = newDeliveredIDs()
+				cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+				cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
+					return deliverCoalescedBatch(cfg, channel, batch)
+				}
+				dead := 0
+				cfg.coalescer.deadLetter = func(_ string, batch []pendingChannelInbound, _ error) bool {
+					dead += len(batch)
+					return true
+				}
+				const path = "/tmp/gc-slack-adapter/inbound/C1234567890/1792436306.401379-image.png"
+				msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"},
+					ProviderMessageID: "100.000001", Text: "whole peer post", Actor: externalActor{IsBot: true},
+					Attachments: []externalAttachment{{ProviderID: "F1", URL: "file://" + path, MIMEType: "image/png"}}}
+				item := peerContextItem{Label: "peer", Channel: "C1", TS: msg.ProviderMessageID, Text: msg.Text, inbound: msg}
+				// Mirror the immediate peer transfer, then exercise the actual
+				// coalescer rejection ladder for the unrelated successors.
+				if err := deliverCoalescedBatch(cfg, "C1", []pendingChannelInbound{{inbound: msg, body: msg.Text}}); err != nil {
+					cfg.peerContext.add(item.withholdRejectedAttachments(err))
+				} else {
+					t.Fatal("initial fixture did not fail")
+				}
+				for _, ts := range []string{"100.000002", "100.000003"} {
+					release := cfg.coalescer.holdDelivery("C1")
+					err := cfg.coalescer.post("C1", []pendingChannelInbound{testPending("C1", ts, "unrelated successor")})
+					release()
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				got := capture.snapshot()
+				if dead != 0 || len(got) != 2 || cfg.peerContext.count("C1") != 0 {
+					t.Fatalf("rider poisoned successor: dead=%d delivered=%d pending=%d", dead, len(got), cfg.peerContext.count("C1"))
+				}
+				joined := got[0].Text + got[1].Text
+				if !strings.Contains(joined, msg.Text) || !strings.Contains(joined, path) || !strings.Contains(joined, "attachment withheld") {
+					t.Fatal("attachment fallback lost peer text, trusted path, or withholding notice")
+				}
+				if firstStatus == http.StatusServiceUnavailable && !strings.Contains(got[0].Text, "[1 omitted — awaiting delivery]") {
+					t.Fatal("successor did not disclose its deferred rider")
+				}
+			})
+		}
 	}
 }

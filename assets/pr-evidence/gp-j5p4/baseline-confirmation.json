@@ -1,0 +1,208 @@
+{
+  "as_of_utc": "2026-10-21T23:00:00+00:00",
+  "cutoff_utc": "2026-10-14T23:00:00+00:00",
+  "selected_files_by_mtime": 85,
+  "messages": 575,
+  "sources": {
+    "user": 215,
+    "attachment": 360
+  },
+  "excluded_outside_timestamp_window": 334,
+  "malformed_json_lines": 0,
+  "bytes": 518967,
+  "classes_bytes": {
+    "header_framing": 52900,
+    "author": 12915,
+    "thread_ts": 14436,
+    "thread_context": 102648,
+    "message": 152948,
+    "message_id": 30225,
+    "reply": 61525,
+    "peer_wrapper": 11455,
+    "other": 79915
+  },
+  "boilerplate_share": 0.7052837656344237,
+  "token_estimate_divisor": 3.6,
+  "estimated_tokens_per_24h": 20593.928571428572,
+  "record_batch_histogram": {
+    "1": 571,
+    "2": 2
+  },
+  "before_assistant_batch_histogram": {
+    "1": 446,
+    "2": 42,
+    "3": 7,
+    "4": 3,
+    "6": 2
+  },
+  "daily": {
+    "2026-10-14": {
+      "header_framing": 368,
+      "author": 88,
+      "thread_ts": 144,
+      "thread_context": 6484,
+      "message": 176,
+      "message_id": 252,
+      "reply": 428,
+      "peer_wrapper": 0,
+      "other": 764,
+      "messages": 4
+    },
+    "2026-10-15": {
+      "header_framing": 6348,
+      "author": 1570,
+      "thread_ts": 1944,
+      "thread_context": 18598,
+      "message": 14914,
+      "message_id": 3867,
+      "reply": 7383,
+      "peer_wrapper": 870,
+      "other": 12460,
+      "messages": 69
+    },
+    "2026-10-16": {
+      "header_framing": 4876,
+      "author": 1181,
+      "thread_ts": 1548,
+      "thread_context": 15821,
+      "message": 16810,
+      "message_id": 3009,
+      "reply": 5671,
+      "peer_wrapper": 1015,
+      "other": 9290,
+      "messages": 53
+    },
+    "2026-10-17": {
+      "header_framing": 8648,
+      "author": 2176,
+      "thread_ts": 360,
+      "thread_context": 2398,
+      "message": 9452,
+      "message_id": 3402,
+      "reply": 10058,
+      "peer_wrapper": 145,
+      "other": 7258,
+      "messages": 94
+    },
+    "2026-10-18": {
+      "header_framing": 460,
+      "author": 110,
+      "thread_ts": 72,
+      "thread_context": 464,
+      "message": 650,
+      "message_id": 225,
+      "reply": 535,
+      "peer_wrapper": 0,
+      "other": 341,
+      "messages": 5
+    },
+    "2026-10-19": {
+      "header_framing": 11960,
+      "author": 2911,
+      "thread_ts": 4464,
+      "thread_context": 17697,
+      "message": 27465,
+      "message_id": 7350,
+      "reply": 13910,
+      "peer_wrapper": 1740,
+      "other": 19501,
+      "messages": 130
+    },
+    "2026-10-20": {
+      "header_framing": 8188,
+      "author": 1985,
+      "thread_ts": 2556,
+      "thread_context": 15000,
+      "message": 21855,
+      "message_id": 5037,
+      "reply": 9523,
+      "peer_wrapper": 3045,
+      "other": 13811,
+      "messages": 89
+    },
+    "2026-10-21": {
+      "header_framing": 12052,
+      "author": 2894,
+      "thread_ts": 3348,
+      "thread_context": 26186,
+      "message": 61626,
+      "message_id": 7083,
+      "reply": 14017,
+      "peer_wrapper": 4640,
+      "other": 16490,
+      "messages": 131
+    }
+  },
+  "daily_reply_repetition": {
+    "2026-10-14": {
+      "occurrences": 4,
+      "distinct_exact_lines": 1,
+      "exact_repeats_after_first": 3,
+      "largest_identical_group": 4
+    },
+    "2026-10-15": {
+      "occurrences": 69,
+      "distinct_exact_lines": 22,
+      "exact_repeats_after_first": 47,
+      "largest_identical_group": 19
+    },
+    "2026-10-16": {
+      "occurrences": 53,
+      "distinct_exact_lines": 16,
+      "exact_repeats_after_first": 37,
+      "largest_identical_group": 29
+    },
+    "2026-10-17": {
+      "occurrences": 94,
+      "distinct_exact_lines": 86,
+      "exact_repeats_after_first": 8,
+      "largest_identical_group": 4
+    },
+    "2026-10-18": {
+      "occurrences": 5,
+      "distinct_exact_lines": 5,
+      "exact_repeats_after_first": 0,
+      "largest_identical_group": 1
+    },
+    "2026-10-19": {
+      "occurrences": 130,
+      "distinct_exact_lines": 30,
+      "exact_repeats_after_first": 100,
+      "largest_identical_group": 52
+    },
+    "2026-10-20": {
+      "occurrences": 89,
+      "distinct_exact_lines": 23,
+      "exact_repeats_after_first": 66,
+      "largest_identical_group": 29
+    },
+    "2026-10-21": {
+      "occurrences": 131,
+      "distinct_exact_lines": 44,
+      "exact_repeats_after_first": 87,
+      "largest_identical_group": 33
+    }
+  },
+  "analysis": {
+    "kind": "ANALYSIS: counterfactual replay, not deployment or billing measurements",
+    "savings_bytes": {
+      "reply": 29900,
+      "header_framing": 20125,
+      "thread_ts": 4411,
+      "message_id": 6300,
+      "peer_wrapper": 3871,
+      "other": 11187,
+      "thread_context": 64301,
+      "batch_directions": 6497
+    },
+    "thread_context_policy_counts": {
+      "first_retained": 114,
+      "repeat_removed": 284
+    },
+    "smallest_tokens_per_day": 19407.420634920632,
+    "adapter_flag_tokens_per_day": 18995.992063492064,
+    "full_set_tokens_per_day": 14776.785714285714,
+    "full_saved_bytes": 146592,
+    "adapter_saved_bytes": 40268
+  }
+}

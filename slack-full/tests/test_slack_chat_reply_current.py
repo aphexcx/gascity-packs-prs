@@ -1628,7 +1628,10 @@ def test_find_inbound_thread_by_ts_matches_exact_entry(
     items = [
         {"Kind": "inbound", "ProviderMessageID": "3.0", "ReplyToMessageID": "9.9",
          "Conversation": {"ConversationID": "C1", "Kind": "room"}},
-        # Bot-authored entry with the target ts must be skipped (gp-kop).
+        # Synthetic reactions are not postable messages; the peer inbound is.
+        {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "7.7",
+         "Actor": {"is_bot": True, "display_name": "reaction: fixture"},
+         "Conversation": {"ConversationID": "C1", "Kind": "room"}},
         {"Kind": "inbound", "ProviderMessageID": "2.0", "ReplyToMessageID": "8.8",
          "Actor": {"is_bot": True},
          "Conversation": {"ConversationID": "C1", "Kind": "room"}},
@@ -1642,7 +1645,7 @@ def test_find_inbound_thread_by_ts_matches_exact_entry(
     match = common.find_inbound_thread_by_ts(conv, "2.0")
     assert match is not None
     thread_root, got_conv = match
-    assert thread_root == "1.5"
+    assert thread_root == "8.8"
     assert got_conv["conversation_id"] == "C1"
 
     assert common.find_inbound_thread_by_ts(conv, "3.0") == (

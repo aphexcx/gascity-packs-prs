@@ -95,65 +95,6 @@ func TestComposeChannelReminder_DropsPeerSecond(t *testing.T) {
 	}
 }
 
-func TestComposeChannelReminder_TrimsBodyTailLast(t *testing.T) {
-	anchor := "[reply in thread 99.000001]"
-	head := strings.Repeat("H", 250)
-	tail := strings.Repeat("T", 5000)
-	parts := channelReminderParts{
-		anchor:    anchor,
-		body:      head + tail,
-		files:     "[file: log.txt]",
-		ts:        "100.000001",
-		channelID: "C1",
-	}
-	budget := 800
-	got, _, usedHelp, _, trimmed := composeChannelReminderText(parts, "", strings.Repeat("h", 300), budget)
-	if !trimmed || usedHelp {
-		t.Fatalf("trimmed=%v usedHelp=%v, want true/false", trimmed, usedHelp)
-	}
-	if !strings.HasPrefix(got, anchor+"\n") {
-		t.Fatalf("anchor must lead the delivery untouched:\n%s", got)
-	}
-	if !strings.Contains(got, strings.Repeat("H", 250)) {
-		t.Fatalf("protected body head was cut:\n%s", got)
-	}
-	if !strings.Contains(got, "[message trimmed to fit the delivery budget — full text at ts 100.000001 in channel C1]") {
-		t.Fatalf("trim marker missing or malformed:\n%s", got)
-	}
-	if !strings.Contains(got, "[file: log.txt]") {
-		t.Fatalf("files block must never be trimmed:\n%s", got)
-	}
-	if len(got) > budget {
-		t.Fatalf("len=%d exceeds budget %d", len(got), budget)
-	}
-}
-
-func TestComposeChannelReminder_BodyHeadFloorBeatsBudget(t *testing.T) {
-	// A budget too small even for the protected head: the head survives
-	// and the delivery goes out oversized rather than mutilated.
-	body := strings.Repeat("x", 1000)
-	parts := channelReminderParts{body: body, ts: "1.0", channelID: "C1"}
-	got, _, _, _, trimmed := composeChannelReminderText(parts, "", "", 50)
-	if !trimmed {
-		t.Fatalf("expected a trim")
-	}
-	if !strings.Contains(got, strings.Repeat("x", reminderBodyHeadRunes)) {
-		t.Fatalf("first %d runes must survive any budget:\n%s", reminderBodyHeadRunes, got)
-	}
-}
-
-func TestComposeChannelReminder_RuneSafeTrim(t *testing.T) {
-	body := strings.Repeat("héllo wörld ", 500)
-	parts := channelReminderParts{body: body, ts: "1.0", channelID: "C1"}
-	got, _, _, _, trimmed := composeChannelReminderText(parts, "", "", 400)
-	if !trimmed {
-		t.Fatalf("expected a trim")
-	}
-	if !utf8.ValidString(got) {
-		t.Fatalf("trim split a multi-byte rune")
-	}
-}
-
 func TestFormatThreadReplyAnchor(t *testing.T) {
 	cases := []struct {
 		name, threadTS, author, line string
@@ -201,81 +142,10 @@ func TestComposeChannelReminder_DropsPreambleBeforeBody(t *testing.T) {
 	if usedPreamble || trimmed {
 		t.Fatalf("usedPreamble=%v trimmed=%v, want false/false", usedPreamble, trimmed)
 	}
-	if !strings.HasPrefix(got, parts.anchor+"\n"+preambleOmittedNotice+"ok") {
+	if !strings.HasPrefix(got, parts.anchor+"\n"+contextOmissionNotice(parts.preamble)+"ok") {
 		t.Fatalf("expected anchor + omission notice + body, got %q", got)
 	}
 	if len(got) > 3500 {
 		t.Fatalf("len=%d exceeds budget", len(got))
-	}
-}
-
-func TestComposeChannelReminder_PreambleDropThenBodyTrim(t *testing.T) {
-	parts := channelReminderParts{
-		preamble:  strings.Repeat("p", 5000) + "\n---\n\n",
-		body:      strings.Repeat("b", 5000),
-		ts:        "100.000001",
-		channelID: "C1",
-	}
-	got, _, _, usedPreamble, trimmed := composeChannelReminderText(parts, "", "", 1000)
-	if usedPreamble || !trimmed {
-		t.Fatalf("usedPreamble=%v trimmed=%v, want false/true", usedPreamble, trimmed)
-	}
-	if !strings.HasPrefix(got, preambleOmittedNotice+strings.Repeat("b", reminderBodyHeadRunes)) {
-		t.Fatalf("expected omission notice then protected body head, got %.300q", got)
-	}
-	if len(got) > 1000 {
-		t.Fatalf("len=%d exceeds budget", len(got))
-	}
-}
-
-func TestComposeChannelReminder_OmissionNoticeYieldsToHardBound(t *testing.T) {
-	// codex round-2 finding 1: the omission notice itself must shed when
-	// the trimmed result would otherwise exceed the budget.
-	parts := channelReminderParts{
-		anchor:    "[reply in thread 99.1]",
-		preamble:  strings.Repeat("p", 5000) + "\n---\n\n",
-		body:      strings.Repeat("b", 5000),
-		ts:        "1.0",
-		channelID: "C1",
-	}
-	// Budget large enough for anchor + 200-rune head + marker, but not
-	// for the omission notice on top.
-	budget := len(parts.anchor) + 1 + reminderBodyHeadRunes + 90
-	got, _, _, usedPreamble, trimmed := composeChannelReminderText(parts, "", "", budget)
-	if usedPreamble || !trimmed {
-		t.Fatalf("usedPreamble=%v trimmed=%v, want false/true", usedPreamble, trimmed)
-	}
-	if strings.Contains(got, preambleOmittedNotice) {
-		t.Fatalf("omission notice must shed before breaking the bound:\n%s", got)
-	}
-	if len(got) > budget {
-		t.Fatalf("len=%d exceeds budget %d:\n%s", len(got), budget, got)
-	}
-	if !strings.HasPrefix(got, parts.anchor+"\n"+strings.Repeat("b", reminderBodyHeadRunes)) {
-		t.Fatalf("anchor + protected head must survive:\n%.300s", got)
-	}
-}
-
-func TestComposeChannelReminder_FilesOnlyOmissionNoticeYields(t *testing.T) {
-	// codex round-3 finding 1: a files-only unit has nothing to trim,
-	// but the omission notice must still shed when it alone overflows.
-	parts := channelReminderParts{
-		anchor:    "[reply in thread 99.1]",
-		preamble:  strings.Repeat("p", 5000) + "\n---\n\n",
-		body:      "",
-		files:     "[file: photo.jpg]",
-		ts:        "1.0",
-		channelID: "C1",
-	}
-	budget := len(parts.anchor) + 1 + 2 + len(parts.files) + 10
-	got, _, _, usedPreamble, trimmed := composeChannelReminderText(parts, "", "", budget)
-	if usedPreamble || trimmed {
-		t.Fatalf("usedPreamble=%v trimmed=%v, want false/false", usedPreamble, trimmed)
-	}
-	if strings.Contains(got, preambleOmittedNotice) || len(got) > budget {
-		t.Fatalf("notice must shed to honor the bound (len=%d, budget=%d):\n%s", len(got), budget, got)
-	}
-	if got != parts.anchor+"\n\n\n"+parts.files {
-		t.Fatalf("expected anchor + files, got %q", got)
 	}
 }

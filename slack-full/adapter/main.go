@@ -772,20 +772,13 @@ type config struct {
 	// backfill reads channel history (SLACK_BACKFILL_MAX_WINDOW, default
 	// 1h; 0 disables backfill delivery — the watchdog then only alarms).
 	backfillMaxWindow time.Duration
-	// peerBotsPath is the JSON file naming the allowlisted fleet apps whose
-	// posts are delivered to bound sessions as tagged read-only peer
-	// context (gp-kop), plus the channels configured for immediate (waking)
-	// delivery. Operator-edited off-band; same SIGHUP-or-restart reload
-	// contract as channelMappingPath. Sourced from SLACK_PEER_BOTS_PATH,
-	// defaulting to <GC_CITY_PATH>/.gc/slack/peer_bots.json when
-	// GC_CITY_PATH is set, else /tmp/gc-slack-adapter/peer_bots.json.
+	// peerBotsPath names the allowlisted fleet apps whose posts wake bound
+	// sessions immediately. Labels affect display, not identity checks.
 	peerBotsPath string
 	// peerBots is the in-memory snapshot of peerBotsPath. Nil-safe: nil (or
 	// an empty allowlist) keeps the legacy drop-every-bot-message behavior.
 	peerBots *peerBotsRegistry
-	// peerContext buffers allowlisted peer posts per channel until the next
-	// inbound naturally forwarded for that channel carries them as a
-	// prepended context block (the no-wake default). Nil-safe.
+	// peerContext retains failed peer forwards for the next delivery.
 	peerContext *peerContextBuffer
 	// peerAuthors resolves a peer post's bot_id through bots.info — the
 	// company gateway's author-resolution scaffolding reused for the
@@ -828,10 +821,9 @@ type config struct {
 	// failure instead of one per attempt (gp-sgu7). Nil-safe: nil logs
 	// every failure (bare test configs).
 	postFailures *repeatedFailureLog
-	// reminderTextBudget bounds one channel delivery's Text field
-	// (gp-0qw + gp-9gc): boilerplate attaches only inside the budget,
-	// and a body that alone overflows it is tail-trimmed behind a
-	// protected head — see reminder_budget.go for the full contract.
+	// reminderTextBudget bounds optional context and recovery. The new
+	// message and attachment references stay whole even when oversized.
+	// See reminder_budget.go for the full contract.
 	// SLACK_REMINDER_TEXT_BUDGET overrides; 0 disables (the value
 	// directly-constructed test configs get, keeping the legacy
 	// layout byte-for-byte).
@@ -1822,6 +1814,7 @@ func main() {
 	}
 	log.Printf("peer bots registry: store=%s peers=%d (read-only; SIGHUP or restart to reload)",
 		cfg.peerBotsPath, peerBots.Len())
+	log.Printf("peer bots: every channel is immediate; wake and immediate_channels are deprecated compatibility keys")
 	// Peer-bot visibility (gp-kop): the registry, the per-channel context
 	// buffer, and the bots.info author resolver (reusing the company
 	// gateway's resolver type for the never-deliver-own-posts self-guard)
@@ -3979,15 +3972,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	if cfg.minimalInjection() {
 		cfg.injectionParents.invalidateMutation(msg, env.Event)
 	}
-	// Bot-authored messages historically dropped here unconditionally,
-	// which made fleet mayors blind to each other's posts (gp-kop). Every
-	// bot post that survives the fail-closed author resolution is now
-	// delivered as tagged read-only context (gp-9e7 item 3): buffered by
-	// default — riding the channel's next real delivery, never a wake —
-	// and immediate only for ALLOWLISTED peers granted one (per-entry
-	// "wake" or immediate_channels). The peer branch terminates here
-	// either way: no target parsing, no busy affordance, no alias
-	// dispatch — a bot post is never an ask.
+	// Allowlisted bot posts use the same reminder shape and wake on arrival.
 	if msg.BotID != "" || msg.Subtype == "bot_message" {
 		maybeDeliverPeerBotMessage(cfg, env, msg)
 		return
@@ -4245,11 +4230,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// truncated one.
 	isThreadReply := msg.ThreadTS != "" && msg.ThreadTS != msg.TS
 	preamble := ""
-	// preambleLean is preamble rendered without peer-bot quotes (the
-	// pre-jg-ure5r8 text): the composer's shed-before-omit fallback so
-	// bot quotes can never cost the human lines their place. Same
-	// inputs, nil classifier — no extra Slack call.
-	preambleLean := ""
 	parentAuthor, parentFirstLine := "", ""
 	// Mention-only room bindings for this channel (jg-vobf70). Resolved
 	// here so the thread-context fetch below can be reused by the
@@ -4261,7 +4241,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	var threadReplies []slackThreadMessage
 	threadRepliesFetched := false
 	contextWindow := injectionWindow{MessageTS: msg.TS, ThreadTS: msg.ThreadTS, Known: true}
-	leanWindow := contextWindow
 	// The preamble carries no "[slack thread_ts=…]" marker line any more
 	// (jg-fc1csv): the thread ts already rides the protected anchor at the
 	// head of the delivery and gc's "Message id: … (in thread …)" line at
@@ -4311,16 +4290,11 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				}
 				return target == "" && cfg.coalescer.pendingContains(msg.Channel, ts)
 			}
-			// Peer-bot replies (a sister city's mayor in the same
-			// thread) quote under their display name; our own posts
-			// still drop (jg-ure5r8). Self identity comes from the
-			// same sources the peer-bot path trusts.
+			// History includes all authors; classification changes provenance only.
 			botAuthor := newThreadBotClassifier(cfg, env).classify
 			preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor, &contextWindow)
-			preambleLean = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil, &leanWindow)
 			if err != nil {
 				preamble = threadContextIncompleteNotice + preamble
-				preambleLean = threadContextIncompleteNotice + preambleLean
 			} else {
 				threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
 				cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
@@ -4348,16 +4322,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	}
 	if preamble != "" {
 		preamble = rewriteSlackUserMentions(cfg, preamble)
-	}
-	if preambleLean != "" {
-		preambleLean = rewriteSlackUserMentions(cfg, preambleLean)
-	}
-	// botQuotes marks a preamble that differs from its lean rendering —
-	// the only case the composer's fallback applies. A human-only
-	// preamble carries no duplicate lean copy (in memory or the spool).
-	botQuotes := preamble != preambleLean
-	if !botQuotes {
-		preambleLean = ""
 	}
 	textWithPreamble := preamble + text
 	// Thread replies lead with a protected anchor naming the thread ts
@@ -4424,7 +4388,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
 	}
 	inbound.injectionWindows = []injectionWindow{contextWindow}
-	inbound.injectionLeanWindows = []injectionWindow{leanWindow}
 	// botMentioned/convKind/willBuffer were computed ahead of the
 	// thread-context preamble (the channel-claim gate needs them).
 	//
@@ -4633,8 +4596,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			inbound:      inboundForChannel,
 			threadAnchor: anchor,
 			preamble:     preamble,
-			preambleLean: preambleLean,
-			botQuotes:    botQuotes,
 			body:         text,
 			files:        filesBlock,
 		})
@@ -4733,15 +4694,10 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// reply how-to are restored on failure and must decorate the
 		// replayed delivery instead of being baked into the spool twice.
 		baseTextForChannel := textForChannel
-		// Buffered peer-bot context (gp-kop): pending allowlisted peer
-		// posts for this channel ride ahead of the message that
-		// naturally woke the bound session. Channel copy only — the
-		// alias-dispatch copy below targets a session that may not be
-		// bound to this channel at all. Drained here, restored on
-		// forward failure so a Slack redelivery re-flushes the same
-		// context.
+		// Failed peer forwards recover on the next channel delivery.
+		// The alias copy can target a session outside this channel, so
+		// it does not carry these entries. Failed recovery restores FIFO.
 		peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
-		peerBlock := injectionPeerBlock(cfg, peerItems, peerDropped)
 		// Once-per-channel full reply how-to (gp-729 item 3): the
 		// per-message reminder carries only the registered one-line
 		// template, so the first delivery for a channel this adapter
@@ -4752,26 +4708,22 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		if firstHelp {
 			helpBlock = replyHelpBlock(cfg, msg.Channel)
 		}
-		// Head-protected composition (gp-0qw + gp-9gc): the message unit
+		// Whole-message composition: the message unit
 		// leads and boilerplate attaches only inside the reminder budget
 		// — see reminder_budget.go for the contract. Optional blocks the
 		// composer withheld unwind their side effects here so they ride
 		// a later delivery instead of being lost.
-		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(channelReminderParts{
-			anchor:       anchor,
-			preamble:     preamble,
-			preambleLean: preambleLean,
-			botQuotes:    botQuotes,
-			body:         text,
-			files:        filesBlock,
-			ts:           msg.TS,
-			channelID:    msg.Channel,
-		}, peerBlock, helpBlock, cfg.reminderTextBudget)
+		composed, _, usedHelp, usedPreamble, _ := composeChannelReminderText(channelReminderParts{
+			anchor:    anchor,
+			preamble:  preamble,
+			body:      text,
+			files:     filesBlock,
+			ts:        msg.TS,
+			channelID: msg.Channel,
+		}, "", helpBlock, cfg.reminderTextBudget)
 		textForChannel = composed
 		if cfg.minimalInjection() {
 			textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
-			textForChannel, peerItems = minimalPeerRecovery(cfg, msg.Channel, textForChannel, peerItems)
-			peerDropped = 0
 		}
 		if firstHelp && !usedHelp {
 			cfg.replyHelp.unmark(msg.Channel)
@@ -4779,42 +4731,24 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			log.Printf("inbound: chan=%s ts=%s reply how-to withheld — delivery over reminder budget %d; re-arms for a smaller delivery (gp-9gc)",
 				msg.Channel, msg.TS, cfg.reminderTextBudget)
 		}
-		if peerBlock != "" && !usedPeer {
-			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
-			peerItems, peerDropped = nil, 0
-			log.Printf("inbound: chan=%s ts=%s peer context withheld — delivery over reminder budget %d; restored to ride the next delivery",
-				msg.Channel, msg.TS, cfg.reminderTextBudget)
-		}
 		if preamble != "" && !usedPreamble {
 			log.Printf("inbound: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d; thread reachable via the anchor's --thread-ts",
 				msg.Channel, msg.TS, cfg.reminderTextBudget)
 		}
-		if trimmed {
-			log.Printf("inbound: chan=%s ts=%s body tail trimmed to reminder budget %d — head (anchor + first %d runes) preserved, marker names the full text",
-				msg.Channel, msg.TS, cfg.reminderTextBudget, reminderBodyHeadRunes)
-		}
-
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
-		inboundForChannel.injectionWindows = selectedInjectionWindows(inbound, preamble, preambleLean, textForChannel)
-		receipt, postErr := postInboundWithReceipt(cfg, inboundForChannel)
+		inboundForChannel.injectionWindows = selectedInjectionWindows(inbound, preamble, "", textForChannel)
+		inboundForChannel, peerItems, receipt, postErr := postWithPeerRecovery(cfg, inboundForChannel, peerItems)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
-		// Delivery-receipt gate (gp-32q): gc accepting the payload is
-		// not the same as the session receiving it — gc's inbound
-		// handler notifies members in the background and answers 200
-		// first, so a mangled last hop looks identical to a clean one
-		// from here. When gc vouches for nothing, re-post ONCE in place
-		// (the claim is still held, so a parked twin cannot duplicate
-		// the attempt) and re-read the verdict. Only if that also fails
-		// to vouch does this fall through to the failure path below,
-		// which releases the claim so the parked twin re-posts.
-		for attempt := 0; postErr == nil && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
-			log.Printf("inbound: chan=%s ts=%s gc did not vouch for delivery (%s) — re-posting in place (attempt %d/%d)",
-				msg.Channel, msg.TS, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
-			receipt, postErr = postInboundWithReceipt(cfg, inboundForChannel)
-			verdict = receipt.verdict(cfg.deliveryReceiptGate)
+		// Settle riders while holding the channel: a successor must not
+		// overtake a failed FIFO prefix or resend a recovered timestamp.
+		if postErr != nil || verdict == receiptUnconfirmed {
+			cfg.peerContext.restore(msg.Channel, peerItems, peerDropped)
+		} else {
+			recordRecoveredPeers(cfg, peerItems)
 		}
-		releaseChannel() // the submission is concluded; coalesced deliveries for the channel may resume
+		peerItems, peerDropped = nil, 0
+		releaseChannel()
 		if postErr == nil && verdict == receiptHeld {
 			// gc took the payload and is still waiting for the session
 			// to reach an idle boundary (mayor ruling, 2026-08-28). The
@@ -4882,8 +4816,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					inbound:      spoolCopy,
 					threadAnchor: anchor,
 					preamble:     preamble,
-					preambleLean: preambleLean,
-					botQuotes:    botQuotes,
 					body:         text,
 					files:        filesBlock,
 				}}
@@ -5286,8 +5218,6 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 						inbound:      inbound,
 						threadAnchor: anchor,
 						preamble:     preamble,
-						preambleLean: preambleLean,
-						botQuotes:    botQuotes,
 						body:         text,
 					}}
 					cfg.coalescer.applyDeletionTombstones(inbound.Conversation.ConversationID, spoolEntry)

@@ -1,0 +1,19 @@
+{
+  "command": [
+    "python3",
+    "slack-full/scripts/measure_injected_alerts.py",
+    "--transcripts",
+    "/Users/tailor512/.claude/projects/-Users-tailor512-city",
+    "--scratch",
+    ".gc/scratch/gp-j5p4/confirmed-baseline",
+    "--report",
+    "assets/pr-evidence/gp-j5p4/baseline-confirmation.json",
+    "--as-of",
+    "2026-10-21T23:00:00Z"
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex",
+  "exit_code": 0,
+  "seconds": 2.67,
+  "test_events": {},
+  "failed": []
+}

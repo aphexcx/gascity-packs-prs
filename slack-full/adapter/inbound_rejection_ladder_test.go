@@ -561,8 +561,8 @@ func TestWithholdAttachmentsPromotesLegacyEntryAndSurvivesTrim(t *testing.T) {
 		t.Fatal("promoted entry must expose parts to the composer")
 	}
 	composed, _, _, _, trimmed := composeChannelReminderText(parts, "", "", 1000)
-	if !trimmed {
-		t.Fatal("fixture must overflow the budget so the body is trimmed")
+	if trimmed || !strings.Contains(composed, long) {
+		t.Fatal("whole body must survive the context budget")
 	}
 	if !strings.Contains(composed, "/tmp/x/memo.m4a") {
 		t.Fatalf("the withheld-attachment notice must survive the trim; composed=%q", composed)

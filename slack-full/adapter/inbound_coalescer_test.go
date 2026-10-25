@@ -1219,7 +1219,7 @@ func TestDeliverCoalescedBatchMultiMergesEnvelopeAndRecords(t *testing.T) {
 	if !strings.Contains(got.Text, "[1.0] Afik: first") || strings.Index(got.Text, "[1.0]") > strings.Index(got.Text, "[2.0]") {
 		t.Fatalf("messages must render in ts order:\n%s", got.Text)
 	}
-	for _, want := range []string{"first", "second", "peer says hi", peerContextHeader,
+	for _, want := range []string{"first", "second", "peer says hi", "Context: gc slack read",
 		"full reply how-to", "gc slack reply-current --conversation-id C1"} {
 		if !strings.Contains(got.Text, want) {
 			t.Fatalf("delivered text missing %q:\n%s", want, got.Text)

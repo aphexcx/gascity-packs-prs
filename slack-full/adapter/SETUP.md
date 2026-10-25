@@ -327,16 +327,16 @@ instead — that path eliminates the standalone systemd unit and lets
 gc reverse-proxy `/publish` over a UDS while the public Slack
 endpoint stays bound to TCP `:8765`.
 
-## Bot-post visibility (all bot authors; allowlist for wakes)
+## Peer posts
 
-Every bot-authored post in a bound channel is delivered to the bound
-session as tagged, read-only context (gp-9e7 item 3; originally the
-gp-kop fleet-peer allowlist). The default is always BUFFERED — the
-post rides ahead of the next inbound naturally forwarded for that
-channel, never waking the session by itself. `peer_bots.json`
-(default `<GC_CITY_PATH>/.gc/slack/peer_bots.json`, override with
-`SLACK_PEER_BOTS_PATH`) now exists to name the bots whose posts
-deserve a WAKE, and to give fleet peers a friendly label:
+An allowlisted peer's post is its own inbound on arrival in every channel
+and thread, waking the bound session in both full and minimal mode. Its
+registry label is the sender name. It uses the human reminder shape, whole
+text, thread anchor and reply coordinates, without adapter instructions about
+whether to respond. Each city's agent prompt owns that decision.
+
+`peer_bots.json` (default `<GC_CITY_PATH>/.gc/slack/peer_bots.json`, override
+with `SLACK_PEER_BOTS_PATH`) supplies the allowlist and friendly labels:
 
 ```json
 {
@@ -349,28 +349,48 @@ deserve a WAKE, and to give fleet peers a friendly label:
 }
 ```
 
-- Unlisted bots buffer under a best-effort label
-  (`bot_profile.name`, then the `bots.info` name, then the resolved
-  ids) and can NEVER wake the session. Each allowlist entry needs a
-  `label` (used in the provenance tag) and at least one of `app_id`,
-  `bot_id`, `bot_user_id`.
-- A wake — an immediate forward as the post's own inbound — is
-  granted only to allowlisted peers: per-entry `"wake": true` (all
-  channels), or `immediate_channels` (that channel, any allowlisted
-  peer). No deployment currently grants either.
-- Delivery is tagged, read-only context (`peer-bot <label> posted in
-  <channel> …`), never an ask: no busy reaction, no alias dispatch,
-  and `gc slack reply-current` / `react` / `upload` never anchor on a
-  bot post.
-- The buffer keeps the newest 20 posts per channel; the flushed block
-  counts anything older it had to evict, so truncation is never
-  silent.
+- Each entry needs a `label` and at least one of `app_id`, `bot_id`, or
+  `bot_user_id`. Unlisted bots do not originate inbounds. This removes the
+  previous unlisted-bot ambient buffer; it does not change registry entries.
+- `wake` and `immediate_channels` still parse for configuration compatibility.
+  They have no effect: every channel is immediate. Startup logs that change
+  once. Keeping the keys avoids breaking existing operator files on upgrade.
+- Failed forwards alone enter an in-memory FIFO. Later human, batch or peer
+  deliveries carry whole queued posts when they fit the reminder budget.
+  `[N omitted — awaiting delivery]` reports the remaining queue in both modes.
+  There is no per-item clip or 20-item eviction. An oversized head stays queued
+  until enough budget is available; it never silently becomes a delivered
+  excerpt. Restart loses this in-memory queue, and sustained failures can grow
+  it. The count and read pointer make pending context visible in the meantime.
+  Attachments and trusted local paths survive recovery. A payload refusal
+  defers the riders and retries the new message alone; rejected attachments
+  become a visible withholding notice with their saved paths. A held delivery
+  that is ultimately lost retains all included peers in its dead letter.
+- Peer text does not grant alias routing or busy reactions. Automatic
+  reply-current/react/upload anchor selection includes peer inbounds by the
+  same latest-message rule as human inbounds. Event and transcript selection
+  agree on the author; a peer never inherits an older human's unrelated thread.
+  Explicit reply coordinates still select the exact post being answered.
 - Loop safety: every candidate is resolved through `bots.info` (per-
   bot TTL cache) and the adapter never delivers its own posts back to
   itself, even if misconfigured into the allowlist. An author that
   cannot be definitively resolved is dropped, not delivered.
 - Same reload contract as the other registries: edit the file, then
   SIGHUP or restart the adapter.
+
+Full thread context quotes humans, own-bot posts, peers and other bots under
+one rule: chronological order, whole collapsed text and the same delivered
+watermark/count. The optional context window yields as a whole under the
+reminder budget, with `[N omitted — thread context over budget]`; no author
+has a separate clip, allowance or shedding priority. The protected new message
+and attachments stay whole even when they exceed `SLACK_REMINDER_TEXT_BUDGET`
+(default 3,500 bytes). Only optional context/help are budget-limited.
+
+`gc slack read` returns every author in channel and thread mode. Both keep
+the newest N messages (`--limit`, default 50), displayed chronologically.
+Thread reads follow cursors to the end while retaining only N messages in
+memory; a long thread can require multiple Slack API requests. `has_more`
+also reports older matching messages omitted by this newest-N window.
 
 ## Optional — inbound token efficiency (gp-729, gp-9e7)
 
@@ -405,11 +425,10 @@ Knobs:
   thread anchor, new text, attachment descriptions, and one `Context: gc slack
   read --conversation-id <C> --thread-ts <root>` pointer per message. It
   registers `reply-to <root-or-message-ts>` automatically, overriding
-  `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes, ambient peer text and reply
-  how-to blocks are omitted; the peer buffer still drains on delivery. An
-  immediately delivered peer post retains its own text and read-only label.
-  Failed immediate forwards remain queued separately and ride a later delivery
-  within the reminder budget; budget-deferred recovery is not discarded.
+  `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes and reply how-to blocks are
+  omitted. Every allowlisted peer post arrives independently with its whole
+  text, exactly like a human post. Failed forwards ride a later delivery when
+  they fit; the remaining count is explicit and deferred recovery is retained.
   Thread context is not fetched in minimal mode. The parent author/first line
   comes from a bounded cache of observed roots; a cold cache keeps the thread
   id alone, and edits/deletions invalidate cached excerpts. A reaction with
@@ -418,8 +437,7 @@ Knobs:
   ownership predates the adapter's own-thread registry; this is routing, not
   context injection.
   **Before opting in**, put both contracts in every receiving agent's prompt:
-  "For Slack context, run the reminder's `gc slack read` pointer; read the
-  channel without `--thread-ts` for surrounding peer posts. To answer, write
+  "For Slack context, run the reminder's `gc slack read` pointer. To answer, write
   a file and run `gc slack reply-current --conversation-id <C> --reply-to
   <reply-to ts> --body-file <file>`." Mention-only recipients also need their
   existing `publish-to-channel --conversation-id <C> --thread-ts <ts>

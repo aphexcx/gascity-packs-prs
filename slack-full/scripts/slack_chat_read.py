@@ -187,20 +187,24 @@ def _friendly_api_error(exc: SlackAPIError, conversation_id: str, thread_ts: str
 # --- fetch ----------------------------------------------------------------
 
 def _paginate(method: str, base_params: dict[str, str], limit: int,
-              token: str) -> tuple[list[dict[str, Any]], bool]:
+              token: str, *, newest_tail: bool = False) -> tuple[list[dict[str, Any]], bool]:
     """Collect up to ``limit`` messages across cursor pages.
 
     Returns (messages in Slack's native order for the method, has_more).
-    has_more is True when Slack reported more matching messages beyond
-    what was collected.
+    has_more is True when matching messages were omitted or pagination is
+    incomplete. Replies arrive oldest-first: newest_tail scans every page
+    while retaining only the newest limit messages in bounded memory.
     """
     messages: list[dict[str, Any]] = []
     cursor = ""
     seen_cursors: set[str] = set()
     page_max = _PAGE_MAX
+    omitted = False
     while True:
         params = dict(base_params)
-        page_limit = min(page_max, limit - len(messages))
+        # Thread reads must reach the last cursor regardless of output size.
+        # A small --limit should bound retained messages, not multiply requests.
+        page_limit = page_max if newest_tail else min(page_max, limit - len(messages))
         params["limit"] = str(page_limit)
         if cursor:
             params["cursor"] = cursor
@@ -220,12 +224,15 @@ def _paginate(method: str, base_params: dict[str, str], limit: int,
             continue
         page = [m for m in (data.get("messages") or []) if isinstance(m, dict)]
         messages.extend(page)
+        if newest_tail and len(messages) > limit:
+            messages = messages[-limit:]
+            omitted = True
         cursor = ((data.get("response_metadata") or {}).get("next_cursor") or "").strip()
         more_reported = bool(data.get("has_more")) or bool(cursor)
-        if len(messages) >= limit:
+        if not newest_tail and len(messages) >= limit:
             return messages[:limit], more_reported or len(messages) > limit
         if not cursor:
-            return messages, more_reported
+            return messages, omitted or more_reported
         if cursor in seen_cursors:
             print(f"{method}: repeated cursor; history is incomplete", file=sys.stderr)
             return messages, True
@@ -251,13 +258,13 @@ def fetch_history(conversation_id: str, *, limit: int, oldest: str, newest: str,
 
 def fetch_replies(conversation_id: str, thread_ts: str, *, limit: int, oldest: str,
                   newest: str, token: str) -> tuple[list[dict[str, Any]], bool]:
-    """Thread messages, oldest-first from the parent (Slack's native order)."""
+    """Newest limit thread messages, displayed chronologically, all authors."""
     params = {"channel": conversation_id, "ts": thread_ts}
     if oldest:
         params["oldest"] = oldest
     if newest:
         params["latest"] = newest
-    return _paginate("conversations.replies", params, limit, token)
+    return _paginate("conversations.replies", params, limit, token, newest_tail=True)
 
 
 # --- author resolution ----------------------------------------------------

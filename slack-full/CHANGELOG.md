@@ -27,6 +27,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Peer posts are independent inbounds in both modes** (gp-j5p4): every
+  allowlisted peer wakes on arrival in every channel/thread, using the human
+  reminder shape and registry sender label. `wake` and `immediate_channels`
+  remain parsed compatibility keys; startup reports that every channel is
+  immediate. Unlisted bots no longer enter ambient recovery storage.
+- **One thread-context rule for every author**, including own-bot history:
+  whole quotes, the same delivered collapse and one counted omission rule.
+  New message text remains whole even above the optional-context budget.
+- **Recovery-only peer FIFO in both modes**: whole failed posts ride later
+  deliveries within budget; an explicit count names deferred entries. No
+  eviction or clipped-as-delivered recovery. The queue remains in memory.
+- **Thread reads return newest N**, matching channel reads; all authors are
+  retained and long threads are scanned across cursor pages with bounded memory.
+- **Reply anchors include peer turns**: default conversation and thread lookup
+  use the same latest-inbound rule, and explicit turn lookup accepts peers.
+  Reaction notifications remain excluded because their timestamps are not posts.
 - **Thread context pagination** now preserves the root and newest replies
   across cursor pages, instead of losing the newest end of long threads.
   Current/later messages are excluded before selecting an inbound's window.
@@ -34,8 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failures deliver the retained partial window with an incomplete notice.
 - **Mention-only ownership recovery** now follows cursors beyond the first
   200-message page, so an older own-bot post can establish routing ownership.
-- **Minimal peer recovery** preserves failed immediate forwards separately from
-  ambient context and includes them on later deliveries within the text budget.
 - **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker
   line** (jg-fc1csv). The protected `[thread reply …]` anchor already names
   the thread ts at the head of every thread-reply delivery and gc's
@@ -49,6 +63,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command. Already-delivered priors collapse to `Thread context: N earlier
   messages already delivered.` without the `(newest ts …) — not re-quoted`
   tail.
+
+### Removed
+
+- Peer read-only/do-not-act wrapper, actor-name prefix and minimal peer tag.
+- Bot-only 280-byte quote clip, 1,400-byte allowance, bot-first shedding,
+  2,000-byte recovery clip, ambient ride-along buffer and minimal omission.
 
 ### Fixed
 

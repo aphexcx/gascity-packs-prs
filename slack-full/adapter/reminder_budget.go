@@ -1,42 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
 
-// --- head-protected reminder composition (gp-0qw + gp-9gc) -------------------
-//
-// Two live incidents (pc_a59c241284b8, pc_b334cff7f9c6, and the 8/27
-// 22:57Z escalation on gp-0qw) delivered a bound session ONLY the tail
-// of an inbound reminder — the reply-hint boilerplate and a dangling
-// ts, with the channel, author, and message body cut entirely. The
-// downstream injection keeps the TAIL when a delivery is mangled, so
-// whatever the adapter lets grow unbounded is paid for by the HEAD —
-// the part that actually identifies the message.
-//
-// This file owns the adapter-side contract for one channel delivery's
-// Text field:
-//
-//   - The message unit — thread anchor, thread-context preamble, body,
-//     files block — always leads, and boilerplate never displaces it:
-//     the once-per-channel reply how-to is appended only when the
-//     delivery stays inside the budget (gp-9gc: "append how-to only if
-//     budget remains"), and buffered peer context is included only when
-//     it fits (it restores to its buffer and rides a later delivery).
-//   - When the body ALONE overflows the budget, its tail is trimmed —
-//     never the head: the first reminderBodyHeadRunes runes survive
-//     unconditionally, and an explicit marker names the ts and channel
-//     so the full text is always recoverable from Slack. The thread
-//     anchor and the files block are never trimmed.
-//   - A zero/negative budget disables all of this and reproduces the
-//     legacy assembly byte-for-byte (directly-constructed test configs
-//     get budget 0 and stay on the historical layout).
-//
-// The budget bounds the adapter's OWN rendering only. The transport
-// underneath (gc's member notification) can still mangle a delivery —
-// see the claim-commit contract note at the postInbound success path
-// in main.go for where that boundary lies.
+// A reminder protects the entire new message, its anchor and attachments.
+// The budget limits optional context and help; an oversized message is sent
+// whole. All authors share the same context ordering and omission rule.
 
 const (
 	// defaultReminderTextBudget bounds one delivery's Text field
@@ -46,9 +18,6 @@ const (
 	// traffic — the observed offender was boilerplate riding small
 	// messages, not large bodies.
 	defaultReminderTextBudget = 3500
-	// reminderBodyHeadRunes is the body prefix that survives trimming
-	// unconditionally — the bead contract's "first ~200 chars".
-	reminderBodyHeadRunes = 200
 	// threadAnchorParentLineRunes caps the parent's quoted first line
 	// inside the thread-reply anchor.
 	threadAnchorParentLineRunes = 120
@@ -56,28 +25,19 @@ const (
 
 // channelReminderParts are the per-message pieces of one channel
 // delivery, in layout order. anchor/preamble/files may be empty; body
-// is the (rewritten) message text and is the only trimmable part.
-// ts/channelID feed the trim marker so a trimmed body always names
-// where the full text lives.
+// is the whole (rewritten) message text. Coordinates remain available to
+// older spool entries and callers.
 type channelReminderParts struct {
 	anchor   string
 	preamble string
-	// preambleLean is the same thread-context preamble rendered WITHOUT
-	// peer-bot quotes — byte-identical to what the formatter produced
-	// before jg-ure5r8 — so the composer can shed the bot quotes before
-	// it sheds the preamble: human context never loses to bot context
-	// (codex r3 P2). Meaningful only when botQuotes is set.
+	// Read compatibility for older spool entries. These fields no longer
+	// participate in composition: all authors use the same preamble.
 	preambleLean string
-	// botQuotes reports that preamble carries peer-bot quotes, i.e. that
-	// preambleLean is a real fallback — possibly EMPTY, when the whole
-	// delta was bot posts (codex r5 P2). Without it an empty lean is
-	// indistinguishable from "not supplied" (legacy callers, spool lines
-	// written before the field).
-	botQuotes bool
-	body      string
-	files     string
-	ts        string
-	channelID string
+	botQuotes    bool
+	body         string
+	files        string
+	ts           string
+	channelID    string
 }
 
 // assemble joins the message unit around the given body, reproducing
@@ -99,28 +59,23 @@ func (p channelReminderParts) assemble(body string) string {
 	return unit
 }
 
-// preambleOmittedNotice replaces a thread-context preamble dropped for
-// budget (codex round-1 finding 2: the preamble is the one unbounded
-// decoration — Slack messages up to 40k chars quote into it — so a
-// hard bound must be able to shed it). The thread stays reachable via
-// the anchor's --thread-ts.
-const preambleOmittedNotice = "[thread context omitted — delivery over budget]\n\n"
+// contextOmissionNotice counts quoted messages without inspecting body text.
+// Every quote occupies one line; context text has already collapsed newlines.
+func contextOmissionNotice(preamble string) string {
+	count := 0
+	for _, line := range strings.Split(preamble, "\n") {
+		if strings.HasPrefix(line, "@") || strings.HasPrefix(line, "[bot ") {
+			count++
+		}
+	}
+	if count == 0 {
+		count = 1
+	}
+	return fmt.Sprintf("[%d omitted — thread context over budget]\n\n", count)
+}
 
-// botQuotesOmittedNotice leads a preamble whose peer-bot quotes were
-// shed for budget (jg-ure5r8): the human lines below it are intact and
-// the peer replies stay reachable in the thread via the anchor.
-const botQuotesOmittedNotice = "[peer-bot quotes omitted — delivery over budget]\n"
-
-// composeChannelReminderText assembles one channel delivery's Text
-// under the head-protection contract above. It reports which optional
-// blocks were included so the caller can unwind the side effects of
-// the ones that were not (replyHelp.unmark, peerContext.restore) or
-// log the loss (usedPreamble=false), and whether the body was
-// tail-trimmed. Shedding order: help block, peer block, the peer-bot
-// quotes inside the preamble, preamble, body tail — the anchor, the first reminderBodyHeadRunes runes of
-// body, and the files block (bounded by Slack's per-message file cap)
-// are never sacrificed; only a budget smaller than that protected
-// residue still overflows.
+// composeChannelReminderText sheds help, recovery, then the complete context
+// window, with no author preference. The current message is never clipped.
 func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock string, budget int) (text string, usedPeer, usedHelp, usedPreamble, trimmed bool) {
 	unit := p.assemble(p.body)
 	withPeer := unit
@@ -134,84 +89,18 @@ func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock str
 	if budget <= 0 || len(full) <= budget {
 		return full, peerBlock != "", helpBlock != "", true, false
 	}
-	// Boilerplate first (gp-9gc): the how-to re-arms via the caller and
-	// rides a later, smaller delivery.
 	if len(withPeer) <= budget {
 		return withPeer, peerBlock != "", false, true, false
 	}
-	// Peer context second: it restores to its buffer, nothing is lost.
 	if len(unit) <= budget {
 		return unit, false, false, true, false
 	}
-	// Peer-bot quotes third (jg-ure5r8): fall back to the lean preamble
-	// — the pre-fix rendering, human lines intact, possibly empty when
-	// the delta was bot posts only — under a one-line notice, so the
-	// bot quotes this fix added can never be the reason human context
-	// is dropped or trimmed. The lean form is carried by the caller
-	// (and the spool), never re-derived here.
-	if p.botQuotes && p.preambleLean != p.preamble {
-		p.preamble = botQuotesOmittedNotice + p.preambleLean
-		unit = p.assemble(p.body)
-		if len(unit) <= budget {
-			return unit, false, false, true, false
-		}
-		// The notice itself yields before the human context does (codex
-		// r4 P2): a lean unit that fits the budget bare must deliver
-		// exactly as it did before bot quotes existed.
-		p.preamble = p.preambleLean
-		unit = p.assemble(p.body)
-		if len(unit) <= budget {
-			return unit, false, false, true, false
-		}
-	}
-	// Preamble fourth: replaced by an explicit omission notice. Unlike
-	// peer/help there is nothing to unwind — the delta was consumed at
-	// fetch time — so the notice (and the caller's log) is the record.
 	usedPreamble = true
 	if p.preamble != "" {
 		usedPreamble = false
-		p.preamble = preambleOmittedNotice
-		unit = p.assemble(p.body)
-		if len(unit) <= budget {
-			return unit, false, false, false, false
-		}
+		p.preamble = contextOmissionNotice(p.preamble)
 	}
-	// Last resort: trim the body TAIL behind the protected head. A
-	// delivery that still overflows after the floor is delivered
-	// oversized rather than mutilated.
-	if p.body == "" {
-		// Nothing to trim (files-only unit); the omission notice still
-		// yields if it alone breaks the bound (codex round-3 finding 1).
-		if len(unit) > budget && p.preamble == preambleOmittedNotice {
-			p.preamble = ""
-			unit = p.assemble(p.body)
-		}
-		return unit, false, false, usedPreamble, false
-	}
-	marker := "\n[message trimmed to fit the delivery budget — full text at ts " +
-		neutralizeMarkupBoundaries(p.ts) + " in channel " + neutralizeMarkupBoundaries(p.channelID) + "]"
-	trim := func(pp channelReminderParts) (string, bool) {
-		u := pp.assemble(pp.body)
-		keep := len(pp.body) - (len(u) - budget) - len(marker)
-		if floor := runePrefixBytes(pp.body, reminderBodyHeadRunes); keep < floor {
-			keep = floor
-		}
-		if keep >= len(pp.body) {
-			// The overflow is entirely marker-sized rounding; trimming
-			// would only add bytes.
-			return u, false
-		}
-		return pp.assemble(clipRuneSafe(pp.body, keep) + marker), true
-	}
-	text, trimmed = trim(p)
-	if len(text) > budget && p.preamble == preambleOmittedNotice {
-		// Even the omission notice yields before the bound breaks (codex
-		// round-2 finding 1): only the anchor, the protected body head,
-		// the files block, and the trim marker are tolerated overflow.
-		p.preamble = ""
-		text, trimmed = trim(p)
-	}
-	return text, false, false, usedPreamble, trimmed
+	return p.assemble(p.body), false, false, usedPreamble, false
 }
 
 // formatThreadReplyAnchor renders the protected first line of a
