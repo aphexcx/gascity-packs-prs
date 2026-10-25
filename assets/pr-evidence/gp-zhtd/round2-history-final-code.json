@@ -1,0 +1,110 @@
+{
+  "base": "986cbad3604f0be455b8c29677be3b6760cff4ae",
+  "head": "941f4d9626e3dea8bd1e797181ee38e27cd886a9",
+  "commands": [
+    {
+      "command": [
+        "git",
+        "rev-list",
+        "--reverse",
+        "986cbad3604f0be455b8c29677be3b6760cff4ae..HEAD"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "show",
+        "-s",
+        "--format=%B",
+        "1418310d865b83678cee302f48691116f3240f13"
+      ],
+      "exit_code": 0,
+      "required_trailers": true
+    },
+    {
+      "command": [
+        "git",
+        "show",
+        "-s",
+        "--format=%B",
+        "10a9c9122ec11c54f7cb5b598d841b30b7653804"
+      ],
+      "exit_code": 0,
+      "required_trailers": true
+    },
+    {
+      "command": [
+        "git",
+        "show",
+        "-s",
+        "--format=%B",
+        "941f4d9626e3dea8bd1e797181ee38e27cd886a9"
+      ],
+      "exit_code": 0,
+      "required_trailers": true
+    },
+    {
+      "command": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "84b8da4490608074006440ae21ee2bf98fb26ba3",
+        "HEAD"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "910c232b579e4cc583af3c39280668aefc630fd0",
+        "HEAD"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "52cbd2f848d5c7b21046ac33179f73f101d4c079",
+        "HEAD"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        "986cbad3604f0be455b8c29677be3b6760cff4ae",
+        "HEAD"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--exit-code",
+        "986cbad3604f0be455b8c29677be3b6760cff4ae",
+        "HEAD",
+        "--",
+        "slack-full/adapter/testdata/injection-full"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "986cbad3604f0be455b8c29677be3b6760cff4ae",
+        "HEAD"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

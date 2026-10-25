@@ -97,3 +97,22 @@ fixture reproduced the 10-byte overflow at 2,005 available text bytes, then
 passed with the fix (`round2-minor-red.json`, `round2-minor-green.json`). The
 small follow-up is reviewed separately against 10a9c912; no earlier code is
 outside the two scopes.
+
+At final code head `941f4d9626e3dea8bd1e797181ee38e27cd886a9`, the full adapter
+race suite passed **1,404 top-level tests, 12,717 including subtests**, with one
+opt-in replay skip and no failures. The exact command was
+`go test -race -count=1 -json ./...` from `slack-full/adapter`, recorded in
+`round2-adapter-race-final-head.json`. Adapter `go vet ./...` passed at the
+same head (`round2-adapter-vet-final-head.json`). The completion manifest was
+read back before reporting these results. The final focused self-review is
+CLEAN (`round2-self-review-r4.md`). `round2-history-final-code.json` verifies
+the required trailers on every new code commit, preserved ancestors and
+unchanged full-mode fixtures.
+
+The final Codex gate is **CLEAN with no actionable findings** for
+`10a9c9122ec11c54f7cb5b598d841b30b7653804..941f4d9626e3dea8bd1e797181ee38e27cd886a9`
+(`round2-codex-review-r3.md`, helper exit 0 with an anchored verdict). Together
+with the CLEAN full-round gate through 10a9c912, these reports cover every
+round-2 code change. The last commit records only verification and review
+evidence; its production tree matches the reviewed and fully tested 941f4d96.
+The mayor's independent gate, Fable round 2 and Afik's read remain pending.
