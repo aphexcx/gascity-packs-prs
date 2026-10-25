@@ -32,3 +32,10 @@ are not postable message timestamps. Tests exercise human C1 → peer C2 and
 actual default replies under a peer's thread or at channel level, plus exact
 peer-turn lookup. The pre-design inventory remains unchanged as historical
 evidence; the updated note explicitly records the policy correction.
+
+Round 3 reviewed `21c39771f42ea86027eee5b94625ce07e76616a0` against
+`f507f7189184df2318011cfb4a6de8a82c5dc636` with gpt-6-astra, DEEP class,
+and returned CLEAN with no actionable correctness or regression findings.
+The helper validated the verdict and exited 0; the transcript and its result
+sidecars are `codex-review-r3.md`, `.md.rc` and `.md.reason`. The subsequent
+commit adds only this review evidence, leaving the tested source unchanged.

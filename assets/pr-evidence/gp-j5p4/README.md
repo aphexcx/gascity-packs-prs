@@ -3,7 +3,9 @@
 Base: `f507f7189184df2318011cfb4a6de8a82c5dc636` (main, merged PR 62).
 Go implementation: `43e982a75af86f24553c1510fa98817178f14c40`; subsequent
 reply-anchor changes affect Python and docs only and have their own full
-Python check below. Evidence-only follow-up commits do not change tested source.
+Python check below. Final source and reviewed head:
+`21c39771f42ea86027eee5b94625ce07e76616a0`. Evidence-only follow-up commits
+do not change tested source.
 
 ## Measurement
 
@@ -87,8 +89,13 @@ anchor policy noted in the pre-design inventory.
 ## Reviews and handoff
 
 `self-review.md` records the fresh same-model review and follow-up rechecks:
-all findings fixed, then CLEAN. The external Codex gate transcript and validated verdict are
-added after its completion. Fable review and founder merge approval belong
-to the mayor; the PR remains draft. No live adapter mode changed or restart
+all findings fixed, then CLEAN. External Codex rounds 1 and 2 found ordering,
+pagination and reply-anchor issues; all were fixed with regressions, as
+recorded in `review-response.md`. Round 3 reviewed the final source head
+`21c39771f42ea86027eee5b94625ce07e76616a0` against the fixed base and
+returned CLEAN. `codex-review-r3.md` contains the transcript; its `.rc` is 0
+and `.reason` confirms the anchored verdict. The final follow-up commit only
+records review evidence. Fable review and founder merge approval belong to
+the mayor; the PR remains draft. No live adapter mode changed or restart
 occurred. The queue remains in memory and oversized recovery heads stay
 pending with a visible count.
