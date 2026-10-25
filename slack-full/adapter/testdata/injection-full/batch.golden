@@ -1,0 +1,18 @@
+{
+  "provider_message_id": "100.000003",
+  "conversation": {
+    "scope_id": "",
+    "provider": "",
+    "account_id": "",
+    "conversation_id": "C1",
+    "kind": ""
+  },
+  "actor": {
+    "id": "U_HUMAN",
+    "display_name": "Example",
+    "is_bot": false
+  },
+  "text": "[2 messages in C1, coalesced. Reply with --reply-to 100.000003 to answer the newest; to answer an older one use --reply-to \u003cits thread ts, else its own ts\u003e]\n\n[100.000002] Example: synthetic batch member\n\n[100.000003] Example: synthetic batch member",
+  "dedup_key": "slack-batch-100.000002-100.000003-2",
+  "received_at": "0001-01-01T00:00:00Z"
+}

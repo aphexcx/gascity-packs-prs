@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Progressive-disclosure reminders** (`SLACK_INJECTION_MODE=full|minimal`,
+  default `full`, gp-zhtd), with compact reply coordinates and on-demand thread
+  reads. Minimal mode skips context fetches and omits repeated thread/peer
+  context and reply how-to. Install the agent prompt contract before opting in.
+- **Text-free inbound delivery journal**, daily JSONL segments with configurable
+  retention, selected context-window metadata and gc receipt/session evidence.
+
 - **`SLACK_REPLY_INSTRUCTIONS=compact`** (jg-fc1csv) registers an ids-only
   per-message reply line, `reply-to <ts>`, instead of the full
   `Reply: gc slack reply-current --conversation-id … --reply-to … --body-file
@@ -20,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Thread context pagination** now preserves the root and newest replies
+  across cursor pages, instead of losing the newest end of long threads.
+  Current/later messages are excluded before selecting an inbound's window.
 - **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker
   line** (jg-fc1csv). The protected `[thread reply …]` anchor already names
   the thread ts at the head of every thread-reply delivery and gc's

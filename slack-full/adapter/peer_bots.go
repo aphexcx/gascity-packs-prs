@@ -611,6 +611,16 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		DedupKey:         "slack-" + msg.TS,
 		ReceivedAt:       time.Now().UTC(),
 	}
+	if cfg.minimalInjection() {
+		anchor := ""
+		if msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
+			author, line := cfg.injectionParents.get(msg.Channel, msg.ThreadTS)
+			anchor = formatThreadReplyAnchor(msg.ThreadTS, author, line)
+		} else {
+			cfg.injectionParents.remember(msg.Channel, msg.TS, entry.Label, msg.Text)
+		}
+		inbound.Text = minimalReminder(cfg, inbound, msg.Text, "", anchor)
+	}
 	if err := postInbound(cfg, inbound); err != nil {
 		// Degrade to the buffered default rather than lose the post; the
 		// dedup claim commits either way (peer context is best-effort and
@@ -620,6 +630,9 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		return
 	}
 	log.Printf("peer-bot: delivered immediate post from %q chan=%s ts=%s", entry.Label, msg.Channel, msg.TS)
+	if cfg.minimalInjection() {
+		cfg.peerContext.flush(msg.Channel)
+	}
 }
 
 // sortedPeerLabels returns the loaded allowlist labels, sorted, for tests

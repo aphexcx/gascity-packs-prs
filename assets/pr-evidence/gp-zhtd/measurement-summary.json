@@ -1,0 +1,11 @@
+{
+  "kind": "ANALYSIS: offline production-renderer projection",
+  "blocks": 575,
+  "members": 657,
+  "batches": 73,
+  "baseline_tokens_per_day": 20593.928571428572,
+  "sinan_default_tokens_per_day": 19056.309523809523,
+  "sinan_compact_tokens_per_day": 17208.095238095237,
+  "minimal_tokens_per_day": 12763.849206349205,
+  "gc_header_and_message_id_tokens_per_day": 3298.611111111111
+}

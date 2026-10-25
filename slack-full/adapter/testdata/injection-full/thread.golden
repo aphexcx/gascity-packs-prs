@@ -1,0 +1,19 @@
+{
+  "provider_message_id": "100.000003",
+  "conversation": {
+    "scope_id": "test-city",
+    "provider": "slack",
+    "account_id": "T1",
+    "conversation_id": "C1",
+    "kind": "room"
+  },
+  "actor": {
+    "id": "U_HUMAN",
+    "display_name": "U_HUMAN",
+    "is_bot": false
+  },
+  "text": "[reply in thread 100.000001; parent @U_ROOT: \"synthetic parent\"]\nThread context (2 earlier messages):\n@U_ROOT: synthetic parent\n@U_OTHER: synthetic prior\n\n---\n\nsynthetic reply",
+  "reply_to_message_id": "100.000001",
+  "dedup_key": "slack-100.000003",
+  "received_at": "0001-01-01T00:00:00Z"
+}

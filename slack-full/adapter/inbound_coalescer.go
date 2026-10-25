@@ -1083,6 +1083,8 @@ func (c *inboundCoalescer) applyDeletionTombstones(channel string, batch []pendi
 // entry keeps its ts and actor so dedup keys and the batch member line
 // stay intact.
 func applyDeletion(p *pendingChannelInbound) {
+	p.inbound.injectionWindows = []injectionWindow{{MessageTS: p.inbound.ProviderMessageID, ThreadTS: p.inbound.ReplyToMessageID, Known: true}}
+	p.inbound.injectionLeanWindows = nil
 	p.inbound.Text = deletedBySenderNotice
 	p.inbound.Attachments = nil
 	p.inbound.trustedFilePaths = nil
@@ -3228,14 +3230,38 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	}
 	env := batch[len(batch)-1].inbound
 	peerItems, peerDropped := cfg.peerContext.flush(channel)
-	peerBlock := formatPeerContextBlock(peerItems, peerDropped)
-	firstHelp := cfg.replyHelp.first(channel)
+	peerBlock := injectionPeerBlock(cfg, peerItems, peerDropped)
+	firstHelp := injectionReplyHelp(cfg, channel)
 	helpBlock := ""
 	if firstHelp {
 		helpBlock = replyHelpBlock(cfg, channel)
 	}
 	var text string
-	if len(batch) == 1 {
+	env.injectionWindows = nil
+	if cfg.minimalInjection() {
+		minimalCfg := cfg
+		if len(batch) > 1 {
+			minimalCfg.reminderTextBudget = 0
+		} // Preserve the verbatim digest contract.
+		var units []string
+		var attachments []externalAttachment
+		var trustedPaths []string
+		for _, p := range batch {
+			body, files, anchor := p.body, p.files, p.threadAnchor
+			if !p.hasReminderParts() {
+				body = p.inbound.Text
+			}
+			units = append(units, minimalReminder(minimalCfg, p.inbound, body, files, anchor))
+			env.injectionWindows = append(env.injectionWindows, injectionWindow{MessageTS: p.inbound.ProviderMessageID, ThreadTS: p.inbound.ReplyToMessageID, Known: true})
+			attachments = append(attachments, p.inbound.Attachments...)
+			trustedPaths = append(trustedPaths, p.inbound.trustedFilePaths...)
+		}
+		text = strings.Join(units, "\n\n")
+		env.Attachments, env.trustedFilePaths = attachments, trustedPaths
+		if len(batch) > 1 {
+			env.DedupKey = coalesceBatchDedupKey(batch)
+		}
+	} else if len(batch) == 1 {
 		// A single entry delivers under the SAME head-protected contract
 		// as the immediate path (gp-0qw): thread anchor with the parent
 		// line captured at intake, boilerplate only inside the budget,
@@ -3256,6 +3282,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		}
 		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(p, peerBlock, helpBlock, cfg.reminderTextBudget)
 		text = composed
+		env.injectionWindows = selectedInjectionWindows(batch[0].inbound, p.preamble, p.preambleLean, composed)
 		if firstHelp && !usedHelp {
 			cfg.replyHelp.unmark(channel)
 			firstHelp = false
@@ -3289,6 +3316,11 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		var trustedPaths []string
 		for _, p := range batch {
 			attachments = append(attachments, p.inbound.Attachments...)
+			windows := p.inbound.injectionWindows
+			if len(windows) == 0 {
+				windows = []injectionWindow{{MessageTS: p.inbound.ProviderMessageID, ThreadTS: p.inbound.ReplyToMessageID}}
+			}
+			env.injectionWindows = append(env.injectionWindows, windows...)
 			trustedPaths = append(trustedPaths, p.inbound.trustedFilePaths...)
 		}
 		env.Attachments = attachments
@@ -3328,11 +3360,12 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		// are what a standing loss writes to the dead-letter file.
 		heldCfg, heldEnv, heldBatch := cfg, env, append([]pendingChannelInbound(nil), batch...)
 		cfg.receiptFollowUps.note(heldDelivery{
-			receiptID: receipt.id,
-			leg:       "coalesce",
-			channel:   channel,
-			ts:        env.ProviderMessageID,
-			repost:    func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
+			receiptID:      receipt.id,
+			observeReceipt: func(r deliveryReceipt) { heldCfg.inboundJournal.record(heldCfg, heldEnv, r, "concluded") },
+			leg:            "coalesce",
+			channel:        channel,
+			ts:             env.ProviderMessageID,
+			repost:         func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
 			deadLetter: func(cause error) bool {
 				return deadLetterHeldLoss(heldCfg, channel, heldBatch, cause)
 			},

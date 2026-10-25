@@ -592,13 +592,13 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 			// user, exactly like the legacy lane's fallback.
 			if botUID != "" && cfg.slackBotToken != "" {
 				fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-				replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, ev.Channel, ev.ThreadTS, ownThreadScanLimit)
+				found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, ev.Channel, ev.ThreadTS, botUID, ev.TS)
 				cancel()
 				if err != nil {
 					log.Printf("company: mention-only own-thread scan fetch failed chan=%s thread=%s: %v", ev.Channel, ev.ThreadTS, err)
 					scanFailed = true
 				} else {
-					in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ev.TS)
+					in.botPostedInThread = found
 				}
 			}
 		}

@@ -86,6 +86,18 @@ attachment rejection and spool replay; their provenance stays in adapter state.
 
 ## Status
 
+Slack reminders support opt-in progressive disclosure with
+`SLACK_INJECTION_MODE=minimal` (`full` remains the default). Minimal reminders
+retain message and reply coordinates, sender, text, a short thread anchor and
+one on-demand read pointer; previous thread and buffered peer text are not
+repeated. Before enabling it, add the reply and context-reading contracts to
+every receiving agent's prompt. The setting takes effect at the next adapter
+start; invalid values fail startup. A text-free inbound journal records forward
+metadata and gc receipts, with seven-day retention by default. See
+[configuration and the operator step](adapter/SETUP.md#optional--inbound-token-efficiency-gp-729-gp-9e7)
+and the [measurement and synthesis](docs/injection-progressive-disclosure-20261025.md).
+
+
 Implemented:
 
 - [x] `gc slack bind-dm` — bind a Slack DM channel to one named session

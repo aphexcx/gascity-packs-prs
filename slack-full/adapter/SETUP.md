@@ -400,6 +400,39 @@ On top of that (gp-9e7):
 
 Knobs:
 
+- `SLACK_INJECTION_MODE` — `full` (default) preserves the current reminder
+  format; `minimal` keeps the channel name/id, sender name/id, message ts,
+  thread anchor, new text, attachment descriptions, and one `Context: gc slack
+  read --conversation-id <C> --thread-ts <root>` pointer per message. It
+  registers `reply-to <root-or-message-ts>` automatically, overriding
+  `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes, buffered peer text and reply
+  how-to blocks are omitted; the peer buffer still drains on delivery. An
+  immediately delivered peer post retains its own text and read-only label.
+  Thread context is not fetched in minimal mode. The parent author/first line
+  comes from a bounded cache of observed roots; a cold cache keeps the thread
+  id alone. Mention-only routing may still scan a historical thread whose
+  ownership predates the adapter's own-thread registry; this is routing, not
+  context injection.
+  **Before opting in**, put both contracts in every receiving agent's prompt:
+  "For Slack context, run the reminder's `gc slack read` pointer; read the
+  channel without `--thread-ts` for surrounding peer posts. To answer, write
+  a file and run `gc slack reply-current --conversation-id <C> --reply-to
+  <reply-to ts> --body-file <file>`." Mention-only recipients also need their
+  existing `publish-to-channel --conversation-id <C> --thread-ts <ts>
+  --body-file <file>` contract. Takes effect at the next adapter start;
+  unknown values fail startup. Restore `full` and restart to roll back.
+- `SLACK_INBOUND_JOURNAL_RETENTION_DAYS` — `1..365`, default `7`. The adapter
+  appends text-free delivery metadata under
+  `<GC_CITY_PATH>/.gc/slack/inbound-journal/YYYYMMDD.jsonl`: message/channel/
+  thread ids, target handle and receipt-provided sessions, adapter Text bytes,
+  mode, quoted-window endpoints, collapsed count and watermark. Files rotate
+  at 16 MiB into numbered day segments; all segments expire by UTC day.
+  One row records each accepted forward; a held receipt's conclusion adds a
+  `concluded` row with the same receipt id. Reposts are distinct attempts.
+  `accepted_unconfirmed` and missing session ids mean gc supplied no evidence
+  of the last hop, not confirmed delivery. Journal errors are logged without
+  retrying a message that gc already accepted. The journal contains no message
+  text; Slack reads recover content subject to Slack retention/access.
 - `SLACK_REPLY_INSTRUCTIONS` — the per-message reply line gc renders into
   every inbound reminder (jg-fc1csv). `full` (default) registers
   `Reply: gc slack reply-current --conversation-id <C> --reply-to <ts>

@@ -841,6 +841,9 @@ type config struct {
 	// Empty — directly-constructed test configs — registers the full
 	// template.
 	replyInstructions string
+	injectionMode     string
+	injectionParents  *injectionParents
+	inboundJournal    *inboundJournal
 	// deliveryReceiptGate arms the same-ts claim's delivery-receipt gate
 	// (gp-32q): a claim concludes only on a receipt that vouches the
 	// complete payload reached the session. SLACK_DELIVERY_RECEIPT_GATE
@@ -1029,6 +1032,20 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.replyInstructions = tmpl
 	} else {
 		return cfg, err
+	}
+	if mode, err := injectionModeFor(getenv(injectionModeEnv)); err == nil {
+		cfg.injectionMode = mode
+		if cfg.minimalInjection() {
+			cfg.replyInstructions = slackReplyInstructionsCompactTemplate
+		}
+	} else {
+		return cfg, err
+	}
+
+	if days, err := strconv.Atoi(envOrFn("SLACK_INBOUND_JOURNAL_RETENTION_DAYS", "7")); err == nil && days > 0 && days <= 365 {
+		cfg.inboundJournal = &inboundJournal{dir: companyStateDirDefault(cfg.cityPath, "inbound-journal"), retentionDays: days}
+	} else {
+		return cfg, fmt.Errorf("SLACK_INBOUND_JOURNAL_RETENTION_DAYS must be 1..365")
 	}
 
 	// Same-ts delivery-receipt gate (gp-32q). Armed by default: against
@@ -1346,6 +1363,9 @@ type externalAttachment struct {
 }
 
 type externalInboundMessage struct {
+	injectionPrepared    bool
+	injectionWindows     []injectionWindow
+	injectionLeanWindows []injectionWindow
 	// Adapter-only provenance for paths retained after gc rejects attachments.
 	// Never accepted from or serialized to the gc wire message.
 	trustedFilePaths  []string
@@ -1896,6 +1916,7 @@ func main() {
 	cfg.deliveryPolicy = deliveryPolicy
 	cfg.deliveredIDs = newDeliveredIDs()
 	cfg.channelNames = newChannelNameCache()
+	cfg.injectionParents = &injectionParents{}
 	cfg.replyHelp = newOncePerChannel()
 	cfg.postFailures = newRepeatedFailureLog()
 	cfg.bindingCheck = newBindingCheckCache()
@@ -2371,6 +2392,9 @@ func listenUDS(path string) (net.Listener, error) {
 
 func registerAdapter(cfg config) error {
 	tmpl := cfg.replyInstructions
+	if cfg.minimalInjection() {
+		tmpl = slackReplyInstructionsCompactTemplate
+	}
 	if tmpl == "" {
 		tmpl = slackReplyInstructionsTemplate
 	}
@@ -4233,15 +4257,17 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	}
 	var threadReplies []slackThreadMessage
 	threadRepliesFetched := false
+	contextWindow := injectionWindow{MessageTS: msg.TS, ThreadTS: msg.ThreadTS, Known: true}
+	leanWindow := contextWindow
 	// The preamble carries no "[slack thread_ts=…]" marker line any more
 	// (jg-fc1csv): the thread ts already rides the protected anchor at the
 	// head of the delivery and gc's "Message id: … (in thread …)" line at
 	// its tail, and the alias copy names the thread itself, so the marker
 	// was a third copy of the same ts on every thread reply.
-	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil {
+	if !skipChannelPost && isThreadReply && cfg.threadContextCache != nil && !cfg.minimalInjection() {
 		sinceTS := cfg.threadContextCache.lastDeliveredFor(target, msg.Channel, msg.ThreadTS)
 		fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit)
+		replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, cfg.slackThreadContextLimit, msg.TS)
 		cancel()
 		if err == nil {
 			threadReplies, threadRepliesFetched = replies, true
@@ -4285,8 +4311,8 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// still drop (jg-ure5r8). Self identity comes from the
 			// same sources the peer-bot path trusts.
 			botAuthor := newThreadBotClassifier(cfg, env).classify
-			preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor)
-			preambleLean = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil)
+			preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, botAuthor, &contextWindow)
+			preambleLean = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS, sinceTS, resolveName, alreadyDelivered, nil, &leanWindow)
 			threadCtxPrevTS, threadCtxAdvanced = sinceTS, true
 			cfg.threadContextCache.markDelivered(target, msg.Channel, msg.ThreadTS, msg.TS)
 		}
@@ -4303,6 +4329,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 	// contract, while the alias copy and the gc envelope keep the
 	// legacy preamble+body concatenation byte-for-byte.
 	text = rewriteSlackUserMentions(cfg, text)
+	if cfg.minimalInjection() {
+		if isThreadReply {
+			parentAuthor, parentFirstLine = cfg.injectionParents.get(msg.Channel, msg.ThreadTS)
+		} else {
+			cfg.injectionParents.remember(msg.Channel, msg.TS, resolveUserDisplayName(cfg, msg.User), text)
+		}
+	}
 	if preamble != "" {
 		preamble = rewriteSlackUserMentions(cfg, preamble)
 	}
@@ -4375,6 +4408,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		DedupKey:         "slack-" + msg.TS,
 		ReceivedAt:       time.Now().UTC(),
 	}
+	if cfg.minimalInjection() {
+		inbound.Text = minimalReminder(cfg, inbound, text, "", anchor)
+		inbound.injectionPrepared = true
+		textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
+	}
+	inbound.injectionWindows = []injectionWindow{contextWindow}
+	inbound.injectionLeanWindows = []injectionWindow{leanWindow}
 	// botMentioned/convKind/willBuffer were computed ahead of the
 	// thread-context preamble (the channel-claim gate needs them).
 	//
@@ -4480,12 +4520,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					// truncated.
 					if !moIn.botPostedInThread && (!threadRepliesFetched || len(threadReplies) >= mentionOnlyScanMinRefetch(cfg.slackThreadContextLimit)) {
 						fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-						replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, ownThreadScanLimit)
+						found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, msg.Channel, msg.ThreadTS, botUID, msg.TS)
 						cancel()
 						if err != nil {
 							log.Printf("mention-only: own-thread scan fetch failed chan=%s thread=%s: %v", msg.Channel, msg.ThreadTS, err)
 						} else {
-							moIn.botPostedInThread = threadHasOwnBotPost(replies, botUID, msg.TS)
+							moIn.botPostedInThread = found
 						}
 					}
 				}
@@ -4691,13 +4731,13 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 		// forward failure so a Slack redelivery re-flushes the same
 		// context.
 		peerItems, peerDropped := cfg.peerContext.flush(msg.Channel)
-		peerBlock := formatPeerContextBlock(peerItems, peerDropped)
+		peerBlock := injectionPeerBlock(cfg, peerItems, peerDropped)
 		// Once-per-channel full reply how-to (gp-729 item 3): the
 		// per-message reminder carries only the registered one-line
 		// template, so the first delivery for a channel this adapter
 		// lifetime appends the long form (and the channel's name+id
 		// pairing, item 4).
-		firstHelp := cfg.replyHelp.first(msg.Channel)
+		firstHelp := injectionReplyHelp(cfg, msg.Channel)
 		helpBlock := ""
 		if firstHelp {
 			helpBlock = replyHelpBlock(cfg, msg.Channel)
@@ -4718,6 +4758,9 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			channelID:    msg.Channel,
 		}, peerBlock, helpBlock, cfg.reminderTextBudget)
 		textForChannel = composed
+		if cfg.minimalInjection() {
+			textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
+		}
 		if firstHelp && !usedHelp {
 			cfg.replyHelp.unmark(msg.Channel)
 			firstHelp = false
@@ -4741,6 +4784,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 
 		inboundForChannel := inbound
 		inboundForChannel.Text = textForChannel
+		inboundForChannel.injectionWindows = selectedInjectionWindows(inbound, preamble, preambleLean, textForChannel)
 		receipt, postErr := postInboundWithReceipt(cfg, inboundForChannel)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
 		// Delivery-receipt gate (gp-32q): gc accepting the payload is
@@ -4773,11 +4817,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			// captured as posted so the recovery copy is identical.
 			heldCfg, heldEnv := cfg, inboundForChannel
 			cfg.receiptFollowUps.note(heldDelivery{
-				receiptID: receipt.id,
-				leg:       "inbound",
-				channel:   msg.Channel,
-				ts:        msg.TS,
-				repost:    func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
+				receiptID:      receipt.id,
+				observeReceipt: func(r deliveryReceipt) { heldCfg.inboundJournal.record(heldCfg, heldEnv, r, "concluded") },
+				leg:            "inbound",
+				channel:        msg.Channel,
+				ts:             msg.TS,
+				repost:         func() (deliveryReceipt, error) { return postInboundWithReceipt(heldCfg, heldEnv) },
 				deadLetter: func(cause error) bool {
 					return deadLetterHeldLoss(heldCfg, heldEnv.Conversation.ConversationID, []pendingChannelInbound{{inbound: heldEnv}}, cause)
 				},
@@ -5117,12 +5162,12 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				// Rendered ONCE: the in-place re-dispatch and the
 				// follow-up's recovery copy re-send these exact bytes.
 				aliasBody := renderAliasDispatch(cfg, inbound, target)
-				aliasReceipt, aliasOK := sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody)
+				aliasReceipt, aliasOK := sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody, inbound)
 				aliasVerdict := aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				for attempt := 0; aliasOK && aliasVerdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
 					log.Printf("alias dispatch: handle=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
 						target, inbound.ProviderMessageID, aliasReceipt.logField(aliasVerdict), attempt+1, deliveryReceiptRepostAttempts)
-					aliasReceipt, aliasOK = sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody)
+					aliasReceipt, aliasOK = sendAliasDispatch(cfg, aliasedSessionID, target, aliasBody, inbound)
 					aliasVerdict = aliasReceipt.verdict(cfg.deliveryReceiptGate)
 				}
 				if aliasOK && aliasVerdict == receiptHeld {
@@ -5134,11 +5179,17 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					heldCfg, heldEnv, heldSession, heldTarget, heldBody := cfg, inbound, aliasedSessionID, target, aliasBody
 					cfg.receiptFollowUps.note(heldDelivery{
 						receiptID: aliasReceipt.id,
-						leg:       "alias dispatch",
-						channel:   inbound.Conversation.ConversationID,
-						ts:        inbound.ProviderMessageID,
+						observeReceipt: func(r deliveryReceipt) {
+							m := heldEnv
+							m.Text = heldBody
+							r.members = []deliveryReceiptMember{{SessionID: heldSession}}
+							heldCfg.inboundJournal.record(heldCfg, m, r, "concluded")
+						},
+						leg:     "alias dispatch",
+						channel: inbound.Conversation.ConversationID,
+						ts:      inbound.ProviderMessageID,
 						repost: func() (deliveryReceipt, error) {
-							r, ok := sendAliasDispatch(heldCfg, heldSession, heldTarget, heldBody)
+							r, ok := sendAliasDispatch(heldCfg, heldSession, heldTarget, heldBody, heldEnv)
 							if !ok {
 								return r, fmt.Errorf("alias dispatch to %s failed", heldTarget)
 							}
@@ -6550,7 +6601,7 @@ func handleHandleAliasDelete(reg *handleAliasRegistry) http.HandlerFunc {
 // gc emits none) and whether gc ACCEPTED the injection — the receipt is
 // what says it arrived (gp-32q).
 func dispatchToAliasedSession(cfg config, sessionID string, msg externalInboundMessage, handle string) (deliveryReceipt, bool) {
-	return sendAliasDispatch(cfg, sessionID, handle, renderAliasDispatch(cfg, msg, handle))
+	return sendAliasDispatch(cfg, sessionID, handle, renderAliasDispatch(cfg, msg, handle), msg)
 }
 
 // renderAliasDispatch builds the address-by-handle reminder body. Split
@@ -6609,6 +6660,9 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 		tsContext += ", a reply in thread " + neutralizeMarkupBoundaries(msg.ReplyToMessageID)
 		replyThreadTS = msg.ReplyToMessageID
 	}
+	if cfg.minimalInjection() {
+		return "<system-reminder>\n" + neutralizeMarkupBoundaries(minimalDispatchText(cfg, msg)) + attachmentsBlock + "\nreply-to " + neutralizeMarkupBoundaries(replyThreadTS) + "\n</system-reminder>"
+	}
 	body := fmt.Sprintf(
 		"<system-reminder>\n"+
 			"Slack address-by-handle: @%s addressed you from channel %s (Slack ts %s) by user %s.\n"+
@@ -6646,7 +6700,17 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 // sendAliasDispatch injects one rendered reminder body into the aliased
 // session. Returns gc's delivery receipt (zero-valued when gc emits none)
 // and whether gc ACCEPTED the injection.
-func sendAliasDispatch(cfg config, sessionID, handle, body string) (deliveryReceipt, bool) {
+func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessages ...externalInboundMessage) (result deliveryReceipt, accepted bool) {
+	defer func() {
+		if !accepted || len(journalMessages) == 0 {
+			return
+		}
+		msg := journalMessages[0]
+		msg.Text = body
+		r := result
+		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
+		cfg.inboundJournal.record(cfg, msg, r)
+	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters
 	// (slash, percent, etc.) cannot alter routing on the gc API side
@@ -6824,7 +6888,12 @@ func postInbound(cfg config, msg externalInboundMessage) error {
 // receipt's question, and only a claim-holding caller needs to ask it —
 // see delivery_receipt.go. A receipt-less gc yields the zero receipt
 // (present=false), which every gate treats as the legacy 2xx verdict.
-func postInboundWithReceipt(cfg config, msg externalInboundMessage) (deliveryReceipt, error) {
+func postInboundWithReceipt(cfg config, msg externalInboundMessage) (receipt deliveryReceipt, postErr error) {
+	defer func() {
+		if postErr == nil {
+			cfg.inboundJournal.record(cfg, msg, receipt)
+		}
+	}()
 	msg = redactInboundMessage(msg)
 	body, _ := json.Marshal(map[string]any{
 		"message": msg,
