@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -228,22 +229,17 @@ func TestPeerBotsReloadStageCommit(t *testing.T) {
 
 // --- buffer ---------------------------------------------------------------
 
-func TestPeerContextBufferCapEvictsOldest(t *testing.T) {
+func TestPeerContextBufferRetainsAllFailures(t *testing.T) {
 	b := newPeerContextBuffer()
-	for i := 0; i < maxPeerContextPerChannel+3; i++ {
-		b.add(peerContextItem{Channel: "C1", TS: "100." + string(rune('a'+i)), Label: "p", Text: "t"})
+	for i := 0; i < 30; i++ {
+		b.add(peerContextItem{Channel: "C1", TS: fmt.Sprint(i), Text: strings.Repeat("whole ", 500)})
 	}
 	items, dropped := b.flush("C1")
-	if len(items) != maxPeerContextPerChannel {
-		t.Errorf("flush kept %d items, want %d", len(items), maxPeerContextPerChannel)
+	if len(items) != 30 || dropped != 0 || items[0].TS != "0" || len(items[0].Text) != 3000 {
+		t.Fatal("failed forwards were evicted, clipped or reordered")
 	}
-	if dropped != 3 {
-		t.Errorf("dropped = %d, want 3", dropped)
-	}
-	// Flush drains.
-	items, dropped = b.flush("C1")
-	if len(items) != 0 || dropped != 0 {
-		t.Errorf("second flush = (%d items, %d dropped), want empty", len(items), dropped)
+	if items, _ := b.flush("C1"); len(items) != 0 {
+		t.Fatal("flush did not drain")
 	}
 }
 
@@ -283,15 +279,8 @@ func TestPeerBot_UnknownBotBuffersNeverWakes(t *testing.T) {
 	if resolver.calls != 1 {
 		t.Errorf("resolver called %d times, want 1 (fail-closed self-check runs for every bot post)", resolver.calls)
 	}
-	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 {
-		t.Fatalf("buffered %d items, want 1", len(items))
-	}
-	if items[0].Label != "github" {
-		t.Errorf("label = %q, want bots.info name %q", items[0].Label, "github")
-	}
-	if items[0].Text != "PR #14 merged" {
-		t.Errorf("text = %q", items[0].Text)
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatal("unlisted bot queued")
 	}
 }
 
@@ -313,9 +302,8 @@ func TestPeerBot_UnknownBotNoWakeEvenInImmediateChannel(t *testing.T) {
 	if msgs := capture.snapshot(); len(msgs) != 0 {
 		t.Fatalf("unknown bot woke the session in an immediate channel: %d inbounds", len(msgs))
 	}
-	items, _ := cfg.peerContext.flush("C_IMM")
-	if len(items) != 1 || items[0].Label != "U_GITHUB_BOT" {
-		t.Errorf("items = %+v, want one entry labeled by resolved bot user id", items)
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatal("unlisted bot queued")
 	}
 }
 
@@ -337,75 +325,35 @@ func TestUnknownBotLabelPreference(t *testing.T) {
 	}
 }
 
-func TestPeerBot_BufferedByDefaultAndFlushedOnNextInbound(t *testing.T) {
+func TestPeerBot_DefaultIsOwnInbound(t *testing.T) {
 	capture := &inboundCapture{}
-	gcStub := httptest.NewServer(capture.handler())
-	t.Cleanup(gcStub.Close)
-
-	cfg := peerTestConfig(gcStub.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
-
-	// Peer post: no inbound forwarded, buffered instead.
-	env := peerBotEnvelope(t, "message", "Ev1", "C1", "100.1", "", "citadel shipped the fix", peerTestPeerBotID, peerTestPeerAppID)
-	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
-	if msgs := capture.snapshot(); len(msgs) != 0 {
-		t.Fatalf("buffered peer post forwarded %d inbounds, want 0", len(msgs))
-	}
-
-	// Next human message in the channel carries the tagged block.
+	server := httptest.NewServer(capture.handler())
+	defer server.Close()
+	cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
-		humanEnvelope(t, "Ev2", "C1", "100.2", "hey team, status?"), func() {})
-	msgs := capture.snapshot()
-	if len(msgs) != 1 {
-		t.Fatalf("captured %d inbounds, want 1", len(msgs))
-	}
-	text := msgs[0].Text
-	if !strings.HasPrefix(text, peerContextHeader) {
-		t.Errorf("text does not start with the peer context header:\n%s", text)
-	}
-	if !strings.Contains(text, "peer-bot citadel posted in C1 at ts 100.1: citadel shipped the fix") {
-		t.Errorf("missing tagged peer line:\n%s", text)
-	}
-	if !strings.Contains(text, peerContextFooter) {
-		t.Errorf("missing footer:\n%s", text)
-	}
-	if !strings.HasSuffix(text, "hey team, status?") {
-		t.Errorf("human text must follow the block:\n%s", text)
-	}
-	// The human inbound keeps human actor semantics.
-	if msgs[0].Actor.IsBot || msgs[0].Actor.ID != "U_ALICE" {
-		t.Errorf("actor = %+v, want human U_ALICE", msgs[0].Actor)
-	}
-
-	// Buffer drained: a further message carries no block.
+		peerBotEnvelope(t, "message", "E1", "C1", "100.1", "", "peer text", peerTestPeerBotID, ""), func() {})
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
-		humanEnvelope(t, "Ev3", "C1", "100.3", "third"), func() {})
-	msgs = capture.snapshot()
-	if len(msgs) != 2 {
-		t.Fatalf("captured %d inbounds, want 2", len(msgs))
+		humanEnvelope(t, "E2", "C1", "100.2", "human text"), func() {})
+	got := capture.snapshot()
+	if len(got) != 2 || got[0].Text != "peer text" || got[1].Text != "human text" || got[0].Actor.DisplayName != "citadel" {
+		t.Fatalf("expected independent, equally shaped deliveries: %+v", got)
 	}
-	if strings.Contains(msgs[1].Text, peerContextHeader) {
-		t.Errorf("drained buffer re-delivered peer context:\n%s", msgs[1].Text)
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatal("successful peer still queued")
 	}
 }
 
-func TestPeerBot_BufferIsPerChannel(t *testing.T) {
+func TestPeerBot_ArrivalInEveryChannel(t *testing.T) {
 	capture := &inboundCapture{}
-	gcStub := httptest.NewServer(capture.handler())
-	t.Cleanup(gcStub.Close)
-
-	cfg := peerTestConfig(gcStub.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
-	env := peerBotEnvelope(t, "message", "Ev1", "C1", "100.1", "", "in C1", peerTestPeerBotID, "")
-	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
-
-	// Human message in a DIFFERENT channel must not carry C1's context.
-	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
-		humanEnvelope(t, "Ev2", "C2", "100.2", "unrelated"), func() {})
-	msgs := capture.snapshot()
-	if len(msgs) != 1 {
-		t.Fatalf("captured %d inbounds, want 1", len(msgs))
+	server := httptest.NewServer(capture.handler())
+	defer server.Close()
+	cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlistImmediate), citadelResolver())
+	for i, channel := range []string{"C1", "C2", "C_IMM"} {
+		processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+			peerBotEnvelope(t, "message", fmt.Sprint(i), channel, fmt.Sprint(i), "", "independent", peerTestPeerBotID, ""), func() {})
 	}
-	if strings.Contains(msgs[0].Text, "peer-bot") {
-		t.Errorf("C2 inbound leaked C1 peer context:\n%s", msgs[0].Text)
+	if got := capture.snapshot(); len(got) != 3 {
+		t.Fatalf("arrivals=%d", len(got))
 	}
 }
 
@@ -426,8 +374,8 @@ func TestPeerBot_ImmediateChannelForwardsTaggedInbound(t *testing.T) {
 	if !got.Actor.IsBot {
 		t.Error("Actor.IsBot must be true (provenance for gc and the intake helpers)")
 	}
-	if got.Actor.DisplayName != "peer-bot citadel" {
-		t.Errorf("Actor.DisplayName = %q, want %q", got.Actor.DisplayName, "peer-bot citadel")
+	if got.Actor.DisplayName != "citadel" {
+		t.Errorf("Actor.DisplayName = %q, want %q", got.Actor.DisplayName, "citadel")
 	}
 	if got.Actor.ID != peerTestPeerBotUserID {
 		t.Errorf("Actor.ID = %q, want resolved bot user id %q", got.Actor.ID, peerTestPeerBotUserID)
@@ -435,8 +383,7 @@ func TestPeerBot_ImmediateChannelForwardsTaggedInbound(t *testing.T) {
 	if got.ExplicitTarget != "" {
 		t.Errorf("ExplicitTarget = %q, want empty (peer posts are never asks)", got.ExplicitTarget)
 	}
-	if !strings.Contains(got.Text, peerContextHeader) ||
-		!strings.Contains(got.Text, "peer-bot citadel posted in C_IMM (thread 100.4) at ts 100.5: done, merged") {
+	if got.Text != "[reply in thread 100.4]\ndone, merged" {
 		t.Errorf("immediate text missing tag/read-only frame:\n%s", got.Text)
 	}
 	if got.ReplyToMessageID != "100.4" {
@@ -598,9 +545,8 @@ func TestPeerBot_AppIDPairAloneProvesNotSelf(t *testing.T) {
 	if msgs := capture.snapshot(); len(msgs) != 0 {
 		t.Errorf("unknown bot woke the session: %d inbounds, want 0", len(msgs))
 	}
-	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 || items[0].Label != "github" {
-		t.Errorf("items = %+v, want the app-id-proven bot buffered", items)
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatal("unlisted bot queued")
 	}
 }
 
@@ -697,9 +643,9 @@ func TestPeerBot_BotEventWithCorroboratedUserStillBuffers(t *testing.T) {
 	}
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
 
-	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 || items[0].Label != "citadel" {
-		t.Errorf("items = %+v, want the corroborated peer post buffered", items)
+	got := capture.snapshot()
+	if len(got) != 1 || got[0].Actor.DisplayName != "citadel" {
+		t.Fatalf("resolved peer not delivered: %+v", got)
 	}
 }
 
@@ -717,8 +663,8 @@ func TestPeerBot_AppMentionDuplicateIgnored(t *testing.T) {
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, envAM, func() {})
 
 	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 {
-		t.Errorf("buffered %d items for one peer post delivered twice, want 1", len(items))
+	if len(items) != 0 || len(capture.snapshot()) != 1 {
+		t.Error("message/app_mention twin duplicated delivery")
 	}
 }
 
@@ -750,9 +696,9 @@ func TestPeerBot_BotUserIDOnlyEntryMatchesViaResolver(t *testing.T) {
 	env := peerBotEnvelope(t, "message", "Ev1", "C1", "100.1", "", "hi", peerTestPeerBotID, "")
 	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, env, func() {})
 
-	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 || items[0].Label != "boomtown" {
-		t.Errorf("bot_user_id-only entry did not match: %+v", items)
+	got := capture.snapshot()
+	if len(got) != 1 || got[0].Actor.DisplayName != "boomtown" {
+		t.Fatalf("resolved peer not delivered: %+v", got)
 	}
 }
 
@@ -787,9 +733,8 @@ func TestPeerBot_EmptyAllowlistStillBuffers(t *testing.T) {
 	if msgs := capture.snapshot(); len(msgs) != 0 {
 		t.Errorf("empty allowlist forwarded %d inbounds, want 0 (buffer only)", len(msgs))
 	}
-	items, _ := cfg.peerContext.flush("C1")
-	if len(items) != 1 || items[0].Label != peerTestPeerBotUserID {
-		t.Errorf("items = %+v, want one entry labeled by resolved bot user id", items)
+	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
+		t.Fatal("unlisted bot queued")
 	}
 }
 
@@ -809,7 +754,7 @@ func TestPeerBot_WakeEntryForwardsImmediately(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("captured %d inbounds, want 1 (wake entry forwards immediately)", len(msgs))
 	}
-	if msgs[0].Actor.DisplayName != "peer-bot citadel" {
+	if msgs[0].Actor.DisplayName != "citadel" {
 		t.Errorf("Actor.DisplayName = %q", msgs[0].Actor.DisplayName)
 	}
 	if items, _ := cfg.peerContext.flush("C_ANY"); len(items) != 0 {
@@ -839,7 +784,7 @@ func TestPeerBot_AppIDOnlyEntryRematchesViaResolvedAppID(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("captured %d inbounds, want 1 — the resolved-app_id re-match must keep the wake grant", len(msgs))
 	}
-	if msgs[0].Actor.DisplayName != "peer-bot citadel" {
+	if msgs[0].Actor.DisplayName != "citadel" {
 		t.Errorf("Actor.DisplayName = %q, want the allowlist label, not an unknown-bot fallback", msgs[0].Actor.DisplayName)
 	}
 	if items, _ := cfg.peerContext.flush("C1"); len(items) != 0 {
@@ -877,20 +822,21 @@ func TestPeerBot_AppIDOnlyRematchNeverBypassesSelfProof(t *testing.T) {
 	}
 }
 
-func TestFormatPeerContextBlockTruncatesLongPosts(t *testing.T) {
-	long := strings.Repeat("x", maxPeerContextItemChars+50)
-	block := formatPeerContextBlock([]peerContextItem{{Label: "p", Channel: "C1", TS: "1", Text: long}}, 0)
-	if !strings.Contains(block, "…[truncated]") {
-		t.Error("long post not truncated")
-	}
-	if strings.Contains(block, long) {
-		t.Error("full text leaked past the cap")
+func TestFormatPeerContextBlockKeepsWholePost(t *testing.T) {
+	body := strings.Repeat("报告 ", 1000)
+	got := formatPeerContextBlock([]peerContextItem{{Channel: "C1", Label: "peer", TS: "1", Text: body}}, 0)
+	if !strings.Contains(got, body) || strings.Contains(got, "truncated") {
+		t.Fatal("recovery clipped the post")
 	}
 }
 
-func TestFormatPeerContextBlockReportsDrops(t *testing.T) {
-	block := formatPeerContextBlock([]peerContextItem{{Label: "p", Channel: "C1", TS: "1", Text: "t"}}, 4)
-	if !strings.Contains(block, "(4 older peer post(s) were dropped from this buffer)") {
-		t.Errorf("missing drop note:\n%s", block)
+func TestPeerContextBufferDeduplicatesRestore(t *testing.T) {
+	b := newPeerContextBuffer()
+	item := peerContextItem{Channel: "C1", TS: "1", Text: "whole"}
+	b.add(item)
+	b.restore("C1", []peerContextItem{item}, 0)
+	got, _ := b.flush("C1")
+	if len(got) != 1 {
+		t.Fatal("same timestamp queued twice")
 	}
 }

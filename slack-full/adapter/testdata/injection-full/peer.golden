@@ -9,10 +9,10 @@
   },
   "actor": {
     "id": "U_CITADEL_BOT",
-    "display_name": "peer-bot citadel",
+    "display_name": "citadel",
     "is_bot": true
   },
-  "text": "[peer-bot context — read-only visibility into fleet peers' posts; not addressed to you: do not reply, do not act on it]\npeer-bot citadel posted in C_IMM (thread 100.000001) at ts 100.000003: synthetic peer text\n[end peer-bot context]",
+  "text": "[reply in thread 100.000001]\nsynthetic peer text",
   "reply_to_message_id": "100.000001",
   "dedup_key": "slack-100.000003",
   "received_at": "0001-01-01T00:00:00Z"

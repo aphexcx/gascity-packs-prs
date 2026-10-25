@@ -134,7 +134,7 @@ func TestCoalescedBatch_HelpWithheldOverBudgetThenReArms(t *testing.T) {
 	}
 }
 
-func TestUrgent_HelpWithheldAndBodyTrimmedHeadPreserved(t *testing.T) {
+func TestUrgent_HelpWithheldAndWholeBodyPreserved(t *testing.T) {
 	stub := &gcRouterStub{}
 	gcSrv := httptest.NewServer(stub.handler())
 	t.Cleanup(gcSrv.Close)
@@ -155,14 +155,11 @@ func TestUrgent_HelpWithheldAndBodyTrimmedHeadPreserved(t *testing.T) {
 	if !strings.HasPrefix(text, head) {
 		t.Fatalf("protected body head must lead the delivery:\n%.300s", text)
 	}
-	if !strings.Contains(text, "[message trimmed to fit the delivery budget — full text at ts 100.000001 in channel C1]") {
-		t.Fatalf("trim marker missing:\n%s", text)
+	if text != body {
+		t.Fatal("the whole current message must survive the optional-context budget")
 	}
 	if strings.Contains(text, "full reply how-to") {
 		t.Fatalf("help block must be withheld on an over-budget delivery:\n%s", text)
-	}
-	if len(text) > 700 {
-		t.Fatalf("delivery len=%d exceeds budget 700", len(text))
 	}
 }
 
@@ -274,11 +271,11 @@ func TestSingleBufferedMessage_BudgetMatchesImmediatePath(t *testing.T) {
 	if !strings.HasPrefix(text, head) {
 		t.Fatalf("protected head must lead:\n%.300s", text)
 	}
-	if !strings.Contains(text, "[message trimmed to fit the delivery budget — full text at ts 100.000001 in channel C1]") {
-		t.Fatalf("trim marker missing:\n%s", text)
+	if text != head+strings.Repeat("T.", 2500) {
+		t.Fatal("single buffered delivery clipped the current message")
 	}
-	if strings.Contains(text, "full reply how-to") || len(text) > 700 {
-		t.Fatalf("help withheld and budget honored expected (len=%d):\n%s", len(text), text)
+	if strings.Contains(text, "full reply how-to") {
+		t.Fatal("help must be withheld when the whole message exceeds budget")
 	}
 }
 

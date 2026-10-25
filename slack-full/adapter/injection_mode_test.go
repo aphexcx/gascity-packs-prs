@@ -61,7 +61,6 @@ func TestMinimalInbounds(t *testing.T) {
 			}
 			cfg.channelNames = newChannelNameCache()
 			cfg.channelNames.put(channel, "example", time.Now(), time.Hour)
-			cfg.peerContext.add(peerContextItem{Channel: channel, TS: "100.000001", Text: "buffered context must not appear"})
 			switch shape {
 			case "human":
 				processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil, humanEnvelope(t, "E1", channel, "100.000003", "synthetic body"), func() {})
@@ -96,7 +95,7 @@ func TestMinimalInbounds(t *testing.T) {
 			if !strings.Contains(m.Text, m.Actor.ID) {
 				t.Fatal("sender id missing from reminder")
 			}
-			for _, bad := range []string{"Thread context", "buffered context must not appear", "full reply how-to", "--body-file", peerContextHeader} {
+			for _, bad := range []string{"Thread context", "buffered context must not appear", "full reply how-to", "--body-file", "read-only"} {
 				if strings.Contains(m.Text, bad) {
 					t.Fatalf("unexpected %q", bad)
 				}
@@ -176,7 +175,7 @@ func TestThreadContextIncidentMechanisms(t *testing.T) {
 	replies := []slackThreadMessage{{TS: "100.000001", User: "U_ROOT", Text: "parent"}, {TS: "100.000002", User: "U_OLD", Text: "earlier context"}, {TS: "100.000004", BotID: "B_PEER", Text: strings.Repeat("word ", 339)}}
 	window := injectionWindow{Known: true}
 	got := formatThreadContextPreamble(replies, "100.000001", "100.000005", cache.lastDeliveredFor("", "C1", "100.000001"), nil, nil, func(slackThreadMessage) (string, bool) { return "Peer", true }, &window)
-	if !strings.Contains(got, "Thread context (2 earlier messages)") || strings.Contains(got, "earlier context") || !strings.Contains(got, strings.Repeat("word ", 55)+"word…") || strings.Contains(got, strings.Repeat("word ", 57)) {
+	if !strings.Contains(got, "Thread context (2 earlier messages)") || strings.Contains(got, "earlier context") || !strings.Contains(got, strings.TrimSpace(replies[2].Text)) {
 		t.Fatalf("incident mechanisms changed: %s", got)
 	}
 	if window.Oldest != "100.000001" || window.Newest != "100.000004" {
@@ -188,7 +187,7 @@ func TestThreadContextIncidentMechanisms(t *testing.T) {
 		t.Fatal("target scopes conflated")
 	}
 	peer := formatPeerContextLine(peerContextItem{Text: strings.Repeat("x", 2050)})
-	if !strings.Contains(peer, strings.Repeat("x", 2000)+" …[truncated]") {
+	if !strings.Contains(peer, strings.Repeat("x", 2050)) {
 		t.Fatal("buffer clip reproduction missing")
 	}
 }
@@ -465,7 +464,7 @@ func TestMinimalCompanyMentionPreservesFilesWithOversizedCaption(t *testing.T) {
 			continue
 		}
 		found = true
-		for _, want := range []string{"synthetic-report.txt", "F_TEST", "message trimmed", "Context: gc slack read"} {
+		for _, want := range []string{"synthetic-report.txt", "F_TEST", strings.Repeat("caption ", 999), "Context: gc slack read"} {
 			if !strings.Contains(call.body, want) {
 				t.Fatalf("missing protected content %q", want)
 			}
@@ -544,17 +543,11 @@ func TestMinimalReminderBudgetIncludesPointer(t *testing.T) {
 	msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, Actor: externalActor{ID: "U_TEST"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.1"}
 	for _, budget := range []int{defaultReminderTextBudget, 1000, 1, 0} {
 		got := minimalReminder(config{injectionMode: "minimal", reminderTextBudget: budget}, msg, body, "", "")
-		if !strings.HasSuffix(got, "Context: gc slack read --conversation-id C1 --thread-ts 100.1") || !strings.Contains(got, body[:reminderBodyHeadRunes]) {
+		if !strings.HasSuffix(got, "Context: gc slack read --conversation-id C1 --thread-ts 100.1") || !strings.Contains(got, body) {
 			t.Fatalf("budget %d lost pointer or protected head", budget)
 		}
-		if budget >= 1000 && len(got) > budget {
-			t.Fatalf("budget %d rendered %d bytes", budget, len(got))
-		}
-		if budget > 0 && !strings.Contains(got, "message trimmed") {
-			t.Fatalf("positive budget %d disabled trimming", budget)
-		}
-		if budget == 0 && !strings.Contains(got, body) {
-			t.Fatal("disabled budget clipped body")
+		if !strings.Contains(got, body) || strings.Contains(got, "message trimmed") {
+			t.Fatal("whole new message must survive every context budget")
 		}
 	}
 }

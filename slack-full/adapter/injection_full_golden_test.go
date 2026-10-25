@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// Fixtures are generated with the 52cbd2f8 source through a Go overlay,
-// not with the implementation being tested. They contain synthetic text only.
+// Human/thread/batch fixtures preserve the 52cbd2f8 baseline. The peer fixture
+// deliberately changes for gp-j5p4: an ordinary author line, anchor and whole
+// message replace the peer-only wrapper. Fixtures contain synthetic text only.
 func TestInjectionFullGoldens(t *testing.T) {
 	for _, shape := range []string{"human", "thread", "peer", "batch"} {
 		t.Run(shape, func(t *testing.T) {
@@ -66,7 +67,7 @@ func TestInjectionFullGoldens(t *testing.T) {
 				t.Fatal(err)
 			}
 			if string(want) != string(data) {
-				t.Fatalf("full mode differs from Sinan's base:\n%s", data)
+				t.Fatalf("full mode differs from its checked-in golden:\n%s", data)
 			}
 		})
 	}

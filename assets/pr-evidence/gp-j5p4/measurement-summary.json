@@ -1,0 +1,27 @@
+{
+  "kind": "projection of captured buffered copies as admitted peer arrivals; not historical registry reconstruction or billing",
+  "peer_copies": 110,
+  "before_full_rider_bytes": 93809,
+  "after_full_arrival_bytes": 106539,
+  "after_minimal_arrival_bytes": 114484,
+  "average_bytes_per_peer": {
+    "full_before": 852.8090909090909,
+    "full_after": 968.5363636363636,
+    "minimal_before": 0,
+    "minimal_after": 1040.7636363636364
+  },
+  "seven_day_bytes": {
+    "full_before": 480219,
+    "full_after_projection": 492949,
+    "minimal_before": 321589,
+    "minimal_after": 435938
+  },
+  "estimated_tokens_per_day": {
+    "full_before": 19056.309523809523,
+    "full_after_projection": 19561.468253968254,
+    "full_delta": 505.1587301587301,
+    "minimal_before": 12761.468253968254,
+    "minimal_after": 17299.126984126986,
+    "minimal_delta": 4537.65873015873
+  }
+}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -283,15 +282,7 @@ type slackThreadMessage struct {
 	// by the reaction-target lookup (gp-by3) to thread the reaction
 	// notification under the reacted-to message's thread.
 	ThreadTS string `json:"thread_ts,omitempty"`
-	// BotID is set when the message came from a bot rather than a
-	// human user. The adapter's OWN posts are skipped from the
-	// preamble — they are its outbound replies reflected back, already
-	// in the session's transcript, and re-quoting them would only spend
-	// budget (and invite feedback loops). PEER bot posts (a sister
-	// city's mayor answering in the same thread) are quoted, labelled
-	// with the bot's display name: they are the context that makes a
-	// human's short reply legible (jg-ure5r8 — the 9/11 misread of
-	// 「yes sling the fix bead」, which answered the peer, not us).
+	// BotID identifies a bot author for display provenance only.
 	BotID string `json:"bot_id,omitempty"`
 	// Subtype, AppID, Username and BotProfile are the bot-provenance
 	// fields conversations.replies carries for bot-authored messages;
@@ -306,50 +297,12 @@ type slackThreadMessage struct {
 	BotProfile json.RawMessage `json:"bot_profile,omitempty"`
 }
 
-// threadContextBotPostBytes caps each quoted PEER BOT post in the
-// preamble. Agents write long reports (the 9/11 thread carried eight
-// ~1 KB peer replies) while the channel reminder budget
-// (defaultReminderTextBudget, 3500 bytes) sheds the preamble WHOLE when
-// the unit is over budget — quoting peer posts in full would have
-// replaced the entire context, the human's lines included, with the
-// omission notice on exactly the thread this fix is for. The reader
-// needs enough of each peer post to place the human's reply, not the
-// report itself. Bytes, because the budget is bytes; the cut is
-// rune-safe. Human posts stay unclipped (pre-existing behaviour).
-const threadContextBotPostBytes = 280
-
-// threadContextBotTotalBytes caps the bytes ALL quoted bot posts may
-// take in one preamble. A per-post cap alone still lets a dozen peer
-// reports push the unit over the reminder budget, where the composer
-// sheds the preamble whole and the human lines that used to survive
-// go with it (codex r2 P2). Bot quotes are allocated newest-first —
-// the posts nearest the human's reply are the ones that place it —
-// and the older overflow collapses into one count line. Human posts
-// are never charged against this allowance. Sized so a full allowance
-// plus a 20-line human window plus anchor and body still clears the
-// default 3500-byte budget.
-const threadContextBotTotalBytes = 1400
-
-// threadBotAuthorFunc classifies a bot-authored thread reply for the
-// preamble: include reports whether the post is quoted at all, label is
-// the display name it is quoted under (rendered "@<label> (bot)"). A nil
-// func drops every bot post — the pre-jg-ure5r8 behaviour, and the
-// conservative direction when no self identity is known.
+// threadBotAuthorFunc supplies a display label. The legacy include result is
+// ignored: history includes all authors, including when the classifier is nil.
 type threadBotAuthorFunc func(m slackThreadMessage) (label string, include bool)
 
-// threadBotClassifier decides, for a bot-authored conversations.replies
-// message, whether it is this adapter's own post (dropped) or a peer's
-// (quoted, labelled). It mirrors the identity checklist of
-// maybeDeliverPeerBotMessage (peer_bots.go, safety rule 1): a post is
-// quoted only when at least one authoritative identity pair PROVES the
-// author is not this adapter — the author's app id against a known self
-// app id, or the author's bot user id against a known self bot user id.
-// Wire fields (app_id / user / bot_profile) settle it without an API
-// call for every real Slack post; a sparse message falls back to the
-// per-bot-cached bots.info resolver. A post that cannot be proven
-// not-self drops, with a log line as the operator signal — silently
-// re-quoting our own reflected output is the failure the original
-// blanket bot filter existed to prevent.
+// threadBotClassifier supplies display provenance only. History is context,
+// so own, peer and unknown bot messages all follow the human quote rule.
 type threadBotClassifier struct {
 	selfAppIDs  []string
 	selfUserIDs []string
@@ -357,7 +310,7 @@ type threadBotClassifier struct {
 	// fine (every peer then takes its wire / bots.info name).
 	peers *peerBotsRegistry
 	// authors is the bots.info resolver used only when the wire fields
-	// cannot prove not-self; nil disables the fallback.
+	// lack an identity; nil disables the name lookup fallback.
 	authors companyAuthorResolver
 	// resolved memoises resolver outcomes per bot id for the lifetime of
 	// one classifier (one preamble): a thread of N sparse posts by one
@@ -421,41 +374,25 @@ func (c *threadBotClassifier) classify(m slackThreadMessage) (string, bool) {
 	if userID == "" {
 		userID = profile.UserID
 	}
-	self, proven := c.compareSelf(appID, userID)
-	if self {
-		return "", false
-	}
+	self, _ := c.compareSelf(appID, userID)
 	var info companyBotInfo
-	if !proven && c.authors != nil && m.BotID != "" {
+	if appID == "" && userID == "" && c.authors != nil && m.BotID != "" {
 		if resolved, outcome := c.resolve(m.BotID); outcome == botResolveOK {
 			info = resolved
-			// The wire must not contradict the resolution (same
-			// corroboration as the peer path); a contradiction is a
-			// post we do not understand — drop.
-			if (appID != "" && info.AppID != "" && appID != info.AppID) ||
-				(userID != "" && info.UserID != "" && userID != info.UserID) {
-				log.Printf("thread context: bot_id=%s ts=%s wire ids (app=%q user=%q) contradict bots.info (app=%q user=%q) — not quoted",
-					m.BotID, m.TS, appID, userID, info.AppID, info.UserID)
-				return "", false
-			}
-			if appID == "" {
-				appID = info.AppID
-			}
-			if userID == "" {
-				userID = info.UserID
-			}
-			self, proven = c.compareSelf(appID, userID)
-			if self {
-				return "", false
-			}
+			appID, userID = info.AppID, info.UserID
+			self, _ = c.compareSelf(appID, userID)
 		}
 	}
-	if !proven {
-		log.Printf("thread context: cannot prove bot_id=%s ts=%s is not self (author app=%q user=%q; self ids known: apps=%d users=%d) — not quoted",
-			m.BotID, m.TS, appID, userID, len(c.selfAppIDs), len(c.selfUserIDs))
-		return "", false
+	label := threadBotLabel(m, appID, userID, profile.Name, info.Name, c.peers)
+	provenance := "bot"
+	if self {
+		provenance = "own bot"
+	} else if _, ok := c.peers.matchPeer(m.BotID, appID); ok {
+		provenance = "peer bot"
+	} else if _, ok := c.peers.matchPeerByBotUserID(userID); ok {
+		provenance = "peer bot"
 	}
-	return threadBotLabel(m, appID, userID, profile.Name, info.Name, c.peers), true
+	return label + " (" + provenance + ")", true
 }
 
 // compareSelf reports whether (appID, userID) names this adapter, and
@@ -688,10 +625,9 @@ func fetchThreadHasOwnBotPost(ctx context.Context, token, channel, threadTS, bot
 // the preamble to peer activity newer than the target's last
 // delivered context — gc-px8.6's cross-agent delta visibility.
 //
-// Whitespace-only messages are filtered. Bot-authored messages go
-// through botAuthor: nil drops them all (pre-jg-ure5r8 behaviour);
-// otherwise the adapter's own posts drop and peer bots quote under
-// "@<label> (bot)". Returns "" when no messages survive filtering —
+// Whitespace-only messages are filtered. Bot classification only labels the
+// author; no author class is filtered or assigned a separate quote budget.
+// Returns "" when no messages survive the timestamp/content filters;
 // caller MUST treat that as no-op so empty/short threads,
 // current-message-only callbacks, and replays with no new peer
 // activity carry no preamble overhead.
@@ -731,15 +667,12 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		if strings.TrimSpace(m.Text) == "" {
 			continue
 		}
-		// A bot-authored thread ROOT is always kept (upstream #491); other bot
-		// posts quote only when the peer-bot classifier includes them.
-		if m.BotID != "" && !isRoot {
-			if botAuthor == nil {
-				continue
-			}
-			label, include := botAuthor(m)
-			if !include {
-				continue
+		if m.BotID != "" || m.Subtype == "bot_message" {
+			label := threadBotLabel(m, m.AppID, m.User, parseBotProfile(m.BotProfile).Name, "", nil) + " (bot)"
+			if botAuthor != nil {
+				if named, _ := botAuthor(m); named != "" {
+					label = named
+				}
 			}
 			botLabels[m.TS] = label
 		}
@@ -757,35 +690,6 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		}
 		quoted = append(quoted, m)
 	}
-	// Bot allowance: walk newest-first, keep the bot posts whose clipped
-	// text fits threadContextBotTotalBytes, drop the rest from quoted
-	// and count them. Human posts pass untouched.
-	botOmitted := 0
-	if len(quoted) > 0 {
-		remaining := threadContextBotTotalBytes
-		keep := make([]bool, len(quoted))
-		for i := len(quoted) - 1; i >= 0; i-- {
-			m := quoted[i]
-			if m.BotID == "" {
-				keep[i] = true
-				continue
-			}
-			cost := len(clipBotPost(collapseThreadText(m.Text), threadContextBotPostBytes))
-			if cost <= remaining {
-				keep[i] = true
-				remaining -= cost
-				continue
-			}
-			botOmitted++
-		}
-		kept := quoted[:0]
-		for i, m := range quoted {
-			if keep[i] {
-				kept = append(kept, m)
-			}
-		}
-		quoted = kept
-	}
 	for _, window := range windows {
 		window.Collapsed = deliveredCount
 		if len(quoted) > 0 {
@@ -802,7 +706,7 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		// re-quoted" tail restated what "already delivered" says.
 		b.WriteString(" already delivered.\n")
 	}
-	if len(quoted) == 0 && botOmitted == 0 {
+	if len(quoted) == 0 {
 		b.WriteString("\n---\n\n")
 		return b.String()
 	}
@@ -810,25 +714,11 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 	if len(quoted) != 1 {
 		b.WriteByte('s')
 	}
-	if botOmitted > 0 {
-		fmt.Fprintf(&b, "; %d older peer-bot post", botOmitted)
-		if botOmitted != 1 {
-			b.WriteByte('s')
-		}
-		b.WriteString(" omitted for budget")
-	}
 	b.WriteString("):\n")
 	for _, m := range quoted {
-		if _, labeled := botLabels[m.TS]; m.BotID != "" && !labeled {
-			// A bot root kept without a classifier label (upstream #491
-			// rendering): the bot id is the only name available.
-			text := strings.ReplaceAll(strings.TrimSpace(redactInboundText(m.Text)), "\n", " | ")
-			fmt.Fprintf(&b, "[bot %s]: %s\n", m.BotID, text)
-			continue
-		}
 		author := m.User
-		if m.BotID != "" {
-			author = botLabels[m.TS] + " (bot)"
+		if label, ok := botLabels[m.TS]; ok {
+			author = label
 		} else if author != "" && resolveName != nil {
 			author = resolveName(author)
 		}
@@ -836,9 +726,6 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 			author = "?"
 		}
 		text := collapseThreadText(m.Text)
-		if m.BotID != "" {
-			text = clipBotPost(text, threadContextBotPostBytes)
-		}
 		fmt.Fprintf(&b, "@%s: %s\n", author, text)
 	}
 	b.WriteString("\n---\n\n")
@@ -851,15 +738,6 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 func collapseThreadText(s string) string {
 	s = redactInboundText(s)
 	return strings.ReplaceAll(strings.TrimSpace(s), "\n", " | ")
-}
-
-// clipBotPost returns s cut to at most maxBytes bytes (rune-safe) with
-// an ellipsis when longer; a non-positive maxBytes disables clipping.
-func clipBotPost(s string, maxBytes int) string {
-	if maxBytes <= 0 || len(s) <= maxBytes {
-		return s
-	}
-	return strings.TrimRight(clipRuneSafe(s, maxBytes), " |") + "…"
 }
 
 // clipBodyForLog truncates a Slack response body for inclusion in an

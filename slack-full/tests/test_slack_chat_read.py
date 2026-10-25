@@ -245,6 +245,42 @@ def test_thread_mode_uses_replies_endpoint(slack_api, monkeypatch, capsys):
     assert query["channel"] == "C0TEST"
 
 
+@pytest.mark.parametrize("thread", [False, True])
+def test_read_keeps_human_own_and_peer_authors(slack_api, monkeypatch, capsys, thread):
+    mod = _import_module(monkeypatch, slack_api.url)
+    messages = [
+        _msg("100.0", "U_HUMAN", "synthetic human"),
+        _msg("101.0", "U_OWN", "synthetic own", bot_id="B_OWN"),
+        _msg("102.0", "U_PEER", "synthetic peer", bot_id="B_PEER"),
+    ]
+    method = "/conversations.replies" if thread else "/conversations.history"
+    slack_api.handlers[method] = _static({"ok": True, "messages": messages if thread else messages[::-1]})
+    args = ["--conversation-id", "C_TEST", "--no-names", "--json"]
+    if thread:
+        args += ["--thread-ts", "100.0"]
+    assert mod.main(args) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert [m["text"] for m in result["messages"]] == [m["text"] for m in messages]
+
+
+def test_thread_read_retains_newest_n_across_all_pages(slack_api, monkeypatch, capsys):
+    mod = _import_module(monkeypatch, slack_api.url)
+    messages = [_msg(f"{100 + i}.0", "U_TEST", f"synthetic {i}", bot_id="B_PEER" if i % 2 else "") for i in range(137)]
+
+    def replies(query, headers):
+        start = int(query.get("cursor", "0"))
+        end = min(start + int(query["limit"]), len(messages))
+        return 200, {"ok": True, "messages": messages[start:end], "has_more": end < len(messages),
+                     "response_metadata": {"next_cursor": str(end) if end < len(messages) else ""}}
+
+    slack_api.handlers["/conversations.replies"] = replies
+    assert mod.main(["--conversation-id", "C_TEST", "--thread-ts", "100.0", "--no-names", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert [m["text"] for m in result["messages"]] == [m["text"] for m in messages[-50:]]
+    assert result["has_more"] is True
+    assert len(slack_api.calls("/conversations.replies")) == 3
+
+
 def test_thread_read_retries_cut_page_at_smaller_limit(slack_api, monkeypatch, capsys):
     mod = _import_module(monkeypatch, slack_api.url)
     sleeps: list[float] = []

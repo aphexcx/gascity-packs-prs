@@ -19,6 +19,7 @@ OUTER = re.compile(
 BATCH = re.compile(r"\[(\d+) messages in [^\n]+\]\n")
 MEMBER = re.compile(r"(?m)^\[(?P<ts>[\d.]+)\] (?P<sender>[^\n]+?)(?: \(in thread (?P<thread>[\d.]+)\))?: ")
 PEERS = re.compile(r"\[peer-bot context[^\n]*\]\n.*?\[end peer-bot context\]\n*", re.S)
+PEER_ITEM = re.compile(r"(?m)^peer-bot (?P<sender>.*?) posted in (?P<channel>\S+)(?: \(thread (?P<thread>[\d.]+)\))? at ts (?P<ts>[\d.]+): ")
 HELP = re.compile(r"\[channel [^\n]+full reply how-to.*?To react: [^\n]+", re.S)
 CONTEXT = re.compile(r"Thread context(?::| \()[^\n]*\n.*?\n---\n\n", re.S)
 
@@ -52,9 +53,38 @@ def unit(body, channel, sender, ts, thread, is_bot=False):
                 thread=thread or "", body=body.strip(), anchor=anchor, is_bot=is_bot)
 
 
-def prepare(rows):
+def peer_units(body):
+    """Captured ride-along items as separate arrivals, preserving captured text.
+
+    This cannot reconstruct clips, evictions or historical registry identity.
+    The projection treats each captured item as an admitted peer arrival.
+    """
+    for block in PEERS.finditer(body):
+        payload = block[0].split("\n", 1)[1].split("[end peer-bot context]", 1)[0].rstrip("\n")
+        matches = list(PEER_ITEM.finditer(payload))
+        for i, match in enumerate(matches):
+            end = matches[i+1].start() if i+1 < len(matches) else len(payload)
+            text = payload[match.end():end].rstrip("\n")
+            text = re.sub(r"\n\(\d+ older peer post\(s\) were dropped from this buffer\)\Z", "", text)
+            g = match.groupdict()
+            yield dict(channel=g["channel"], sender=g["sender"], sender_id="U_REPLAY_ID",
+                       ts=g["ts"], thread=g["thread"] or "", body=text, anchor="", is_bot=True)
+
+
+def peer_row(u):
+    head = (f'<system-reminder>\nNew message in shared conversation slack/{u["channel"]}:\n\n'
+            f'- {u["sender"]} (agent): ')
+    foot = f'\n\nMessage id: {u["ts"]}'
+    if u["thread"]:
+        foot += f' (in thread {u["thread"]})'
+    reply = u["thread"] or u["ts"]
+    return dict(head=head, foot=foot+f'\n\nreply-to {reply}\n</system-reminder>', units=[u], peer_arrival=True)
+
+
+def prepare(rows, *, peer_parity=True):
     outputs = []
-    counts = dict(blocks=0, members=0, batches=0, baseline_bytes=0, sinan_full_bytes=0, sinan_compact_bytes=0)
+    counts = dict(blocks=0, members=0, batches=0, baseline_bytes=0, sinan_full_bytes=0, sinan_compact_bytes=0,
+                  peer_arrivals=0, peer_rider_bytes=0)
     for index, row in enumerate(rows):
         text = row["text"]
         match = OUTER.fullmatch(text)
@@ -62,6 +92,12 @@ def prepare(rows):
             raise ValueError(f"unrecognized envelope at row {index}; no text exported")
         g = match.groupdict()
         body = g["body"]
+        # An immediate peer is already the main unit, not an extra arrival.
+        if peer_parity and g["kind"] != "agent":
+            peers = list(peer_units(body))
+            counts["peer_arrivals"] += len(peers)
+            counts["peer_rider_bytes"] += sum(len(b[0].encode()) for b in PEERS.finditer(body))
+            outputs.extend(dict(peer_row(u), day=row.get("timestamp", "")[:10]) for u in peers)
         batch = BATCH.search(body)
         if batch:
             body = PEERS.sub("", HELP.sub("", body))
@@ -81,7 +117,7 @@ def prepare(rows):
         counts["sinan_full_bytes"] += len(sinan(text).encode())
         counts["sinan_compact_bytes"] += len(sinan(text,True).encode())
         suffix = g["foot"] + "reply-to " + (g["thread"] or g["ts"]) + "\n</system-reminder>"
-        outputs.append(dict(head=g["head"], foot=suffix, units=units))
+        outputs.append(dict(head=g["head"], foot=suffix, units=units, day=row.get("timestamp", "")[:10]))
     return outputs, counts
 
 
@@ -89,12 +125,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rows", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--legacy-peer-omission", action="store_true", help="reproduce the pre-parity projection")
     args = parser.parse_args()
     root = (Path.cwd()/".gc/scratch").resolve()
     if not args.output.resolve().is_relative_to(root):
         parser.error("--output must stay in this lane's .gc/scratch")
     rows = [json.loads(line) for line in args.rows.read_text().splitlines()]
-    outputs, counts = prepare(rows)
+    outputs, counts = prepare(rows, peer_parity=not args.legacy_peer_omission)
     with args.output.open("x",encoding="utf-8") as f:
         args.output.chmod(0o600)
         for row in outputs:

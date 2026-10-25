@@ -1,0 +1,54 @@
+{
+  "window": {
+    "from": "2026-10-14T23:00:00+00:00",
+    "through": "2026-10-21T23:00:00+00:00"
+  },
+  "counts": {
+    "peer_blocks": 79,
+    "immediate_reminders": 0,
+    "peer_items": 110,
+    "other_items": 92,
+    "currently_allowlisted_items": 18
+  },
+  "daily": {
+    "2026-10-14": {
+      "peer_items": 0
+    },
+    "2026-10-15": {
+      "peer_items": 10,
+      "other_items": 7,
+      "currently_allowlisted_items": 3
+    },
+    "2026-10-16": {
+      "peer_items": 8,
+      "other_items": 5,
+      "currently_allowlisted_items": 3
+    },
+    "2026-10-17": {
+      "peer_items": 3,
+      "other_items": 3
+    },
+    "2026-10-18": {
+      "peer_items": 0
+    },
+    "2026-10-19": {
+      "peer_items": 13,
+      "other_items": 12,
+      "currently_allowlisted_items": 1
+    },
+    "2026-10-20": {
+      "peer_items": 24,
+      "other_items": 24
+    },
+    "2026-10-21": {
+      "peer_items": 52,
+      "other_items": 41,
+      "currently_allowlisted_items": 11
+    }
+  },
+  "limitations": [
+    "Historical transcript items are delivered copies, not distinct Slack posts.",
+    "Registry label membership is the present-day snapshot, not historical author proof.",
+    "Buffered log counts measure admission; no per-item delivery log exists at the base."
+  ]
+}

@@ -89,8 +89,13 @@ attachment rejection and spool replay; their provenance stays in adapter state.
 Slack reminders support opt-in progressive disclosure with
 `SLACK_INJECTION_MODE=minimal` (`full` remains the default). Minimal reminders
 retain message and reply coordinates, sender, text, a short thread anchor and
-one on-demand read pointer; previous thread and ambient peer text are not
-repeated. Failed immediate peer forwards remain queued for later delivery.
+one on-demand read pointer; previous thread text is read on demand. Allowlisted
+peer posts arrive independently and wake the session in both modes, using the
+same reminder shape as human posts. New text stays whole; failed forwards
+remain queued with an explicit deferred count. Full context quotes every
+author under one budget rule. Channel and thread reads return every author
+and keep the newest N messages (default 50). The old `wake` and
+`immediate_channels` keys still parse but no longer limit peer delivery.
 Before enabling it, add the reply and context-reading contracts to
 every receiving agent's prompt. The setting takes effect at the next adapter
 start; invalid values fail startup. A text-free inbound journal records forward

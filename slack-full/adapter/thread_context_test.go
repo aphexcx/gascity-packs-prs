@@ -127,7 +127,7 @@ func TestThreadContext_BotRootIncludedOnFirstReply(t *testing.T) {
 	if !strings.Contains(msgs[0].Text, rootText) {
 		t.Errorf("inbound missing bot-authored root; got %q", msgs[0].Text)
 	}
-	if !strings.Contains(msgs[0].Text, "bot B_AGENT") {
+	if !strings.Contains(msgs[0].Text, "B_AGENT (bot)") {
 		t.Errorf("inbound did not label root as bot-authored; got %q", msgs[0].Text)
 	}
 }
@@ -972,8 +972,8 @@ func TestFormatThreadContextPreamble_FiltersAndFormats(t *testing.T) {
 			replies: []slackThreadMessage{
 				{BotID: "B0", Text: "bot noise", TS: "1700000050.000000"},
 			},
-			current:  "1700000100.000000",
-			wantNoOp: true,
+			current: "1700000100.000000",
+			want:    "Thread context (1 earlier message):\n@B0 (bot): bot noise\n\n---\n\n",
 		},
 		{
 			name: "bot root survives bot and since filters",
@@ -984,7 +984,7 @@ func TestFormatThreadContextPreamble_FiltersAndFormats(t *testing.T) {
 			thread:  "1700000050.000000",
 			current: "1700000100.000000",
 			since:   "1700000080.000000",
-			want:    "Thread context (1 earlier message):\n[bot B_ROOT]: choose a, b, or c\n\n---\n\n",
+			want:    "Thread context (1 earlier message):\n@B_ROOT (bot): choose a, b, or c\n\n---\n\n",
 		},
 		{
 			name: "only whitespace replies",

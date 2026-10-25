@@ -1,0 +1,47 @@
+{
+  "daily": {
+    "2026-10-14": {
+      "minimal_bytes": 2236
+    },
+    "2026-10-15": {
+      "minimal_bytes": 48786,
+      "peer_arrivals": 10,
+      "peer_minimal_bytes": 9683
+    },
+    "2026-10-16": {
+      "minimal_bytes": 42611,
+      "peer_arrivals": 8,
+      "peer_minimal_bytes": 10793
+    },
+    "2026-10-17": {
+      "minimal_bytes": 44549,
+      "peer_arrivals": 3,
+      "peer_minimal_bytes": 1885
+    },
+    "2026-10-18": {
+      "minimal_bytes": 2591
+    },
+    "2026-10-19": {
+      "minimal_bytes": 90067,
+      "peer_arrivals": 13,
+      "peer_minimal_bytes": 11267
+    },
+    "2026-10-20": {
+      "minimal_bytes": 70486,
+      "peer_arrivals": 24,
+      "peer_minimal_bytes": 20036
+    },
+    "2026-10-21": {
+      "minimal_bytes": 134612,
+      "peer_arrivals": 52,
+      "peer_minimal_bytes": 60820
+    }
+  },
+  "totals": {
+    "blocks": 685,
+    "members": 767,
+    "minimal_bytes": 435938,
+    "peer_full_bytes": 106539,
+    "peer_minimal_bytes": 114484
+  }
+}

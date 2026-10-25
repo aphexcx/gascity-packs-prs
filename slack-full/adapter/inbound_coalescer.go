@@ -205,7 +205,7 @@ func (p pendingChannelInbound) foldedText() string {
 }
 
 // reminderParts returns the entry's channelReminderParts for the
-// head-protected composer, reporting false when the entry predates the
+// whole-message composer, reporting false when the entry predates the
 // parts fields (legacy spool replays) and the caller must fall back to
 // the folded Text.
 func (p pendingChannelInbound) reminderParts(channel string) (channelReminderParts, bool) {
@@ -3230,7 +3230,6 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 	}
 	env := batch[len(batch)-1].inbound
 	peerItems, peerDropped := cfg.peerContext.flush(channel)
-	peerBlock := injectionPeerBlock(cfg, peerItems, peerDropped)
 	firstHelp := injectionReplyHelp(cfg, channel)
 	helpBlock := ""
 	if firstHelp {
@@ -3257,17 +3256,14 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 			trustedPaths = append(trustedPaths, p.inbound.trustedFilePaths...)
 		}
 		text = strings.Join(units, "\n\n")
-		text, peerItems = minimalPeerRecovery(cfg, channel, text, peerItems)
-		peerDropped = 0
 		env.Attachments, env.trustedFilePaths = attachments, trustedPaths
 		if len(batch) > 1 {
 			env.DedupKey = coalesceBatchDedupKey(batch)
 		}
 	} else if len(batch) == 1 {
-		// A single entry delivers under the SAME head-protected contract
-		// as the immediate path (gp-0qw): thread anchor with the parent
-		// line captured at intake, boilerplate only inside the budget,
-		// body tail-trimmed behind the protected head. Entries that
+		// A single entry uses the same whole-message contract as the
+		// immediate path: thread anchor with the parent line captured at
+		// intake, boilerplate only inside the budget. Entries that
 		// predate the parts fields (legacy spool replays) deliver their
 		// folded Text as the body with a bare-ts anchor synthesized for
 		// thread replies.
@@ -3282,7 +3278,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 				p.anchor = formatThreadReplyAnchor(rt, "", "")
 			}
 		}
-		composed, usedPeer, usedHelp, usedPreamble, trimmed := composeChannelReminderText(p, peerBlock, helpBlock, cfg.reminderTextBudget)
+		composed, _, usedHelp, usedPreamble, _ := composeChannelReminderText(p, "", helpBlock, cfg.reminderTextBudget)
 		text = composed
 		env.injectionWindows = selectedInjectionWindows(batch[0].inbound, p.preamble, p.preambleLean, composed)
 		if firstHelp && !usedHelp {
@@ -3291,18 +3287,8 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 			log.Printf("coalesce: chan=%s ts=%s reply how-to withheld — delivery over reminder budget %d; re-arms for a smaller delivery (gp-9gc)",
 				channel, env.ProviderMessageID, cfg.reminderTextBudget)
 		}
-		if peerBlock != "" && !usedPeer {
-			cfg.peerContext.restore(channel, peerItems, peerDropped)
-			peerItems, peerDropped = nil, 0
-			log.Printf("coalesce: chan=%s ts=%s peer context withheld — delivery over reminder budget %d; restored to ride the next delivery",
-				channel, env.ProviderMessageID, cfg.reminderTextBudget)
-		}
 		if p.preamble != "" && !usedPreamble {
 			log.Printf("coalesce: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d",
-				channel, env.ProviderMessageID, cfg.reminderTextBudget)
-		}
-		if trimmed {
-			log.Printf("coalesce: chan=%s ts=%s body tail trimmed to reminder budget %d — head preserved, marker names the full text",
 				channel, env.ProviderMessageID, cfg.reminderTextBudget)
 		}
 	} else {
@@ -3328,9 +3314,6 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		env.Attachments = attachments
 		env.trustedFilePaths = trustedPaths
 		env.DedupKey = coalesceBatchDedupKey(batch)
-		if peerBlock != "" {
-			text = peerBlock + "\n\n" + text
-		}
 		if firstHelp {
 			if cfg.reminderTextBudget > 0 && len(text)+2+len(helpBlock) > cfg.reminderTextBudget {
 				cfg.replyHelp.unmark(channel)
@@ -3343,17 +3326,8 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		}
 	}
 	env.Text = text
-	receipt, err := postInboundWithReceipt(cfg, env)
+	env, peerItems, receipt, err := postWithPeerRecovery(cfg, env, peerItems)
 	verdict := receipt.verdict(cfg.deliveryReceiptGate)
-	// Delivery-receipt gate (gp-32q), same contract as the urgent path:
-	// a batch gc accepted but would not vouch for is re-posted once in
-	// place while the member claims are still held.
-	for attempt := 0; err == nil && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
-		log.Printf("coalesce: chan=%s newest_ts=%s gc did not vouch for delivery (%s) — re-posting in place (attempt %d/%d)",
-			channel, env.ProviderMessageID, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
-		receipt, err = postInboundWithReceipt(cfg, env)
-		verdict = receipt.verdict(cfg.deliveryReceiptGate)
-	}
 	if err == nil && verdict == receiptHeld {
 		log.Printf("coalesce: HELD chan=%s batch=%d newest_ts=%s gc accepted the batch and has not finished delivering it — not re-posting — %s",
 			channel, len(batch), env.ProviderMessageID, receipt.logField(verdict))
@@ -3361,6 +3335,12 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		// as one unit with the same dedup key; the per-message entries
 		// are what a standing loss writes to the dead-letter file.
 		heldCfg, heldEnv, heldBatch := cfg, env, append([]pendingChannelInbound(nil), batch...)
+		// A recovered peer is now owned by this held envelope. Preserve
+		// its whole original entry if follow-up and the repost both fail.
+		for _, item := range peerItems {
+			heldBatch = append(heldBatch, pendingChannelInbound{inbound: item.inbound,
+				body: item.Text, files: item.Files})
+		}
 		cfg.receiptFollowUps.note(heldDelivery{
 			receiptID:      receipt.id,
 			observeReceipt: func(r deliveryReceipt) { heldCfg.inboundJournal.record(heldCfg, heldEnv, r, "concluded") },
@@ -3424,6 +3404,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 		tss = append(tss, p.inbound.ProviderMessageID)
 	}
 	cfg.deliveredIDs.record("", channel, tss...)
+	recordRecoveredPeers(cfg, peerItems)
 	cfg.postFailures.clear(channel)
 	log.Printf("inbound (coalesced): chan=%s batch=%d newest_ts=%s text=%dch %s",
 		channel, len(batch), env.ProviderMessageID, len(env.Text), receipt.logField(verdict))

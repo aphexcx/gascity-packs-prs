@@ -1,8 +1,10 @@
 # Slack injection: progressive disclosure, 2026-10-25
 
-Draft for the founder's first-head read. Built on Sinan's jg-fc1csv commits
-`84b8da44`, `910c232b`, `52cbd2f8`, unchanged. No live adapter setting or agent
-prompt has been changed. Full is the default.
+The PR 62 audit below records the original progressive-disclosure baseline,
+built on Sinan's jg-fc1csv commits `84b8da44`, `910c232b`, `52cbd2f8`.
+The **Peer parity** section records the follow-up on merged base `f507f718`.
+It supersedes PR 62's peer omission and bot-only presentation rules. No live
+adapter setting or agent prompt has been changed. Full is the default.
 
 ## Measure first
 
@@ -72,7 +74,7 @@ Source references at the immutable `52cbd2f8` base:
 `adapter/peer_bots.go:255` / `:352` (buffer clip);
 `adapter/reminder_budget.go:48` / `:54` (3,500-byte budget / 120-rune anchor).
 
-## Synthesis of the two audits
+## PR 62 synthesis of the two audits (historical)
 
 Citadel's byte accounting uses 575 blocks from seven days ending
 2026-10-21 23:00 UTC, estimated tokens = UTF-8 bytes / 3.6 / 7. Sinan's audit
@@ -93,32 +95,21 @@ Citadel's. Entries marked “included” are subdivisions, not extra bytes.
 | Peer items | Included in message | Included in message | Clips proposed | Keep | Recover buffered peers with channel read |
 | Other, including help/batch directions | 138.98 | 3,171.23 | Anchor/tail cuts above | Shorter batch directions | No per-message how-to; each batch member keeps ids/text |
 
-The minimum is channel name/id, sender name/id, new message ts/text, thread
-root when replying, the short anchor, compact reply-to coordinates and one
-context pointer per member. Immediate peer messages also retain the read-only,
-not-addressed-to-you label: removing that would change their meaning. File
+PR 62's minimum was channel name/id, sender name/id, new message ts/text,
+thread root, short anchor, compact reply coordinates and a context pointer.
+Its peer-specific tag and omission decisions are superseded below. File
 descriptions remain payload. Multi-message digests remain verbatim.
 
-The loss is deliberate: earlier thread decisions and ambient peer reports are
-not immediately present. Read the thread using the pointer; read the channel
-without `--thread-ts` for peer posts. Reply syntax belongs in each agent's
+Earlier thread decisions are read using the pointer. Reply syntax belongs in each agent's
 prompt before enabling the flag. A cold parent cache retains only the thread
 id; keeping a first-line quote cannot require a new history fetch per message.
 Observed edits and deletions invalidate cached parent excerpts. Reaction
 target lookups keep their original single-page scope; a minimal reaction
 without a known thread root points to the channel rather than its event ts.
 Minimal does not use or advance full mode's delivered-context cache.
-Minimal intentionally renders no ambient-peer count line: the receiving agent
-learns of buffered ambient posts by reading the channel top, as SETUP.md's prompt
-contract requires. Failed immediate peer forwards are delivery recovery, kept
-in a separate queue from ambient context and rendered with label, timestamp,
-clipped text and read-only provenance on a later channel, batch or peer delivery.
-They share the reminder budget; entries that do not fit remain queued, and a
-failed recovery delivery restores them. An oversized first recovery can use a
-budget-clipped excerpt with an explicit read-channel marker, so a small budget
-does not permanently block later entries. Ambient traffic cannot evict them.
-Like the existing peer buffer, this queue is in memory; adapter restarts are
-not durable recovery, and a sustained outage can grow the recovery queue.
+PR 62 omitted ambient peers without a count and clipped failed-forward
+recovery. Both decisions are replaced by peer parity below. Recovery remains
+in memory; restarts are not durable recovery and sustained outages can grow it.
 Mention-only ownership recovery can still query Slack for an old thread not
 in the own-thread registry; that routing fallback is preserved.
 
@@ -153,6 +144,93 @@ historical replay has no failed-forward state; its ordinary reminders and
 totals. More transcript files now pass the mtime prefilter (83 vs 55), but the
 fixed timestamp window still produces exactly 575 blocks. Only numeric and
 structural reports are committed under `assets/pr-evidence/gp-zhtd/`.
+
+## Peer parity (gp-j5p4)
+
+The pre-design inventory and count comment precede implementation. Evidence
+is under `assets/pr-evidence/gp-j5p4/`; no source transcript or live message text
+is committed. The exact same window, **2026-10-14 23:00–2026-10-21 23:00 UTC**,
+again yields **575 reminders / 518,967 bytes** from `measure_injected_alerts.py`.
+The base Go renderer replay reproduces **321,589 minimal bytes**.
+
+The captured sample has **110 bot-item copies in 79 buffered ride-along
+blocks**, with zero immediate peer reminders. The adapter log records 150
+buffered admissions in the same window (49 allowlisted, 101 other bots), zero
+immediate deliveries and 41 budget deferrals. Log admission is not delivery.
+The new journal starts after this window and cannot reconstruct it. The
+measure-first artifact also records the latest seven-day log window and its
+coverage limits.
+
+Every allowlisted peer now arrives as an independent inbound in both modes,
+with the registry sender label and whole text. The peer golden deliberately
+changes to the ordinary human reminder shape: author, thread anchor, text and
+reply coordinates, without the adapter's response instructions. The old
+`wake` and `immediate_channels` keys still parse, avoiding a config migration;
+startup logs once that every channel is immediate. Unlisted bots no longer
+enter an ambient buffer, while history reads and quotes include all authors.
+
+Full context gives humans, own bots, peers and other bots the same whole
+quotes, chronological order, delivered collapse and counted window omission.
+There is no 280-byte clip, 1,400-byte bot allowance or bot-first shedding.
+The 3,500-byte budget applies to optional context/help; new message text and
+attachments stay whole. Minimal mode still reads previous context on demand.
+Both read modes keep the newest N messages, across every author; thread reads
+scan to the final cursor instead of returning the oldest 50.
+
+Failed forwards alone enter the FIFO. Recovery preserves whole text, uses the
+same budget in both modes, restores failures ahead of deferred entries and
+reports `[N omitted — awaiting delivery]` whenever entries remain. There is
+no 20-entry eviction or 2,000-byte clip. An item too large to fit remains
+queued with a count until there is enough budget, rather than being counted
+as delivered after clipping. This queue is still in memory.
+Recovery retains attachments and trusted file paths. A refused rider cannot
+charge an unrelated successor's rejection ladder: riders are deferred and the
+successor retries alone with a count. Rejected attachments retain a path and
+withholding notice; held-loss dead letters retain every included peer.
+
+### Cost of a peer post
+
+The replay promotes each of the 110 captured buffered copies to an admitted
+peer arrival and renders it with production Go functions. Figures include
+the gc envelope and reply line on each new arrival. Before-full amortizes the
+shared wrapper over the captured posts; before-minimal omitted those posts.
+Estimated tokens use UTF-8 bytes / 3.6, as in the original audit.
+
+| Average per captured peer copy | Before bytes | After bytes | Before estimated tokens | After estimated tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Full: buffered rider → own reminder | 852.81 | 968.54 | 236.89 | 269.04 |
+| Minimal: omitted rider → own reminder | 0 | 1,040.76 | 0 | 289.10 |
+
+| Seven-day scenario | Before bytes | After bytes | Estimated tokens/day delta |
+| --- | ---: | ---: | ---: |
+| Full arrival-cost projection | 480,219 | 492,949 | +505.16 |
+| Minimal production-renderer replay | 321,589 | 435,938 | +4,537.66 |
+
+The minimal replay now contains **685 reminders / 767 members**, including
+the original 73 batches. Its total is **17,299.13 estimated tokens/day**.
+The 114,484 bytes for new peer arrivals are offset by 135 bytes of retired
+bot-tag overhead elsewhere in the sample. The full projection substitutes
+106,539 arrival bytes for 93,809 buffered-block bytes, including separators.
+
+Rows from the original audit that move:
+
+| Class | Before | After and reason |
+| --- | --- | --- |
+| Peer wrapper | 11,455 bytes | 0; wrapper and footer retired |
+| Peer items / new message | Buffered in full; omitted in minimal | Every admitted peer is a separate whole-text message |
+| Header, author, message id and reply line | Shared the human wake | Each new peer reminder pays its own envelope and reply coordinates |
+| Thread quotes | Bot clip/allowance and bot-first shedding | Same context rule for every author; historical missing originals cannot be reconstructed |
+
+**Projection limits:** these are delivered copies, not unique Slack posts or
+a future traffic forecast. Only 18 copies match labels in today's registry;
+historical identities and registry state are unavailable, so the 110-copy
+scenario explicitly models all captured items as admitted peers. It does not
+silently count the removal of unlisted traffic as a saving. Captured clipped
+text cannot be expanded, and full-mode context at each peer's original arrival
+is unknown. The full number isolates arrival overhead and does not estimate
+the added own-bot/longer thread quotes. Reads, resolved names, unobserved posts,
+recovery and provider tokenization affect realized cost. No adapter was
+restarted or switched to minimal for this measurement.
 
 ## Definitive content and delivery evidence
 
@@ -194,6 +272,6 @@ is a separate gc-fork bead for the mayor; this branch changes none of gc.
 
 Set the prompt's reply/read contracts first, then opt into
 `SLACK_INJECTION_MODE=minimal` at the next approved adapter start. Unknown modes
-fail startup. Full is unchanged apart from the long-thread pagination fix and
-text-free diagnostics. The PR remains draft for the founder's first-head read;
+fail startup. Peer parity applies in full and minimal modes. The PR remains
+draft for the founder's first-head read;
 the mayor owns the Fable review, merge word, PR 59 supersession and rollout.
