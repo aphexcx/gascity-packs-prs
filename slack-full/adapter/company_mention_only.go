@@ -592,13 +592,13 @@ func (g *companyGateway) deliverMentionOnlyForCompanyRoom(env slackEventEnvelope
 			// user, exactly like the legacy lane's fallback.
 			if botUID != "" && cfg.slackBotToken != "" {
 				fetchCtx, cancel := context.WithTimeout(context.Background(), threadContextFetchTimeout)
-				replies, err := fetchThreadReplies(fetchCtx, cfg.slackBotToken, ev.Channel, ev.ThreadTS, ownThreadScanLimit)
+				found, err := fetchThreadHasOwnBotPost(fetchCtx, cfg.slackBotToken, ev.Channel, ev.ThreadTS, botUID, ev.TS)
 				cancel()
 				if err != nil {
 					log.Printf("company: mention-only own-thread scan fetch failed chan=%s thread=%s: %v", ev.Channel, ev.ThreadTS, err)
 					scanFailed = true
 				} else {
-					in.botPostedInThread = threadHasOwnBotPost(replies, botUID, ev.TS)
+					in.botPostedInThread = found
 				}
 			}
 		}
@@ -643,7 +643,8 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 	text := rewriteSlackUserMentions(cfg, ev.Text)
 	// Files are not downloaded on this path (the company hydrator owns
 	// file rendering for members); the reminder still names every file.
-	if filesBlock := formatInboundFilesBlock(ev.Files, nil); filesBlock != "" {
+	filesBlock := formatInboundFilesBlock(ev.Files, nil)
+	if filesBlock != "" && !cfg.minimalInjection() {
 		if strings.TrimSpace(text) == "" {
 			text = filesBlock
 		} else {
@@ -669,6 +670,10 @@ func (g *companyGateway) runMentionOnlyTargets(origin ReceiptOrigin, ev slackMes
 		ReplyToMessageID: ev.ThreadTS,
 		DedupKey:         "slack-" + ev.TS,
 		ReceivedAt:       time.Now().UTC(),
+	}
+	if cfg.minimalInjection() {
+		inbound.Text = minimalDispatchParts(cfg, inbound, filesBlock)
+		inbound.injectionPrepared = true
 	}
 	// Every selected target is written to the receipt as PENDING before the
 	// first POST (codex r6 re-gate P1): a process that exits mid-run — a

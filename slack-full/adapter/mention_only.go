@@ -777,6 +777,9 @@ func formatMentionOnlyReminder(cfg config, msg externalInboundMessage, reason, h
 		replyThreadTS = msg.ReplyToMessageID
 	}
 	channelID := neutralizeMarkupBoundaries(msg.Conversation.ConversationID)
+	if cfg.minimalInjection() {
+		return "<system-reminder>\n" + neutralizeMarkupBoundaries(minimalDispatchText(cfg, msg)) + attachmentsBlock + "\nreply-to " + neutralizeMarkupBoundaries(replyThreadTS) + "\n</system-reminder>"
+	}
 	return fmt.Sprintf(
 		"<system-reminder>\n"+
 			"Slack mention-only room delivery: %s in channel %s (Slack ts %s) by user %s.\n"+
@@ -848,7 +851,21 @@ func mentionOnlyInbound(inbound externalInboundMessage, files []slackFile, files
 // has not reached the session yet. With a confirm hook the terminal result
 // is awaited and a failed one reads as not accepted (codex r6 P1). Both
 // lanes pass one (mentionOnlyConfirmFor); a nil hook lets acceptance stand.
-func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mentionOnlyAsyncConfirm) (deliveryReceipt, bool) {
+func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mentionOnlyAsyncConfirm, journalMessages ...externalInboundMessage) (result deliveryReceipt, delivered bool) {
+	acceptedTransport, confirmed := false, false
+	defer func() {
+		if !acceptedTransport || len(journalMessages) == 0 {
+			return
+		}
+		m := journalMessages[0]
+		m.Text = body
+		r := result
+		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
+		if confirmed {
+			r.status = "delivered"
+		}
+		cfg.inboundJournal.record(cfg, m, r)
+	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	target := fmt.Sprintf("%s/v0/city/%s/session/%s/messages",
 		cfg.gcAPIBase, url.PathEscape(cfg.cityName), url.PathEscape(sessionID))
@@ -872,6 +889,7 @@ func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mention
 		return deliveryReceipt{}, false
 	}
 	if resp.StatusCode == http.StatusAccepted && confirm != nil {
+		acceptedTransport = true
 		var accepted companyAsyncAccepted
 		if readErr == nil {
 			readErr = json.Unmarshal(respBody, &accepted)
@@ -885,8 +903,10 @@ func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mention
 			log.Printf("mention-only dispatch: session=%s async request %s did not conclude delivered: %s", sessionID, requestID, detail)
 			return deliveryReceipt{}, false
 		}
+		confirmed = true
 		return deliveryReceipt{}, true
 	}
+	acceptedTransport = true
 	if readErr != nil {
 		log.Printf("mention-only dispatch: session=%s accepted; receipt unreadable: %v", sessionID, readErr)
 		return deliveryReceipt{}, true
@@ -942,12 +962,9 @@ func retryMentionOnlyFailed(cfg config, lane string, failed []mentionOnlyTarget,
 	return reached, failed
 }
 
-// ownThreadScanLimit is the conversations.replies window the own-thread
-// fallback scan reads when the preamble's (context-limit-sized) fetch did
-// not run or may have been truncated. Slack pages oldest-first, so a bot
-// reply deep in a long thread needs the wider window (codex r1 P2).
-// Threads longer than this without a registry entry still read as
-// "not posted"; the registry is the primary source.
+// ownThreadScanLimit is the page size of the ownership fallback. It follows
+// cursors until it finds an own post or exhausts the thread; context-window
+// retention must never erase evidence used to route a mention-only reply.
 const ownThreadScanLimit = 200
 
 // mentionOnlyScanMinRefetch is the reply count at which a preamble fetch
@@ -1083,12 +1100,12 @@ func deliverMentionOnlyEach(cfg config, targets []mentionOnlyTarget, inbound ext
 			Provisional: true,
 		}
 		cfg.mentionOnlyDeliveries.record(t.binding, record)
-		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm)
+		receipt, ok := postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm, inbound)
 		verdict := receipt.verdict(cfg.deliveryReceiptGate)
 		for attempt := 0; ok && verdict == receiptUnconfirmed && attempt < deliveryReceiptRepostAttempts && receiptRepostAllowed(cfg); attempt++ {
 			log.Printf("mention-only: session=%s chan=%s ts=%s gc did not vouch for the injection (%s) — re-dispatching in place (attempt %d/%d)",
 				t.binding.SessionID, channel, ts, receipt.logField(verdict), attempt+1, deliveryReceiptRepostAttempts)
-			receipt, ok = postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm)
+			receipt, ok = postMentionOnlyReminder(cfg, t.binding.SessionID, body, confirm, inbound)
 			verdict = receipt.verdict(cfg.deliveryReceiptGate)
 		}
 		if ok && verdict == receiptUnconfirmed {

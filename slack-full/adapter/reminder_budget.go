@@ -222,12 +222,17 @@ func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock str
 // parentAuthor/parentFirstLine degrade gracefully — the anchor always
 // carries the thread ts. Every interpolation is neutralized: thread
 // ts, author, and parent text are provider-supplied.
+//
+// The anchor names the thread, not a flag (jg-fc1csv): it used to say
+// "reply with --thread-ts <ts>", a flag reply-current does not take —
+// the per-message reply line already spells the command with
+// --reply-to — so the wording was both stale and per-message overhead.
 func formatThreadReplyAnchor(threadTS, parentAuthor, parentFirstLine string) string {
 	if threadTS == "" {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("[thread reply — reply with --thread-ts ")
+	b.WriteString("[reply in thread ")
 	b.WriteString(neutralizeMarkupBoundaries(threadTS))
 	if line := firstLineClipped(parentFirstLine, threadAnchorParentLineRunes); line != "" {
 		b.WriteString("; parent")

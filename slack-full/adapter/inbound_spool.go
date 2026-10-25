@@ -76,6 +76,8 @@ var syncFile = func(f *os.File) error { return f.Sync() }
 // whether it was a no-wake reaction entry, and the ready-to-post
 // envelope (final per-message text, attachments, dedup key).
 type spooledInbound struct {
+	InjectionWindows     []injectionWindow `json:"injection_windows,omitempty"`
+	InjectionLeanWindows []injectionWindow `json:"injection_lean_windows,omitempty"`
 	// Adapter-authored provenance survives stripped retries without adding
 	// rejected attachments back to the gc wire envelope.
 	TrustedFilePaths []string               `json:"trusted_file_paths,omitempty"`
@@ -309,6 +311,7 @@ func (s *inboundSpool) appendLocked(channel string, batch []pendingChannelInboun
 	for _, p := range batch {
 		entry := spooledInbound{
 			Channel: channel, Reaction: p.reaction, Inbound: p.inbound,
+			InjectionWindows: p.inbound.injectionWindows, InjectionLeanWindows: p.inbound.injectionLeanWindows,
 			ThreadAnchor: p.threadAnchor, Preamble: p.preamble, Body: p.body, Files: p.files,
 			Isolate: p.isolate, Stripped: p.stripped,
 		}
@@ -589,6 +592,7 @@ func (s *inboundSpool) compactToRecordsLocked() {
 			applyDeletion(&p)
 			e.Inbound = p.inbound
 			e.ThreadAnchor, e.Preamble, e.PreambleLean, e.Body, e.Files = p.threadAnchor, p.preamble, p.preambleLean, p.body, p.files
+			e.InjectionWindows, e.InjectionLeanWindows = p.inbound.injectionWindows, p.inbound.injectionLeanWindows
 			e.BotQuotes = p.botQuotes
 		}
 		at, list := refusedAt, &refused
@@ -1062,6 +1066,7 @@ func (s *inboundSpool) replay(c *inboundCoalescer) (int, error) {
 			threadAnchor: e.ThreadAnchor, preamble: e.Preamble, preambleLean: e.PreambleLean, botQuotes: e.BotQuotes, body: e.Body, files: e.Files,
 			isolate: e.Isolate, stripped: e.Stripped,
 		}
+		p.inbound.injectionWindows, p.inbound.injectionLeanWindows = e.InjectionWindows, e.InjectionLeanWindows
 		if !e.Reaction && deleted[e.Channel][e.Inbound.ProviderMessageID] {
 			applyDeletion(&p)
 			log.Printf("inbound spool: chan=%s ts=%s deleted before restart — replayed as a deletion notice", e.Channel, e.Inbound.ProviderMessageID)

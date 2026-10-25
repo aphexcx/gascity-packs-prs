@@ -86,6 +86,19 @@ attachment rejection and spool replay; their provenance stays in adapter state.
 
 ## Status
 
+Slack reminders support opt-in progressive disclosure with
+`SLACK_INJECTION_MODE=minimal` (`full` remains the default). Minimal reminders
+retain message and reply coordinates, sender, text, a short thread anchor and
+one on-demand read pointer; previous thread and ambient peer text are not
+repeated. Failed immediate peer forwards remain queued for later delivery.
+Before enabling it, add the reply and context-reading contracts to
+every receiving agent's prompt. The setting takes effect at the next adapter
+start; invalid values fail startup. A text-free inbound journal records forward
+metadata and gc receipts, with seven-day retention by default. See
+[configuration and the operator step](adapter/SETUP.md#optional--inbound-token-efficiency-gp-729-gp-9e7)
+and the [measurement and synthesis](docs/injection-progressive-disclosure-20261025.md).
+
+
 Implemented:
 
 - [x] `gc slack bind-dm` — bind a Slack DM channel to one named session
@@ -577,16 +590,20 @@ visible in metadata and CLI stderr. See the [delivery-evidence contract](docs/de
 for receipt fields, retry behavior, and durable receipt lookup.
 
 When a human replies inside a Slack thread, the text the session
-receives starts with a `[slack thread_ts=<root ts>]` line naming the
-thread root. After it comes the earlier thread context: the root
+receives starts with a `[thread reply …]` anchor line naming the thread
+root's ts and the parent's first line; gc's `Message id: <ts> (in thread
+<root ts>)` line repeats the root at the end. (Earlier versions also
+sent a `[slack thread_ts=<root ts>]` marker line; it carried the same ts
+a third time and was dropped.) After the anchor comes the earlier
+thread context: the root
 message's text on every reply, even when a bot posted it (shown as
 `[bot <bot id>]: ...`), plus any human messages newer than the last
 reply this session already received. Other bot messages, and messages
 with no text (a file-only root, for example), are left out. If the adapter cannot fetch the thread from Slack, the
-marker line is followed by `Thread parent could not be fetched.`
+anchor is followed by `Thread parent could not be fetched.`
 instead of the context. `gc slack reply-current` already answers in
 the thread; with `gc slack publish-to-channel`, pass the root ts as
-`--thread-ts`. Messages outside a thread arrive without the marker.
+`--thread-ts`. Messages outside a thread arrive without the anchor.
 
 ## Adapter as a proxy_process service
 

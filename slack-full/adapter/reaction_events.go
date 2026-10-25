@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -272,19 +273,24 @@ func fetchReactionTargetContext(cfg config, channel, ts string) (snippet, thread
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), reactionTargetFetchTimeout)
 	defer cancel()
-	msgs, err := fetchThreadReplies(ctx, cfg.slackBotToken, channel, ts, reactionTargetFetchLimit)
+	// The target is in the first page. Following its reply cursors would
+	// spend calls on unrelated replies and discard a valid target if a
+	// later page fails or exceeds this best-effort lookup's deadline.
+	page, err := fetchThreadRepliesPage(ctx, cfg.slackBotToken, url.Values{
+		"channel": {channel}, "ts": {ts}, "limit": {strconv.Itoa(reactionTargetFetchLimit)},
+	})
 	if err != nil {
 		log.Printf("reaction: target lookup failed chan=%s ts=%s: %v (forwarding without snippet)", channel, ts, err)
 		return "", ""
 	}
-	for _, m := range msgs {
+	for _, m := range page.Messages {
 		if m.TS != ts {
 			continue
 		}
 		if m.ThreadTS != "" && m.ThreadTS != m.TS {
 			threadRoot = m.ThreadTS
 		}
-		return truncateRunesClean(strings.TrimSpace(m.Text), maxReactionSnippetChars), threadRoot
+		return truncateRunesClean(strings.TrimSpace(redactInboundText(m.Text)), maxReactionSnippetChars), threadRoot
 	}
 	return "", ""
 }

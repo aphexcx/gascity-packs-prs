@@ -8,6 +8,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Progressive-disclosure reminders** (`SLACK_INJECTION_MODE=full|minimal`,
+  default `full`, gp-zhtd), with compact reply coordinates and on-demand thread
+  reads. Minimal mode skips context fetches and omits repeated thread/peer
+  context and reply how-to. Install the agent prompt contract before opting in.
+- **Text-free inbound delivery journal**, daily JSONL segments with configurable
+  retention, selected context-window metadata and gc receipt/session evidence.
+
+- **`SLACK_REPLY_INSTRUCTIONS=compact`** (jg-fc1csv) registers an ids-only
+  per-message reply line, `reply-to <ts>`, instead of the full
+  `Reply: gc slack reply-current --conversation-id … --reply-to … --body-file
+  <file>` command (~22 fewer tokens on every inbound reminder). Opt-in, default
+  `full`: the command then has to live in each bound agent's prompt, because
+  the once-per-channel how-to is per adapter lifetime, not per agent session.
+  See SETUP.md.
+
+### Changed
+
+- **Thread context pagination** now preserves the root and newest replies
+  across cursor pages, instead of losing the newest end of long threads.
+  Current/later messages are excluded before selecting an inbound's window.
+  Fetches use 500-message pages and stop after four pages; timeout/rate-limit
+  failures deliver the retained partial window with an incomplete notice.
+- **Mention-only ownership recovery** now follows cursors beyond the first
+  200-message page, so an older own-bot post can establish routing ownership.
+- **Minimal peer recovery** preserves failed immediate forwards separately from
+  ambient context and includes them on later deliveries within the text budget.
+- **Thread replies no longer carry the `[slack thread_ts=<root ts>]` marker
+  line** (jg-fc1csv). The protected `[thread reply …]` anchor already names
+  the thread ts at the head of every thread-reply delivery and gc's
+  `Message id: … (in thread …)` line repeats it at the tail, so the marker
+  was a third copy (~13 tokens per thread reply). Nothing parses it: the
+  reply/react/upload helpers read the transcript's structured fields.
+- **Shorter thread-reply anchor and collapsed-priors line** (jg-fc1csv). The
+  anchor reads `[reply in thread <ts>; parent @<name>: "…"]` instead of
+  `[thread reply — reply with --thread-ts <ts>; …]` — `--thread-ts` is not a
+  `reply-current` flag, and the per-message reply line already spells the
+  command. Already-delivered priors collapse to `Thread context: N earlier
+  messages already delivered.` without the `(newest ts …) — not re-quoted`
+  tail.
+
 ### Fixed
 
 - Redact secret-shaped inbound Slack text before durable admission, gc journal

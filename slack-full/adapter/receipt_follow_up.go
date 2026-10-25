@@ -156,7 +156,8 @@ const receiptFollowUpLogLimit = 240
 // enough to ask gc later, to re-post the identical envelope, and to make a
 // standing loss durable.
 type heldDelivery struct {
-	receiptID string
+	observeReceipt func(deliveryReceipt)
+	receiptID      string
 	// leg names the call site for the log line: inbound | coalesce |
 	// alias dispatch.
 	leg     string
@@ -477,6 +478,9 @@ func (f *receiptFollowUps) runFrom(h heldDelivery, repostsLeft int, recovery boo
 			f.lost(h, repostsLeft, fmt.Errorf("gc holds no record of receipt %s — the background send died with its process or aged out; nobody is still trying", logID))
 			return
 		case state == receiptPollConcluded:
+			if h.observeReceipt != nil {
+				h.observeReceipt(receipt)
+			}
 			// Landing evidence outranks the summary verdict. A busy
 			// session's fan-out concludes with the payload pasted whole
 			// and only the submit unconfirmed (gp-2io classifies that

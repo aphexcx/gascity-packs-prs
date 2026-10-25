@@ -1,0 +1,13 @@
+{
+  "command": [
+    "go",
+    "vet",
+    "./..."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "head": "941f4d9626e3dea8bd1e797181ee38e27cd886a9",
+  "utc": "2026-10-25T11:39:05.243350+00:00",
+  "exit_code": 0,
+  "seconds": 1.01,
+  "test_counts": {}
+}

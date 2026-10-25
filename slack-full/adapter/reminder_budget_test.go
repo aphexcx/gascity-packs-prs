@@ -96,7 +96,7 @@ func TestComposeChannelReminder_DropsPeerSecond(t *testing.T) {
 }
 
 func TestComposeChannelReminder_TrimsBodyTailLast(t *testing.T) {
-	anchor := "[thread reply — reply with --thread-ts 99.000001]"
+	anchor := "[reply in thread 99.000001]"
 	head := strings.Repeat("H", 250)
 	tail := strings.Repeat("T", 5000)
 	parts := channelReminderParts{
@@ -159,11 +159,11 @@ func TestFormatThreadReplyAnchor(t *testing.T) {
 		name, threadTS, author, line string
 		want                         string
 	}{
-		{"bare", "99.1", "", "", "[thread reply — reply with --thread-ts 99.1]"},
+		{"bare", "99.1", "", "", "[reply in thread 99.1]"},
 		{"with parent", "99.1", "Afik", "approve it\nsecond line",
-			`[thread reply — reply with --thread-ts 99.1; parent @Afik: "approve it"]`},
+			`[reply in thread 99.1; parent @Afik: "approve it"]`},
 		{"no author", "99.1", "", "context here",
-			`[thread reply — reply with --thread-ts 99.1; parent: "context here"]`},
+			`[reply in thread 99.1; parent: "context here"]`},
 		{"no thread", "", "Afik", "x", ""},
 	}
 	for _, c := range cases {
@@ -191,7 +191,7 @@ func TestComposeChannelReminder_DropsPreambleBeforeBody(t *testing.T) {
 	// codex round-1 finding 2: an unbounded preamble must not defeat the
 	// budget — it sheds (with a notice) before the body is touched.
 	parts := channelReminderParts{
-		anchor:    "[thread reply — reply with --thread-ts 99.1]",
+		anchor:    "[reply in thread 99.1]",
 		preamble:  "Thread context (1 earlier message):\n@alice: " + strings.Repeat("p", 5000) + "\n\n---\n\n",
 		body:      "ok",
 		ts:        "100.000001",
@@ -232,7 +232,7 @@ func TestComposeChannelReminder_OmissionNoticeYieldsToHardBound(t *testing.T) {
 	// codex round-2 finding 1: the omission notice itself must shed when
 	// the trimmed result would otherwise exceed the budget.
 	parts := channelReminderParts{
-		anchor:    "[thread reply — reply with --thread-ts 99.1]",
+		anchor:    "[reply in thread 99.1]",
 		preamble:  strings.Repeat("p", 5000) + "\n---\n\n",
 		body:      strings.Repeat("b", 5000),
 		ts:        "1.0",
@@ -260,7 +260,7 @@ func TestComposeChannelReminder_FilesOnlyOmissionNoticeYields(t *testing.T) {
 	// codex round-3 finding 1: a files-only unit has nothing to trim,
 	// but the omission notice must still shed when it alone overflows.
 	parts := channelReminderParts{
-		anchor:    "[thread reply — reply with --thread-ts 99.1]",
+		anchor:    "[reply in thread 99.1]",
 		preamble:  strings.Repeat("p", 5000) + "\n---\n\n",
 		body:      "",
 		files:     "[file: photo.jpg]",

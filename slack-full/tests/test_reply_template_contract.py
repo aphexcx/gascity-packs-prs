@@ -66,3 +66,28 @@ def test_help_block_flags_exist_on_reply_current_and_react() -> None:
 def test_template_is_single_line() -> None:
     # The whole point of gp-729 item 3: the per-message form is ONE line.
     assert "\\n" not in _template_line()
+
+
+def _compact_template_line() -> str:
+    match = re.search(
+        r'slackReplyInstructionsCompactTemplate = "([^"]+)"', _go_source()
+    )
+    assert match, "slackReplyInstructionsCompactTemplate const not found in inbound_coalescer.go"
+    return match.group(1)
+
+
+def test_compact_template_always_renders_and_has_no_optional_segment() -> None:
+    # SLACK_REPLY_INSTRUCTIONS=compact (jg-fc1csv). gc replaces an EMPTY
+    # render with its longer generic fallback and treats [..] as an
+    # optional segment dropped when a placeholder is empty, so the compact
+    # line must carry literal text, no brackets, and only placeholders gc
+    # always fills ({thread_ts} falls back to the message's own ts).
+    template = _compact_template_line()
+    assert "\\n" not in template
+    assert "[" not in template and "]" not in template
+    placeholders = set(re.findall(r"\{([a-z_]+)\}", template))
+    assert placeholders == {"thread_ts"}
+    assert re.sub(r"\{[a-z_]+\}", "", template).strip()
+    # The command shape lives in the once-per-channel help block (pinned
+    # above) and the operator's prompt note, never in the compact line.
+    assert "gc slack" not in template

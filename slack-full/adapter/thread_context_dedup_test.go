@@ -22,7 +22,7 @@ func TestPreambleCollapsesDeliveredParent(t *testing.T) {
 	got := formatThreadContextPreamble(dedupReplies(), "", "4.0", "", nil,
 		func(ts string) bool { return delivered[ts] }, nil)
 
-	if !strings.Contains(got, "1 earlier message already delivered (newest ts 1.0) — not re-quoted.") {
+	if !strings.Contains(got, "1 earlier message already delivered.") {
 		t.Fatalf("missing collapse line:\n%s", got)
 	}
 	if strings.Contains(got, "parent message") {
@@ -38,7 +38,7 @@ func TestPreambleCollapsesDeliveredParent(t *testing.T) {
 func TestPreambleAllDeliveredCollapsesToOneLine(t *testing.T) {
 	got := formatThreadContextPreamble(dedupReplies(), "", "4.0", "", nil,
 		func(string) bool { return true }, nil)
-	if !strings.Contains(got, "3 earlier messages already delivered (newest ts 3.0) — not re-quoted.") {
+	if !strings.Contains(got, "3 earlier messages already delivered.") {
 		t.Fatalf("missing collapse line:\n%s", got)
 	}
 	for _, quoted := range []string{"parent message", "first reply", "second reply"} {
@@ -56,7 +56,7 @@ func TestPreambleNilFilterQuotesEverything(t *testing.T) {
 	if !strings.Contains(got, "Thread context (3 earlier messages):") {
 		t.Fatalf("nil filter must keep pre-gp-729 shape:\n%s", got)
 	}
-	if strings.Contains(got, "not re-quoted") {
+	if strings.Contains(got, "already delivered") {
 		t.Fatalf("nil filter must not emit collapse lines:\n%s", got)
 	}
 	for _, want := range []string{"parent message", "first reply", "second reply"} {

@@ -1,0 +1,18 @@
+{
+  "provider_message_id": "100.000003",
+  "conversation": {
+    "scope_id": "test-city",
+    "provider": "slack",
+    "account_id": "T1",
+    "conversation_id": "C1",
+    "kind": "room"
+  },
+  "actor": {
+    "id": "U_ALICE",
+    "display_name": "U_ALICE",
+    "is_bot": false
+  },
+  "text": "synthetic human text",
+  "dedup_key": "slack-100.000003",
+  "received_at": "0001-01-01T00:00:00Z"
+}

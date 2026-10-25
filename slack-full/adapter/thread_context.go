@@ -35,19 +35,30 @@ import (
 // channel, thread) the ts up-to-which preamble has been delivered;
 // the formatter applies that as a lower bound so each agent's
 // preamble is the delta of peer activity since its last visit.
-// Trade-off: more API calls than gc-px8.5's single-shot policy; one
-// fetch per inbound in a thread. Slack's tier-3 limit on
-// conversations.replies (50/min) is comfortable for typical
-// per-thread cadence.
+// Trade-off: one bounded fetch per inbound in a thread. Page size is
+// independent of the retained context window so long threads do not spend
+// one API request for every 20 messages. Rate limits and timeouts return
+// the context already fetched with an explicit incomplete-window notice.
 
-// defaultThreadContextLimit caps how many thread replies the adapter
-// asks Slack for when seeding context. Slack itself silently caps
-// conversations.replies at 1000; we want a smaller window so a long-
+// defaultThreadContextLimit caps the retained thread window (root plus
+// newest replies). Cursor pages are consumed oldest-first; we want a smaller
+// retained window so a long-
 // running thread doesn't dump a megabyte of history into a single
 // bridge-mail body. 20 is generous for the priority-feature use case
 // (a freshly-mentioned mayor seeing the recent decision-making) and
 // is overrideable via SLACK_THREAD_CONTEXT_LIMIT.
 const defaultThreadContextLimit = 20
+
+// Fetch at most four 500-message pages per inbound, independently of the
+// retained window. An unfinished fetch preserves the newest replies in hand.
+const threadContextPageSize = 500
+const threadContextMaxPages = 4
+
+// A 500-message page can legitimately exceed the old 1 MiB allowance.
+// Keep the body bounded while allowing large ordinary text pages to decode.
+const threadRepliesMaxResponseBytes = 32 << 20
+
+const threadContextIncompleteNotice = "[thread context incomplete — showing fetched replies; read thread for the rest]\n\n"
 
 // threadContextFetchTimeout bounds the conversations.replies HTTP
 // round-trip. Slack's API typically responds in well under a second;
@@ -520,19 +531,22 @@ func parseBotProfile(raw json.RawMessage) slackBotProfile {
 // slackConversationsRepliesResp is the top-level conversations.replies
 // JSON response.
 type slackConversationsRepliesResp struct {
-	OK       bool                 `json:"ok"`
-	Error    string               `json:"error,omitempty"`
-	Messages []slackThreadMessage `json:"messages,omitempty"`
+	OK               bool                 `json:"ok"`
+	Error            string               `json:"error,omitempty"`
+	Messages         []slackThreadMessage `json:"messages,omitempty"`
+	HasMore          bool                 `json:"has_more,omitempty"`
+	ResponseMetadata struct {
+		NextCursor string `json:"next_cursor"`
+	} `json:"response_metadata"`
 }
 
-// fetchThreadReplies calls Slack's conversations.replies to retrieve
-// messages in the thread rooted at threadTS. limit caps the response
-// size; non-positive limits fall back to defaultThreadContextLimit.
-//
-// Returns the message slice exactly as Slack returned it (oldest-
-// first by Slack's contract). The caller filters: drop the current
-// message and any later replies before formatting.
-func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, limit int) ([]slackThreadMessage, error) {
+// fetchThreadReplies follows conversations.replies cursors, retaining the
+// root and newest limit-1 replies in chronological order. Optional beforeTS
+// excludes the current and later messages before selecting the retained window.
+// Non-positive limits fall back to defaultThreadContextLimit. A failed or
+// incomplete page returns the retained window AND an error: callers must label
+// the partial context and must not advance the delivered-context watermark.
+func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, limit int, beforeTS ...string) ([]slackThreadMessage, error) {
 	if token == "" {
 		return nil, fmt.Errorf("slack token empty")
 	}
@@ -545,38 +559,123 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 	q := url.Values{}
 	q.Set("channel", channel)
 	q.Set("ts", threadTS)
-	q.Set("limit", strconv.Itoa(limit))
+	q.Set("limit", strconv.Itoa(threadContextPageSize))
+	if len(beforeTS) > 0 && beforeTS[0] != "" {
+		q.Set("latest", beforeTS[0])
+		q.Set("inclusive", "false")
+	}
+	// Slack pages oldest first. Keep the root for the anchor and the
+	// newest limit-1 replies, using bounded memory while following cursors.
+	var root *slackThreadMessage
+	var recent []slackThreadMessage
+	window := func() []slackThreadMessage {
+		if root != nil {
+			return append([]slackThreadMessage{*root}, recent...)
+		}
+		return recent
+	}
+	seenCursors := map[string]bool{}
+	for page := 0; page < threadContextMaxPages; page++ {
+		sr, err := fetchThreadRepliesPage(ctx, token, q)
+		if err != nil {
+			return window(), err
+		}
+		for i := range sr.Messages {
+			sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
+			m := sr.Messages[i]
+			if len(beforeTS) > 0 && beforeTS[0] != "" && m.TS >= beforeTS[0] {
+				continue
+			}
+			if m.TS == threadTS {
+				copy := m
+				root = &copy
+			} else {
+				recent = append(recent, m)
+			}
+		}
+		keep := limit
+		if root != nil {
+			keep--
+		}
+		if len(recent) > keep {
+			recent = append([]slackThreadMessage(nil), recent[len(recent)-keep:]...)
+		}
+		cursor := strings.TrimSpace(sr.ResponseMetadata.NextCursor)
+		if cursor == "" {
+			if sr.HasMore {
+				return window(), fmt.Errorf("conversations.replies has_more without cursor")
+			}
+			return window(), nil
+		}
+		if seenCursors[cursor] {
+			return window(), fmt.Errorf("conversations.replies repeated cursor")
+		}
+		seenCursors[cursor] = true
+		q.Set("cursor", cursor)
+	}
+	return window(), fmt.Errorf("conversations.replies exceeded %d-page context limit", threadContextMaxPages)
+}
 
+func fetchThreadRepliesPage(ctx context.Context, token string, q url.Values) (slackConversationsRepliesResp, error) {
 	reqURL := slackAPIBase + "/conversations.replies?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return nil, fmt.Errorf("build conversations.replies request: %w", err)
+		return slackConversationsRepliesResp{}, fmt.Errorf("build conversations.replies request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("conversations.replies: %w", err)
+		return slackConversationsRepliesResp{}, fmt.Errorf("conversations.replies: %w", err)
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, threadRepliesMaxResponseBytes))
+	resp.Body.Close()
 	if err != nil {
-		return nil, fmt.Errorf("read conversations.replies body: %w", err)
+		return slackConversationsRepliesResp{}, fmt.Errorf("read conversations.replies body: %w", err)
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("conversations.replies HTTP %d: %s", resp.StatusCode, clipBodyForLog(body))
+		return slackConversationsRepliesResp{}, fmt.Errorf("conversations.replies HTTP %d: %s", resp.StatusCode, clipBodyForLog(body))
 	}
 	var sr slackConversationsRepliesResp
 	if err := json.Unmarshal(body, &sr); err != nil {
-		return nil, fmt.Errorf("decode conversations.replies: %w (body=%s)", err, clipBodyForLog(body))
+		return slackConversationsRepliesResp{}, fmt.Errorf("decode conversations.replies: %w (body=%s)", err, clipBodyForLog(body))
 	}
 	if !sr.OK {
-		return nil, fmt.Errorf("conversations.replies not ok: %s", sr.Error)
+		return slackConversationsRepliesResp{}, fmt.Errorf("conversations.replies not ok: %s", sr.Error)
 	}
-	for i := range sr.Messages {
-		sr.Messages[i].Text = redactInboundText(sr.Messages[i].Text)
+	return sr, nil
+}
+
+// Ownership is an existence query over all pages, not a retained context
+// window. Stop as soon as an own post is found, without losing early replies.
+func fetchThreadHasOwnBotPost(ctx context.Context, token, channel, threadTS, botUserID, currentTS string) (bool, error) {
+	q := url.Values{"channel": {channel}, "ts": {threadTS}, "limit": {strconv.Itoa(ownThreadScanLimit)}}
+	if currentTS != "" {
+		q.Set("latest", currentTS)
+		q.Set("inclusive", "false")
 	}
-	return sr.Messages, nil
+	seen := map[string]bool{}
+	for {
+		sr, err := fetchThreadRepliesPage(ctx, token, q)
+		if err != nil {
+			return false, err
+		}
+		if threadHasOwnBotPost(sr.Messages, botUserID, currentTS) {
+			return true, nil
+		}
+		cursor := strings.TrimSpace(sr.ResponseMetadata.NextCursor)
+		if cursor == "" {
+			if sr.HasMore {
+				return false, fmt.Errorf("conversations.replies has_more without cursor")
+			}
+			return false, nil
+		}
+		if seen[cursor] {
+			return false, fmt.Errorf("conversations.replies repeated cursor")
+		}
+		seen[cursor] = true
+		q.Set("cursor", cursor)
+	}
 }
 
 // formatThreadContextPreamble builds the bridge-mail preamble from
@@ -607,7 +706,10 @@ func fetchThreadReplies(ctx context.Context, token, channel, threadTS string, li
 // re-quote. nil disables the filter (every prior quotes in full, the
 // pre-gp-729 behavior). The conservative direction is always the full
 // quote: an empty delivered-set only ever re-quotes, never loses.
-func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, currentTS, sinceTS string, resolveName func(string) string, alreadyDelivered func(string) bool, botAuthor threadBotAuthorFunc) string {
+func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, currentTS, sinceTS string, resolveName func(string) string, alreadyDelivered func(string) bool, botAuthor threadBotAuthorFunc, windows ...*injectionWindow) string {
+	for _, window := range windows {
+		window.SinceTS = sinceTS
+	}
 	var prior []slackThreadMessage
 	// botLabels carries the classifier's label per quoted bot post, keyed
 	// by ts, so classification runs once per message.
@@ -621,6 +723,9 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		}
 		isRoot := threadTS != "" && m.TS == threadTS
 		if !isRoot && sinceTS != "" && m.TS <= sinceTS {
+			for _, window := range windows {
+				window.Skipped++
+			}
 			continue
 		}
 		if strings.TrimSpace(m.Text) == "" {
@@ -645,13 +750,9 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 	}
 	var quoted []slackThreadMessage
 	deliveredCount := 0
-	deliveredNewest := ""
 	for _, m := range prior {
 		if alreadyDelivered != nil && alreadyDelivered(m.TS) {
 			deliveredCount++
-			if m.TS > deliveredNewest {
-				deliveredNewest = m.TS
-			}
 			continue
 		}
 		quoted = append(quoted, m)
@@ -685,13 +786,21 @@ func formatThreadContextPreamble(replies []slackThreadMessage, threadTS, current
 		}
 		quoted = kept
 	}
+	for _, window := range windows {
+		window.Collapsed = deliveredCount
+		if len(quoted) > 0 {
+			window.Oldest, window.Newest = quoted[0].TS, quoted[len(quoted)-1].TS
+		}
+	}
 	var b strings.Builder
 	if deliveredCount > 0 {
 		fmt.Fprintf(&b, "Thread context: %d earlier message", deliveredCount)
 		if deliveredCount != 1 {
 			b.WriteByte('s')
 		}
-		fmt.Fprintf(&b, " already delivered (newest ts %s) — not re-quoted.\n", deliveredNewest)
+		// The count alone (jg-fc1csv): the old "(newest ts …) — not
+		// re-quoted" tail restated what "already delivered" says.
+		b.WriteString(" already delivered.\n")
 	}
 	if len(quoted) == 0 && botOmitted == 0 {
 		b.WriteString("\n---\n\n")

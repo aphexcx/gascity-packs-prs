@@ -242,6 +242,9 @@ type peerContextItem struct {
 	TS       string
 	ThreadTS string
 	Text     string
+	// FailedForward distinguishes undelivered wake-granted posts from
+	// ambient context, which minimal mode intentionally omits.
+	FailedForward bool
 }
 
 // maxPeerContextPerChannel bounds the per-channel buffer. A quiet channel
@@ -261,23 +264,30 @@ type peerContextBuffer struct {
 	mu      sync.Mutex
 	pending map[string][]peerContextItem
 	dropped map[string]int
+	failed  map[string][]peerContextItem
 }
 
 func newPeerContextBuffer() *peerContextBuffer {
 	return &peerContextBuffer{
 		pending: make(map[string][]peerContextItem),
 		dropped: make(map[string]int),
+		failed:  make(map[string][]peerContextItem),
 	}
 }
 
 // add appends one peer post to the channel's buffer, evicting the oldest
-// entry (and counting it) when the cap is reached. Nil-safe.
+// ambient entry (and counting it) when the cap is reached. Failed immediate
+// forwards have their own queue and are never evicted by that cap. Nil-safe.
 func (b *peerContextBuffer) add(item peerContextItem) {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if item.FailedForward {
+		b.failed[item.Channel] = append(b.failed[item.Channel], item)
+		return
+	}
 	q := b.pending[item.Channel]
 	if len(q) >= maxPeerContextPerChannel {
 		drop := len(q) - maxPeerContextPerChannel + 1
@@ -295,10 +305,11 @@ func (b *peerContextBuffer) flush(channel string) ([]peerContextItem, int) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	items := b.pending[channel]
+	items := append(b.failed[channel], b.pending[channel]...)
 	dropped := b.dropped[channel]
 	delete(b.pending, channel)
 	delete(b.dropped, channel)
+	delete(b.failed, channel)
 	return items, dropped
 }
 
@@ -311,7 +322,20 @@ func (b *peerContextBuffer) restore(channel string, items []peerContextItem, dro
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	q := append(append([]peerContextItem{}, items...), b.pending[channel]...)
+	var failed, ambient []peerContextItem
+	for _, item := range items {
+		if item.FailedForward {
+			failed = append(failed, item)
+		} else {
+			ambient = append(ambient, item)
+		}
+	}
+	// Ambient churn and budget deferral must not evict an undelivered
+	// immediate forward. Recovery drains as later reminders have room.
+	if len(failed) > 0 {
+		b.failed[channel] = append(failed, b.failed[channel]...)
+	}
+	q := append(ambient, b.pending[channel]...)
 	if len(q) > maxPeerContextPerChannel {
 		over := len(q) - maxPeerContextPerChannel
 		q = append(q[:0:0], q[over:]...)
@@ -611,11 +635,33 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		DedupKey:         "slack-" + msg.TS,
 		ReceivedAt:       time.Now().UTC(),
 	}
+	var recovery []peerContextItem
+	if cfg.minimalInjection() {
+		// bots.info can prove the app identity without returning user_id.
+		// Keep the actual bot id as the sender coordinate in that case.
+		if inbound.Actor.ID == "" {
+			inbound.Actor.ID = botID
+		}
+		anchor := ""
+		if msg.ThreadTS != "" && msg.ThreadTS != msg.TS {
+			author, line := cfg.injectionParents.get(msg.Channel, msg.ThreadTS)
+			anchor = formatThreadReplyAnchor(msg.ThreadTS, author, line)
+		} else {
+			cfg.injectionParents.remember(msg.Channel, msg.TS, entry.Label, msg.Text)
+		}
+		inbound.Text = minimalReminder(cfg, inbound, msg.Text, "", anchor)
+		items, _ := cfg.peerContext.flush(msg.Channel)
+		inbound.Text, recovery = minimalPeerRecovery(cfg, msg.Channel, inbound.Text, items)
+	}
 	if err := postInbound(cfg, inbound); err != nil {
 		// Degrade to the buffered default rather than lose the post; the
 		// dedup claim commits either way (peer context is best-effort and
 		// must not re-trigger Slack redelivery churn).
 		log.Printf("peer-bot: immediate forward failed chan=%s ts=%s (%v) — buffering instead", msg.Channel, msg.TS, err)
+		cfg.peerContext.restore(msg.Channel, recovery, 0)
+		// Full mode retains its existing capped ambient FIFO and rendering.
+		// Only minimal mode has budget-aware recovery draining.
+		item.FailedForward = cfg.minimalInjection()
 		cfg.peerContext.add(item)
 		return
 	}
