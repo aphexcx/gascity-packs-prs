@@ -96,6 +96,10 @@ remain queued with an explicit deferred count. Full context quotes every
 author under one budget rule. Channel and thread reads return every author
 and keep the newest N messages (default 50). The old `wake` and
 `immediate_channels` keys still parse but no longer limit peer delivery.
+Before re-pinning, populate the peer registry as described in the
+[peer-parity upgrade note](CHANGELOG.md#upgrade). An oversized recovery head
+rides whole on the next delivery; context fits newest-first with a counted
+remainder and a 1,200-byte floor when the protected message exhausts its budget.
 Before enabling it, add the reply and context-reading contracts to
 every receiving agent's prompt. The setting takes effect at the next adapter
 start; invalid values fail startup. A text-free inbound journal records forward

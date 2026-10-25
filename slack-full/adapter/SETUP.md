@@ -344,8 +344,7 @@ with `SLACK_PEER_BOTS_PATH`) supplies the allowlist and friendly labels:
     {"label": "citadel", "bot_id": "B0XXXXXXXXX", "wake": true},
     {"label": "sinan", "app_id": "A0XXXXXXXXX"},
     {"label": "boomtown", "bot_user_id": "U0XXXXXXXXX"}
-  ],
-  "immediate_channels": ["C0XXXXXXXXX"]
+  ]
 }
 ```
 
@@ -358,9 +357,10 @@ with `SLACK_PEER_BOTS_PATH`) supplies the allowlist and friendly labels:
 - Failed forwards alone enter an in-memory FIFO. Later human, batch or peer
   deliveries carry whole queued posts when they fit the reminder budget.
   `[N omitted — awaiting delivery]` reports the remaining queue in both modes.
-  There is no per-item clip or 20-item eviction. An oversized head stays queued
-  until enough budget is available; it never silently becomes a delivered
-  excerpt. Restart loses this in-memory queue, and sustained failures can grow
+  There is no per-item clip or 20-item eviction. An oversized head rides whole
+  on the next delivery, over budget, with a log naming its channel, byte size
+  and budget. Later entries retain FIFO order and ride subsequent deliveries.
+  Restart loses this in-memory queue, and sustained failures can grow
   it. The count and read pointer make pending context visible in the meantime.
   Attachments and trusted local paths survive recovery. A payload refusal
   defers the riders and retries the new message alone; rejected attachments
@@ -377,14 +377,28 @@ with `SLACK_PEER_BOTS_PATH`) supplies the allowlist and friendly labels:
   cannot be definitively resolved is dropped, not delivered.
 - Same reload contract as the other registries: edit the file, then
   SIGHUP or restart the adapter.
+- Unlisted or contradicted bot identities log one info line per bot id per
+  hour, including channel, timestamp and bot/app/user ids. Successful peer
+  deliveries log the registry label. See the [upgrade note](../CHANGELOG.md#upgrade).
 
 Full thread context quotes humans, own-bot posts, peers and other bots under
 one rule: chronological order, whole collapsed text and the same delivered
-watermark/count. The optional context window yields as a whole under the
-reminder budget, with `[N omitted — thread context over budget]`; no author
-has a separate clip, allowance or shedding priority. The protected new message
-and attachments stay whole even when they exceed `SLACK_REMINDER_TEXT_BUDGET`
-(default 3,500 bytes). Only optional context/help are budget-limited.
+watermark/count. Context fits whole quotes newest-first, displaying the retained
+suffix chronologically. One `[N omitted — thread context over budget]` counts
+all older omitted lines, including already-delivered and incomplete-context
+notices. Quotes take priority over those notices. An oversized newest quote
+is cut at a UTF-8 boundary with `… [truncated]` and counts as fitted.
+
+`SLACK_REMINDER_TEXT_BUDGET` (default 3,500 bytes; 0 disables) subtracts the
+protected anchor, new body and files to determine available context space.
+When that protected unit alone exhausts the budget, context instead receives
+`SLACK_REMINDER_CONTEXT_FLOOR` (default 1,200 bytes; positive integer). Small
+context therefore rides whole under an oversized new post. The new message
+and attachments always stay whole. A pathologically small positive budget
+can be exceeded by the mandatory truncation marker and omission count.
+Help still yields first; multi-message full-mode batches retain their verbatim
+contract. A partial context window is journaled as unknown because the rendered
+quote text does not supply exact timestamps for the selected suffix.
 
 `gc slack read` returns every author in channel and thread mode. Both keep
 the newest N messages (`--limit`, default 50), displayed chronologically.
@@ -427,8 +441,9 @@ Knobs:
   registers `reply-to <root-or-message-ts>` automatically, overriding
   `SLACK_REPLY_INSTRUCTIONS`. Thread re-quotes and reply how-to blocks are
   omitted. Every allowlisted peer post arrives independently with its whole
-  text, exactly like a human post. Failed forwards ride a later delivery when
-  they fit; the remaining count is explicit and deferred recovery is retained.
+  text, exactly like a human post. The first failed forward rides a later
+  delivery whole even over budget; the remaining count is explicit and
+  deferred recovery is retained.
   Thread context is not fetched in minimal mode. The parent author/first line
   comes from a bounded cache of observed roots; a cold cache keeps the thread
   id alone, and edits/deletions invalidate cached excerpts. A reaction with

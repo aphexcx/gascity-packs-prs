@@ -1,0 +1,26 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-count=1",
+    "-json",
+    "-run",
+    "Test(PeerRecovery|PeerBotAdmissionDiagnostics|PeerBotDropLogHourlyLimit|ThreadContextFit|ReminderContextFloor|ComposeChannelReminder|ThreadContextQuotesAndShedsAllAuthorsEqually)",
+    "."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "exit_code": 1,
+  "seconds": 6.98,
+  "test_events": {
+    "run": 30,
+    "output": 67,
+    "pass": 29,
+    "fail": 1
+  },
+  "top_level": {
+    "run": 14,
+    "output": 29,
+    "pass": 13,
+    "fail": 1
+  }
+}

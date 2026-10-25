@@ -33,11 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remain parsed compatibility keys; startup reports that every channel is
   immediate. Unlisted bots no longer enter ambient recovery storage.
 - **One thread-context rule for every author**, including own-bot history:
-  whole quotes, the same delivered collapse and one counted omission rule.
-  New message text remains whole even above the optional-context budget.
+  whole quotes fit newest-first with one count for all omitted older quotes
+  and notices; an oversized newest quote is clipped rune-safe with a marker
+  (gp-qwc2). New message text remains whole. When it exhausts the reminder
+  budget, `SLACK_REMINDER_CONTEXT_FLOOR` (default 1,200 bytes) retains context.
 - **Recovery-only peer FIFO in both modes**: whole failed posts ride later
   deliveries within budget; an explicit count names deferred entries. No
-  eviction or clipped-as-delivered recovery. The queue remains in memory.
+  eviction or clipped-as-delivered recovery. An oversized head rides whole
+  on the next delivery, over budget and logged (gp-qwc2). The queue remains
+  in memory.
 - **Thread reads return newest N**, matching channel reads; all authors are
   retained and long threads are scanned across cursor pages with bounded memory.
 - **Reply anchors include peer turns**: default conversation and thread lookup
@@ -63,6 +67,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command. Already-delivered priors collapse to `Thread context: N earlier
   messages already delivered.` without the `(newest ts …) — not re-quoted`
   tail.
+
+### Upgrade
+
+From the peer-parity change (PR 63, gp-j5p4), a city with no `peer_bots.json`,
+or entries naming stale bot ids, receives no peer posts in any reminder.
+They remain readable with `gc slack read` and quoted as thread context.
+Before re-pinning, list each peer by `app_id` (stable across reinstalls),
+with `bot_id` and `bot_user_id` as fallbacks. When several ids appear in an
+entry, they must agree; remove stale pinned ids after reinstalling.
+An unlisted or contradicted bot post logs one info line per bot id per hour
+with channel, timestamp and bot/app/user ids (gp-qwc2). Successful peer
+deliveries also log their registry label.
 
 ### Removed
 

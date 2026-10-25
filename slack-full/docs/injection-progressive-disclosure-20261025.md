@@ -186,15 +186,38 @@ scan to the final cursor instead of returning the oldest 50.
 Failed forwards alone enter the FIFO. Recovery preserves whole text, uses the
 same budget in both modes, restores failures ahead of deferred entries and
 reports `[N omitted — awaiting delivery]` whenever entries remain. There is
-no 20-entry eviction or 2,000-byte clip. An item too large to fit remains
-queued with a count until there is enough budget, rather than being counted
-as delivered after clipping. This queue is still in memory.
+no 20-entry eviction or 2,000-byte clip. As of gp-qwc2, an oversized head
+rides whole on the next delivery, over budget and logged; subsequent items
+stay in FIFO order. This queue is still in memory.
 Recovery retains attachments and trusted file paths. A refused rider cannot
 charge an unrelated successor's rejection ladder: riders are deferred and the
 successor retries alone with a count. Rejected attachments retain a path and
 withholding notice; held-loss dead letters retain every included peer.
 
 ### Cost of a peer post
+
+2026-10-25 follow-up (gp-qwc2): replaying the same 2026-10-14 23:00 to
+2026-10-21 23:00 UTC capture through the before/after production composer
+produces **0 → 0 whole-context drops** among 371 reminders with captured
+context. The capture still contains 575 reminders / 518,967 bytes; promoting
+its 110 buffered peer copies gives 685 projected reminders. Full mode is
+**485,075 → 485,075 bytes**, **708.14 → 708.14 bytes/reminder**; minimal is
+**435,938 → 435,938 bytes**, **636.41 → 636.41 bytes/reminder**. This window
+does not exercise the oversized-context defect: historical clips and missing
+quotes cannot be reconstructed. The extended replay retains captured context,
+uses the full-mode reply line and captured batch framing, omits optional help,
+and preserves verbatim multi-message batches. It therefore measures a renderer
+projection, not historical byte-for-byte delivery or a billing saving.
+Aggregate reports are in `assets/pr-evidence/gp-qwc2/`; private inputs remain
+in ignored scratch. Synthetic goldens cover the repaired overflow cases.
+
+The follow-up fits whole quotes newest-first, with one older-remainder count
+including notices, and clips only an oversized newest line at a UTF-8 boundary.
+When the protected anchor/body/files exhaust the 3,500-byte reminder budget,
+`SLACK_REMINDER_CONTEXT_FLOOR` supplies 1,200 context bytes by default. When
+the remainder is positive, that remainder is the context budget. This keeps a
+small context whole under a long new post while every author's new text remains
+protected. Marker/count overhead can exceed pathologically tiny budgets.
 
 The replay promotes each of the 110 captured buffered copies to an admitted
 peer arrival and renders it with production Go functions. Figures include

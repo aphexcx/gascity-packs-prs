@@ -128,7 +128,7 @@ func TestFormatThreadReplyAnchor_NeutralizesAndClips(t *testing.T) {
 	}
 }
 
-func TestComposeChannelReminder_DropsPreambleBeforeBody(t *testing.T) {
+func TestComposeChannelReminder_FitsPreambleBeforeBody(t *testing.T) {
 	// codex round-1 finding 2: an unbounded preamble must not defeat the
 	// budget — it sheds (with a notice) before the body is touched.
 	parts := channelReminderParts{
@@ -142,8 +142,8 @@ func TestComposeChannelReminder_DropsPreambleBeforeBody(t *testing.T) {
 	if usedPreamble || trimmed {
 		t.Fatalf("usedPreamble=%v trimmed=%v, want false/false", usedPreamble, trimmed)
 	}
-	if !strings.HasPrefix(got, parts.anchor+"\n"+contextOmissionNotice(parts.preamble)+"ok") {
-		t.Fatalf("expected anchor + omission notice + body, got %q", got)
+	if !strings.HasPrefix(got, parts.anchor+"\n@alice: ") || !strings.HasSuffix(got, "… [truncated]\n\nok") || strings.Contains(got, "omitted") {
+		t.Fatalf("expected anchor + fitted newest quote + body, got %q", got)
 	}
 	if len(got) > 3500 {
 		t.Fatalf("len=%d exceeds budget", len(got))

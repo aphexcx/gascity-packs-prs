@@ -1,0 +1,17 @@
+replay-prepare: ['python3', 'slack-full/scripts/replay_minimal_injections.py', '--rows', '.gc/scratch/gp-qwc2/baseline/blocks.jsonl', '--output', '.gc/scratch/gp-qwc2/replay.jsonl']: exit 0
+replay-before-run: ['go', 'test', '-count=1', '-json', '-run', 'TestMinimalReplayMeasurement', '.']: exit 0
+focused: ['go', 'test', '-count=1', '-json', '-run', 'Test(PeerRecovery|PeerBotAdmissionDiagnostics|PeerBotDropLogHourlyLimit|ThreadContextFit|ReminderContextFloor|ComposeChannelReminder|ThreadContextQuotesAndShedsAllAuthorsEqually)', '.']: exit 1
+cli-vet: ['go', 'vet', './...']: exit 0
+replay-after-run: ['go', 'test', '-count=1', '-json', '-run', 'TestMinimalReplayMeasurement', '.']: exit 0
+python: ['uv', 'run', '--python', '3.13', '--with', 'pytest', '--with', 'pyyaml', '--with', 'jsonschema', 'python3', '-m', 'pytest', 'tests', '-q']: exit 0
+adapter-tests: ['go', 'test', '-json', './...']: exit 0
+adapter-vet: ['go', 'vet', './...']: exit 0
+diff-check: ['git', 'diff', '--check']: exit 0
+adapter-tests-final: ['go', 'test', '-json', './...']: exit 0
+replay-after-reviewed: ['go', 'test', '-count=1', '-json', '-run', 'Test(MinimalReplayMeasurement|ReplayContextOutcome|ReminderContextFloorConfigAndBoundaries)', '.']: exit 0
+adapter-vet-reviewed: ['go', 'vet', './...']: exit 0
+adapter-race: ['go', 'test', '-race', '-json', './...']: exit 0
+adapter-tests-reviewed: ['go', 'test', '-json', './...']: exit 0
+goldens-final: ['go', 'test', '-json', '-run', 'TestThreadContextFitGoldens', '.']: exit 0
+adapter-race-reviewed: ['go', 'test', '-race', '-json', './...']: exit 0
+diff-check-staged: ['git', 'diff', '--cached', '--check']: exit 0

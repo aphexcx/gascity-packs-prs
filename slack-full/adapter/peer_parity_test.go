@@ -127,7 +127,7 @@ func TestThreadContextQuotesAndShedsAllAuthorsEqually(t *testing.T) {
 	}
 	parts := channelReminderParts{preamble: preamble, body: "new message", anchor: "[reply in thread 100.1]"}
 	text, _, _, used, clipped := composeChannelReminderText(parts, "", "", 700)
-	if used || clipped || strings.Contains(text, body) || !strings.Contains(text, "[4 omitted — thread context over budget]") || !strings.Contains(text, parts.body) {
+	if used || clipped || strings.Contains(text, body) || !strings.Contains(text, "[3 omitted — thread context over budget]") || !strings.Contains(text, "@B_OTHER (bot):") || !strings.Contains(text, parts.body) {
 		t.Fatal("context was shed with author preference or no count")
 	}
 	// A nil classifier affects names only; no history author disappears.

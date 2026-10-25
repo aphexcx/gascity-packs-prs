@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -95,9 +97,10 @@ func TestPeerRecoveryWholeFIFOCountAndRetry(t *testing.T) {
 				t.Fatal("failed delivery lost/reordered queued posts")
 			}
 			text, sent = peerRecovery(cfg, "C1", strings.Repeat("large", 1000), retry)
-			if len(sent) != 0 || !strings.HasSuffix(text, "[2 omitted — awaiting delivery]") {
-				t.Fatal("oversized new message silently hid deferred posts")
+			if len(sent) != 1 || !strings.Contains(text, items[0].Text) || !strings.HasSuffix(text, "[1 omitted — awaiting delivery]") {
+				t.Fatal("oversized new message blocked recovery head")
 			}
+			cfg.peerContext.restore("C1", sent, 0)
 			cfg.reminderTextBudget = 0
 			retry, _ = cfg.peerContext.flush("C1")
 			text, sent = peerRecovery(cfg, "C1", body, retry)
@@ -110,18 +113,51 @@ func TestPeerRecoveryWholeFIFOCountAndRetry(t *testing.T) {
 }
 
 func TestPeerRecoveryOversizedHeadRemainsVisibleAndWhole(t *testing.T) {
+	var logs bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(previous) })
 	cfg := config{reminderTextBudget: 500, peerContext: newPeerContextBuffer()}
 	for i := 0; i < 25; i++ {
 		cfg.peerContext.add(peerContextItem{Channel: "C1", TS: fmt.Sprint(i), Text: strings.Repeat("whole ", 1000)})
 	}
 	items, _ := cfg.peerContext.flush("C1")
 	text, sent := peerRecovery(cfg, "C1", "new post", items)
-	if len(sent) != 0 || !strings.Contains(text, "25 omitted") {
+	if len(sent) != 1 || !strings.Contains(text, items[0].Text) || !strings.Contains(text, "24 omitted") || len(text) <= cfg.reminderTextBudget {
 		t.Fatal("oversized recovery was clipped or silently dropped")
 	}
 	queued, _ := cfg.peerContext.flush("C1")
-	if len(queued) != 25 || queued[0].Text != items[0].Text {
+	if !reflect.DeepEqual(queued, items[1:]) {
 		t.Fatal("recovery queue lost whole messages")
+	}
+	wantLog := fmt.Sprintf("oversized recovery head chan=C1 item_bytes=%d budget=500", len(formatPeerContextBlock(items[:1], 0)))
+	if strings.Count(logs.String(), wantLog) != 1 {
+		t.Fatalf("missing single overflow log: %s", logs.String())
+	}
+}
+
+func TestPeerRecoverySecondOversizedHeadRidesNextDelivery(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg := config{injectionMode: mode, reminderTextBudget: 500, peerContext: newPeerContextBuffer()}
+			items := []peerContextItem{
+				{Channel: "C1", TS: "100.1", Text: strings.Repeat("first ", 1000)},
+				{Channel: "C1", TS: "100.2", Text: strings.Repeat("second ", 1000)},
+			}
+			for i := range items {
+				pending := items
+				if i > 0 {
+					pending, _ = cfg.peerContext.flush("C1")
+				}
+				text, sent := peerRecovery(cfg, "C1", "new post", pending)
+				if len(sent) != 1 || sent[0].TS != items[i].TS || !strings.Contains(text, items[i].Text) {
+					t.Fatalf("delivery %d did not carry its whole head", i)
+				}
+			}
+			if cfg.peerContext.count("C1") != 0 {
+				t.Fatal("queue did not drain")
+			}
+		})
 	}
 }
 
