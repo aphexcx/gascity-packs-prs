@@ -157,3 +157,19 @@ three 200-message requests.
 
 The prior ordering and failed-flush fixes remain sound. No new actionable
 findings. This was a read-only review; I did not rerun tests.
+
+## Reply-anchor follow-up transcript
+
+**CLEAN — the reply-anchor mismatch is resolved.**
+
+Event selection, latest-transcript lookup, and explicit timestamp lookup now
+admit peer inbounds consistently. Reaction notifications remain excluded
+using the adapter's actual actor prefix.
+
+The regression checks the real reply command across channels for both
+threaded and top-level peers, ensuring it does not inherit an older human
+thread. The shared helpers also cover react/upload anchoring. Updated docs
+match this policy and identify the earlier inventory as historical.
+
+No new actionable findings. Read-only review; tests were inspected, not
+independently rerun.

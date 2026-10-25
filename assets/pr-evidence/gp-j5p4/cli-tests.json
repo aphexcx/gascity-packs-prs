@@ -1,0 +1,15 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-json",
+    "./..."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/cli",
+  "exit_code": 0,
+  "seconds": 1.32,
+  "test_events": {
+    "pass": 237
+  },
+  "failed": []
+}

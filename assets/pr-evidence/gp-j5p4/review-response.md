@@ -16,3 +16,19 @@ fixed main base and returned BLOCK. Its transcript is `codex-review-r1.md`.
 
 The same-model reviewer rechecked both changes and returned CLEAN. The final
 external gate and complete final check summaries accompany the handoff.
+
+Round 2 reviewed `43e982a75af86f24553c1510fa98817178f14c40` and returned
+BLOCK on inconsistent reply anchoring: a plain-label peer event could select
+a conversation while transcript lookup still skipped that peer and inherited
+an unrelated human thread. Its transcript is `codex-review-r2.md`.
+
+The implementation removes the remaining bot exclusions from default and
+explicit-turn anchor lookup. This deliberately supersedes the initial SETUP
+claim that automatic anchors prefer humans: the bead requires peer posts to
+be ordinary posts and leaves response policy to each city's prompt. Events
+and transcripts now select the same latest inbound, whether human or peer.
+Synthetic reaction notifications stay excluded because their event timestamps
+are not postable message timestamps. Tests exercise human C1 → peer C2 and
+actual default replies under a peer's thread or at channel level, plus exact
+peer-turn lookup. The pre-design inventory remains unchanged as historical
+evidence; the updated note explicitly records the policy correction.

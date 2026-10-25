@@ -367,8 +367,10 @@ with `SLACK_PEER_BOTS_PATH`) supplies the allowlist and friendly labels:
   become a visible withholding notice with their saved paths. A held delivery
   that is ultimately lost retains all included peers in its dead letter.
 - Peer text does not grant alias routing or busy reactions. Automatic
-  reply-current transcript selection still prefers human turns; the explicit
-  reply coordinates supplied with each peer post remain usable.
+  reply-current/react/upload anchor selection includes peer inbounds by the
+  same latest-message rule as human inbounds. Event and transcript selection
+  agree on the author; a peer never inherits an older human's unrelated thread.
+  Explicit reply coordinates still select the exact post being answered.
 - Loop safety: every candidate is resolved through `bots.info` (per-
   bot TTL cache) and the adapter never delivers its own posts back to
   itself, even if misconfigured into the allowlist. An author that

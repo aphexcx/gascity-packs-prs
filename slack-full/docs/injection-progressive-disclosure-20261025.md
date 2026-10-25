@@ -168,6 +168,12 @@ reply coordinates, without the adapter's response instructions. The old
 `wake` and `immediate_channels` keys still parse, avoiding a config migration;
 startup logs once that every channel is immediate. Unlisted bots no longer
 enter an ambient buffer, while history reads and quotes include all authors.
+Current-reply/react/upload lookups also include admitted peer inbounds, with
+the same latest-message rule for event selection and transcript anchoring.
+This removes the leftover bot skip that could pair a new peer conversation
+with an older human thread. Synthetic reaction notifications stay excluded.
+The measure-first inventory recorded the former human-only anchor policy;
+review showed it could not coexist with the new ordinary peer event shape.
 
 Full context gives humans, own bots, peers and other bots the same whole
 quotes, chronological order, delivered collapse and counted window omission.

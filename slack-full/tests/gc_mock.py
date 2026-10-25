@@ -175,8 +175,8 @@ class GcMock:
         arrives at the slack-pack adapter and gets forwarded to /extmsg/inbound.
 
         ``actor`` is the inbound speaker's display name (gc's
-        InboundEventPayload.Actor) — the adapter stamps ``peer-bot <label>``
-        here on immediate peer-context inbounds (gp-kop).
+        InboundEventPayload.Actor). Peer arrivals use their registry label,
+        with bot provenance carried by the transcript's structured Actor.
 
         ``age_seconds`` backdates the event so tests can exercise the
         client's escalating ``since`` windows; it is mock-internal and
@@ -238,7 +238,7 @@ class GcMock:
         The ``Actor`` key mirrors gc's wire shape: the record struct has no
         json tags (PascalCase keys) while the nested ExternalActor does
         (``is_bot``). ``actor_is_bot=True`` marks a bot-authored entry, e.g.
-        an immediate peer-context inbound (gp-kop).
+        an ordinary allowlisted peer inbound.
         """
         key = (provider, conversation_id, kind)
         entry = {

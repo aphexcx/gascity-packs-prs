@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   eviction or clipped-as-delivered recovery. The queue remains in memory.
 - **Thread reads return newest N**, matching channel reads; all authors are
   retained and long threads are scanned across cursor pages with bounded memory.
+- **Reply anchors include peer turns**: default conversation and thread lookup
+  use the same latest-inbound rule, and explicit turn lookup accepts peers.
+  Reaction notifications remain excluded because their timestamps are not posts.
 - **Thread context pagination** now preserves the root and newest replies
   across cursor pages, instead of losing the newest end of long threads.
   Current/later messages are excluded before selecting an inbound's window.
