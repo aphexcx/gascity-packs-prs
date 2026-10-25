@@ -22,22 +22,27 @@ whole. The marker and count can overflow pathologically tiny positive budgets.
 The fresh capture reproduces the original seven-day window (2026-10-14 23:00
 through 2026-10-21 23:00 UTC): 575 reminders, 518,967 bytes. `baseline.json`
 contains the aggregate measurement. The existing preparation script was
-extended to retain context and batch framing for full-mode replay. Its actual
+extended to retain context for full-mode replay. Batches now use the production
+formatter directly, without single-message reply anchors. Its actual
 path is `slack-full/scripts/replay_minimal_injections.py`, correcting the bead's
 `adapter/scripts` path.
 
-Both renderer runs use the same private JSONL input. The before run happened
-before the composer changed. The projection promotes 110 captured buffered peer
+Both renderer runs use the same private JSONL input. The first baseline ran
+before the composer changed. After correcting the batch harness, the baseline
+was rerun with a Go source overlay of the immutable base composer and its old
+omission helper. Only an unused variadic floor parameter and the helper name
+were adapted for compilation; baseline composition is unchanged. The projection
+promotes 110 captured buffered peer
 copies to arrivals, resulting in 685 reminders / 767 members, of which 371
 reminders carry captured context. Whole-window drops are **0 before and 0
-after**. Full bytes are **485,075 → 485,075** (708.14 bytes/reminder); minimal
+after**. Full bytes are **482,843 → 482,843** (704.88 bytes/reminder); minimal
 bytes are **435,938 → 435,938** (636.41 bytes/reminder). Reports are
 `replay-before.json` and `replay-after.json`.
 
 This historical sample does not reach the fitter: its 336 context-bearing
 single-unit rows peak at 2,951 bytes; multi-message batches retain their
 verbatim contract. Missing or previously clipped text cannot be reconstructed.
-Full replay uses the verbose reply line, captured batch framing, and no optional
+Full replay uses the verbose reply line, production batch framing, and no optional
 help; minimal uses the compact reply line and the existing synthetic sender id.
 The results are renderer projections, not historical delivery or billing.
 
@@ -75,6 +80,12 @@ whitespace from the long-body golden; `goldens-final.json` records all five
 goldens passing after regeneration. Production source is unchanged by that
 fixture correction.
 
+The gate's measurement-only follow-up changes no production adapter source.
+Its targeted race replay command runs `TestMinimalReplayMeasurement`,
+`TestReplayContextOutcome`, and `TestReplayThreadedBatchParity` (3 passed);
+the baseline overlay replay passes separately (1). Python replay tests pass
+(3 passed, 854 deselected). Corrected command records end in `-corrected.json`.
+
 The optional private replay test skips without input during ordinary Go suites
 and passes separately with `INJECTION_REPLAY_INPUT` / `INJECTION_REPLAY_REPORT`.
 
@@ -85,3 +96,10 @@ compact-window boundary bug and missing clipping-only replay counts. Both were
 fixed with regressions; the final recheck was CLEAN. `self-review.md` records
 the review and follow-up. The separate validated Codex gate follows the source
 commit. The mayor owns the DEEP gate and Fable cross-model read on READY.
+
+Codex DEEP round 1 reviewed source head `ab95b2cdd394f17c741aaf59b90fbbeba7457a26`
+and returned CLEAN, validated exit 0, with one MINOR: the replay synthesized
+single-message anchors for threaded batches. Corrected by using production
+batch formatting and adding a parity test against an actual coalescer delivery.
+The corrected replay totals supersede the original 485,075-byte projection.
+`codex-review-r1.md` retains the finding; the follow-up gate checks its correction.

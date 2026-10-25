@@ -201,11 +201,11 @@ withholding notice; held-loss dead letters retain every included peer.
 produces **0 → 0 whole-context drops** among 371 reminders with captured
 context. The capture still contains 575 reminders / 518,967 bytes; promoting
 its 110 buffered peer copies gives 685 projected reminders. Full mode is
-**485,075 → 485,075 bytes**, **708.14 → 708.14 bytes/reminder**; minimal is
+**482,843 → 482,843 bytes**, **704.88 → 704.88 bytes/reminder**; minimal is
 **435,938 → 435,938 bytes**, **636.41 → 636.41 bytes/reminder**. This window
 does not exercise the oversized-context defect: historical clips and missing
 quotes cannot be reconstructed. The extended replay retains captured context,
-uses the full-mode reply line and captured batch framing, omits optional help,
+uses the full-mode reply line and production batch framing, omits optional help,
 and preserves verbatim multi-message batches. It therefore measures a renderer
 projection, not historical byte-for-byte delivery or a billing saving.
 Aggregate reports are in `assets/pr-evidence/gp-qwc2/`; private inputs remain

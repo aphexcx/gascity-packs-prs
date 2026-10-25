@@ -36,3 +36,13 @@ files-only regression checks the budget and preserved attachment description.
 The reviewer confirmed the source correction and requested ASCII fixture text:
 the first CJK fixture left two spare bytes at a rune boundary, masking the old
 bug. The fixture now uses ASCII, exposing 102 bytes before versus 100 after.
+
+## Codex measurement correction recheck
+
+After external Codex round 1, the same reviewer checked the batch replay fix
+against `ab95b2cdd394f17c741aaf59b90fbbeba7457a26` read-only. Verdict: CLEAN.
+Member anchors are removed and `formatCoalescedBlock` supplies production
+framing. The parity test compares replay byte totals with an actual delivery
+capture. The baseline overlay preserves the original composer behavior.
+Corrected before/after full totals both equal 482,843 bytes. No new findings;
+no builds, tests, or writes performed by the reviewer.

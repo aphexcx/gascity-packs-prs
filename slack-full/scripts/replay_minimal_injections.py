@@ -101,18 +101,15 @@ def prepare(rows, *, peer_parity=True):
             counts["peer_rider_bytes"] += sum(len(b[0].encode()) for b in PEERS.finditer(body))
             outputs.extend(dict(peer_row(u), day=row.get("timestamp", "")[:10]) for u in peers)
         batch = BATCH.search(body)
-        batch_header = ""
         if batch:
             body = PEERS.sub("", HELP.sub("", body))
             members = list(MEMBER.finditer(body))
             if len(members) != int(batch[1]):
                 raise ValueError(f"batch member count mismatch at row {index}")
             units = []
-            batch_header = sinan(body[:members[0].start()])
             for i, m in enumerate(members):
                 end = members[i+1].start() if i+1 < len(members) else len(body)
                 units.append(unit(body[m.end():end], g["channel"], m["sender"], m["ts"], m["thread"]))
-                units[-1]["prefix"] = m[0]
             counts["batches"] += 1
         else:
             units = [unit(body,g["channel"],g["sender"],g["ts"],g["thread"],g["kind"]=="agent")]
@@ -122,8 +119,7 @@ def prepare(rows, *, peer_parity=True):
         counts["sinan_full_bytes"] += len(sinan(text).encode())
         counts["sinan_compact_bytes"] += len(sinan(text,True).encode())
         suffix = g["foot"] + "reply-to " + (g["thread"] or g["ts"]) + "\n</system-reminder>"
-        outputs.append(dict(head=g["head"], foot=suffix, units=units,
-                            batch_header=batch_header, day=row.get("timestamp", "")[:10]))
+        outputs.append(dict(head=g["head"], foot=suffix, units=units, day=row.get("timestamp", "")[:10]))
     return outputs, counts
 
 

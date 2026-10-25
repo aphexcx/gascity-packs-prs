@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -28,13 +30,12 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 		var row struct {
 			Head, Foot  string
 			Day         string
-			BatchHeader string `json:"batch_header"`
-			PeerArrival bool   `json:"peer_arrival"`
+			PeerArrival bool `json:"peer_arrival"`
 			Units       []struct {
 				Channel, Sender          string
 				SenderID                 string `json:"sender_id"`
 				TS, Thread, Body, Anchor string
-				Preamble, Prefix         string
+				Preamble                 string
 				IsBot                    bool `json:"is_bot"`
 			}
 		}
@@ -42,6 +43,7 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 			t.Fatal("invalid replay row")
 		}
 		var texts, fullTexts []string
+		var fullBatch []pendingChannelInbound
 		hasContext, droppedWhole, partial := false, false, false
 		cfg := config{injectionMode: "minimal", reminderTextBudget: defaultReminderTextBudget}
 		if len(row.Units) > 1 {
@@ -54,8 +56,15 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 				anchor = formatThreadReplyAnchor(u.Thread, "", "")
 			}
 			texts = append(texts, minimalReminder(cfg, m, u.Body, "", anchor))
+			if len(row.Units) > 1 {
+				// Production batches carry thread coordinates in each member
+				// prefix, without the single-message reply anchor.
+				anchor = ""
+			}
 			full, _, _, usedPreamble, _ := composeChannelReminderText(channelReminderParts{anchor: anchor, preamble: u.Preamble, body: u.Body}, "", "", cfg.reminderTextBudget)
-			fullTexts = append(fullTexts, u.Prefix+full)
+			fullTexts = append(fullTexts, full)
+			m.Text = full
+			fullBatch = append(fullBatch, pendingChannelInbound{inbound: m})
 			if u.Preamble != "" {
 				hasContext = true
 				// Inspect only the composed context, never matching user body text.
@@ -92,7 +101,11 @@ func TestMinimalReplayMeasurement(t *testing.T) {
 			reply = last.TS
 		}
 		fullFoot := strings.Replace(row.Foot, "\nreply-to "+reply+"\n", "\nReply: gc slack reply-current --conversation-id "+last.Channel+" --reply-to "+reply+" --body-file <file>\n", 1)
-		fullBytes := len(row.Head + row.BatchHeader + strings.Join(fullTexts, "\n\n") + fullFoot)
+		fullText := strings.Join(fullTexts, "\n\n")
+		if len(fullBatch) > 1 {
+			fullText = formatCoalescedBlock(config{}, last.Channel, fullBatch)
+		}
+		fullBytes := len(row.Head + fullText + fullFoot)
 		counts["full_bytes"] += fullBytes
 		bytes := len(row.Head + strings.Join(texts, "\n\n") + row.Foot)
 		counts["minimal_bytes"] += bytes
@@ -147,5 +160,55 @@ func TestReplayContextOutcome(t *testing.T) {
 	}
 	if whole, partial := replayContextOutcome("@human: … [truncated]\n", true); whole || partial {
 		t.Fatal("unchanged quoted text mistaken for fitter output")
+	}
+}
+
+func TestReplayThreadedBatchParity(t *testing.T) {
+	const head = "synthetic envelope\n"
+	const foot = "\nreply-to 100.1\n"
+	var batch []pendingChannelInbound
+	var units []map[string]any
+	for _, ts := range []string{"100.2", "100.3"} {
+		p := pendingChannelInbound{threadAnchor: "[reply in thread 100.1]", preamble: "@prior: synthetic context\n\n", body: "synthetic body"}
+		p.inbound = externalInboundMessage{Conversation: conversationRef{ConversationID: "C_TEST"}, ProviderMessageID: ts, ReplyToMessageID: "100.1", Actor: externalActor{ID: "U_TEST", DisplayName: "Example"}, Text: p.foldedText()}
+		batch = append(batch, p)
+		units = append(units, map[string]any{"channel": "C_TEST", "sender": "Example", "sender_id": "U_TEST", "ts": ts, "thread": "100.1", "body": p.body, "preamble": p.preamble, "anchor": p.threadAnchor})
+	}
+	input, err := json.Marshal(map[string]any{"head": head, "foot": foot, "units": units})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	inputPath, reportPath := filepath.Join(dir, "input.jsonl"), filepath.Join(dir, "report.json")
+	if err := os.WriteFile(inputPath, append(input, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("INJECTION_REPLAY_INPUT", inputPath)
+	t.Setenv("INJECTION_REPLAY_REPORT", reportPath)
+	TestMinimalReplayMeasurement(t)
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct{ Totals map[string]int }
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	capture := &inboundCapture{}
+	server := httptest.NewServer(capture.handler())
+	defer server.Close()
+	cfg := coalescingTestConfig(server.URL, 0)
+	cfg.replyHelp.first("C_TEST")
+	if err := deliverCoalescedBatch(cfg, "C_TEST", batch); err != nil {
+		t.Fatal(err)
+	}
+	got := capture.snapshot()
+	if len(got) != 1 {
+		t.Fatalf("deliveries=%d", len(got))
+	}
+	fullFoot := "\nReply: gc slack reply-current --conversation-id C_TEST --reply-to 100.1 --body-file <file>\n"
+	wantBytes := len(head + got[0].Text + fullFoot)
+	if strings.Contains(got[0].Text, "[reply in thread") || report.Totals["full_bytes"] != wantBytes {
+		t.Fatalf("batch projection=%d, delivered=%d", report.Totals["full_bytes"], wantBytes)
 	}
 }
