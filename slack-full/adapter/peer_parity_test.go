@@ -1,9 +1,12 @@
 package main
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -40,6 +43,70 @@ func TestPeerArrivalUsesHumanReminderShape(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPeerArrivalFlushesOlderHumanPostsFirst(t *testing.T) {
+	for _, mode := range []string{"full", "minimal"} {
+		t.Run(mode, func(t *testing.T) {
+			capture := &inboundCapture{}
+			server := httptest.NewServer(capture.handler())
+			defer server.Close()
+			cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+			cfg.injectionMode, cfg.deliveredIDs = mode, newDeliveredIDs()
+			cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+			cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
+				return deliverCoalescedBatch(cfg, channel, batch)
+			}
+			defer cfg.coalescer.flushAll()
+			cfg.coalescer.enqueue("C1", testPending("C1", "100.000001", "older human instruction"))
+			processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+				peerBotEnvelope(t, "message", "E_PEER", "C1", "100.000002", "", "new peer answer", peerTestPeerBotID, ""), func() {})
+			got := capture.snapshot()
+			if len(got) != 2 || got[0].ProviderMessageID != "100.000001" || got[1].ProviderMessageID != "100.000002" {
+				t.Fatalf("peer overtook a buffered human post: %+v", got)
+			}
+			if cfg.coalescer.pendingContains("C1", "100.000001") {
+				t.Fatal("older human post remains pending after peer arrival")
+			}
+		})
+	}
+}
+
+func TestPeerThreadQuotesHumanAfterFailedFlushAhead(t *testing.T) {
+	slackStub, _ := fakeSlackRepliesServer(t, []slackThreadMessage{
+		{TS: "100.000000", User: "U_ROOT", Text: "thread root"},
+		{TS: "100.000001", User: "U_HUMAN", Text: "older undelivered human instruction"},
+	})
+	withSlackAPIStub(t, slackStub)
+	var posts atomic.Int32
+	capture := &inboundCapture{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if posts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		capture.handler().ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	cfg := peerTestConfig(server.URL, newTestPeerBotsRegistry(t, peerTestAllowlist), citadelResolver())
+	cfg.injectionMode, cfg.slackBotToken = "full", "fixture"
+	cfg.threadContextCache, cfg.slackThreadContextLimit = newThreadContextCache(), 10
+	cfg.deliveredIDs = newDeliveredIDs()
+	cfg.coalescer = newInboundCoalescer(time.Hour, nil)
+	cfg.coalescer.deliver = func(channel string, batch []pendingChannelInbound) error {
+		return deliverCoalescedBatch(cfg, channel, batch)
+	}
+	defer cfg.coalescer.flushAll()
+	cfg.coalescer.enqueue("C1", testPending("C1", "100.000001", "older undelivered human instruction"))
+	processSlackEvent(cfg, newTestHandleAliasRegistry(t), nil, nil, nil, nil,
+		peerBotEnvelope(t, "message", "E_PEER", "C1", "100.000002", "100.000000", "peer answer", peerTestPeerBotID, ""), func() {})
+	got := capture.snapshot()
+	if len(got) != 1 || got[0].ProviderMessageID != "100.000002" || !strings.Contains(got[0].Text, "older undelivered human instruction") || strings.Contains(got[0].Text, "already delivered") {
+		t.Fatalf("pending human was falsely collapsed: %+v", got)
+	}
+	if !cfg.coalescer.pendingContains("C1", "100.000001") || cfg.deliveredIDs.seen("", "C1", "100.000001") {
+		t.Fatal("failed human entry lost its pending retry ownership")
 	}
 }
 

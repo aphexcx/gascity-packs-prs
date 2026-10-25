@@ -263,9 +263,10 @@ def test_read_keeps_human_own_and_peer_authors(slack_api, monkeypatch, capsys, t
     assert [m["text"] for m in result["messages"]] == [m["text"] for m in messages]
 
 
-def test_thread_read_retains_newest_n_across_all_pages(slack_api, monkeypatch, capsys):
+@pytest.mark.parametrize("limit", [1, 50])
+def test_thread_read_retains_newest_n_across_all_pages(slack_api, monkeypatch, capsys, limit):
     mod = _import_module(monkeypatch, slack_api.url)
-    messages = [_msg(f"{100 + i}.0", "U_TEST", f"synthetic {i}", bot_id="B_PEER" if i % 2 else "") for i in range(137)]
+    messages = [_msg(f"{100 + i}.0", "U_TEST", f"synthetic {i}", bot_id="B_PEER" if i % 2 else "") for i in range(437)]
 
     def replies(query, headers):
         start = int(query.get("cursor", "0"))
@@ -274,11 +275,16 @@ def test_thread_read_retains_newest_n_across_all_pages(slack_api, monkeypatch, c
                      "response_metadata": {"next_cursor": str(end) if end < len(messages) else ""}}
 
     slack_api.handlers["/conversations.replies"] = replies
-    assert mod.main(["--conversation-id", "C_TEST", "--thread-ts", "100.0", "--no-names", "--json"]) == 0
+    args = ["--conversation-id", "C_TEST", "--thread-ts", "100.0", "--no-names", "--json"]
+    if limit != 50:
+        args += ["--limit", str(limit)]
+    assert mod.main(args) == 0
     result = json.loads(capsys.readouterr().out)
-    assert [m["text"] for m in result["messages"]] == [m["text"] for m in messages[-50:]]
+    assert [m["text"] for m in result["messages"]] == [m["text"] for m in messages[-limit:]]
     assert result["has_more"] is True
-    assert len(slack_api.calls("/conversations.replies")) == 3
+    calls = slack_api.calls("/conversations.replies")
+    assert len(calls) == 3
+    assert [call["query"]["limit"] for call in calls] == ["200", "200", "200"]
 
 
 def test_thread_read_retries_cut_page_at_smaller_limit(slack_api, monkeypatch, capsys):

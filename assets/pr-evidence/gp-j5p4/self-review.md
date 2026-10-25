@@ -112,3 +112,48 @@ Held coalesced dead letters include each recovered entry. Permanent refusals
 restore the riders and retry the successor alone with the deferred count;
 the existing attachment-withholding helper retains paths and a notice.
 Regression coverage is in `slack-full/adapter/injection_recovery_test.go`.
+
+## Ordering follow-up transcript: first recheck
+
+**CHANGES_REQUIRED — successful ordering is fixed; failed-flush context remains incorrect.**
+
+**P2:** `peer_bots.go:605` still counts pending coalescer entries as already
+delivered. flushAheadOf intentionally proceeds after failure or during
+backoff, leaving those entries pending.
+
+Reproduction: queue older human H; its flush returns 503; peer P fetches
+thread history containing H and successfully posts. P omits H's text and
+labels it “already delivered,” then advances the context watermark. H has
+never reached the session.
+
+Use deliveredIDs alone for peer-context collapse, and add a failed-flush
+thread-context regression.
+
+Lock ordering is safe: flushing occurs before holdDelivery, and blocking
+mutex acquisition happens outside c.mu. Failed messages retain the existing
+retry/dead-letter handling. The new both-mode test covers successful wire
+ordering. No tests independently rerun.
+
+## Ordering follow-up transcript: final recheck
+
+**CLEAN — the ordering follow-up resolves the finding.**
+
+Successful flushes deliver older messages before the peer. Failed or deferred
+flushes leave those messages pending, and full-mode context now collapses
+only IDs recorded as delivered. The new regression verifies the retained
+quote, absence of a false delivery claim, and preserved retry ownership.
+
+Lock ordering remains safe. No new actionable findings; tests were inspected
+but not independently rerun.
+
+## Ordering and pagination follow-up transcript
+
+**CLEAN — ordering and pagination follow-ups are ready for the r2 gate.**
+
+Newest-tail reads now use full API pages independently of the output limit,
+retain only the newest N messages, and preserve response-cut fallback. The
+updated tests verify both default 50 and limit 1 across 437 messages using
+three 200-message requests.
+
+The prior ordering and failed-flush fixes remain sound. No new actionable
+findings. This was a read-only review; I did not rerun tests.

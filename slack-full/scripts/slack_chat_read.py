@@ -202,7 +202,9 @@ def _paginate(method: str, base_params: dict[str, str], limit: int,
     omitted = False
     while True:
         params = dict(base_params)
-        page_limit = min(page_max, limit if newest_tail else limit - len(messages))
+        # Thread reads must reach the last cursor regardless of output size.
+        # A small --limit should bound retained messages, not multiply requests.
+        page_limit = page_max if newest_tail else min(page_max, limit - len(messages))
         params["limit"] = str(page_limit)
         if cursor:
             params["cursor"] = cursor

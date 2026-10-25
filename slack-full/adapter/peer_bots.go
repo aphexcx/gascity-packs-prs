@@ -568,6 +568,10 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	}
 	item := peerContextItem{Label: entry.Label, ActorID: actorID, Channel: msg.Channel,
 		TS: msg.TS, ThreadTS: msg.ThreadTS, Text: body, Files: files, inbound: inbound}
+	// Like an urgent human arrival, deliver older buffered messages first.
+	// No twin is withheld: a queued same-ts copy can settle normally, and
+	// the delivered-ID check below then suppresses this duplicate.
+	cfg.coalescer.flushAheadOf(msg.Channel, "")
 	release := cfg.coalescer.holdDelivery(msg.Channel)
 	defer release()
 	if cfg.deliveredIDs.seen("", msg.Channel, msg.TS) {
@@ -599,7 +603,9 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 				}
 			}
 			already := func(ts string) bool {
-				return cfg.deliveredIDs.seen("", msg.Channel, ts) || cfg.coalescer.pendingContains(msg.Channel, ts)
+				// Flush-ahead can fail or defer under backoff. A still-pending
+				// message is not evidence of delivery and must remain quoted.
+				return cfg.deliveredIDs.seen("", msg.Channel, ts)
 			}
 			pending.preamble = formatThreadContextPreamble(replies, msg.ThreadTS, msg.TS,
 				cfg.threadContextCache.lastDeliveredFor("", msg.Channel, msg.ThreadTS),
