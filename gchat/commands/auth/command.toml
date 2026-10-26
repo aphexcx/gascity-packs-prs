@@ -1,0 +1,2 @@
+description = "Sign in to Google Chat, or refresh and check the saved credential"
+run = "../auth.sh"

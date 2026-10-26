@@ -1,0 +1,2 @@
+description = "List spaces or change their wake policy"
+run = "../spaces.sh"

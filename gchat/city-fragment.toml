@@ -1,0 +1,9 @@
+# City-config fragment: paste this block into city.toml.
+# pack.toml cannot carry extmsg config; the pack parser rejects unknown keys.
+# Routes unbound Google Chat conversations to the mayor. Without a default
+# route gc acknowledges inbound messages as no_route and wakes no agent.
+# Rebind individual conversations with gc extmsg bind.
+
+[[extmsg.default_route]]
+provider = "gchat"
+agent = "mayor"

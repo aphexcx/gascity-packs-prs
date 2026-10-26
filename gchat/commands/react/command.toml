@@ -1,0 +1,2 @@
+description = "Add or remove a reaction on a message"
+run = "../react.sh"
