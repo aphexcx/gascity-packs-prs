@@ -1,0 +1,2 @@
+description = "Read recent messages from a space or thread"
+run = "../read.sh"

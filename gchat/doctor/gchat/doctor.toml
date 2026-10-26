@@ -1,0 +1,2 @@
+description = "Google Chat secrets, credential refresh, active subscription and default route"
+run = "./run.sh"

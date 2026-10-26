@@ -1,0 +1,2 @@
+description = "Restore or reset a running service in recovery-required"
+run = "../state.sh"

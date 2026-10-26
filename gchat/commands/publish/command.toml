@@ -1,0 +1,2 @@
+description = "Publish text to a Google Chat conversation"
+run = "../publish.sh"

@@ -1,0 +1,2 @@
+description = "Show health, subscription, counters and delivery recovery"
+run = "../status.sh"
