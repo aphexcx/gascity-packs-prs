@@ -18,6 +18,9 @@ const (
 	// traffic — the observed offender was boilerplate riding small
 	// messages, not large bodies.
 	defaultReminderTextBudget = 3500
+	// A protected unit that exhausts the text budget still carries a small
+	// context window. SLACK_REMINDER_CONTEXT_FLOOR overrides this fallback.
+	defaultReminderContextFloor = 1200
 	// threadAnchorParentLineRunes caps the parent's quoted first line
 	// inside the thread-reply anchor.
 	threadAnchorParentLineRunes = 120
@@ -59,24 +62,70 @@ func (p channelReminderParts) assemble(body string) string {
 	return unit
 }
 
-// contextOmissionNotice counts quoted messages without inspecting body text.
-// Every quote occupies one line; context text has already collapsed newlines.
-func contextOmissionNotice(preamble string) string {
-	count := 0
+// contextLines excludes framing, but retains every quote and notice. Notices
+// describe the window rather than a dated post, so quotes get first choice of
+// space, newest first. The selected suffix is still displayed chronologically.
+func contextLines(preamble string) []string {
+	var notices, quotes []string
 	for _, line := range strings.Split(preamble, "\n") {
+		if strings.TrimSpace(line) == "" || line == "---" || strings.HasPrefix(line, "Thread context (") {
+			continue
+		}
 		if strings.HasPrefix(line, "@") || strings.HasPrefix(line, "[bot ") {
-			count++
+			quotes = append(quotes, line)
+		} else {
+			notices = append(notices, line)
 		}
 	}
-	if count == 0 {
-		count = 1
-	}
-	return fmt.Sprintf("[%d omitted — thread context over budget]\n\n", count)
+	return append(notices, quotes...)
 }
 
-// composeChannelReminderText sheds help, recovery, then the complete context
-// window, with no author preference. The current message is never clipped.
-func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock string, budget int) (text string, usedPeer, usedHelp, usedPreamble, trimmed bool) {
+func contextOmissionNotice(count int) string {
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("[%d omitted — thread context over budget]\n", count)
+}
+
+// fitThreadContext retains a whole newest suffix and counts all older lines,
+// including already-delivered and incomplete-window notices. Only an oversized
+// newest line is clipped. Even a tiny budget retains its truncation marker and
+// the count; these mandatory diagnostics may exceed that pathological budget.
+func fitThreadContext(preamble string, budget int) string {
+	if len(preamble) <= budget {
+		return preamble
+	}
+	lines := contextLines(preamble)
+	if len(lines) == 0 {
+		return ""
+	}
+	// Removing framing may make the entire window fit. Check that before
+	// reserving an omission count that is unnecessary when no line is lost.
+	compact := strings.Join(lines, "\n") + "\n\n"
+	if len(compact) <= budget {
+		return compact
+	}
+	selected := ""
+	for i := len(lines) - 1; i >= 0; i-- {
+		candidate := lines[i] + "\n" + selected
+		if len(candidate)+len(contextOmissionNotice(i))+1 > budget {
+			if selected == "" {
+				const marker = "… [truncated]"
+				available := budget - len(contextOmissionNotice(i)) - len(marker) - 2
+				selected = clipRuneSafe(lines[i], available) + marker + "\n"
+				return selected + contextOmissionNotice(i) + "\n"
+			}
+			return selected + contextOmissionNotice(i+1) + "\n"
+		}
+		selected = candidate
+	}
+	return selected + "\n"
+}
+
+// composeChannelReminderText sheds help and optional recovery before fitting
+// context, with no author preference. The current message is never clipped.
+// usedPreamble reports an unchanged preamble, not whether any context survived.
+func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock string, budget int, contextFloors ...int) (text string, usedPeer, usedHelp, usedPreamble, trimmed bool) {
 	unit := p.assemble(p.body)
 	withPeer := unit
 	if peerBlock != "" {
@@ -97,8 +146,18 @@ func composeChannelReminderText(p channelReminderParts, peerBlock, helpBlock str
 	}
 	usedPreamble = true
 	if p.preamble != "" {
-		usedPreamble = false
-		p.preamble = contextOmissionNotice(p.preamble)
+		original := p.preamble
+		// Measure the surrounding unit with context present: a files-only
+		// post gains its attachment separator when context is included.
+		contextBudget := budget - (len(unit) - len(original))
+		if contextBudget <= 0 {
+			contextBudget = defaultReminderContextFloor
+			if len(contextFloors) > 0 && contextFloors[0] > 0 {
+				contextBudget = contextFloors[0]
+			}
+		}
+		p.preamble = fitThreadContext(original, contextBudget)
+		usedPreamble = p.preamble == original
 	}
 	return p.assemble(p.body), false, false, usedPreamble, false
 }

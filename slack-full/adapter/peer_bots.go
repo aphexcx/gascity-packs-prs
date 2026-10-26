@@ -48,6 +48,45 @@ type peerBotsRegistry struct {
 	peers     []peerBotEntry
 	immediate map[string]bool
 	diskPath  string
+	dropLogs  peerBotDropLogs
+}
+
+// One diagnostic per bot per hour, including across registry reloads. Expired
+// keys are removed as new diagnostics arrive; no message text is retained.
+type peerBotDropLogs struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+func (l *peerBotDropLogs) allow(botID string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if last, ok := l.last[botID]; ok && now.Sub(last) < time.Hour {
+		return false
+	}
+	for id, last := range l.last {
+		if now.Sub(last) >= time.Hour {
+			delete(l.last, id)
+		}
+	}
+	if l.last == nil {
+		l.last = make(map[string]time.Time)
+	}
+	l.last[botID] = now
+	return true
+}
+
+var missingPeerRegistryDropLogs peerBotDropLogs
+
+func (r *peerBotsRegistry) logDroppedBot(reason string, msg slackMessageEvent, botID, appID, botUserID string) {
+	limiter := &missingPeerRegistryDropLogs
+	if r != nil {
+		limiter = &r.dropLogs
+	}
+	if limiter.allow(botID, time.Now()) {
+		log.Printf("peer-bot: %s chan=%q ts=%q bot_id=%q app_id=%q bot_user_id=%q — dropped",
+			reason, msg.Channel, msg.TS, botID, appID, botUserID)
+	}
 }
 
 // peerBotsSnapshot is a parsed-but-not-yet-committed view of peer_bots.json.
@@ -452,9 +491,11 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	// Corroborate event-declared identifiers against the resolution, same
 	// checklist as resolveCompanyAuthor: a mismatch fails closed.
 	if msg.AppID != "" && msg.AppID != info.AppID {
+		cfg.peerBots.logDroppedBot("contradicted", msg, botID, msg.AppID, info.UserID)
 		return
 	}
 	if bp := parseBotProfileAppID(msg.BotProfile); bp != "" && bp != info.AppID {
+		cfg.peerBots.logDroppedBot("contradicted", msg, botID, bp, info.UserID)
 		return
 	}
 	// Human corroboration (fix round 3b), completing the
@@ -465,6 +506,7 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	// message dressed as a bot. A human must never be buffered or woken
 	// as a bot: drop.
 	if msg.User != "" && msg.User != info.UserID {
+		cfg.peerBots.logDroppedBot("contradicted", msg, botID, info.AppID, msg.User)
 		return
 	}
 
@@ -541,13 +583,14 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 		// contradicts does not match (fail closed) — and a contradicted
 		// author must not slip through as a generic unknown bot either,
 		// so this stays a hard drop.
-		if entry.BotUserID != "" && entry.BotUserID != info.UserID {
-			return
-		}
-		if entry.AppID != "" && info.AppID != "" && entry.AppID != info.AppID {
+		if (entry.BotID != "" && entry.BotID != botID) ||
+			(entry.BotUserID != "" && entry.BotUserID != info.UserID) ||
+			(entry.AppID != "" && info.AppID != "" && entry.AppID != info.AppID) {
+			cfg.peerBots.logDroppedBot("contradicted", msg, botID, info.AppID, info.UserID)
 			return
 		}
 	} else {
+		cfg.peerBots.logDroppedBot("unlisted", msg, botID, info.AppID, info.UserID)
 		return // Only the registry allowlist can originate an inbound.
 	}
 
@@ -630,7 +673,7 @@ func maybeDeliverPeerBotMessage(cfg config, env slackEventEnvelope, msg slackMes
 	if complete {
 		cfg.threadContextCache.markDelivered("", msg.Channel, msg.ThreadTS, msg.TS)
 	}
-	log.Printf("peer-bot: delivered immediate post chan=%s ts=%s", msg.Channel, msg.TS)
+	log.Printf("peer-bot: delivered immediate post chan=%s ts=%s label=%q", msg.Channel, msg.TS, entry.Label)
 
 }
 

@@ -161,6 +161,12 @@ func selectedInjectionWindows(msg externalInboundMessage, full, lean, rendered s
 	}
 	for i := range windows {
 		windows[i].Oldest, windows[i].Newest, windows[i].Collapsed = "", "", 0
+		// A fitted preamble can retain a suffix or a clipped quote. Text
+		// alone cannot recover exact timestamps; do not report an empty
+		// known window when some context may have reached the recipient.
+		if full != "" {
+			windows[i].Known = false
+		}
 	}
 	return windows
 }

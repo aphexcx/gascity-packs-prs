@@ -22,6 +22,7 @@ def test_replay_preserves_new_payload_and_removes_context():
     assert unit["body"] == "new text"
     assert unit["anchor"] == '[reply in thread 100.1; parent @Example: "parent"]'
     assert unit["thread"] == "100.1"
+    assert unit["preamble"] == "Thread context (1 earlier message):\n@Example: prior\n\n---\n\n"
     assert counts["baseline_bytes"] == len(text.encode())
     assert rows[-1]["foot"].endswith("reply-to 100.1\n</system-reminder>")
     assert counts["peer_arrivals"] == 1

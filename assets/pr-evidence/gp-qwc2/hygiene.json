@@ -1,0 +1,10 @@
+{
+  "scope": "added source/doc lines; new fixture files inspected separately",
+  "matches": {
+    "slack_token": 0,
+    "private_key": 0,
+    "slack_user_id": 0,
+    "slack_channel_id": 0,
+    "email": 0
+  }
+}

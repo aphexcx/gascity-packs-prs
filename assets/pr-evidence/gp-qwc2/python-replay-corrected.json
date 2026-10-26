@@ -1,0 +1,26 @@
+{
+  "command": [
+    "uv",
+    "run",
+    "--python",
+    "3.13",
+    "--with",
+    "pytest",
+    "--with",
+    "pyyaml",
+    "--with",
+    "jsonschema",
+    "python3",
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-k",
+    "replay_minimal"
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full",
+  "exit_code": 0,
+  "seconds": 0.78,
+  "test_events": {},
+  "top_level": {}
+}

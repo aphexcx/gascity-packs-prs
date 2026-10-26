@@ -35,6 +35,7 @@ def sinan(text, compact=False):
 
 def unit(body, channel, sender, ts, thread, is_bot=False):
     body = HELP.sub("", body)
+    preamble = "".join(sinan(m[0]) for m in CONTEXT.finditer(body))
     body = CONTEXT.sub("", body)
     body = re.sub(r"\[slack thread_ts=[^\n]+\]\n", "", body)
     anchor = ""
@@ -50,7 +51,8 @@ def unit(body, channel, sender, ts, thread, is_bot=False):
     else:
         body = PEERS.sub("", body)
     return dict(channel=channel, sender=sender, sender_id="U_REPLAY_ID", ts=ts,
-                thread=thread or "", body=body.strip(), anchor=anchor, is_bot=is_bot)
+                thread=thread or "", body=body.strip(), anchor=anchor, is_bot=is_bot,
+                preamble=preamble)
 
 
 def peer_units(body):

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -147,7 +148,8 @@ func (c *injectionParents) invalidateMutation(msg slackMessageEvent, raw json.Ra
 // peerRecovery includes whole failed posts in FIFO order in both modes.
 // Deferred entries are retained before returning; the caller restores the
 // included prefix if transport fails. A count is always visible when pending
-// messages cannot fit, including when the new message itself exceeds budget.
+// messages cannot fit. The first queued post is protected like the new message:
+// it rides whole even over budget, so a fixed limit cannot strand the FIFO.
 func peerRecovery(cfg config, channel, text string, items []peerContextItem) (string, []peerContextItem) {
 	notice := func(n int) string {
 		if n == 0 {
@@ -160,7 +162,11 @@ func peerRecovery(cfg config, channel, text string, items []peerContextItem) (st
 	for i := range items {
 		candidate := formatPeerContextBlock(items[:i+1], 0) + "\n\n" + text + notice(len(items)-i-1)
 		if cfg.reminderTextBudget > 0 && len(candidate) > cfg.reminderTextBudget {
-			break
+			if used > 0 {
+				break
+			}
+			log.Printf("peer-bot: oversized recovery head chan=%s item_bytes=%d budget=%d — carrying whole",
+				channel, len(formatPeerContextBlock(items[:1], 0)), cfg.reminderTextBudget)
 		}
 		result, used = candidate, i+1
 	}

@@ -827,7 +827,8 @@ type config struct {
 	// SLACK_REMINDER_TEXT_BUDGET overrides; 0 disables (the value
 	// directly-constructed test configs get, keeping the legacy
 	// layout byte-for-byte).
-	reminderTextBudget int
+	reminderTextBudget   int
+	reminderContextFloor int
 	// replyInstructions is the per-message reply template registered
 	// with gc (SLACK_REPLY_INSTRUCTIONS: full | compact, jg-fc1csv).
 	// Empty — directly-constructed test configs — registers the full
@@ -1018,6 +1019,11 @@ func loadConfigFromLookup(lookup func(string) (string, bool)) (config, error) {
 		cfg.reminderTextBudget = n
 	} else {
 		return cfg, fmt.Errorf("SLACK_REMINDER_TEXT_BUDGET %q invalid (want a non-negative integer; 0 disables the reminder budget)", getenv("SLACK_REMINDER_TEXT_BUDGET"))
+	}
+	if n, err := strconv.Atoi(envOrFn("SLACK_REMINDER_CONTEXT_FLOOR", strconv.Itoa(defaultReminderContextFloor))); err == nil && n > 0 {
+		cfg.reminderContextFloor = n
+	} else {
+		return cfg, fmt.Errorf("SLACK_REMINDER_CONTEXT_FLOOR %q invalid (want a positive integer)", getenv("SLACK_REMINDER_CONTEXT_FLOOR"))
 	}
 
 	if tmpl, err := replyInstructionsTemplateFor(getenv(replyInstructionsModeEnv)); err == nil {
@@ -4720,7 +4726,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 			files:     filesBlock,
 			ts:        msg.TS,
 			channelID: msg.Channel,
-		}, "", helpBlock, cfg.reminderTextBudget)
+		}, "", helpBlock, cfg.reminderTextBudget, cfg.reminderContextFloor)
 		textForChannel = composed
 		if cfg.minimalInjection() {
 			textForChannel = minimalReminder(cfg, inbound, text, filesBlock, anchor)
@@ -4732,7 +4738,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 				msg.Channel, msg.TS, cfg.reminderTextBudget)
 		}
 		if preamble != "" && !usedPreamble {
-			log.Printf("inbound: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d; thread reachable via the anchor's --thread-ts",
+			log.Printf("inbound: chan=%s ts=%s thread-context preamble fitted — delivery over reminder budget %d; read thread for omitted context",
 				msg.Channel, msg.TS, cfg.reminderTextBudget)
 		}
 		inboundForChannel := inbound

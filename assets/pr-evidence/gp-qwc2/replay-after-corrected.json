@@ -1,0 +1,25 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-race",
+    "-count=1",
+    "-json",
+    "-run",
+    "Test(MinimalReplayMeasurement|ReplayContextOutcome|ReplayThreadedBatchParity)",
+    "."
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter",
+  "exit_code": 0,
+  "seconds": 10.56,
+  "test_events": {
+    "run": 3,
+    "output": 7,
+    "pass": 3
+  },
+  "top_level": {
+    "run": 3,
+    "output": 7,
+    "pass": 3
+  }
+}

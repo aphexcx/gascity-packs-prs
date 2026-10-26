@@ -3278,7 +3278,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 				p.anchor = formatThreadReplyAnchor(rt, "", "")
 			}
 		}
-		composed, _, usedHelp, usedPreamble, _ := composeChannelReminderText(p, "", helpBlock, cfg.reminderTextBudget)
+		composed, _, usedHelp, usedPreamble, _ := composeChannelReminderText(p, "", helpBlock, cfg.reminderTextBudget, cfg.reminderContextFloor)
 		text = composed
 		env.injectionWindows = selectedInjectionWindows(batch[0].inbound, p.preamble, p.preambleLean, composed)
 		if firstHelp && !usedHelp {
@@ -3288,7 +3288,7 @@ func deliverCoalescedBatch(cfg config, channel string, batch []pendingChannelInb
 				channel, env.ProviderMessageID, cfg.reminderTextBudget)
 		}
 		if p.preamble != "" && !usedPreamble {
-			log.Printf("coalesce: chan=%s ts=%s thread-context preamble omitted — delivery over reminder budget %d",
+			log.Printf("coalesce: chan=%s ts=%s thread-context preamble fitted — delivery over reminder budget %d",
 				channel, env.ProviderMessageID, cfg.reminderTextBudget)
 		}
 	} else {

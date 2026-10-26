@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python3",
+    "slack-full/scripts/replay_minimal_injections.py",
+    "--rows",
+    ".gc/scratch/gp-qwc2/baseline/blocks.jsonl",
+    "--output",
+    ".gc/scratch/gp-qwc2/replay.jsonl"
+  ],
+  "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex",
+  "exit_code": 0,
+  "seconds": 0.3,
+  "test_events": {},
+  "top_level": {}
+}
