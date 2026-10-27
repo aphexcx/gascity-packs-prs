@@ -1,0 +1,2 @@
+description = 'installed SDK and dependency marker match the committed lockfile'
+run = '../check-dependencies.sh'

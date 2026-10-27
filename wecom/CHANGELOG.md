@@ -2,6 +2,12 @@
 
 ## 0.0.1 (unreleased)
 
+- Linux install and Corepack recipe; doctor checks for Node/pnpm, the
+  dependency marker, credential names, and Unix socket health. Pack tests
+  exercise missing/stale dependencies, credential isolation, and health errors.
+- Keep isolated inbound/media tests alive while awaiting unreferenced timers,
+  using a bounded fixture handle in place of the production WebSocket.
+
 - Reconnect/publish coordination (jp-rwh / jp-dq1, 10/19): remediation
   waits for active publishes up to `WECOM_RECONNECT_DRAIN_TIMEOUT_MS`
   (default 30000), with one wait log line. In-flight uploads defer

@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import AiBot from '@wecom/aibot-node-sdk';
@@ -47,6 +47,13 @@ const { decryptFile } = AiBot;
 // key shape before downloading (a falsy key would make the SDK hand back
 // ciphertext).
 const testAesKey = crypto.randomBytes(32).toString('base64');
+
+// Deadline timers deliberately unref in production, where the WebSocket
+// keeps Node alive. Keep a bounded handle while each isolated fixture runs.
+beforeEach(t => {
+  const handle = setTimeout(() => {}, 5000);
+  t.after(() => clearTimeout(handle));
+});
 
 // encryptWeComMedia builds a fixture the way WeCom encrypts media: AES-256
 // key from the base64 aeskey, IV = its first 16 bytes, PKCS#7 padded to

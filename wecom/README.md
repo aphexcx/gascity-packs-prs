@@ -384,6 +384,79 @@ must have long-connection permission enabled (Admin Console → Security &
 Management → Management Tools → Smart Robot → API Mode Management), and the
 robot's visible scope decides who can talk to it.
 
+## Linux
+
+The 2026-10-27 Linux ARM64 proof used Debian 12, Node 22.23.4, Corepack
+0.36.0, and pnpm 10.18.3. Install Node 20+ and Corepack, plus Bash, Git,
+`curl` and `jq` (the publish command needs both). Python 3.11+ with pytest
+runs the pack checks; `openssl` enables the adapter's local TLS tests.
+
+From an initialized city, enable pnpm and import the reviewed revision:
+
+```sh
+corepack enable pnpm
+corepack prepare pnpm@10.18.3 --activate
+PACKS_REV=<reviewed-commit-sha>
+gc import add https://github.com/aphexcx/gascity-packs-prs/tree/main/wecom \
+  --name wecom --version "sha:$PACKS_REV"
+gc import install
+gc import list
+```
+
+`gc import install` fetches/materializes v2 imports; the older `gc pack fetch`
+surface only processes named packs. Set `WECOM_PACK` to the materialized
+`wecom` directory under `~/.gc/cache/repos/`. Pre-warm that exact copy:
+
+```sh
+(cd "$WECOM_PACK/adapter" && ./run.sh --deps-only)
+(cd "$WECOM_PACK/adapter" && pnpm exec node --version)
+```
+
+The committed lockfile controls the install. `node_modules/.gc-deps-ok` is
+written only after success and must match the lockfile's SHA-256. Linux uses
+`sha256sum` when `shasum` is absent. The proof's cold install took 1.25 seconds;
+pre-warming remains necessary because network latency can exceed gc's
+five-second readiness window. Repeat it after a pin changes the cached copy.
+
+Write `<city>/.gc/services/wecom/secrets/env` with mode 0600 using the
+[Secrets](#secrets) contract, and configure the default route from
+[Setup](#setup). Supply `WECOM_BOT_ID` and `WECOM_BOT_SECRET` from a dedicated
+test bot, plus `GC_CITY_NAME` and the actual `GC_API_BASE_URL` printed by
+`gc start`. Then:
+
+```sh
+gc start
+gc service list
+gc doctor --verbose
+curl --fail http://127.0.0.1:8372/v0/city/YOUR_CITY/svc/wecom/healthz
+```
+
+The new doctor checks Node/pnpm, installed SDK and lockfile marker, required
+credential names, and an explicitly supplied Unix socket. It never executes
+the env file or prints credential values; shell expressions receive a warning
+because they cannot be verified statically. For a direct socket probe, copy
+the current socket path from `<city>/.gc/services/wecom/logs/service.log`:
+
+```sh
+GC_SERVICE_SOCKET=/actual/socket/from/the/log gc doctor --verbose
+```
+
+Without `GC_SERVICE_SOCKET`, the socket doctor warns rather than guessing a
+path; gc allocates it dynamically. A successful `/healthz` proves local
+readiness only, even while Tencent authentication is unavailable. The Linux
+proof used fake credentials and a loopback WebSocket endpoint, and passed
+all 385 adapter tests plus 16 pack/doctor tests:
+
+```sh
+(cd "$WECOM_PACK/adapter/test" && pnpm exec node --test)
+(cd "$WECOM_PACK" && python3 -m pytest tests -q)
+```
+
+Run permission tests as an ordinary user. No live bot round trip is claimed;
+it awaits test bot credentials. Use `gc supervisor install` on Linux hosts
+with a systemd user manager; the proof container used the detached supervisor.
+See the [dated proof](../docs/plans/linux-proof-slack-wecom-20261027.md).
+
 ## Known protocol constraints (as of 2026-08)
 
 - Long-connection robots do **not** work in external/customer groups —
