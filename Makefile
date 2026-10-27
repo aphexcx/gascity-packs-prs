@@ -19,7 +19,7 @@ endif
 # `uv run --with ...` (a Homebrew python3 has no pytest). GC_TEMPLATE is unset
 # because a gc worker session exports it and one claim-command test would
 # otherwise inherit it as its expected route.
-PYTEST_DIRS ?= tests contributing-to-gascity/tests gascity/tests discord/tests github/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests
+PYTEST_DIRS ?= tests contributing-to-gascity/tests gascity/tests discord/tests github/tests slack-full/tests slack-channel/tests pr-pipeline/tests profiler/tests mayor-shadow-eval/tests
 PYTEST_ARGS ?= -q
 PYTEST_RUNNER = if $(PYTHON) -c 'import pytest, yaml, jsonschema' >/dev/null 2>&1; then echo '$(PYTHON) -m pytest'; else echo 'uv run --with pytest --with pyyaml --with jsonschema $(PYTHON) -m pytest'; fi
 

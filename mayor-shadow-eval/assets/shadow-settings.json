@@ -1,0 +1,10 @@
+{
+  "permissions": {"defaultMode": "dontAsk"},
+  "hooks": {
+    "PreToolUse": [{"matcher": "*", "hooks": [{
+      "type": "command",
+      "command": "exec python3 -I \"$SHADOW_PACK_DIR/scripts/shadow_guard.py\"",
+      "timeout": 10
+    }]}]
+  }
+}

@@ -1,0 +1,56 @@
+# Copy to ~/city/ops/shadow-eval.toml. No credentials belong in this file.
+model = "kimi-k3.1-pro"
+base_url = "https://api.moonshot.ai/anthropic"
+secret_name = "MOONSHOT_API_KEY"
+infisical_project = "dd84097e-3d9b-4999-aee6-b296edde8d01"
+city_dir = "~/city"
+source_config_dir = "~/.claude"
+work_dir = "~/city/work/eval-kimi-k31"
+kill_switch = "~/city/ops/shadow-eval.off"
+max_turns = 10
+settle_seconds = 240
+poll_seconds = 30
+timeout_seconds = 600
+context_window = 1000000
+daily_token_cap = 25000000
+max_output_tokens = 8192
+judge_model = "claude-opus-5-5"
+judge_timeout_seconds = 180
+codex_shim = "~/city/.gc/shims/codex-astra/codex"
+
+[env]
+CLAUDE_CODE_AUTO_COMPACT_WINDOW = "1000000"
+CLAUDE_CODE_EFFORT_LEVEL = "xhigh"
+
+[guard]
+# These regexes can only NARROW the parser's built-in safe command grammar.
+bash_allowlist = [
+  '^gc mail (peek|inbox|list|search)( |$)',
+  '^gc bd (list|show|search)( |$)',
+  '^gc session (list|peek)( |$)',
+  '^gc slack (history|read)( |$)',
+  '^gc slack (channel|thread) (history|read)( |$)',
+  '^(cat|head|tail|grep|rg|ls|find|wc|stat|date|du|md5|shasum|ffprobe)( |$)',
+  '^sed -n ',
+  '^git (log|show|diff|status|branch)( |$)',
+  '^python3 -I -c ',
+]
+
+# USD per million tokens. Source verified 2026-10-27:
+# https://platform.kimi.ai/docs/pricing
+# Automatic prefix caching, default TTL 5 minutes. Cache writes are separate
+# token categories, not a surcharge on input_tokens. 1-hour writes have a
+# separate rate. Canary/judge models without a table remain explicitly unpriced.
+[prices."kimi-k3.1-pro"]
+input = 2.0
+cache_read = 0.2
+cache_write = 2.0
+cache_write_1h = 4.0
+output = 10.0
+
+[prices."kimi-k3.1-pro-highspeed"]
+input = 4.0
+cache_read = 0.2
+cache_write = 4.0
+cache_write_1h = 8.0
+output = 20.0

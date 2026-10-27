@@ -1,0 +1,2 @@
+description = "Show current replay counters and kill switch"
+run = "../shadow-status.sh"

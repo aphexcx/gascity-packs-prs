@@ -1,0 +1,2 @@
+description = "Score a day of private shadow ledgers"
+run = "../shadow-judge.sh"

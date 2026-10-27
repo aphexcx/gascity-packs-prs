@@ -1,0 +1,2 @@
+description = "Replay completed mayor turns under the shadow guard"
+run = "../shadow-watch.sh"
