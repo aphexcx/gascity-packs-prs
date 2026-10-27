@@ -15,3 +15,6 @@
 {"command": "python3 assets/pr-evidence/gp-zbq3/round-2/replay-check.py", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "replay-grouped-check.log"}
 {"command": "python3 assets/pr-evidence/gp-zbq3/measure.py --replay", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "live-replay-grouped.log"}
 {"command": "git diff --check", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "evidence-diff-check.log"}
+{"command": "python3 --version", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "evidence-python-version.log"}
+{"command": "git diff --exit-code 648f887e3a444e4c4b50cc6c5f21caa0d0d4e8c1 HEAD -- slack-full", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "production-equivalence.log"}
+{"command": "git diff --check", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "final-diff-check.log"}

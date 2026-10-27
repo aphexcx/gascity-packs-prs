@@ -101,13 +101,20 @@ the raw SHA-256 and byte count. Python logs retain their suite summaries.
   199 top-level tests / 237 including subtests passed, no skips.
 - Go 1.27.3 darwin/arm64. `pnpm exec node --version`: v24.21.0. No Node tests
   apply; no unsupported-engine warning appeared.
+  The standalone evidence/parity scripts use Python 3.15.0; the full pytest
+  suite above runs on Python 3.13.13 through uv.
 
 The gpt-6-astra helper review in self-review.out is CLEAN for the round delta
 6d977249..648f887e (no critical/major findings). Its minor noted ambiguous
 per-occurrence duplicate URL flags. The grouped-count representation above
 resolves that issue, tested with the reviewer's label-first example and replayed
-read-only. The follow-up review covers this evidence adjustment separately;
-production redaction code and fixtures are unchanged from the tested 648f887e.
+read-only. The follow-up gpt-6-astra review, self-review-followup.out, is CLEAN
+for 648f887e..c612d94c with no findings at any severity. Together the two records
+cover all round-2 implementation changes. Production redaction code and fixtures
+are unchanged from the tested 648f887e; the final commit records review results
+and documentation only. Both helper .rc files contain 0 and both .reason files
+validate an anchored CLEAN verdict. The reviews ran read-only in this lane
+through the installed helper's exec mode, without creating another worktree.
 
 ## Handoff
 

@@ -56,7 +56,8 @@ Validation at the round-2 implementation:
 - From slack-full/cli: `go test -race -count=1 -json ./...`: **8 packages,
   199 top-level tests / 237 including subtests passed**, no skips.
 - Python 3.13.13; Go 1.27.3 darwin/arm64; `pnpm exec node --version` v24.21.0.
-  No Node tests apply and no unsupported-engine warning appeared.
+  Evidence/parity scripts use Python 3.15.0. No Node tests apply and no
+  unsupported-engine warning appeared.
 
 Evidence: `assets/pr-evidence/gp-zbq3/round-2/README.md`, checks.jsonl,
 regression-summary.json, parity.json, suite summaries and live-replay-grouped.log;
@@ -84,9 +85,11 @@ The gpt-6-astra immutable-delta review is CLEAN for 6d977249..648f887e
 (self-review.out). Its minor evidence finding is fixed: identical URL strings
 now have grouped occurrence/redaction counts, avoiding attribution to the wrong
 duplicate's position. Both duplicate orderings are tested and the final replay
-retains the same identities and 4-to-3 contextual total. A follow-up review
-covers that evidence-only adjustment; production redaction code and fixtures
-remain exactly as tested at 648f887e.
+retains the same identities and 4-to-3 contextual total. The follow-up review
+is CLEAN with no findings for 648f887e..c612d94c (self-review-followup.out).
+Both helper verdicts are validated, exit 0; together they cover all round-2
+implementation changes. Production redaction code and fixtures remain exactly
+as tested at 648f887e. The final commit records review evidence and docs only.
 The mayor owns the fresh cross-model gate, founder checkpoint, merge and later
 city pin roll plus separate tail-helper snapshot installation. No readiness
 transition, city configuration change or deployment was performed.
@@ -94,5 +97,5 @@ transition, city configuration change or deployment was performed.
 Papercuts addressed: pc_192a75a6463d, pc_4fe82b567b32.
 
 Bead: gp-zbq3
-Codex-Reviewed-By: OpenAI Codex gpt-6-astra (worker self-review; immutable-delta gate recorded separately)
+Codex-Reviewed-By: OpenAI Codex gpt-6-astra (round-2 gate CLEAN at 648f887e; evidence follow-up CLEAN at c612d94c)
 Co-Authored-By: OpenAI Codex <noreply@openai.com>
