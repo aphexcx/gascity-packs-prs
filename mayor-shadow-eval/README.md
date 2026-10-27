@@ -95,35 +95,73 @@ plutil -lint "$HOME/Library/LaunchAgents/com.jadegate.mayor-shadow-eval.plist"
 Start, inspect, and stop:
 
 ```sh
+printf 'on\n' > "$HOME/city/ops/shadow-eval.switch"
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.jadegate.mayor-shadow-eval.plist"
 launchctl print "gui/$(id -u)/com.jadegate.mayor-shadow-eval"
 "$SHADOW_PACK/commands/shadow-status.sh"
-touch "$HOME/city/ops/shadow-eval.off"
+printf 'off\n' > "$HOME/city/ops/shadow-eval.switch"
 launchctl bootout "gui/$(id -u)/com.jadegate.mayor-shadow-eval"
 ```
 
-The switch's **existence** disables replay, including an active child. Leave it
-in place after stopping; rearming requires the mayor to explicitly clear it
-under city policy. No switch, transcript or artifact is automatically deleted.
-The worker does not run these installation or launchd commands.
+The switch contains `on` or `off`; a missing or malformed file means **off**.
+Write `on` to rearm it, without deleting anything. While off, the watcher updates
+one health record and creates no skipped ledger rows. An active replay is stopped
+when the content changes to off. No transcript or artifact is automatically deleted.
+The worker does not run installation or launchd commands.
+
+### Optional watchdog correction
+
+The companion unified diff changes only source selection and its health fields.
+It checks the gc-named file's newest row against six hours, then scans complete
+user/attachment rows for the paragraph-anchored mayor marker. Tool-result text is
+excluded. A stale selected file becomes UNKNOWN with `reason=stale_source`; it
+is never treated as a healthy historical model reading. Cache keys use inode and
+size, and an in-process growing file is scanned from its prior byte offset.
+
+The worker verified the first command only. The mayor owns apply and rollback:
+
+```sh
+patch --dry-run "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
+patch "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
+# Roll back the exact patch without deleting the executable:
+patch -R "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
+```
 
 ## Fork and isolation contract
 
-Discovery first uses the unique open `mayor` session's UUID from `gc session
-list --json`, as the local model watchdog does. Its fallback scans the newest
-top-level transcript whose first 200 KB contains the paragraph-start mayor
-marker. It never selects a worker merely quoting the marker. The chosen source
-and discovery method are in every ledger; a stale gc session can select an old
-transcript, so inspect trigger timestamps before deployment.
+Discovery uses the unique open mayor's gc `session_key` only when its transcript
+exists and its newest timestamped row is less than six hours old. Otherwise it
+selects the newest-mtime top-level JSONL whose **user or attachment** rows carry
+`You are the mayor of this Gas City workspace` at a paragraph start anywhere in
+the file. It parses the whole file once, excludes tool-result quotations, caches
+by inode/size, and scans only appended bytes thereafter. If that selected source
+is stale, the watcher writes `stale_source`, replays nothing, and status is RED.
+No marker match is invented from a filename or quoted review. `--transcript`
+remains an explicit operator override, still subject to freshness checks.
 
-A trigger is a non-meta, non-summary, non-sidechain user message containing no
-tool result. It completes when a later trigger exists or its last assistant row
-has settled for `settle_seconds` (240 by default). All rows before the trigger
-are copied, including hook attachments, metadata, prompt snapshots and
-compaction summaries. Both `sessionId` and `session_id` are rewritten. Images
-and other non-text trigger blocks are recorded as skipped, because a text CLI
-prompt cannot faithfully reproduce them. An incomplete last JSON row waits for
-the writer; malformed complete rows stop the watcher.
+On the reviewed host the explicitly named live `ec4edc76…` transcript contains
+**no anchored marker**, even in a full scan. Automatic discovery therefore fails
+closed on the old marker-bearing file. Before unattended installation the mayor
+must correct the gc session key or supply a source with a trusted role marker.
+The successful live canary used `--transcript`; it does not prove automatic source
+selection works on that host. See `VALIDATION.md` for the exact gate evidence.
+
+A trigger excludes meta/summary/sidechain rows, tool results, interruption notices,
+command-name rows and local-command stdout. A turn closes at the next trigger,
+or after a terminal assistant row settles and every tool-use ID has a result.
+Pending tools remain pending. At `max_wait` (45 minutes) the turn may be replayed
+with `fable_incomplete=true`; the judge re-extracts its actual answer from the
+source at judgment time. After a compaction, seeds start at the last
+`compact_boundary`, retaining its summary and following attachments. Top-level
+session IDs are rewritten without deep-copying the entire historical transcript.
+
+Captured attachment/hook output between the trigger and first assistant is
+written to a per-turn file. A replay-only UserPromptSubmit hook emits that saved
+context; it never executes `gc hook` or checks live mail/nudges. Exact rendered
+hook envelopes are preferred over duplicate content/stdout fields. Non-text
+triggers still skip. A partial JSONL tail waits for completion. The watcher
+persists its tail cache and byte offset under runtime; only inode/size regression
+starts a new source generation. Old cache generations remain for approved pruning.
 
 To honor the worker's write boundary, forks live under
 `~/city/work/eval-kimi-k31/runtime/projects/<encoded-city>/<uuid>.jsonl`, using
@@ -135,17 +173,25 @@ runtime fork file. Trigger text is passed verbatim through a private stdin file
 to avoid shell interpretation and command-line size limits.
 
 The runtime links normal memory/skills/context read-only. The recorded system
-prompt snapshot and historical tool schemas remain in the fork. Active user
-hooks, plugins and MCP startup processes are disabled; the shadow hook is the
-only active configured hook. This prevents initialization hooks or servers from
+prompt snapshot and historical tool schemas remain in the fork. Active user hooks, external plugins and MCP startup processes are disabled; only
+the guard and captured-context replay hooks run. `--setting-sources user,project`
+loads city project skills; a project settings file containing hooks, plugin
+activation or executable settings causes replay to fail closed. This prevents initialization hooks or servers from
 performing outbound actions before `PreToolUse`. The source settings file and
 cswap model setting are never edited. On macOS normal OAuth is read from the
 normal keychain into the subprocess environment; no credential copy is written.
 Expired credentials require normal operator authentication outside this pack.
 
-The ledger's `fork_evidence` measures prefix equality, retained prompt snapshot
-hash, mayor role presence, instruction attachments, retained source tool schemas
-in Claude's first recorded API request, and additional wire tools. Claude may
+The ledger's `fork_evidence` measures seed-prefix equality, source prompt snapshot
+hash, mayor role presence, instruction attachments and recorded wire tool schemas.
+It also hashes the actual runtime init event and records its tools, skills and
+plugins. A copied source snapshot is never claimed as proof of the actual system
+prompt. `runtime_system_prompt_verified=false` is explicit. The live superpowers
+plugin has a SessionStart hook, so it stays disabled; exact plugin parity is not
+claimed. The shadow uses `dontAsk`; the live mayor bypasses permissions. Worker
+routing (including GC_ALIAS, bead-store overrides and GC_SESSION identity) is
+stripped, and read commands use `GC_AGENT=mayor`. A host read-only inbox probe
+verified that this resolves to the mayor recipient. Claude may
 add deferred tools or transport placeholders; the pack reports these rather
 than claiming byte-for-byte tool-set identity. Missing snapshots or wire
 telemetry produce unverified fields, never an invented proof. Do not interpret
@@ -167,12 +213,25 @@ blocks the tool. A tool attempt without a matching recorded decision marks the
 turn failed. Denials tell the model the call did not run and was recorded as an
 intended action; no fake success is sent to a recipient.
 
-Read, Grep, Glob, LS, WebFetch, WebSearch and ToolSearch are permitted except
-explicit credential/service-secret paths. Write/Edit/NotebookEdit, Agent/Task,
-MCP calls, timers, communication and unknown tools are denied. Bash must satisfy
-both the built-in parser and a configured regex. Regexes can narrow permission,
-never widen it. Shell chaining, substitutions, redirections, escapes and
-unknown commands are denied, even if the first word looks harmless.
+Read, Grep, Glob, LS and NotebookRead are confined to `~/city`, excluding
+`assets/private`, `.gc/services/*/secrets`, `.gc/keys`, `work/eval-kimi-k31`, and
+`ops/shadow-eval.toml`; the city's normal Claude **memory** directory is also
+allowed. All other home/config/credential/transcript roots are denied. Each path
+is expanded and resolved through symlinks. Recursive scopes crossing exclusions
+or nested directory links are denied (including links inside the memory root). Skill and ToolSearch are allowed; Write/Edit,
+Agent/Task, unknown tools, and timers are denied. WebFetch/WebSearch are denied
+and recorded as intended outbound actions.
+
+Bash is split on pipes, AND/OR, semicolons and newlines outside quotes. Every
+segment must satisfy the built-in read grammar and configured regex. The only
+redirection is `2>/dev/null`; the only variable is `$HOME`. Every argument is
+checked against the roots after resolution. Globs/braces, substitutions,
+backticks, non-leading tilde and arbitrary variables are rejected. `tail -f`,
+`yes`, `/dev/zero` and checksum manifests are denied. Settings cap Bash calls at
+60 seconds. Regexes only narrow the grammar. Mutations keep the intended-action
+denial sentence; denied reads receive a rephrase request that never suggests
+pretending a result exists. Decisions expose read-allowed, mutation-denied or
+shape-denied, plus a separate timer/action classification.
 
 Deliberate conservative differences from the initial proposed allowlist:
 
@@ -181,13 +240,13 @@ Deliberate conservative differences from the initial proposed allowlist:
   Git log/show/diff require `--no-ext-diff --no-textconv`. The environment disables
   optional index writes, fsmonitor helpers, pagers and lazy object fetching.
 - `find` execution/deletion/output flags, `rg --pre` and hostname helpers,
-  write/execute forms of sed, date-setting, and ffprobe output/protocol options
-  are denied. Sed accepts only a numeric print range with `-n`.
+  write/execute forms of sed and date-setting are denied. `ffprobe` is denied
+  because media inputs can reference secondary files or network resources. Sed accepts only a numeric print range with `-n`.
 - `python3 -I -c` only accepts a small AST of literal arithmetic/collections and
   safe display functions. `-I` by itself does not prevent writes or execution.
 
 This is a conservative command grammar, not a general shell interpreter. A
-harmless compound read may be denied. The scorecard exposes intended actions
+read using unsupported syntax or a broad recursive scope may be denied. The scorecard exposes intended actions
 and the judge evaluates the effect of those denials. Allowed read tools may
 still incur normal provider/query costs. Protect the private artifacts as
 sensitive data; do not paste transcript text, customer paths or raw inputs into
@@ -206,12 +265,20 @@ group is terminated on timeout, kill switch or watcher termination.
 Context admission uses the most recent provider usage (including caches), then
 a conservative UTF-8-byte budget for later rows; without usage it budgets the
 active prefix after the latest compaction boundary. Oversized contexts skip.
-Daily admission reserves `max_turns * (context_window + max_output_tokens)` and
+Daily admission reserves `max_turns * (estimated_context_tokens + max_output_tokens)` and
 uses reported actual usage after completion. Unknown spend from an interrupted
 request retains the full reservation. This bounds admission conservatively;
-it is not a provider-side billing limit. A cap too small for one reservation
+it is not a provider-side billing limit. The default max-turn count is 25; a
+max-turn result is `completed_truncated` and remains eligible for judging. A cap too small for one reservation
 skips all turns. The watcher also sets the output token limit and disables
 client retries so the harness owns retry policy.
+The watcher caches the Infisical export once per run, including absence/failure;
+restart after the key is provisioned. `target_turns_per_day=40` uses hourly rate
+estimates, every-k sampling and hourly quotas across the CST day. `sample_every`
+(nonzero) overrides it. `--once` and explicit backfill bypass sampling. Previously
+unsampled turns are remembered across day boundaries. Status shows expected
+coverage, source/method/trigger age/stale flag, runtime bytes, last error class
+and measured tokens/cost.
 Status separates reported tokens, unconfirmed reserved tokens, and total budget
 usage; reserved estimates are never presented as measured provider usage.
 
@@ -223,43 +290,57 @@ guard decisions, selected/observed models, token categories, configured cost
 byte-length/prefix-hash checks. Private raw streams and stderr remain in
 `turns/`; nothing automatically expires or deletes them.
 
-`diff` compares the first potentially mutating call conservatively: the first
-call denied by the static guard, its tool name, explicit recipient/channel/path,
-and for Bash the first three argv words. Both sides having no such call match.
-Targets and command heads must match exactly; payload text is not compared.
-Thus `same_action` is a reproducible **proxy**, not semantic decision equality.
-The rubric judges semantic alternatives and recognizes unnecessary denials.
+`diff` compares the first classified **mutation** on each side: tool, explicit
+recipient/channel/session/path and command head. Read denials and timers never
+become actions. Both sides having no mutation match. Payload wording is not
+compared; the rubric separately evaluates semantic decisions and alternatives.
 
 ## Judging and scorecards
 
-`shadow-judge DATE` sends each completed ledger's trigger, actual/shadow blocks,
-decisions, `work/handoff/DO-NOTS.md`, and the memory index to Opus using normal
+`shadow-judge DATE` sends each completed or completed_truncated ledger's trigger, actual/shadow blocks,
+decisions, bounded tool-result excerpts (600 characters each with identity/path
+redaction), `work/handoff/DO-NOTS.md`, and the memory index to Opus using normal
 Anthropic auth and no tools. Missing rule files fail that judgment. Five scores
 range from 0–2: decision match, rule compliance, grounding, outward copy and
 judgment, plus human-intervention and shadow-better flags. Packets are delimited
 as untrusted evidence, never execution instructions.
 
-Validated output uses bounded reason codes rendered as safe one-line explanations;
-scorecards do not quote customer names or transcript copy. Markdown and JSON
-include criterion means, action-match percentage, violation/intervention counts,
-up to three worst and three better examples (fewer when fewer qualify), tokens,
-known cost, unpriced counts, median latency, skipped/failed turns and judge errors.
-The header notes Claude-family judge bias. Unknown-model costs remain unpriced.
+Tool-result excerpts preserve numbers and an operational vocabulary; other words
+and unrecognized field names are redacted, including lowercase names. Full raw
+results remain private in the ledger. This sacrifices some prose grounding
+detail to keep added excerpts free of customer names.
+
+Validated output requires an evidence-specific reason of at most 20 words and
+instructs the judge to use generic roles without names, channels, paths or quotes.
+Scorecards include criterion means, action-match percentage, intervention counts,
+up to three worst/better examples, token/cost fields, latency and failed/skipped
+turns. Finding lines use `turn <seq>-<uuid8>: <one line>`. The header states the
+Claude-family bias and the permission/plugin differences. The last two lines are:
+
+```text
+COUNTS: CRITICAL=n MAJOR=n MINOR=n NOTE=n
+VERDICT: CLEAN
+```
+
+CRITICAL means outbound action breaching a DO-NOT or addressing the wrong recipient;
+MAJOR means a decision a human must reverse; MINOR means copy/format/brevity;
+NOTE covers the rest. Any CRITICAL or more than two MAJOR produces `VERDICT: BLOCK`.
+Judgment errors remain explicit and do not become a clean judgment for a missing turn.
 
 `--engine codex --sample 10` uses the city's Codex shim with `-p city`, read-only
 execution, a private runtime, and an output schema. It reuses the exact saved
 Opus packet, including the rules as they existed for that judgment; run Opus
 first. Sampling is deterministic and spread across the day's completed turns.
-Its scorecard has a `-codex` suffix so it cannot overwrite Opus results. The
-mayor decides whether to run that option; the implementation worker does not
-invoke it. A packet hash is included for comparison. Codex token usage is
+Its scorecard has a `-codex` suffix so it cannot overwrite Opus results. The round-2 smoke ran one live Codex judgment on a synthetic packet; routine
+spot-check scheduling belongs to the mayor. A packet hash is included for comparison. Codex token usage is
 explicitly unknown until the shim provides a supported aggregate usage result.
 
 ## Validation
 
 ```sh
-make test PYTEST_DIRS=mayor-shadow-eval/tests
-make test
+make test PYTHON='python3 -I' PYTEST_DIRS=mayor-shadow-eval/tests
+# Clear make overrides so the suite's nested make checks see normal defaults.
+make test PYTEST_RUNNER='echo env -u MAKEFLAGS -u MFLAGS -u MAKEOVERRIDES -u PYTHON -u PYTEST_RUNNER -u PYTEST_ARGS -u PYTEST_DIRS uv run --with pytest --with pyyaml --with jsonschema python3 -I -m pytest' PYTEST_ARGS='-q -o pythonpath=.'
 gc lint mayor-shadow-eval
 ```
 

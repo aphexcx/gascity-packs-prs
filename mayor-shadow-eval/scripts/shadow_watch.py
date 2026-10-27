@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import argparse
-import copy
+import datetime as dt
+import math
 import hashlib
 import json
 import os
@@ -17,10 +18,11 @@ import uuid
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shadow_common import (PACK, cost, cst_day, discover, fingerprint, jsonl, ledgers,
+from shadow_common import (PACK, CST, cost, cst_day, discover, fingerprint, jsonl, ledgers,
     load_config, lock, moonshot_key, normal_auth, normal_env, path, prepare_runtime,
-    private_dir, run_process, sandbox_argv, save, timestamp, totals, usage, write_private)
-from shadow_guard import decide
+    private_dir, run_process, sandbox_argv, save, timestamp, totals, usage, write_private,
+    is_prompt, row_text, source_info, switch_on, tail_rows)
+from shadow_guard import mutation, segments, redirection_target
 
 
 def content(row):
@@ -29,14 +31,11 @@ def content(row):
 
 
 def prompt(row):
-    if row.get("type") != "user" or row.get("isMeta") or row.get("isCompactSummary") or row.get("isSidechain"):
-        return False
-    c = content(row)
-    return bool(c) and not any(b.get("type") == "tool_result" for b in c)
+    return is_prompt(row)
 
 
 def text_of(row):
-    return "\n".join(b.get("text", "") for b in content(row) if b.get("type") == "text")
+    return row_text(row)
 
 
 def blocks(rows):
@@ -52,27 +51,86 @@ def blocks(rows):
     return result
 
 
-def completed_turns(rows, settle_seconds, now=None):
+def turn_closed(rows, start, end, settle_seconds, now):
+    if end < len(rows) and prompt(rows[end]):
+        return True
+    pending = set()
+    main = [r for r in rows[start+1:end] if not r.get("isSidechain")]
+    # Progress/API telemetry are not conversation rows. Attachments and user
+    # rows do keep a turn open until the next terminal assistant response.
+    main = [r for r in main if r.get("type") in {"assistant", "user", "attachment"}]
+    for row in main:
+        for b in content(row):
+            if b.get("type") == "tool_use" and b.get("id"):
+                pending.add(b["id"])
+            elif b.get("type") == "tool_result":
+                pending.discard(b.get("tool_use_id"))
+    return bool(main and main[-1].get("type") == "assistant" and not pending
+                and not any(b.get("type") == "tool_use" for b in content(main[-1]))
+                and timestamp(main[-1].get("timestamp"))
+                and now - timestamp(main[-1].get("timestamp")) >= settle_seconds)
+
+
+def completed_turns(rows, settle_seconds, now=None, max_wait=2700):
     starts = [i for i, r in enumerate(rows) if prompt(r)]
     now = time.time() if now is None else now
     out = []
     for n, start in enumerate(starts):
         end = starts[n + 1] if n + 1 < len(starts) else len(rows)
-        assistants = [r for r in rows[start+1:end] if r.get("type") == "assistant" and not r.get("isSidechain")]
-        if n + 1 < len(starts) or (assistants and timestamp(assistants[-1].get("timestamp")) and now - timestamp(assistants[-1].get("timestamp")) >= settle_seconds):
+        if turn_closed(rows, start, end, settle_seconds, now) or (timestamp(rows[start].get("timestamp")) and now - timestamp(rows[start]["timestamp"]) >= max_wait):
             out.append((start, end))
     return out
 
 
+def compact_start(rows, start):
+    return max((i for i in range(start) if rows[i].get("subtype") == "compact_boundary"), default=0)
+
+
 def fork_rows(rows, start, new_id):
-    # Do not reconstruct only messages. Hook output, attachment, summary,
-    # compaction boundary and snapshot rows all belong to the prefix.
-    prefix = copy.deepcopy(rows[:start])
-    for r in prefix:
+    # The provider only sees the active compacted context. Copy rows shallowly:
+    # only top-level IDs change; nested content is never mutated.
+    prefix = []
+    for row in rows[compact_start(rows, start):start]:
+        r = dict(row)
         for key in ("sessionId", "session_id"):
             if key in r:
                 r[key] = new_id
+        prefix.append(r)
     return prefix
+
+
+def replay_context(rows, start, end):
+    captured = []
+    for r in rows[start+1:end]:
+        if r.get("type") == "assistant" and not r.get("isSidechain"):
+            break
+        if r.get("isMeta") or r.get("type") == "attachment":
+            a = r.get("attachment", {})
+            if a.get("type") in {"prompt_snapshot", "deferred_tools_record"}:
+                continue
+            value = text_of(r)
+            # Claude stores the exact model-visible hook envelope in rendered.
+            # Prefer it, otherwise use content (or stdout), without duplicating
+            # hook_success fields that contain the same payload.
+            rendered = r.get("rendered")
+            def flatten(v):
+                if isinstance(v, str):
+                    return v
+                if isinstance(v, list):
+                    return "\n".join(flatten(x) for x in v)
+                if isinstance(v, dict):
+                    return flatten(v.get("text", v.get("content", "")))
+                return ""
+            value = flatten(rendered) or value or flatten(a.get("content")) or flatten(a.get("stdout")) or flatten(a.get("output"))
+            if value:
+                captured.append(value)
+    return "\n".join(captured)
+
+
+def tool_results(rows):
+    return [{"tool_use_id": b.get("tool_use_id"), "content": b.get("content", "")}
+            for r in rows if not r.get("isSidechain") for b in content(r)
+            if b.get("type") == "tool_result"]
 
 
 def context_estimate(prefix, trigger):
@@ -94,20 +152,27 @@ def context_estimate(prefix, trigger):
 
 def action(blocks_):
     for b in blocks_:
-        if b.get("type") != "tool_use" or decide(b.get("name", ""), b.get("input", {})) == "allow":
+        name, data = b.get("name", ""), b.get("input", {})
+        if b.get("type") != "tool_use" or mutation(name, data) != "mutation":
             continue
-        name, data = b.get("name"), b.get("input", {})
-        target = next((str(data[k]) for k in ("recipient", "to", "channel", "channel_id", "file_path", "path") if data.get(k)), None)
+        target = next((str(data[k]) for k in ("recipient", "to", "channel", "channel_id", "file_path", "path", "url") if data.get(k)), None)
         head = None
         if name == "Bash":
             try:
-                a = shlex.split(data.get("command", ""))
+                parts = segments(data.get("command", ""))
+                chosen = next((x for x in parts if mutation("Bash", {"command": x}) == "mutation"), data.get("command", ""))
+                a = shlex.split(chosen)
             except ValueError:
-                a = []
-            head = a[:3]
-            for flag in ("--to", "--channel", "--channel-id", "--path"):
+                try:
+                    a = shlex.split(data.get("command", ""))
+                except ValueError:
+                    a = []
+            head = a[:3] if a[:1] == ["gc"] else a[:2] if a and a[0] in {"git", "bd"} else a[:1]
+            target = target or redirection_target(data.get("command", ""))
+            for flag in ("--to", "--recipient", "--channel", "--channel-id", "--session", "--room", "--path"):
                 if flag in a and a.index(flag)+1 < len(a):
                     target = a[a.index(flag)+1]
+                target = next((x.split("=", 1)[1] for x in a if x.startswith(flag+"=")), target)
             if len(a) > 3 and a[:3] in (["gc", "mail", "send"], ["gc", "mail", "reply"]):
                 target = a[3]
             target = target or " ".join(head)
@@ -118,7 +183,7 @@ def action(blocks_):
 def diff(fable, shadow):
     a, b = action(fable), action(shadow)
     return {"fable_first_mutation": a, "shadow_first_mutation": b, "same_action": a == b,
-            "rule": "first denied-by-static-guard tool + explicit target + Bash first three argv tokens; both absent match; copy and decision semantics require judge"}
+            "rule": "first classified mutation: tool + explicit target + command head; denied reads and timers excluded; both absent match"}
 
 
 def parse_stream(rows):
@@ -161,14 +226,13 @@ def classify_error(rows, stderr, code, timed):
     return None
 
 
-def fork_evidence(source_prefix, seed, runtime_file):
+def fork_evidence(source_prefix, seed, runtime_file, init=None):
     """Content-free provenance. Claude records prompt snapshots and wire shapes."""
     seed_rows = jsonl(seed)
     actual = jsonl(runtime_file) if runtime_file and runtime_file.exists() else []
     expected = fork_rows(source_prefix, len(source_prefix), seed.stem)
     snapshots = [r["attachment"] for r in source_prefix if r.get("attachment", {}).get("type") == "prompt_snapshot"]
     snapshot = next((s for s in reversed(snapshots) if s.get("tools")), snapshots[-1] if snapshots else {})
-    retained = [r["attachment"] for r in actual if r.get("attachment", {}).get("type") == "prompt_snapshot"]
     shape = next((r["shape"] for r in actual if r.get("type") == "api-request-shape"), {})
     wire_tools = {t["name"]: t for t in shape.get("tools", [])}
     tools = snapshot.get("tools", [])
@@ -188,7 +252,12 @@ def fork_evidence(source_prefix, seed, runtime_file):
     return {"prefix_rows_identical_except_session_id": seed_rows == expected,
             "mayor_role_in_prefix": any("You are the mayor of this Gas City workspace" in text_of(r) for r in source_prefix),
             "source_system_prompt_sha256": canonical(system) if system else None,
-            "system_prompt_snapshot_retained": bool(system and any(s.get("systemPrompt") == system for s in retained)),
+            "runtime_init_sha256": canonical(init) if init else None,
+            "runtime_init_tools": (init or {}).get("tools", []),
+            "runtime_init_skills": (init or {}).get("skills", []),
+            "runtime_init_plugins": (init or {}).get("plugins", []),
+            "runtime_system_prompt_verified": False,
+            "permission_mode_difference": "shadow dontAsk; live bypassPermissions",
             "source_tool_count": len(tools), "unchanged_wire_tool_count": len(unchanged),
             "all_source_tool_schemas_retained": bool(tools and len(unchanged) == len(tools)),
             "additional_wire_tools": sorted(set(wire_tools) - {t["name"] for t in tools}),
@@ -198,6 +267,8 @@ def fork_evidence(source_prefix, seed, runtime_file):
 
 
 def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
+    if not switch_on(cfg["kill_switch"]):
+        return None, {"status": "off", "shadow": {"errors": []}}
     start, end = interval
     trigger = rows[start]
     trigger_id = trigger.get("uuid")
@@ -214,7 +285,8 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
              "trigger_uuid": trigger_id, "trigger_timestamp": trigger.get("timestamp"),
              "trigger_text": text_of(trigger), "trigger_day_cst": cst_day(trigger.get("timestamp")),
              "run_day_cst": today, "source": str(source), "discovery": discovery,
-             "fable": fable, "status": "running", "shadow": {"model": selected, "blocks": [], "decisions": [], "errors": [], "usage": {}, "cost_usd": None},
+             "fable": fable, "fable_tool_results": tool_results(rows[start+1:end]),
+             "fable_incomplete": not turn_closed(rows, start, end, cfg["settle_seconds"], time.time()), "status": "running", "shadow": {"model": selected, "blocks": [], "decisions": [], "errors": [], "usage": {}, "cost_usd": None},
              "diff": diff(fable, [])}
     save(dest, entry, exclusive=True)  # claim before forking; crashes never replay silently
     shadow = entry["shadow"]
@@ -225,12 +297,10 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
         estimate = context_estimate(rows[:start], trigger)
         shadow["context_estimate"] = estimate
         day_total = totals(ledgers(root, today))["budget_used_tokens"]
-        # Reserve a full upper bound for each request. Claude's max output
-        # token limit is passed in env; input cannot exceed context_window.
-        reservation = cfg["max_turns"] * (cfg["context_window"] + cfg["max_output_tokens"])
+        reservation = cfg["max_turns"] * (estimate + cfg["max_output_tokens"])
         shadow["token_reservation"] = reservation
         skip = None
-        if path(cfg["kill_switch"]).exists():
+        if not switch_on(cfg["kill_switch"]):
             skip = "kill_switch"
         elif any(b.get("type") != "text" for b in content(trigger)):
             skip = "non_text_trigger"  # text CLI cannot faithfully reproduce images
@@ -245,14 +315,20 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
         seed_id = str(uuid.uuid4())
         seed = projects / (seed_id + ".jsonl")
         write_private(seed, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in fork_rows(rows, start, seed_id)), exclusive=True)
-        shadow.update({"fork_file": str(seed), "fork_session_id": seed_id, "prefix_rows": start,
+        shadow.update({"fork_file": str(seed), "fork_session_id": seed_id, "prefix_rows": start - compact_start(rows, start),
+                       "seed_bytes": seed.stat().st_size,
                        "guard_decisions_file": str(artifact / "decisions.jsonl")})
         save(dest, entry)
+        replay_file = artifact / "prompt-context.txt"
+        write_private(replay_file, replay_context(rows, start, end), exclusive=True)
+        shadow["replay_context_bytes"] = replay_file.stat().st_size
         env = normal_env()
         env.update({"CLAUDE_CONFIG_DIR": str(runtime), "TMPDIR": str(private_dir(root / "tmp")),
                     "GC_AGENT": "mayor", "GC_CITY_PATH": cfg["city_dir"], "GC_CITY": cfg["city_dir"],
                     "SHADOW_PACK_DIR": str(PACK), "SHADOW_CONFIG": cfg["config_path"],
                     "SHADOW_WORK_DIR": str(root), "SHADOW_DECISIONS": shadow["guard_decisions_file"],
+                    "SHADOW_REPLAY_CONTEXT": str(replay_file),
+                    "BASH_DEFAULT_TIMEOUT_MS": "60000", "BASH_MAX_TIMEOUT_MS": "60000",
                     "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(cfg["max_output_tokens"])})
         env.update({k: str(v) for k, v in cfg.get("env", {}).items()})
         if selected.startswith("claude-"):
@@ -268,12 +344,12 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
         prompt_file = artifact / "trigger.txt"
         write_private(prompt_file, text_of(trigger), exclusive=True)
         for attempt in range(3):
-            if path(cfg["kill_switch"]).exists():
+            if not switch_on(cfg["kill_switch"]):
                 shadow["errors"].append("kill_switch")
                 break
             out, err = artifact / f"stream-{attempt}.jsonl", artifact / f"stderr-{attempt}.txt"
             argv = ["claude", "-p", "--resume", seed_id, "--fork-session", "--model", selected,
-                    "--permission-mode", "dontAsk", "--setting-sources", "user",
+                    "--permission-mode", "dontAsk", "--setting-sources", "user,project",
                     "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                     "--settings", str(PACK / "assets/shadow-settings.json"),
                     "--output-format", "stream-json", "--verbose", "--max-turns", str(cfg["max_turns"]),
@@ -290,6 +366,7 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
             shadow.update({"blocks": answer, "usage": dict(all_usage), "exit_status": code,
                            "stream_file": str(out), "stderr_file": str(err), "attempts": attempt + 1,
                            "runtime_session_id": result.get("session_id"),
+                           "tool_results": tool_results(stream),
                            "runtime_init": next((r for r in stream if r.get("type") == "system" and r.get("subtype") == "init"), None)})
             shadow["observed_models"] = sorted({r["message"]["model"] for r in stream if r.get("type") == "assistant" and r.get("message", {}).get("model")})
             if result.get("session_id"):
@@ -298,8 +375,10 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
                 shadow["errors"].append(error)
                 if error not in {"http_401", "http_429", "http_5xx"} and not result.get("usage"):
                     shadow["unconfirmed_token_reservation"] = reservation
-            if not error:
-                entry["status"] = "completed"
+            if not error or error == "max_turns":
+                entry["status"] = "completed_truncated" if error else "completed"
+                if result.get("usage") or sum(all_usage.values()):
+                    shadow.pop("unconfirmed_token_reservation", None)
                 break
             entry["status"] = "failed"
             # Do not replay partial actions, auth failures or unknown token
@@ -331,7 +410,7 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
         shadow["cost_usd"] = cost(cfg, selected, shadow["usage"])
         if shadow.get("fork_file"):
             runtime_file = path(shadow["runtime_fork_file"]) if shadow.get("runtime_fork_file") else None
-            shadow["fork_evidence"] = fork_evidence(rows[:start], path(shadow["fork_file"]), runtime_file)
+            shadow["fork_evidence"] = fork_evidence(rows[:start], path(shadow["fork_file"]), runtime_file, shadow.get("runtime_init"))
         entry["diff"] = diff(fable, shadow["blocks"])
         after_size = source.stat().st_size
         shadow["source_integrity"] = {"before_bytes": before_size, "after_bytes": after_size,
@@ -343,11 +422,64 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
     return dest, entry
 
 
+def health(root, **updates):
+    dest = root / "watch-health.json"
+    old = json.loads(dest.read_text()) if dest.exists() else {}
+    new = {**old, **updates}
+    if new != old:
+        save(dest, new)
+
+
+def sample_turn(cfg, state, trigger, now=None):
+    """Rate-based every-k sampling, with an hourly quota to span the CST day."""
+    now = time.time() if now is None else now
+    local = dt.datetime.fromtimestamp(now, CST)
+    day, hour = local.date().isoformat(), local.hour
+    sampling = state.setdefault("sampling", {})
+    if sampling.get("day") != day:
+        sampling.clear()
+        sampling.update(day=day, eligible=0, sampled=0, hours={})
+    ident = trigger.get("uuid")
+    processed = state.setdefault("sampling_seen", {})
+    if ident in processed:
+        return False
+    processed[ident] = True
+    sampling["eligible"] += 1
+    hour_key = str(hour)
+    bucket = sampling["hours"].setdefault(hour_key, {"eligible": 0, "sampled": 0})
+    bucket["eligible"] += 1
+    override = cfg.get("sample_every", 0)
+    target = cfg.get("target_turns_per_day", 40)
+    if sampling.get("rate_hour") != hour:
+        # Prior completed clock hours form the running rate. Spread the target
+        # through all 24 hours; quiet hours do not create a midnight burst.
+        past = [v["eligible"] for k, v in sampling["hours"].items() if int(k) < hour]
+        rate = sum(past) / len(past) if past else target / 24
+        sampling["k"] = max(1, math.ceil(rate * 24 / target))
+        sampling["rate_hour"] = hour
+        sampling["estimated_eligible_per_day"] = round(rate * 24)
+    k = override or sampling["k"]
+    quota = ((hour + 1) * target // 24) - (hour * target // 24)
+    selected = (bucket["eligible"] - 1) % k == 0 and (bool(override) or bucket["sampled"] < quota)
+    if selected:
+        bucket["sampled"] += 1
+        sampling["sampled"] += 1
+    sampling["expected_coverage"] = min(1, 1 / k, target / max(1, sampling["estimated_eligible_per_day"])) if not override else 1 / k
+    return selected
+
+
 def tick(cfg, args):
     root = path(cfg["work_dir"])
+    if not switch_on(cfg["kill_switch"]):
+        health(root, switch="off", last_error="switch_off")
+        return 0
     source, by = (path(args.transcript), "explicit") if args.transcript else discover(cfg)
-    rows = jsonl(source)
-    intervals = completed_turns(rows, cfg["settle_seconds"])
+    info = source_info(source)
+    health(root, **info, source=str(source), discovery=by, switch="on", last_error="stale_source" if info["stale"] else None)
+    if info["stale"]:
+        return 1
+    rows = tail_rows(source, root)
+    intervals = completed_turns(rows, cfg["settle_seconds"], max_wait=cfg["max_wait"])
     existing = ledgers(root)
     seen = {(r.get("session_id"), r.get("trigger_uuid")) for _, r in existing}
     eligible = [v for v in intervals if (rows[v[0]].get("sessionId", source.stem), rows[v[0]].get("uuid")) not in seen]
@@ -368,13 +500,22 @@ def tick(cfg, args):
     if args.once:
         eligible = eligible[-1:]
     result = 0
-    for n, interval in enumerate(eligible, len(existing)+1):
-        dest, entry = run_turn(cfg, source, by, rows, interval, n, model=args.model)
-        print(json.dumps({"ledger": str(dest), "status": entry["status"], "errors": entry["shadow"]["errors"], "skip_reason": entry.get("skip_reason")} ), flush=True)
+    seq = len(existing)
+    for interval in eligible:
+        if not switch_on(cfg["kill_switch"]):
+            health(root, switch="off", last_error="switch_off")
+            break
+        if not args.once and not args.backfill:
+            selected = sample_turn(cfg, state, rows[interval[0]])
+            save(state_file, state)
+            health(root, sampling=state.get("sampling", {}))
+            if not selected:
+                continue
+        seq += 1
+        dest, entry = run_turn(cfg, source, by, rows, interval, seq, model=args.model)
+        print(json.dumps({"ledger": str(dest) if dest else None, "status": entry["status"], "errors": entry["shadow"]["errors"], "skip_reason": entry.get("skip_reason")}), flush=True)
         if entry["status"] == "failed":
             result = 1
-        if path(cfg["kill_switch"]).exists():
-            break
     return result
 
 

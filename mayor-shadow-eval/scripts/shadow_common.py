@@ -11,6 +11,8 @@ import re
 import signal
 import subprocess
 import time
+import uuid
+import sys
 import tomllib
 from zoneinfo import ZoneInfo
 
@@ -37,17 +39,23 @@ def load_config(filename) -> dict:
         raise ValueError("config does not exist")
     for k in ("city_dir", "source_config_dir", "work_dir", "kill_switch", "codex_shim"):
         default[k] = str(path(default[k]))
-    for k in ("max_turns", "timeout_seconds", "context_window", "daily_token_cap", "max_output_tokens"):
-        if not isinstance(default[k], int) or default[k] <= 0:
+    for k in ("max_turns", "timeout_seconds", "context_window", "daily_token_cap", "max_output_tokens", "max_wait", "target_turns_per_day", "poll_seconds"):
+        if type(default[k]) is not int or default[k] <= 0:
             raise ValueError("positive integer required: " + k)
+    for k in ("settle_seconds", "sample_every"):
+        if type(default[k]) is not int or default[k] < 0:
+            raise ValueError("nonnegative integer required: " + k)
     default["config_path"] = str(p if p.exists() else PACK / "assets/shadow-eval.toml")
     return default
 
 
 def private_dir(p: Path) -> Path:
-    p.mkdir(parents=True, exist_ok=True, mode=0o700)
     if p.is_symlink():
         raise ValueError("private directory cannot be a symlink")
+    if not p.parent.exists():
+        private_dir(p.parent)
+    p.mkdir(exist_ok=True, mode=0o700)
+    p.chmod(0o700)
     return p
 
 
@@ -70,18 +78,155 @@ def jsonl(p: Path) -> list[dict]:
     if not p.exists():
         return []
     rows = []
-    data = p.read_bytes()
-    lines = data.splitlines(keepends=True)
-    for i, line in enumerate(lines):
-        try:
-            row = json.loads(line)
-        except ValueError:
-            if i == len(lines) - 1 and not line.endswith(b"\n"):
-                break  # writer has not completed this row
-            raise ValueError("invalid transcript/ledger JSON row") from None
-        if isinstance(row, dict):
-            rows.append(row)
+    with p.open("rb") as f:
+        for line in f:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                if not line.endswith(b"\n"):
+                    break
+                raise ValueError("invalid transcript/ledger JSON row") from None
+            if isinstance(row, dict):
+                rows.append(row)
     return rows
+
+
+_TAILS = {}
+
+
+def tail_rows(source, root):
+    """Persist complete rows and byte offset; partial final lines wait for append.
+
+    The cache is replay evidence, never a resume transcript. An inode/size
+    regression starts a new generation; old evidence is retained, not deleted.
+    """
+    cache_root = private_dir(root / "runtime" / "tail-cache")
+    key = hashlib.sha256(str(source).encode()).hexdigest()
+    manifest = cache_root / (key + ".json")
+    state = json.loads(manifest.read_text()) if manifest.exists() else {}
+    st = source.stat()
+    identity = [st.st_dev, st.st_ino]
+    if state.get("identity") != identity or st.st_size < state.get("size", 0):
+        state = {"identity": identity, "offset": 0, "size": 0,
+                 "cache": str(cache_root / (key + "-" + uuid.uuid4().hex + ".jsonl"))}
+    cache = Path(state["cache"])
+    memo_key = str(cache)
+    rows = _TAILS.setdefault(memo_key, jsonl(cache) if memo_key not in _TAILS else [])
+    # Recover a crash between cache append and manifest persistence by trusting
+    # only the committed byte offset in the manifest.
+    if cache.exists() and cache.stat().st_size != state["offset"]:
+        state["cache"] = str(cache_root / (key + "-" + uuid.uuid4().hex + ".jsonl"))
+        cache = Path(state["cache"])
+        rows = []
+        state["offset"] = 0
+        _TAILS[str(cache)] = rows
+    fd = os.open(cache, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "ab") as out, source.open("rb") as inp:
+        os.fchmod(out.fileno(), 0o600)
+        inp.seek(state["offset"])
+        while True:
+            line = inp.readline()
+            if not line or not line.endswith(b"\n"):
+                break
+            row = json.loads(line)
+            if isinstance(row, dict):
+                rows.append(row)
+            out.write(line)
+            state["offset"] += len(line)
+        out.flush()
+        os.fsync(out.fileno())
+    state["size"] = st.st_size
+    save(manifest, state)
+    return rows
+
+
+def switch_on(filename):
+    try:
+        return path(filename).read_text().strip() == "on"
+    except OSError:
+        return False
+
+
+def row_text(row):
+    value = row.get("message", {}).get("content", [])
+    if isinstance(value, str):
+        return value
+    return "\n".join(b.get("text", "") for b in value if isinstance(b, dict) and b.get("type") == "text")
+
+
+def is_prompt(row):
+    if row.get("type") != "user" or any(row.get(k) for k in ("isMeta", "isCompactSummary", "isSidechain")):
+        return False
+    c = row.get("message", {}).get("content", [])
+    if not c or (isinstance(c, list) and any(b.get("type") == "tool_result" for b in c if isinstance(b, dict))):
+        return False
+    text = row_text(row).lstrip()
+    return not text.startswith(("[Request interrupted by user]", "[Request interrupted by user for tool use]", "<command-name>", "<local-command-stdout>"))
+
+
+_SOURCE_CACHE = {}
+_SOURCE_PROGRESS = {}
+MARKER = re.compile(r"(?:^|\n)You are the mayor of this Gas City workspace")
+
+
+def marker_in_row(row):
+    if row.get("type") == "user":
+        c = row.get("message", {}).get("content", [])
+        # Never let tool_result text identify a source.
+        if isinstance(c, list) and any(b.get("type") == "tool_result" for b in c if isinstance(b, dict)):
+            return False
+        return bool(MARKER.search(row_text(row)))
+    if row.get("type") == "attachment":
+        def strings(value):
+            if isinstance(value, str):
+                yield value
+            elif isinstance(value, list):
+                for v in value:
+                    yield from strings(v)
+            elif isinstance(value, dict) and value.get("type") != "tool_result":
+                for v in value.values():
+                    yield from strings(v)
+        return any(MARKER.search(t) for t in strings([row.get("attachment", {}), row.get("rendered", [])]))
+    return False
+
+
+def source_info(source):
+    st = source.stat()
+    key = (str(source), st.st_dev, st.st_ino, st.st_size)
+    if key not in _SOURCE_CACHE:
+        identity = (str(source), st.st_dev, st.st_ino)
+        progress = _SOURCE_PROGRESS.get(identity, {})
+        if st.st_size < progress.get("size", 0):
+            progress = {}
+        found = progress.get("marker", False)
+        newest, trigger = progress.get("newest_timestamp", 0), progress.get("newest_trigger_timestamp", 0)
+        offset = progress.get("offset", 0)
+        with source.open("rb") as f:
+            f.seek(offset)
+            for raw in f:
+                if not raw.endswith(b"\n"):
+                    break
+                offset += len(raw)
+                try:
+                    row = json.loads(raw)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                found = found or marker_in_row(row)
+                newest = max(newest, timestamp(row.get("timestamp")))
+                if is_prompt(row):
+                    trigger = max(trigger, timestamp(row.get("timestamp")))
+        _SOURCE_CACHE[key] = {"marker": found, "newest_timestamp": newest,
+                              "newest_trigger_timestamp": trigger}
+        _SOURCE_PROGRESS[identity] = {**_SOURCE_CACHE[key], "offset": offset, "size": st.st_size}
+    info = dict(_SOURCE_CACHE[key])
+    now = time.time()
+    info.update({"source_basename": source.name,
+                 "newest_row_age_seconds": max(0, now - info["newest_timestamp"]),
+                 "newest_trigger_age_seconds": max(0, now - info["newest_trigger_timestamp"]),
+                 "stale": not info["newest_timestamp"] or now - info["newest_timestamp"] >= 6 * 3600})
+    return info
 
 
 def cst_day(timestamp=None):
@@ -125,17 +270,13 @@ def discover(cfg):
             key = mayors[0].get("session_key", "")
             if re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", key):
                 p = project / (key + ".jsonl")
-                if p.is_file():
+                if p.is_file() and not source_info(p)["stale"]:
                     return p, "gc-session"
     except (OSError, ValueError, subprocess.SubprocessError):
         pass
-    # Match watchdog's paragraph anchor; a quoted marker in worker memory is
-    # not enough. Deliberately no loose substring fallback for replay safety.
-    marker = re.compile(rb"(?:\\n|\n)You are the mayor of this Gas City workspace")
     for p in sorted(project.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True):
-        with p.open("rb") as f:
-            if marker.search(f.read(200000)):
-                return p, "paragraph-start"
+        if source_info(p)["marker"]:
+            return p, "paragraph-start-full-scan"
     raise RuntimeError("no mayor transcript found")
 
 
@@ -170,7 +311,8 @@ def totals(items):
             counts[status] += 1
         actual = sum(shadow.get("usage", {}).values())
         tokens += actual
-        reserved_tokens += max(0, shadow.get("unconfirmed_token_reservation", 0) - actual)
+        reserved = shadow.get("token_reservation", 0) if status == "running" else shadow.get("unconfirmed_token_reservation", 0)
+        reserved_tokens += max(0, reserved - actual)
         amount = shadow.get("cost_usd")
         if amount is None and shadow.get("usage"):
             unpriced += 1
@@ -190,8 +332,14 @@ def normal_env():
     for k in list(e):
         if k.startswith(("ANTHROPIC_", "CLAUDE_CODE_OAUTH", "CLAUDE_CODE_SUBAGENT", "CLAUDE_CODE_USE_")) or k in {"CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "MOONSHOT_API_KEY"}:
             e.pop(k, None)
-    for k in ("BASH_ENV", "ENV", "GC_RIG", "GC_RIG_ROOT", "GC_TEMPLATE", "GC_SESSION_NAME", "GC_SESSION_ID", "GC_DIR", "GC_WORK_DIR"):
-        e.pop(k, None)
+    # gc resolves GC_SESSION_ID, then GC_ALIAS, then GC_AGENT. Never carry
+    # worker aliases, bead-store overrides or session instance credentials into
+    # the mayor replay. The watcher supplies its explicit city/agent identity.
+    city_environment = {"GC_BIN", "GC_HOME", "GC_CITY", "GC_CITY_PATH", "GC_DOLT_PORT",
+                        "GC_CITY_RUNTIME_DIR", "GC_DISABLE_USAGE_METRICS"}
+    for k in list(e):
+        if (k.startswith("GC_") and k not in city_environment) or k in {"BASH_ENV", "ENV", "RIPGREP_CONFIG_PATH"}:
+            e.pop(k, None)
     e.update({"CLAUDE_CODE_MAX_RETRIES": "0", "GIT_OPTIONAL_LOCKS": "0", "GIT_PAGER": "cat",
               "PAGER": "cat", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
               "DISABLE_AUTOUPDATER": "1", "CLAUDE_BASH_NO_LOGIN": "1", "GIT_NO_LAZY_FETCH": "1",
@@ -214,7 +362,7 @@ def normal_auth(e, source_dir):
     raw = ""
     if credentials.is_file():
         raw = credentials.read_text()
-    elif __import__("sys").platform == "darwin":
+    elif sys.platform == "darwin":
         r = subprocess.run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
                            capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
@@ -232,12 +380,21 @@ def normal_auth(e, source_dir):
     raise RuntimeError("normal Anthropic auth unavailable in private runtime")
 
 
+_MOONSHOT_KEYS = {}
+
+
 def moonshot_key(cfg):
     name = cfg["secret_name"]
     if not re.fullmatch(r"[A-Z][A-Z0-9_]+", name):
         raise ValueError("invalid secret name")
     if os.environ.get(name):
         return os.environ[name]
+    cache_key = (cfg["infisical_project"], name)
+    if cache_key in _MOONSHOT_KEYS:
+        if not _MOONSHOT_KEYS[cache_key]:
+            raise RuntimeError("Moonshot credential unavailable for this watcher run")
+        return _MOONSHOT_KEYS[cache_key]
+    _MOONSHOT_KEYS[cache_key] = None
     # The sourced token only enters this subprocess. JSON export is parsed,
     # never evaluated as shell code and never printed (including on failure).
     r = subprocess.run(["/bin/bash", "-c", 'source "$HOME/.config/infisical-agent/token.sh" >/dev/null 2>&1 && exec infisical export --env=agents --projectId "$1" --format=json',
@@ -250,11 +407,17 @@ def moonshot_key(cfg):
     token = data.get(name)
     if not token:
         raise RuntimeError("Moonshot credential unavailable")
+    _MOONSHOT_KEYS[cache_key] = token
     return token
 
 
 def prepare_runtime(cfg, name="runtime"):
     root = private_dir(path(cfg["work_dir"]) / name)
+    for project_settings in (path(cfg["city_dir"]) / ".claude/settings.json", path(cfg["city_dir"]) / ".claude/settings.local.json"):
+        if project_settings.exists():
+            project_config = json.loads(project_settings.read_text())
+            if any(project_config.get(k) for k in ("hooks", "enabledPlugins", "env", "apiKeyHelper", "statusLine")):
+                raise RuntimeError("project settings can launch live hooks; refusing replay")
     source = path(cfg["source_config_dir"])
     project = private_dir(project_dir(root, path(cfg["city_dir"])))
     # Only read-only context is shared. Runtime settings, sessions, telemetry,
@@ -273,12 +436,13 @@ def prepare_runtime(cfg, name="runtime"):
     for k in ("hooks", "env", "permissions", "apiKeyHelper", "statusLine", "enabledPlugins"):
         config.pop(k, None)
     config["enabledPlugins"] = {}
+    save(root / "plugin-fidelity.json", {"matched": False, "reason": "plugins disabled because their SessionStart hooks run before the tool guard"})
     save(root / "settings.json", config)
     return root, project
 
 
 def sandbox_argv(cfg, argv):
-    if __import__("sys").platform != "darwin":
+    if sys.platform != "darwin":
         raise RuntimeError("live replay requires macOS sandbox-exec write confinement")
     # The tool hook provides semantic denial; the OS additionally prevents
     # harness/plugin/background writes outside the private work directory.
@@ -307,10 +471,10 @@ def run_process(argv, env, cwd, stdout: Path, stderr: Path, timeout, kill_switch
     error = None
     with stdout.open("ab") as out, stderr.open("ab") as err, open(stdin_path or os.devnull, "rb") as inp:
         proc = subprocess.Popen(argv, env=env, cwd=cwd, stdin=inp,
-                                stdout=out, stderr=err, start_new_session=True)
+                                stdout=out, stderr=err, start_new_session=True, umask=0o077)
         try:
             while proc.poll() is None:
-                if kill_switch and path(kill_switch).exists():
+                if kill_switch and not switch_on(kill_switch):
                     error = "kill_switch"
                     break
                 if time.monotonic() - started >= timeout:

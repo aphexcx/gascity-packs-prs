@@ -1,0 +1,114 @@
+--- a/mayor-model-watchdog
++++ b/mayor-model-watchdog
+@@ -32 +32 @@
+-import calendar, glob, json, os, re, subprocess, sys, time, urllib.request
++import calendar, datetime, glob, json, os, re, subprocess, sys, time, urllib.request
+@@ -97,0 +98,65 @@
++_SOURCE_CACHE = {}
++_SOURCE_PROGRESS = {}
++
++
++def _source_info(path):
++    st = os.stat(path)
++    key = (path, st.st_ino, st.st_size)
++    if key not in _SOURCE_CACHE:
++        previous = _SOURCE_PROGRESS.get((path, st.st_ino), {})
++        if st.st_size < previous.get("size", 0):
++            previous = {}
++        marker = previous.get("marker", False)
++        newest = previous.get("newest", 0)
++        trigger = previous.get("trigger", 0)
++        offset = previous.get("offset", 0)
++        def strings(value):
++            if isinstance(value, str):
++                yield value
++            elif isinstance(value, list):
++                for item in value:
++                    yield from strings(item)
++            elif isinstance(value, dict) and value.get("type") != "tool_result":
++                for item in value.values():
++                    yield from strings(item)
++        with open(path, "rb") as fh:
++            fh.seek(offset)
++            for raw in fh:
++                if not raw.endswith(b"\n"):
++                    break
++                offset += len(raw)
++                try:
++                    row = json.loads(raw)
++                except ValueError:
++                    continue
++                if not isinstance(row, dict):
++                    continue
++                try:
++                    stamp = datetime.datetime.fromisoformat(row.get("timestamp", "").replace("Z", "+00:00")).timestamp()
++                except (AttributeError, ValueError):
++                    stamp = 0
++                newest = max(newest, stamp)
++                content = row.get("message", {}).get("content", [])
++                tool_result = isinstance(content, list) and any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content)
++                if row.get("type") == "user" and not tool_result:
++                    text = content if isinstance(content, str) else "\n".join(x.get("text", "") for x in content if isinstance(x, dict) and x.get("type") == "text")
++                    marker = marker or bool(re.search(r"(?:^|\n)You are the mayor of this Gas City workspace", text))
++                    if not any(row.get(k) for k in ("isMeta", "isCompactSummary", "isSidechain")) and text and not text.lstrip().startswith(("[Request interrupted by user", "<command-name>", "<local-command-stdout>")):
++                        trigger = max(trigger, stamp)
++                elif row.get("type") == "attachment":
++                    marker = marker or any(re.search(r"(?:^|\n)You are the mayor of this Gas City workspace", x) for x in strings([row.get("attachment", {}), row.get("rendered", [])]))
++        _SOURCE_CACHE[key] = {"marker": marker, "newest": newest, "trigger": trigger}
++        _SOURCE_PROGRESS[(path, st.st_ino)] = {**_SOURCE_CACHE[key], "offset": offset, "size": st.st_size}
++    info = dict(_SOURCE_CACHE[key])
++    info.update(stale=not info["newest"] or time.time() - info["newest"] >= 6 * 3600,
++                newest_trigger_age_seconds=max(0, time.time() - info["trigger"]), source_basename=os.path.basename(path))
++    return info
++
++
++def _select_source(path, method):
++    info = _source_info(path)
++    _SELECTED.update(by=method, source_basename=info["source_basename"],
++                     newest_trigger_age_seconds=info["newest_trigger_age_seconds"], stale=info["stale"])
++    return path
++
++
+@@ -99,2 +164 @@
+-    # Primary: the session gc says is the mayor's. Nothing that sniffs prompt text may come first -- every
+-    # session of this project quotes the marker sentence through the pinned memory.
++    # gc keys are authoritative only while their actual transcript is fresh.
+@@ -103,7 +167,5 @@
+-        if not os.path.isfile(path):
+-            raise RuntimeError(f"gc names {os.path.basename(path)}, which is not in the project dir")
+-        _SELECTED["by"] = "gc-session"
+-        return path
+-    except Exception as e:  # noqa: BLE001 -- a hung or missing gc must never hide the verdict
+-        # stderr: --status and --model-only own stdout
+-        log(f"GC-SESSION-FAIL {type(e).__name__}: {e}; falling back to the prompt-marker rule", sys.stderr)
++        if os.path.isfile(path) and not _source_info(path)["stale"]:
++            return _select_source(path, "gc-session")
++    except Exception:
++        pass
++    # Whole-file parsed user/attachment marker, never tool-result quotations.
+@@ -111,2 +173 @@
+-    loose = None
+-    for f in files:
++    for path in files:
+@@ -114,2 +175,2 @@
+-            with open(f, "rb") as fh:
+-                head = fh.read(HEAD_BYTES)
++            if _source_info(path)["marker"]:
++                return _select_source(path, "paragraph-start-full-scan")
+@@ -118,7 +179,2 @@
+-        if MAYOR_MARKER_RE.search(head):
+-            _SELECTED["by"] = "paragraph-start"
+-            return f
+-        if loose is None and MAYOR_MARKER in head:
+-            loose = f
+-    _SELECTED["by"] = "substring" if loose else None
+-    return loose  # no paragraph-start match anywhere (prompt reworded?): the old substring rule beats UNKNOWN
++    _SELECTED.update(by=None, stale=True)
++    return None
+@@ -266,0 +323,2 @@
++    if _SELECTED.get("stale"):
++        return {"state": "UNKNOWN", "reason": "stale_source", "model": None, "transcript": path, **_SELECTED}
+@@ -290,0 +349,3 @@
++        "source_basename": _SELECTED.get("source_basename"),
++        "newest_trigger_age_seconds": _SELECTED.get("newest_trigger_age_seconds"),
++        "stale": _SELECTED.get("stale"),

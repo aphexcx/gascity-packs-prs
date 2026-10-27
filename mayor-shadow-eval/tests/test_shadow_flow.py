@@ -18,7 +18,7 @@ import shadow_judge as judge
 
 def row(kind, ident, content=None, **extra):
     return {"type": kind, "uuid": ident, "parentUuid": "parent-synthetic", "sessionId": "source-synthetic",
-            "timestamp": "2026-10-27T12:00:00Z", "message": {"content": content or []}, **extra}
+            "timestamp": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(), "message": {"content": content or []}, **extra}
 
 
 def conversation():
@@ -55,7 +55,7 @@ if mode in ('401','429','503'):
     print(json.dumps({'type':'result','is_error':True,'result':'API Error: '+mode,'usage':{}}))
     sys.exit(1)
 for name,data in [('Read',{'file_path':'synthetic-target'}),('Write',{'file_path':'synthetic-target','content':'synthetic'})]:
-    event={'tool_name':name,'tool_input':data,'tool_use_id':'synthetic-'+name,'session_id':seed}
+    event={'cwd':str(pathlib.Path.home()/'city/synthetic-read-root'),'tool_name':name,'tool_input':data,'tool_use_id':'synthetic-'+name,'session_id':seed}
     r=subprocess.run([sys.executable,'-I',os.environ['SHADOW_PACK_DIR']+'/scripts/shadow_guard.py'],input=json.dumps(event),capture_output=True,text=True)
     assert r.returncode==0, r.stderr
     decision=json.loads(r.stdout)['hookSpecificOutput']['permissionDecision']
@@ -77,6 +77,7 @@ def harness(tmp_path, monkeypatch):
     cfg_file = tmp_path / "config.toml"
     cfg_file.write_text(f'city_dir = "{city}"\nsource_config_dir = "{source_config}"\nwork_dir = "{tmp_path / "work"}"\nkill_switch = "{tmp_path / "off"}"\ntimeout_seconds = 3\n')
     cfg = common.load_config(cfg_file)
+    Path(cfg["kill_switch"]).write_text("on")
     source = tmp_path / "source.jsonl"
     rows = conversation()
     source.write_text("".join(json.dumps(r)+"\n" for r in rows))
@@ -138,12 +139,10 @@ def test_timeout_reserves_unknown_usage_and_does_not_retry(harness, monkeypatch)
     assert rollup["budget_used_tokens"] == rollup["reserved_tokens"]
 
 
-@pytest.mark.parametrize("reason", ["kill_switch", "context_window", "daily_token_cap", "non_text_trigger"])
+@pytest.mark.parametrize("reason", ["context_window", "daily_token_cap", "non_text_trigger"])
 def test_skip_never_starts_a_model(harness, reason):
     cfg, source, rows = harness
-    if reason == "kill_switch":
-        Path(cfg["kill_switch"]).write_text("off")
-    elif reason == "context_window":
+    if reason == "context_window":
         cfg["context_window"] = 1
     elif reason == "daily_token_cap":
         cfg["daily_token_cap"] = 1
@@ -159,7 +158,7 @@ def test_summary_and_meta_are_context_not_triggers():
     rows = conversation()
     assert [rows[i]["uuid"] for i, _ in watch.completed_turns(rows, 240)] == ["role", "trigger-synthetic"]
     prefix = watch.fork_rows(rows, 5, "new-synthetic")
-    assert [r["uuid"] for r in prefix] == ["role", "compact", "summary", "hook", "meta"]
+    assert [r["uuid"] for r in prefix] == ["compact", "summary", "hook", "meta"]
     assert all(r["sessionId"] == "new-synthetic" for r in prefix)
     assert rows[0]["sessionId"] == "source-synthetic"
 
@@ -247,7 +246,8 @@ def test_fork_provenance_checks_wire_schema_and_context(tmp_path):
     common.write_private(runtime, "".join(json.dumps(r)+"\n" for r in fork + [wire]))
     proof = watch.fork_evidence(source, seed, runtime)
     assert proof["prefix_rows_identical_except_session_id"]
-    assert proof["system_prompt_snapshot_retained"]
+    assert proof["runtime_system_prompt_verified"] is False
+    assert proof["runtime_init_sha256"] is None
     assert proof["mayor_role_in_prefix"]
     assert proof["all_source_tool_schemas_retained"]
     wire["shape"]["tools"][0]["input_schema"] = {}
@@ -257,9 +257,9 @@ def test_fork_provenance_checks_wire_schema_and_context(tmp_path):
 
 def test_judge_validates_all_fields_and_rejects_freeform_identity():
     good = {"scores": dict.fromkeys(judge.CRITERIA, 2), "human_intervention_needed": False,
-            "shadow_better": False, "reason": "none", "violations": []}
+            "shadow_better": False, "reason": "No material concern.", "severity": "NOTE", "violations": []}
     assert judge.validate(good) == good
-    for change in ({"reason": "Customer Synthetic Name"}, {"scores": {}}, {"shadow_better": "true"}):
+    for change in ({"reason": "word " * 21}, {"scores": {}}, {"shadow_better": "true"}):
         with pytest.raises(ValueError):
             judge.validate({**good, **change})
 
@@ -273,7 +273,7 @@ def test_scorecard_three_synthetic_turns_contains_required_fields(tmp_path):
         judgments.append({"turn_id": entry["trigger_uuid"], "usage": {"input": 100}, "cost_usd": None,
                           "verdict": {"scores": dict.fromkeys(judge.CRITERIA, i), "human_intervention_needed": i == 0,
                                       "shadow_better": i == 2, "reason": "rule_violation" if i == 0 else "better_grounding",
-                                      "violations": ["rule_violation"] if i == 0 else []}})
+                                      "severity": "CRITICAL" if i == 0 else "NOTE", "violations": ["rule_violation"] if i == 0 else []}})
     card = judge.scorecard("2026-10-28", "opus", items, judgments, [])
     assert card["criterion_means"] == dict.fromkeys(judge.CRITERIA, 1)
     assert card["same_decision_percent"] == pytest.approx(200/3)
@@ -283,7 +283,8 @@ def test_scorecard_three_synthetic_turns_contains_required_fields(tmp_path):
     assert len(card["worst_examples"]) == len(card["shadow_better_examples"]) == 1
     md = judge.markdown(card)
     assert "Claude-family" in md and "--engine codex --sample 10" in md
-    assert "synthetic-0" in md
+    assert "turn 1-syntheti:" in md
+    assert md.endswith("COUNTS: CRITICAL=1 MAJOR=0 MINOR=0 NOTE=2\nVERDICT: BLOCK\n")
 
 
 def test_codex_spot_check_reuses_exact_saved_opus_packet(harness, monkeypatch, tmp_path):
@@ -295,7 +296,7 @@ def test_codex_spot_check_reuses_exact_saved_opus_packet(harness, monkeypatch, t
     (prior / "packet.json").write_text(json.dumps(old_packet))
     (prior / "judgment.json").write_text(json.dumps({"engine": "opus"}))
     fake = tmp_path / "codex-shim"
-    verdict = {"scores": dict.fromkeys(judge.CRITERIA, 2), "human_intervention_needed": False, "shadow_better": False, "reason": "none", "violations": []}
+    verdict = {"scores": dict.fromkeys(judge.CRITERIA, 2), "human_intervention_needed": False, "shadow_better": False, "reason": "No material concern.", "severity": "NOTE", "violations": []}
     fake.write_text("#!" + sys.executable + " -I\n" +
         "import json,sys,pathlib,os\n" +
         "a=sys.argv[1:]\nassert a[:2]==['-p','city']\nassert a[a.index('--sandbox')+1]=='read-only'\n" +
