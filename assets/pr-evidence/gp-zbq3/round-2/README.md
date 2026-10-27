@@ -42,7 +42,7 @@ is `live-replay.log`. One-second timestamp margins recovered both replies
 where the original 10-microsecond windows omitted them. Decimal arithmetic
 keeps the timestamps exact, and identity filtering makes the wider read safe.
 
-The final read-only replay is `live-replay-context.log` and `../after.json`:
+The final read-only replay is `live-replay-grouped.log` and `../after.json`:
 all 50 baseline identities and both incident identities match, with none
 missing. Both incident link targets are readable; their repeated URL labels
 are redacted. No Slack post or other Slack mutation was made. Records contain
@@ -54,12 +54,14 @@ before and three after: the two gist occurrences still match hex, and the
 repeated x.com label now redacts as required. Isolated URL strings still show
 four before and two after; `working_standalone_redacted` records that old
 metric explicitly. `slack_links` records target readability separately from
-label changes. Synthetic replay checks cover exact identities, missing-ID
-errors, extra roots and duplicate URL occurrence counting.
+label changes. Identical URLs are grouped with occurrence/redaction counts;
+the evidence does not attribute survival to a particular duplicate's position.
+Synthetic replay checks cover exact identities, missing-ID errors, extra roots,
+and both label-first and target-first duplicate orderings.
 
 ## Review notes resolved
 
-1. Both round-2 commits will carry Bead, Codex-Reviewed-By and Co-Authored-By
+1. Round-2 commits carry Bead, Codex-Reviewed-By and Co-Authored-By
    trailers. The eventual squash takes the updated PR body and its last block.
 2. Nine failures on the original base are reproduced, replacing the stale eight.
 3. Keep the explicit digit-only exclusion to express the generic rule's policy;
@@ -100,8 +102,12 @@ the raw SHA-256 and byte count. Python logs retain their suite summaries.
 - Go 1.27.3 darwin/arm64. `pnpm exec node --version`: v24.21.0. No Node tests
   apply; no unsupported-engine warning appeared.
 
-The same-model review record is added after the implementation commit so it
-can review the immutable round-2 delta.
+The gpt-6-astra helper review in self-review.out is CLEAN for the round delta
+6d977249..648f887e (no critical/major findings). Its minor noted ambiguous
+per-occurrence duplicate URL flags. The grouped-count representation above
+resolves that issue, tested with the reviewer's label-first example and replayed
+read-only. The follow-up review covers this evidence adjustment separately;
+production redaction code and fixtures are unchanged from the tested 648f887e.
 
 ## Handoff
 

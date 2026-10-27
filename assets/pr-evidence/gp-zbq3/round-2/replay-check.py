@@ -23,8 +23,15 @@ else:
 print('PASS: exact channel/ts pairs and ordering; extra roots excluded; missing identity reported')
 url = 'https://x.com/sampleuser/status/1234567890123456789'
 record = module.record('C1', {'ts': '1', 'user': 'synthetic', 'text': '<' + url + '|' + url + '>'})
-assert [item['working_redacted'] for item in record['urls']] == [False, True]
-assert [item['pinned_redacted'] for item in record['urls']] == [True, True]
+assert len(record['urls']) == 1 and record['urls'][0]['occurrences'] == 2
+assert record['urls'][0]['working_redacted'] == 1
+assert record['urls'][0]['pinned_redacted'] == 2
 assert record['slack_links'] == [{'host': 'x.com', 'working_target_readable': True,
                                   'working_label_changed': True}]
-print('PASS: occurrence counts distinguish the readable target from its redacted repeated label')
+print('PASS: grouped counts retain one readable target and one redacted label')
+reversed_record = module.record('C1', {'ts': '1', 'user': 'synthetic',
+    'text': '<https://example.com|' + url + '> ' + url})
+x_group = next(item for item in reversed_record['urls'] if item['host'] == 'x.com')
+assert x_group['occurrences'] == 2 and x_group['working_redacted'] == 1
+assert x_group['pinned_redacted'] == 2
+print('PASS: label-first and target-first duplicate orders have the same grouped counts')

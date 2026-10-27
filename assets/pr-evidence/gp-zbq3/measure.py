@@ -66,14 +66,13 @@ def record(channel, message):
                             'working_target_readable': bool(after and after.group(1) == link.group(1)),
                             'working_label_changed': not after or after.group(2) != link.group(2)})
     urls = []
-    for match in URL.finditer(text):
-        url = match.group()
-        entry = {'host': urlsplit(url).hostname, 'length': len(url),
+    # Count identical URL strings together: a surviving bare URL must not be
+    # attributed to an earlier identical label that was actually redacted.
+    for url, count in Counter(m.group() for m in URL.finditer(text)).items():
+        entry = {'host': urlsplit(url).hostname, 'length': len(url), 'occurrences': count,
                  'working_standalone_redacted': WORKING.redact_text(url) != url}
         for name, occurrences in remaining.items():
-            entry[name + '_redacted'] = occurrences[url] == 0
-            if occurrences[url]:
-                occurrences[url] -= 1
+            entry[name + '_redacted'] = count - min(count, occurrences[url])
         urls.append(entry)
     spans = []
     for rule, pattern in zip(PINNED._RULES, PINNED._PATTERNS):
@@ -141,10 +140,11 @@ def main():
     for item in sample:
         for url in item['urls']:
             host = counts.setdefault(url['host'], {'urls': 0, 'pinned_redacted': 0, 'working_redacted': 0})
-            host['urls'] += 1
+            host['urls'] += url['occurrences']
             for key in ['pinned_redacted', 'working_redacted']:
                 host[key] += int(url[key])
     output = {'pinned_helper': PIN, 'scope': 'founder-gap-sweep channel union, newest ten roots per channel, seven days',
+              'url_counting': 'identical URLs grouped; redacted fields count occurrences, not positions',
               'read_scopes': [list(scope) for scope, _ in pages],
               'sample': sample, 'live': [record(*item) for item in live], 'by_host': counts}
     assert len(sample) == 50 and {m['ts'] for m in output['live']} == LIVE_IDS

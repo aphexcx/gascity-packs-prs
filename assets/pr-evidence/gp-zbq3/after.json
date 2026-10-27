@@ -1,6 +1,7 @@
 {
   "pinned_helper": "7e3a7ea9044e70b7",
   "scope": "founder-gap-sweep channel union, newest ten roots per channel, seven days",
+  "url_counting": "identical URLs grouped; redacted fields count occurrences, not positions",
   "read_scopes": [
     [
       "C0AP0KV9S9E",
@@ -332,16 +333,18 @@
         {
           "host": "instinct.com",
           "length": 19,
+          "occurrences": 1,
           "working_standalone_redacted": false,
-          "pinned_redacted": false,
-          "working_redacted": false
+          "pinned_redacted": 0,
+          "working_redacted": 0
         },
         {
           "host": "hark.com",
           "length": 15,
+          "occurrences": 1,
           "working_standalone_redacted": false,
-          "pinned_redacted": false,
-          "working_redacted": false
+          "pinned_redacted": 0,
+          "working_redacted": 0
         }
       ],
       "pinned_spans": [],
@@ -685,16 +688,10 @@
         {
           "host": "gist.github.com",
           "length": 64,
+          "occurrences": 2,
           "working_standalone_redacted": true,
-          "pinned_redacted": true,
-          "working_redacted": true
-        },
-        {
-          "host": "gist.github.com",
-          "length": 64,
-          "working_standalone_redacted": true,
-          "pinned_redacted": true,
-          "working_redacted": true
+          "pinned_redacted": 2,
+          "working_redacted": 2
         }
       ],
       "pinned_spans": [
@@ -747,16 +744,10 @@
         {
           "host": "angelmatch.io",
           "length": 22,
+          "occurrences": 2,
           "working_standalone_redacted": false,
-          "pinned_redacted": false,
-          "working_redacted": false
-        },
-        {
-          "host": "angelmatch.io",
-          "length": 22,
-          "working_standalone_redacted": false,
-          "pinned_redacted": false,
-          "working_redacted": false
+          "pinned_redacted": 0,
+          "working_redacted": 0
         }
       ],
       "pinned_spans": [],
@@ -984,16 +975,10 @@
         {
           "host": "x.com",
           "length": 59,
+          "occurrences": 2,
           "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": false
-        },
-        {
-          "host": "x.com",
-          "length": 59,
-          "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": true
+          "pinned_redacted": 2,
+          "working_redacted": 1
         }
       ],
       "pinned_spans": [
@@ -1070,16 +1055,10 @@
         {
           "host": "x.com",
           "length": 51,
+          "occurrences": 2,
           "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": false
-        },
-        {
-          "host": "x.com",
-          "length": 51,
-          "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": true
+          "pinned_redacted": 2,
+          "working_redacted": 1
         }
       ],
       "pinned_spans": [
@@ -1118,16 +1097,10 @@
         {
           "host": "x.com",
           "length": 59,
+          "occurrences": 2,
           "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": false
-        },
-        {
-          "host": "x.com",
-          "length": 59,
-          "working_standalone_redacted": false,
-          "pinned_redacted": true,
-          "working_redacted": true
+          "pinned_redacted": 2,
+          "working_redacted": 1
         }
       ],
       "pinned_spans": [

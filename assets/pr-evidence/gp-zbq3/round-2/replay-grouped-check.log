@@ -1,0 +1,3 @@
+PASS: exact channel/ts pairs and ordering; extra roots excluded; missing identity reported
+PASS: grouped counts retain one readable target and one redacted label
+PASS: label-first and target-first duplicate orders have the same grouped counts

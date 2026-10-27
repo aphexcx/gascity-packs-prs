@@ -59,7 +59,7 @@ Validation at the round-2 implementation:
   No Node tests apply and no unsupported-engine warning appeared.
 
 Evidence: `assets/pr-evidence/gp-zbq3/round-2/README.md`, checks.jsonl,
-regression-summary.json, parity.json, suite summaries and live-replay-context.log;
+regression-summary.json, parity.json, suite summaries and live-replay-grouped.log;
 the corrected replay is `assets/pr-evidence/gp-zbq3/after.json`.
 
 The nine Fable notes are answered explicitly:
@@ -80,7 +80,13 @@ The nine Fable notes are answered explicitly:
    entire exception, preserving the existing containment/idempotence contract.
 9. No change: metadata-only evidence and gc Slack reads satisfy the data boundary.
 
-The same-model immutable-delta review record follows the implementation commit.
+The gpt-6-astra immutable-delta review is CLEAN for 6d977249..648f887e
+(self-review.out). Its minor evidence finding is fixed: identical URL strings
+now have grouped occurrence/redaction counts, avoiding attribution to the wrong
+duplicate's position. Both duplicate orderings are tested and the final replay
+retains the same identities and 4-to-3 contextual total. A follow-up review
+covers that evidence-only adjustment; production redaction code and fixtures
+remain exactly as tested at 648f887e.
 The mayor owns the fresh cross-model gate, founder checkpoint, merge and later
 city pin roll plus separate tail-helper snapshot installation. No readiness
 transition, city configuration change or deployment was performed.
