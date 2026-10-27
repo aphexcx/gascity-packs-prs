@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Linux install and systemd recipes, with a Linux ARM64 readiness proof.
+- The environment doctor honors `GC_SLACK_ADAPTER_ENV`, matching the service
+  launcher, and handles a supervisor environment without `HOME`.
+
 - **Progressive-disclosure reminders** (`SLACK_INJECTION_MODE=full|minimal`,
   default `full`, gp-zhtd), with compact reply coordinates and on-demand thread
   reads. Minimal mode skips context fetches and omits repeated thread/peer

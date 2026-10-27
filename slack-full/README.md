@@ -464,6 +464,86 @@ gc slack bind-dm --help
 gc slack reply-current --help
 ```
 
+## Linux
+
+The 2026-10-27 proof used Debian 12 on Linux ARM64, Go 1.26.5 and
+Python 3.11.2. Go must satisfy `adapter/go.mod` and `cli/go.mod`; Bash,
+Git, Python 3.11+, and a working `gc` installation are required. Run the
+adapter and its permission tests as the city's ordinary user.
+
+From an initialized city, import the reviewed revision (replace the SHA):
+
+```sh
+PACKS_REV=<reviewed-commit-sha>
+gc import add https://github.com/aphexcx/gascity-packs-prs/tree/main/slack-full \
+  --name slack --version "sha:$PACKS_REV"
+gc import install
+gc import list
+```
+
+`gc pack fetch` is the older named-pack fetch surface; for these v2
+`[imports]`, `gc import install` materializes the pinned source. Find the
+materialized `slack-full` directory in the user's gc repository cache
+(`~/.gc/cache/repos/`); use that directory as `SLACK_PACK` below.
+
+Create a private env file using the [env contract](#adapter-env-contract),
+then set `GC_SLACK_ADAPTER_ENV` to its absolute path in the supervisor's
+environment. The doctor now honors this same override. Set `GC_API_BASE_URL`
+to the Dashboard/API address printed by `gc start` (8372 in the proof), and
+`GC_CITY_NAME` to this city's name. Build before starting the service so a
+cold Go compile does not consume the supervisor's readiness window:
+
+```sh
+(cd "$SLACK_PACK/adapter" && go build -o gc-slack-adapter .)
+(cd "$SLACK_PACK/cli" && go build -o gc-slack-cli .)
+gc start
+gc service list
+GC_SLACK_ADAPTER_ENV=/absolute/path/slack.env gc doctor --verbose
+curl --fail http://127.0.0.1:8372/v0/city/YOUR_CITY/svc/slack/healthz
+```
+
+For an always-on Linux city, `gc supervisor install` installs the systemd
+user service. An equivalent hand-managed unit at
+`~/.config/systemd/user/gc-linux-city.service` is shown below; replace the
+binary and env-file paths. Use one supervisor service per OS user.
+
+```ini
+[Unit]
+Description=Gas City supervisor with Slack adapter
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GC_SLACK_ADAPTER_ENV=/absolute/path/slack.env
+ExecStart=/absolute/path/gc supervisor run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now gc-linux-city.service
+journalctl --user -u gc-linux-city.service -f
+```
+
+An administrator can enable lingering for the city user to keep it running
+after logout. The proof container had no running systemd user manager, so
+it exercised gc's detached supervisor; the unit was validated separately.
+The standalone adapter unit is in [SETUP.md](adapter/SETUP.md#running-the-adapter-as-a-service).
+
+Local health does not prove Slack authentication or message delivery. The
+pack has HTTP fixture tests, but no runtime dry mode. The Linux proof's live
+round trip awaits a dedicated test workspace: import `manifest/app.json`,
+install the app, and supply its bot token, signing secret, and workspace ID
+in the env file. For Socket Mode also supply the app-level token; otherwise
+configure the Events API Request URL. See the
+[dated proof](../docs/plans/linux-proof-slack-wecom-20261027.md) for measured
+commands, failures, fixes, and the exact credential-free coverage.
+
 ## Verify
 
 Assuming the adapter is up and the four must-set vars
