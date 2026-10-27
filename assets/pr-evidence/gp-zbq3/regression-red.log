@@ -1,0 +1,140 @@
+...................................................FFFFF.......FFF.....  [100%]
+=================================== FAILURES ===================================
+________________ test_shared_patterns[x-live-1792810032-shape] _________________
+
+case = {'name': 'x-live-1792810032-shape', 'text': '<https://x.com/sampleuser/status/1234567890123456789|https://x.com/sample...', 'want': '<https://x.com/sampleuser/status/1234567890123456789|https://x.com/sampleuser/status/1234567890123456789>'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '<https://x.[...e64:...6789]>' == '<https://x.c...890123456789>'
+E
+E         - <https://x.com/sampleuser/status/1234567890123456789|https://x.com/sampleuser/status/1234567890123456789>
+E         + <https://x.[REDACTED:base64:...6789]|https://x.[REDACTED:base64:...6789]>
+
+tests/test_slack_redact.py:22: AssertionError
+________________ test_shared_patterns[x-live-1793017482-shape] _________________
+
+case = {'name': 'x-live-1793017482-shape', 'text': '<https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.co...ps://x.com/sample_user13/status/1234567890123456789?s=46|https://x.com/sample_user13/status/1234567890123456789?s=46>'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '<https://x.[.....6789]?s=46>' == '<https://x.c...3456789?s=46>'
+E
+E         - <https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.com/sample_user13/status/1234567890123456789?s=46>
+E         + <https://x.[REDACTED:base64:...6789]?s=46|https://x.[REDACTED:base64:...6789]?s=46>
+
+tests/test_slack_redact.py:22: AssertionError
+____________________ test_shared_patterns[x-path-and-query] ____________________
+
+case = {'name': 'x-path-and-query', 'text': 'https://x.com/sampleuser/status/1234567890123456789?context=conversationContextF...wo', 'want': 'https://x.com/sampleuser/status/1234567890123456789?context=conversationContextForEpisodeNumberFortyTwo'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert 'https://x.[R...se64:...yTwo]' == 'https://x.co...umberFortyTwo'
+E
+E         - https://x.com/sampleuser/status/1234567890123456789?context=conversationContextForEpisodeNumberFortyTwo
+E         + https://x.[REDACTED:base64:...6789]?context=[REDACTED:base64:...yTwo]
+
+tests/test_slack_redact.py:22: AssertionError
+______________________ test_shared_patterns[x-upper-host] ______________________
+
+case = {'name': 'x-upper-host', 'text': 'HTTPS://X.COM/sampleuser/status/1234567890123456789', 'want': 'HTTPS://X.COM/sampleuser/status/1234567890123456789'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert 'HTTPS://X.[R...se64:...6789]' == 'HTTPS://X.CO...7890123456789'
+E
+E         - HTTPS://X.COM/sampleuser/status/1234567890123456789
+E         + HTTPS://X.[REDACTED:base64:...6789]
+
+tests/test_slack_redact.py:22: AssertionError
+____________________ test_shared_patterns[x-markdown-pair] _____________________
+
+case = {'name': 'x-markdown-pair', 'text': '[first](https://x.com/sampleuser/status/1234567890123456789) [second](https://x.c...://x.com/sampleuser/status/1234567890123456789) [second](https://x.com/sample_user13/status/1234567890123456789?s=46)'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '[first](http.....6789]?s=46)' == '[first](http...3456789?s=46)'
+E
+E         - [first](https://x.com/sampleuser/status/1234567890123456789) [second](https://x.com/sample_user13/status/1234567890123456789?s=46)
+E         + [first](https://x.[REDACTED:base64:...6789]) [second](https://x.[REDACTED:base64:...6789]?s=46)
+
+tests/test_slack_redact.py:22: AssertionError
+__________________ test_shared_patterns[base64-one-distinct] ___________________
+
+case = {'name': 'base64-one-distinct', 'text': 'ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ', 'want': 'ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '[REDACTED:base64:...ZZZZ]' == 'ZZZZZZZZZZZZ...ZZZZZZZZZZZZZ'
+E
+E         - ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ
+E         + [REDACTED:base64:...ZZZZ]
+
+tests/test_slack_redact.py:22: AssertionError
+__________________ test_shared_patterns[base64-four-distinct] __________________
+
+case = {'name': 'base64-four-distinct', 'text': 'gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_', 'want': 'gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_'}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '[REDACTED:base64:...gH9_]' == 'gH9_gH9_gH9_..._gH9_gH9_gH9_'
+E
+E         - gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_
+E         + [REDACTED:base64:...gH9_]
+
+tests/test_slack_redact.py:22: AssertionError
+______________ test_shared_patterns[base64-padding-not-diversity] ______________
+
+case = {'name': 'base64-padding-not-diversity', 'text': 'gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_==', 'want': 'gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_=='}
+
+    @pytest.mark.parametrize("case", json.loads((FIXTURES / "cases.json").read_text()),
+                             ids=lambda case: case["name"])
+    def test_shared_patterns(case):
+        # Construct synthetic credential shapes without a full webhook literal.
+        text = "".join(case["text_parts"]) if "text_parts" in case else case["text"]
+>       assert redact_text(text) == case["want"]
+E       AssertionError: assert '[REDACTED:base64:...9_==]' == 'gH9_gH9_gH9_...H9_gH9_gH9_=='
+E
+E         - gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_==
+E         + [REDACTED:base64:...9_==]
+
+tests/test_slack_redact.py:22: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_slack_redact.py::test_shared_patterns[x-live-1792810032-shape]
+FAILED tests/test_slack_redact.py::test_shared_patterns[x-live-1793017482-shape]
+FAILED tests/test_slack_redact.py::test_shared_patterns[x-path-and-query] - A...
+FAILED tests/test_slack_redact.py::test_shared_patterns[x-upper-host] - Asser...
+FAILED tests/test_slack_redact.py::test_shared_patterns[x-markdown-pair] - As...
+FAILED tests/test_slack_redact.py::test_shared_patterns[base64-one-distinct]
+FAILED tests/test_slack_redact.py::test_shared_patterns[base64-four-distinct]
+FAILED tests/test_slack_redact.py::test_shared_patterns[base64-padding-not-diversity]
+8 failed, 63 passed, 805 deselected in 1.62s

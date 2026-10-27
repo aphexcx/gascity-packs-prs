@@ -1,0 +1,154 @@
+=== RUN   TestSharedFixtures
+=== RUN   TestSharedFixtures/openai-0
+=== RUN   TestSharedFixtures/anthropic-1
+=== RUN   TestSharedFixtures/slack-2
+=== RUN   TestSharedFixtures/slack-3
+=== RUN   TestSharedFixtures/slack-4
+=== RUN   TestSharedFixtures/github-5
+=== RUN   TestSharedFixtures/github-6
+=== RUN   TestSharedFixtures/github-7
+=== RUN   TestSharedFixtures/aws-8
+=== RUN   TestSharedFixtures/google-9
+=== RUN   TestSharedFixtures/bearer-10
+=== RUN   TestSharedFixtures/bearer-11
+=== RUN   TestSharedFixtures/jwt-12
+=== RUN   TestSharedFixtures/hex-13
+=== RUN   TestSharedFixtures/hex-14
+=== RUN   TestSharedFixtures/base64-15
+=== RUN   TestSharedFixtures/base64-16
+=== RUN   TestSharedFixtures/ordinary
+=== RUN   TestSharedFixtures/short-runs
+=== RUN   TestSharedFixtures/adjacent
+=== RUN   TestSharedFixtures/hex-prefix-base64
+=== RUN   TestSharedFixtures/jwt-in-url
+=== RUN   TestSharedFixtures/unicode-bearer
+=== RUN   TestSharedFixtures/latin-unicode-bearer
+=== RUN   TestSharedFixtures/jwt-overlapping-prefix
+=== RUN   TestSharedFixtures/jwt-overlapping-chain
+=== RUN   TestSharedFixtures/aws-overlapping-prefix
+=== RUN   TestSharedFixtures/bearer-overlapping-prefix
+=== RUN   TestSharedFixtures/bearer-overlapping-chain
+=== RUN   TestSharedFixtures/ordinary-launchd-label
+=== RUN   TestSharedFixtures/ordinary-python-module
+=== RUN   TestSharedFixtures/ordinary-local-hostname
+=== RUN   TestSharedFixtures/ordinary-internal-hostname
+=== RUN   TestSharedFixtures/ordinary-slack-permalink
+=== RUN   TestSharedFixtures/ordinary-slack-permalink-thread
+=== RUN   TestSharedFixtures/ordinary-semver-suffix
+=== RUN   TestSharedFixtures/ordinary-slack-permalink-D-9
+=== RUN   TestSharedFixtures/ordinary-slack-permalink-G-9
+=== RUN   TestSharedFixtures/ordinary-slack-permalink-D-11
+=== RUN   TestSharedFixtures/ordinary-slack-permalink-G-11
+=== RUN   TestSharedFixtures/slack-webhook
+=== RUN   TestSharedFixtures/aws-secret-with-slash
+=== RUN   TestSharedFixtures/slack-permalink-adjacent-key
+=== RUN   TestSharedFixtures/slack-permalink-query-key
+=== RUN   TestSharedFixtures/slack-permalink-appended-token
+=== RUN   TestSharedFixtures/slack-permalink-lookalike-host
+=== RUN   TestSharedFixtures/slack-permalink-bearer
+=== RUN   TestSharedFixtures/slack-permalink-markdown-pair
+=== RUN   TestSharedFixtures/slack-permalink-secret-host
+=== RUN   TestSharedFixtures/slack-permalink-prepended-base64
+=== RUN   TestSharedFixtures/slack-permalink-base64-host
+=== RUN   TestSharedFixtures/x-live-1792810032-shape
+=== RUN   TestSharedFixtures/x-live-1793017482-shape
+=== RUN   TestSharedFixtures/x-path-and-query
+=== RUN   TestSharedFixtures/x-upper-host
+=== RUN   TestSharedFixtures/x-ascii-whitespace-boundaries
+=== RUN   TestSharedFixtures/x-markdown-pair
+=== RUN   TestSharedFixtures/x-jwt-query
+=== RUN   TestSharedFixtures/x-jwt-overlapping-path
+=== RUN   TestSharedFixtures/x-jwt-blocks-whole-exception
+=== RUN   TestSharedFixtures/x-bearer-blocks-exception
+=== RUN   TestSharedFixtures/x-slack-token-query
+=== RUN   TestSharedFixtures/x-client-secret-query
+=== RUN   TestSharedFixtures/x-lookalike-host
+=== RUN   TestSharedFixtures/x-userinfo-host
+=== RUN   TestSharedFixtures/x-in-untrusted-path
+=== RUN   TestSharedFixtures/x-in-untrusted-query
+=== RUN   TestSharedFixtures/base64-one-distinct
+=== RUN   TestSharedFixtures/base64-four-distinct
+=== RUN   TestSharedFixtures/base64-padding-not-diversity
+=== RUN   TestSharedFixtures/base64-five-distinct
+=== RUN   TestSharedFixtures/numeric-hex-stays-red
+=== RUN   TestSharedFixtures/low-diversity-slack-stays-red
+=== RUN   TestSharedFixtures/pem-base64-stays-red
+--- PASS: TestSharedFixtures (0.03s)
+    --- PASS: TestSharedFixtures/openai-0 (0.00s)
+    --- PASS: TestSharedFixtures/anthropic-1 (0.00s)
+    --- PASS: TestSharedFixtures/slack-2 (0.00s)
+    --- PASS: TestSharedFixtures/slack-3 (0.00s)
+    --- PASS: TestSharedFixtures/slack-4 (0.00s)
+    --- PASS: TestSharedFixtures/github-5 (0.00s)
+    --- PASS: TestSharedFixtures/github-6 (0.00s)
+    --- PASS: TestSharedFixtures/github-7 (0.00s)
+    --- PASS: TestSharedFixtures/aws-8 (0.00s)
+    --- PASS: TestSharedFixtures/google-9 (0.00s)
+    --- PASS: TestSharedFixtures/bearer-10 (0.00s)
+    --- PASS: TestSharedFixtures/bearer-11 (0.00s)
+    --- PASS: TestSharedFixtures/jwt-12 (0.00s)
+    --- PASS: TestSharedFixtures/hex-13 (0.00s)
+    --- PASS: TestSharedFixtures/hex-14 (0.00s)
+    --- PASS: TestSharedFixtures/base64-15 (0.00s)
+    --- PASS: TestSharedFixtures/base64-16 (0.00s)
+    --- PASS: TestSharedFixtures/ordinary (0.00s)
+    --- PASS: TestSharedFixtures/short-runs (0.00s)
+    --- PASS: TestSharedFixtures/adjacent (0.00s)
+    --- PASS: TestSharedFixtures/hex-prefix-base64 (0.00s)
+    --- PASS: TestSharedFixtures/jwt-in-url (0.00s)
+    --- PASS: TestSharedFixtures/unicode-bearer (0.00s)
+    --- PASS: TestSharedFixtures/latin-unicode-bearer (0.00s)
+    --- PASS: TestSharedFixtures/jwt-overlapping-prefix (0.00s)
+    --- PASS: TestSharedFixtures/jwt-overlapping-chain (0.00s)
+    --- PASS: TestSharedFixtures/aws-overlapping-prefix (0.00s)
+    --- PASS: TestSharedFixtures/bearer-overlapping-prefix (0.00s)
+    --- PASS: TestSharedFixtures/bearer-overlapping-chain (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-launchd-label (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-python-module (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-local-hostname (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-internal-hostname (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink-thread (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-semver-suffix (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink-D-9 (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink-G-9 (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink-D-11 (0.00s)
+    --- PASS: TestSharedFixtures/ordinary-slack-permalink-G-11 (0.00s)
+    --- PASS: TestSharedFixtures/slack-webhook (0.00s)
+    --- PASS: TestSharedFixtures/aws-secret-with-slash (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-adjacent-key (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-query-key (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-appended-token (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-lookalike-host (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-bearer (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-markdown-pair (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-secret-host (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-prepended-base64 (0.00s)
+    --- PASS: TestSharedFixtures/slack-permalink-base64-host (0.00s)
+    --- PASS: TestSharedFixtures/x-live-1792810032-shape (0.00s)
+    --- PASS: TestSharedFixtures/x-live-1793017482-shape (0.00s)
+    --- PASS: TestSharedFixtures/x-path-and-query (0.00s)
+    --- PASS: TestSharedFixtures/x-upper-host (0.00s)
+    --- PASS: TestSharedFixtures/x-ascii-whitespace-boundaries (0.00s)
+    --- PASS: TestSharedFixtures/x-markdown-pair (0.00s)
+    --- PASS: TestSharedFixtures/x-jwt-query (0.00s)
+    --- PASS: TestSharedFixtures/x-jwt-overlapping-path (0.00s)
+    --- PASS: TestSharedFixtures/x-jwt-blocks-whole-exception (0.00s)
+    --- PASS: TestSharedFixtures/x-bearer-blocks-exception (0.00s)
+    --- PASS: TestSharedFixtures/x-slack-token-query (0.00s)
+    --- PASS: TestSharedFixtures/x-client-secret-query (0.00s)
+    --- PASS: TestSharedFixtures/x-lookalike-host (0.00s)
+    --- PASS: TestSharedFixtures/x-userinfo-host (0.00s)
+    --- PASS: TestSharedFixtures/x-in-untrusted-path (0.00s)
+    --- PASS: TestSharedFixtures/x-in-untrusted-query (0.00s)
+    --- PASS: TestSharedFixtures/base64-one-distinct (0.00s)
+    --- PASS: TestSharedFixtures/base64-four-distinct (0.00s)
+    --- PASS: TestSharedFixtures/base64-padding-not-diversity (0.00s)
+    --- PASS: TestSharedFixtures/base64-five-distinct (0.00s)
+    --- PASS: TestSharedFixtures/numeric-hex-stays-red (0.00s)
+    --- PASS: TestSharedFixtures/low-diversity-slack-stays-red (0.00s)
+    --- PASS: TestSharedFixtures/pem-base64-stays-red (0.00s)
+=== RUN   TestRedactBeforeClip
+--- PASS: TestRedactBeforeClip (0.00s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter/redact	1.278s

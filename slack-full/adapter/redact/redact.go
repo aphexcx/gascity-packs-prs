@@ -16,9 +16,10 @@ import (
 var patterns []byte
 
 type rule struct {
-	kind      string
-	pattern   *regexp.Regexp
-	allowlist []*regexp.Regexp
+	kind        string
+	pattern     *regexp.Regexp
+	allowlist   []*regexp.Regexp
+	minDistinct int
 }
 
 var rules = compile()
@@ -27,19 +28,42 @@ func compile() []rule {
 	var specs []struct {
 		Kind, Pattern string
 		Allowlist     []string
+		MinDistinct   int `json:"min_distinct"`
 	}
 	if err := json.Unmarshal(patterns, &specs); err != nil {
 		panic(err)
 	}
 	parts := make([]rule, 0, len(specs))
 	for _, r := range specs {
-		compiled := rule{kind: r.Kind, pattern: regexp.MustCompile(r.Pattern)}
+		compiled := rule{kind: r.Kind, pattern: regexp.MustCompile(r.Pattern), minDistinct: r.MinDistinct}
 		for _, allowed := range r.Allowlist {
 			compiled.allowlist = append(compiled.allowlist, regexp.MustCompile(allowed))
 		}
 		parts = append(parts, compiled)
 	}
 	return parts
+}
+
+// Only the generic base64 rule sets a diversity floor. Padding is not entropy;
+// numeric identifiers are excluded even when they contain many different digits.
+func enoughDiversity(s string, minimum int) bool {
+	if minimum == 0 {
+		return true
+	}
+	s = strings.TrimRight(s, "=")
+	var seen [128]bool // The base64 pattern only matches ASCII.
+	distinct, digitsOnly := 0, true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !seen[c] {
+			seen[c] = true
+			distinct++
+		}
+		if c < '0' || c > '9' {
+			digitsOnly = false
+		}
+	}
+	return !digitsOnly && distinct >= minimum
 }
 
 // Text redacts before clipping. Merge overlapping matches, including a JWT
@@ -75,7 +99,9 @@ func Text(s string) string {
 			if token >= 0 {
 				start = offset + loc[2*token]
 			}
-			matches = append(matches, match{start, stop, priority})
+			if enoughDiversity(s[start:stop], rule.minDistinct) {
+				matches = append(matches, match{start, stop, priority})
+			}
 			offset = stop
 			if rule.kind == "bearer" {
 				// A token can itself be "Bearer", starting another
