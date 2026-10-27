@@ -1,0 +1,31 @@
+{
+  "format": "summary of go test -json; output events omitted",
+  "raw_sha256": "a788f69032658f484ca65bde3c7bbba36c3fbf3f791794226465df40e0c1cf8e",
+  "raw_bytes": 18383814,
+  "packages": {
+    "github.com/sjarmak/gc-slack-adapter": {
+      "passed": 12684,
+      "top_level_passed": 1402,
+      "skipped": 1,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:19:23.690171-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter",
+        "Elapsed": 75.631
+      }
+    },
+    "github.com/sjarmak/gc-slack-adapter/redact": {
+      "passed": 102,
+      "top_level_passed": 2,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:18:08.15856-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-adapter/redact",
+        "Elapsed": 0.099
+      }
+    }
+  }
+}

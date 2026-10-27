@@ -51,7 +51,7 @@ func enoughDiversity(s string, minimum int) bool {
 		return true
 	}
 	s = strings.TrimRight(s, "=")
-	var seen [128]bool // The base64 pattern only matches ASCII.
+	var seen [256]bool // Indexed by a byte; the base64 pattern only matches ASCII.
 	distinct, digitsOnly := 0, true
 	for i := 0; i < len(s); i++ {
 		c := s[i]

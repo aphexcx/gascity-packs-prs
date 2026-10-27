@@ -1,0 +1,103 @@
+{
+  "round1_head": "6d977249977ddbdf4be5ec9c4c4631d13183552c",
+  "round2_fixture_count": 100,
+  "new_fixtures": 26,
+  "revised_fixtures": 3,
+  "original_fixtures_unchanged": 51,
+  "round1_red": {
+    "python": [
+      "x-live-1792810032-shape",
+      "x-live-1793017482-shape",
+      "x-markdown-pair",
+      "r2-nbsp",
+      "r2-ideographic-space",
+      "r2-line-separator",
+      "r2-paragraph-separator",
+      "r2-control-soh",
+      "r2-control-nul",
+      "r2-control-del",
+      "r2-unicode-path",
+      "r2-caret",
+      "r2-backtick",
+      "r2-nested-parentheses",
+      "r2-standalone-parentheses",
+      "r2-nested-brackets",
+      "r2-standalone-brackets",
+      "r2-nested-apostrophe",
+      "r2-standalone-apostrophe",
+      "r2-nested-quote",
+      "r2-standalone-quote",
+      "r2-nested-pipe",
+      "r2-slack-label-url"
+    ],
+    "go": [
+      "x-live-1792810032-shape",
+      "x-live-1793017482-shape",
+      "x-markdown-pair",
+      "r2-long-s-scheme",
+      "r2-nbsp",
+      "r2-ideographic-space",
+      "r2-line-separator",
+      "r2-paragraph-separator",
+      "r2-control-soh",
+      "r2-control-nul",
+      "r2-control-del",
+      "r2-unicode-path",
+      "r2-caret",
+      "r2-backtick",
+      "r2-nested-parentheses",
+      "r2-standalone-parentheses",
+      "r2-nested-brackets",
+      "r2-standalone-brackets",
+      "r2-nested-apostrophe",
+      "r2-standalone-apostrophe",
+      "r2-nested-quote",
+      "r2-standalone-quote",
+      "r2-nested-pipe",
+      "r2-slack-label-url"
+    ]
+  },
+  "base_round1_red": {
+    "python": [
+      "x-live-1792810032-shape",
+      "x-live-1793017482-shape",
+      "x-path-and-query",
+      "x-upper-host",
+      "x-ascii-whitespace-boundaries",
+      "x-markdown-pair",
+      "base64-one-distinct",
+      "base64-four-distinct",
+      "base64-padding-not-diversity"
+    ],
+    "go": [
+      "x-live-1792810032-shape",
+      "x-live-1793017482-shape",
+      "x-path-and-query",
+      "x-upper-host",
+      "x-ascii-whitespace-boundaries",
+      "x-markdown-pair",
+      "base64-one-distinct",
+      "base64-four-distinct",
+      "base64-padding-not-diversity"
+    ]
+  },
+  "floor6_red": {
+    "python": [
+      "hex-prefix-base64",
+      "slack-permalink-prepended-base64"
+    ],
+    "go": [
+      "hex-prefix-base64",
+      "slack-permalink-prepended-base64"
+    ]
+  },
+  "current_failures": {
+    "python": [],
+    "go": []
+  },
+  "current_parity_count": 100,
+  "current_idempotent": {
+    "python": true,
+    "go": true
+  }
+}
