@@ -1,0 +1,7 @@
+[workspace]
+
+[beads]
+provider = "file"
+
+[api]
+port = 8372

@@ -1,0 +1,37 @@
+{
+  "source_commit": "80159ec24438527a803265761bc79f201762c7bd",
+  "node": "v22.23.4",
+  "wecom_node": {
+    "pass": 385,
+    "fail": 0,
+    "cancelled": 0,
+    "skip": 0
+  },
+  "wecom_pack": {
+    "pass": 16
+  },
+  "slack_python": {
+    "pass": 858,
+    "skip": 2
+  },
+  "slack-adapter-race": {
+    "pass": 12737,
+    "fail": 0,
+    "skip": 1,
+    "top_level_pass": 1404
+  },
+  "slack-cli-race": {
+    "pass": 237,
+    "fail": 0,
+    "skip": 0,
+    "top_level_pass": 199
+  },
+  "city_doctor": {
+    "blocking_failed": 0,
+    "failed": 0,
+    "fixed": 0,
+    "ok": true,
+    "passed": 88,
+    "warned": 1
+  }
+}

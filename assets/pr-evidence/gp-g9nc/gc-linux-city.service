@@ -1,0 +1,14 @@
+[Unit]
+Description=Gas City supervisor with Slack adapter (Linux proof)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin
+Environment=GC_SLACK_ADAPTER_ENV=/evidence/slack-fixture.env
+ExecStart=/usr/local/bin/gc supervisor run
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
