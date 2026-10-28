@@ -165,19 +165,36 @@ READ_GRAMMARS = {
            {"width": "count", "tabsize": "count", "ignore": "text", "hide": "text", "sort": "text", "format": "text", "time-style": "text"},
            {"color": "color"}),
     "du": ("achHklmsx", "all total human-readable summarize one-file-system",
-           {"B": "size", "d": "count"}, {"block-size": "size", "max-depth": "count", "exclude": "text"}, {}),
-    "wc": ("clmwL", "bytes chars lines words max-line-length", {}, {}, {}),
+           {"B": "size", "d": "count"}, {"block-size": "size", "max-depth": "count", "exclude": "text", "files0-from": "file"}, {}),
+    "wc": ("clmwL", "bytes chars lines words max-line-length", {}, {"files0-from": "file"}, {}),
     "cat": ("benstuvAET", "number number-nonblank squeeze-blank show-all show-ends show-tabs show-nonprinting", {}, {}, {}),
     "head": ("qv", "quiet silent verbose", {"n": "offset", "c": "offset"}, {"lines": "offset", "bytes": "offset"}, {}),
-    "tail": ("qvr", "quiet silent verbose", {"n": "offset", "c": "offset"}, {"lines": "offset", "bytes": "offset"}, {}),
+    "tail": ("qvrfF", "quiet silent verbose", {"n": "offset", "c": "offset"}, {"lines": "offset", "bytes": "offset"}, {"follow": "text"}),
     # stat -f means a format argument on BSD and a switch on GNU: deny it.
     "stat": ("nqstx", "terse", {"c": "text"}, {"format": "text", "printf": "text"}, {}),
-    "md5": ("qr", "", {}, {}, {}),
-    "shasum": ("bptU", "binary text portable", {"a": "count"}, {"algorithm": "count"}, {}),
+    "md5": ("qr", "", {"c": "text"}, {"check": "text"}, {}),
+    "shasum": ("bptUc", "binary text portable check", {"a": "count"}, {"algorithm": "count"}, {}),
 }
 
-BSD_READERS = {"ls", "du", "wc", "cat", "head", "tail", "stat", "md5", "shasum", "file", "ffprobe"}
-PERMUTE_READERS = {"grep", "rg", "find", "git"}
+# Installed-binary audit: VALIDATION.md, round 6. macOS md5/file and the Perl
+# shasum wrapper process trailing options too. file/ffprobe still have no safe
+# grammar and remain denied; a regime classification does not enable a reader.
+BSD_READERS = {"ls", "du", "wc", "cat", "head", "tail", "stat"}
+PERMUTE_READERS = {"grep", "rg", "find", "git", "md5", "shasum", "file", "ffprobe"}
+DENIED_READ_MODES = {"shasum": {"c", "check"}, "md5": {"c", "check"},
+                     "tail": {"f", "F", "follow"}}
+
+
+class UnsafeReadMode(ValueError):
+    """A forbidden mode in either regime cannot be ignored as parse ambiguity."""
+
+
+def check_read_mode(exe, key, kind):
+    # Reject indirect file/pattern sources and following files, including in
+    # the alternate parse. md5 -c compares a digest string on this host, but is
+    # conservatively unsupported rather than confused with md5sum manifests.
+    if kind == "file" or key in DENIED_READ_MODES.get(exe, ()):
+        raise UnsafeReadMode("indirect or unsupported read mode")
 
 
 def read_options(exe, args, regime=None):
@@ -208,6 +225,7 @@ def read_options(exe, args, regime=None):
             continue
         if arg.startswith("--"):
             key, equals, value = arg[2:].partition("=")
+            check_read_mode(exe, key, long_values.get(key))
             if key in long_values:
                 kind = long_values[key]
                 if not equals:
@@ -228,6 +246,7 @@ def read_options(exe, args, regime=None):
         while offset < len(arg):
             key = arg[offset]
             offset += 1
+            check_read_mode(exe, key, short_values.get(key))
             if key in short_values:
                 value = arg[offset:]
                 if not value:
@@ -240,9 +259,6 @@ def read_options(exe, args, regime=None):
                 raise ValueError("unknown short option")
             parsed.append((key, "switch", None))
     for _, kind, value in parsed:
-        # Pattern files remain denied: they introduce a secondary read source.
-        if kind == "file":
-            raise ValueError("pattern files are not supported")
         if kind == "count" and not re.fullmatch(r"\d+", value):
             raise ValueError("invalid count")
         if kind == "offset" and not re.fullmatch(r"[+-]?\d+", value):
@@ -292,7 +308,8 @@ def allowed_read_scope(exe, args, cwd):
         operands, options, terminated = read_options(exe, args)
         # A directory that is an operand under either getopt regime cannot be
         # hidden by an option value under the other. The alternate parse may
-        # reject a literal dash-prefixed filename; the primary parse still wins.
+        # reject a literal dash-prefixed filename; the primary parse still wins
+        # unless either regime identified a forbidden read mode.
         try:
             alternate, alternate_options, _ = read_options(exe, args, "permute" if exe in BSD_READERS else "bsd")
             if exe in {"grep", "rg"} and not any(kind == "pattern" or key == "files"
@@ -301,6 +318,8 @@ def allowed_read_scope(exe, args, cwd):
             # Preserve duplicate tokens: a directory-looking search pattern
             # can be repeated later as an operand under the alternate regime.
             ambiguous = alternate if exe in {"grep", "rg"} else [value for value in alternate if value not in operands]
+        except UnsafeReadMode:
+            raise
         except ValueError:
             pass
         recursive = exe in {"rg", "du"} or any(

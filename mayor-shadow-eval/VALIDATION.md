@@ -1,3 +1,82 @@
+# Validation — jp-h8f, round 6
+
+Continued `jp/mayor-shadow-eval` from `7db636cb` on jadegate, Darwin 27.0.0.
+Moved shasum, md5, file and ffprobe to the permutation regime based on the
+installed executables. file/ffprobe remain unsupported and denied. Indirect
+file sources and follow modes now raise a distinct mode rejection that cannot
+be swallowed by the alternate getopt parse. Literal operands after `--` and
+pattern arguments are still parsed as data. The round-5 sandbox is unchanged.
+
+## Installed-binary regime audit
+
+Each trailing-option probe used only `fixture.txt` containing synthetic text
+under `~/city/work/eval-kimi-k31/round6-audit/`. Paths below are the actual PATH
+resolutions. `file -b` identified all except shasum as Mach-O executables;
+shasum is a Perl script using Getopt::Long (`bundling`, default permutation).
+No coreutils replacements were selected for the seven BSD readers.
+
+| Reader | Executable | Probe arguments | Observed result | Regime |
+| --- | --- | --- | --- | --- |
+| md5 | `/sbin/md5` | `fixture.txt -q` | Exit 0, quiet digest; trailing flag applied | Permute |
+| ls | `/bin/ls` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| du | `/usr/bin/du` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| wc | `/usr/bin/wc` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| cat | `/bin/cat` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| head | `/usr/bin/head` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| tail | `/usr/bin/tail` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| stat | `/usr/bin/stat` | `fixture.txt --version` | Exit 1, `--version` is a missing filename | BSD |
+| file | `/usr/bin/file` | `fixture.txt --version` | Exit 0, version 5.41; trailing flag applied | Permute, still denied |
+| ffprobe | `/opt/homebrew/bin/ffprobe` | `fixture.txt -version` | Exit 0, version 9.0.1; trailing flag applied | Permute, still denied |
+| shasum | `/usr/bin/shasum` | `fixture.txt --version` | Exit 0, version 6.02; trailing flag applied | Permute |
+
+ffprobe resolves to `/opt/homebrew/Cellar/ffmpeg/9.0.1_1/bin/ffprobe`.
+Local `man md5` documents BSD-mode `-c string` as comparing the digest string;
+manifest verification belongs to invocation names ending in `sum`. A real
+`md5 fixture.txt -c <matching digest>` returned 0; passing `fixture.txt` as
+that value returned 2 with a failed comparison. The guard conservatively denies
+both `-c` and `--check` for md5. `cat -` remains allowed: it consumes stdin
+bytes, not filenames. No unscoped file was read during this audit.
+
+## Regression and delivery checks
+
+- Before the fix, the 37 new cases produced **15 failed, 22 passed**. Both
+  real-manifest integrations confirmed installed shasum read the synthetic
+  excluded filename and the old hook incorrectly allowed the command.
+- Final repository invocation: **504 passed in 34.82 seconds**, comprising
+  **500 pack tests** and **4 repository command-policy tests**. The **37 new
+  cases** exercise the real hook and its decision ledger, leading/trailing and
+  bundled checksum modes, stdin manifests, BSD alternate-parser rejection,
+  pattern files, follow modes, safe hashes, stdin bytes, literal terminators and
+  pattern arguments. Both manifest integrations run without a sandbox. Existing
+  OS confinement and replay integration tests also passed. No tests deleted.
+- Separate real-hook invocations from the actual city cwd denied
+  `shasum checksums --check` and `shasum checksums -c` with the exact round-2
+  read-shape reason; no checksum command was executed against the live city.
+- `gc lint mayor-shadow-eval`, Python AST/shell syntax, isolated Python
+  entrypoints, secret-pattern scan (**0**), and `git diff --check` passed.
+- Test Python **3.12.14** via uv; host Python **3.14.7**. Node **v26.7.0**,
+  measured with `node --version` inside `slack-full/adapter`; this pack has no
+  Node suite. All Python invocations use `-I`.
+- Implementation self-review checked mode rejection in both regimes, bundled
+  flags, option values, `--`, stdin semantics and fail-closed unsupported readers.
+  No fresh external review gate is claimed. Prior live canary/full-repo/judge
+  gates remain the round-5 and earlier records below.
+
+Exact final test invocation:
+
+```sh
+UV_CACHE_DIR="$HOME/city/work/eval-kimi-k31/uv-cache" \
+TMPDIR="$HOME/city/work/eval-kimi-k31" \
+make test PYTHON='python3 -I' \
+  PYTEST_DIRS='mayor-shadow-eval/tests tests/test_no_bare_bd_commands.py tests/test_no_gc_sling_wrapper.py' \
+  PYTEST_ARGS="-q -o pythonpath=. -o cache_dir=$HOME/city/work/eval-kimi-k31/round6-cache --basetemp=$HOME/city/work/eval-kimi-k31/round6-green"
+```
+
+Synthetic evidence under `~/city/work/eval-kimi-k31/`: `round6-red.log`,
+`round6-green.log`, `round6-real-hooks.json`, `round6-gates.json`,
+`round6-audit/binary-audit.json`, `round6-audit/md5-check.json`. Installation,
+start/stop and configuration steps remain in README; no live service changed.
+
 # Validation — jp-8e8, round 5
 
 Continued `jp/mayor-shadow-eval` from `7b1a145a` on jadegate, Darwin 27.0.0.

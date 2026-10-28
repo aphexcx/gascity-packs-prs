@@ -270,13 +270,24 @@ Unknown options, missing arguments, ambiguous BSD/GNU argument forms, and grep/r
 pattern-file options fail closed with the read-shape reason.
 
 The parser models BSD stop-at-first-operand behavior for ls, du, wc, cat, head,
-tail, stat, md5 and shasum. Later tokens are operands even when they look like
+tail and stat. Later tokens are operands even when they look like
 options: `du file --exclude .` cannot conceal the recursive `.` scope. Grep/rg
-keep option permutation; find and git keep their dedicated grammar. Directories
+and the audited macOS md5/shasum keep option permutation; find and git keep their
+dedicated grammar. Directories
 exposed as operands under either regime receive the recursive exclusion check.
 The shallow listing exception requires a single operand with no real terminator;
 `ls file -R` checks both literal operands. Unknown regimes and unsupported file/
 ffprobe reads are denied with the shape reason.
+
+Checksum verification, grep/rg pattern files, du/wc `--files0-from`, and tail
+follow modes are denied when recognized by either regime. The alternate parse
+cannot swallow these mode denials. A real `--` still protects literal filenames,
+and option arguments remain data (`grep -e --file=list file` is a pattern).
+`cat -` reads bytes from stdin and remains allowed. macOS `md5 -c` compares a
+digest string, rather than loading a manifest, but remains unsupported. The
+per-binary host audit in VALIDATION.md also found trailing-option processing in
+file and ffprobe; both remain denied. Re-audit the executable paths before using
+these assumptions on a different host or with GNU replacements on PATH.
 
 Deliberate conservative differences from the initial proposed allowlist:
 
