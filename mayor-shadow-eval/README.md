@@ -113,21 +113,55 @@ The worker does not run installation or launchd commands.
 
 ### Optional watchdog correction
 
-The companion unified diff changes only source selection and its health fields.
-It checks the gc-named file's newest row against six hours, then scans complete
-user/attachment rows for the paragraph-anchored mayor marker. Tool-result text is
+The companion v2 unified diff adds `WATCHDOG_TRANSCRIPT`, an absolute path to
+the operator-selected live transcript. When set, it takes precedence over gc and
+marker discovery and is read once per tick. It still uses the six-hour newest-row
+freshness gate: stale means `UNKNOWN: stale_source <path>`, and a missing file
+means `UNKNOWN: override_missing <path>`, with no automatic fallback. Relative
+paths fail closed as `override_not_absolute`; an empty value behaves as unset.
+`--status` includes `source_path`, `newest_row_age_seconds` (null if unavailable)
+and `override_used`, including UNKNOWN results. A source exactly six hours old
+is stale. The watchdog's Python entrypoint uses isolated mode (`-I`).
+
+With the override unset, it checks the gc-named file's newest row against six
+hours, then scans complete user/attachment rows for the paragraph-anchored mayor marker. Tool-result text is
 excluded. A stale selected file becomes UNKNOWN with `reason=stale_source`; it
 is never treated as a healthy historical model reading. Cache keys use inode and
 size, and an in-process growing file is scanned from its prior byte offset.
 
-The worker verified the first command only. The mayor owns apply and rollback:
+Both routes were verified against copied fixtures with `patch --dry-run` and
+produce identical v2 files. The mayor owns installation and rollback. Choose
+exactly one route: the full patch for the pristine watchdog, or the incremental
+patch for a watchdog already running v1 (the current jadegate installation).
 
 ```sh
+# Pristine -> v2:
 patch --dry-run "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
 patch "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
-# Roll back the exact patch without deleting the executable:
+# Roll back v2 -> pristine:
 patch -R "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source.patch"
+
+# Already patched v1 -> v2 (use instead of the pristine route):
+patch --dry-run "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source-v1-to-v2.patch"
+patch "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source-v1-to-v2.patch"
+# Roll back v2 -> v1:
+patch -R "$HOME/city/bin/mayor-model-watchdog" "$SHADOW_PACK/assets/patches/mayor-model-watchdog-live-source-v1-to-v2.patch"
 ```
+
+> After every `gc handoff`: update the explicit transcript path in BOTH
+> `~/Library/LaunchAgents/com.jadegate.mayor-shadow-eval.plist` (`--transcript`)
+> and the watchdog's `WATCHDOG_TRANSCRIPT` in its launchd plist
+> `EnvironmentVariables` (`~/Library/LaunchAgents/com.jadegate.model-watchdog.plist`).
+> Reload the edited jobs so launchd picks up the new arguments and environment,
+> then run `launchctl kickstart -k "gui/$(id -u)/com.jadegate.model-watchdog"`.
+
+For each edited job, use `launchctl bootout` followed by `launchctl bootstrap`
+with its plist path; `kickstart` alone does not reload plist changes. Confirm the
+watchdog with `WATCHDOG_TRANSCRIPT=/absolute/live/session.jsonl python3 -I
+"$HOME/city/bin/mayor-model-watchdog" --status`, and after its next poll confirm
+the shadow's selected source with `"$SHADOW_PACK/commands/shadow-status.sh"`.
+The structural fix is for gc's mayor `session_key` to follow the Claude session
+id; that is outside this pack's scope.
 
 ## Fork and isolation contract
 
@@ -144,7 +178,7 @@ remains an explicit operator override, still subject to freshness checks.
 On the reviewed host the explicitly named live `ec4edc76…` transcript contains
 **no anchored marker**, even in a full scan. Automatic discovery therefore fails
 closed on the old marker-bearing file. Before unattended installation the mayor
-must correct the gc session key or supply a source with a trusted role marker.
+must correct the gc session key or set both explicit overrides as described above.
 The successful live canary used `--transcript`; it does not prove automatic source
 selection works on that host. See `VALIDATION.md` for the exact gate evidence.
 

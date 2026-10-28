@@ -1,9 +1,14 @@
+# Live-source patch v2: pristine -> v2; WATCHDOG_TRANSCRIPT + six-hour freshness + status.
 --- a/mayor-model-watchdog
 +++ b/mayor-model-watchdog
+@@ -1 +1 @@
+-#!/usr/bin/python3
++#!/usr/bin/python3 -I
 @@ -32 +32 @@
 -import calendar, glob, json, os, re, subprocess, sys, time, urllib.request
 +import calendar, datetime, glob, json, os, re, subprocess, sys, time, urllib.request
-@@ -97,0 +98,65 @@
+@@ -97,0 +98,70 @@
++# Live-source selection v2: explicit overrides retain the six-hour freshness gate.
 +_SOURCE_CACHE = {}
 +_SOURCE_PROGRESS = {}
 +
@@ -57,23 +62,41 @@
 +        _SOURCE_CACHE[key] = {"marker": marker, "newest": newest, "trigger": trigger}
 +        _SOURCE_PROGRESS[(path, st.st_ino)] = {**_SOURCE_CACHE[key], "offset": offset, "size": st.st_size}
 +    info = dict(_SOURCE_CACHE[key])
-+    info.update(stale=not info["newest"] or time.time() - info["newest"] >= 6 * 3600,
-+                newest_trigger_age_seconds=max(0, time.time() - info["trigger"]), source_basename=os.path.basename(path))
++    now = time.time()
++    info.update(stale=not info["newest"] or now - info["newest"] >= 6 * 3600,
++                newest_row_age_seconds=max(0, now - info["newest"]) if info["newest"] else None,
++                newest_trigger_age_seconds=max(0, now - info["trigger"]), source_basename=os.path.basename(path))
 +    return info
 +
 +
 +def _select_source(path, method):
 +    info = _source_info(path)
-+    _SELECTED.update(by=method, source_basename=info["source_basename"],
++    _SELECTED.update(by=method, source_path=os.path.abspath(path),
++                     newest_row_age_seconds=info["newest_row_age_seconds"],
++                     source_basename=info["source_basename"],
 +                     newest_trigger_age_seconds=info["newest_trigger_age_seconds"], stale=info["stale"])
 +    return path
 +
 +
-@@ -99,2 +164 @@
+@@ -99,2 +169,15 @@
 -    # Primary: the session gc says is the mayor's. Nothing that sniffs prompt text may come first -- every
 -    # session of this project quotes the marker sentence through the pinned memory.
++    # Read the override exactly once per tick; never reuse a prior tick's selection.
++    override = os.environ.get("WATCHDOG_TRANSCRIPT")
++    _SELECTED.clear()
++    _SELECTED.update(by=None, source_path=None, newest_row_age_seconds=None,
++                     override_used=False)
++    if override:
++        _SELECTED.update(by="explicit", source_path=override, override_used=True)
++        if not os.path.isabs(override):
++            _SELECTED["reason"] = f"override_not_absolute {override}"
++            return None
++        if not os.path.isfile(override):
++            _SELECTED["reason"] = f"override_missing {override}"
++            return None
++        return _select_source(override, "explicit")
 +    # gc keys are authoritative only while their actual transcript is fresh.
-@@ -103,7 +167,5 @@
+@@ -103,7 +186,5 @@
 -        if not os.path.isfile(path):
 -            raise RuntimeError(f"gc names {os.path.basename(path)}, which is not in the project dir")
 -        _SELECTED["by"] = "gc-session"
@@ -86,16 +109,16 @@
 +    except Exception:
 +        pass
 +    # Whole-file parsed user/attachment marker, never tool-result quotations.
-@@ -111,2 +173 @@
+@@ -111,2 +192 @@
 -    loose = None
 -    for f in files:
 +    for path in files:
-@@ -114,2 +175,2 @@
+@@ -114,2 +194,2 @@
 -            with open(f, "rb") as fh:
 -                head = fh.read(HEAD_BYTES)
 +            if _source_info(path)["marker"]:
 +                return _select_source(path, "paragraph-start-full-scan")
-@@ -118,7 +179,2 @@
+@@ -118,7 +198,2 @@
 -        if MAYOR_MARKER_RE.search(head):
 -            _SELECTED["by"] = "paragraph-start"
 -            return f
@@ -105,10 +128,18 @@
 -    return loose  # no paragraph-start match anywhere (prompt reworded?): the old substring rule beats UNKNOWN
 +    _SELECTED.update(by=None, stale=True)
 +    return None
-@@ -266,0 +323,2 @@
+@@ -266 +341,3 @@
+-        return {"state": "UNKNOWN", "reason": "no mayor transcript found", "model": None, "transcript": None}
++        return {"state": "UNKNOWN", "reason": "no mayor transcript found", "model": None, "transcript": None, **_SELECTED}
 +    if _SELECTED.get("stale"):
-+        return {"state": "UNKNOWN", "reason": "stale_source", "model": None, "transcript": path, **_SELECTED}
-@@ -290,0 +349,3 @@
++        return {"state": "UNKNOWN", "reason": f"stale_source {path}", "model": None, "transcript": path, **_SELECTED}
+@@ -272 +349 @@
+-        return {"state": "UNKNOWN", "reason": "no model fields in transcript tail", "model": None, "transcript": path}
++        return {"state": "UNKNOWN", "reason": "no model fields in transcript tail", "model": None, "transcript": path, **_SELECTED}
+@@ -290,0 +368,6 @@
++        "source_path": _SELECTED.get("source_path"),
++        "newest_row_age_seconds": _SELECTED.get("newest_row_age_seconds"),
++        "override_used": _SELECTED.get("override_used"),
 +        "source_basename": _SELECTED.get("source_basename"),
 +        "newest_trigger_age_seconds": _SELECTED.get("newest_trigger_age_seconds"),
 +        "stale": _SELECTED.get("stale"),

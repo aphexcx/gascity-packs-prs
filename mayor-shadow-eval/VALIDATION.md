@@ -1,3 +1,54 @@
+# Validation — jp-196, round 7
+
+Continued `jp/mayor-shadow-eval` from `ffab10215784df3c1bdabe34416ba12481add331`.
+Watchdog patch v2 adds an explicit `WATCHDOG_TRANSCRIPT` absolute path, preserves
+the six-hour newest-row freshness rule, and includes source path, newest-row age
+and override use in `--status`. Missing or stale overrides do not fall back to
+automatic discovery. Selection metadata resets and the environment is reread
+once per tick. The deployed watchdog and launchd jobs were not changed.
+
+## Round-7 checks
+
+- **518 passed in 35.86 seconds**: **514 pack tests**, including **14 new
+  watchdog cases**, plus **4 repository command-policy tests**. No tests deleted.
+  The four required cases cover fresh, stale, missing and unset overrides on a
+  pristine+v2 copy. Additional cases cover the exact six-hour boundary, changing
+  overrides between ticks, relative-path rejection, both upgrade routes, and
+  four real `python -I ... --status` subprocesses with isolated fixture homes.
+- The committed pristine fixture matches the host backup byte for byte. Its
+  preserved v1 patch recreates the currently installed watchdog byte for byte.
+  Provenance and hashes are in `tests/fixtures/README.md`.
+- Both delivery patches pass `patch --dry-run` against their respective copied
+  host fixtures, with no offset or fuzz. Applying pristine -> v2 and
+  pristine -> v1 -> v2 produces identical bytes. After formatting the diffs with
+  zero context (avoiding whitespace-only patch context), all **14 patch tests**
+  passed again in **0.32 seconds**.
+- `gc lint mayor-shadow-eval`, Python AST checks, shell syntax, isolated Python
+  entrypoints and `git diff --check` passed. Secret-pattern scan: **0** matches;
+  no credential values printed. The pristine fixture retains its original
+  shebang as data; both v2 patches give the delivered executable `python3 -I`.
+- Node **v26.7.0**, measured inside `slack-full/adapter`; this Python pack has no
+  Node suite. All test and verification Python invocations use `-I`.
+- Implementation self-review covered override precedence, freshness boundaries,
+  per-tick state reset, UNKNOWN status fields and both patch routes. No new
+  external model-review verdict is claimed or required by this round's contract.
+
+Exact full test invocation:
+
+```sh
+UV_CACHE_DIR="$HOME/city/work/eval-kimi-k31/uv-cache" \
+TMPDIR="$HOME/city/work/eval-kimi-k31" \
+make test PYTHON='python3 -I' \
+  PYTEST_DIRS='mayor-shadow-eval/tests tests/test_no_bare_bd_commands.py tests/test_no_gc_sling_wrapper.py' \
+  PYTEST_ARGS="-q -o pythonpath=. -o cache_dir=$HOME/city/work/eval-kimi-k31/round7/cache --basetemp=$HOME/city/work/eval-kimi-k31/round7/full"
+```
+
+Evidence: `~/city/work/eval-kimi-k31/round7/full-tests.log` and `checks.json`.
+README documents both installation/rollback routes and the mandatory dual
+transcript update after every `gc handoff`, including reloading launchd jobs
+before kickstarting the watchdog. The gc session-key structural fix remains
+outside this pack's scope.
+
 # Validation — jp-h8f, round 6
 
 Continued `jp/mayor-shadow-eval` from `7db636cb` on jadegate, Darwin 27.0.0.

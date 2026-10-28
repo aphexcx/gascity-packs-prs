@@ -1,0 +1,664 @@
+#!/usr/bin/python3
+"""External model watchdog for the jadegate mayor session (Afik's order, 2026-09-07 17:33 CST,
+#gastown 1788773614): the mayor must run Fable. If it is downgraded (Opus, Sonnet, anything else),
+post an alert in #gastown, mail the mayor telling it to hand off to a fresh Fable session, and post
+again when it is back on Fable.
+
+Signal: Claude Code writes every assistant turn to the session transcript
+(~/.claude/projects/<project>/<session>.jsonl) with a "model" field. That is what the harness actually
+used for the turn -- it does not depend on the session noticing or reporting its own model, which is
+exactly what failed on 2026-09-07 (three hours on Opus with "Opus 5" in the session's own prompt).
+The mayor's transcript is the one gc itself names: `gc session list --json` carries the Claude session uuid
+(`session_key`) of the session with alias "mayor", gc launches claude with `--session-id <that uuid>`, and the
+transcript file is <uuid>.jsonl (jg-074ur3, 2026-09-20). Only when gc cannot answer does it fall back to the
+most recently modified transcript whose head opens a paragraph with the mayor system prompt.
+
+Second verdict, STALLED (2026-09-20, DO-NOT 137): the newest assistant rows are ALL API-error rows
+(`isApiErrorMessage`), i.e. every turn is dying before a model answers -- an org that disabled Claude Code
+access, a usage wall, or any other API error. On 2026-09-20 05:19-07:03 CST that went unseen for 1 h 44 min
+because error rows are (rightly) skipped when reading the model. Same alert path as DOWNGRADED; the
+watchdog changes nothing in cswap or the settings for it (DO-NOT 74). ORG-DISABLED and WALL are never
+transient and stall at ONE trailing error row; any other API error needs K (default 2). A stall is only
+called Resolved on two trailing real rows, or one real row that has stood for 10 minutes (jg-074ur3).
+
+Runs from launchd (com.jadegate.model-watchdog) every 5 minutes. Stdlib only.
+
+  mayor-model-watchdog            # normal tick: classify, alert/resolve on transitions, log
+  mayor-model-watchdog --status   # print current model + state, change nothing
+  mayor-model-watchdog --dry-run  # classify and print what would be posted/mailed, send nothing
+  mayor-model-watchdog --announce # post a one-line "armed" notice to #gastown (used once)
+  mayor-model-watchdog --model-only  # print just the model id (used by bin/mayor-heartbeat)
+"""
+import calendar, glob, json, os, re, subprocess, sys, time, urllib.request
+
+HOME = os.path.expanduser("~")
+PROJECT_DIR = os.path.join(HOME, ".claude/projects/-Users-tailor64s-macbook-pro-city")
+MAYOR_MARKER = b"You are the mayor of this Gas City workspace"
+# The real prompt opens a paragraph with the marker ("# Mayor\n\nYou are the mayor..."; "\n" is the two
+# characters backslash-n inside a JSONL row). The pinned memory mayor-must-run-fable-5-1 QUOTES the marker
+# and is loaded into every session of this project, pool workers included, so a bare substring test took
+# the newest pool worker's transcript for the mayor's (seen 2026-09-20 07:39 CST: a worker's own
+# transcript was classified) -- which would also hide a stalled mayor behind a healthy worker.
+MAYOR_MARKER_RE = re.compile(rb"(?:\\n|\n)" + re.escape(MAYOR_MARKER))
+STATE = os.path.join(HOME, "city/.heartbeat/model-watch.json")
+LOG = os.path.join(HOME, "Library/Logs/mayor-model-watchdog.log")
+SLACK_ENV = os.path.join(HOME, ".config/gc-slack-adapter/env")
+GASTOWN = "C0ASAPRETDK"
+AFIK = "U0AN32RPBFT"
+REQUIRED_PREFIX = "claude-fable"
+SETTINGS = os.path.join(HOME, ".claude/settings.json")
+FABLE_SETTING = "claude-fable-5-1[1m]"   # what the field must read (Afik 2026-09-09 12:37: "let it restore the field")
+FLAG_KEY = "switchModelsOnFlag"          # Claude Code auto-switch to Opus on a safety-flagged turn (default true); Afik 12:37: "those should be disabled"
+REALERT_SECS = 60 * 60          # while still downgraded, repeat alert + mail hourly
+HEAD_BYTES = 200_000            # how much of a transcript to scan for the mayor marker
+TAIL_BYTES = 2_000_000          # how much of the tail to scan for recent model fields
+MODEL_RE = re.compile(rb'"model":"([^"]+)"')
+BAD_STATES = ("DOWNGRADED", "STALLED")
+STALL_ROWS_DEFAULT = 2          # newest K assistant rows all API errors = STALLED; env WATCHDOG_STALL_ROWS overrides
+STALL_TEXT_CHARS = 160
+CSWAP = os.path.join(HOME, ".local/bin/cswap")
+GC = os.path.join(HOME, ".local/bin/gc")
+CITY = os.path.join(HOME, "city")
+MAYOR_ALIAS = "mayor"
+GC_SESSION_SECS = 10            # bound on the read-only `gc session list --json`
+SESSION_KEY_RE = re.compile(r"^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$")
+DETERMINISTIC_SIGS = ("ORG-DISABLED", "WALL")   # never transient: STALLED at ONE trailing error row (mayor's ruling 2026-09-20)
+RESOLVE_REAL_ROWS = 2           # a stall is Resolved on this many trailing real rows ...
+RESOLVE_QUIET_SECS = 10 * 60    # ... or on one trailing real row that has stood this long with no error after it
+_SELECTED = {"by": None}        # which rule picked the transcript this run (shown by --status)
+
+
+def log(msg, stream=None):
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
+    print(line, file=stream or sys.stdout)
+    try:
+        with open(LOG, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def gc_mayor_session_key():
+    """Claude session uuid gc records for the mayor session: `session_key` of the one open session with
+    alias "mayor" in `gc session list --json`. gc picks that uuid itself and launches claude with
+    `--session-id`, so it follows every gc handoff and never depends on prompt text. Read-only, bounded to
+    GC_SESSION_SECS; raises on any failure (the caller falls back)."""
+    out = subprocess.run([GC, "session", "list", "--json"], cwd=CITY, capture_output=True, text=True,
+                         timeout=GC_SESSION_SECS, check=True).stdout
+    sessions = json.loads(out).get("sessions") or []
+    mayors = [s for s in sessions if isinstance(s, dict) and s.get("alias") == MAYOR_ALIAS and not s.get("closed")]
+    if len(mayors) != 1:
+        raise RuntimeError(f"{len(mayors)} open gc sessions with alias {MAYOR_ALIAS!r}")
+    key = mayors[0].get("session_key")
+    if not isinstance(key, str) or not SESSION_KEY_RE.match(key):
+        raise RuntimeError(f"mayor session_key is not a uuid: {key!r}")
+    return key
+
+
+def find_mayor_transcript():
+    # Primary: the session gc says is the mayor's. Nothing that sniffs prompt text may come first -- every
+    # session of this project quotes the marker sentence through the pinned memory.
+    try:
+        path = os.path.join(PROJECT_DIR, gc_mayor_session_key() + ".jsonl")
+        if not os.path.isfile(path):
+            raise RuntimeError(f"gc names {os.path.basename(path)}, which is not in the project dir")
+        _SELECTED["by"] = "gc-session"
+        return path
+    except Exception as e:  # noqa: BLE001 -- a hung or missing gc must never hide the verdict
+        # stderr: --status and --model-only own stdout
+        log(f"GC-SESSION-FAIL {type(e).__name__}: {e}; falling back to the prompt-marker rule", sys.stderr)
+    files = sorted(glob.glob(os.path.join(PROJECT_DIR, "*.jsonl")), key=os.path.getmtime, reverse=True)
+    loose = None
+    for f in files:
+        try:
+            with open(f, "rb") as fh:
+                head = fh.read(HEAD_BYTES)
+        except OSError:
+            continue
+        if MAYOR_MARKER_RE.search(head):
+            _SELECTED["by"] = "paragraph-start"
+            return f
+        if loose is None and MAYOR_MARKER in head:
+            loose = f
+    _SELECTED["by"] = "substring" if loose else None
+    return loose  # no paragraph-start match anywhere (prompt reworded?): the old substring rule beats UNKNOWN
+
+
+def assistant_rows(path):
+    """Assistant rows of the transcript tail, oldest first, as ("real", model, ts, None) or
+    ("error", None, ts, text).
+
+    Parses JSONL rows and looks only at rows with type == "assistant" (never regex-scans raw text, so an
+    error row quoted inside a tool result is not an error row). An error row is one flagged
+    isApiErrorMessage. A real row carries a Claude model id. Everything else -- the harness placeholder
+    "<synthetic>" WITHOUT the error flag (reminder/resume turns, the 2026-09-08 shape), non-Claude ids --
+    is dropped: it is neither a model reading nor an error.
+    """
+    size = os.path.getsize(path)
+    with open(path, "rb") as fh:
+        fh.seek(max(0, size - TAIL_BYTES))
+        tail = fh.read()
+    lines = tail.split(b"\n")
+    if size > TAIL_BYTES and lines:
+        lines = lines[1:]  # first chunk may be a partial row
+    rows = []
+    for raw in lines:
+        if b'"assistant"' not in raw or (b'"model"' not in raw and b'"isApiErrorMessage"' not in raw):
+            continue
+        try:
+            e = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(e, dict) or e.get("type") != "assistant":
+            continue
+        msg = e.get("message") if isinstance(e.get("message"), dict) else {}
+        ts = e.get("timestamp") if isinstance(e.get("timestamp"), str) else None
+        if e.get("isApiErrorMessage"):
+            rows.append(("error", None, ts, _row_text(msg)))
+            continue
+        m = msg.get("model")
+        if not isinstance(m, str) or m == "<synthetic>" or not m.startswith("claude-"):
+            continue
+        rows.append(("real", m, ts, None))
+    return rows
+
+
+def _row_text(msg):
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return " ".join(b.get("text", "") for b in content if isinstance(b, dict) and isinstance(b.get("text"), str))
+    return ""
+
+
+def recent_models(path, n=20):
+    """Models of the last n REAL assistant turns.
+
+    Parses JSONL rows and reads message.model only from rows with type == "assistant"; ignores the
+    harness placeholder "<synthetic>" (written on reminder/resume turns with no model output -- the row that
+    tripped citadel's watchdog 2026-09-08 00:38Z), rows flagged isApiErrorMessage, and any model string that
+    is not a Claude id. Never regex-scans raw text: a "model":"..." literal inside a tool result or a pasted
+    config would otherwise be read as the mayor's own model (Afik 2026-09-08: "just fix the watchdog").
+    """
+    return [m for kind, m, _, _ in assistant_rows(path) if kind == "real"][-n:]
+
+
+def stall_threshold():
+    try:
+        k = int(os.environ.get("WATCHDOG_STALL_ROWS", ""))
+    except ValueError:
+        return STALL_ROWS_DEFAULT
+    return k if k >= 1 else STALL_ROWS_DEFAULT
+
+
+def stall_signature(text):
+    if "disabled Claude subscription access" in text:
+        return "ORG-DISABLED"
+    low = text.lower()
+    # "out of usage credits" (2026-09-09, the consent-fallback class) has no "limit" and is just as deterministic;
+    # a transient "rate limit" 429 is not a wall and keeps K (mayor's rulings 2026-09-20, jg-sewnrh)
+    if "usage credits" in low or ("limit" in low and "rate limit" not in low):
+        return "WALL"
+    return "API-ERROR"
+
+
+def _epoch(ts):
+    try:
+        return calendar.timegm(time.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S"))
+    except (TypeError, ValueError):
+        return None
+
+
+def trailing_errors(rows):
+    """The run of API-error rows at the newest end of the tail (nothing real after them), or None."""
+    run = []
+    for row in reversed(rows):
+        if row[0] != "error":
+            break
+        run.append(row)
+    if not run:
+        return None
+    run.reverse()
+    text = " ".join((run[-1][3] or "").split())
+    sig = stall_signature(text)
+    return {
+        "signature": sig,
+        "count": len(run),
+        # An org that disabled access and a usage wall do not clear by themselves: one dead turn is enough.
+        # On 2026-09-20 the mayor's turns were an hour apart, so K=2 would have alerted an hour into the outage.
+        "threshold": 1 if sig in DETERMINISTIC_SIGS else stall_threshold(),
+        "first_ts": run[0][2],
+        "last_ts": run[-1][2],
+        "first_epoch": _epoch(run[0][2]),
+        "text": text[:STALL_TEXT_CHARS],
+    }
+
+
+def recovery_confirmed(rows, path, now=None):
+    """True when a stall may be called Resolved: the newest RESOLVE_REAL_ROWS assistant rows are all real,
+    or the newest row is real and has stood RESOLVE_QUIET_SECS with no error after it. One real row between
+    errors is not a recovery (an intermittently failing seat would flap Resolved / STALLED)."""
+    if not rows or rows[-1][0] != "real":
+        return False
+    newest = rows[-RESOLVE_REAL_ROWS:]
+    if len(newest) == RESOLVE_REAL_ROWS and all(r[0] == "real" for r in newest):
+        return True
+    born = _epoch(rows[-1][2])
+    if born is None:
+        born = os.path.getmtime(path)   # never earlier than the row, so this only waits longer
+    return (time.time() if now is None else now) - born >= RESOLVE_QUIET_SECS
+
+
+def settings_model():
+    try:
+        with open(SETTINGS) as f:
+            return json.load(f).get("model", "(unset)")
+    except Exception as e:  # noqa: BLE001
+        return f"(unreadable: {e})"
+
+
+def classify(prev_state=None, prev_stall=None):
+    """prev_state / prev_stall: the saved verdict, so a STALLED verdict is HELD until the recovery is
+    confirmed (recovery_confirmed). Without them the reading is stateless, as before."""
+    path = find_mayor_transcript()
+    if not path:
+        return {"state": "UNKNOWN", "reason": "no mayor transcript found", "model": None, "transcript": None}
+    rows = assistant_rows(path)
+    models = [m for kind, m, _, _ in rows if kind == "real"][-20:]
+    stall = trailing_errors(rows)
+    stalled = bool(stall) and stall["count"] >= stall["threshold"]
+    if not models and not stalled:
+        return {"state": "UNKNOWN", "reason": "no model fields in transcript tail", "model": None, "transcript": path}
+    # A session that STARTED on a dead seat has error rows and no real row at all: that is STALLED, not
+    # UNKNOWN -- staying silent there would repeat the 2026-09-20 incident after any handoff onto such a seat.
+    current = models[-1] if models else None
+    if current is not None and not current.startswith(REQUIRED_PREFIX):
+        state = "DOWNGRADED"            # precedence: a non-Fable last real turn wins over the error run
+    else:
+        state = "STALLED" if stalled else "OK"
+    held = state == "OK" and prev_state == "STALLED" and not recovery_confirmed(rows, path)
+    if held:
+        state = "STALLED"               # one real row between errors keeps the verdict
+    c = {
+        "state": state,
+        "model": current,
+        "recent": models,
+        "transcript": os.path.basename(path),
+        "transcript_mtime": int(os.path.getmtime(path)),
+        "settings_model": settings_model(),
+        "selector": _SELECTED["by"],
+    }
+    if stall:
+        c["stall"] = stall              # shown by --status even below the threshold
+    if held:
+        c["held"] = True
+        if not stall:                   # nothing trailing: the alert texts keep the facts of the stall being held
+            c["stall"] = dict(prev_stall) if isinstance(prev_stall, dict) else _unknown_stall()
+    return c
+
+
+def _unknown_stall():
+    return {"signature": "API-ERROR", "count": 0, "threshold": stall_threshold(), "first_ts": None,
+            "last_ts": None, "first_epoch": None, "text": ""}
+
+
+def load_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def save_state(s):
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    tmp = STATE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(s, f, indent=1)
+    os.replace(tmp, STATE)
+
+
+def _load_settings():
+    with open(SETTINGS) as f:
+        raw = f.read()
+    return raw, json.loads(raw)
+
+
+def _save_settings(d, raw, label):
+    """Back up the current file beside it, then write atomically and read back. Raises on any failure."""
+    backup = SETTINGS + ".bak-wd-" + time.strftime("%Y%m%d-%H%M%S") + "-" + label
+    with open(backup, "w") as f:
+        f.write(raw)
+    tmp = SETTINGS + ".wd-tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, SETTINGS)
+    with open(SETTINGS) as f:
+        json.load(f)
+    return backup
+
+
+def restore_settings_model(dry=False):
+    """Put ~/.claude/settings.json's model back to Fable when it is not (Afik's order 2026-09-09).
+
+    Claude Code itself rewrites the field on a `model_consent_fallback` (seen 2026-09-09 02:16:12Z:
+    "Fable 5.1 requires usage credits", choice switch_default, answered by queued input). A running
+    session keeps its model until it hands off, so this only guarantees the NEXT session comes back
+    on Fable; the mail tells the mayor to hand off. Returns (changed, old_value, backup_path). Never raises.
+    """
+    try:
+        raw, d = _load_settings()
+    except Exception as e:  # noqa: BLE001
+        log(f"RESTORE-FAIL read {SETTINGS}: {type(e).__name__}: {e}")
+        return (False, None, None)
+    old = d.get("model")
+    if isinstance(old, str) and old.startswith(("claude-fable", "fable")):
+        return (False, old, None)
+    if dry:
+        print(f"WOULD RESTORE settings.json model {old!r} -> {FABLE_SETTING!r}")
+        return (True, old, None)
+    try:
+        d["model"] = FABLE_SETTING
+        backup = _save_settings(d, raw, "model")
+        back = _load_settings()[1].get("model")
+        if back != FABLE_SETTING:
+            raise RuntimeError(f"read-back shows {back!r}")
+        log(f"RESTORED settings.json model {old!r} -> {FABLE_SETTING!r} (backup {os.path.basename(backup)})")
+        return (True, old, backup)
+    except Exception as e:  # noqa: BLE001
+        log(f"RESTORE-FAIL write {SETTINGS}: {type(e).__name__}: {e}")
+        return (False, old, None)
+
+
+def enforce_settings_flags(dry=False):
+    """Keep `switchModelsOnFlag` false (Afik 2026-09-09: disable any auto-downgrade setting; citadel has it
+    false since 9/3 and re-asserts it every tick, so both copies match). Idempotent; never raises."""
+    try:
+        raw, d = _load_settings()
+    except Exception as e:  # noqa: BLE001
+        log(f"FLAG-FAIL read {SETTINGS}: {type(e).__name__}: {e}")
+        return False
+    old = d.get(FLAG_KEY)
+    if old is False:
+        return False
+    if dry:
+        print(f"WOULD SET {FLAG_KEY}=false (currently {old!r})")
+        return True
+    try:
+        d[FLAG_KEY] = False
+        backup = _save_settings(d, raw, "flag")
+        if _load_settings()[1].get(FLAG_KEY) is not False:
+            raise RuntimeError("read-back still not false")
+        log(f"ASSERTED {FLAG_KEY}=false (was {old!r}; backup {os.path.basename(backup)})")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log(f"FLAG-FAIL write {SETTINGS}: {type(e).__name__}: {e}")
+        return False
+
+
+def slack_token():
+    """Bot token from the environment or the adapter env file.
+
+    The adapter file writes `export SLACK_BOT_TOKEN=...` (since 2026-08-22); the original
+    `startswith("SLACK_BOT_TOKEN=")` never matched it, so every real alert from 2026-09-07 to
+    2026-09-09 died here with RuntimeError before anything was logged (30 tracebacks in the
+    launchd log across both downgrades). Accept both the bare and the `export` form, and quotes.
+    """
+    tok = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    if tok:
+        return tok
+    with open(SLACK_ENV) as f:
+        for line in f:
+            line = line.strip()
+            if line.startswith("export "):
+                line = line[len("export "):].lstrip()
+            if line.startswith("SLACK_BOT_TOKEN="):
+                val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                if val:
+                    return val
+    raise RuntimeError("SLACK_BOT_TOKEN not found in env or " + SLACK_ENV)
+
+
+def slack_post(text, dry=False):
+    if dry:
+        print("WOULD POST to #gastown:\n" + text)
+        return True
+    body = json.dumps({"channel": GASTOWN, "text": text, "unfurl_links": False}).encode()
+    req = urllib.request.Request(
+        "https://slack.com/api/chat.postMessage", data=body,
+        headers={"Authorization": "Bearer " + slack_token(), "Content-Type": "application/json; charset=utf-8"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        res = json.load(r)
+    if not res.get("ok"):
+        raise RuntimeError("slack: " + str(res.get("error")))
+    return res.get("ts")
+
+
+def mail_mayor(subject, body, dry=False):
+    if dry:
+        print("WOULD MAIL mayor:\nSUBJECT " + subject + "\n" + body)
+        return
+    subprocess.run(
+        [os.path.join(HOME, ".local/bin/gc"), "mail", "send", "mayor", "--notify", "-s", subject, "-m", body],
+        cwd=os.path.join(HOME, "city"), timeout=90, check=False,
+    )
+
+
+def alert_text(c, first):
+    head = "*MODEL DOWNGRADE on the jadegate mayor*" if first else "*jadegate mayor still downgraded*"
+    r = c.get("restored")
+    if r and r.get("changed"):
+        fix = f"settings.json restored to Fable by the watchdog (was `{r.get('old')}`)."
+    elif r and r.get("old") is not None and not r.get("changed") and str(r.get("old")).startswith(("claude-fable", "fable")):
+        fix = "settings.json already says Fable."
+    else:
+        fix = f"settings.json model `{c['settings_model']}` -- restore FAILED, see the watchdog log."
+    return (
+        f"{head} <@{AFIK}> -- the mayor's last turn ran on `{c['model']}`, not Fable. "
+        f"Transcript `{c['transcript']}`. {fix} "
+        "The mayor has been mailed to hand off to a fresh Fable session now."
+    )
+
+
+def mail_text(c):
+    r = c.get("restored") or {}
+    if r.get("changed"):
+        fix = f"The watchdog has restored settings.json to {FABLE_SETTING} (it read {r.get('old')!r}; backup kept), so a handoff now comes back on Fable."
+    elif str(c["settings_model"]).startswith(("claude-fable", "fable")):
+        fix = "settings.json already says Fable, so a handoff should come back on Fable."
+    else:
+        fix = f"settings.json model is `{c['settings_model']}` and the watchdog could NOT restore it (see ~/Library/Logs/mayor-model-watchdog.log) -- fix the file, then hand off."
+    return (
+        f"Your last turn ran on {c['model']}, not Fable 5.1 (transcript {c['transcript']}). "
+        "Afik's rule (memory mayor-must-run-fable-5-1): STOP starting rounds, dispatches and outbound messages. "
+        f"{fix} Then run: gc handoff \"HANDOFF: model downgrade, restarting on Fable\" \"<current context>\" "
+        "-- the first line of the handoff body must tell the next session to verify it is on Fable 5.1 and to re-arm crons from crons/registry.jsonl. "
+        "This mail repeats hourly until the transcript shows Fable again; #gastown has been alerted and will be told when it is resolved."
+    )
+
+
+def resolved_text(c, since, prev="DOWNGRADED"):
+    mins = int((time.time() - since) / 60) if since else 0
+    if prev == "STALLED":
+        return (
+            f"*Resolved: jadegate mayor is completing turns again* (`{c['model']}`, transcript `{c['transcript']}`). "
+            f"Stall lasted about {mins} min."
+        )
+    return (
+        f"*Resolved: jadegate mayor is back on Fable* (`{c['model']}`, transcript `{c['transcript']}`). "
+        f"Downgrade lasted about {mins} min."
+    )
+
+
+def cswap_seat():
+    """One line naming the active cswap seat, e.g. 'Account-9 (a@b [Org]) [Max 20x - Fable] Fable 13%'.
+    Read-only `cswap status`, bounded to 20 s; raises on any failure (the caller prints 'seat unknown')."""
+    out = subprocess.run([CSWAP, "status"], capture_output=True, text=True, timeout=20, check=True).stdout
+    lines = [ln.strip() for ln in out.splitlines()]
+    head = next(ln for ln in lines if ln.startswith("Status:"))
+    seat = head[len("Status:"):].strip()
+    fable = next((ln for ln in lines if "Fable:" in ln), None)
+    if fable:
+        m = re.search(r"Fable:\s*(\d+%)", fable)
+        if m:
+            seat += f" Fable {m.group(1)}"
+    return seat
+
+
+def _seat_or_unknown():
+    try:
+        return cswap_seat() or "seat unknown"
+    except Exception as e:  # noqa: BLE001 -- a hung or missing cswap must never hide the verdict
+        log(f"SEAT-FAIL {type(e).__name__}: {e}")
+        return "seat unknown"
+
+
+def _hhmm(ts):
+    e = _epoch(ts)
+    return time.strftime("%m-%d %H:%M", time.localtime(e)) if e is not None else "?"
+
+
+def stall_action(sig):
+    if sig == "ORG-DISABLED":
+        return "cswap switch to a seat outside that org with Fable room; ask Afik for the word to disable that org's seats"
+    if sig == "WALL":
+        return ("DO-NOT 71/78: `cswap switch <n>` to a seat whose `cswap status --json` `scoped` carries a Fable pct with "
+                "headroom, THEN `gc handoff`; never accept a Switch-to-Opus dialog, never `cswap disable/enable` (DO-NOT 74)")
+    return "read the error text below; if the next turn dies the same way, cswap switch to another seat with Fable room and tell Afik"
+
+
+def _stall_facts(c):
+    s = c["stall"]
+    return (
+        f"{s['signature']}: {s['count']} consecutive API-error turns, {_hhmm(s['first_ts'])} to {_hhmm(s['last_ts'])} "
+        f"(first {s['first_ts']}, last {s['last_ts']}). Active cswap seat now: {c.get('seat') or 'seat unknown'}. "
+        f"Error text: \"{s['text']}\"."
+    )
+
+
+def stalled_alert_text(c, first):
+    head = "*jadegate mayor STALLED*" if first else "*jadegate mayor still stalled*"
+    return (
+        f"{head} <@{AFIK}> -- every recent turn ends in an API error before a model answers, so crons and inbound are dying. "
+        f"{_stall_facts(c)} Transcript `{c['transcript']}`. "
+        f"Recommended: {stall_action(c['stall']['signature'])}. The watchdog changed nothing in cswap or the settings."
+    )
+
+
+def stalled_mail_text(c):
+    return (
+        f"Your recent turns ended in API errors before a model answered. {_stall_facts(c)} Transcript {c['transcript']}. "
+        "If you are reading this, a turn completed: check `cswap status`, then look for prompts (crons, WeCom, Slack) "
+        "that arrived during the window and died unanswered (DO-NOT 137). "
+        f"Recommended: {stall_action(c['stall']['signature'])}. "
+        "The watchdog changed nothing in cswap or the settings. This mail repeats hourly while the newest rows are still errors; "
+        "#gastown has been alerted and will be told when it is resolved."
+    )
+
+
+def main(argv):
+    dry = "--dry-run" in argv
+    st = load_state()
+    c = classify(st.get("state"), st.get("stall"))
+    if "--model-only" in argv:
+        print(c.get("model") or "unknown")
+        return 0
+    if "--status" in argv:
+        print(json.dumps({**c, "saved_state": load_state()}, indent=1, ensure_ascii=False))
+        return 0
+    if "--announce" in argv:
+        slack_post(
+            f"Model watchdog armed on the jadegate mayor: polls the mayor transcript every 5 min for the model of the last turn "
+            f"(currently `{c.get('model')}`). Downgrade to anything but Fable posts here + mails the mayor to hand off; "
+            "recovery posts here too. Script `~/city/bin/mayor-model-watchdog`, launchd `com.jadegate.model-watchdog`.", dry)
+        return 0
+
+    prev = st.get("state", "OK")
+    now = int(time.time())
+    enforce_settings_flags(dry)  # every tick, idempotent
+    if c["state"] == "UNKNOWN":
+        log(f"UNKNOWN: {c.get('reason')}")
+        return 0
+    if c["state"] in BAD_STATES:
+        kind = c["state"]
+        stalled = kind == "STALLED"
+        first = prev != kind
+        due = first or now - st.get("last_alert", 0) >= REALERT_SECS
+        # a stall is dated from its first error row, a downgrade from the tick that saw it
+        began = (c["stall"].get("first_epoch") or now) if stalled else now
+        # Record the verdict BEFORE any network call: on 2026-09-09 an exception inside slack_post
+        # aborted the run before log/state/mail, so both real downgrades left no trace here.
+        st.update({"state": kind, "model": c["model"], "since": began if first else st.get("since"),
+                   "transcript": c["transcript"], "checked": now})
+        if first:
+            # a new verdict owes its own first alert: without this, a first alert whose channels both fail
+            # would wait out the PREVIOUS verdict's last_alert (up to an hour) instead of retrying next tick
+            st["last_alert"] = 0
+            if prev in BAD_STATES:
+                log(f"SUPERSEDED {prev} by {kind} (no resolved notice; the {kind} alert follows)")
+        if stalled:
+            st["stall"] = c["stall"]
+        else:
+            st.pop("stall", None)
+        if not dry:
+            save_state(st)
+        if stalled:
+            s = c["stall"]
+            if c.get("held"):
+                log(f"HOLD STALLED: recovery not confirmed (needs {RESOLVE_REAL_ROWS} trailing real rows, or one "
+                    f"standing {RESOLVE_QUIET_SECS // 60} min with no error after it)")
+            log(f"STALLED sig={s['signature']} errors={s['count']} first={s['first_ts']} last={s['last_ts']} "
+                f"model={c['model']} transcript={c['transcript']} due={due}")
+            if due:
+                c["seat"] = _seat_or_unknown()  # read-only, bounded; no cswap/settings change on a stall (DO-NOT 74)
+            subject = f"STALLED {s['signature']}: mayor's last {s['count']} turns died in API errors"
+            mail_body, slack_body = (lambda: stalled_mail_text(c)), (lambda: stalled_alert_text(c, first))
+        else:
+            log(f"DOWNGRADED model={c['model']} transcript={c['transcript']} settings={c.get('settings_model')} due={due}")
+            # Afik 2026-09-09 12:37 CST: "let it restore the field" -- idempotent, runs every downgraded tick.
+            changed, old, backup = restore_settings_model(dry)
+            c["restored"] = {"changed": changed, "old": old, "backup": backup}
+            if changed and not dry:
+                st["restored"] = {"at": now, "from": old, "to": FABLE_SETTING, "backup": backup}
+                save_state(st)
+            subject = f"MODEL DOWNGRADE: mayor on {c['model']} -- hand off to a fresh Fable session now"
+            mail_body, slack_body = (lambda: mail_text(c)), (lambda: alert_text(c, first))
+        if due:
+            # Mail first (it reaches the actor who can fix it), Slack second; each channel isolated.
+            mail_ok = _attempt("mail", lambda: mail_mayor(subject, mail_body(), dry))
+            slack_ok = _attempt("slack", lambda: slack_post(slack_body(), dry))
+            log(f"ALERT mail={'ok' if mail_ok else 'FAILED'} slack={'ok' if slack_ok else 'FAILED'}")
+            if mail_ok or slack_ok:
+                st["last_alert"] = now  # if both channels failed, retry at the next 5-min tick, not in an hour
+    else:
+        if prev in BAD_STATES:
+            log(f"RESOLVED model={c['model']} after {now - (st.get('since') or now)}s was={prev}")
+            since = st.get("since")
+            slack_ok = _attempt("slack", lambda: slack_post(resolved_text(c, since, prev), dry))
+            if not slack_ok:
+                log("RESOLVED notice not posted to #gastown")
+        st.update({"state": "OK", "model": c["model"], "since": None, "transcript": c["transcript"], "last_alert": st.get("last_alert", 0)})
+        st.pop("stall", None)
+        if prev not in BAD_STATES:
+            log(f"OK model={c['model']} transcript={c['transcript']}")
+    st["checked"] = now
+    if not dry:
+        save_state(st)
+    return 0
+
+
+def _attempt(name, fn):
+    """Run one notification channel; log and swallow its failure so the others still run."""
+    try:
+        fn()
+        return True
+    except Exception as e:  # noqa: BLE001 -- a dead channel must never hide the verdict
+        log(f"ALERT-FAIL {name}: {type(e).__name__}: {e}")
+        return False
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

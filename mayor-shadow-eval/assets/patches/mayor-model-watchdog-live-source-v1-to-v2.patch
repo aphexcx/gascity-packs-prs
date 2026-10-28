@@ -1,0 +1,48 @@
+# Live-source patch v2: v1 -> v2; WATCHDOG_TRANSCRIPT + six-hour freshness + status.
+--- a/mayor-model-watchdog
++++ b/mayor-model-watchdog
+@@ -1 +1 @@
+-#!/usr/bin/python3
++#!/usr/bin/python3 -I
+@@ -97,0 +98 @@
++# Live-source selection v2: explicit overrides retain the six-hour freshness gate.
+@@ -151,2 +152,4 @@
+-    info.update(stale=not info["newest"] or time.time() - info["newest"] >= 6 * 3600,
+-                newest_trigger_age_seconds=max(0, time.time() - info["trigger"]), source_basename=os.path.basename(path))
++    now = time.time()
++    info.update(stale=not info["newest"] or now - info["newest"] >= 6 * 3600,
++                newest_row_age_seconds=max(0, now - info["newest"]) if info["newest"] else None,
++                newest_trigger_age_seconds=max(0, now - info["trigger"]), source_basename=os.path.basename(path))
+@@ -158 +161,3 @@
+-    _SELECTED.update(by=method, source_basename=info["source_basename"],
++    _SELECTED.update(by=method, source_path=os.path.abspath(path),
++                     newest_row_age_seconds=info["newest_row_age_seconds"],
++                     source_basename=info["source_basename"],
+@@ -163,0 +169,14 @@
++    # Read the override exactly once per tick; never reuse a prior tick's selection.
++    override = os.environ.get("WATCHDOG_TRANSCRIPT")
++    _SELECTED.clear()
++    _SELECTED.update(by=None, source_path=None, newest_row_age_seconds=None,
++                     override_used=False)
++    if override:
++        _SELECTED.update(by="explicit", source_path=override, override_used=True)
++        if not os.path.isabs(override):
++            _SELECTED["reason"] = f"override_not_absolute {override}"
++            return None
++        if not os.path.isfile(override):
++            _SELECTED["reason"] = f"override_missing {override}"
++            return None
++        return _select_source(override, "explicit")
+@@ -322 +341 @@
+-        return {"state": "UNKNOWN", "reason": "no mayor transcript found", "model": None, "transcript": None}
++        return {"state": "UNKNOWN", "reason": "no mayor transcript found", "model": None, "transcript": None, **_SELECTED}
+@@ -324 +343 @@
+-        return {"state": "UNKNOWN", "reason": "stale_source", "model": None, "transcript": path, **_SELECTED}
++        return {"state": "UNKNOWN", "reason": f"stale_source {path}", "model": None, "transcript": path, **_SELECTED}
+@@ -330 +349 @@
+-        return {"state": "UNKNOWN", "reason": "no model fields in transcript tail", "model": None, "transcript": path}
++        return {"state": "UNKNOWN", "reason": "no model fields in transcript tail", "model": None, "transcript": path, **_SELECTED}
+@@ -348,0 +368,3 @@
++        "source_path": _SELECTED.get("source_path"),
++        "newest_row_age_seconds": _SELECTED.get("newest_row_age_seconds"),
++        "override_used": _SELECTED.get("override_used"),
