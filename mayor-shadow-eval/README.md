@@ -239,6 +239,15 @@ exclusions. Implicit recursive reads also check the working directory. Shallow
 `ls ~/city/work` may list names; `ls -R` and `ls --recursive` require a scope
 without excluded descendants. Unsupported commands such as `tree` stay denied.
 
+The read grammar consumes option arguments before interpreting `--`: in
+`grep -e -- -r pattern .`, the first `--` is the pattern and `-r` still enables
+recursion. Glued short arguments and long `--option=value` forms use the same
+parser. After a real terminator, directory operands still require confinement,
+including `ls -- -R` when `-R` is a directory. Find start paths are checked
+individually; `--` cannot hide a later path or the implicit working directory.
+Unknown options, missing arguments, ambiguous BSD/GNU argument forms, and grep/rg
+pattern-file options fail closed with the read-shape reason.
+
 Deliberate conservative differences from the initial proposed allowlist:
 
 - `gc mail read` marks mail as read, so it is denied; `gc mail peek` is allowed.

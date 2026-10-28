@@ -147,92 +147,160 @@ def segments(command):
     return result
 
 
-def recursive_read(exe, args):
-    """Recognize implicit traversal, including bundled short options."""
-    if exe in {"find", "rg", "du", "tree"}:
-        return True
-    for i, arg in enumerate(args):
-        if arg == "--":
-            break
-        if exe in {"grep", "ls"} and arg == "--recursive":
-            return True
-        if exe == "grep" and arg in {"--dereference-recursive", "--directories=recurse"}:
-            return True
-        if exe == "grep" and arg in {"-d", "--directories"} and args[i+1:i+2] == ["recurse"]:
-            return True
-        if arg.startswith("-") and not arg.startswith("--"):
-            if exe == "grep" and any(flag in arg[1:] for flag in "rR"):
-                return True
-            if exe == "ls" and "R" in arg[1:]:
-                return True
-    return False
+# Each grammar lists switches, required values, and long optional values.
+# Unsupported options fail closed; an allowlist regex cannot expand this grammar.
+READ_GRAMMARS = {
+    "grep": ("rRnivwxlLqshHIcFoUazbEFG",
+             "recursive dereference-recursive ignore-case invert-match word-regexp line-regexp count files-with-matches files-without-match quiet silent no-messages line-number with-filename no-filename only-matching text null-data null extended-regexp fixed-strings basic-regexp",
+             {"e": "pattern", "f": "file", "m": "count", "A": "count", "B": "count", "C": "count", "d": "directories", "D": "devices"},
+             {"regexp": "pattern", "file": "file", "max-count": "count", "after-context": "count", "before-context": "count", "context": "count", "directories": "directories", "devices": "devices", "include": "text", "exclude": "text", "exclude-dir": "text", "binary-files": "binary"},
+             {"color": "color", "colour": "color"}),
+    "rg": ("nivwxlqshHIcFoUazbFN",
+           "files ignore-case case-sensitive smart-case invert-match word-regexp line-regexp count count-matches files-with-matches files-without-match quiet no-messages line-number no-line-number with-filename no-filename only-matching text null-data null fixed-strings hidden no-ignore no-ignore-vcs no-heading heading",
+           {"e": "pattern", "f": "file", "g": "text", "t": "text", "T": "text", "A": "count", "B": "count", "C": "count", "m": "count", "E": "text"},
+           {"regexp": "pattern", "file": "file", "glob": "text", "iglob": "text", "type": "text", "type-not": "text", "after-context": "count", "before-context": "count", "context": "count", "max-count": "count", "max-depth": "count", "color": "color", "encoding": "text"}, {}),
+    "ls": ("aAbBcCdFfGgHhiklmnpqRrSstUuvx1",
+           "all almost-all directory human-readable inode numeric-uid-gid recursive reverse size",
+           {},  # -w/-T/-I have incompatible BSD/GNU argument grammars.
+           {"width": "count", "tabsize": "count", "ignore": "text", "hide": "text", "sort": "text", "format": "text", "time-style": "text"},
+           {"color": "color"}),
+    "du": ("achHklmsx", "all total human-readable summarize one-file-system",
+           {"B": "size", "d": "count"}, {"block-size": "size", "max-depth": "count", "exclude": "text"}, {}),
+    "wc": ("clmwL", "bytes chars lines words max-line-length", {}, {}, {}),
+    "cat": ("benstuvAET", "number number-nonblank squeeze-blank show-all show-ends show-tabs show-nonprinting", {}, {}, {}),
+    "head": ("qv", "quiet silent verbose", {"n": "offset", "c": "offset"}, {"lines": "offset", "bytes": "offset"}, {}),
+    "tail": ("qvr", "quiet silent verbose", {"n": "offset", "c": "offset"}, {"lines": "offset", "bytes": "offset"}, {}),
+    # stat -f means a format argument on BSD and a switch on GNU: deny it.
+    "stat": ("nqstx", "terse", {"c": "text"}, {"format": "text", "printf": "text"}, {}),
+    "md5": ("qr", "", {}, {}, {}),
+    "shasum": ("bptU", "binary text portable", {"a": "count"}, {"algorithm": "count"}, {}),
+}
 
 
-def search_paths(args):
-    """Separate a small, known search grammar from patterns/option values.
+def read_options(exe, args):
+    """Parse once, consuming values before treating -- as an option terminator.
 
-    Unknown options leave the implicit cwd in scope. They cannot use a value
-    that happens to name a safe directory to hide an implicit recursive read.
+    Return operands, parsed options, and whether a real terminator occurred.
+    Glued short values consume the rest of their bundle, even when it is --.
     """
-    positional, explicit_pattern, files, options, i = [], False, False, True, 0
+    switches, long_switches, short_values, long_values, optional_values = READ_GRAMMARS[exe]
+    long_switches = set(long_switches.split())
+    operands, parsed, terminated, i = [], [], False, 0
     while i < len(args):
         arg = args[i]
         i += 1
-        if options and arg == "--":
-            options = False
-        elif options and arg.startswith("--"):
-            key, sep, _ = arg.partition("=")
-            if key in {"--regexp", "--directories"}:
-                if not sep:
+        if terminated or not arg.startswith("-") or arg == "-":
+            operands.append(arg)
+            continue
+        if arg == "--":
+            terminated = True
+            continue
+        if exe in {"head", "tail"} and re.fullmatch(r"-\d+", arg):
+            parsed.append(("n", "offset", arg[1:]))
+            continue
+        if arg.startswith("--"):
+            key, equals, value = arg[2:].partition("=")
+            if key in long_values:
+                kind = long_values[key]
+                if not equals:
                     if i == len(args):
-                        return []
-                    i += 1
-                explicit_pattern |= key == "--regexp"
-            elif arg == "--files":
-                files = True
-            elif arg not in {"--recursive", "--dereference-recursive"}:
-                return []
-        elif options and arg.startswith("-") and arg != "-":
-            for offset, flag in enumerate(arg[1:], 2):
-                if flag in "ed":
-                    if offset == len(arg):
-                        if i == len(args):
-                            return []
-                        i += 1
-                    explicit_pattern |= flag == "e"
-                    break
-                if flag not in "rRnivwxlLqshHIcFoUaz":
-                    return []
-        else:
-            positional.append(arg)
-    return positional if explicit_pattern or files else positional[1:]
+                        raise ValueError("missing option argument")
+                    value, i = args[i], i + 1
+            elif key in optional_values:
+                kind = optional_values[key]
+                if not equals:
+                    value = "always"  # GNU grep/ls optional values require '='.
+            elif key in long_switches and not equals:
+                kind, value = "switch", None
+            else:
+                raise ValueError("unknown long option")
+            parsed.append((key, kind, value))
+            continue
+        offset = 1
+        while offset < len(arg):
+            key = arg[offset]
+            offset += 1
+            if key in short_values:
+                value = arg[offset:]
+                if not value:
+                    if i == len(args):
+                        raise ValueError("missing option argument")
+                    value, i = args[i], i + 1
+                parsed.append((key, short_values[key], value))
+                break
+            if key not in switches:
+                raise ValueError("unknown short option")
+            parsed.append((key, "switch", None))
+    for _, kind, value in parsed:
+        # Pattern files remain denied: they introduce a secondary read source.
+        if kind == "file":
+            raise ValueError("pattern files are not supported")
+        if kind == "count" and not re.fullmatch(r"\d+", value):
+            raise ValueError("invalid count")
+        if kind == "offset" and not re.fullmatch(r"[+-]?\d+", value):
+            raise ValueError("invalid offset")
+        if kind == "size" and not re.fullmatch(r"[1-9]\d*[bBkKmMgGtTpPeEzZyY]?", value):
+            raise ValueError("invalid block size")
+        enums = {"directories": {"read", "skip", "recurse"}, "devices": {"read", "skip"},
+                 "binary": {"binary", "text", "without-match"}, "color": {"always", "never", "auto"}}
+        if kind in enums and value not in enums[kind]:
+            raise ValueError("invalid option value")
+    return operands, parsed, terminated
+
+
+def find_paths(args):
+    """Find has start paths and an expression, not a -- option terminator."""
+    paths, expression, i = [], False, 0
+    flags = {"-print", "-print0", "-depth", "-mount", "-xdev", "-empty", "-true", "-false", "-prune", "-a", "-and", "-o", "-or", "!", "-not", "(", ")"}
+    values = {"-name", "-iname", "-path", "-ipath", "-type", "-maxdepth", "-mindepth", "-mtime", "-mmin", "-size", "-user", "-group", "-perm"}
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if not expression and (arg == "--" or (not arg.startswith("-") and arg not in {"!", "("})):
+            paths.append(arg)
+            continue
+        expression = True
+        if arg in values:
+            if i == len(args):
+                raise ValueError("missing find predicate argument")
+            i += 1
+        elif arg not in flags:
+            raise ValueError("unsupported find expression")
+    return paths
 
 
 def allowed_read_scope(exe, args, cwd):
-    if exe not in {"grep", "rg", "find", "ls", "du", "wc", "cat", "head", "tail", "tree", "stat", "sed", "md5", "shasum"}:
+    if exe == "sed":
+        # Its only accepted program is the numeric print range checked below.
+        operands, recursive, terminated = args[2:], False, False
+    elif exe == "find":
+        operands, recursive, terminated = find_paths(args), True, False
+        # Some implementations ignore a leading --. It cannot establish an
+        # explicit scope by itself, or conceal another directory operand.
+        if operands and all(value == "--" for value in operands):
+            operands.append(cwd or os.getcwd())
+    elif exe in READ_GRAMMARS:
+        operands, options, terminated = read_options(exe, args)
+        recursive = exe in {"rg", "du"} or any(
+            (exe == "grep" and (key in {"r", "R", "recursive", "dereference-recursive"}
+                                or (kind == "directories" and value == "recurse")))
+            or (exe == "ls" and key in {"R", "recursive"})
+            for key, kind, value in options)
+        if exe in {"grep", "rg"}:
+            if not any(kind == "pattern" or key == "files" for key, kind, _ in options):
+                if not operands:
+                    raise ValueError("missing search pattern")
+                operands = operands[1:]
+    else:
         return True
-    recursive = recursive_read(exe, args)
-    # A shallow ls lists names only; the contract explicitly allows ls ~/city/work.
-    # Every other directory operand is a recursive scope, independent of flags.
-    if exe == "ls" and not recursive:
-        return True
-    values = [arg.split("=", 1)[-1] if arg.startswith("-") and "=" in arg else arg for arg in args]
-    directories = [value for value in values if expand(value, cwd).is_dir()]
-    if recursive:
-        operands = search_paths(args) if exe in {"grep", "rg"} else args
-        if exe in {"ls", "du"}:
-            # Unknown options may consume the next value. Only known switches
-            # can establish explicit operands instead of an implicit cwd read.
-            switches = "aAbBcCdFfGgHhikLlmnopqRrSstUuvx1" if exe == "ls" else "achHklmsx"
-            known = all(not arg.startswith("-") or arg == "--"
-                        or (exe == "ls" and arg == "--recursive")
-                        or (not arg.startswith("--") and all(c in switches for c in arg[1:]))
-                        for arg in args)
-            operands = [arg for arg in args if not arg.startswith("-")] if known else []
-        if (not directories or not operands
-                or (exe == "find" and operands[0].startswith("-"))):
-            directories.append(cwd or os.getcwd())
-    return all(allowed_path(value, cwd, recursive=True) for value in directories)
+    # Directory scope is based only on actual operands, never option values.
+    # A real -- does not exempt literal directory operands from confinement.
+    if exe == "ls" and not recursive and not terminated:
+        return True  # Preserve the explicitly allowed shallow ls ~/city/work.
+    if recursive and not operands:
+        operands = [cwd or os.getcwd()]
+    return all(allowed_path(value, cwd, recursive=expand(value, cwd).is_dir())
+               for value in operands)
 
 
 def safe_simple(command, patterns=None, cwd=None):
@@ -282,23 +350,12 @@ def safe_simple(command, patterns=None, cwd=None):
         return len(args) == 3 and args[:2] == ["-I", "-c"] and safe_python(args[2])
     if exe == "sed":
         return len(args) >= 2 and args[0] == "-n" and bool(re.fullmatch(r"\d+(?:,\d+)?p", args[1])) and all(not x.startswith("-") for x in args[2:])
-    if exe in {"find", "rg", "grep", "du"}:
-        if any(x.startswith(("-exec", "-ok", "-delete", "-fprint", "-fls", "--pre", "--hostname-bin", "--include", "--exclude", "--ignore-file", "--file=")) or x in {"-L", "-f", "--file"} or (x.startswith("-f") and not x.startswith("--")) for x in args):
-            return False
+    if exe == "find" or exe in READ_GRAMMARS:
         return True
     if exe == "date":
         return not args or (len(args) == 1 and (args[0] in {"-u", "--utc", "--iso-8601"} or args[0].startswith("+")))
-    if exe == "md5":
-        return not any(x in {"-p", "-t", "-x"} for x in args)
-    if exe == "shasum":
-        return not any(x.startswith(("-c", "--check", "--status")) for x in args)
-    if exe == "tail" and any(x.startswith(("--follow", "--pid")) or (x.startswith("-") and any(c in x[1:] for c in "fF")) for x in args):
-        return False
-    if exe == "ls" and any(x.startswith("-") and ("L" in x or (x.startswith("--") and x not in {"--", "--recursive"})) for x in args):
-        return False
-    # Media demuxers can follow file/network references from an allowed input.
-    # Leave ffprobe denied until that secondary-read surface is confined too.
-    return exe in {"cat", "head", "tail", "ls", "wc", "stat"}
+    # Media demuxers may follow secondary file/network references.
+    return False
 
 
 def safe_bash(command, patterns=None, cwd=None):

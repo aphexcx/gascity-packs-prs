@@ -1,3 +1,49 @@
+# Validation — jp-n1e, round 4
+
+Continued `jp/mayor-shadow-eval` from `f7b22c3a` on jadegate. The change replaces
+independent recursion/operand scans with one bounded option parser. Required
+arguments consume `--` as data; glued short values and long equals forms follow
+the same grammar. Unknown/missing options and pattern-file reads fail closed.
+Find scopes and literal directory operands after a real terminator are checked;
+ordinary shallow `ls ~/city/work` remains allowed.
+
+- Pack suite: **412 passed** in 27.23 seconds, including **100 new real-hook
+  regressions**. The initial 88-case regression run exposed **29 failures** in
+  the old parser. Four new cases also execute grep against synthetic excluded
+  fixtures, confirm traversal, and verify that the hook denies those commands.
+  No tests were deleted.
+- Real hook invoked separately with `cwd=~/city` and
+  `grep -e -- -r secret .`: **deny**, with the round-2 read-shape reason. The
+  command itself was never executed against the live city.
+- Repository command-policy checks: **4 passed** in 3.10 seconds.
+- `gc lint mayor-shadow-eval`, Python/shell syntax, entrypoint/hook isolation,
+  and `git diff --check`: **passed**. Every Python execution used `-I`.
+- Secret-pattern scan: **0** credential-shaped matches; values were not printed.
+- Test Python: **3.12.14** through the repository uv runner; host Python:
+  **3.14.7**. Node: **v26.7.0**, measured inside `slack-full/adapter`; this
+  Python-pack change did not run a Node suite.
+- Implementation self-review covered option arity, bundles, optional color
+  arguments, default scopes, literal directory operands, and BSD/GNU ambiguity.
+  Ambiguous `ls -w/-T/-I` and `stat -f` forms are denied. Prior round-3 judge and
+  source-selection behavior remains covered by the pack suite.
+
+Exact pack invocation:
+
+```sh
+UV_CACHE_DIR="$HOME/city/work/eval-kimi-k31/uv-cache" \
+TMPDIR="$HOME/city/work/eval-kimi-k31" \
+make test PYTHON='python3 -I' PYTEST_DIRS=mayor-shadow-eval/tests \
+  PYTEST_ARGS="-q -o pythonpath=. -o cache_dir=$HOME/city/work/eval-kimi-k31/round4-pytest-cache --basetemp=$HOME/city/work/eval-kimi-k31/round4-reviewed"
+```
+
+The policy invocation uses the same runner with
+`PYTEST_DIRS='tests/test_no_bare_bd_commands.py tests/test_no_gc_sling_wrapper.py'`
+and basetemp `round4-policy`. Evidence is retained under
+`~/city/work/eval-kimi-k31/`: `round4-red.log`, `round4-reviewed.log`,
+`round4-policy.log`, `round4-gates.json`, and `round4-hook-decisions.jsonl`.
+Earlier rounds' provider/full-repository gates stand as recorded below; this
+round did not install the pack or start a live replay.
+
 # Validation — jp-ake, round 3
 
 Continues `jp/mayor-shadow-eval` from
