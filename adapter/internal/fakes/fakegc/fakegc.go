@@ -272,6 +272,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "message identity and conversation including scope_id are required")
 			return
 		}
+		// gc's attachment schema has no optional fields: a missing or empty
+		// mime_type (Chat sends none for Drive links) is a 422 at the real gc.
+		for i, a := range message.Attachments {
+			if a.ProviderID == "" || a.MIMEType == "" {
+				fail(w, 422, fmt.Sprintf("attachments[%d]: provider_id and mime_type are required", i))
+				return
+			}
+		}
 		s.inbound = append(s.inbound, message)
 		// DedupKey is intentionally ignored; gc keys on conversation and message.
 		keyBytes, _ := json.Marshal(struct {

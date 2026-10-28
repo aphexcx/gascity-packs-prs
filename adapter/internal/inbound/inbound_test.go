@@ -314,6 +314,34 @@ func TestNormalizeContentForHistory(t *testing.T) {
 	}
 }
 
+// Chat sends no contentType for Drive links (driveDataRef) and sometimes none
+// for uploads; gc requires mime_type on every attachment, so the adapter fills a
+// type rather than omitting the field, and the text line carries no empty "()".
+func TestAttachmentsWithoutContentType(t *testing.T) {
+	f := setup(t)
+	m := message()
+	m.Text = ""
+	m.Attachment = []*api.Attachment{
+		{Name: messageName + "/attachments/drive", ContentName: "Blog drafts", Source: "DRIVE_FILE", DriveDataRef: &api.DriveDataRef{DriveFileId: "drive-id"}},
+		{Name: messageName + "/attachments/upload", ContentName: "scan.bin", Source: "UPLOADED_CONTENT", AttachmentDataRef: &api.AttachmentDataRef{ResourceName: "spaces/room/media/scan"}},
+	}
+	f.google.Configure(func(g *fakegoogle.Server) { g.Media["spaces/room/media/scan"] = []byte("scan") })
+	text, attachments := NormalizeContent(context.Background(), f.opts.Chat, f.opts.Config.Endpoints, m)
+	if len(attachments) != 2 || attachments[0].MIMEType != "application/vnd.google-apps.file" || attachments[1].MIMEType != "application/octet-stream" {
+		t.Fatalf("%+v", attachments)
+	}
+	want := "[attachment] Blog drafts https://drive.google.com/file/d/drive-id/view\n[attachment] scan.bin " + attachments[1].URL
+	if text != want {
+		t.Fatalf("got %q want %q", text, want)
+	}
+	// The same message accepted end to end: the fake gc enforces gc's rule.
+	handle(t, f, event("drive-link", "message.created", m))
+	got := f.gc.Inbound()
+	if len(got) != 1 || len(got[0].Attachments) != 2 || got[0].Attachments[0].MIMEType != "application/vnd.google-apps.file" {
+		t.Fatalf("%+v", got)
+	}
+}
+
 func TestDeliveryOutcomes(t *testing.T) {
 	for _, status := range []string{"delivered", "no_route", "failed", "partial", "pending"} {
 		t.Run(status, func(t *testing.T) {
