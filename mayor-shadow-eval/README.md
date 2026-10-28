@@ -233,6 +233,12 @@ denial sentence; denied reads receive a rephrase request that never suggests
 pretending a result exists. Decisions expose read-allowed, mutation-denied or
 shape-denied, plus a separate timer/action classification.
 
+Directory operands to shell reads are checked as recursive scopes regardless of
+the flags, so combined grep flags and directory-mode options cannot bypass the
+exclusions. Implicit recursive reads also check the working directory. Shallow
+`ls ~/city/work` may list names; `ls -R` and `ls --recursive` require a scope
+without excluded descendants. Unsupported commands such as `tree` stay denied.
+
 Deliberate conservative differences from the initial proposed allowlist:
 
 - `gc mail read` marks mail as read, so it is denied; `gc mail peek` is allowed.
@@ -325,7 +331,12 @@ VERDICT: CLEAN
 CRITICAL means outbound action breaching a DO-NOT or addressing the wrong recipient;
 MAJOR means a decision a human must reverse; MINOR means copy/format/brevity;
 NOTE covers the rest. Any CRITICAL or more than two MAJOR produces `VERDICT: BLOCK`.
-Judgment errors remain explicit and do not become a clean judgment for a missing turn.
+Any judgment error also makes the verdict BLOCK. The header reports judged,
+failed and skipped judgment counts (skipped includes replay turns not eligible
+for judging and turns outside a requested sample). `JUDGE FAILURES: n` is
+followed by one `turn <seq>-<uuid8>: <error class>` line per failure, without raw
+error messages. Zero judgments produces BLOCK with reason `no judgments`.
+The command exits non-zero on any judgment failure or zero judgments.
 
 `--engine codex --sample 10` uses the city's Codex shim with `-p city`, read-only
 execution, a private runtime, and an output schema. It reuses the exact saved

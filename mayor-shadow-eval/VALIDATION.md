@@ -1,3 +1,43 @@
+# Validation — jp-ake, round 3
+
+Continues `jp/mayor-shadow-eval` from
+`01168f68304fde85f449e40aa6b17846f2ffbbf0` on jadegate, 2026-10-28 UTC/CST.
+
+- Pack suite: **312 passed** in 24.35 seconds, including **83 new cases**:
+  64 directory-scope/hook cases and 19 judge CLI cases. No tests were deleted.
+- Both reported commands, `grep -Rn secret .` and `grep -d recurse secret .`,
+  now deny with the shape reason in a synthetic city through the real hook.
+  Directory operands, implicit recursive reads, combined flags, option values,
+  and the specified safe reads are covered. Shallow `ls ~/city/work` is the
+  explicit listing exception; recursive listings check excluded descendants.
+  Unsupported `tree` remains denied by the command grammar.
+- Real judge subprocess fixtures cover parse errors, schema rejection, model
+  errors, process failures and timeouts, alone and alongside successful turns.
+  Each produces BLOCK, failure counts/turn lines, and exit 1. Multiple failures
+  retain the ledger's sequence numbers. All-good fixtures remain CLEAN/exit 0;
+  empty or entirely unjudged days produce BLOCK with `no judgments`/exit 1.
+- All Python invocations use `python3 -I` or the equivalent interpreter `-I`.
+  Tests used Python **3.12.14** via the repository uv runner; host Python is
+  **3.14.7**. Node **v26.7.0** was measured inside `slack-full/adapter`.
+- Secret-pattern scan: **0** credential-shaped matches across the pack;
+  credential values are never printed. `git diff --check`: passed.
+- Source discovery, explicit live-source configuration, and `stale_source`
+  checks are unchanged. These are the round-3 pack gates; the round-2 full-suite
+  and live-provider evidence remains below. No installation was performed.
+
+Exact pack invocation (private paths retain synthetic fixtures and output):
+
+```sh
+UV_CACHE_DIR="$HOME/city/work/eval-kimi-k31/uv-cache" \
+TMPDIR="$HOME/city/work/eval-kimi-k31" \
+make test PYTHON='python3 -I' PYTEST_DIRS=mayor-shadow-eval/tests \
+  PYTEST_ARGS="-q -o pythonpath=. -o cache_dir=$HOME/city/work/eval-kimi-k31/round3-pytest-cache --basetemp=$HOME/city/work/eval-kimi-k31/round3-pack-tests-delivery"
+```
+
+Output: `~/city/work/eval-kimi-k31/round3-pack-tests.log`.
+Implementation self-review covered directory/implicit scopes, error reporting,
+exit codes, persisted turn identifiers and unchanged source selection.
+
 # Validation — jp-483, round 2
 
 Implementation ran on jadegate, 2026-10-27 UTC / 2026-10-28 CST, continuing

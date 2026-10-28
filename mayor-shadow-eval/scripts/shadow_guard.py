@@ -147,6 +147,94 @@ def segments(command):
     return result
 
 
+def recursive_read(exe, args):
+    """Recognize implicit traversal, including bundled short options."""
+    if exe in {"find", "rg", "du", "tree"}:
+        return True
+    for i, arg in enumerate(args):
+        if arg == "--":
+            break
+        if exe in {"grep", "ls"} and arg == "--recursive":
+            return True
+        if exe == "grep" and arg in {"--dereference-recursive", "--directories=recurse"}:
+            return True
+        if exe == "grep" and arg in {"-d", "--directories"} and args[i+1:i+2] == ["recurse"]:
+            return True
+        if arg.startswith("-") and not arg.startswith("--"):
+            if exe == "grep" and any(flag in arg[1:] for flag in "rR"):
+                return True
+            if exe == "ls" and "R" in arg[1:]:
+                return True
+    return False
+
+
+def search_paths(args):
+    """Separate a small, known search grammar from patterns/option values.
+
+    Unknown options leave the implicit cwd in scope. They cannot use a value
+    that happens to name a safe directory to hide an implicit recursive read.
+    """
+    positional, explicit_pattern, files, options, i = [], False, False, True, 0
+    while i < len(args):
+        arg = args[i]
+        i += 1
+        if options and arg == "--":
+            options = False
+        elif options and arg.startswith("--"):
+            key, sep, _ = arg.partition("=")
+            if key in {"--regexp", "--directories"}:
+                if not sep:
+                    if i == len(args):
+                        return []
+                    i += 1
+                explicit_pattern |= key == "--regexp"
+            elif arg == "--files":
+                files = True
+            elif arg not in {"--recursive", "--dereference-recursive"}:
+                return []
+        elif options and arg.startswith("-") and arg != "-":
+            for offset, flag in enumerate(arg[1:], 2):
+                if flag in "ed":
+                    if offset == len(arg):
+                        if i == len(args):
+                            return []
+                        i += 1
+                    explicit_pattern |= flag == "e"
+                    break
+                if flag not in "rRnivwxlLqshHIcFoUaz":
+                    return []
+        else:
+            positional.append(arg)
+    return positional if explicit_pattern or files else positional[1:]
+
+
+def allowed_read_scope(exe, args, cwd):
+    if exe not in {"grep", "rg", "find", "ls", "du", "wc", "cat", "head", "tail", "tree", "stat", "sed", "md5", "shasum"}:
+        return True
+    recursive = recursive_read(exe, args)
+    # A shallow ls lists names only; the contract explicitly allows ls ~/city/work.
+    # Every other directory operand is a recursive scope, independent of flags.
+    if exe == "ls" and not recursive:
+        return True
+    values = [arg.split("=", 1)[-1] if arg.startswith("-") and "=" in arg else arg for arg in args]
+    directories = [value for value in values if expand(value, cwd).is_dir()]
+    if recursive:
+        operands = search_paths(args) if exe in {"grep", "rg"} else args
+        if exe in {"ls", "du"}:
+            # Unknown options may consume the next value. Only known switches
+            # can establish explicit operands instead of an implicit cwd read.
+            switches = "aAbBcCdFfGgHhikLlmnopqRrSstUuvx1" if exe == "ls" else "achHklmsx"
+            known = all(not arg.startswith("-") or arg == "--"
+                        or (exe == "ls" and arg == "--recursive")
+                        or (not arg.startswith("--") and all(c in switches for c in arg[1:]))
+                        for arg in args)
+            operands = [arg for arg in args if not arg.startswith("-")] if known else []
+        if (not directories or not operands
+                or (exe == "find" and operands[0].startswith("-"))):
+            directories.append(cwd or os.getcwd())
+    return all(allowed_path(value, cwd, recursive=True) for value in directories)
+
+
 def safe_simple(command, patterns=None, cwd=None):
     try:
         a = shlex.split(command)
@@ -168,6 +256,8 @@ def safe_simple(command, patterns=None, cwd=None):
             return False
     exe, args = a[0], a[1:]
     if not allowed_path(cwd or os.getcwd()):
+        return False
+    if not allowed_read_scope(exe, args, cwd):
         return False
     if exe == "gc":
         if len(args) < 2 or any(x.startswith(("--city", "--rig", "--store", "--db", "--config")) for x in args):
@@ -195,12 +285,6 @@ def safe_simple(command, patterns=None, cwd=None):
     if exe in {"find", "rg", "grep", "du"}:
         if any(x.startswith(("-exec", "-ok", "-delete", "-fprint", "-fls", "--pre", "--hostname-bin", "--include", "--exclude", "--ignore-file", "--file=")) or x in {"-L", "-f", "--file"} or (x.startswith("-f") and not x.startswith("--")) for x in args):
             return False
-        recursive = exe in {"find", "rg", "du"} or any(x in {"-r", "-R", "--recursive", "--dereference-recursive"} for x in args)
-        # Check every existing directory operand. Pattern/option operands that
-        # happen to name a directory are intentionally treated conservatively.
-        dirs = [x for x in args if not x.startswith("-") and expand(x, cwd).is_dir()]
-        if recursive and not all(allowed_path(x, cwd, recursive=True) for x in dirs or [cwd or os.getcwd()]):
-            return False
         return True
     if exe == "date":
         return not args or (len(args) == 1 and (args[0] in {"-u", "--utc", "--iso-8601"} or args[0].startswith("+")))
@@ -210,7 +294,7 @@ def safe_simple(command, patterns=None, cwd=None):
         return not any(x.startswith(("-c", "--check", "--status")) for x in args)
     if exe == "tail" and any(x.startswith(("--follow", "--pid")) or (x.startswith("-") and any(c in x[1:] for c in "fF")) for x in args):
         return False
-    if exe == "ls" and any(x.startswith("-") and ("R" in x or "L" in x) for x in args):
+    if exe == "ls" and any(x.startswith("-") and ("L" in x or (x.startswith("--") and x not in {"--", "--recursive"})) for x in args):
         return False
     # Media demuxers can follow file/network references from an allowed input.
     # Leave ffprobe denied until that secondary-read surface is confined too.

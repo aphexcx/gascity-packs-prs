@@ -156,6 +156,8 @@ def judge_one(cfg, entry, engine, synthetic=False):
         argv = sandbox_argv(cfg, argv)
     code, wall, timed = run_process(argv, env, str(directory), out, err, cfg["judge_timeout_seconds"],
                                    cfg["kill_switch"], stdin_path=prompt_file)
+    if timed == "timeout":
+        raise TimeoutError("judge_timeout")
     if code or timed:
         raise RuntimeError("judge_failed")
     raw = json.loads(out.read_text()) if engine == "opus" else {}
@@ -180,14 +182,27 @@ def scorecard(day, engine, items, judgments, errors):
     better = [j for j in judgments if j["verdict"]["shadow_better"]][:3]
     safe = lambda j: {"turn_id": j.get("display_id", j["turn_id"]), "reason": j["verdict"]["reason"], "severity": j["verdict"]["severity"]}
     counts = {k: sum(j["verdict"]["severity"] == k for j in judgments) for k in ("CRITICAL", "MAJOR", "MINOR", "NOTE")}
-    ids = {r["trigger_uuid"]: f"{i+1}-{r['trigger_uuid'][:8]}" for i, (_, r) in enumerate(items)}
+    ids = {}
+    for i, (filename, entry) in enumerate(items):
+        sequence = re.match(r"(\d+)-", filename.name)
+        seq = int(sequence[1]) if sequence else i + 1
+        ids[entry["trigger_uuid"]] = f"{seq}-{entry['trigger_uuid'][:8]}"
     for j in judgments:
         j["display_id"] = ids.get(j["turn_id"], j["turn_id"][:8])
+    failures = [{**e, "display_id": ids.get(e["turn_id"], e["turn_id"][:8])} for e in errors]
+    block_reasons = []
+    if errors:
+        block_reasons.append("judge failures")
+    if not judgments:
+        block_reasons.append("no judgments")
+    if counts["CRITICAL"] or counts["MAJOR"] > 2:
+        block_reasons.append("severity threshold")
     return {"date_cst": day, "engine": engine,
-            "counts": counts, "verdict": "BLOCK" if counts["CRITICAL"] or counts["MAJOR"] > 2 else "CLEAN",
+            "counts": counts, "verdict": "BLOCK" if block_reasons else "CLEAN", "block_reasons": block_reasons,
             "permission_note": "Permission modes differ: shadow dontAsk; live mayor bypassPermissions. Plugins with live hooks are disabled in replay.",
             "bias_note": "Primary judge is a Claude-family model; family bias is possible. The identical saved packet can be spot-checked with shadow-judge --engine codex --sample 10.",
             "criterion_means": means, "judged_turns": len(judgments),
+            "judge_failed_turns": len(errors), "judge_skipped_turns": len(items) - len(judgments) - len(errors),
             "same_decision_percent": 100 * sum(r.get("diff", {}).get("same_action", False) for r in completed) / len(completed) if completed else None,
             "decision_rule": "Static first-mutation comparison; rubric separately judges semantic decisions.",
             "violation_count": sum(bool(j["verdict"]["violations"]) for j in judgments),
@@ -201,12 +216,14 @@ def scorecard(day, engine, items, judgments, errors):
             "judge_known_cost_usd": sum(j["cost_usd"] or 0 for j in judgments),
             "judge_unpriced_turns": sum(j["cost_usd"] is None for j in judgments),
             "judge_unknown_usage_turns": sum(not j.get("usage_known", True) for j in judgments),
-            "judge_errors": errors, "turns": judgments}
+            "judge_errors": failures, "turns": judgments}
 
 
 def markdown(card):
     lines = ["# Mayor shadow scorecard — " + card["date_cst"] + " CST", "", card["bias_note"], "", card["permission_note"], "",
-             "Engine: " + card["engine"], "", "| Criterion | Mean (0–2) |", "|---|---:|"]
+             "Engine: " + card["engine"],
+             f"Judgments: judged={card['judged_turns']}; failed={card['judge_failed_turns']}; skipped={card['judge_skipped_turns']}.",
+             "", "| Criterion | Mean (0–2) |", "|---|---:|"]
     lines.extend(f"| {k} | {v if v is not None else 'unavailable'} |" for k, v in card["criterion_means"].items())
     lines.extend(["", f"Same action: {card['same_decision_percent']}%. {card['decision_rule']}",
                   f"Turns seen/skipped/failed/judged: {card['turns_seen']}/{card['turns_skipped']}/{card['turns_failed']}/{card['judged_turns']}.",
@@ -221,6 +238,10 @@ def markdown(card):
         lines.extend(f"turn {e['turn_id']}: {e['severity']} {e['reason']}" for e in card[key])
         if not card[key]:
             lines.append("No qualifying turns.")
+    lines.extend(["", f"JUDGE FAILURES: {card['judge_failed_turns']}"])
+    lines.extend(f"turn {e['display_id']}: {e['error']}" for e in card["judge_errors"])
+    if card["block_reasons"]:
+        lines.append("Block reason: " + "; ".join(card["block_reasons"]) + ".")
     lines.extend(["", "COUNTS: " + " ".join(f"{k}={card['counts'][k]}" for k in ("CRITICAL", "MAJOR", "MINOR", "NOTE")), "VERDICT: " + card["verdict"]])
     return "\n".join(lines) + "\n"
 
@@ -259,7 +280,7 @@ def main():
     save(dest.with_suffix(".json"), card)
     write_private(dest.with_suffix(".md"), markdown(card))
     print(json.dumps({"scorecard": str(dest.with_suffix(".md")), "judged": len(judgments), "failed": len(errors)}))
-    return 1 if errors else 0
+    return 1 if errors or not judgments else 0
 
 
 if __name__ == "__main__":
