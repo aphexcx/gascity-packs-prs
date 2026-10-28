@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -46,6 +47,12 @@ def load_config(filename) -> dict:
         if type(default[k]) is not int or default[k] < 0:
             raise ValueError("nonnegative integer required: " + k)
     default["config_path"] = str(p if p.exists() else PACK / "assets/shadow-eval.toml")
+    default.setdefault("sandbox", Path("/usr/bin/sandbox-exec").is_file())
+    if type(default["sandbox"]) is not bool:
+        raise ValueError("sandbox must be a boolean")
+    exclusions = default.get("sandbox_excluded_paths", [])
+    if not isinstance(exclusions, list) or any(not isinstance(p, str) or not p for p in exclusions):
+        raise ValueError("sandbox_excluded_paths must be a list of paths")
     return default
 
 
@@ -449,6 +456,77 @@ def sandbox_argv(cfg, argv):
     allowed = json.dumps(str(path(cfg["work_dir"])))
     profile = '(version 1)(allow default)(deny file-write*)(allow file-write* (subpath ' + allowed + ') (literal "/dev/null"))'
     return ["/usr/bin/sandbox-exec", "-p", profile, *argv]
+
+
+def shadow_sandbox_profile(cfg, runtime, temporary, decisions):
+    """Seatbelt policy for the shadow and every descendant, including hooks.
+
+    Resolve symlinks as well as lexical paths. Wildcards are single components;
+    regex rules cover future service secret directories without reading them.
+    Only this turn's runtime is exempt from the work-directory read denial.
+    """
+    city, work, source = (path(cfg[k]) for k in ("city_dir", "work_dir", "source_config_dir"))
+    runtime, temporary, decisions = map(path, (runtime, temporary, decisions))
+    if (runtime == work or not runtime.is_relative_to(work)
+            or temporary == work or not temporary.is_relative_to(work)
+            or not decisions.is_relative_to(work)
+            or runtime.is_relative_to(source) or temporary.is_relative_to(source)):
+        raise ValueError("invalid sandbox runtime boundary")
+
+    def sub(p):
+        return '(subpath ' + json.dumps(str(p), ensure_ascii=False) + ')'
+
+    def literal(p):
+        return '(literal ' + json.dumps(str(p), ensure_ascii=False) + ')'
+
+    def deny_except(root, exceptions):
+        return '(deny file-read* (require-all ' + sub(root) + ' (require-not (require-any ' + ' '.join(exceptions) + '))))'
+
+    lines = ['(version 1)', '(allow default)', '(deny file-write*)',
+             '(allow file-write* ' + ' '.join((sub(runtime), sub(temporary), literal(decisions), literal('/dev/null'))) + ')',
+             deny_except(work, [sub(runtime), sub(temporary)]),
+             deny_except(city / 'work/eval-kimi-k31', [sub(runtime), sub(temporary)]),
+             '(allow file-read-metadata ' + literal(decisions) + ')']
+    context = [source / rel for rel in ('CLAUDE.md', 'skills', 'agents', 'plugins')]
+    context.append(project_dir(source, city) / 'memory')
+    # Exceptions apply only to the live config exclusion, never to the work
+    # ledger, credentials or explicitly configured excluded paths.
+    lines.append(deny_except(source, [sub(p) for p in context]))
+    exclusions = [str(city / p) for p in ('assets/private', '.gc/keys', '.gc/services/*/secrets', 'ops/shadow-eval.toml')]
+    exclusions += [str(Path.home() / '.config/infisical-agent'), str(source / '.credentials.json'), cfg['config_path']]
+    exclusions += cfg.get('sandbox_excluded_paths', [])
+    for value in exclusions:
+        p = Path(value).expanduser()
+        p = p if p.is_absolute() else city / p
+        if any(c in str(p) for c in '?[]{}\n\r\x00'):
+            raise ValueError('unsupported sandbox exclusion')
+        if '*' in str(p):
+            if any('*' in part and part != '*' for part in p.parts):
+                raise ValueError('wildcards must be whole path components')
+            prefix, suffix = str(p).split('*', 1)
+            for pattern in {str(p), str(path(prefix)) + '/*' + suffix}:
+                regex = '^' + re.escape(pattern).replace(r'\*', '[^/]+') + '(/|$)'
+                # Use an ordinary Scheme string: #"..." is raw and would
+                # retain JSON's doubled backslashes, silently weakening rules.
+                lines.append('(deny file-read* (regex ' + json.dumps(regex) + '))')
+            # Resolve existing symlink targets without opening any excluded file.
+            for match in glob.glob(str(p)):
+                lines.append('(deny file-read* ' + sub(path(match)) + ')')
+        else:
+            for target in {Path(os.path.abspath(p)), path(p)}:
+                lines.append('(deny file-read* ' + sub(target) + ')')
+    return '\n'.join(lines) + '\n'
+
+
+def shadow_sandbox_argv(cfg, argv):
+    if not cfg['sandbox']:
+        return argv
+    if not Path('/usr/bin/sandbox-exec').is_file():
+        raise RuntimeError('sandbox requested but sandbox-exec unavailable')
+    runtime = path(cfg['_shadow_runtime'])
+    profile = runtime / 'shadow.sb'
+    write_private(profile, shadow_sandbox_profile(cfg, runtime, runtime / 'tmp', cfg['_shadow_decisions']))
+    return ['/usr/bin/sandbox-exec', '-f', str(profile), *argv]
 
 
 def prepare_codex_runtime(cfg):

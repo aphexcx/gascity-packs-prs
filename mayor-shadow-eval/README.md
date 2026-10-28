@@ -5,8 +5,10 @@ executing mutations, and produce a daily Opus scorecard. The live mayor keeps it
 provider. This pack neither sends messages nor installs or starts itself.
 
 Requires Python 3.11+, `gc`, Claude Code with `--resume`, `--fork-session`, hooks,
-stream JSON, prompt snapshots and `--json-schema`, and macOS `sandbox-exec` for
-live replay. Tested with Python 3.14.7 and Claude Code 2.1.311. Python tests also
+stream JSON, prompt snapshots and `--json-schema`. The macOS `sandbox-exec`
+utility is deprecated but present on the tested Darwin 27 host; the shadow
+enables it by default when `/usr/bin/sandbox-exec` exists. Tested with Python
+3.14.7 and Claude Code 2.1.311. Python tests also
 run on Linux using a synthetic executable; they do not call a model or secrets
 service. All entrypoints and hooks invoke `python3 -I`.
 
@@ -164,7 +166,7 @@ persists its tail cache and byte offset under runtime; only inode/size regressio
 starts a new source generation. Old cache generations remain for approved pruning.
 
 To honor the worker's write boundary, forks live under
-`~/city/work/eval-kimi-k31/runtime/projects/<encoded-city>/<uuid>.jsonl`, using
+`~/city/work/eval-kimi-k31/runtime/<seed-uuid>/projects/<encoded-city>/<uuid>.jsonl`, using
 `CLAUDE_CONFIG_DIR` pointed at that private runtime. They are **not** written to
 the live `~/.claude/projects` directory. The process still runs from `~/city`.
 Claude is invoked with `--resume <seed-uuid> --fork-session`; its output has a
@@ -199,10 +201,29 @@ scores as a perfectly controlled comparison if context/tool evidence differs.
 Reads issued during replay see current external state, not a historical snapshot
 of mail, beads or files. Historical tool results before the trigger are preserved.
 
-In addition to the semantic hook, `sandbox-exec` denies filesystem writes
-outside the private work directory (and `/dev/null`), including writes through
-context symlinks. It permits network requests for model APIs and allowed reads;
-it is not a network isolation boundary. Live replay fails closed on other OSes.
+In addition to the semantic hook, the shadow generates a `shadow.sb` profile at
+launch and runs Claude and all descendants under `sandbox-exec -f`. It denies
+reads of `assets/private`, service secrets (including future service directories),
+`.gc/keys`, the operator config, Infisical-agent config, evaluation storage and
+the live Claude config. The live config exceptions are CLAUDE.md, skills, agents,
+plugin files and this city's memory; credentials and live transcripts remain
+denied. Config `sandbox_excluded_paths` adds exclusions, including paths relative
+to `city_dir`. Exclusions cover resolved symlink targets as well as lexical paths.
+
+Only the current turn's private runtime is readable within evaluation storage;
+it holds the seed, fork, replay context and a guard-only config snapshot. Previous
+turns, tail caches and ledgers remain unreadable. Filesystem writes are denied
+except in that runtime and its temporary directory, the exact decision sidecar,
+and `/dev/null`. The guard appends to the sidecar; metadata access is allowed but
+content reads remain denied. Context symlinks remain read-only. The parent watcher writes the final
+ledger outside the sandbox. Network access is unchanged for model requests.
+
+Set `sandbox = false` only to choose parser-only isolation: the watcher prints a
+warning and `shadow-status` reports `sandbox: off` with a warning. Each turn's
+ledger records `sandbox: on|off`. If `sandbox = true` is requested but the binary
+is absent or launch fails, the run fails closed; it never silently retries without
+the profile. When the binary is absent, the default is false. The judge retains
+its existing macOS write sandbox, separate from the shadow read policy.
 
 ## Guard behavior
 
@@ -247,6 +268,15 @@ including `ls -- -R` when `-R` is a directory. Find start paths are checked
 individually; `--` cannot hide a later path or the implicit working directory.
 Unknown options, missing arguments, ambiguous BSD/GNU argument forms, and grep/rg
 pattern-file options fail closed with the read-shape reason.
+
+The parser models BSD stop-at-first-operand behavior for ls, du, wc, cat, head,
+tail, stat, md5 and shasum. Later tokens are operands even when they look like
+options: `du file --exclude .` cannot conceal the recursive `.` scope. Grep/rg
+keep option permutation; find and git keep their dedicated grammar. Directories
+exposed as operands under either regime receive the recursive exclusion check.
+The shallow listing exception requires a single operand with no real terminator;
+`ls file -R` checks both literal operands. Unknown regimes and unsupported file/
+ffprobe reads are denied with the shape reason.
 
 Deliberate conservative differences from the initial proposed allowlist:
 

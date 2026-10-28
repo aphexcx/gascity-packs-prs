@@ -176,24 +176,32 @@ READ_GRAMMARS = {
     "shasum": ("bptU", "binary text portable", {"a": "count"}, {"algorithm": "count"}, {}),
 }
 
+BSD_READERS = {"ls", "du", "wc", "cat", "head", "tail", "stat", "md5", "shasum", "file", "ffprobe"}
+PERMUTE_READERS = {"grep", "rg", "find", "git"}
 
-def read_options(exe, args):
+
+def read_options(exe, args, regime=None):
     """Parse once, consuming values before treating -- as an option terminator.
 
     Return operands, parsed options, and whether a real terminator occurred.
     Glued short values consume the rest of their bundle, even when it is --.
     """
+    regime = regime or ("bsd" if exe in BSD_READERS else "permute" if exe in PERMUTE_READERS else None)
+    if regime not in {"bsd", "permute"} or exe not in READ_GRAMMARS:
+        raise ValueError("unknown read option regime")
     switches, long_switches, short_values, long_values, optional_values = READ_GRAMMARS[exe]
     long_switches = set(long_switches.split())
-    operands, parsed, terminated, i = [], [], False, 0
+    operands, parsed, terminated, options_ended, i = [], [], False, False, 0
     while i < len(args):
         arg = args[i]
         i += 1
-        if terminated or not arg.startswith("-") or arg == "-":
+        if options_ended or not arg.startswith("-") or arg == "-":
             operands.append(arg)
+            if regime == "bsd":
+                options_ended = True
             continue
         if arg == "--":
-            terminated = True
+            terminated = options_ended = True
             continue
         if exe in {"head", "tail"} and re.fullmatch(r"-\d+", arg):
             parsed.append(("n", "offset", arg[1:]))
@@ -270,6 +278,7 @@ def find_paths(args):
 
 
 def allowed_read_scope(exe, args, cwd):
+    ambiguous = []
     if exe == "sed":
         # Its only accepted program is the numeric print range checked below.
         operands, recursive, terminated = args[2:], False, False
@@ -281,6 +290,19 @@ def allowed_read_scope(exe, args, cwd):
             operands.append(cwd or os.getcwd())
     elif exe in READ_GRAMMARS:
         operands, options, terminated = read_options(exe, args)
+        # A directory that is an operand under either getopt regime cannot be
+        # hidden by an option value under the other. The alternate parse may
+        # reject a literal dash-prefixed filename; the primary parse still wins.
+        try:
+            alternate, alternate_options, _ = read_options(exe, args, "permute" if exe in BSD_READERS else "bsd")
+            if exe in {"grep", "rg"} and not any(kind == "pattern" or key == "files"
+                                                 for key, kind, _ in alternate_options):
+                alternate = alternate[1:]
+            # Preserve duplicate tokens: a directory-looking search pattern
+            # can be repeated later as an operand under the alternate regime.
+            ambiguous = alternate if exe in {"grep", "rg"} else [value for value in alternate if value not in operands]
+        except ValueError:
+            pass
         recursive = exe in {"rg", "du"} or any(
             (exe == "grep" and (key in {"r", "R", "recursive", "dereference-recursive"}
                                 or (kind == "directories" and value == "recurse")))
@@ -291,11 +313,16 @@ def allowed_read_scope(exe, args, cwd):
                 if not operands:
                     raise ValueError("missing search pattern")
                 operands = operands[1:]
-    else:
+    elif exe in {"gc", "git", "python3", "date"}:
         return True
+    else:
+        raise ValueError("unknown or unsupported read grammar")
     # Directory scope is based only on actual operands, never option values.
     # A real -- does not exempt literal directory operands from confinement.
-    if exe == "ls" and not recursive and not terminated:
+    if any(expand(value, cwd).is_dir() and not allowed_path(value, cwd, recursive=True)
+           for value in ambiguous):
+        return False
+    if exe == "ls" and not recursive and not terminated and len(operands) <= 1:
         return True  # Preserve the explicitly allowed shallow ls ~/city/work.
     if recursive and not operands:
         operands = [cwd or os.getcwd()]
@@ -488,8 +515,9 @@ def main():
         event = json.load(sys.stdin)
         config = Path(os.environ["SHADOW_CONFIG"])
         defaults = Path(__file__).resolve().parents[1] / "assets/shadow-eval.toml"
-        patterns = tomllib.loads(defaults.read_text())["guard"]["bash_allowlist"]
-        patterns = tomllib.loads(config.read_text()).get("guard", {}).get("bash_allowlist", patterns)
+        patterns = tomllib.loads(config.read_text()).get("guard", {}).get("bash_allowlist")
+        if patterns is None:
+            patterns = tomllib.loads(defaults.read_text())["guard"]["bash_allowlist"]
         name, data = event.get("tool_name", ""), event.get("tool_input", {})
         decision = decide(name, data, patterns, event.get("cwd"))
         kind = decision_class(name, data, decision)

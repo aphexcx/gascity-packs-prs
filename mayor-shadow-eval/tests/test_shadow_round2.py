@@ -76,8 +76,7 @@ def test_real_fork_uses_captured_post_prompt_attachments(harness):
     source.write_text(''.join(json.dumps(r)+'\n' for r in rows))
     _, entry = watch.run_turn(cfg, source, 'synthetic', rows, (5, 10), 1, model='claude-synthetic')
     assert entry['status'] == 'completed'
-    artifact = Path(entry['shadow']['guard_decisions_file']).parent
-    assert (artifact/'prompt-context.txt').read_text() == 'synthetic queued mail'
+    assert Path(entry['shadow']['replay_context_file']).read_text() == 'synthetic queued mail'
     prefix = common.jsonl(Path(entry['shadow']['fork_file']))
     assert prefix[0]['subtype'] == 'compact_boundary'
     assert all(r['uuid'] != 'role' for r in prefix)

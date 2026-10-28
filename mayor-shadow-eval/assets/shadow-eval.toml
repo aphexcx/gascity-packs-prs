@@ -7,6 +7,12 @@ city_dir = "~/city"
 source_config_dir = "~/.claude"
 work_dir = "~/city/work/eval-kimi-k31"
 kill_switch = "~/city/ops/shadow-eval.switch"
+# Defaults to true when /usr/bin/sandbox-exec exists. Explicit false runs the
+# parser-only path and emits a warning in both watch and status.
+# sandbox = true
+# Additional read exclusions (absolute, home-relative, or relative to city_dir).
+# Mandatory private paths, work_dir and the live config are always protected.
+sandbox_excluded_paths = []
 max_turns = 25
 max_wait = 2700
 target_turns_per_day = 40

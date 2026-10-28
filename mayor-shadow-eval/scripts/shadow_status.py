@@ -24,6 +24,8 @@ def status(cfg, day):
     sampling = observed.get('sampling', {})
     result.update({k: observed.get(k) for k in ('source_basename', 'discovery', 'newest_trigger_age_seconds', 'stale')})
     result.update(date_cst=day, switch='on' if switch_on(cfg['kill_switch']) else 'off',
+                  sandbox='on' if cfg['sandbox'] else 'off',
+                  sandbox_warning=None if cfg['sandbox'] else 'WARNING: SANDBOX OFF — parser-only isolation',
                   health='RED' if observed.get('stale') or observed.get('last_error') else 'OK',
                   last_error_class='stale_source' if observed.get('stale') else observed.get('last_error') or result['last_error'],
                   target_turns_per_day=cfg['target_turns_per_day'],

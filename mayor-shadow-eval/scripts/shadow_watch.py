@@ -20,7 +20,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from shadow_common import (PACK, CST, cost, cst_day, discover, fingerprint, jsonl, ledgers,
     load_config, lock, moonshot_key, normal_auth, normal_env, path, prepare_runtime,
-    private_dir, run_process, sandbox_argv, save, timestamp, totals, usage, write_private,
+    private_dir, run_process, shadow_sandbox_argv as sandbox_argv, save, timestamp, totals, usage, write_private,
     is_prompt, row_text, source_info, switch_on, tail_rows)
 from shadow_guard import mutation, segments, redirection_target
 
@@ -285,6 +285,7 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
              "trigger_uuid": trigger_id, "trigger_timestamp": trigger.get("timestamp"),
              "trigger_text": text_of(trigger), "trigger_day_cst": cst_day(trigger.get("timestamp")),
              "run_day_cst": today, "source": str(source), "discovery": discovery,
+             "sandbox": "on" if cfg["sandbox"] else "off",
              "fable": fable, "fable_tool_results": tool_results(rows[start+1:end]),
              "fable_incomplete": not turn_closed(rows, start, end, cfg["settle_seconds"], time.time()), "status": "running", "shadow": {"model": selected, "blocks": [], "decisions": [], "errors": [], "usage": {}, "cost_usd": None},
              "diff": diff(fable, [])}
@@ -311,21 +312,27 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
         if skip:
             entry["status"], entry["skip_reason"] = "skipped", skip
             return dest, entry
-        runtime, projects = prepare_runtime(cfg)
         seed_id = str(uuid.uuid4())
+        runtime, projects = prepare_runtime(cfg, "runtime/" + seed_id)
         seed = projects / (seed_id + ".jsonl")
         write_private(seed, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in fork_rows(rows, start, seed_id)), exclusive=True)
         shadow.update({"fork_file": str(seed), "fork_session_id": seed_id, "prefix_rows": start - compact_start(rows, start),
                        "seed_bytes": seed.stat().st_size,
                        "guard_decisions_file": str(artifact / "decisions.jsonl")})
         save(dest, entry)
-        replay_file = artifact / "prompt-context.txt"
+        replay_file = runtime / "prompt-context.txt"
         write_private(replay_file, replay_context(rows, start, end), exclusive=True)
         shadow["replay_context_bytes"] = replay_file.stat().st_size
+        shadow["replay_context_file"] = str(replay_file)
+        # The child cannot read the operator config. Give the hook only its
+        # non-secret allowlist in the current turn's private runtime.
+        guard_config = runtime / "guard.toml"
+        write_private(guard_config, "[guard]\nbash_allowlist = " + json.dumps(cfg["guard"]["bash_allowlist"]) + "\n", exclusive=True)
+        sandbox_cfg = {**cfg, "_shadow_runtime": str(runtime), "_shadow_decisions": shadow["guard_decisions_file"]}
         env = normal_env()
-        env.update({"CLAUDE_CONFIG_DIR": str(runtime), "TMPDIR": str(private_dir(root / "tmp")),
+        env.update({"CLAUDE_CONFIG_DIR": str(runtime), "TMPDIR": str(private_dir(runtime / "tmp")),
                     "GC_AGENT": "mayor", "GC_CITY_PATH": cfg["city_dir"], "GC_CITY": cfg["city_dir"],
-                    "SHADOW_PACK_DIR": str(PACK), "SHADOW_CONFIG": cfg["config_path"],
+                    "SHADOW_PACK_DIR": str(PACK), "SHADOW_CONFIG": str(guard_config),
                     "SHADOW_WORK_DIR": str(root), "SHADOW_DECISIONS": shadow["guard_decisions_file"],
                     "SHADOW_REPLAY_CONTEXT": str(replay_file),
                     "BASH_DEFAULT_TIMEOUT_MS": "60000", "BASH_MAX_TIMEOUT_MS": "60000",
@@ -356,7 +363,7 @@ def run_turn(cfg, source, discovery, rows, interval, seq, *, model=None):
                     "--effort", "xhigh"]
             shadow["request_started"] = True
             save(dest, entry)
-            code, wall, timed = run_process(sandbox_argv(cfg, argv), env, cfg["city_dir"], out, err,
+            code, wall, timed = run_process(sandbox_argv(sandbox_cfg, argv), env, cfg["city_dir"], out, err,
                                            cfg["timeout_seconds"], cfg["kill_switch"], stdin_path=prompt_file)
             stream = jsonl(out)
             answer, spent, result = parse_stream(stream)
@@ -534,6 +541,8 @@ def main():
         p.error("--backfill must be nonnegative")
     try:
         cfg = load_config(args.config)
+        if not cfg["sandbox"]:
+            print("WARNING: SHADOW SANDBOX OFF — parser-only isolation", file=sys.stderr, flush=True)
         with lock(path(cfg["work_dir"])):
             # An interrupted run is visible and never automatically replayed.
             for dest, r in ledgers(path(cfg["work_dir"])):

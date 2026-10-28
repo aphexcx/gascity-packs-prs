@@ -1,3 +1,72 @@
+# Validation — jp-8e8, round 5
+
+Continued `jp/mayor-shadow-eval` from `7b1a145a` on jadegate, Darwin 27.0.0.
+BSD readers stop parsing at the first operand. The alternate getopt parse also
+checks directory operands, including a repeated directory-looking search
+pattern. Unknown readers remain denied; shallow `ls ~/city/work` still works.
+
+The shadow now runs under a generated Seatbelt read/write policy. Current-turn
+runtime storage is separate from previous forks and ledgers. The hook reads a
+private guard config snapshot; its decision sidecar is writable but unreadable.
+The normal judge write sandbox is unchanged. `sandbox` defaults on when the
+binary exists; explicit off is visible in watch/status and every turn ledger.
+
+- Final repository runner: **467 passed in 33.01 seconds**: **463 pack tests**
+  (including **51 new round-5 cases**) and **4 repository command-policy tests**.
+  Real BSD utilities demonstrate the two bypasses against synthetic fixtures;
+  the real hook denies them. OS tests bypass the hook entirely and assert EPERM
+  for cat and du, future service secrets, ledgers, previous runtimes, live config,
+  credentials, extra exclusions and symlink targets. They also exercise allowed
+  context reads, write confinement, sandbox-off status and the real replay/hook
+  subprocess chain. No tests were deleted. The captured-context test now follows
+  the ledger's runtime context path.
+- The real hook, separately invoked with `cwd=~/city`, denied both
+  `du work/dispatch/mayor-shadow-eval-1028-round5.md --exclude .` and
+  `ls -R work/dispatch/mayor-shadow-eval-1028-round5.md --ignore .` with the
+  read-shape reason. Neither utility was executed against the live city.
+- Final live `--model claude-opus-5-5` canary: **completed**, normal auth,
+  `sandbox: on`, exit 0, no errors, **57.991 seconds**, seed **2,627,251 bytes**.
+  Source `ec4edc76-a322-4674-95b6-1eabc401098a.jsonl`, discovery `explicit`,
+  trigger `2026-10-28T02:18:22.787Z`; newest-trigger age at start **2.45 seconds**.
+  Guard decisions: Bash read-allowed 1, Bash shape-denied 3, WebSearch
+  mutation-denied 1, Write mutation-denied 2. `same_action=false`.
+  Runtime fork exists; seed prefix and source tool schemas retained. Live source
+  grew from **177,223,775** to **177,289,430 bytes**, existing prefix unchanged.
+  Actual runtime instruction attachments include `MEMORY.md`; the final prompt
+  references it. The generated profile matches the final implementation.
+- Neither `~/city/CLAUDE.md` nor `~/.claude/CLAUDE.md` exists on this host. A
+  separate normal-auth Opus startup probe supplied a synthetic CLAUDE.md in its
+  private runtime: **exit 0 in 6.566 seconds**, expected instruction response,
+  `sandbox: on`. OS tests also verify CLAUDE.md and memory reads. No live context
+  file was created or edited. No allow-list widening or parser-only fallback was
+  needed. The existing `runtime_system_prompt_verified=false` fidelity limitation
+  remains explicit.
+- `gc lint mayor-shadow-eval`, Python AST/shell syntax, `python3 -I` entrypoints,
+  `git diff --check`: passed. Secret-pattern scan: **0**; no values printed.
+- Test Python **3.12.14** via uv; host Python **3.14.7**. Node **v26.7.0**, measured
+  inside `slack-full/adapter`; this Python pack has no Node test suite.
+- Implementation self-review covered both option regimes, duplicate operands,
+  Seatbelt regex quoting, future exclusions, symlinks, child-process inheritance,
+  runtime exceptions, bundled/default config startup and fail-closed launch.
+  No fresh external review gate is claimed.
+
+Exact final test invocation:
+
+```sh
+UV_CACHE_DIR="$HOME/city/work/eval-kimi-k31/uv-cache" \
+TMPDIR="$HOME/city/work/eval-kimi-k31" \
+make test PYTHON='python3 -I' \
+  PYTEST_DIRS='mayor-shadow-eval/tests tests/test_no_bare_bd_commands.py tests/test_no_gc_sling_wrapper.py' \
+  PYTEST_ARGS="-q -o pythonpath=. -o cache_dir=$HOME/city/work/eval-kimi-k31/round5-cache --basetemp=$HOME/city/work/eval-kimi-k31/round5-reviewed"
+```
+
+Content-free evidence under `~/city/work/eval-kimi-k31/`: `round5-reviewed.log`,
+`round5-real-hooks.json`, `round5-canary-final/summary.json`,
+`round5-context-canary/summary.json`. Private replay artifacts remain there;
+no transcript text or credentials are committed. Installation/start/stop steps
+remain in README; no service was installed or loop started. Earlier full-repo,
+dummy-key and judge gates stand as recorded below.
+
 # Validation — jp-n1e, round 4
 
 Continued `jp/mayor-shadow-eval` from `f7b22c3a` on jadegate. The change replaces
