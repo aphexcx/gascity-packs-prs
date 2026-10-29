@@ -1,0 +1,8 @@
+docs(evidence): record clean round-two Codex reviews
+
+Record both validated CLEAN verdicts and the grouped replay correction.
+All production code and fixtures remain at the fully tested 648f887e tree.
+
+Bead: gp-zbq3
+Codex-Reviewed-By: OpenAI Codex gpt-6-astra (round-2 CLEAN at 648f887e; follow-up CLEAN at c612d94c)
+Co-Authored-By: OpenAI Codex <noreply@openai.com>

@@ -92,6 +92,13 @@ deliveries also log their registry label.
 
 ### Fixed
 
+- Preserve shared HTTPS `x.com` targets in the generic base64 redactor
+  (gp-zbq3), with identical ASCII URL boundaries in Python and Go. Unicode,
+  controls, nested URLs, and directly adjacent Slack labels cannot widen the
+  exception. Recognized credentials still redact inside links. The generic
+  rule requires five distinct non-padding characters; specific secret rules
+  remain unchanged.
+
 - Redact secret-shaped inbound Slack text before durable admission, gc journal
   and mail delivery, shutdown spooling, and dead letters (gp-pnfn). The pack's
   tail helper imports the same rules and redacts before truncating output.

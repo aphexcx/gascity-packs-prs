@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-zbq3/measure.py", line 149, in <module>
+    main()
+    ~~~~^^
+  File "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-zbq3/measure.py", line 123, in main
+    latest, live = replay_selection(messages, baseline)
+                   ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/assets/pr-evidence/gp-zbq3/measure.py", line 90, in replay_selection
+    raise RuntimeError('replay missing message IDs: ' + json.dumps(missing))
+RuntimeError: replay missing message IDs: [["C0B2Y13DRMK", "1793023860.098719"], ["C0B2Y13DRMK", "1793023959.721439"]]

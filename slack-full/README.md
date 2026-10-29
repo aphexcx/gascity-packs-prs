@@ -62,9 +62,21 @@ receives it for its events journal or mail. Matches become
 records. The shared rules in `adapter/redact/patterns.json` cover provider keys
 (`sk-`, `sk-ant-`, Slack `xoxb-`/`xoxp-`/`xapp-`, GitHub, AWS `AKIA`, Google
 `AIza`), Bearer tokens, JWT-shaped strings, 32+ hex and 40+ base64/base64url
-runs. This is a conservative shape filter: long hashes/identifiers in prose
-can be redacted too. Canonical Slack permalinks are exempt from the base64 rule
-through its shared allowlist; webhook URLs and slash-containing keys still redact.
+runs. The base64 rule requires at least five distinct characters (excluding
+padding) and ignores digit-only runs. Specific rules still apply, including
+the 32+ hex rule, so long numeric identifiers can still redact as hex.
+Canonical Slack permalink paths and HTTPS `x.com` paths/queries are exempt
+from the base64 rule through its shared allowlist. An overlapping match from
+another rule, such as a JWT or Slack token, disables that URL exception.
+The `x.com` exception requires an ASCII HTTPS scheme and exact host. It starts
+only at the beginning of text, after ASCII whitespace, or after Slack's `<`
+link bracket. Its span uses printable ASCII URL characters; Unicode, controls,
+quotes, parentheses, brackets, braces, backslashes, backticks, carets and `|`
+end it. Lookalike hosts, userinfo, and nested URLs in another URL are not
+exempt. Neither Markdown parentheses nor the Slack label separator `|` grants
+an exception, including a repeated URL directly after `|`. Slack webhook
+URLs, generic keys in Slack permalink queries, and slash-containing keys
+outside exempt URLs still redact. Other hosts have no URL exception.
 Protocol routing IDs and attachment download URLs stay
 intact; attachment bytes and outbound posts are outside this text filter.
 

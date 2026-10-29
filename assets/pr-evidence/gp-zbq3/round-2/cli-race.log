@@ -1,0 +1,103 @@
+{
+  "format": "summary of go test -json; output events omitted",
+  "raw_sha256": "637b4db3d6706c3322c877f1c02ad61964587f63e9d2ab67c3302a8c222b7d2f",
+  "raw_bytes": 206370,
+  "packages": {
+    "github.com/sjarmak/gc-slack-cli": {
+      "passed": 11,
+      "top_level_passed": 6,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.908965-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli",
+        "Elapsed": 1.21
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/cmd": {
+      "passed": 129,
+      "top_level_passed": 119,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:18.329881-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/cmd",
+        "Elapsed": 1.631
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/apps": {
+      "passed": 33,
+      "top_level_passed": 15,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.911653-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/apps",
+        "Elapsed": 1.212
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/blockkit": {
+      "passed": 6,
+      "top_level_passed": 6,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.908397-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/blockkit",
+        "Elapsed": 1.209
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/channels": {
+      "passed": 14,
+      "top_level_passed": 14,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.94986-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/channels",
+        "Elapsed": 1.25
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/rigs": {
+      "passed": 30,
+      "top_level_passed": 30,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:18.071532-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/rigs",
+        "Elapsed": 1.3719999999999999
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/rooms": {
+      "passed": 8,
+      "top_level_passed": 8,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.893326-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/rooms",
+        "Elapsed": 1.194
+      }
+    },
+    "github.com/sjarmak/gc-slack-cli/internal/state/workspace": {
+      "passed": 6,
+      "top_level_passed": 1,
+      "skipped": 0,
+      "failed": [],
+      "completion": {
+        "Time": "2026-10-26T23:20:17.852216-05:00",
+        "Action": "pass",
+        "Package": "github.com/sjarmak/gc-slack-cli/internal/state/workspace",
+        "Elapsed": 1.152
+      }
+    }
+  }
+}

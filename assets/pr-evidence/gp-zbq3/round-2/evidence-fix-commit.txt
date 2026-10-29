@@ -1,0 +1,9 @@
+fix(evidence): group identical URLs without positional attribution
+
+Address the CLEAN Codex gate's minor duplicate-occurrence finding. Verify
+both duplicate orderings and replay the exact baseline identities again.
+Production redaction code and fixtures remain unchanged at 648f887e.
+
+Bead: gp-zbq3
+Codex-Reviewed-By: OpenAI Codex gpt-6-astra (gate CLEAN at 648f887e; evidence fix self-reviewed)
+Co-Authored-By: OpenAI Codex <noreply@openai.com>

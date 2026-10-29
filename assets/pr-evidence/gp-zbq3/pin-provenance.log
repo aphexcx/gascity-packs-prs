@@ -1,0 +1,1 @@
+{"installed_sha256": "7e3a7ea9044e70b722b4f9bf295e69739ff34b68e4fda5d75dfd245c8688a31a", "byte_identical_source_commit": "8e6d75e51b5d9749e5a14d558bc19a466a289599", "files": ["scripts/slack_tail.py", "scripts/slack_redact.py", "adapter/redact/patterns.json"]}

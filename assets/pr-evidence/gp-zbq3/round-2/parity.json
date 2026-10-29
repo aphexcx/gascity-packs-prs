@@ -1,0 +1,176 @@
+[
+  {
+    "name": "x-live-1792810032-shape",
+    "python": "<https://x.com/sampleuser/status/1234567890123456789|https://x.[REDACTED:base64:...6789]>",
+    "go": "<https://x.com/sampleuser/status/1234567890123456789|https://x.[REDACTED:base64:...6789]>",
+    "byte_identical": true
+  },
+  {
+    "name": "x-live-1793017482-shape",
+    "python": "<https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.[REDACTED:base64:...6789]?s=46>",
+    "go": "<https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.[REDACTED:base64:...6789]?s=46>",
+    "byte_identical": true
+  },
+  {
+    "name": "x-markdown-pair",
+    "python": "[first](https://x.[REDACTED:base64:...6789]) [second](https://x.[REDACTED:base64:...6789]?s=46)",
+    "go": "[first](https://x.[REDACTED:base64:...6789]) [second](https://x.[REDACTED:base64:...6789]?s=46)",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-long-s-scheme",
+    "python": "http\u017f://x.com/a?k=[REDACTED:base64:...ab9X]",
+    "go": "http\u017f://x.com/a?k=[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-unicode-host",
+    "python": "https://x.c\u043em/a?k=[REDACTED:base64:...ab9X]",
+    "go": "https://x.c\u043em/a?k=[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-unicode-host-suffix",
+    "python": "https://x.com\u017f/a?k=[REDACTED:base64:...ab9X]",
+    "go": "https://x.com\u017f/a?k=[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nbsp",
+    "python": "https://x.com/a\u00a0[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u00a0[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-ideographic-space",
+    "python": "https://x.com/a\u3000[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u3000[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-line-separator",
+    "python": "https://x.com/a\u2028[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u2028[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-paragraph-separator",
+    "python": "https://x.com/a\u2029[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u2029[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-control-soh",
+    "python": "https://x.com/a\u0001[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u0001[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-control-nul",
+    "python": "https://x.com/a\u0000[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u0000[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-control-del",
+    "python": "https://x.com/a\u007f[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u007f[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-unicode-path",
+    "python": "https://x.com/a\u00e9[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a\u00e9[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-caret",
+    "python": "https://x.com/a^[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a^[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-backtick",
+    "python": "https://x.com/a`[REDACTED:base64:...ab9X]",
+    "go": "https://x.com/a`[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nested-parentheses",
+    "python": "https://evil.test/?next=(https://x.com/a?k=[REDACTED:base64:...ab9X])",
+    "go": "https://evil.test/?next=(https://x.com/a?k=[REDACTED:base64:...ab9X])",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-standalone-parentheses",
+    "python": "(https://x.com/a?k=[REDACTED:base64:...ab9X])",
+    "go": "(https://x.com/a?k=[REDACTED:base64:...ab9X])",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nested-brackets",
+    "python": "https://evil.test/?next=[https://x.com/a?k=[REDACTED:base64:...ab9X]]",
+    "go": "https://evil.test/?next=[https://x.com/a?k=[REDACTED:base64:...ab9X]]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-standalone-brackets",
+    "python": "[https://x.com/a?k=[REDACTED:base64:...ab9X]]",
+    "go": "[https://x.com/a?k=[REDACTED:base64:...ab9X]]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nested-apostrophe",
+    "python": "https://evil.test/?next='https://x.com/a?k=[REDACTED:base64:...ab9X]'",
+    "go": "https://evil.test/?next='https://x.com/a?k=[REDACTED:base64:...ab9X]'",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-standalone-apostrophe",
+    "python": "'https://x.com/a?k=[REDACTED:base64:...ab9X]'",
+    "go": "'https://x.com/a?k=[REDACTED:base64:...ab9X]'",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nested-quote",
+    "python": "https://evil.test/?next=\"https://x.com/a?k=[REDACTED:base64:...ab9X]\"",
+    "go": "https://evil.test/?next=\"https://x.com/a?k=[REDACTED:base64:...ab9X]\"",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-standalone-quote",
+    "python": "\"https://x.com/a?k=[REDACTED:base64:...ab9X]\"",
+    "go": "\"https://x.com/a?k=[REDACTED:base64:...ab9X]\"",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-nested-pipe",
+    "python": "https://evil.test/?next=|https://x.com/a?k=[REDACTED:base64:...ab9X]",
+    "go": "https://evil.test/?next=|https://x.com/a?k=[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-slack-target",
+    "python": "<https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X|label>",
+    "go": "<https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X|label>",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-slack-label-key",
+    "python": "<https://x.com/a|[REDACTED:base64:...ab9X]>",
+    "go": "<https://x.com/a|[REDACTED:base64:...ab9X]>",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-slack-label-url",
+    "python": "<https://x.com/a|https://x.com/a?k=[REDACTED:base64:...ab9X]>",
+    "go": "<https://x.com/a|https://x.com/a?k=[REDACTED:base64:...ab9X]>",
+    "byte_identical": true
+  },
+  {
+    "name": "r2-ascii-whitespace-key",
+    "python": "\thttps://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\u000b[REDACTED:base64:...ab9X]",
+    "go": "\thttps://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\u000b[REDACTED:base64:...ab9X]",
+    "byte_identical": true
+  }
+]

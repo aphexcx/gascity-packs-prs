@@ -1,0 +1,1328 @@
+{
+  "pinned_helper": "7e3a7ea9044e70b7",
+  "scope": "founder-gap-sweep channel union, newest ten roots per channel, seven days",
+  "read_scopes": [
+    [
+      "C0AMHQ74ZLK",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMQ5G0UJE",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMQTZ7N79",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMTQ853CL",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AN32RV4SV",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AP0KV9S9E",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0Y964Q1Z",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BEZ3CQK5X",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BME4EM6RY",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BQJ6DE431",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BSL2RSL6R",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BTTJL55RR",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHANNKB29",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP3SB44",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0CAF55U53L",
+      "",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMQTZ7N79",
+      "1792597745.852519",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMQTZ7N79",
+      "1792645773.496439",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AMQTZ7N79",
+      "1792808142.243589",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AP0KV9S9E",
+      "1792559866.553749",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AP0KV9S9E",
+      "1792747923.483339",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0AP0KV9S9E",
+      "1792941235.093289",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792555316.905569",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792555474.213309",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792556944.295739",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792560178.290589",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792563440.141289",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792563664.330509",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792612490.203189",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792622843.244239",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792869321.710999",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792959172.094269",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792523993.563139",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792587161.156189",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792684971.380889",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792713265.881269",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792824094.273629",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793050446.930009",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792618754.561399",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792700031.969959",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792779581.811939",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792780919.447879",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792807548.246069",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1792971525.988989",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019271.574839",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019964.698719",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793063238.257399",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BEZ3CQK5X",
+      "1792534968.424479",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BEZ3CQK5X",
+      "1792536095.662229",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BEZ3CQK5X",
+      "1792671159.889799",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BEZ3CQK5X",
+      "1792686688.554359",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792512751.096969",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792516926.544589",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792556740.531629",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792559607.547549",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792607909.409009",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792614608.251659",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1792681280.579609",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1793017482.720239",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BKF28CYUE",
+      "1793040874.905649",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BME4EM6RY",
+      "1792480961.791579",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BME4EM6RY",
+      "1792521905.676669",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BME4EM6RY",
+      "1792543241.014039",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0BME4EM6RY",
+      "1792608557.146479",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792697490.813989",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792702408.920469",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792724893.388839",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792810421.286259",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792853377.065999",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1792974420.296289",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1793032428.611059",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1793053188.920449",
+      "1792467609",
+      ""
+    ],
+    [
+      "C0CACRS0162",
+      "1793066572.595389",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP3SB44",
+      "1792560189.392489",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP3SB44",
+      "1792723409.594349",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP3SB44",
+      "1792723661.371699",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP3SB44",
+      "1792735284.788089",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792541156.022619",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792541199.333109",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792541517.081719",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792703550.306099",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792784819.538719",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1792849679.449559",
+      "1792467609",
+      ""
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1792467609",
+      ""
+    ]
+  ],
+  "sample": [
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793066920.465569",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN33FNGU9",
+      "length": 213,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793066661.583549",
+      "thread_ts": "1793066572.595389",
+      "user": "U0AN33FNGU9",
+      "length": 196,
+      "urls": [
+        {
+          "host": "instinct.com",
+          "length": 19,
+          "pinned_redacted": false,
+          "working_redacted": false
+        },
+        {
+          "host": "hark.com",
+          "length": 15,
+          "pinned_redacted": false,
+          "working_redacted": false
+        }
+      ],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793066572.595389",
+      "thread_ts": "1793066572.595389",
+      "user": "U0AN33FNGU9",
+      "length": 87,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793064910.253929",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN33FNGU9",
+      "length": 93,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793064890.535529",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 7,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793062088.455629",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 4,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793061995.275429",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 36,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793061868.695369",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 92,
+      "urls": [],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 0,
+          "end": 48,
+          "distinct": 35,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 49,
+          "end": 92,
+          "distinct": 35,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060805.916309",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 2,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060526.013459",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 109,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060029.149819",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 17,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793059984.257239",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 41,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793059853.831709",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 44,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793059839.509939",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 61,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793058449.481079",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793058355.485189",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793058305.870599",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 99,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793053323.236209",
+      "thread_ts": "1792824094.273629",
+      "user": "U0AN32RPBFT",
+      "length": 32,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793053188.920449",
+      "thread_ts": "1793053188.920449",
+      "user": "U0AN32RPBFT",
+      "length": 265,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052870.124789",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 112,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052845.841069",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 33,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052835.354469",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 186,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793051463.608099",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 320,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793050973.868679",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 109,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793050698.772409",
+      "thread_ts": "1793050446.930009",
+      "user": "U0AN33FNGU9",
+      "length": 11,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793050446.930009",
+      "thread_ts": "1793050446.930009",
+      "user": "U0AN33FNGU9",
+      "length": 179,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0ASAPRETDK",
+      "ts": "1793046090.327329",
+      "thread_ts": "1792959172.094269",
+      "user": "U0AN32RPBFT",
+      "length": 7,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793045801.182019",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 276,
+      "urls": [
+        {
+          "host": "gist.github.com",
+          "length": 64,
+          "pinned_redacted": true,
+          "working_redacted": true
+        },
+        {
+          "host": "gist.github.com",
+          "length": 64,
+          "pinned_redacted": true,
+          "working_redacted": true
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "hex",
+          "start": 178,
+          "end": 210,
+          "distinct": 12,
+          "digits_only": false
+        },
+        {
+          "rule": "hex",
+          "start": 243,
+          "end": 275,
+          "distinct": 12,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 166,
+          "end": 210,
+          "distinct": 18,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 231,
+          "end": 275,
+          "distinct": 18,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793040874.905649",
+      "thread_ts": "1793040874.905649",
+      "user": "U0AN32RPBFT",
+      "length": 143,
+      "urls": [
+        {
+          "host": "angelmatch.io",
+          "length": 22,
+          "pinned_redacted": false,
+          "working_redacted": false
+        },
+        {
+          "host": "angelmatch.io",
+          "length": 22,
+          "pinned_redacted": false,
+          "working_redacted": false
+        }
+      ],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035991.806809",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035949.334119",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 17,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035936.238039",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 66,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793034172.046959",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 46,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793033752.772449",
+      "thread_ts": "1793032428.611059",
+      "user": "U0AN32RPBFT",
+      "length": 39,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793032428.611059",
+      "thread_ts": "1793032428.611059",
+      "user": "U0AN33FNGU9",
+      "length": 72,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793026093.715099",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 99,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793024806.413079",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 147,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793024099.450359",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 18,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023959.721439",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 30,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023936.989049",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 89,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023908.338219",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 183,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023860.098719",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 73,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023826.103579",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 37,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023560.946879",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 50,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023430.291499",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 496,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793021725.183839",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 82,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793017482.720239",
+      "thread_ts": "1793017482.720239",
+      "user": "U0AN33FNGU9",
+      "length": 122,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 59,
+          "pinned_redacted": true,
+          "working_redacted": true
+        },
+        {
+          "host": "x.com",
+          "length": 59,
+          "pinned_redacted": true,
+          "working_redacted": true
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 11,
+          "end": 55,
+          "distinct": 21,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 115,
+          "distinct": 21,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true
+    },
+    {
+      "channel": "C0AP0KV9S9E",
+      "ts": "1793014656.816209",
+      "thread_ts": "1792941235.093289",
+      "user": "U0AN32RPBFT",
+      "length": 32,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0ASAPRETDK",
+      "ts": "1792974249.414619",
+      "thread_ts": "1792622843.244239",
+      "user": "U0AN32RPBFT",
+      "length": 8,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    },
+    {
+      "channel": "C0AP0KV9S9E",
+      "ts": "1792969017.427239",
+      "thread_ts": "1792941235.093289",
+      "user": "U0AN33FNGU9",
+      "length": 42,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false
+    }
+  ],
+  "live": [
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1792810032.204479",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 165,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 51,
+          "pinned_redacted": true,
+          "working_redacted": true
+        },
+        {
+          "host": "x.com",
+          "length": 51,
+          "pinned_redacted": true,
+          "working_redacted": true
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 112,
+          "distinct": 25,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 123,
+          "end": 164,
+          "distinct": 25,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793017482.720239",
+      "thread_ts": "1793017482.720239",
+      "user": "U0AN33FNGU9",
+      "length": 122,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 59,
+          "pinned_redacted": true,
+          "working_redacted": true
+        },
+        {
+          "host": "x.com",
+          "length": 59,
+          "pinned_redacted": true,
+          "working_redacted": true
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 11,
+          "end": 55,
+          "distinct": 21,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 115,
+          "distinct": 21,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true
+    }
+  ],
+  "by_host": {
+    "instinct.com": {
+      "urls": 1,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "hark.com": {
+      "urls": 1,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "gist.github.com": {
+      "urls": 2,
+      "pinned_redacted": 2,
+      "working_redacted": 2
+    },
+    "angelmatch.io": {
+      "urls": 2,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "x.com": {
+      "urls": 2,
+      "pinned_redacted": 2,
+      "working_redacted": 2
+    }
+  }
+}

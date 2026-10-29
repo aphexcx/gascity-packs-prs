@@ -1,0 +1,1165 @@
+{
+  "pinned_helper": "7e3a7ea9044e70b7",
+  "scope": "founder-gap-sweep channel union, newest ten roots per channel, seven days",
+  "url_counting": "identical URLs grouped; redacted fields count occurrences, not positions",
+  "read_scopes": [
+    [
+      "C0AP0KV9S9E",
+      "1792941235.093289",
+      "1792969016.427239",
+      "1792969018.427239"
+    ],
+    [
+      "C0AP0KV9S9E",
+      "1792941235.093289",
+      "1793014655.816209",
+      "1793014657.816209"
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792622843.244239",
+      "1792974248.414619",
+      "1792974250.414619"
+    ],
+    [
+      "C0ASAPRETDK",
+      "1792959172.094269",
+      "1793046089.327329",
+      "1793046091.327329"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1792824094.273629",
+      "1793053322.236209",
+      "1793053324.236209"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793050446.930009",
+      "1793050445.930009",
+      "1793050447.930009"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793050446.930009",
+      "1793050697.772409",
+      "1793050699.772409"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1793058304.870599",
+      "1793058306.870599"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1793059983.257239",
+      "1793059985.257239"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1793061994.275429",
+      "1793061996.275429"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1793062087.455629",
+      "1793062089.455629"
+    ],
+    [
+      "C0B0K1NARGD",
+      "1793058305.870599",
+      "1793064889.535529",
+      "1793064891.535529"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019271.574839",
+      "1793023559.946879",
+      "1793023561.946879"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019271.574839",
+      "1793023958.721439",
+      "1793023960.721439"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019271.574839",
+      "1793024098.450359",
+      "1793024100.450359"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019964.698719",
+      "1793021724.183839",
+      "1793021726.183839"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019964.698719",
+      "1793023825.103579",
+      "1793023827.103579"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019964.698719",
+      "1793026092.715099",
+      "1793026094.715099"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793019964.698719",
+      "1793064909.253929",
+      "1793064911.253929"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793023429.291499",
+      "1793023431.291499"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793023859.098719",
+      "1793023861.098719"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793023907.338219",
+      "1793023909.338219"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793023935.989049",
+      "1793023937.989049"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793024805.413079",
+      "1793024807.413079"
+    ],
+    [
+      "C0B2Y13DRMK",
+      "1793023430.291499",
+      "1793066919.465569",
+      "1793066921.465569"
+    ],
+    [
+      "C0BKF28CYUE",
+      "",
+      "1792810031.204479",
+      "1792810033.204479"
+    ],
+    [
+      "C0BKF28CYUE",
+      "1793017482.720239",
+      "1793017481.720239",
+      "1793017483.720239"
+    ],
+    [
+      "C0BKF28CYUE",
+      "1793040874.905649",
+      "1793040873.905649",
+      "1793040875.905649"
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1793034171.046959",
+      "1793034173.046959"
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1793035935.238039",
+      "1793035937.238039"
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1793035948.334119",
+      "1793035950.334119"
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1793035990.806809",
+      "1793035992.806809"
+    ],
+    [
+      "C0CACRS0162",
+      "",
+      "1793050972.868679",
+      "1793050974.868679"
+    ],
+    [
+      "C0CACRS0162",
+      "1793032428.611059",
+      "1793032427.611059",
+      "1793032429.611059"
+    ],
+    [
+      "C0CACRS0162",
+      "1793032428.611059",
+      "1793033751.772449",
+      "1793033753.772449"
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1793045800.182019",
+      "1793045802.182019"
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1793051462.608099",
+      "1793051464.608099"
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1793052834.354469",
+      "1793052836.354469"
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1793052844.841069",
+      "1793052846.841069"
+    ],
+    [
+      "C0CACRS0162",
+      "1793045801.182019",
+      "1793052869.124789",
+      "1793052871.124789"
+    ],
+    [
+      "C0CACRS0162",
+      "1793053188.920449",
+      "1793053187.920449",
+      "1793053189.920449"
+    ],
+    [
+      "C0CACRS0162",
+      "1793066572.595389",
+      "1793066571.595389",
+      "1793066573.595389"
+    ],
+    [
+      "C0CACRS0162",
+      "1793066572.595389",
+      "1793066660.583549",
+      "1793066662.583549"
+    ],
+    [
+      "D0BHHP446JG",
+      "",
+      "1793058354.485189",
+      "1793058356.485189"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793058448.481079",
+      "1793058450.481079"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793059838.509939",
+      "1793059840.509939"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793059852.831709",
+      "1793059854.831709"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793060028.149819",
+      "1793060030.149819"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793060525.013459",
+      "1793060527.013459"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793060804.916309",
+      "1793060806.916309"
+    ],
+    [
+      "D0BHHP446JG",
+      "1793058449.481079",
+      "1793061867.695369",
+      "1793061869.695369"
+    ]
+  ],
+  "sample": [
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793066920.465569",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN33FNGU9",
+      "length": 213,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793066661.583549",
+      "thread_ts": "1793066572.595389",
+      "user": "U0AN33FNGU9",
+      "length": 196,
+      "urls": [
+        {
+          "host": "instinct.com",
+          "length": 19,
+          "occurrences": 1,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 0,
+          "working_redacted": 0
+        },
+        {
+          "host": "hark.com",
+          "length": 15,
+          "occurrences": 1,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 0,
+          "working_redacted": 0
+        }
+      ],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": [
+        {
+          "host": "instinct.com",
+          "working_target_readable": true,
+          "working_label_changed": false
+        },
+        {
+          "host": "hark.com",
+          "working_target_readable": true,
+          "working_label_changed": false
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793066572.595389",
+      "thread_ts": "1793066572.595389",
+      "user": "U0AN33FNGU9",
+      "length": 87,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793064910.253929",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN33FNGU9",
+      "length": 93,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793064890.535529",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 7,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793062088.455629",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 4,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793061995.275429",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 36,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793061868.695369",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 92,
+      "urls": [],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 0,
+          "end": 48,
+          "distinct": 35,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 49,
+          "end": 92,
+          "distinct": 35,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060805.916309",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 2,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060526.013459",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 109,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793060029.149819",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 17,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793059984.257239",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 41,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793059853.831709",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 44,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793059839.509939",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 61,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793058449.481079",
+      "thread_ts": "1793058449.481079",
+      "user": "U0AN33FNGU9",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "D0BHHP446JG",
+      "ts": "1793058355.485189",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793058305.870599",
+      "thread_ts": "1793058305.870599",
+      "user": "U0AN33FNGU9",
+      "length": 99,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793053323.236209",
+      "thread_ts": "1792824094.273629",
+      "user": "U0AN32RPBFT",
+      "length": 32,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793053188.920449",
+      "thread_ts": "1793053188.920449",
+      "user": "U0AN32RPBFT",
+      "length": 265,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052870.124789",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 112,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052845.841069",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 33,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793052835.354469",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 186,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793051463.608099",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 320,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793050973.868679",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 109,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793050698.772409",
+      "thread_ts": "1793050446.930009",
+      "user": "U0AN33FNGU9",
+      "length": 11,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B0K1NARGD",
+      "ts": "1793050446.930009",
+      "thread_ts": "1793050446.930009",
+      "user": "U0AN33FNGU9",
+      "length": 179,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0ASAPRETDK",
+      "ts": "1793046090.327329",
+      "thread_ts": "1792959172.094269",
+      "user": "U0AN32RPBFT",
+      "length": 7,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793045801.182019",
+      "thread_ts": "1793045801.182019",
+      "user": "U0AN32RPBFT",
+      "length": 276,
+      "urls": [
+        {
+          "host": "gist.github.com",
+          "length": 64,
+          "occurrences": 2,
+          "working_standalone_redacted": true,
+          "pinned_redacted": 2,
+          "working_redacted": 2
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "hex",
+          "start": 178,
+          "end": 210,
+          "distinct": 12,
+          "digits_only": false
+        },
+        {
+          "rule": "hex",
+          "start": 243,
+          "end": 275,
+          "distinct": 12,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 166,
+          "end": 210,
+          "distinct": 18,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 231,
+          "end": 275,
+          "distinct": 18,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true,
+      "slack_links": [
+        {
+          "host": "gist.github.com",
+          "working_target_readable": false,
+          "working_label_changed": true
+        }
+      ]
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793040874.905649",
+      "thread_ts": "1793040874.905649",
+      "user": "U0AN32RPBFT",
+      "length": 143,
+      "urls": [
+        {
+          "host": "angelmatch.io",
+          "length": 22,
+          "occurrences": 2,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 0,
+          "working_redacted": 0
+        }
+      ],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": [
+        {
+          "host": "angelmatch.io",
+          "working_target_readable": true,
+          "working_label_changed": false
+        }
+      ]
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035991.806809",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 34,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035949.334119",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 17,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793035936.238039",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 66,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793034172.046959",
+      "thread_ts": "",
+      "user": "U0AN33FNGU9",
+      "length": 46,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793033752.772449",
+      "thread_ts": "1793032428.611059",
+      "user": "U0AN32RPBFT",
+      "length": 39,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0CACRS0162",
+      "ts": "1793032428.611059",
+      "thread_ts": "1793032428.611059",
+      "user": "U0AN33FNGU9",
+      "length": 72,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793026093.715099",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 99,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793024806.413079",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 147,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793024099.450359",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 18,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023959.721439",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 30,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023936.989049",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 89,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023908.338219",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 183,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023860.098719",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 73,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023826.103579",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 37,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023560.946879",
+      "thread_ts": "1793019271.574839",
+      "user": "U0AN32RPBFT",
+      "length": 50,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793023430.291499",
+      "thread_ts": "1793023430.291499",
+      "user": "U0AN32RPBFT",
+      "length": 496,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0B2Y13DRMK",
+      "ts": "1793021725.183839",
+      "thread_ts": "1793019964.698719",
+      "user": "U0AN32RPBFT",
+      "length": 82,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793017482.720239",
+      "thread_ts": "1793017482.720239",
+      "user": "U0AN33FNGU9",
+      "length": 122,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 59,
+          "occurrences": 2,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 2,
+          "working_redacted": 1
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 11,
+          "end": 55,
+          "distinct": 21,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 115,
+          "distinct": 21,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true,
+      "slack_links": [
+        {
+          "host": "x.com",
+          "working_target_readable": true,
+          "working_label_changed": true
+        }
+      ]
+    },
+    {
+      "channel": "C0AP0KV9S9E",
+      "ts": "1793014656.816209",
+      "thread_ts": "1792941235.093289",
+      "user": "U0AN32RPBFT",
+      "length": 32,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0ASAPRETDK",
+      "ts": "1792974249.414619",
+      "thread_ts": "1792622843.244239",
+      "user": "U0AN32RPBFT",
+      "length": 8,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    },
+    {
+      "channel": "C0AP0KV9S9E",
+      "ts": "1792969017.427239",
+      "thread_ts": "1792941235.093289",
+      "user": "U0AN33FNGU9",
+      "length": 42,
+      "urls": [],
+      "pinned_spans": [],
+      "pinned_changed": false,
+      "working_changed": false,
+      "slack_links": []
+    }
+  ],
+  "live": [
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1792810032.204479",
+      "thread_ts": "",
+      "user": "U0AN32RPBFT",
+      "length": 165,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 51,
+          "occurrences": 2,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 2,
+          "working_redacted": 1
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 112,
+          "distinct": 25,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 123,
+          "end": 164,
+          "distinct": 25,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true,
+      "slack_links": [
+        {
+          "host": "x.com",
+          "working_target_readable": true,
+          "working_label_changed": true
+        }
+      ]
+    },
+    {
+      "channel": "C0BKF28CYUE",
+      "ts": "1793017482.720239",
+      "thread_ts": "1793017482.720239",
+      "user": "U0AN33FNGU9",
+      "length": 122,
+      "urls": [
+        {
+          "host": "x.com",
+          "length": 59,
+          "occurrences": 2,
+          "working_standalone_redacted": false,
+          "pinned_redacted": 2,
+          "working_redacted": 1
+        }
+      ],
+      "pinned_spans": [
+        {
+          "rule": "base64",
+          "start": 11,
+          "end": 55,
+          "distinct": 21,
+          "digits_only": false
+        },
+        {
+          "rule": "base64",
+          "start": 71,
+          "end": 115,
+          "distinct": 21,
+          "digits_only": false
+        }
+      ],
+      "pinned_changed": true,
+      "working_changed": true,
+      "slack_links": [
+        {
+          "host": "x.com",
+          "working_target_readable": true,
+          "working_label_changed": true
+        }
+      ]
+    }
+  ],
+  "by_host": {
+    "instinct.com": {
+      "urls": 1,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "hark.com": {
+      "urls": 1,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "gist.github.com": {
+      "urls": 2,
+      "pinned_redacted": 2,
+      "working_redacted": 2
+    },
+    "angelmatch.io": {
+      "urls": 2,
+      "pinned_redacted": 0,
+      "working_redacted": 0
+    },
+    "x.com": {
+      "urls": 2,
+      "pinned_redacted": 2,
+      "working_redacted": 1
+    }
+  },
+  "replay_identity_check": {
+    "sample_matched": 50,
+    "live_matched": 2,
+    "missing": []
+  }
+}

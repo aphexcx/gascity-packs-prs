@@ -22,7 +22,12 @@ def redact_text(text: str) -> str:
         while m := pattern.search(text, offset):
             start = m.start("token") if token else m.start()
             stop = m.end("token") if token else m.end()
-            matches.append((start, -stop, priority))
+            minimum = _RULES[priority].get("min_distinct", 0)
+            candidate = text[start:stop].rstrip("=")
+            # Only the generic base64 rule sets this floor. Specific secret
+            # rules (including hex) still redact low-diversity credentials.
+            if not minimum or (not candidate.isdigit() and len(set(candidate)) >= minimum):
+                matches.append((start, -stop, priority))
             # Resume at a JWT's first separator to include overlapping
             # candidates with another eyJ header in a later segment.
             if _RULES[priority]["kind"] == "bearer":

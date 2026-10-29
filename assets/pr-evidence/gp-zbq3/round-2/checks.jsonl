@@ -1,0 +1,20 @@
+{"command": "python3 assets/pr-evidence/gp-zbq3/round-2/prove.py", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "red-parity.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/round-2/replay-check.py", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "replay-selection.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/measure.py --replay", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 1, "log": "live-replay.log"}
+{"command": "uv run --offline --no-project --with pytest python -m pytest tests -q -p no:cacheprovider", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full", "exit_code": 0, "log": "python-suite.log"}
+{"command": "go test -count=1 -json ./...", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter", "exit_code": 0, "log": "go-suite.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/measure.py --replay", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "live-replay-final.log"}
+{"command": "pnpm exec node --version", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "node-version.log"}
+{"command": "go version", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "go-version.log"}
+{"command": "uv run --offline --no-project --with pytest python -c 'import sys,pytest; print(sys.version); print(pytest.__file__)'", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "python-version.log"}
+{"command": "go test -race -count=1 -json ./...", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/cli", "exit_code": 0, "log": "cli-race.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/measure.py --replay", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "live-replay-context.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/round-2/replay-check.py", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "replay-selection-final.log"}
+{"command": "go test -race -count=1 -json ./...", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex/slack-full/adapter", "exit_code": 0, "log": "go-race.log"}
+{"command": "git diff --check", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "diff-check.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/round-2/replay-check.py", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "replay-grouped-check.log"}
+{"command": "python3 assets/pr-evidence/gp-zbq3/measure.py --replay", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "live-replay-grouped.log"}
+{"command": "git diff --check", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "evidence-diff-check.log"}
+{"command": "python3 --version", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "evidence-python-version.log"}
+{"command": "git diff --exit-code 648f887e3a444e4c4b50cc6c5f21caa0d0d4e8c1 HEAD -- slack-full", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "production-equivalence.log"}
+{"command": "git diff --check", "cwd": "/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex", "exit_code": 0, "log": "final-diff-check.log"}

@@ -1,0 +1,2 @@
+PASS: exact channel/ts pairs and ordering; extra roots excluded; missing identity reported
+PASS: occurrence counts distinguish the readable target from its redacted repeated label

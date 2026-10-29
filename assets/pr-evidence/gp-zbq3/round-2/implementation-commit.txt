@@ -1,0 +1,9 @@
+fix(slack): constrain URL exemptions to ASCII token boundaries
+
+Close Unicode folding/separator and nested URL exemptions in both engines.
+Pin replay to exact baseline identities and report target versus label behavior.
+Add 26 shared cases, cross-engine RED/parity proof, and full suite evidence.
+
+Bead: gp-zbq3
+Codex-Reviewed-By: OpenAI Codex gpt-6-astra (worker self-review; immutable-delta gate follows this commit)
+Co-Authored-By: OpenAI Codex <noreply@openai.com>

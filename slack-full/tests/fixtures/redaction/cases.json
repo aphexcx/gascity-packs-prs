@@ -257,5 +257,250 @@
     "name": "slack-permalink-base64-host",
     "text": "https://AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AB.slack.com/archives/C0123456789/p1792436306401379",
     "want": "https:[REDACTED:base64:...89AB].slack.[REDACTED:base64:...1379]"
+  },
+  {
+    "name": "x-live-1792810032-shape",
+    "text": "<https://x.com/sampleuser/status/1234567890123456789|https://x.com/sampleuser/status/1234567890123456789>",
+    "want": "<https://x.com/sampleuser/status/1234567890123456789|https://x.[REDACTED:base64:...6789]>"
+  },
+  {
+    "name": "x-live-1793017482-shape",
+    "text": "<https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.com/sample_user13/status/1234567890123456789?s=46>",
+    "want": "<https://x.com/sample_user13/status/1234567890123456789?s=46|https://x.[REDACTED:base64:...6789]?s=46>"
+  },
+  {
+    "name": "x-path-and-query",
+    "text": "https://x.com/sampleuser/status/1234567890123456789?context=conversationContextForEpisodeNumberFortyTwo",
+    "want": "https://x.com/sampleuser/status/1234567890123456789?context=conversationContextForEpisodeNumberFortyTwo"
+  },
+  {
+    "name": "x-upper-host",
+    "text": "HTTPS://X.COM/sampleuser/status/1234567890123456789",
+    "want": "HTTPS://X.COM/sampleuser/status/1234567890123456789"
+  },
+  {
+    "name": "x-ascii-whitespace-boundaries",
+    "text": "\u000bhttps://x.com/sampleuser/status/1234567890123456789\u000bZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "want": "\u000bhttps://x.com/sampleuser/status/1234567890123456789\u000bZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+  },
+  {
+    "name": "x-markdown-pair",
+    "text": "[first](https://x.com/sampleuser/status/1234567890123456789) [second](https://x.com/sample_user13/status/1234567890123456789?s=46)",
+    "want": "[first](https://x.[REDACTED:base64:...6789]) [second](https://x.[REDACTED:base64:...6789]?s=46)"
+  },
+  {
+    "name": "x-jwt-query",
+    "text": "https://x.com/a?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "https://x.com/a?token=[REDACTED:jwt:...Ef56]"
+  },
+  {
+    "name": "x-jwt-overlapping-path",
+    "text": "https://x.com/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "https://x.[REDACTED:base64:...Ef56]"
+  },
+  {
+    "name": "x-jwt-blocks-whole-exception",
+    "text": "https://x.com/sampleuser/status/1234567890123456789?token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmaXh0dXJlIn0.jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjEf56",
+    "want": "https://x.[REDACTED:base64:...6789]?token=[REDACTED:jwt:...Ef56]"
+  },
+  {
+    "name": "x-bearer-blocks-exception",
+    "text": "Bearer https://x.com/sampleuser/status/1234567890123456789",
+    "want": "[REDACTED:bearer:...ttps]://x.[REDACTED:base64:...6789]"
+  },
+  {
+    "name": "x-slack-token-query",
+    "text": "https://x.com/a?token=xoxb-fixture-only-not-a-live-token-TEST",
+    "want": "https://x.com/a?token=[REDACTED:slack:...TEST]"
+  },
+  {
+    "name": "x-client-secret-query",
+    "text": "https://x.com/a?client_secret=sk-test-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaQ9z7",
+    "want": "https://x.com/a?client_secret=[REDACTED:openai:...Q9z7]"
+  },
+  {
+    "name": "x-lookalike-host",
+    "text": "https://x.com.evil.test/sampleuser/status/1234567890123456789",
+    "want": "https://x.com.evil.[REDACTED:base64:...6789]"
+  },
+  {
+    "name": "x-userinfo-host",
+    "text": "https://x.com@evil.test/sampleuser/status/1234567890123456789",
+    "want": "https://x.com@evil.[REDACTED:base64:...6789]"
+  },
+  {
+    "name": "x-in-untrusted-path",
+    "text": "https://evil.test/redirect/https://x.com/sampleuser/status/1234567890123456789",
+    "want": "https://evil.test/redirect/https://x.[REDACTED:base64:...6789]"
+  },
+  {
+    "name": "x-in-untrusted-query",
+    "text": "https://evil.test/?next=https://x.com/sampleuser/status/1234567890123456789",
+    "want": "https://evil.test/?next=https://x.[REDACTED:base64:...6789]"
+  },
+  {
+    "name": "base64-one-distinct",
+    "text": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+    "want": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+  },
+  {
+    "name": "base64-four-distinct",
+    "text": "gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_",
+    "want": "gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_"
+  },
+  {
+    "name": "base64-padding-not-diversity",
+    "text": "gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_==",
+    "want": "gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_gH9_=="
+  },
+  {
+    "name": "base64-five-distinct",
+    "text": "gH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_QgH9_Q",
+    "want": "[REDACTED:base64:...H9_Q]"
+  },
+  {
+    "name": "numeric-hex-stays-red",
+    "text": "12345678901234567890123456789012345678901234567890",
+    "want": "[REDACTED:hex:...7890]"
+  },
+  {
+    "name": "low-diversity-slack-stays-red",
+    "text": "xoxp-22222222222222222222222222222222222222222222222222",
+    "want": "[REDACTED:slack:...2222]"
+  },
+  {
+    "name": "pem-base64-stays-red",
+    "text": "-----BEGIN PRIVATE KEY-----\nqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\n-----END PRIVATE KEY-----",
+    "want": "-----BEGIN PRIVATE KEY-----\n[REDACTED:base64:...ab9X]\n-----END PRIVATE KEY-----"
+  },
+  {
+    "name": "r2-long-s-scheme",
+    "text": "httpſ://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "httpſ://x.com/a?k=[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-unicode-host",
+    "text": "https://x.cоm/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.cоm/a?k=[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-unicode-host-suffix",
+    "text": "https://x.comſ/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.comſ/a?k=[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-nbsp",
+    "text": "https://x.com/a qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a [REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-ideographic-space",
+    "text": "https://x.com/a　qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a　[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-line-separator",
+    "text": "https://x.com/a qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a [REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-paragraph-separator",
+    "text": "https://x.com/a qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a [REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-control-soh",
+    "text": "https://x.com/a\u0001qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a\u0001[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-control-nul",
+    "text": "https://x.com/a\u0000qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a\u0000[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-control-del",
+    "text": "https://x.com/aqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-unicode-path",
+    "text": "https://x.com/aéqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/aé[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-caret",
+    "text": "https://x.com/a^qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a^[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-backtick",
+    "text": "https://x.com/a`qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://x.com/a`[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-nested-parentheses",
+    "text": "https://evil.test/?next=(https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X)",
+    "want": "https://evil.test/?next=(https://x.com/a?k=[REDACTED:base64:...ab9X])"
+  },
+  {
+    "name": "r2-standalone-parentheses",
+    "text": "(https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X)",
+    "want": "(https://x.com/a?k=[REDACTED:base64:...ab9X])"
+  },
+  {
+    "name": "r2-nested-brackets",
+    "text": "https://evil.test/?next=[https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X]",
+    "want": "https://evil.test/?next=[https://x.com/a?k=[REDACTED:base64:...ab9X]]"
+  },
+  {
+    "name": "r2-standalone-brackets",
+    "text": "[https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X]",
+    "want": "[https://x.com/a?k=[REDACTED:base64:...ab9X]]"
+  },
+  {
+    "name": "r2-nested-apostrophe",
+    "text": "https://evil.test/?next='https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X'",
+    "want": "https://evil.test/?next='https://x.com/a?k=[REDACTED:base64:...ab9X]'"
+  },
+  {
+    "name": "r2-standalone-apostrophe",
+    "text": "'https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X'",
+    "want": "'https://x.com/a?k=[REDACTED:base64:...ab9X]'"
+  },
+  {
+    "name": "r2-nested-quote",
+    "text": "https://evil.test/?next=\"https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\"",
+    "want": "https://evil.test/?next=\"https://x.com/a?k=[REDACTED:base64:...ab9X]\""
+  },
+  {
+    "name": "r2-standalone-quote",
+    "text": "\"https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\"",
+    "want": "\"https://x.com/a?k=[REDACTED:base64:...ab9X]\""
+  },
+  {
+    "name": "r2-nested-pipe",
+    "text": "https://evil.test/?next=|https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "https://evil.test/?next=|https://x.com/a?k=[REDACTED:base64:...ab9X]"
+  },
+  {
+    "name": "r2-slack-target",
+    "text": "<https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X|label>",
+    "want": "<https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X|label>"
+  },
+  {
+    "name": "r2-slack-label-key",
+    "text": "<https://x.com/a|qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X>",
+    "want": "<https://x.com/a|[REDACTED:base64:...ab9X]>"
+  },
+  {
+    "name": "r2-slack-label-url",
+    "text": "<https://x.com/a|https://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X>",
+    "want": "<https://x.com/a|https://x.com/a?k=[REDACTED:base64:...ab9X]>"
+  },
+  {
+    "name": "r2-ascii-whitespace-key",
+    "text": "\thttps://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\u000bqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X",
+    "want": "\thttps://x.com/a?k=qR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9XqR/+ab9X\u000b[REDACTED:base64:...ab9X]"
   }
 ]
