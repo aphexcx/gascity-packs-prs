@@ -11,12 +11,20 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
+import { beforeEach, test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { createInboundPipeline, postJSON, postJSONWithRetry, renderText } from '../src/inbound.js';
 
 const testAesKey = crypto.randomBytes(32).toString('base64');
+
+// Production has a live WebSocket. These isolated fixtures do not, so an
+// awaited unref'ed coalescing timer can otherwise let Node exit mid-test.
+// Bound the stand-in handle so a genuinely stuck promise still fails.
+beforeEach(t => {
+  const handle = setTimeout(() => {}, 5000);
+  t.after(() => clearTimeout(handle));
+});
 
 function tmpMediaDir(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wecom-inbound-test-'));

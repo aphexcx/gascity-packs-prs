@@ -1,0 +1,2 @@
+description = 'Node.js 20+ and pnpm are available'
+run = '../check-runtime.sh'

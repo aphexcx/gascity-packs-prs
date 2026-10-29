@@ -1,0 +1,15 @@
+[pack]
+name = "linux-proof"
+schema = 2
+
+[imports.core]
+source = "https://github.com/gastownhall/gascity/tree/main/internal/bootstrap/packs/core"
+version = "sha:f895c0ff47d6ee9334ed282a416387eb5b084d24"
+
+[imports.slack]
+source = "https://github.com/aphexcx/gascity-packs-prs/tree/main/slack-full"
+version = "sha:80159ec24438527a803265761bc79f201762c7bd"
+
+[imports.wecom]
+source = "https://github.com/aphexcx/gascity-packs-prs/tree/main/wecom"
+version = "sha:80159ec24438527a803265761bc79f201762c7bd"
