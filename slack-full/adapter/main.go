@@ -1362,6 +1362,7 @@ type externalAttachment struct {
 
 type externalInboundMessage struct {
 	injectionPrepared    bool
+	injectionDirect      bool
 	injectionWindows     []injectionWindow
 	injectionLeanWindows []injectionWindow
 	// Adapter-only provenance for paths retained after gc rejects attachments.
@@ -1935,6 +1936,8 @@ func main() {
 	// afterwards. Built here, before deliverCfg snapshots the config,
 	// so every leg (urgent, coalesced, alias) shares one component.
 	cfg.receiptFollowUps = receiptFollowUpsFor(cfg)
+	stopIngestion := startIngestionObserver(cfg)
+	defer stopIngestion()
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
 		cfg.coalescer.recordVerdict = cfg.inboundSpool.recordVerdict
@@ -6655,6 +6658,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		}
 		msg := journalMessages[0]
 		msg.Text = body
+		msg.injectionDirect = true
 		r := result
 		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
 		cfg.inboundJournal.record(cfg, msg, r)

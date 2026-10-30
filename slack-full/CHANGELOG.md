@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session-proven inbound ingestion receipts** (gp-41p6): local deliveries
+  receive `ingested` only after the complete payload appears in a rendered
+  Claude or Codex session record. After two minutes without proof, the journal
+  records `delivered_unseen` and sends one deduplicated mayor alert. Transport
+  failures keep their existing dead-letter behavior. See
+  `docs/inbound-ingestion.md` for evidence, bounds and rollout limitations.
 - Linux install and systemd recipes, with a Linux ARM64 readiness proof.
 - The environment doctor honors `GC_SLACK_ADAPTER_ENV`, matching the service
   launcher, and handles a supervisor environment without `HOME`.

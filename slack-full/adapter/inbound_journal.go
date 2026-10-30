@@ -32,18 +32,23 @@ type inboundJournal struct {
 }
 
 type inboundJournalRecord struct {
-	Phase          string            `json:"phase"`
-	TS             time.Time         `json:"ts"`
-	Channel        string            `json:"channel"`
-	ThreadTS       string            `json:"thread_ts,omitempty"`
-	MessageTS      string            `json:"message_ts"`
-	Target         string            `json:"target"`
-	TargetSessions []string          `json:"target_sessions,omitempty"`
-	Bytes          int               `json:"bytes"`
-	Mode           string            `json:"mode"`
-	ReceiptID      string            `json:"receipt_id,omitempty"`
-	Status         string            `json:"status"`
-	Windows        []injectionWindow `json:"windows"`
+	Phase          string             `json:"phase"`
+	TS             time.Time          `json:"ts"`
+	Channel        string             `json:"channel"`
+	ThreadTS       string             `json:"thread_ts,omitempty"`
+	MessageTS      string             `json:"message_ts"`
+	Target         string             `json:"target"`
+	TargetSessions []string           `json:"target_sessions,omitempty"`
+	Bytes          int                `json:"bytes"`
+	Mode           string             `json:"mode"`
+	ReceiptID      string             `json:"receipt_id,omitempty"`
+	Status         string             `json:"status"`
+	Windows        []injectionWindow  `json:"windows"`
+	PayloadSHA256  string             `json:"payload_sha256,omitempty"`
+	ProofKind      string             `json:"proof_kind,omitempty"`
+	DeliveredAt    time.Time          `json:"delivered_at,omitempty"`
+	Evidence       *ingestionEvidence `json:"ingestion_evidence,omitempty"`
+	Alerted        bool               `json:"alerted,omitempty"`
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
@@ -51,6 +56,12 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 		return
 	}
 	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows}
+	r.ProofKind = "extmsg"
+	payload := ingestionSanitize(msg.Text)
+	if msg.injectionDirect {
+		r.ProofKind, payload = "session", msg.Text
+	}
+	r.PayloadSHA256 = ingestionDigest(payload)
 	r.Phase = "accepted"
 	if len(phase) > 0 {
 		r.Phase = phase[0]

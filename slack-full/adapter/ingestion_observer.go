@@ -1,0 +1,404 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+const ingestionWindow = 2 * time.Minute
+const ingestionPollInterval = 5 * time.Second
+const ingestionReadLimit = 32 << 20
+
+// These are session-side facts, not a transport receipt or model claim.
+// No transcript text is persisted in the journal.
+type ingestionEvidence struct {
+	SessionID string    `json:"session_id"`
+	EntryID   string    `json:"entry_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Kind      string    `json:"kind"`
+}
+
+type ingestionObserver struct {
+	cfg    config
+	now    func() time.Time
+	fetch  func(context.Context, string) ([]json.RawMessage, error)
+	notify func(context.Context, inboundJournalRecord) error
+}
+
+func ingestionDigest(text string) string {
+	d := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(d[:])
+}
+
+// Mirrors gc's promptsafe boundary stripping for the extmsg envelope. A
+// future incompatible renderer fails closed as unseen, never as ingested.
+func ingestionSanitize(text string) string {
+	for {
+		next := strings.ReplaceAll(strings.ReplaceAll(text, "</system-reminder>", ""), "<system-reminder>", "")
+		if next == text {
+			return text
+		}
+		text = next
+	}
+}
+
+func startIngestionObserver(cfg config) func() {
+	if cfg.inboundJournal == nil {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	o := &ingestionObserver{cfg: cfg, now: time.Now}
+	o.fetch, o.notify = o.fetchTranscript, o.mailUnseen
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(ingestionPollInterval)
+		defer ticker.Stop()
+		for {
+			if err := o.step(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("ingestion observer: %v", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
+}
+
+func ingestionKey(r inboundJournalRecord, session string) string {
+	return strings.Join([]string{r.ReceiptID, r.Channel, r.MessageTS, r.PayloadSHA256, session}, "\x00")
+}
+
+// Reconstruct from the durable journal every pass: adapter restarts cannot
+// forget a delivered receipt or send another successful alert. Scan all
+// retained days; bounded reads fail loudly rather than silently skipping rows.
+func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
+	j := o.cfg.inboundJournal
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(paths)
+	rows := make(map[string]inboundJournalRecord)
+	remaining := int64(64 << 20)
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		remaining -= info.Size()
+		if remaining < 0 {
+			return nil, fmt.Errorf("journal exceeds 64 MiB observation budget")
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		s := bufio.NewScanner(f)
+		s.Buffer(make([]byte, 4096), 1<<20)
+		for s.Scan() {
+			var r inboundJournalRecord
+			if err := json.Unmarshal(s.Bytes(), &r); err != nil {
+				f.Close()
+				return nil, fmt.Errorf("invalid journal row: %w", err)
+			}
+			// Old rows lack a complete payload fingerprint. Do not fabricate
+			// acknowledgements or flood the mailbox on the first upgrade.
+			if r.PayloadSHA256 == "" || r.TS.IsZero() {
+				continue
+			}
+			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" {
+				continue
+			}
+			for _, session := range r.TargetSessions {
+				if session == "" {
+					continue
+				}
+				key := ingestionKey(r, session)
+				if old, ok := rows[key]; ok && !r.TS.After(old.TS) {
+					continue
+				}
+				copy := r
+				copy.TargetSessions = []string{session}
+				if copy.DeliveredAt.IsZero() {
+					copy.DeliveredAt = copy.TS
+				}
+				rows[key] = copy
+			}
+		}
+		err = s.Err()
+		f.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	for key, r := range rows {
+		if r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted) {
+			delete(rows, key)
+		}
+	}
+	return rows, nil
+}
+
+func (o *ingestionObserver) step(ctx context.Context) error {
+	rows, err := o.pending()
+	if err != nil {
+		return err
+	}
+	// One bounded request per target per pass, not one per Slack message.
+	cache := make(map[string][]json.RawMessage)
+	keys := make([]string, 0, len(rows))
+	for key := range rows {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var failures []error
+	for _, key := range keys {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		r := rows[key]
+		session := r.TargetSessions[0]
+		messages, ok := cache[session]
+		if !ok {
+			requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			messages, err = o.fetch(requestCtx, session)
+			cancel()
+			if err != nil {
+				log.Printf("ingestion observer: session=%s transcript unavailable: %v", sanitizeReceiptLogValue(session, 100), err)
+			}
+			cache[session] = messages
+		}
+		var proof *ingestionEvidence
+		for _, raw := range messages {
+			if proof = ingestionProof(raw, r); proof != nil {
+				break
+			}
+		}
+		if proof != nil {
+			r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
+			continue
+		}
+		if o.now().Before(r.DeliveredAt.Add(ingestionWindow)) {
+			continue
+		}
+		if r.Status != "delivered_unseen" {
+			r.Status, r.Phase = "delivered_unseen", "ingestion"
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
+		}
+		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		err = o.notify(mailCtx, r)
+		cancel()
+		if err != nil {
+			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+			continue
+		}
+		r.Alerted, r.Phase = true, "ingestion_alert"
+		if err := o.cfg.inboundJournal.append(r); err != nil {
+			return err
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string) ([]json.RawMessage, error) {
+	u := fmt.Sprintf("%s/v0/city/%s/session/%s/transcript?format=raw&tail=1", o.cfg.gcAPIBase, url.PathEscape(o.cfg.cityName), url.PathEscape(session))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-GC-Request", "gc-slack-ingestion-observer")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("transcript HTTP %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, ingestionReadLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > ingestionReadLimit {
+		return nil, fmt.Errorf("transcript exceeds %d bytes", ingestionReadLimit)
+	}
+	var result struct {
+		ID       string            `json:"id"`
+		Format   string            `json:"format"`
+		Messages []json.RawMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(b, &result); err != nil {
+		return nil, err
+	}
+	if result.ID != session || result.Format != "raw" {
+		return nil, fmt.Errorf("transcript identity/format mismatch")
+	}
+	return result.Messages, nil
+}
+
+func (o *ingestionObserver) mailUnseen(ctx context.Context, r inboundJournalRecord) error {
+	// Fanout members share one mailbox alert for this Slack receipt.
+	key := ingestionDigest(ingestionKey(r, ""))
+	body := fmt.Sprintf("Slack delivered_unseen: channel=%s message_ts=%s thread_ts=%s receipt=%s session=%s. No complete rendered session payload was found within %s of hand-off %s. Read this Slack thread now. Transport delivery is not ingestion; the dead-letter file is unchanged.", r.Channel, r.MessageTS, r.ThreadTS, r.ReceiptID, r.TargetSessions[0], ingestionWindow, r.DeliveredAt.UTC().Format(time.RFC3339))
+	cmd := exec.CommandContext(ctx, "gc", "--city", o.cfg.cityPath, "mail", "send", "mayor", "--dedup", "slack-ingestion:"+key, "-s", "Slack delivered_unseen", "-m", body)
+	// Do not log CLI output, which may contain mailbox or provider data.
+	return cmd.Run()
+}
+
+// Accept actual user input and rendered queued-command attachments only.
+// Queue enqueue/remove, API snapshots, assistant quotations and tool results
+// (including a manual Slack read) are not evidence that an injection surfaced.
+func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvidence {
+	var entry struct {
+		Type        string    `json:"type"`
+		UUID        string    `json:"uuid"`
+		Timestamp   time.Time `json:"timestamp"`
+		IsSidechain bool      `json:"isSidechain"`
+		Message     struct {
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		} `json:"message"`
+		Attachment struct {
+			Type string `json:"type"`
+		} `json:"attachment"`
+		Rendered []struct {
+			Content string `json:"content"`
+		} `json:"rendered"`
+		Ordinal int `json:"ordinal"`
+		Payload struct {
+			Type    string `json:"type"`
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"payload"`
+	}
+	if json.Unmarshal(raw, &entry) != nil || entry.IsSidechain || entry.Timestamp.IsZero() {
+		return nil
+	}
+	// The receipt may wait for gc's bounded fanout before returning. Claude's
+	// attachment timestamp is input creation time, a few seconds before it.
+	if entry.Timestamp.Before(r.DeliveredAt.Add(-30*time.Second)) || entry.Timestamp.After(r.DeliveredAt.Add(ingestionWindow)) {
+		return nil
+	}
+	var texts []string
+	if entry.Type == "response_item" && entry.Payload.Type == "message" && entry.Payload.Role == "user" && entry.Ordinal > 0 {
+		entry.UUID = fmt.Sprintf("codex-ordinal:%d", entry.Ordinal)
+		for _, b := range entry.Payload.Content {
+			if b.Type == "input_text" || b.Type == "text" {
+				texts = append(texts, b.Text)
+			}
+		}
+	} else if entry.Type == "attachment" && entry.Attachment.Type == "queued_command" {
+		for _, rendered := range entry.Rendered {
+			texts = append(texts, rendered.Content)
+		}
+	} else if entry.Type == "user" && entry.Message.Role == "user" {
+		var text string
+		if json.Unmarshal(entry.Message.Content, &text) == nil {
+			texts = append(texts, text)
+		} else {
+			var blocks []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(entry.Message.Content, &blocks) != nil {
+				return nil
+			}
+			for _, b := range blocks {
+				if b.Type == "text" {
+					texts = append(texts, b.Text)
+				}
+			}
+		}
+	}
+	if entry.UUID == "" {
+		return nil
+	}
+	for _, text := range texts {
+		if ingestionMatches(text, r) {
+			return &ingestionEvidence{SessionID: r.TargetSessions[0], EntryID: entry.UUID, Timestamp: entry.Timestamp, Kind: entry.Type}
+		}
+	}
+	return nil
+}
+
+func ingestionMatches(text string, r inboundJournalRecord) bool {
+	const open = "<system-reminder>"
+	const close = "</system-reminder>"
+	for offset := 0; offset < len(text); {
+		i := strings.Index(text[offset:], open)
+		if i < 0 {
+			break
+		}
+		i += offset
+		offset = i + len(open) // also examine nested reminder starts
+		end := strings.Index(text[offset:], close)
+		if end < 0 {
+			continue
+		}
+		block := text[i : offset+end+len(close)]
+		if r.ProofKind == "session" && ingestionDigest(block) == r.PayloadSHA256 {
+			return true
+		}
+		if r.ProofKind != "extmsg" {
+			continue
+		}
+		header := open + "\nNew message in shared conversation slack/" + r.Channel + ":\n\n- "
+		if !strings.HasPrefix(block, header) {
+			continue
+		}
+		body := block[len(header):]
+		actorEnd := -1
+		for _, kind := range []string{"human", "agent"} {
+			separator := " (" + kind + "): "
+			if n := strings.Index(body, separator); n >= 0 && !strings.Contains(body[:n], "\n") {
+				actorEnd = n + len(separator)
+				break
+			}
+		}
+		if actorEnd < 0 {
+			continue
+		}
+		footer := "\n\nMessage id: " + r.MessageTS
+		if r.ThreadTS != "" {
+			footer += " (in thread " + r.ThreadTS + ")"
+		}
+		footer += "\n\n"
+		last := strings.LastIndex(body, footer)
+		if last < actorEnd {
+			continue
+		}
+		if ingestionDigest(body[actorEnd:last]) == r.PayloadSHA256 {
+			return true
+		}
+	}
+	return false
+}

@@ -859,6 +859,7 @@ func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mention
 		}
 		m := journalMessages[0]
 		m.Text = body
+		m.injectionDirect = true
 		r := result
 		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
 		if confirmed {
