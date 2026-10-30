@@ -100,6 +100,7 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	}
 	sort.Strings(paths)
 	rows := make(map[string]inboundJournalRecord)
+	alerted := make(map[string]bool)
 	remaining := int64(64 << 20)
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -130,6 +131,9 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" {
 				continue
 			}
+			if r.Alerted {
+				alerted[ingestionKey(r, "")] = true
+			}
 			for _, session := range r.TargetSessions {
 				if session == "" {
 					continue
@@ -153,6 +157,10 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 		}
 	}
 	for key, r := range rows {
+		if alerted[ingestionKey(r, "")] {
+			r.Alerted = true
+			rows[key] = r
+		}
 		if r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted) {
 			delete(rows, key)
 		}
@@ -167,6 +175,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 	}
 	// One bounded request per target per pass, not one per Slack message.
 	cache := make(map[string][]json.RawMessage)
+	alerted := make(map[string]bool)
 	keys := make([]string, 0, len(rows))
 	for key := range rows {
 		keys = append(keys, key)
@@ -211,13 +220,17 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 				return err
 			}
 		}
-		mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		err = o.notify(mailCtx, r)
-		cancel()
-		if err != nil {
-			failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
-			continue
+		alertKey := ingestionKey(r, "")
+		if !r.Alerted && !alerted[alertKey] {
+			mailCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			err = o.notify(mailCtx, r)
+			cancel()
+			if err != nil {
+				failures = append(failures, fmt.Errorf("unseen alert failed: %w", err))
+				continue
+			}
 		}
+		alerted[alertKey] = true
 		r.Alerted, r.Phase = true, "ingestion_alert"
 		if err := o.cfg.inboundJournal.append(r); err != nil {
 			return err

@@ -57,7 +57,9 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 	}
 	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows}
 	r.ProofKind = "extmsg"
-	payload := ingestionSanitize(msg.Text)
+	// Held-receipt callbacks may retain the pre-redaction envelope; hash the
+	// same redacted text the extmsg POST actually sent.
+	payload := ingestionSanitize(redactInboundMessage(msg).Text)
 	if msg.injectionDirect {
 		r.ProofKind, payload = "session", msg.Text
 	}

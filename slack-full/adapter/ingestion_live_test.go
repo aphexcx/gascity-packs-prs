@@ -74,7 +74,7 @@ func TestIngestionLiveBusySessionProof(t *testing.T) {
 		}
 		ts := fmt.Sprintf("%d.%06d", time.Now().Unix(), i+1)
 		timestamps = append(timestamps, ts)
-		event, _ := json.Marshal(slackMessageEvent{Type: "message", User: spec.UserID, Channel: spec.Channel, ThreadTS: spec.ThreadTS, TS: ts, Text: fmt.Sprintf("%s line %d/3. Diagnostic only; no founder instruction. @mayor-citadel", marker, i+1)})
+		event, _ := json.Marshal(slackMessageEvent{Type: "message", User: spec.UserID, Channel: spec.Channel, ThreadTS: spec.ThreadTS, TS: ts, Text: fmt.Sprintf("[gp-41p6 synthetic test %d of 3, not Afik] %s. Diagnostic only; no founder instruction. @mayor-citadel", i+1, marker)})
 		body, _ := json.Marshal(slackEventEnvelope{Type: "event_callback", TeamID: cfg.accountID, EventID: "Ev-gp-41p6-" + ts, Event: event})
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, spec.EventsURL, bytes.NewReader(body))
 		if err != nil {

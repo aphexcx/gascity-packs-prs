@@ -270,3 +270,35 @@ func TestIngestionCodexUserInputAndDeadline(t *testing.T) {
 		}
 	}
 }
+
+func TestIngestionReceiptAlertSharedAcrossTargets(t *testing.T) {
+	at := time.Now().UTC()
+	now := at.Add(3 * time.Minute)
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+	r := ingestionTestRecord("100.1", at, "body")
+	r.TargetSessions = []string{"s1", "s2"}
+	if err := j.append(r); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now }, fetch: func(context.Context, string) ([]json.RawMessage, error) { return nil, nil }, notify: func(context.Context, inboundJournalRecord) error { count++; return nil }}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("one receipt sent %d alerts", count)
+	}
+	// A later concluded fanout member cannot alert again even if the mayor
+	// already archived the first mail and the observer restarted.
+	r.TargetSessions = []string{"s3"}
+	if err := j.append(r); err != nil {
+		t.Fatal(err)
+	}
+	restarted := *o
+	if err := restarted.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("late member resent alert: %d", count)
+	}
+}
