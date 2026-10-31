@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -167,4 +168,132 @@ func TestIngestionProofBeforeCompactionIsRecovered(t *testing.T) {
 		}
 	}
 	t.Fatalf("proof before compaction not recovered; requests=%d", requests)
+}
+
+func TestIngestionNameReassignmentBetweenDeliveries(t *testing.T) {
+	at := time.Now().UTC()
+	now := at
+	first := ingestionTestRecord("100.1", at, "first body")
+	second := ingestionTestRecord("100.2", at.Add(10*time.Second), "second body")
+	first.TargetSessions, second.TargetSessions = []string{"mayor"}, []string{"mayor"}
+	entries := map[string]json.RawMessage{
+		"s1": ingestionTestEntry(t, first, "first body", "attachment"),
+		"s2": ingestionTestEntry(t, second, "second body", "attachment"),
+	}
+	var generation atomic.Int32
+	generation.Store(1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		id := fmt.Sprintf("s%d", generation.Load())
+		if req.URL.Path == "/v0/city/test/session/mayor" {
+			fmt.Fprintf(w, `{"id":%q,"alias":"mayor","session_name":"mayor"}`, id)
+			return
+		}
+		if strings.Contains(req.URL.Path, "/session/s1/") {
+			id = "s1"
+		}
+		fmt.Fprintf(w, `{"id":%q,"format":"raw","messages":[%s]}`, id, entries[id])
+	}))
+	defer server.Close()
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+	o := &ingestionObserver{cfg: config{inboundJournal: j, gcAPIBase: server.URL, cityName: "test"}, now: func() time.Time { return now }}
+	o.fetch = o.fetchTranscript
+	o.notify = func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected unseen alert"); return nil }
+	if err := j.append(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	generation.Store(2)
+	now = at.Add(10 * time.Second)
+	if err := j.append(second); err != nil {
+		t.Fatal(err)
+	}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.MessageTS == second.MessageTS && row.Status == "ingested" && row.Evidence.SessionID == "s2" {
+			return
+		}
+	}
+	t.Fatal("new delivery followed the old name binding")
+}
+
+func TestIngestionRepeatedConclusionsCannotReopenOrDelay(t *testing.T) {
+	for _, rendered := range []bool{false, true} {
+		t.Run(fmt.Sprint("rendered=", rendered), func(t *testing.T) {
+			at := time.Now().UTC()
+			now := at
+			r := ingestionTestRecord("100.1", at, "body")
+			r.DeliveredAt = time.Time{} // transport rows do not set this field
+			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+			if err := j.append(r); err != nil {
+				t.Fatal(err)
+			}
+			reference := ingestionTestRecord("100.1", at, "body")
+			var entries []json.RawMessage
+			if rendered {
+				entries = []json.RawMessage{ingestionTestEntry(t, reference, "body", "attachment")}
+			}
+			alerts := 0
+			o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+				fetch:  func(context.Context, string) ([]json.RawMessage, error) { return entries, nil },
+				notify: func(context.Context, inboundJournalRecord) error { alerts++; return nil }}
+			if err := o.step(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			// A later transport observation is neither a new delivery nor a
+			// reason to forget session evidence already recorded on disk.
+			now = at.Add(4 * time.Minute)
+			r.Phase = "concluded"
+			if err := j.append(r); err != nil {
+				t.Fatal(err)
+			}
+			if rendered {
+				rows, err := o.pending()
+				if err != nil || len(rows) != 0 {
+					t.Fatalf("completed ingestion reopened: rows=%d err=%v", len(rows), err)
+				}
+			} else {
+				if err := o.step(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if alerts != 1 {
+					t.Fatalf("later receipt postponed original deadline: alerts=%d", alerts)
+				}
+			}
+		})
+	}
+}
+
+func TestIngestionDelayedConclusionRetainsInputInterval(t *testing.T) {
+	at := time.Now().UTC()
+	now := at
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+	r := ingestionTestRecord("100.1", at, "body")
+	r.DeliveredAt, r.Status = time.Time{}, "pending"
+	if err := j.append(r); err != nil {
+		t.Fatal(err)
+	}
+	now = at.Add(2 * time.Minute)
+	r.Status, r.Phase = "delivered", "concluded"
+	if err := j.append(r); err != nil {
+		t.Fatal(err)
+	}
+	reference := ingestionTestRecord("100.1", at, "body")
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch: func(context.Context, string) ([]json.RawMessage, error) {
+			return []json.RawMessage{ingestionTestEntry(t, reference, "body", "attachment")}, nil
+		},
+		notify: func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Status == "ingested" {
+			return
+		}
+	}
+	t.Fatal("delayed transport conclusion excluded the original input")
 }

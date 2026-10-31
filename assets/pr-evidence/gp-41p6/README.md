@@ -66,6 +66,13 @@ passed afterward. Handoff eligibility is now retained per member; direct
 reminders share their recording path; canonical targets are pinned in the
 journal; transcript reads follow older pages within one shared budget.
 
+The second completed gate found lifetime name caching and receipt updates
+overwriting earlier ingestion/timing. Additional regressions reproduce name
+reassignment, repeated conclusions after ingestion, postponed unseen alerts,
+and delayed confirmation of input already rendered. Resolution is now fresh
+for new deliveries, while journal reconstruction retains each delivery's
+canonical pin, original interval and terminal ingestion result.
+
 No message is automatically replayed. No peer-city delivery, company receipt
 state machine, dead-letter semantics, production binary, or founder-gap-watch
 manifest is changed. Bounds and unsupported-format behavior are documented in
@@ -79,16 +86,17 @@ No Node or pnpm commands were used.
 - Before implementation: `go test -run '^TestInboundJournalCarriesSessionProofIdentity$' -count=1 .`
   in `slack-full/adapter` failed because the delivered row lacked proof identity.
 - `go test -race -json -count=1 ./...` in `slack-full/adapter`: exit 0,
-  1,416 top-level tests / 12,798 tests including subtests passed; two skipped
+  1,419 top-level tests / 12,803 tests including subtests passed; two skipped
   (`TestIngestionLiveBusySessionProof` and `TestMinimalReplayMeasurement`).
 - Same command in `slack-full/cli`: exit 0, 199 top-level tests / 237 including
   subtests passed; none skipped.
 - `uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q`
   in `slack-full`: exit 0, 907 passed, two skipped. Two existing fork-in-thread
   deprecation warnings in `test_slack_company_outbound.py`.
-- After the four review fixes:
+- After all six major review fixes:
   `go test -race -json -run '^Test(Ingestion|InboundJournal)' -count=1 .`
-  in `slack-full/adapter`: exit 0, 15 passed, one intentionally skipped live test.
+  in `slack-full/adapter`: exit 0, 20 passes including subtests, one intentionally
+  skipped live test.
 - `go vet ./...` in `slack-full/adapter`: exit 0.
 
 ## Controlled live proof

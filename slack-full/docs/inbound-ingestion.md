@@ -24,7 +24,10 @@ The journal preserves each member's handoff eligibility. Concluded `pending`
 members with complete byte counts are monitored too, including mixed fanouts;
 unconfirmed submission neither proves nor disproves ingestion. Direct reminder
 fingerprints survive delayed alias confirmation. Name bindings are resolved
-through gc's session API and pinned durably to the canonical session ID.
+through gc's session API and pinned durably to the canonical session ID for
+that delivery. New deliveries resolve names afresh. Repeated receipt polls
+cannot undo `ingested`, move the first handoff's deadline, or exclude input
+that arrived between initial acceptance and a delayed conclusion.
 
 After three minutes without proof, the journal appends `delivered_unseen` and
 the observer sends `gc mail send mayor --dedup ...`, naming the channel,

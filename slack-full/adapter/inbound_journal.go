@@ -49,6 +49,7 @@ type inboundJournalRecord struct {
 	PayloadSHA256      string             `json:"payload_sha256,omitempty"`
 	ProofKind          string             `json:"proof_kind,omitempty"`
 	DeliveredAt        time.Time          `json:"delivered_at,omitempty"`
+	StartedAt          time.Time          `json:"started_at,omitempty"`
 	Evidence           *ingestionEvidence `json:"ingestion_evidence,omitempty"`
 	Alerted            bool               `json:"alerted,omitempty"`
 }

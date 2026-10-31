@@ -102,6 +102,7 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	sort.Strings(paths)
 	rows := make(map[string]inboundJournalRecord)
 	alerted := make(map[string]bool)
+	started := make(map[string]time.Time)
 	remaining := int64(64 << 20)
 	for _, path := range paths {
 		info, err := os.Stat(path)
@@ -129,6 +130,9 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 			if r.PayloadSHA256 == "" || r.TS.IsZero() {
 				continue
 			}
+			identity := ingestionKey(r, "")
+			start := earlierIngestionTime(r.StartedAt, earlierIngestionTime(r.DeliveredAt, r.TS))
+			started[identity] = earlierIngestionTime(started[identity], start)
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
@@ -144,9 +148,6 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 					continue
 				}
 				key := ingestionKey(r, session)
-				if old, ok := rows[key]; ok && !r.TS.After(old.TS) {
-					continue
-				}
 				copy := r
 				copy.TargetSessions = []string{session}
 				if len(r.HandoffSessions) > 0 {
@@ -154,6 +155,21 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 				}
 				if copy.DeliveredAt.IsZero() {
 					copy.DeliveredAt = copy.TS
+				}
+				if old, ok := rows[key]; ok {
+					// Transport polls cannot undo a session-side verdict or
+					// restart a handoff's original observation deadline.
+					handoff := earlierIngestionTime(old.DeliveredAt, copy.DeliveredAt)
+					canonical := old.CanonicalSessionID
+					if old.Status == "ingested" ||
+						(old.Status == "delivered_unseen" && copy.Status != "ingested") ||
+						(copy.Status != "ingested" && copy.Status != "delivered_unseen" && old.TS.After(copy.TS)) {
+						copy = old
+					}
+					copy.DeliveredAt = handoff
+					if canonical != "" {
+						copy.CanonicalSessionID = canonical
+					}
 				}
 				rows[key] = copy
 			}
@@ -165,15 +181,23 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 		}
 	}
 	for key, r := range rows {
+		r.StartedAt = started[ingestionKey(r, "")]
 		if alerted[ingestionKey(r, "")] {
 			r.Alerted = true
-			rows[key] = r
 		}
+		rows[key] = r
 		if r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted) {
 			delete(rows, key)
 		}
 	}
 	return rows, nil
+}
+
+func earlierIngestionTime(a, b time.Time) time.Time {
+	if a.IsZero() || (!b.IsZero() && b.Before(a)) {
+		return b
+	}
+	return a
 }
 
 func (o *ingestionObserver) step(ctx context.Context) error {
@@ -183,6 +207,10 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 	}
 	// One bounded request per target per pass, not one per Slack message.
 	cache := make(map[string][]json.RawMessage)
+	// Resolution results describe this pass only. Each delivery's durable
+	// CanonicalSessionID remains pinned, but a new delivery may use a name
+	// reassigned to a different session since the previous pass.
+	o.resolved = make(map[string]string)
 	alerted := make(map[string]bool)
 	keys := make([]string, 0, len(rows))
 	for key := range rows {
@@ -262,9 +290,6 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string) ([]json.RawMessage, error) {
 	base := fmt.Sprintf("%s/v0/city/%s/session/", o.cfg.gcAPIBase, url.PathEscape(o.cfg.cityName))
 	canonical := session
-	if id := o.resolved[session]; id != "" {
-		canonical = id
-	}
 	var messages []json.RawMessage
 	remaining := int64(ingestionReadLimit)
 	cursor := ""
@@ -291,7 +316,7 @@ func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string)
 		if err := json.Unmarshal(b, &result); err != nil {
 			return messages, err
 		}
-		if result.ID != canonical && page == 0 && o.resolved[session] == "" {
+		if result.ID != canonical && page == 0 {
 			// Name bindings are supported by gc; authenticate their resolution
 			// separately, then pin all transcript pages to the canonical ID.
 			body, err := ingestionRead(ctx, base+url.PathEscape(session), remaining)
@@ -398,7 +423,11 @@ func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvide
 	}
 	// The receipt may wait for gc's bounded fanout before returning. Claude's
 	// attachment timestamp is input creation time, a few seconds before it.
-	if entry.Timestamp.Before(r.DeliveredAt.Add(-30*time.Second)) || entry.Timestamp.After(r.DeliveredAt.Add(ingestionWindow)) {
+	start := r.StartedAt
+	if start.IsZero() {
+		start = r.DeliveredAt
+	}
+	if entry.Timestamp.Before(start.Add(-30*time.Second)) || entry.Timestamp.After(r.DeliveredAt.Add(ingestionWindow)) {
 		return nil
 	}
 	var texts []string
