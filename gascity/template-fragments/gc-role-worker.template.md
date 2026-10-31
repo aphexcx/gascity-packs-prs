@@ -49,9 +49,16 @@ it instead of idling.
 
 BOUNDED WAIT: for an infrastructure wall you cannot move (toolchain, host,
 credential, or provider), this path takes precedence over the immediate-close
-instruction above: mail `mayor` a BLOCKED message naming the wall and the staged
-state, then keep the claimed bead open and the session active for at most
-20 minutes from that message. Read `gc mail inbox --json` and
+instruction above: resolve the recipient from the bead's escalation contract
+in its description or metadata. If that contract names a recipient, use it;
+otherwise use `mayor` as the fallback. Send that recipient a BLOCKED message
+naming the wall and the staged state. If `gc mail send` fails, pause 5 seconds
+and retry once to the same recipient. If the second attempt fails, record the
+failed notification (recipient and both errors) in the eventual close reason;
+still run the wait and keep the lease as below. Never close on send failure
+alone or retry again; the retry does not restart the clock. Complete these
+send attempts, then keep the claimed bead open and the session active for at most
+20 minutes from the first send attempt. Read `gc mail inbox --json` and
 `gc bd show "$CLAIMED_BEAD_ID" --json --include-comments` on entry, every
 2 minutes, and once at the deadline. Before any heartbeat or close, confirm
 the bead's status is still `in_progress` and its assignee and `gc.session_id`
@@ -191,8 +198,11 @@ work record required for normal work beads:
 - `no-op`: no change was needed (already satisfied or duplicate); omit commit
   and branch metadata.
 - `blocked` or `abandoned`: work could not be completed; record the reason
-  and follow the bead's escalation contract after the bounded wait of the
-  BLOCKED paragraph when an infrastructure wall caused the stop.
+  and perform the remaining acts of the bead's escalation contract after the
+  bounded wait of the BLOCKED paragraph when an infrastructure wall caused the
+  stop. The recipient notification happens at the start of that wait; do not
+  repeat it at close, and include any failed notification recorded by that
+  paragraph in the close reason.
 
 Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exists,
 record unrecoverable failure as `gc.outcome=fail` plus concise

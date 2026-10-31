@@ -216,9 +216,16 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
     for instruction in (
         "takes precedence over the immediate-close instruction above",
-        "mail `mayor` a BLOCKED message naming the wall and the staged state",
+        "resolve the recipient from the bead's escalation contract in its description or metadata",
+        "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+        "Send that recipient a BLOCKED message naming the wall and the staged state",
+        "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+        "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+        "still run the wait and keep the lease as below",
+        "Never close on send failure alone or retry again",
+        "the retry does not restart the clock",
         "keep the claimed bead open and the session active",
-        "at most 20 minutes from that message",
+        "at most 20 minutes from the first send attempt",
         'gc bd heartbeat "$CLAIMED_BEAD_ID"',
         "every 2 minutes",
         "gc mail inbox --json",
@@ -231,8 +238,13 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
         "forbids a silent idle",
     ):
         assert instruction in wait
+    assert wait.index("resolve the recipient") < wait.index("Send that recipient")
+    assert wait.index("Send that recipient") < wait.index("then keep the claimed bead open")
+    assert "mail `mayor` a BLOCKED message" not in wait
     close = " ".join(prompt.split("## Close", 1)[1].split("## Continue", 1)[0].split())
-    assert "after the bounded wait of the BLOCKED paragraph" in close
+    assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in close
+    assert "The recipient notification happens at the start of that wait; do not repeat it at close" in close
+    assert "include any failed notification recorded by that paragraph in the close reason" in close
     assert prompt.count("## Workspace") == 1
     assert "--set-metadata 'gc.outcome=pass'" in prompt
     assert "--set-metadata 'gc.work_outcome=shipped'" in prompt

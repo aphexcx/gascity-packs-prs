@@ -39,6 +39,38 @@ def blocked_wait_paragraph() -> str:
     return " ".join(text.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
 
 
+def test_blocked_wait_notifies_the_beads_escalation_recipient_before_waiting() -> None:
+    wait = blocked_wait_paragraph()
+    assert "resolve the recipient from the bead's escalation contract in its description or metadata" in wait
+    assert "If that contract names a recipient, use it" in wait
+    assert "Send that recipient a BLOCKED message" in wait
+    assert wait.index("resolve the recipient") < wait.index("Send that recipient")
+    assert wait.index("Send that recipient") < wait.index("then keep the claimed bead open")
+    assert "mail `mayor` a BLOCKED message" not in wait
+
+
+def test_blocked_wait_defaults_to_mayor_only_without_a_named_recipient() -> None:
+    wait = blocked_wait_paragraph()
+    assert "If that contract names a recipient, use it; otherwise use `mayor` as the fallback" in wait
+
+
+def test_blocked_wait_notification_failure_is_recorded_without_skipping_the_wait() -> None:
+    wait = blocked_wait_paragraph()
+    assert "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient" in wait
+    assert "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason" in wait
+    assert "still run the wait and keep the lease as below" in wait
+    assert "Never close on send failure alone or retry again" in wait
+    assert "the retry does not restart the clock" in wait
+    assert wait.index("If the second attempt fails") < wait.index("then keep the claimed bead open")
+
+
+def test_blocked_wait_close_performs_remaining_escalation_without_notifying_twice() -> None:
+    close = " ".join(fragment().split("## Close", 1)[1].split("## Continue", 1)[0].split())
+    assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in close
+    assert "The recipient notification happens at the start of that wait; do not repeat it at close" in close
+    assert "include any failed notification recorded by that paragraph in the close reason" in close
+
+
 def test_blocked_wait_ruling_resumes_work_before_expiry() -> None:
     wait = blocked_wait_paragraph()
     assert "on entry, every 2 minutes, and once at the deadline" in wait
@@ -52,7 +84,7 @@ def test_blocked_wait_ruling_resumes_work_before_expiry() -> None:
 def test_blocked_wait_expiry_is_bounded_and_records_the_wait() -> None:
     wait = blocked_wait_paragraph()
     assert "keep the claimed bead open and the session active" in wait
-    assert "at most 20 minutes from that message" in wait
+    assert "at most 20 minutes from the first send attempt" in wait
     assert 'gc bd heartbeat "$CLAIMED_BEAD_ID"' in wait
     assert "unrelated messages do not restart the clock" in wait
     assert "Only at expiry, after the final reads find no ruling" in wait

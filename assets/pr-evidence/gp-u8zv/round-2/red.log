@@ -1,0 +1,891 @@
+FFFFFFFFFFFF.F.                                                          [100%]
+=================================== FAILURES ===================================
+_ test_role_prompts_render_public_worker_fragment[gc-gascity-gc.implementation-worker-# GC Role Worker] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi0')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'gc'
+pack_path = 'gascity', agent = 'gc.implementation-worker'
+persona_heading = '# GC Role Worker'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
+persona_heading = '# GC Role Worker'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[gascity-gascity-gc.implementation-worker-# GC Role Worker] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi1')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'gascity'
+pack_path = 'gascity', agent = 'gc.implementation-worker'
+persona_heading = '# GC Role Worker'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
+persona_heading = '# GC Role Worker'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[custom-gascity-gc.implementation-worker-# GC Role Worker] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi2')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'custom'
+pack_path = 'gascity', agent = 'gc.implementation-worker'
+persona_heading = '# GC Role Worker'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
+persona_heading = '# GC Role Worker'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[bmad-bmad-bmad.story-implementer-# BMAD Story Implementer] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi3')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'bmad'
+pack_path = 'bmad', agent = 'bmad.story-implementer'
+persona_heading = '# BMAD Story Implementer'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# BMAD Story Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph....nds, task tools, or the upstream BMAD runtime. You are the implementation lane; do not dispatch another implementer.\n'
+persona_heading = '# BMAD Story Implementer'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[superpowers-superpowers-superpowers.implementer-# Superpowers Implementer] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi4')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc')
+city_binding = 'superpowers', pack_path = 'superpowers'
+agent = 'superpowers.implementer', persona_heading = '# Superpowers Implementer'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# Superpowers Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph...s, task tools, or the upstream plugin runtime. You are the implementation lane; do not dispatch another implementer.\n'
+persona_heading = '# Superpowers Implementer'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[gstack-gstack-gstack.implementer-# gstack Implementer] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi5')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'gstack'
+pack_path = 'gstack', agent = 'gstack.implementer'
+persona_heading = '# gstack Implementer'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = '# gstack Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` ...ider-native subagents, slash commands, task tools, or the\nupstream gstack runtime. You are the implementation lane.\n'
+persona_heading = '# gstack Implementer'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[compound-engineering-compound-engineering-compound-engineering.ce-work-# Compound Engineering Worker] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi6')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc')
+city_binding = 'compound-engineering', pack_path = 'compound-engineering'
+agent = 'compound-engineering.ce-work'
+persona_heading = '# Compound Engineering Worker'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = "# Compound Engineering Worker\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `g...xt asks for subagents, translate that work into this Gas City lane's output or record that a graph lane is required.\n"
+persona_heading = '# Compound Engineering Worker'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+_ test_role_prompts_render_public_worker_fragment[profiler-profiler-profiler.profile-analyst-# Profile Analyst] _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-1999/test_role_prompts_render_publi7')
+gc_test_bin = PosixPath('/Users/tailor512/go/bin/gc'), city_binding = 'profiler'
+pack_path = 'profiler', agent = 'profiler.profile-analyst'
+persona_heading = '# Profile Analyst'
+
+    @pytest.mark.parametrize(
+        ("city_binding", "pack_path", "agent", "persona_heading"),
+        (
+            ("gc", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("gascity", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("custom", "gascity", "gc.implementation-worker", "# GC Role Worker"),
+            ("bmad", "bmad", "bmad.story-implementer", "# BMAD Story Implementer"),
+            (
+                "superpowers",
+                "superpowers",
+                "superpowers.implementer",
+                "# Superpowers Implementer",
+            ),
+            ("gstack", "gstack", "gstack.implementer", "# gstack Implementer"),
+            (
+                "compound-engineering",
+                "compound-engineering",
+                "compound-engineering.ce-work",
+                "# Compound Engineering Worker",
+            ),
+            ("profiler", "profiler", "profiler.profile-analyst", "# Profile Analyst"),
+        ),
+    )
+    def test_role_prompts_render_public_worker_fragment(
+        tmp_path: Path,
+        gc_test_bin: Path,
+        city_binding: str,
+        pack_path: str,
+        agent: str,
+        persona_heading: str,
+    ) -> None:
+        workspace = write_prompt_workspace(
+            tmp_path,
+            city_binding=city_binding,
+            city_pack=REPO_ROOT / pack_path,
+        )
+    
+        result = run_gc(
+            gc_test_bin,
+            workspace,
+            "--city",
+            str(workspace.city_dir),
+            "prime",
+            "--strict",
+            f"fixture/{agent}",
+            cwd=workspace.city_dir,
+        )
+    
+        assert result.returncode == 0, result.stderr
+>       assert_clean_worker_render(result.stdout, persona_heading)
+
+tests/test_gc_role_prompt_integration.py:356: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+prompt = "# Profile Analyst\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` wor... zero.\n\nThis is read-only analysis of capture data. Do not modify the profiled rig's\nsource, beads, or artifacts.\n"
+persona_heading = '# Profile Analyst'
+
+    def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
+        assert persona_heading in prompt
+        assert prompt.count("# GC Role Worker") == 1
+        assert '{{ template "gc-role-worker" . }}' not in prompt
+        assert "gc hook --claim --drain-ack --json" in prompt
+        assert "gc gc claim" not in prompt
+        assert "CLAIMED_BEAD_ID" in prompt
+        assert "CLAIMED_ROOT_BEAD_ID" in prompt
+        assert "CLAIMED_CONTINUATION_GROUP" in prompt
+        assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
+        assert "An absent key is an empty value, never a failed claim." in prompt
+        assert prompt.count("BOUNDED WAIT") == 1
+        wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+        for instruction in (
+            "takes precedence over the immediate-close instruction above",
+            "resolve the recipient from the bead's escalation contract in its description or metadata",
+            "If that contract names a recipient, use it; otherwise use `mayor` as the fallback",
+            "Send that recipient a BLOCKED message naming the wall and the staged state",
+            "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient",
+            "If the second attempt fails, record the failed notification (recipient and both errors) in the eventual close reason",
+            "still run the wait and keep the lease as below",
+            "Never close on send failure alone or retry again",
+            "the retry does not restart the clock",
+            "keep the claimed bead open and the session active",
+            "at most 20 minutes from the first send attempt",
+            'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+            "every 2 minutes",
+            "gc mail inbox --json",
+            'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+            "a ruling for this bead is the next step",
+            "continue, re-scope, or close as ruled",
+            "unrelated messages do not restart the clock",
+            "gc.work_outcome=blocked",
+            "reason naming the wait and its elapsed length",
+            "forbids a silent idle",
+        ):
+>           assert instruction in wait
+E           assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_prompt_integration.py:240: AssertionError
+___ test_blocked_wait_notifies_the_beads_escalation_recipient_before_waiting ___
+
+    def test_blocked_wait_notifies_the_beads_escalation_recipient_before_waiting() -> None:
+        wait = blocked_wait_paragraph()
+>       assert "resolve the recipient from the bead's escalation contract in its description or metadata" in wait
+E       assert "resolve the recipient from the bead's escalation contract in its description or metadata" in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_worker_fragment.py:44: AssertionError
+______ test_blocked_wait_defaults_to_mayor_only_without_a_named_recipient ______
+
+    def test_blocked_wait_defaults_to_mayor_only_without_a_named_recipient() -> None:
+        wait = blocked_wait_paragraph()
+>       assert "If that contract names a recipient, use it; otherwise use `mayor` as the fallback" in wait
+E       assert 'If that contract names a recipient, use it; otherwise use `mayor` as the fallback' in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_worker_fragment.py:54: AssertionError
+_ test_blocked_wait_notification_failure_is_recorded_without_skipping_the_wait _
+
+    def test_blocked_wait_notification_failure_is_recorded_without_skipping_the_wait() -> None:
+        wait = blocked_wait_paragraph()
+>       assert "If `gc mail send` fails, pause 5 seconds and retry once to the same recipient" in wait
+E       assert 'If `gc mail send` fails, pause 5 seconds and retry once to the same recipient' in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_worker_fragment.py:59: AssertionError
+_ test_blocked_wait_close_performs_remaining_escalation_without_notifying_twice _
+
+    def test_blocked_wait_close_performs_remaining_escalation_without_notifying_twice() -> None:
+        close = " ".join(fragment().split("## Close", 1)[1].split("## Continue", 1)[0].split())
+>       assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in close
+E       assert "perform the remaining acts of the bead's escalation contract after the bounded wait of the BLOCKED paragraph" in "`gc.outcome=pass|fail` is the run/step result; honor the bead's requested contract. `gc.work_outcome=shipped|no-op|bl...he failure contract (default `gc.outcome=fail`, `gc.failure_class=pr_handoff_failed`, PR URL in the reason) and close."
+
+tests/test_gc_role_worker_fragment.py:69: AssertionError
+___________ test_blocked_wait_expiry_is_bounded_and_records_the_wait ___________
+
+    def test_blocked_wait_expiry_is_bounded_and_records_the_wait() -> None:
+        wait = blocked_wait_paragraph()
+        assert "keep the claimed bead open and the session active" in wait
+>       assert "at most 20 minutes from the first send attempt" in wait
+E       assert 'at most 20 minutes from the first send attempt' in ': for an infrastructure wall you cannot move (toolchain, host, credential, or provider), this path takes precedence o...d length. "Instead of idling" forbids a silent idle; this bounded wait that reads its mail and comments is not idling.'
+
+tests/test_gc_role_worker_fragment.py:87: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[gc-gascity-gc.implementation-worker-# GC Role Worker]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[gascity-gascity-gc.implementation-worker-# GC Role Worker]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[custom-gascity-gc.implementation-worker-# GC Role Worker]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[bmad-bmad-bmad.story-implementer-# BMAD Story Implementer]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[superpowers-superpowers-superpowers.implementer-# Superpowers Implementer]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[gstack-gstack-gstack.implementer-# gstack Implementer]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[compound-engineering-compound-engineering-compound-engineering.ce-work-# Compound Engineering Worker]
+FAILED tests/test_gc_role_prompt_integration.py::test_role_prompts_render_public_worker_fragment[profiler-profiler-profiler.profile-analyst-# Profile Analyst]
+FAILED tests/test_gc_role_worker_fragment.py::test_blocked_wait_notifies_the_beads_escalation_recipient_before_waiting
+FAILED tests/test_gc_role_worker_fragment.py::test_blocked_wait_defaults_to_mayor_only_without_a_named_recipient
+FAILED tests/test_gc_role_worker_fragment.py::test_blocked_wait_notification_failure_is_recorded_without_skipping_the_wait
+FAILED tests/test_gc_role_worker_fragment.py::test_blocked_wait_close_performs_remaining_escalation_without_notifying_twice
+FAILED tests/test_gc_role_worker_fragment.py::test_blocked_wait_expiry_is_bounded_and_records_the_wait
+13 failed, 2 passed, 398 deselected in 4.82s
