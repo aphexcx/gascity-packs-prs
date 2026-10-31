@@ -1,0 +1,9 @@
+{"Time":"2026-10-30T23:13:39.500574-05:00","Action":"start","Package":"github.com/sjarmak/gc-slack-adapter"}
+{"Time":"2026-10-30T23:13:39.699349-05:00","Action":"run","Package":"github.com/sjarmak/gc-slack-adapter","Test":"TestIngestionDisabledRetainsNormallyAndCanBeReenabled"}
+{"Time":"2026-10-30T23:13:39.699439-05:00","Action":"output","Package":"github.com/sjarmak/gc-slack-adapter","Test":"TestIngestionDisabledRetainsNormallyAndCanBeReenabled","Output":"=== RUN   TestIngestionDisabledRetainsNormallyAndCanBeReenabled\n","OutputType":"frame"}
+{"Time":"2026-10-30T23:13:39.712905-05:00","Action":"output","Package":"github.com/sjarmak/gc-slack-adapter","Test":"TestIngestionDisabledRetainsNormallyAndCanBeReenabled","Output":"    ingestion_operations_round2_test.go:134: disabled observer pinned an expired handoff: \u003cnil\u003e\n","OutputType":"error"}
+{"Time":"2026-10-30T23:13:39.713629-05:00","Action":"output","Package":"github.com/sjarmak/gc-slack-adapter","Test":"TestIngestionDisabledRetainsNormallyAndCanBeReenabled","Output":"--- FAIL: TestIngestionDisabledRetainsNormallyAndCanBeReenabled (0.01s)\n","OutputType":"frame"}
+{"Time":"2026-10-30T23:13:39.713642-05:00","Action":"fail","Package":"github.com/sjarmak/gc-slack-adapter","Test":"TestIngestionDisabledRetainsNormallyAndCanBeReenabled","Elapsed":0.01}
+{"Time":"2026-10-30T23:13:39.713672-05:00","Action":"output","Package":"github.com/sjarmak/gc-slack-adapter","Output":"FAIL\n","OutputType":"frame"}
+{"Time":"2026-10-30T23:13:39.714319-05:00","Action":"output","Package":"github.com/sjarmak/gc-slack-adapter","Output":"FAIL\tgithub.com/sjarmak/gc-slack-adapter\t0.213s\n","OutputType":"frame"}
+{"Time":"2026-10-30T23:13:39.714337-05:00","Action":"fail","Package":"github.com/sjarmak/gc-slack-adapter","Elapsed":0.214}

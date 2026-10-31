@@ -852,19 +852,19 @@ func mentionOnlyInbound(inbound externalInboundMessage, files []slackFile, files
 // is awaited and a failed one reads as not accepted (codex r6 P1). Both
 // lanes pass one (mentionOnlyConfirmFor); a nil hook lets acceptance stand.
 func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mentionOnlyAsyncConfirm, journalMessages ...externalInboundMessage) (result deliveryReceipt, delivered bool) {
+	started := time.Now().UTC()
 	acceptedTransport, confirmed := false, false
 	defer func() {
 		if !acceptedTransport || len(journalMessages) == 0 {
 			return
 		}
-		m := journalMessages[0]
-		m.Text = body
 		r := result
-		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
 		if confirmed {
 			r.status = "delivered"
 		}
-		cfg.inboundJournal.record(cfg, m, r)
+		msg := journalMessages[0]
+		msg.injectionStartedAt = started
+		cfg.inboundJournal.recordDirect(cfg, msg, r, sessionID, body)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	target := fmt.Sprintf("%s/v0/city/%s/session/%s/messages",

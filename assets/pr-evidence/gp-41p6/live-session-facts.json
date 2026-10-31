@@ -1,0 +1,38 @@
+[
+  {
+    "type": "hold_tool",
+    "timestamp": "2026-10-31T01:25:16.078Z",
+    "tool_id": "toolu_01764nbsv7yntTXCn8Ujc9mc",
+    "name": "Bash",
+    "command": "python3 -I -c 'import time,datetime as d; t=d.datetime(2026,10,31,1,28,30,tzinfo=d.timezone.utc); s=(t-d.datetime.now(d.timezone.utc)).total_seconds(); print(\"hold start\", d.datetime.now(d.timezone.utc).isoformat(), \"sleeping\", int(s)); time.sleep(max(0,s)); print(\"hold end\", d.datetime.now(d.timezone.utc).isoformat())'"
+  },
+  {
+    "type": "tool_result",
+    "timestamp": "2026-10-31T01:28:30.060Z",
+    "tool_id": "toolu_01764nbsv7yntTXCn8Ujc9mc"
+  },
+  {
+    "type": "attachment",
+    "uuid": "f3a01ef3-ff3f-48e2-83be-43375c914b51",
+    "timestamp": "2026-10-31T01:26:14.797Z",
+    "messages": [
+      "1793409965.000001"
+    ]
+  },
+  {
+    "type": "attachment",
+    "uuid": "e01ac4dc-a649-4f75-bd31-e7cb7ea1679b",
+    "timestamp": "2026-10-31T01:26:44.412Z",
+    "messages": [
+      "1793409995.000002"
+    ]
+  },
+  {
+    "type": "attachment",
+    "uuid": "3b3ef04c-7a82-48eb-b0e3-90739e87fd12",
+    "timestamp": "2026-10-31T01:27:14.677Z",
+    "messages": [
+      "1793410025.000003"
+    ]
+  }
+]

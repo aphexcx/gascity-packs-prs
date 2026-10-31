@@ -1362,6 +1362,8 @@ type externalAttachment struct {
 
 type externalInboundMessage struct {
 	injectionPrepared    bool
+	injectionDirect      bool
+	injectionStartedAt   time.Time
 	injectionWindows     []injectionWindow
 	injectionLeanWindows []injectionWindow
 	// Adapter-only provenance for paths retained after gc rejects attachments.
@@ -1935,6 +1937,8 @@ func main() {
 	// afterwards. Built here, before deliverCfg snapshots the config,
 	// so every leg (urgent, coalesced, alias) shares one component.
 	cfg.receiptFollowUps = receiptFollowUpsFor(cfg)
+	stopIngestion := startIngestionObserver(cfg)
+	defer stopIngestion()
 	if cfg.inboundSpool != nil {
 		cfg.coalescer.spill = cfg.inboundSpool.spillBatch
 		cfg.coalescer.recordVerdict = cfg.inboundSpool.recordVerdict
@@ -5130,10 +5134,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					cfg.receiptFollowUps.note(heldDelivery{
 						receiptID: aliasReceipt.id,
 						observeReceipt: func(r deliveryReceipt) {
-							m := heldEnv
-							m.Text = heldBody
-							r.members = []deliveryReceiptMember{{SessionID: heldSession}}
-							heldCfg.inboundJournal.record(heldCfg, m, r, "concluded")
+							heldCfg.inboundJournal.recordDirect(heldCfg, heldEnv, r, heldSession, heldBody, "concluded")
 						},
 						leg:     "alias dispatch",
 						channel: inbound.Conversation.ConversationID,
@@ -6649,15 +6650,14 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 // session. Returns gc's delivery receipt (zero-valued when gc emits none)
 // and whether gc ACCEPTED the injection.
 func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessages ...externalInboundMessage) (result deliveryReceipt, accepted bool) {
+	started := time.Now().UTC()
 	defer func() {
 		if !accepted || len(journalMessages) == 0 {
 			return
 		}
 		msg := journalMessages[0]
-		msg.Text = body
-		r := result
-		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
-		cfg.inboundJournal.record(cfg, msg, r)
+		msg.injectionStartedAt = started
+		cfg.inboundJournal.recordDirect(cfg, msg, result, sessionID, body)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters

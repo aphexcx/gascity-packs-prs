@@ -1,0 +1,143 @@
+[
+  {
+    "run": "final-regressions-red",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -json -run ^TestIngestion(SettledFanoutSurvivesMidnightUntilFollowUpEnds|LongToolReturnSupersedesUnseenWithinBound)$ -count=1 . | exit=1",
+    "counts": {
+      "pass": 0,
+      "fail": 10,
+      "skip": 0,
+      "top_level_pass": 0
+    },
+    "failed_tests": [
+      "TestIngestionLongToolReturnSupersedesUnseenWithinBound/90m_creation_timestamp",
+      "TestIngestionLongToolReturnSupersedesUnseenWithinBound/90m_return_timestamp",
+      "TestIngestionLongToolReturnSupersedesUnseenWithinBound/expired_creation_timestamp",
+      "TestIngestionLongToolReturnSupersedesUnseenWithinBound/expired_return_timestamp",
+      "TestIngestionLongToolReturnSupersedesUnseenWithinBound",
+      "TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds/concluded",
+      "TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds/concluded_extmsg",
+      "TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds/follow_up_ended",
+      "TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds/orphan",
+      "TestIngestionSettledFanoutSurvivesMidnightUntilFollowUpEnds"
+    ],
+    "skipped_tests": []
+  },
+  {
+    "run": "focused-green",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -run Test(Ingestion|InboundJournal|ReceiptFollowUp) -count=1 . | exit=0",
+    "counts": {
+      "pass": 96,
+      "fail": 0,
+      "skip": 1,
+      "top_level_pass": 70
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof"
+    ]
+  },
+  {
+    "run": "adapter-race",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 12832,
+      "fail": 0,
+      "skip": 2,
+      "top_level_pass": 1431
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement"
+    ]
+  },
+  {
+    "run": "cli-race",
+    "cwd": "slack-full/cli",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 237,
+      "fail": 0,
+      "skip": 0,
+      "top_level_pass": 199
+    },
+    "failed_tests": [],
+    "skipped_tests": []
+  },
+  {
+    "run": "pytest",
+    "cwd": "slack-full",
+    "command_and_exit": "uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q | exit=0",
+    "result": "907 passed, 2 skipped, 2 existing fork-in-thread deprecation warnings"
+  },
+  {
+    "run": "adapter-vet",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go vet ./... | exit=0"
+  },
+  {
+    "run": "diff-check",
+    "cwd": ".",
+    "command_and_exit": "git diff --check | exit=0"
+  },
+  {
+    "run": "adapter-final-race",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 12834,
+      "fail": 0,
+      "skip": 2,
+      "top_level_pass": 1431
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement"
+    ]
+  },
+  {
+    "run": "disabled-red",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -json -run TestIngestionDisabledRetainsNormallyAndCanBeReenabled -count=1 . | exit=1",
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "run": "focused-r2-green",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -run Test(Ingestion|InboundJournal|ReceiptFollowUp) -count=1 . | exit=0",
+    "counts": {
+      "pass": 97,
+      "fail": 0,
+      "skip": 1
+    }
+  },
+  {
+    "run": "adapter-r2-race",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 12835,
+      "fail": 0,
+      "skip": 2,
+      "top_level_pass": 1432
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement"
+    ]
+  },
+  {
+    "run": "adapter-r2-vet",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go vet ./... | exit=0"
+  }
+]
