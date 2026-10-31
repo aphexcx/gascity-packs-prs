@@ -482,6 +482,10 @@ func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvide
 func ingestionMatches(text string, r inboundJournalRecord) bool {
 	const open = "<system-reminder>"
 	const close = "</system-reminder>"
+	provider := r.Provider
+	if provider == "" {
+		provider = "slack" // compatibility with journal rows before provider recording
+	}
 	for offset := 0; offset < len(text); {
 		i := strings.Index(text[offset:], open)
 		if i < 0 {
@@ -500,7 +504,7 @@ func ingestionMatches(text string, r inboundJournalRecord) bool {
 		if r.ProofKind != "extmsg" {
 			continue
 		}
-		header := open + "\nNew message in shared conversation slack/" + r.Channel + ":\n\n- "
+		header := open + "\nNew message in shared conversation " + provider + "/" + r.Channel + ":\n\n- "
 		if !strings.HasPrefix(block, header) {
 			continue
 		}

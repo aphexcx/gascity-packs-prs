@@ -9,10 +9,12 @@ The adapter now fingerprints each journaled payload without storing its text.
 A background observer checks gc's raw session transcript every five seconds,
 sharing one bounded fetch across each target's pending receipts. `ingested`
 requires a complete matching
-payload, its channel/message/thread coordinates for extmsg envelopes, and a
+payload, its provider/channel/message/thread coordinates for extmsg envelopes, and a
 timestamp within the delivery window. The evidence records the target session,
 transcript entry UUID (or SHA-256 of the compact native Codex record), timestamp
 and record kind. Native Codex proof does not require a gc-added ordinal.
+The journal retains the message's provider so `ADAPTER_PROVIDER` overrides
+match their actual rendered headers. Older rows default to `slack`.
 
 Claude user text and rendered `queued_command` attachments count. Codex user
 `response_item` message text counts. Assistant text, tool output, manual Slack

@@ -35,6 +35,30 @@ func TestInboundJournalCarriesSessionProofIdentity(t *testing.T) {
 	}
 }
 
+func TestIngestionConfiguredProviderSurvivesJournal(t *testing.T) {
+	at := time.Now().UTC()
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return at }}
+	msg := externalInboundMessage{Conversation: conversationRef{Provider: "slack-secondary", ConversationID: "C1"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.0", Text: "complete provider body"}
+	// Use the message's actual provider, even if current config differs.
+	j.record(config{provider: "slack"}, msg, deliveryReceipt{id: "provider-r1", status: "delivered", members: []deliveryReceiptMember{{SessionID: "s1"}}})
+	o := &ingestionObserver{cfg: config{inboundJournal: j}}
+	rows, err := o.pending()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("pending=%v err=%v", rows, err)
+	}
+	reference := ingestionTestRecord(msg.ProviderMessageID, at, msg.Text)
+	defaultEntry := ingestionTestEntry(t, reference, msg.Text, "attachment")
+	actualEntry := json.RawMessage(strings.Replace(string(defaultEntry), "shared conversation slack/", "shared conversation slack-secondary/", 1))
+	for _, row := range rows {
+		if ingestionProof(actualEntry, row) == nil {
+			t.Fatal("journal lost the configured provider's actual ingestion proof")
+		}
+		if ingestionProof(defaultEntry, row) != nil {
+			t.Fatal("proof from a different provider was accepted")
+		}
+	}
+}
+
 func ingestionTestRecord(ts string, at time.Time, payload string) inboundJournalRecord {
 	return inboundJournalRecord{Phase: "accepted", TS: at, DeliveredAt: at, Channel: "C1", ThreadTS: "100.0", MessageTS: ts, ReceiptID: "r-" + ts, Status: "delivered", TargetSessions: []string{"s1"}, ProofKind: "extmsg", PayloadSHA256: ingestionDigest(payload), Windows: []injectionWindow{{MessageTS: ts, ThreadTS: "100.0", Oldest: "99.1", Newest: "99.9", Known: true, Collapsed: 2}}}
 }
