@@ -130,6 +130,9 @@ const receiptFollowUpDeadline = 10 * time.Minute
 // second loss is a standing condition a third copy would not fix.
 const receiptFollowUpReposts = 1
 
+// Adapter-only journal disposition; it makes no transport-delivery claim.
+const receiptFollowUpEnded = "follow_up_ended"
+
 // receiptFollowUpTombstones bounds how many FINISHED receipt ids are
 // remembered so a late second note for one of them is not followed again
 // (a second recovery copy would be a duplicate; codex r1 P2 #5). Holds are
@@ -310,6 +313,7 @@ func (f *receiptFollowUps) note(h heldDelivery) {
 // process exit that cuts the write short must not erase both the record
 // and the alarm (codex r2 P1 #2).
 func (f *receiptFollowUps) recordNow(h heldDelivery, cause error) {
+	defer h.recordFollowUpEnded()
 	log.Printf("receipt follow-up: LOSS leg=%s chan=%s ts=%s receipt=%s recording an untrackable hold now — if no dead-letter line follows for this receipt, the process exited before the record landed: %s",
 		h.leg, h.channel, h.ts, receiptLogID(h.receiptID), describeReceiptErr(cause))
 	f.stuck(h, cause)
@@ -416,6 +420,14 @@ func (f *receiptFollowUps) pause() {
 	}
 }
 
+// Retire timing protection when this adapter stops following a receipt
+// without a gc conclusion. The journal records an unverified disposition.
+func (h heldDelivery) recordFollowUpEnded() {
+	if h.observeReceipt != nil {
+		h.observeReceipt(deliveryReceipt{id: h.receiptID, status: receiptFollowUpEnded})
+	}
+}
+
 // run is one held delivery's follow-up, start to finish.
 func (f *receiptFollowUps) run(h heldDelivery) {
 	f.runFrom(h, receiptFollowUpReposts, false)
@@ -432,6 +444,12 @@ func (f *receiptFollowUps) run(h heldDelivery) {
 // already established, so anything short of a vouch leaves that loss
 // standing and must be recorded.
 func (f *receiptFollowUps) runFrom(h heldDelivery, repostsLeft int, recovery bool) {
+	conclusionObserved := false
+	defer func() {
+		if !conclusionObserved {
+			h.recordFollowUpEnded()
+		}
+	}()
 	receiptID := h.receiptID
 	logID := receiptLogID(receiptID)
 	started := time.Now()
@@ -478,6 +496,7 @@ func (f *receiptFollowUps) runFrom(h heldDelivery, repostsLeft int, recovery boo
 			f.lost(h, repostsLeft, fmt.Errorf("gc holds no record of receipt %s — the background send died with its process or aged out; nobody is still trying", logID))
 			return
 		case state == receiptPollConcluded:
+			conclusionObserved = true
 			if h.observeReceipt != nil {
 				h.observeReceipt(receipt)
 			}

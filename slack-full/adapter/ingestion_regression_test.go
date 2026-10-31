@@ -72,7 +72,7 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 		t.Run(fmt.Sprintf("rendered=%v", rendered), func(t *testing.T) {
 			at := time.Now().UTC()
 			now := at
-			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+			j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
 			cfg := config{inboundJournal: j}
 			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.0", Text: "complete recovery body"}
 			mixed := concludedReceipt("recovered", "partial", 30, 30)
@@ -84,6 +84,7 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 			poll.on("original", receiptPollAnswer{state: receiptPollUnknown})
 			h := &followUpHarness{repostAns: []receiptPollAnswer{{receipt: mixed}}}
 			f := testFollowUps(poll.poll, nil)
+			j.record(cfg, msg, deliveryReceipt{id: "original", status: "pending"})
 			f.note(heldDelivery{receiptID: "original", leg: "inbound", channel: "C1", ts: msg.ProviderMessageID,
 				observeReceipt: func(r deliveryReceipt) { j.record(cfg, msg, r, "concluded") },
 				repost: func() (deliveryReceipt, error) {
@@ -122,7 +123,9 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 				}
 			}
 			states := map[string]string{}
+			originalEnded := false
 			for _, row := range ingestionJournalRows(t, j) {
+				originalEnded = originalEnded || (row.ReceiptID == "original" && row.Phase == "follow_up_ended")
 				if row.Phase == "ingestion" {
 					states[row.TargetSessions[0]] = row.Status
 				}
@@ -133,6 +136,16 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 			}
 			if states["s1"] != "ingested" || states["s2"] != want || alerts != wantAlerts {
 				t.Fatalf("complete recovery handoff escaped observation: states=%v alerts=%d", states, alerts)
+			}
+			if !originalEnded {
+				t.Fatal("successful recovery did not conclude the original receipt's follow-up")
+			}
+			now = now.Add(24 * time.Hour)
+			if err := j.append(inboundJournalRecord{Status: "unrelated"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(filepath.Join(j.dir, at.Format("20060102")+".jsonl")); !os.IsNotExist(err) {
+				t.Fatalf("original receipt pinned retention after recovery: %v", err)
 			}
 		})
 	}
@@ -198,6 +211,56 @@ func TestIngestionRetentionPreservesUnresolvedAcrossMidnight(t *testing.T) {
 				t.Fatalf("settled evidence should resume normal pruning: %v", err)
 			}
 		})
+	}
+}
+
+func TestIngestionFollowUpExitReleasesPendingTiming(t *testing.T) {
+	for _, mode := range []string{"timeout", "shutdown", "already_drained"} {
+		t.Run(mode, func(t *testing.T) {
+			now := time.Now().UTC()
+			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+			cfg := config{inboundJournal: j}
+			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", Text: "pending body"}
+			j.record(cfg, msg, deliveryReceipt{id: "original", status: "pending"})
+			var draining atomic.Bool
+			draining.Store(mode == "shutdown")
+			f := testFollowUps(func(context.Context, string) (receiptPollState, deliveryReceipt, error) {
+				return receiptPollPending, pendingReceipt("original"), nil
+			}, &draining)
+			f.deadline = 0
+			f.closed = mode == "already_drained"
+			f.note(heldDelivery{receiptID: "original", leg: "inbound",
+				observeReceipt: func(r deliveryReceipt) { j.record(cfg, msg, r, "concluded") },
+				deadLetter:     func(error) bool { return true }})
+			if !f.wait(time.Second) {
+				t.Fatal("follow-up did not exit")
+			}
+			for _, row := range ingestionJournalRows(t, j) {
+				if row.ReceiptID == "original" && row.Phase == "follow_up_ended" && row.Status == "unverified" {
+					return
+				}
+			}
+			t.Fatal("follow-up exit left no durable original-receipt disposition")
+		})
+	}
+}
+
+func TestIngestionOrphanTimingExpiresAfterRestart(t *testing.T) {
+	at := time.Date(2026, 10, 30, 23, 59, 59, 0, time.UTC)
+	now := at
+	dir := t.TempDir()
+	j := &inboundJournal{dir: dir, retentionDays: 1, now: func() time.Time { return now }}
+	msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", Text: "orphan body"}
+	j.record(config{}, msg, deliveryReceipt{id: "orphan", status: "pending"})
+	// A crash leaves no live follow-up and no terminal callback. This is
+	// beyond the 20-minute recovery ladder plus the three-minute margin.
+	now = at.Add(30 * time.Minute)
+	j = &inboundJournal{dir: dir, retentionDays: 1, now: func() time.Time { return now }}
+	if err := j.append(inboundJournalRecord{Status: "unrelated"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, at.Format("20060102")+".jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("orphan receipt pinned retention after restart: %v", err)
 	}
 }
 

@@ -64,7 +64,12 @@ Retention preserves the oldest unresolved delivery's day and all later
 segments until ingestion is proved or its unseen alert succeeds. This keeps
 one-day retention from erasing an observation at midnight and preserves
 failed alerts across restarts. Initial pending receipts retain their original
-timing independently until conclusion, even before a handoff is observable.
+timing independently before a handoff is observable. Follow-ups ending without
+a gc conclusion write `phase=follow_up_ended`, `status=unverified`; this is an
+adapter disposition, not a delivery claim. After a crash, orphan timing is
+protected for at most 23 minutes: the two ten-minute follow-up attempts plus
+the three-minute observation margin. This bound does not expire actual handoff
+observations or unsent unseen alerts.
 Normal pruning resumes when observations settle;
 malformed or over-budget reconstruction defers pruning with an error.
 Pre-upgrade rows without a payload fingerprint are excluded to avoid retroactive

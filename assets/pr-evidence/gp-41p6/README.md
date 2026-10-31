@@ -107,6 +107,14 @@ sender separators. An adjacent mixed-fanout regression additionally proved that
 complete pending members must enroll on the initial receipt, without waiting
 for a callback that may never run; both initial and concluded receipts do so.
 
+The eighth completed gate found that abandoned pending receipts could pin
+retention forever. Regressions now include the original acceptance before
+recovery under a new receipt ID, timeout and both shutdown paths, and restart
+without a terminal callback. Follow-ups ending without a gc conclusion record
+an adapter-only `follow_up_ended` / `unverified` disposition. Orphan timing is
+protected for at most 23 minutes (the existing recovery ladder plus a margin);
+actual handoff observations and failed alerts retain their independent protection.
+
 The observer never replays a message. No peer-city delivery, company receipt
 state machine, dead-letter semantics, production binary, or founder-gap-watch
 manifest is changed. Bounds and unsupported-format behavior are documented in
@@ -120,16 +128,16 @@ No Node or pnpm commands were used.
 - Before implementation: `go test -run '^TestInboundJournalCarriesSessionProofIdentity$' -count=1 .`
   in `slack-full/adapter` failed because the delivered row lacked proof identity.
 - `go test -race -json -count=1 ./...` in `slack-full/adapter`: exit 0,
-  1,425 top-level tests / 12,817 tests including subtests passed; two skipped
+  1,427 top-level tests / 12,822 tests including subtests passed; two skipped
   (`TestIngestionLiveBusySessionProof` and `TestMinimalReplayMeasurement`).
 - Same command in `slack-full/cli`: exit 0, 199 top-level tests / 237 including
   subtests passed; none skipped.
 - `uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q`
   in `slack-full`: exit 0, 907 passed, two skipped. Two existing fork-in-thread
   deprecation warnings in `test_slack_company_outbound.py`.
-- After all twelve major review fixes and the actor-parsing minor:
+- After all thirteen major review fixes and the actor-parsing minor:
   `go test -race -json -run '^Test(Ingestion|InboundJournal|ReceiptFollowUp)' -count=1 .`
-  in `slack-full/adapter`: exit 0, 79 passes including subtests, one intentionally
+  in `slack-full/adapter`: exit 0, 84 passes including subtests, one intentionally
   skipped live test.
 - `go vet ./...` in `slack-full/adapter`: exit 0.
 

@@ -25,6 +25,11 @@ const ingestionWindow = 3 * time.Minute
 const ingestionPollInterval = 5 * time.Second
 const ingestionReadLimit = 32 << 20
 
+// A crashed process cannot write the follow-up's terminal disposition. Keep
+// initial timing through the bounded recovery ladder plus a grace window,
+// without allowing an orphan acceptance to pin journal retention forever.
+const ingestionPendingTimingLimit = (receiptFollowUpReposts+1)*receiptFollowUpDeadline + ingestionWindow
+
 // These are session-side facts, not a transport receipt or model claim.
 // No transcript text is persisted in the journal.
 type ingestionEvidence struct {
@@ -96,7 +101,7 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	j := o.cfg.inboundJournal
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	rows, _, err := j.pendingIngestionLocked()
+	rows, _, err := j.pendingIngestionLocked(time.Time{})
 	return rows, err
 }
 
@@ -104,7 +109,7 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 // cannot be removed between reconstruction and the pruning decision. The
 // second result protects initial pending receipts before they become eligible
 // for session observation; it never treats an acceptance as a handoff.
-func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalRecord, time.Time, error) {
+func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string]inboundJournalRecord, time.Time, error) {
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
 		return nil, time.Time{}, err
@@ -148,7 +153,7 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 			if r.Phase == "accepted" && r.ReceiptID != "" && receiptStatusPending(r.Status) {
 				held[identity] = true
 			}
-			if r.Phase == "concluded" || receiptStatusPositive(r.Status) || r.Status == "ingested" || r.Status == "delivered_unseen" {
+			if r.Phase == "concluded" || r.Phase == receiptFollowUpEnded || receiptStatusPositive(r.Status) || r.Status == "ingested" || r.Status == "delivered_unseen" {
 				concluded[identity] = true
 			}
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
@@ -210,7 +215,7 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 	}
 	var receiptStart time.Time
 	for identity := range held {
-		if !concluded[identity] {
+		if !concluded[identity] && (pruningAt.IsZero() || pruningAt.Before(started[identity].Add(ingestionPendingTimingLimit))) {
 			receiptStart = earlierIngestionTime(receiptStart, started[identity])
 		}
 	}

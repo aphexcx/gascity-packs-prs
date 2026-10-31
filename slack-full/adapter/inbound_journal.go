@@ -80,6 +80,9 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 	if len(phase) > 0 {
 		r.Phase = phase[0]
 	}
+	if receipt.status == receiptFollowUpEnded {
+		r.Phase, r.Status = receiptFollowUpEnded, "unverified"
+	}
 	if r.Mode == "" {
 		r.Mode = "full"
 	}
@@ -198,7 +201,7 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	// Retention must not erase the recovery record for a still-unseen
 	// delivery or an alert that has not reached the mayor. Preserve its
 	// original interval and all later updates until observation settles.
-	pending, receiptStart, err := j.pendingIngestionLocked()
+	pending, receiptStart, err := j.pendingIngestionLocked(now)
 	if err != nil {
 		return fmt.Errorf("journal pruning deferred: %w", err)
 	}
