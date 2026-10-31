@@ -73,6 +73,12 @@ and delayed confirmation of input already rendered. Resolution is now fresh
 for new deliveries, while journal reconstruction retains each delivery's
 canonical pin, original interval and terminal ingestion result.
 
+The third completed gate found that native Codex records have no ordinal and
+that mention-only confirmation can finish long after input was rendered.
+Both regressions failed before the fixes. Native records now get a stable
+SHA-256 evidence identifier, and actual direct send paths preserve their send
+timestamp through confirmation before writing their first journal row.
+
 No message is automatically replayed. No peer-city delivery, company receipt
 state machine, dead-letter semantics, production binary, or founder-gap-watch
 manifest is changed. Bounds and unsupported-format behavior are documented in
@@ -86,16 +92,16 @@ No Node or pnpm commands were used.
 - Before implementation: `go test -run '^TestInboundJournalCarriesSessionProofIdentity$' -count=1 .`
   in `slack-full/adapter` failed because the delivered row lacked proof identity.
 - `go test -race -json -count=1 ./...` in `slack-full/adapter`: exit 0,
-  1,419 top-level tests / 12,803 tests including subtests passed; two skipped
+  1,420 top-level tests / 12,804 tests including subtests passed; two skipped
   (`TestIngestionLiveBusySessionProof` and `TestMinimalReplayMeasurement`).
 - Same command in `slack-full/cli`: exit 0, 199 top-level tests / 237 including
   subtests passed; none skipped.
 - `uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q`
   in `slack-full`: exit 0, 907 passed, two skipped. Two existing fork-in-thread
   deprecation warnings in `test_slack_company_outbound.py`.
-- After all six major review fixes:
-  `go test -race -json -run '^Test(Ingestion|InboundJournal)' -count=1 .`
-  in `slack-full/adapter`: exit 0, 20 passes including subtests, one intentionally
+- After all eight major review fixes:
+  `go test -race -json -run '^TestIngestion' -count=1 .`
+  in `slack-full/adapter`: exit 0, 17 passes including subtests, one intentionally
   skipped live test.
 - `go vet ./...` in `slack-full/adapter`: exit 0.
 

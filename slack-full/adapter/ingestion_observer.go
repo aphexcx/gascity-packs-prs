@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -408,7 +409,6 @@ func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvide
 		Rendered []struct {
 			Content string `json:"content"`
 		} `json:"rendered"`
-		Ordinal int `json:"ordinal"`
 		Payload struct {
 			Type    string `json:"type"`
 			Role    string `json:"role"`
@@ -431,8 +431,15 @@ func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvide
 		return nil
 	}
 	var texts []string
-	if entry.Type == "response_item" && entry.Payload.Type == "message" && entry.Payload.Role == "user" && entry.Ordinal > 0 {
-		entry.UUID = fmt.Sprintf("codex-ordinal:%d", entry.Ordinal)
+	if entry.Type == "response_item" && entry.Payload.Type == "message" && entry.Payload.Role == "user" {
+		// Native Codex records have no UUID or ordinal. Hash the complete
+		// record after removing insignificant JSON whitespace for a stable
+		// evidence identifier across raw transcript formatting changes.
+		var compact bytes.Buffer
+		if json.Compact(&compact, raw) != nil {
+			return nil
+		}
+		entry.UUID = "codex-sha256:" + ingestionDigest(compact.String())
 		for _, b := range entry.Payload.Content {
 			if b.Type == "input_text" || b.Type == "text" {
 				texts = append(texts, b.Text)

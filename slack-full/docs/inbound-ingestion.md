@@ -11,7 +11,8 @@ sharing one bounded fetch across each target's pending receipts. `ingested`
 requires a complete matching
 payload, its channel/message/thread coordinates for extmsg envelopes, and a
 timestamp within the delivery window. The evidence records the target session,
-transcript entry UUID (or Codex ordinal), timestamp and record kind.
+transcript entry UUID (or SHA-256 of the compact native Codex record), timestamp
+and record kind. Native Codex proof does not require a gc-added ordinal.
 
 Claude user text and rendered `queued_command` attachments count. Codex user
 `response_item` message text counts. Assistant text, tool output, manual Slack
@@ -23,7 +24,8 @@ original quoted-context windows.
 The journal preserves each member's handoff eligibility. Concluded `pending`
 members with complete byte counts are monitored too, including mixed fanouts;
 unconfirmed submission neither proves nor disproves ingestion. Direct reminder
-fingerprints survive delayed alias confirmation. Name bindings are resolved
+fingerprints and the original send timestamp survive delayed alias and
+mention-only confirmation. Name bindings are resolved
 through gc's session API and pinned durably to the canonical session ID for
 that delivery. New deliveries resolve names afresh. Repeated receipt polls
 cannot undo `ingested`, move the first handoff's deadline, or exclude input

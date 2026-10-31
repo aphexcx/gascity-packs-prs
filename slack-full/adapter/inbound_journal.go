@@ -59,6 +59,7 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 		return
 	}
 	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows, HandoffSessions: []string{}}
+	r.StartedAt = msg.injectionStartedAt
 	r.ProofKind = "extmsg"
 	// Held-receipt callbacks may retain the pre-redaction envelope; hash the
 	// same redacted text the extmsg POST actually sent.

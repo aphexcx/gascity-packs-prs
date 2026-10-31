@@ -297,3 +297,46 @@ func TestIngestionDelayedConclusionRetainsInputInterval(t *testing.T) {
 	}
 	t.Fatal("delayed transport conclusion excluded the original input")
 }
+
+func TestIngestionMentionOnlyDelayedAsyncConfirmation(t *testing.T) {
+	at := time.Now().UTC()
+	reference := ingestionTestRecord("100.1", at, "body")
+	body := ingestionTestReminder(reference, "body")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method != http.MethodPost || !strings.HasSuffix(req.URL.Path, "/session/s1/messages") {
+			t.Errorf("unexpected request: %s %s", req.Method, req.URL.Path)
+		}
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprint(w, `{"status":"accepted","request_id":"mo-req-1","event_cursor":"1"}`)
+	}))
+	defer server.Close()
+	// Simulate a confirmation reconnecting two minutes after input arrived.
+	// There is no earlier pending journal row on this actual send path.
+	now := at.Add(2 * time.Minute)
+	j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { now = now.Add(time.Millisecond); return now }}
+	cfg := config{gcAPIBase: server.URL, cityName: "test", inboundJournal: j}
+	msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: reference.MessageTS}
+	_, ok := postMentionOnlyReminder(cfg, "s1", body, func(requestID, cursor string) (string, bool) {
+		if requestID != "mo-req-1" || cursor != "1" {
+			t.Fatal("wrong confirmation identity")
+		}
+		return "delivered", true
+	}, msg)
+	if !ok {
+		t.Fatal("async confirmation failed")
+	}
+	o := &ingestionObserver{cfg: cfg, now: func() time.Time { return now },
+		fetch: func(context.Context, string) ([]json.RawMessage, error) {
+			return []json.RawMessage{ingestionTestEntry(t, reference, "body", "attachment")}, nil
+		},
+		notify: func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.Status == "ingested" {
+			return
+		}
+	}
+	t.Fatal("mention-only confirmation lost the send-time proof interval")
+}

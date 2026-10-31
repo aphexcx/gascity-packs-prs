@@ -262,10 +262,19 @@ func TestIngestionDirectReminderAndBoundarySanitization(t *testing.T) {
 func TestIngestionCodexUserInputAndDeadline(t *testing.T) {
 	r := ingestionTestRecord("100.1", time.Now(), "complete body")
 	for _, role := range []string{"user", "assistant", "tool"} {
-		entry := map[string]any{"type": "response_item", "ordinal": 42, "timestamp": r.DeliveredAt.Add(time.Second), "payload": map[string]any{"type": "message", "role": role, "content": []map[string]string{{"type": "input_text", "text": ingestionTestReminder(r, "complete body")}}}}
+		// Native Codex frames have no gc-added ordinal or UUID.
+		entry := map[string]any{"type": "response_item", "timestamp": r.DeliveredAt.Add(time.Second), "payload": map[string]any{"type": "message", "role": role, "content": []map[string]string{{"type": "input_text", "text": ingestionTestReminder(r, "complete body")}}}}
 		b, _ := json.Marshal(entry)
 		if got := ingestionProof(b, r); (got != nil) != (role == "user") {
 			t.Fatalf("role=%s proof=%+v", role, got)
+		}
+		if role == "user" {
+			got := ingestionProof(b, r)
+			pretty, _ := json.MarshalIndent(entry, "", "  ")
+			again := ingestionProof(pretty, r)
+			if !strings.HasPrefix(got.EntryID, "codex-sha256:") || again == nil || again.EntryID != got.EntryID {
+				t.Fatal("native Codex proof needs a stable record identifier")
+			}
 		}
 		entry["timestamp"] = r.DeliveredAt.Add(ingestionWindow + time.Second)
 		b, _ = json.Marshal(entry)

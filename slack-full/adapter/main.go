@@ -1363,6 +1363,7 @@ type externalAttachment struct {
 type externalInboundMessage struct {
 	injectionPrepared    bool
 	injectionDirect      bool
+	injectionStartedAt   time.Time
 	injectionWindows     []injectionWindow
 	injectionLeanWindows []injectionWindow
 	// Adapter-only provenance for paths retained after gc rejects attachments.
@@ -6649,11 +6650,14 @@ func renderAliasDispatch(cfg config, msg externalInboundMessage, handle string) 
 // session. Returns gc's delivery receipt (zero-valued when gc emits none)
 // and whether gc ACCEPTED the injection.
 func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessages ...externalInboundMessage) (result deliveryReceipt, accepted bool) {
+	started := time.Now().UTC()
 	defer func() {
 		if !accepted || len(journalMessages) == 0 {
 			return
 		}
-		cfg.inboundJournal.recordDirect(cfg, journalMessages[0], result, sessionID, body)
+		msg := journalMessages[0]
+		msg.injectionStartedAt = started
+		cfg.inboundJournal.recordDirect(cfg, msg, result, sessionID, body)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters
