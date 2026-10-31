@@ -10,13 +10,14 @@ evidence, validation logs and completion manifest are retained there.
 | Slack message | gc receipt | tmux receipt | bytes | harness enqueue/render |
 | --- | --- | --- | --- | --- |
 | 1793396994.219339 | ir-93767-158 | nr-93767-177 | 2373 | absent |
+| 1793400117.363949 | ir-93767-172 | nr-93767-191 | 1963 | absent |
 | 1793400187.460319 | ir-93767-173 | nr-93767-192 | 693 | both present |
 | 1793400217.435699 | ir-93767-174 | nr-93767-193 | 1210 | absent |
 | 1793400533.063889 | ir-93767-175 | nr-93767-194 | 3526 | both present |
 | 1793400564.044799 | ir-93767-176 | nr-93767-195 | 628 | both present |
 | 1793400917.910839 | ir-93767-177 | nr-93767-196 | 1841 | absent |
 
-All six transport receipts report complete payloads and `submitted=true`.
+All seven transport receipts report complete payloads and `submitted=true`.
 The adapter used `POST /v0/city/{city}/extmsg/inbound` with
 `X-GC-Delivery-Receipt: require`. The raw inbound journal is the relevant
 receipt surface for these events, not the separate company-room ingress store.
@@ -25,11 +26,18 @@ The two mayor transcripts were
 `87275b55-c774-4c9d-9013-898e1c0f7b3c.jsonl` and
 `1a4163cb-9eb3-4b65-a431-0f8e2f6ca888.jsonl`, under the city Claude project.
 The three surviving lines have enqueue, `absorbed_mid_turn` removal, rendered
-`queued_command` attachments, and user API text. The missing lines appear only
+`queued_command` attachments, and user API text. The four missing lines appear only
 in later diagnostic/manual tool reads. Those are excluded from ingestion proof.
 The current nudge state had no mayor pending items; it is not a historical
 snapshot and cannot prove the past queue contents. `gc session peek` likewise
 shows the present pane, not the missing historical input.
+
+The fourth loss, reported by the mayor at 00:34Z, is included in
+`incident-journal.jsonl`. Its 22:42:07.635513Z adapter row reports 1,679 payload
+bytes and one quoted-context line. The transport reports 1,963 framed bytes.
+The only transcript hits are a 22:50:28 manual tool result and its API snapshot;
+neither is ingestion. The local record retains `journal-fourth.jsonl`,
+`transport-fourth.log`, `transcript-fourth.json` and the extraction script.
 
 Supervisor evidence is in `~/.gc/supervisor.log`, and adapter evidence in
 `.gc/services/slack/logs/service.log`. The loss is between a tmux transport write

@@ -1,7 +1,7 @@
 # Inbound session ingestion
 
 `delivered` means gc handed the payload to the session transport. It does not
-prove that the harness exposed it to the model. On 2026-10-30, three Slack
+prove that the harness exposed it to the model. On 2026-10-30, four Slack
 deliveries had complete tmux receipts with `submitted=true`, but no harness
 enqueue or rendered attachment; three neighboring deliveries had both.
 
