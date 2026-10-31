@@ -1,0 +1,26 @@
+docs/plans/linux-proof-slack-wecom-20261027.md:5:@Sterling (Citadel Mayor)” (Slack `C0CACRS0162`, timestamp
+docs/plans/2026-08-19-ops-board-audit.md:32:  >72h → attention) and `escalated` (open `gc:escalation` bead). Every row = id + reason chip +
+tests/test_gascity_pack_inference_gate.py:1194:            "mayor and witness escalation",
+tests/test_gascity_pack_inference_gate.py:1195:            id="dropped-witness-escalation",
+tests/test_gascity_pack_inference_gate.py:1231:        # The halt closes its own step straight after the escalation loop. A
+tests/test_gascity_pack_inference_gate.py:1238:            "halt close after escalation",
+tests/test_gascity_pack_inference_gate.py:1239:            id="statement-between-the-escalation-and-the-close",
+tests/test_gascity_pack_inference_gate.py:2066:    write_executable(core / "assets" / "scripts" / "escalate.sh", executable=executable)
+tests/test_gascity_pack_inference_gate.py:2094:        Path("internal/bootstrap/packs/core/assets/scripts/escalate.sh"),
+docs/design/mayor-voice-secretary.md:1:# Mayor voice secretary — outbound FaceTime status calls with read-back-confirmed verdicts
+docs/design/mayor-voice-secretary.md:12:mail you for questions. Anything that escalates to you … It would be nice if you could call us
+docs/design/mayor-voice-secretary.md:88:**[1] Mayor-surface adapter (read side).** A compiler, not a live query layer. Before each
+docs/design/mayor-voice-secretary.md:92:escalations first), an **open-words queue** (the questions the mayor wants answered, each with
+gascity/README.md:11:- **The `gc.mayor` coordinator skill** — a user-facing planner that gathers
+gascity/README.md:71:Prefer a guided experience? Run the coordinator skill instead and let it do
+gascity/README.md:515:per bead; it is not a concurrent close coordinator. All input is validated before
+gascity/skills/mayor/SKILL.md:3:[Omitted long matching line]
+gascity/skills/mayor/SKILL.md:6:# GC Mayor
+gascity/skills/mayor/SKILL.md:10:skill also applies to direct Mayor references such as `Mayor`, `$mayor`,
+gascity/skills/mayor/SKILL.md:11:`/mayor`, and `@mayor`; treat those as requests for coordinator behavior. The
+gascity/skills/mayor/SKILL.md:12:mayor is a coordinator: inspect, interview, write planning artifacts, create
+gascity/skills/mayor/SKILL.md:188:gc sling <coordinator-target> <bead-or-convoy-id> --on <formula-name> \
+gascity/skills/mayor/SKILL.md:195:gc sling <coordinator-target> <formula-name> --formula \
+gascity/skills/mayor/SKILL.md:199:Use `gc.run-operator` as the default coordinator target for this pack unless
+gascity/tests/test_formula_assets.py:834:        # derived packs. A hard-coded coordinator recipient, or a mail send
+gascity/template-fragments/gc-role-worker.template.md:194:  and follow the bead's escalation contract after the bounded wait of the

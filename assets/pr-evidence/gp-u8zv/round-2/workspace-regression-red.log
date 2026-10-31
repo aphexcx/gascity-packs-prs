@@ -1,0 +1,44 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___ test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane ___
+
+    def test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane() -> None:
+        """Round 9 (Afik, 9/9 22:28 CT: "drop the fallback if we don't use it").
+        Rounds 2, 3, 4, 7 and 8 each patched one paragraph that had a role the
+        city gave no lane make its own worktree; no citadel dispatch takes that
+        path since the city half went live. The fragment now carries NO
+        worktree-creating instruction anywhere in its role-session text (no `git
+        worktree add` verb, no `.worktrees/...` path to make, no base to resolve),
+        and ONE paragraph says what a session outside a gc-made lane does: the
+        three-part boundary test, then read by `git show` / `git log -1` only,
+        and `gc.outcome=fail` + `gc.failure_class=no-lane` naming the lane the
+        city must give the role. Grep-driven over the fragment and the README."""
+        text = fragment()
+        flat = " ".join(text.split())
+        # No worktree-creating verb and no trace of the fallback, anywhere in the fragment.
+        for gone in (
+            "worktree add",
+            ".worktrees/<rig>/<bead>",
+            "create your worktree",
+            "mail the mayor that this role needs a lane",
+            "Resolve the base of a new branch",
+            "<remote>/HEAD",
+            "<remote>/main",
+            "<remote>/master",
+            "rev-parse --verify '<base>^{commit}'",
+            "This fallback never fails",
+            "If `$GC_DIR` is the rig root",
+        ):
+            assert gone not in flat, f"the fragment still carries the lane-less fallback: {gone!r}"
+>       assert "fallback" not in flat.lower()
+E       assert 'fallback' not in '{{ define ".... {{- end }}'
+E
+E         'fallback' is contained here:
+E         ?                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    ...
+E
+E         ...Full output truncated, use '-vv' to show
+
+tests/test_gc_role_worker_fragment.py:255: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_gc_role_worker_fragment.py::test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane
+1 failed, 412 deselected in 2.46s

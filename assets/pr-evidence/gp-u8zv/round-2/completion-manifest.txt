@@ -1,0 +1,12 @@
+baseline | env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'blocked_wait or role_prompts_render_public_worker_fragment' | exit=0
+red | env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'blocked_wait or role_prompts_render_public_worker_fragment' | exit=1
+green | env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'blocked_wait or role_prompts_render_public_worker_fragment' | exit=0
+final green | env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'blocked_wait or role_prompts_render_public_worker_fragment' | exit=0
+workspace regression red | env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k session_outside_a_lane | exit=1
+all worker contracts | env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'gc_role_worker_fragment or role_prompts_render_public_worker_fragment' | exit=0
+full suite | make test | exit=2
+pnpm race recheck (cwd gascity) | env -u GC_TEMPLATE uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k test_concurrent_callers_wait_for_one_install_instead_of_racing_it | exit=0
+full suite final | make test | exit=0
+tracked worktree matches reviewed commit | git diff --quiet -- claimed source tests evidence paths | exit=0
+final committed delta whitespace | git diff --check 052ec10e2efdcaa38fae88285b9354cf0fe07f32 HEAD -- claimed source tests evidence paths | exit=2
+staged evidence whitespace | git diff --cached --check -- assets/pr-evidence/gp-u8zv/round-2 | exit=0
