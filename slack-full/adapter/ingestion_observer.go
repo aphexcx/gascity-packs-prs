@@ -68,8 +68,12 @@ func ingestionSanitize(text string) string {
 	}
 }
 
+func ingestionObserverDisabled() bool {
+	return os.Getenv("SLACK_INGESTION_OBSERVER_DISABLED") == "1"
+}
+
 func startIngestionObserver(cfg config) func() {
-	if cfg.inboundJournal == nil || os.Getenv("SLACK_INGESTION_OBSERVER_DISABLED") == "1" {
+	if cfg.inboundJournal == nil || ingestionObserverDisabled() {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -132,6 +136,11 @@ type ingestionRecordDays struct {
 // settled rows too: newer transport rows must not outlive their verdicts.
 // receiptStart protects held receipts independently of member observation.
 func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]inboundJournalRecord, map[string]ingestionRecordDays, time.Time, error) {
+	if ingestionObserverDisabled() {
+		// With no observer to settle handoffs, use ordinary journal retention.
+		// Do not let unresolved rows pin disabled-mode history indefinitely.
+		return nil, nil, time.Time{}, nil
+	}
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
 		return nil, nil, time.Time{}, err

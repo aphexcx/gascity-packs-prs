@@ -61,7 +61,10 @@ represent failed transport handoffs.
 
 The observer starts with the adapter by default. Set
 `SLACK_INGESTION_OBSERVER_DISABLED=1` before starting the adapter to disable
-transcript polling and observer alerts; inbound journaling remains enabled.
+transcript polling and observer alerts; inbound journaling remains enabled
+with its normal configured retention, without observation-related retention
+extensions. Re-enabling observes retained eligible deliveries; expired records
+are not recovered.
 It uses
 `GET /v0/city/{city}/session/{id}/transcript?format=raw&tail=1`, verifies the
 response identity/format, and follows `before` cursors across compaction

@@ -52,6 +52,14 @@ and malformed JSON lines produce a counted warning instead of disabling all
 observation. A torn final fragment is separated from the next append so the
 new complete row remains readable. No production process was changed.
 
+The first lane DEEP gate at `0492bff8` returned BLOCK: disabled observation
+could leave handoffs unresolved indefinitely and pin journal retention. The
+follow-up fix applies ordinary configured retention while disabled, bypassing
+observation reconstruction and its retention extensions. A red-then-green
+regression covers midnight expiry, continued journaling and re-enabling against
+the retained current-day delivery. The original verdict remains recorded in
+`codex-review-r1.out`; the replacement review covers the whole round delta.
+
 ## Validation
 
 Go 1.27.3 darwin/arm64; Python 3.13.13 with pytest, PyYAML and jsonschema
@@ -65,11 +73,14 @@ contains counts and the names of expected red failures and skipped tests.
   changes were restored byte-for-byte afterwards. `final-regressions-red.jsonl`
   contains the assertions and the complete run.
 - `go test -race -json -run '^Test(Ingestion|InboundJournal|ReceiptFollowUp)' -count=1 .`
-  in `slack-full/adapter`: 96 passes including subtests, one opt-in live skip.
-  This includes the final creation-time and tool-return-time late cases.
+  in `slack-full/adapter`: 97 passes including subtests, one opt-in live skip.
+  This includes the final timestamp cases and disabled-mode retention fix.
+  `focused-r2-green.jsonl` records the complete run; `disabled-red.jsonl`
+  records the new regression's failure before that fix.
 - `go test -race -json -count=1 ./...` in `slack-full/adapter`: 1,431 top-level
-  passes / 12,832 including subtests, two opt-in skips. A final run includes
-  the two additional timestamp cases added after this full run.
+  passes / 12,834 including subtests, two opt-in skips before the disabled-mode
+  follow-up. The full suite is rerun for that fix as well. The earlier full run
+  passed 12,832 before the two extra timestamp cases.
 - The same full race command in `slack-full/cli`: 199 top-level passes / 237
   including subtests, no skips.
 - `go vet ./...` in `slack-full/adapter`: passed.

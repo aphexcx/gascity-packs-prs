@@ -115,3 +115,44 @@ func TestIngestionTornJournalLineDoesNotHideCompleteRecords(t *testing.T) {
 		t.Fatal("warning exposed journal contents")
 	}
 }
+
+func TestIngestionDisabledRetainsNormallyAndCanBeReenabled(t *testing.T) {
+	t.Setenv("SLACK_INGESTION_OBSERVER_DISABLED", "1")
+	at := time.Date(2026, 10, 30, 23, 59, 0, 0, time.UTC)
+	now := at
+	j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
+	old := ingestionTestRecord("100.1", at, "old body")
+	if err := j.append(old); err != nil {
+		t.Fatal(err)
+	}
+	now = at.Add(2 * time.Minute)
+	current := ingestionTestRecord("100.2", now, "current body")
+	if err := j.append(current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(j.dir, at.Format("20060102")+".jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("disabled observer pinned an expired handoff: %v", err)
+	}
+	rows := ingestionJournalRows(t, j)
+	if len(rows) != 1 || rows[0].MessageTS != current.MessageTS {
+		t.Fatalf("disabled mode must continue normal journaling: %v", rows)
+	}
+	// Re-enable as on a later adapter start. Retained deliveries can still
+	// become observations; expired data does not pin or poison reconstruction.
+	t.Setenv("SLACK_INGESTION_OBSERVER_DISABLED", "0")
+	j = &inboundJournal{dir: j.dir, retentionDays: 1, now: func() time.Time { return now }}
+	o := &ingestionObserver{cfg: config{inboundJournal: j}, now: func() time.Time { return now },
+		fetch: func(context.Context, string) ([]json.RawMessage, error) {
+			return []json.RawMessage{ingestionTestEntry(t, current, "current body", "attachment")}, nil
+		},
+		notify: func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }}
+	if err := o.step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range ingestionJournalRows(t, j) {
+		if row.MessageTS == current.MessageTS && row.Status == "ingested" {
+			return
+		}
+	}
+	t.Fatal("re-enabled observer failed to record retained input")
+}

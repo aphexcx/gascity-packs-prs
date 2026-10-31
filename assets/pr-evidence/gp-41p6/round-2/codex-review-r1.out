@@ -1,0 +1,24 @@
+# codex-gate review: base a648f8ee2e7ff52e3b21359842c01cf803900d75 (merge base of --base a648f8ee2e7ff52e3b21359842c01cf803900d75 = a648f8ee2e7ff52e3b21359842c01cf803900d75 and the head) head 0492bff85106f3692a5a8f570b884b159a85b92e; 13 file(s) (6 under assets/pr-evidence/, outside the --max-files cap; 7 counted); class DEEP; model gpt-6-astra; 2026-10-31T04:08:00Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex-b; 25 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  assets/pr-evidence/gp-41p6/README.md                           |   4 +-
+#  assets/pr-evidence/gp-41p6/live-journal.jsonl                  |  30 ++++++------
+#  assets/pr-evidence/gp-41p6/round-2/README.md                   |  78 ++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-41p6/round-2/completion-manifest.txt     |   7 +++
+#  assets/pr-evidence/gp-41p6/round-2/final-regressions-red.jsonl |  52 ++++++++++++++++++++
+#  assets/pr-evidence/gp-41p6/round-2/test-results.json           |  86 +++++++++++++++++++++++++++++++++
+#  slack-full/adapter/inbound_journal.go                          |  57 ++++++++++++++++++++--
+#  slack-full/adapter/ingestion_late_round2_test.go               |  84 ++++++++++++++++++++++++++++++++
+#  slack-full/adapter/ingestion_observer.go                       |  72 ++++++++++++++++++++--------
+#  slack-full/adapter/ingestion_observer_test.go                  |   7 ++-
+#  slack-full/adapter/ingestion_operations_round2_test.go         | 117 +++++++++++++++++++++++++++++++++++++++++++++
+#  slack-full/adapter/ingestion_retention_round2_test.go          | 127 +++++++++++++++++++++++++++++++++++++++++++++++++
+#  slack-full/docs/inbound-ingestion.md                           |  29 ++++++++---
+#  13 files changed, 703 insertions(+), 47 deletions(-)
+
+- **Major — disabling the observer also prevents journal expiry.** [ingestion_observer.go:72](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.wAambj/tree/slack-full/adapter/ingestion_observer.go:72): With `SLACK_INGESTION_OBSERVER_DISABLED=1`, deliveries still enter the journal, but nothing marks them ingested or alerted. Retention therefore treats every handoff as unresolved and permanently pins its day and all later segments. One delivered receipt is enough to defeat configured retention. Once accumulated segments exceed 64 MiB, reconstruction rejects them, so re-enabling the observer cannot recover without manual cleanup. Propagate the disabled state into a bounded retention policy, and cover expiry and re-enabling with a regression test.
+
+Tests: **not run (sandbox)**. [Committed evidence](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.wAambj/tree/assets/pr-evidence/gp-41p6/round-2/test-results.json) reports passing focused ingestion tests, adapter/CLI race suites, vet, and Python tests; it does not cover disabled-observer retention.
+
+VERDICT: BLOCK

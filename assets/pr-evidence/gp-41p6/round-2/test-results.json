@@ -82,5 +82,41 @@
     "run": "diff-check",
     "cwd": ".",
     "command_and_exit": "git diff --check | exit=0"
+  },
+  {
+    "run": "adapter-final-race",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 12834,
+      "fail": 0,
+      "skip": 2,
+      "top_level_pass": 1431
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement"
+    ]
+  },
+  {
+    "run": "disabled-red",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -json -run TestIngestionDisabledRetainsNormallyAndCanBeReenabled -count=1 . | exit=1",
+    "counts": {
+      "pass": 0,
+      "fail": 1,
+      "skip": 0
+    }
+  },
+  {
+    "run": "focused-r2-green",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -run Test(Ingestion|InboundJournal|ReceiptFollowUp) -count=1 . | exit=0",
+    "counts": {
+      "pass": 97,
+      "fail": 0,
+      "skip": 1
+    }
   }
 ]

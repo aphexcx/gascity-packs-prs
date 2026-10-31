@@ -5,3 +5,6 @@ slack-full/cli | go test -race -json -count=1 ./... | exit=0
 slack-full | uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q | exit=0
 slack-full/adapter | go vet ./... | exit=0
 . | git diff --check | exit=0
+slack-full/adapter (final) | go test -race -json -count=1 ./... | exit=0
+slack-full/adapter | go test -json -run TestIngestionDisabledRetainsNormallyAndCanBeReenabled -count=1 . | exit=1
+slack-full/adapter | go test -race -json -run Test(Ingestion|InboundJournal|ReceiptFollowUp) -count=1 . | exit=0
