@@ -53,6 +53,7 @@ type inboundJournalRecord struct {
 	StartedAt          time.Time          `json:"started_at,omitempty"`
 	Evidence           *ingestionEvidence `json:"ingestion_evidence,omitempty"`
 	Alerted            bool               `json:"alerted,omitempty"`
+	Late               bool               `json:"late,omitempty"`
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
@@ -158,8 +159,22 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 			}
 		}
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
 	if err != nil {
+		return err
+	}
+	// A crash can leave an unterminated JSON fragment. Isolate it so the
+	// next complete record is not swallowed along with the torn line.
+	info, err := f.Stat()
+	if err == nil && info.Size() > 0 {
+		var last [1]byte
+		_, err = f.ReadAt(last[:], info.Size()-1)
+		if err == nil && last[0] != '\n' {
+			data = append([]byte{'\n'}, data...)
+		}
+	}
+	if err != nil {
+		f.Close()
 		return err
 	}
 	_, err = f.Write(data)
@@ -201,7 +216,7 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	// Retention must not erase the recovery record for a still-unseen
 	// delivery or an alert that has not reached the mayor. Preserve its
 	// original interval and all later updates until observation settles.
-	pending, receiptStart, err := j.pendingIngestionLocked(now)
+	observations, recordDays, receiptStart, err := j.ingestionStateLocked(now)
 	if err != nil {
 		return fmt.Errorf("journal pruning deferred: %w", err)
 	}
@@ -210,10 +225,46 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 			cutoff = day
 		}
 	}
-	for _, observation := range pending {
+	for _, observation := range observations {
+		if ingestionSettled(observation, now) {
+			continue
+		}
 		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt)
 		if day := start.UTC().Format("20060102"); day < cutoff {
 			cutoff = day
+		}
+	}
+	// A settled member's evidence may be in yesterday's file while today's
+	// transport conclusion still names that member. Copy only those verdicts
+	// that would otherwise be deleted before their newer rows. Preserve all
+	// timestamps, proof and alert state; fsync before removing any source.
+	var carry []byte
+	for key, observation := range observations {
+		d := recordDays[key]
+		if !ingestionSettled(observation, now) || d.selected >= cutoff || d.latest < cutoff {
+			continue
+		}
+		b, err := json.Marshal(observation)
+		if err != nil {
+			return err
+		}
+		carry = append(append(carry, b...), '\n')
+	}
+	if len(carry) > 0 {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			return err
+		}
+		_, err = f.Write(carry)
+		if err == nil {
+			err = f.Sync()
+		}
+		closeErr := f.Close()
+		if err != nil {
+			return err
+		}
+		if closeErr != nil {
+			return closeErr
 		}
 	}
 	for _, name := range expired {

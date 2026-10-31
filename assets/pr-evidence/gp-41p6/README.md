@@ -143,9 +143,7 @@ No Node or pnpm commands were used.
 
 ## Controlled live proof
 
-The mayor authorized synthetic events in C0AMHQ74ZLK / 1793403453.255169 with
-the explicit prefix `[gp-41p6 synthetic test N of 3, not Afik]`. The actual
-foreground tool ran from 01:25:16Z to 01:28:30Z on 2026-10-31. Events were sent
+The foreground tool ran from 01:25:16Z to 01:28:30Z on 2026-10-31. Events were sent
 at 01:26:05Z, 01:26:35Z and 01:27:05Z. All three surfaced as rendered
 `queued_command` attachments when that tool returned; the mayor independently
 confirmed them. Their receipt summaries remained `pending` despite complete

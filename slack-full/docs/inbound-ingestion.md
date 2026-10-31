@@ -44,6 +44,13 @@ The mail command and each target's transcript fetch have ten-second limits.
 The normal alert latency is the three-minute window plus one polling pass.
 The controlled busy-session proof needed 2m16s for the first queued input to
 render after the held tool call, so a two-minute window was too short.
+Longer tool calls can outlast the alert window: the mayor's consolidator runs
+for 60–90 minutes. An alerted row therefore remains observable for two hours
+from handoff (90 minutes plus 30 minutes of margin). Matching input rendered
+within that horizon appends `status=ingested`, `late=true` with its evidence;
+this supersedes the earlier unseen verdict without retracting or repeating the
+alert. After the horizon an alerted row stops polling. Failed alerts remain
+retryable. The three-minute initial alert deadline is unchanged.
 
 There is no automatic whole-message resend: a draft may still be in the
 harness, and resending could duplicate a founder instruction. The mayor reads
@@ -52,26 +59,36 @@ format also produces `delivered_unseen`; absence of proof is not a claim that
 the message was definitely lost. The existing dead-letter file continues to
 represent failed transport handoffs.
 
-The observer starts with the adapter. It uses
+The observer starts with the adapter by default. Set
+`SLACK_INGESTION_OBSERVER_DISABLED=1` before starting the adapter to disable
+transcript polling and observer alerts; inbound journaling remains enabled.
+It uses
 `GET /v0/city/{city}/session/{id}/transcript?format=raw&tail=1`, verifies the
 response identity/format, and follows `before` cursors across compaction
 boundaries. All pages together are capped at 32 MiB and 64 requests; missing
 or repeated cursors fail visibly. Transcript text is never logged. It reads
 at most 64 MiB of retained journal segments per pass, under the journal lock.
-Malformed/over-budget journals fail visibly in the service log and require
-operator attention; they cannot generate trustworthy ingestion receipts.
+Malformed JSON lines are skipped with a counted warning that contains no
+journal contents. Appends isolate an unterminated final fragment so it cannot
+swallow the next complete record. Read errors and over-budget journals fail
+visibly and require operator attention.
 Retention preserves the oldest unresolved delivery's day and all later
-segments until ingestion is proved or its unseen alert succeeds. This keeps
+segments until ingestion is proved or its alerted late horizon expires. This keeps
 one-day retention from erasing an observation at midnight and preserves
 failed alerts across restarts. Initial pending receipts retain their original
-timing independently before a handoff is observable. Follow-ups ending without
+timing and settled-member evidence independently until transport follow-up
+concludes or ends; a member's ingestion never concludes the whole receipt.
+Before pruning, settled member verdicts are copied durably into the current
+segment if newer retained transport rows could otherwise re-enroll them.
+Their timestamps, evidence and alert state are preserved; copies expire with
+normal journal retention. Follow-ups ending without
 a gc conclusion write `phase=follow_up_ended`, `status=unverified`; this is an
 adapter disposition, not a delivery claim. After a crash, orphan timing is
 protected for at most 23 minutes: the two ten-minute follow-up attempts plus
 the three-minute observation margin. This bound does not expire actual handoff
 observations or unsent unseen alerts.
 Normal pruning resumes when observations settle;
-malformed or over-budget reconstruction defers pruning with an error.
+read failures or over-budget reconstruction defer pruning with an error.
 Pre-upgrade rows without a payload fingerprint are excluded to avoid retroactive
 alerts. The journal is the
 recovery record; deleting it discards alert completion history. A crash between

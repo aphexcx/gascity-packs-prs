@@ -266,6 +266,11 @@ func TestIngestionFetchChecksIdentityAndMailFailureIsDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, err = o.pending()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("alerted row must remain observable for late input: %v %v", rows, err)
+	}
+	now = now.Add(ingestionLateWindow)
+	rows, err = o.pending()
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("unsettled: %v %v", rows, err)
 	}
@@ -317,7 +322,7 @@ func TestIngestionCodexUserInputAndDeadline(t *testing.T) {
 				t.Fatal("native Codex proof needs a stable record identifier")
 			}
 		}
-		entry["timestamp"] = r.DeliveredAt.Add(ingestionWindow + time.Second)
+		entry["timestamp"] = r.DeliveredAt.Add(ingestionLateWindow + time.Second)
 		b, _ = json.Marshal(entry)
 		if ingestionProof(b, r) != nil {
 			t.Fatal("late input passed the bounded window")

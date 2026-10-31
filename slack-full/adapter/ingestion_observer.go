@@ -22,6 +22,10 @@ import (
 )
 
 const ingestionWindow = 3 * time.Minute
+
+// The measured consolidator tool call lasts 60-90 minutes. Allow two hours
+// from handoff for rendered input to appear, while still alerting at 3 minutes.
+const ingestionLateWindow = 2 * time.Hour
 const ingestionPollInterval = 5 * time.Second
 const ingestionReadLimit = 32 << 20
 
@@ -65,7 +69,7 @@ func ingestionSanitize(text string) string {
 }
 
 func startIngestionObserver(cfg config) func() {
-	if cfg.inboundJournal == nil {
+	if cfg.inboundJournal == nil || os.Getenv("SLACK_INGESTION_OBSERVER_DISABLED") == "1" {
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,46 +105,72 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	j := o.cfg.inboundJournal
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	rows, _, err := j.pendingIngestionLocked(time.Time{})
+	now := time.Now()
+	if o.now != nil {
+		now = o.now()
+	}
+	rows, _, _, err := j.ingestionStateLocked(now)
+	for key, row := range rows {
+		if ingestionSettled(row, now) {
+			delete(rows, key)
+		}
+	}
 	return rows, err
 }
 
+func ingestionSettled(r inboundJournalRecord, now time.Time) bool {
+	return r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted && !now.Before(r.DeliveredAt.Add(ingestionLateWindow)))
+}
+
+type ingestionRecordDays struct {
+	selected string // segment containing the selected member verdict
+	latest   string // newest segment containing any row for this member
+}
+
 // Shared with retention pruning. The caller holds j.mu so pending evidence
-// cannot be removed between reconstruction and the pruning decision. The
-// second result protects initial pending receipts before they become eligible
-// for session observation; it never treats an acceptance as a handoff.
-func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string]inboundJournalRecord, time.Time, error) {
+// cannot be removed between reconstruction and the pruning decision. Keep
+// settled rows too: newer transport rows must not outlive their verdicts.
+// receiptStart protects held receipts independently of member observation.
+func (j *inboundJournal) ingestionStateLocked(pruningAt time.Time) (map[string]inboundJournalRecord, map[string]ingestionRecordDays, time.Time, error) {
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, nil, time.Time{}, err
 	}
 	sort.Strings(paths)
 	rows := make(map[string]inboundJournalRecord)
+	days := make(map[string]ingestionRecordDays)
 	alerted := make(map[string]bool)
 	started := make(map[string]time.Time)
 	held := make(map[string]bool)
 	concluded := make(map[string]bool)
+	skipped := 0
+	defer func() {
+		if skipped > 0 {
+			log.Printf("ingestion observer: skipped %d malformed journal line(s)", skipped)
+		}
+	}()
 	remaining := int64(64 << 20)
 	for _, path := range paths {
+		day := strings.SplitN(filepath.Base(path), ".", 2)[0]
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, nil, time.Time{}, err
 		}
 		remaining -= info.Size()
 		if remaining < 0 {
-			return nil, time.Time{}, fmt.Errorf("journal exceeds 64 MiB observation budget")
+			return nil, nil, time.Time{}, fmt.Errorf("journal exceeds 64 MiB observation budget")
 		}
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, nil, time.Time{}, err
 		}
 		s := bufio.NewScanner(f)
 		s.Buffer(make([]byte, 4096), 1<<20)
 		for s.Scan() {
 			var r inboundJournalRecord
 			if err := json.Unmarshal(s.Bytes(), &r); err != nil {
-				f.Close()
-				return nil, time.Time{}, fmt.Errorf("invalid journal row: %w", err)
+				skipped++
+				continue
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
 			// acknowledgements or flood the mailbox on the first upgrade.
@@ -153,7 +183,7 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 			if r.Phase == "accepted" && r.ReceiptID != "" && receiptStatusPending(r.Status) {
 				held[identity] = true
 			}
-			if r.Phase == "concluded" || r.Phase == receiptFollowUpEnded || receiptStatusPositive(r.Status) || r.Status == "ingested" || r.Status == "delivered_unseen" {
+			if r.Phase == "concluded" || r.Phase == receiptFollowUpEnded || receiptStatusPositive(r.Status) {
 				concluded[identity] = true
 			}
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
@@ -171,6 +201,7 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 					continue
 				}
 				key := ingestionKey(r, session)
+				recordDays := ingestionRecordDays{selected: day, latest: day}
 				copy := r
 				copy.TargetSessions = []string{session}
 				if len(r.HandoffSessions) > 0 {
@@ -188,6 +219,7 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 						(old.Status == "delivered_unseen" && copy.Status != "ingested") ||
 						(copy.Status != "ingested" && copy.Status != "delivered_unseen" && old.TS.After(copy.TS)) {
 						copy = old
+						recordDays.selected = days[key].selected
 					}
 					copy.DeliveredAt = handoff
 					if canonical != "" {
@@ -195,12 +227,13 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 					}
 				}
 				rows[key] = copy
+				days[key] = recordDays
 			}
 		}
 		err = s.Err()
 		f.Close()
 		if err != nil {
-			return nil, time.Time{}, err
+			return nil, nil, time.Time{}, err
 		}
 	}
 	for key, r := range rows {
@@ -209,9 +242,6 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 			r.Alerted = true
 		}
 		rows[key] = r
-		if r.Status == "ingested" || (r.Status == "delivered_unseen" && r.Alerted) {
-			delete(rows, key)
-		}
 	}
 	var receiptStart time.Time
 	for identity := range held {
@@ -219,7 +249,7 @@ func (j *inboundJournal) pendingIngestionLocked(pruningAt time.Time) (map[string
 			receiptStart = earlierIngestionTime(receiptStart, started[identity])
 		}
 	}
-	return rows, receiptStart, nil
+	return rows, days, receiptStart, nil
 }
 
 func earlierIngestionTime(a, b time.Time) time.Time {
@@ -282,6 +312,7 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			if r.CanonicalSessionID != "" {
 				proof.SessionID = r.CanonicalSessionID
 			}
+			r.Late = !o.now().Before(r.DeliveredAt.Add(ingestionWindow))
 			r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
 			if err := o.cfg.inboundJournal.append(r); err != nil {
 				return err
@@ -290,6 +321,9 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		}
 		if o.now().Before(r.DeliveredAt.Add(ingestionWindow)) {
 			continue
+		}
+		if r.Alerted && r.Status == "delivered_unseen" {
+			continue // Keep looking for late proof without another alert or row.
 		}
 		if r.Status != "delivered_unseen" {
 			r.Status, r.Phase = "delivered_unseen", "ingestion"
@@ -455,7 +489,7 @@ func ingestionProof(raw json.RawMessage, r inboundJournalRecord) *ingestionEvide
 	if start.IsZero() {
 		start = r.DeliveredAt
 	}
-	if entry.Timestamp.Before(start.Add(-30*time.Second)) || entry.Timestamp.After(r.DeliveredAt.Add(ingestionWindow)) {
+	if entry.Timestamp.Before(start.Add(-30*time.Second)) || entry.Timestamp.After(r.DeliveredAt.Add(ingestionLateWindow)) {
 		return nil
 	}
 	var texts []string
