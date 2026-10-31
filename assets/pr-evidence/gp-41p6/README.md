@@ -53,11 +53,18 @@ but aphexcx/gascity has issues disabled (papercut pc_e351afea85e3).
 The journal stores a complete payload SHA-256 and proof format, never message
 text. The observer accepts actual rendered Claude/Codex user records, matches
 the complete payload and extmsg coordinates, and writes `ingested` with entry
-evidence. After two minutes without proof it writes `delivered_unseen`, sends
+evidence. After three minutes without proof it writes `delivered_unseen`, sends
 a deduplicated mayor mail, and records completion. Disk journal reconstruction
 preserves restart recovery. The test reproduces three lines inside thirty
 seconds with quoted-context windows, the missing middle input, a later manual
 read that must not count, and exactly one alert across observer restart.
+
+The first completed Codex gate found four major gaps: concluded pending/mixed
+fanouts, held-alias fingerprint format, session-name resolution, and proof
+hidden by compaction pagination. Four regressions failed before the fixes and
+passed afterward. Handoff eligibility is now retained per member; direct
+reminders share their recording path; canonical targets are pinned in the
+journal; transcript reads follow older pages within one shared budget.
 
 No message is automatically replayed. No peer-city delivery, company receipt
 state machine, dead-letter semantics, production binary, or founder-gap-watch
@@ -72,15 +79,46 @@ No Node or pnpm commands were used.
 - Before implementation: `go test -run '^TestInboundJournalCarriesSessionProofIdentity$' -count=1 .`
   in `slack-full/adapter` failed because the delivered row lacked proof identity.
 - `go test -race -json -count=1 ./...` in `slack-full/adapter`: exit 0,
-  1,410 top-level tests / 12,792 tests including subtests passed; one skipped.
+  1,416 top-level tests / 12,798 tests including subtests passed; two skipped
+  (`TestIngestionLiveBusySessionProof` and `TestMinimalReplayMeasurement`).
 - Same command in `slack-full/cli`: exit 0, 199 top-level tests / 237 including
   subtests passed; none skipped.
 - `uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q`
   in `slack-full`: exit 0, 907 passed, two skipped. Two existing fork-in-thread
   deprecation warnings in `test_slack_company_outbound.py`.
-- After Codex proof support and the opt-in live harness:
+- After the four review fixes:
   `go test -race -json -run '^Test(Ingestion|InboundJournal)' -count=1 .`
-  in `slack-full/adapter`: exit 0, ten passed, one intentionally skipped live test.
+  in `slack-full/adapter`: exit 0, 15 passed, one intentionally skipped live test.
+- `go vet ./...` in `slack-full/adapter`: exit 0.
 
-The live proof and review results will be recorded before handoff. The mayor
-alone retires the founder gap watch after a week with zero unseen rows.
+## Controlled live proof
+
+The mayor authorized synthetic events in C0AMHQ74ZLK / 1793403453.255169 with
+the explicit prefix `[gp-41p6 synthetic test N of 3, not Afik]`. The actual
+foreground tool ran from 01:25:16Z to 01:28:30Z on 2026-10-31. Events were sent
+at 01:26:05Z, 01:26:35Z and 01:27:05Z. All three surfaced as rendered
+`queued_command` attachments when that tool returned; the mayor independently
+confirmed them. Their receipt summaries remained `pending` despite complete
+byte counts: submit confirmation was a false negative in this run.
+
+| Message | Receipt | Session entry UUID |
+| --- | --- | --- |
+| 1793409965.000001 | ir-93767-207 | f3a01ef3-ff3f-48e2-83be-43375c914b51 |
+| 1793409995.000002 | ir-93767-208 | e01ac4dc-a649-4f75-bd31-e7cb7ea1679b |
+| 1793410025.000003 | ir-93767-209 | 3b3ef04c-7a82-48eb-b0e3-90739e87fd12 |
+
+The original observer skipped the concluded-pending rows, and its test run
+timed out because the scheduled wait consumed the command budget. After the
+fix, a **readback-only** run checked those same events and wrote all three
+`ingested` receipts. No event was resent. Payload fingerprints came from gc's
+external transcript, independently of the session transcript; imported rows
+are explicitly marked `proof_import`. `live-journal.jsonl` contains the full
+rows and `live-session-facts.json` contains the tool/input facts. This proves
+the matching logic against a real busy session; it is not a claim that the
+production adapter has been upgraded or that its continuous observer ran.
+
+`live-proof-readback.log` and the completion manifest record exit 0 for
+`go test -v -run '^TestIngestionLiveBusySessionProof$' -count=1 -timeout=2m .`
+from `slack-full/adapter`, with the readback spec in
+`GC_SLACK_INGESTION_PROOF_SPEC`. The mayor alone retires the founder gap watch
+after a week with zero unseen rows.

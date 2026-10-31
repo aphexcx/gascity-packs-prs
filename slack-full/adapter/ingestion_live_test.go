@@ -27,12 +27,13 @@ func TestIngestionLiveBusySessionProof(t *testing.T) {
 		t.Skip("requires a mayor-coordinated live proof spec")
 	}
 	var spec struct {
-		Channel   string    `json:"channel"`
-		ThreadTS  string    `json:"thread_ts"`
-		UserID    string    `json:"user_id"`
-		SessionID string    `json:"session_id"`
-		EventsURL string    `json:"events_url"`
-		Start     time.Time `json:"start"`
+		Channel    string    `json:"channel"`
+		ThreadTS   string    `json:"thread_ts"`
+		UserID     string    `json:"user_id"`
+		SessionID  string    `json:"session_id"`
+		EventsURL  string    `json:"events_url"`
+		Start      time.Time `json:"start"`
+		Timestamps []string  `json:"message_timestamps"`
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -48,7 +49,11 @@ func TestIngestionLiveBusySessionProof(t *testing.T) {
 	if err != nil || u.Scheme != "http" || u.Hostname() != "127.0.0.1" || u.Path != "/slack/events" {
 		t.Fatal("proof requires the local adapter events endpoint")
 	}
-	if time.Until(spec.Start) < 0 || time.Until(spec.Start) > 10*time.Minute {
+	readback := len(spec.Timestamps) > 0
+	if readback && (len(spec.Timestamps) != 3 || time.Since(spec.Start) < 0 || time.Since(spec.Start) > 24*time.Hour) {
+		t.Fatal("readback requires three existing timestamps from the last day")
+	}
+	if !readback && (time.Until(spec.Start) < 0 || time.Until(spec.Start) > 10*time.Minute) {
 		t.Fatal("proof start must be within the next ten minutes")
 	}
 	cfg, err := loadConfig()
@@ -58,12 +63,19 @@ func TestIngestionLiveBusySessionProof(t *testing.T) {
 	if cfg.slackSigningKey == "" {
 		t.Fatal("signing key unavailable")
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), spec.Start.Add(4*time.Minute))
+	deadline := spec.Start.Add(5 * time.Minute)
+	if readback {
+		deadline = time.Now().Add(time.Minute)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	client := &http.Client{Timeout: 10 * time.Second}
 	marker := "gp-41p6 synthetic ingestion proof " + spec.Start.UTC().Format(time.RFC3339)
-	var timestamps []string
-	for i := 0; i < 3; i++ {
+	timestamps := append([]string(nil), spec.Timestamps...)
+	if readback {
+		t.Logf("readback only; no events posted: %v", timestamps)
+	}
+	for i := 0; !readback && i < 3; i++ {
 		delay := time.Until(spec.Start.Add(time.Duration(i) * 30 * time.Second))
 		if delay > 0 {
 			select {
@@ -169,8 +181,24 @@ func TestIngestionLiveBusySessionProof(t *testing.T) {
 					t.Fatalf("proof failed: delivered_unseen receipt=%s ts=%s", r.ReceiptID, r.MessageTS)
 				}
 				payload, ok := payloads[r.MessageTS]
-				if r.Status != "delivered" || imported[r.MessageTS] || !ok {
+				if imported[r.MessageTS] || !ok {
 					continue
+				}
+				if r.Status != "delivered" {
+					if r.Phase != "concluded" {
+						continue
+					}
+					pollCtx, stop := context.WithTimeout(ctx, 10*time.Second)
+					state, receipt, err := pollInboundReceipt(pollCtx, cfg, r.ReceiptID)
+					stop()
+					if err != nil {
+						f.Close()
+						t.Fatal(err)
+					}
+					if state != receiptPollConcluded || !receipt.landedUnconfirmed() {
+						continue
+					}
+					r.HandoffSessions = append([]string(nil), r.TargetSessions...)
 				}
 				if len(payload) != r.Bytes {
 					f.Close()

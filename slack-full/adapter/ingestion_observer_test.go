@@ -135,7 +135,7 @@ func TestIngestionThreeBusySessionLinesWithQuotedWindows(t *testing.T) {
 	if mailCount != 0 || fetchCount != 1 {
 		t.Fatalf("early mail=%d fetch=%d", mailCount, fetchCount)
 	}
-	now = at.Add(3 * time.Minute)
+	now = at.Add(4 * time.Minute)
 	if err := o.step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -202,6 +202,10 @@ func TestIngestionAllThreeRenderedAndFanout(t *testing.T) {
 
 func TestIngestionFetchChecksIdentityAndMailFailureIsDurable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v0/city/test/session/s1" {
+			fmt.Fprint(w, `{"id":"s1"}`)
+			return
+		}
 		if r.URL.Path != "/v0/city/test/session/s1/transcript" || r.URL.Query().Get("format") != "raw" || r.URL.Query().Get("tail") != "1" {
 			t.Errorf("wrong request %s", r.URL)
 		}

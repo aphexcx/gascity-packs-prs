@@ -5133,10 +5133,7 @@ func processSlackEvent(cfg config, aliasReg *handleAliasRegistry, threadReg *thr
 					cfg.receiptFollowUps.note(heldDelivery{
 						receiptID: aliasReceipt.id,
 						observeReceipt: func(r deliveryReceipt) {
-							m := heldEnv
-							m.Text = heldBody
-							r.members = []deliveryReceiptMember{{SessionID: heldSession}}
-							heldCfg.inboundJournal.record(heldCfg, m, r, "concluded")
+							heldCfg.inboundJournal.recordDirect(heldCfg, heldEnv, r, heldSession, heldBody, "concluded")
 						},
 						leg:     "alias dispatch",
 						channel: inbound.Conversation.ConversationID,
@@ -6656,12 +6653,7 @@ func sendAliasDispatch(cfg config, sessionID, handle, body string, journalMessag
 		if !accepted || len(journalMessages) == 0 {
 			return
 		}
-		msg := journalMessages[0]
-		msg.Text = body
-		msg.injectionDirect = true
-		r := result
-		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
-		cfg.inboundJournal.record(cfg, msg, r)
+		cfg.inboundJournal.recordDirect(cfg, journalMessages[0], result, sessionID, body)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	// PathEscape cityName and sessionID so URL-significant characters

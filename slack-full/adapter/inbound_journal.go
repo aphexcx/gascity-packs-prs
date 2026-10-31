@@ -32,30 +32,32 @@ type inboundJournal struct {
 }
 
 type inboundJournalRecord struct {
-	Phase          string             `json:"phase"`
-	TS             time.Time          `json:"ts"`
-	Channel        string             `json:"channel"`
-	ThreadTS       string             `json:"thread_ts,omitempty"`
-	MessageTS      string             `json:"message_ts"`
-	Target         string             `json:"target"`
-	TargetSessions []string           `json:"target_sessions,omitempty"`
-	Bytes          int                `json:"bytes"`
-	Mode           string             `json:"mode"`
-	ReceiptID      string             `json:"receipt_id,omitempty"`
-	Status         string             `json:"status"`
-	Windows        []injectionWindow  `json:"windows"`
-	PayloadSHA256  string             `json:"payload_sha256,omitempty"`
-	ProofKind      string             `json:"proof_kind,omitempty"`
-	DeliveredAt    time.Time          `json:"delivered_at,omitempty"`
-	Evidence       *ingestionEvidence `json:"ingestion_evidence,omitempty"`
-	Alerted        bool               `json:"alerted,omitempty"`
+	Phase              string             `json:"phase"`
+	TS                 time.Time          `json:"ts"`
+	Channel            string             `json:"channel"`
+	ThreadTS           string             `json:"thread_ts,omitempty"`
+	MessageTS          string             `json:"message_ts"`
+	Target             string             `json:"target"`
+	TargetSessions     []string           `json:"target_sessions,omitempty"`
+	HandoffSessions    []string           `json:"handoff_sessions"`
+	CanonicalSessionID string             `json:"canonical_session_id,omitempty"`
+	Bytes              int                `json:"bytes"`
+	Mode               string             `json:"mode"`
+	ReceiptID          string             `json:"receipt_id,omitempty"`
+	Status             string             `json:"status"`
+	Windows            []injectionWindow  `json:"windows"`
+	PayloadSHA256      string             `json:"payload_sha256,omitempty"`
+	ProofKind          string             `json:"proof_kind,omitempty"`
+	DeliveredAt        time.Time          `json:"delivered_at,omitempty"`
+	Evidence           *ingestionEvidence `json:"ingestion_evidence,omitempty"`
+	Alerted            bool               `json:"alerted,omitempty"`
 }
 
 func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt deliveryReceipt, phase ...string) {
 	if j == nil {
 		return
 	}
-	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows}
+	r := inboundJournalRecord{Channel: msg.Conversation.ConversationID, ThreadTS: msg.ReplyToMessageID, MessageTS: msg.ProviderMessageID, Target: msg.ExplicitTarget, Bytes: len(msg.Text), Mode: cfg.injectionMode, ReceiptID: receipt.id, Status: receipt.status, Windows: msg.injectionWindows, HandoffSessions: []string{}}
 	r.ProofKind = "extmsg"
 	// Held-receipt callbacks may retain the pre-redaction envelope; hash the
 	// same redacted text the extmsg POST actually sent.
@@ -77,6 +79,13 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 	for _, m := range receipt.members {
 		if m.SessionID != "" {
 			r.TargetSessions = append(r.TargetSessions, m.SessionID)
+			// A completed paste may still have an unconfirmed submit. Keep
+			// that transport fact separate from actual session ingestion.
+			if (receiptStatusPositive(m.Status) && !m.shortfall()) ||
+				(m.Status == "" && receiptStatusPositive(r.Status) && !receipt.shortfall()) ||
+				(r.Phase == "concluded" && receiptStatusPending(m.Status) && m.landedWhole()) {
+				r.HandoffSessions = append(r.HandoffSessions, m.SessionID)
+			}
 		}
 	}
 	if len(r.Windows) == 0 {
@@ -85,6 +94,19 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 	if err := j.append(r); err != nil {
 		log.Printf("inbound journal: %v", err)
 	}
+}
+
+// Used for both the initial direct send and its held-receipt callback, so
+// delayed confirmation cannot silently switch a reminder to extmsg proof.
+func (j *inboundJournal) recordDirect(cfg config, msg externalInboundMessage, receipt deliveryReceipt, sessionID, body string, phase ...string) {
+	msg.Text, msg.injectionDirect = body, true
+	if len(receipt.members) == 0 {
+		receipt.members = []deliveryReceiptMember{{SessionID: sessionID, Status: receipt.status,
+			Delivered: receipt.delivered, Expected: receipt.expected,
+			DeliveredOK: receipt.deliveredOK, ExpectedOK: receipt.expectedOK,
+			DeliveredUnit: receipt.deliveredUnit, ExpectedUnit: receipt.expectedUnit}}
+	}
+	j.record(cfg, msg, receipt, phase...)
 }
 
 func (j *inboundJournal) append(r inboundJournalRecord) error {

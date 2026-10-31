@@ -857,15 +857,11 @@ func postMentionOnlyReminder(cfg config, sessionID, body string, confirm mention
 		if !acceptedTransport || len(journalMessages) == 0 {
 			return
 		}
-		m := journalMessages[0]
-		m.Text = body
-		m.injectionDirect = true
 		r := result
-		r.members = []deliveryReceiptMember{{SessionID: sessionID}}
 		if confirmed {
 			r.status = "delivered"
 		}
-		cfg.inboundJournal.record(cfg, m, r)
+		cfg.inboundJournal.recordDirect(cfg, journalMessages[0], r, sessionID, body)
 	}()
 	payload, _ := json.Marshal(gcSessionMessageRequest{Message: body})
 	target := fmt.Sprintf("%s/v0/city/%s/session/%s/messages",

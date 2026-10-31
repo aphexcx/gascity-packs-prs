@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const ingestionWindow = 2 * time.Minute
+const ingestionWindow = 3 * time.Minute
 const ingestionPollInterval = 5 * time.Second
 const ingestionReadLimit = 32 << 20
 
@@ -34,10 +34,11 @@ type ingestionEvidence struct {
 }
 
 type ingestionObserver struct {
-	cfg    config
-	now    func() time.Time
-	fetch  func(context.Context, string) ([]json.RawMessage, error)
-	notify func(context.Context, inboundJournalRecord) error
+	cfg      config
+	now      func() time.Time
+	fetch    func(context.Context, string) ([]json.RawMessage, error)
+	notify   func(context.Context, inboundJournalRecord) error
+	resolved map[string]string
 }
 
 func ingestionDigest(text string) string {
@@ -128,13 +129,17 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 			if r.PayloadSHA256 == "" || r.TS.IsZero() {
 				continue
 			}
-			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" {
+			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
 			if r.Alerted {
 				alerted[ingestionKey(r, "")] = true
 			}
-			for _, session := range r.TargetSessions {
+			targets := r.TargetSessions
+			if r.HandoffSessions != nil {
+				targets = r.HandoffSessions
+			}
+			for _, session := range targets {
 				if session == "" {
 					continue
 				}
@@ -144,6 +149,9 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 				}
 				copy := r
 				copy.TargetSessions = []string{session}
+				if len(r.HandoffSessions) > 0 {
+					copy.HandoffSessions = []string{session}
+				}
 				if copy.DeliveredAt.IsZero() {
 					copy.DeliveredAt = copy.TS
 				}
@@ -188,6 +196,9 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 		}
 		r := rows[key]
 		session := r.TargetSessions[0]
+		if r.CanonicalSessionID != "" {
+			session = r.CanonicalSessionID
+		}
 		messages, ok := cache[session]
 		if !ok {
 			requestCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -198,6 +209,12 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			}
 			cache[session] = messages
 		}
+		if canonical := o.resolved[session]; canonical != "" && r.CanonicalSessionID == "" {
+			r.CanonicalSessionID, r.Phase = canonical, "ingestion_target"
+			if err := o.cfg.inboundJournal.append(r); err != nil {
+				return err
+			}
+		}
 		var proof *ingestionEvidence
 		for _, raw := range messages {
 			if proof = ingestionProof(raw, r); proof != nil {
@@ -205,6 +222,9 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 			}
 		}
 		if proof != nil {
+			if r.CanonicalSessionID != "" {
+				proof.SessionID = r.CanonicalSessionID
+			}
 			r.Status, r.Phase, r.Evidence = "ingested", "ingestion", proof
 			if err := o.cfg.inboundJournal.append(r); err != nil {
 				return err
@@ -240,7 +260,78 @@ func (o *ingestionObserver) step(ctx context.Context) error {
 }
 
 func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string) ([]json.RawMessage, error) {
-	u := fmt.Sprintf("%s/v0/city/%s/session/%s/transcript?format=raw&tail=1", o.cfg.gcAPIBase, url.PathEscape(o.cfg.cityName), url.PathEscape(session))
+	base := fmt.Sprintf("%s/v0/city/%s/session/", o.cfg.gcAPIBase, url.PathEscape(o.cfg.cityName))
+	canonical := session
+	if id := o.resolved[session]; id != "" {
+		canonical = id
+	}
+	var messages []json.RawMessage
+	remaining := int64(ingestionReadLimit)
+	cursor := ""
+	seen := map[string]bool{}
+	for page := 0; page < 64; page++ {
+		q := url.Values{"format": {"raw"}, "tail": {"1"}}
+		if cursor != "" {
+			q.Set("before", cursor)
+		}
+		b, err := ingestionRead(ctx, base+url.PathEscape(canonical)+"/transcript?"+q.Encode(), remaining)
+		if err != nil {
+			return messages, err
+		}
+		remaining -= int64(len(b))
+		var result struct {
+			ID         string            `json:"id"`
+			Format     string            `json:"format"`
+			Messages   []json.RawMessage `json:"messages"`
+			Pagination struct {
+				HasOlder bool   `json:"has_older_messages"`
+				Before   string `json:"truncated_before_message"`
+			} `json:"pagination"`
+		}
+		if err := json.Unmarshal(b, &result); err != nil {
+			return messages, err
+		}
+		if result.ID != canonical && page == 0 && o.resolved[session] == "" {
+			// Name bindings are supported by gc; authenticate their resolution
+			// separately, then pin all transcript pages to the canonical ID.
+			body, err := ingestionRead(ctx, base+url.PathEscape(session), remaining)
+			if err != nil {
+				return messages, err
+			}
+			remaining -= int64(len(body))
+			var info struct {
+				ID    string `json:"id"`
+				Alias string `json:"alias"`
+				Name  string `json:"session_name"`
+			}
+			if json.Unmarshal(body, &info) == nil && info.ID == result.ID && info.ID != "" && (info.ID == session || info.Alias == session || info.Name == session) {
+				canonical = info.ID
+			}
+		}
+		if result.ID == "" || result.ID != canonical || result.Format != "raw" {
+			return messages, fmt.Errorf("transcript identity/format mismatch")
+		}
+		if o.resolved == nil {
+			o.resolved = map[string]string{}
+		}
+		o.resolved[session] = canonical
+		messages = append(messages, result.Messages...)
+		if !result.Pagination.HasOlder {
+			return messages, nil
+		}
+		cursor = result.Pagination.Before
+		if cursor == "" || seen[cursor] {
+			return messages, fmt.Errorf("transcript older-page cursor missing or repeated")
+		}
+		seen[cursor] = true
+	}
+	return messages, fmt.Errorf("transcript exceeds 64-page observation budget")
+}
+
+func ingestionRead(ctx context.Context, u string, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("transcript exceeds %d bytes", ingestionReadLimit)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
@@ -254,25 +345,14 @@ func (o *ingestionObserver) fetchTranscript(ctx context.Context, session string)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("transcript HTTP %d", resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, ingestionReadLimit+1))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(b) > ingestionReadLimit {
+	if int64(len(b)) > limit {
 		return nil, fmt.Errorf("transcript exceeds %d bytes", ingestionReadLimit)
 	}
-	var result struct {
-		ID       string            `json:"id"`
-		Format   string            `json:"format"`
-		Messages []json.RawMessage `json:"messages"`
-	}
-	if err := json.Unmarshal(b, &result); err != nil {
-		return nil, err
-	}
-	if result.ID != session || result.Format != "raw" {
-		return nil, fmt.Errorf("transcript identity/format mismatch")
-	}
-	return result.Messages, nil
+	return b, nil
 }
 
 func (o *ingestionObserver) mailUnseen(ctx context.Context, r inboundJournalRecord) error {
