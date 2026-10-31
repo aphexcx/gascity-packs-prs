@@ -8,3 +8,7 @@ slack-full/adapter | go vet ./... | exit=0
 slack-full/adapter (final) | go test -race -json -count=1 ./... | exit=0
 slack-full/adapter | go test -json -run TestIngestionDisabledRetainsNormallyAndCanBeReenabled -count=1 . | exit=1
 slack-full/adapter | go test -race -json -run Test(Ingestion|InboundJournal|ReceiptFollowUp) -count=1 . | exit=0
+slack-full/adapter (disabled-mode fix) | go test -race -json -count=1 ./... | exit=0
+slack-full/adapter (disabled-mode fix) | go vet ./... | exit=0
+. (final evidence) | git diff --check | exit=0
+codex-gate.sh review --base a648f8ee2e7ff52e3b21359842c01cf803900d75 -C <lane> --model gpt-6-astra --class DEEP --output codex-review-r2.out | exit=0

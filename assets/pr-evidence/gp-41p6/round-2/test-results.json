@@ -118,5 +118,26 @@
       "fail": 0,
       "skip": 1
     }
+  },
+  {
+    "run": "adapter-r2-race",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go test -race -json -count=1 ./... | exit=0",
+    "counts": {
+      "pass": 12835,
+      "fail": 0,
+      "skip": 2,
+      "top_level_pass": 1432
+    },
+    "failed_tests": [],
+    "skipped_tests": [
+      "TestIngestionLiveBusySessionProof",
+      "TestMinimalReplayMeasurement"
+    ]
+  },
+  {
+    "run": "adapter-r2-vet",
+    "cwd": "slack-full/adapter",
+    "command_and_exit": "go vet ./... | exit=0"
   }
 ]

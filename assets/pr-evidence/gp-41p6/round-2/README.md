@@ -77,13 +77,28 @@ contains counts and the names of expected red failures and skipped tests.
   This includes the final timestamp cases and disabled-mode retention fix.
   `focused-r2-green.jsonl` records the complete run; `disabled-red.jsonl`
   records the new regression's failure before that fix.
-- `go test -race -json -count=1 ./...` in `slack-full/adapter`: 1,431 top-level
-  passes / 12,834 including subtests, two opt-in skips before the disabled-mode
-  follow-up. The full suite is rerun for that fix as well. The earlier full run
-  passed 12,832 before the two extra timestamp cases.
+- `go test -race -json -count=1 ./...` in `slack-full/adapter`: 1,432 top-level
+  passes / 12,835 including subtests, two opt-in skips on the final code and
+  tests including the disabled-mode follow-up. Earlier full runs passed 12,832
+  before the two extra timestamp cases and 12,834 before the disabled-mode fix.
 - The same full race command in `slack-full/cli`: 199 top-level passes / 237
   including subtests, no skips.
 - `go vet ./...` in `slack-full/adapter`: passed.
 - `uv run --no-project --python 3.13 --with pytest --with PyYAML --with jsonschema python -m pytest tests -q`
   in `slack-full`: 907 passed, two skipped, two existing fork-in-thread warnings.
 - `git diff --check`: passed.
+
+## Review and handoff
+
+The installed helper validated **VERDICT: CLEAN** (exit 0) for the DEEP
+review of `a648f8ee2e7ff52e3b21359842c01cf803900d75` through
+`f0375e56027daf244f12358654425a0230ce9e28`, using `gpt-6-astra`.
+`codex-review-r2.out`, its `.rc`, and `.reason` record the result. The reviewer
+found no actionable correctness or regression findings after tracing all
+changed files and affected callers. Its sandbox did not run tests; the
+separate lane runs above provide the execution evidence.
+
+The following commit only records final verification/review evidence. The
+reviewed production code is unchanged. PR 68 remains draft. The mayor's
+Fable delta read r2 and founder merge decision remain pending; this lane
+does not deploy, restart the adapter, mark ready or merge.
