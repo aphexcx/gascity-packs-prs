@@ -38,7 +38,11 @@ The integration cases call real `gc prime --strict` for Gas City under `gc`,
 compound-engineering and profiler workers. These validate rendered instruction
 contracts; they do not simulate a real blocked agent's 20-minute wait.
 
-`make test` is running independently; its completion and counts will be recorded
-in the handoff before READY. The manual observation remains deferred to the
-first real infrastructure wall after the next repository-based pack roll,
-under the mayor's existing observation plan in the PR body.
+Final `make test`: 2567 passed, 115 skipped, 10631 subtests passed, two existing
+Python fork deprecation warnings, exit 0 (`full-suite-final.log`). The first
+run also hit a scheduling-sensitive unchanged pnpm fixture; it passed on
+recheck and in the final run. Details are in `completion.md`.
+
+The manual observation remains deferred to the first real infrastructure wall
+after the next repository-based pack roll, under the mayor's existing
+observation plan in the PR body.

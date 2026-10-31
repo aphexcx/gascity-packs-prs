@@ -43,7 +43,7 @@ persona_heading = '# GC Role Worker'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -54,12 +54,12 @@ persona_heading = '# GC Role Worker'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
 persona_heading = '# GC Role Worker'
@@ -147,7 +147,7 @@ persona_heading = '# GC Role Worker'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -158,12 +158,12 @@ persona_heading = '# GC Role Worker'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
 persona_heading = '# GC Role Worker'
@@ -251,7 +251,7 @@ persona_heading = '# GC Role Worker'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -262,12 +262,12 @@ persona_heading = '# GC Role Worker'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` worker for\n`implementat...- `gc.kind=check|fanout|scope-check|workflow-finalize`: implicit\n  `workflow-control` work, not normal worker work.\n'
 persona_heading = '# GC Role Worker'
@@ -355,7 +355,7 @@ persona_heading = '# BMAD Story Implementer'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -366,12 +366,12 @@ persona_heading = '# BMAD Story Implementer'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# BMAD Story Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph....nds, task tools, or the upstream BMAD runtime. You are the implementation lane; do not dispatch another implementer.\n'
 persona_heading = '# BMAD Story Implementer'
@@ -459,7 +459,7 @@ agent = 'superpowers.implementer', persona_heading = '# Superpowers Implementer'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -470,12 +470,12 @@ agent = 'superpowers.implementer', persona_heading = '# Superpowers Implementer'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# Superpowers Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph...s, task tools, or the upstream plugin runtime. You are the implementation lane; do not dispatch another implementer.\n'
 persona_heading = '# Superpowers Implementer'
@@ -563,7 +563,7 @@ persona_heading = '# gstack Implementer'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -574,12 +574,12 @@ persona_heading = '# gstack Implementer'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = '# gstack Implementer\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` ...ider-native subagents, slash commands, task tools, or the\nupstream gstack runtime. You are the implementation lane.\n'
 persona_heading = '# gstack Implementer'
@@ -668,7 +668,7 @@ persona_heading = '# Compound Engineering Worker'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -679,12 +679,12 @@ persona_heading = '# Compound Engineering Worker'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = "# Compound Engineering Worker\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `g...xt asks for subagents, translate that work into this Gas City lane's output or record that a graph lane is required.\n"
 persona_heading = '# Compound Engineering Worker'
@@ -772,7 +772,7 @@ persona_heading = '# Profile Analyst'
             city_binding=city_binding,
             city_pack=REPO_ROOT / pack_path,
         )
-    
+
         result = run_gc(
             gc_test_bin,
             workspace,
@@ -783,12 +783,12 @@ persona_heading = '# Profile Analyst'
             f"fixture/{agent}",
             cwd=workspace.city_dir,
         )
-    
+
         assert result.returncode == 0, result.stderr
 >       assert_clean_worker_render(result.stdout, persona_heading)
 
-tests/test_gc_role_prompt_integration.py:356: 
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_gc_role_prompt_integration.py:356:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
 
 prompt = "# Profile Analyst\n\n# GC Role Worker\n\nYou are `gascity-packs/implementation-worker-codex`, Gas City `graph.v2` wor... zero.\n\nThis is read-only analysis of capture data. Do not modify the profiled rig's\nsource, beads, or artifacts.\n"
 persona_heading = '# Profile Analyst'
