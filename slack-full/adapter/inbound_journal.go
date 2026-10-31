@@ -93,7 +93,7 @@ func (j *inboundJournal) record(cfg config, msg externalInboundMessage, receipt 
 			// that transport fact separate from actual session ingestion.
 			if (receiptStatusPositive(m.Status) && !m.shortfall()) ||
 				(m.Status == "" && receiptStatusPositive(r.Status) && !receipt.shortfall()) ||
-				(r.Phase == "concluded" && receiptStatusPending(m.Status) && m.landedWhole()) {
+				(receiptStatusPending(m.Status) && m.landedWhole()) {
 				r.HandoffSessions = append(r.HandoffSessions, m.SessionID)
 			}
 		}
@@ -198,9 +198,14 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	// Retention must not erase the recovery record for a still-unseen
 	// delivery or an alert that has not reached the mayor. Preserve its
 	// original interval and all later updates until observation settles.
-	pending, err := j.pendingIngestionLocked()
+	pending, receiptStart, err := j.pendingIngestionLocked()
 	if err != nil {
 		return fmt.Errorf("journal pruning deferred: %w", err)
+	}
+	if !receiptStart.IsZero() {
+		if day := receiptStart.UTC().Format("20060102"); day < cutoff {
+			cutoff = day
+		}
 	}
 	for _, observation := range pending {
 		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt)

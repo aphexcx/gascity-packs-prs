@@ -23,8 +23,8 @@ quoted message timestamps do not count. Alias and mention-only reminders are
 matched as complete reminder blocks. A coalesced receipt retains all its
 original quoted-context windows.
 
-The journal preserves each member's handoff eligibility. Concluded `pending`
-members with complete byte counts are monitored too, including mixed fanouts;
+The journal preserves each member's handoff eligibility. `pending` members
+with complete byte counts are monitored from their initial receipt, including mixed fanouts;
 complete recovery handoffs enroll even when no further receipt poll is needed.
 Unconfirmed submission neither proves nor disproves ingestion. Direct reminder
 fingerprints and the original send timestamp survive delayed alias and
@@ -63,7 +63,9 @@ operator attention; they cannot generate trustworthy ingestion receipts.
 Retention preserves the oldest unresolved delivery's day and all later
 segments until ingestion is proved or its unseen alert succeeds. This keeps
 one-day retention from erasing an observation at midnight and preserves
-failed alerts across restarts. Normal pruning resumes when observations settle;
+failed alerts across restarts. Initial pending receipts retain their original
+timing independently until conclusion, even before a handoff is observable.
+Normal pruning resumes when observations settle;
 malformed or over-budget reconstruction defers pruning with an error.
 Pre-upgrade rows without a payload fingerprint are excluded to avoid retroactive
 alerts. The journal is the

@@ -40,26 +40,30 @@ func ingestionJournalRows(t *testing.T, j *inboundJournal) []inboundJournalRecor
 }
 
 func TestIngestionConcludedPendingAndMixedFanout(t *testing.T) {
-	j := &inboundJournal{dir: t.TempDir()}
-	msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", Text: "whole body"}
-	r := deliveryReceipt{id: "r1", status: "partial", members: []deliveryReceiptMember{
-		{SessionID: "s1", Status: "delivered"},
-		{SessionID: "s2", Status: "pending", Delivered: 50, Expected: 50, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
-		{SessionID: "s3", Status: "pending", Delivered: 10, Expected: 50, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
-		{SessionID: "s4", Status: "failed"},
-	}}
-	j.record(config{}, msg, r, "concluded")
-	o := &ingestionObserver{cfg: config{inboundJournal: j}}
-	rows, err := o.pending()
-	if err != nil {
-		t.Fatal(err)
-	}
-	targets := map[string]bool{}
-	for _, row := range rows {
-		targets[row.TargetSessions[0]] = true
-	}
-	if len(targets) != 2 || !targets["s1"] || !targets["s2"] {
-		t.Fatalf("completed handoffs must be monitored individually, got %v", targets)
+	for _, phase := range []string{"accepted", "concluded"} {
+		t.Run(phase, func(t *testing.T) {
+			j := &inboundJournal{dir: t.TempDir()}
+			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", Text: "whole body"}
+			r := deliveryReceipt{id: "r1", status: "partial", members: []deliveryReceiptMember{
+				{SessionID: "s1", Status: "delivered"},
+				{SessionID: "s2", Status: "pending", Delivered: 50, Expected: 50, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
+				{SessionID: "s3", Status: "pending", Delivered: 10, Expected: 50, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
+				{SessionID: "s4", Status: "failed"},
+			}}
+			j.record(config{}, msg, r, phase)
+			o := &ingestionObserver{cfg: config{inboundJournal: j}}
+			rows, err := o.pending()
+			if err != nil {
+				t.Fatal(err)
+			}
+			targets := map[string]bool{}
+			for _, row := range rows {
+				targets[row.TargetSessions[0]] = true
+			}
+			if len(targets) != 2 || !targets["s1"] || !targets["s2"] {
+				t.Fatalf("completed handoffs must be monitored individually, got %v", targets)
+			}
+		})
 	}
 }
 
@@ -430,6 +434,50 @@ func TestIngestionDelayedConclusionRetainsInputInterval(t *testing.T) {
 		}
 	}
 	t.Fatal("delayed transport conclusion excluded the original input")
+}
+
+func TestIngestionPendingReceiptTimingSurvivesRetention(t *testing.T) {
+	for _, conclusion := range []string{"delivered", "failed"} {
+		t.Run(conclusion, func(t *testing.T) {
+			at := time.Date(2026, 10, 30, 23, 59, 59, 0, time.UTC)
+			now := at
+			j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
+			cfg := config{inboundJournal: j}
+			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.0", Text: "delayed midnight body"}
+			j.record(cfg, msg, deliveryReceipt{id: "midnight-pending", status: "pending"})
+			now = at.Add(2 * time.Second)
+			if err := j.append(inboundJournalRecord{Status: "unrelated"}); err != nil {
+				t.Fatal(err)
+			}
+			o := &ingestionObserver{cfg: cfg, now: func() time.Time { return now }}
+			rows, err := o.pending()
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("unconfirmed receipt became an observation: %v %v", rows, err)
+			}
+			now = at.Add(2 * time.Minute)
+			j.record(cfg, msg, deliveryReceipt{id: "midnight-pending", status: conclusion, members: []deliveryReceiptMember{{SessionID: "s1", Status: conclusion}}}, "concluded")
+			if conclusion == "delivered" {
+				reference := ingestionTestRecord(msg.ProviderMessageID, at, msg.Text)
+				o.fetch = func(context.Context, string) ([]json.RawMessage, error) {
+					return []json.RawMessage{ingestionTestEntry(t, reference, msg.Text, "attachment")}, nil
+				}
+				o.notify = func(context.Context, inboundJournalRecord) error { t.Fatal("unexpected alert"); return nil }
+				if err := o.step(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, row := range ingestionJournalRows(t, j) {
+					found = found || row.Status == "ingested"
+				}
+				if !found {
+					t.Fatal("midnight pruning erased the pending receipt's original input interval")
+				}
+			}
+			if _, err := os.Stat(filepath.Join(j.dir, at.Format("20060102")+".jsonl")); !os.IsNotExist(err) {
+				t.Fatalf("concluded receipt left expired timing protected: %v", err)
+			}
+		})
+	}
 }
 
 func TestIngestionMentionOnlyDelayedAsyncConfirmation(t *testing.T) {

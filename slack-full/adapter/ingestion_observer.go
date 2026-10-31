@@ -96,33 +96,38 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	j := o.cfg.inboundJournal
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.pendingIngestionLocked()
+	rows, _, err := j.pendingIngestionLocked()
+	return rows, err
 }
 
 // Shared with retention pruning. The caller holds j.mu so pending evidence
-// cannot be removed between reconstruction and the pruning decision.
-func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalRecord, error) {
+// cannot be removed between reconstruction and the pruning decision. The
+// second result protects initial pending receipts before they become eligible
+// for session observation; it never treats an acceptance as a handoff.
+func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalRecord, time.Time, error) {
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
-		return nil, err
+		return nil, time.Time{}, err
 	}
 	sort.Strings(paths)
 	rows := make(map[string]inboundJournalRecord)
 	alerted := make(map[string]bool)
 	started := make(map[string]time.Time)
+	held := make(map[string]bool)
+	concluded := make(map[string]bool)
 	remaining := int64(64 << 20)
 	for _, path := range paths {
 		info, err := os.Stat(path)
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		remaining -= info.Size()
 		if remaining < 0 {
-			return nil, fmt.Errorf("journal exceeds 64 MiB observation budget")
+			return nil, time.Time{}, fmt.Errorf("journal exceeds 64 MiB observation budget")
 		}
 		f, err := os.Open(path)
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 		s := bufio.NewScanner(f)
 		s.Buffer(make([]byte, 4096), 1<<20)
@@ -130,7 +135,7 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 			var r inboundJournalRecord
 			if err := json.Unmarshal(s.Bytes(), &r); err != nil {
 				f.Close()
-				return nil, fmt.Errorf("invalid journal row: %w", err)
+				return nil, time.Time{}, fmt.Errorf("invalid journal row: %w", err)
 			}
 			// Old rows lack a complete payload fingerprint. Do not fabricate
 			// acknowledgements or flood the mailbox on the first upgrade.
@@ -140,6 +145,12 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 			identity := ingestionKey(r, "")
 			start := earlierIngestionTime(r.StartedAt, earlierIngestionTime(r.DeliveredAt, r.TS))
 			started[identity] = earlierIngestionTime(started[identity], start)
+			if r.Phase == "accepted" && r.ReceiptID != "" && receiptStatusPending(r.Status) {
+				held[identity] = true
+			}
+			if r.Phase == "concluded" || receiptStatusPositive(r.Status) || r.Status == "ingested" || r.Status == "delivered_unseen" {
+				concluded[identity] = true
+			}
 			if r.Status != "delivered" && r.Status != "ingested" && r.Status != "delivered_unseen" && len(r.HandoffSessions) == 0 {
 				continue
 			}
@@ -184,7 +195,7 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 		err = s.Err()
 		f.Close()
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
 	}
 	for key, r := range rows {
@@ -197,7 +208,13 @@ func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalReco
 			delete(rows, key)
 		}
 	}
-	return rows, nil
+	var receiptStart time.Time
+	for identity := range held {
+		if !concluded[identity] {
+			receiptStart = earlierIngestionTime(receiptStart, started[identity])
+		}
+	}
+	return rows, receiptStart, nil
 }
 
 func earlierIngestionTime(a, b time.Time) time.Time {
@@ -515,28 +532,30 @@ func ingestionMatches(text string, r inboundJournalRecord) bool {
 			continue
 		}
 		body := block[len(header):]
-		actorEnd := -1
-		for _, kind := range []string{"human", "agent"} {
-			separator := " (" + kind + "): "
-			if n := strings.Index(body, separator); n >= 0 && !strings.Contains(body[:n], "\n") {
-				actorEnd = n + len(separator)
-				break
-			}
-		}
-		if actorEnd < 0 {
-			continue
-		}
 		footer := "\n\nMessage id: " + r.MessageTS
 		if r.ThreadTS != "" {
 			footer += " (in thread " + r.ThreadTS + ")"
 		}
 		footer += "\n\n"
 		last := strings.LastIndex(body, footer)
-		if last < actorEnd {
+		if last < 0 {
 			continue
 		}
-		if ingestionDigest(body[actorEnd:last]) == r.PayloadSHA256 {
-			return true
+		// Display names and message text may themselves contain actor-like
+		// separators. The complete payload digest selects the real boundary.
+		for _, kind := range []string{"human", "agent"} {
+			separator := " (" + kind + "): "
+			for from := 0; from < last; {
+				n := strings.Index(body[from:last], separator)
+				if n < 0 || strings.Contains(body[:from+n], "\n") {
+					break
+				}
+				actorEnd := from + n + len(separator)
+				if ingestionDigest(body[actorEnd:last]) == r.PayloadSHA256 {
+					return true
+				}
+				from = actorEnd
+			}
 		}
 	}
 	return false

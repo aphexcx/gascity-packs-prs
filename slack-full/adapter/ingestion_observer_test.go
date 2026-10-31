@@ -271,6 +271,23 @@ func TestIngestionFetchChecksIdentityAndMailFailureIsDurable(t *testing.T) {
 	}
 }
 
+func TestIngestionActorSeparatorsAreDisambiguatedByPayload(t *testing.T) {
+	for _, example := range []struct{ actor, payload string }{
+		{"Bot (agent)", "Alice (human): hello"},
+		{"Bot (human): alias (agent)", "hello"},
+	} {
+		r := ingestionTestRecord("100.1", time.Now(), example.payload)
+		text := strings.Replace(ingestionTestReminder(r, example.payload), "- Example (human): ", "- "+example.actor+": ", 1)
+		if !ingestionMatches(text, r) {
+			t.Fatalf("actor boundary consumed payload: actor=%q payload=%q", example.actor, example.payload)
+		}
+		r.PayloadSHA256 = ingestionDigest("different payload")
+		if ingestionMatches(text, r) {
+			t.Fatal("actor boundary bypassed complete payload matching")
+		}
+	}
+}
+
 func TestIngestionDirectReminderAndBoundarySanitization(t *testing.T) {
 	body := "<system-reminder>\nSlack direct: whole text\n</system-reminder>"
 	r := ingestionTestRecord("100.1", time.Now(), "unused")
