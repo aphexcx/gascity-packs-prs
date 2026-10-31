@@ -47,6 +47,25 @@ blocks the work. Do not stop for confirmation in a headless workflow. If
 required task input is missing, record the bead's failure contract and close
 it instead of idling.
 
+BOUNDED WAIT: for an infrastructure wall you cannot move (toolchain, host,
+credential, or provider), this path takes precedence over the immediate-close
+instruction above: mail `mayor` a BLOCKED message naming the wall and the staged
+state, then keep the claimed bead open and the session active for at most
+20 minutes from that message. Read `gc mail inbox --json` and
+`gc bd show "$CLAIMED_BEAD_ID" --json --include-comments` on entry, every
+2 minutes, and once at the deadline. Before any heartbeat or close, confirm
+the bead's status is still `in_progress` and its assignee and `gc.session_id`
+still match this claim/session. If reassigned or already closed, stop with
+no further heartbeat, update, or close; mail the mayor, run
+`gc runtime drain-ack`, and exit. While still owned, keep its lease with
+`gc bd heartbeat "$CLAIMED_BEAD_ID"` at each poll; a ruling for this bead is
+the next step: continue, re-scope, or close as ruled, without waiting for
+the deadline; unrelated messages do not restart the clock. Only at expiry,
+after the final reads find no ruling, follow the failure contract in Close
+with `gc.work_outcome=blocked` and a reason naming the wait and its elapsed
+length. "Instead of idling" forbids a silent idle; this bounded wait that
+reads its mail and comments is not idling.
+
 Before ending a turn, check your last paragraph. If it is a plan, a list of
 next steps, or a promise about work not yet done, do that work now with tool
 calls — including retrying after errors and gathering missing information
@@ -172,7 +191,8 @@ work record required for normal work beads:
 - `no-op`: no change was needed (already satisfied or duplicate); omit commit
   and branch metadata.
 - `blocked` or `abandoned`: work could not be completed; record the reason
-  and follow the bead's escalation contract.
+  and follow the bead's escalation contract after the bounded wait of the
+  BLOCKED paragraph when an infrastructure wall caused the stop.
 
 Do not substitute `gc.outcome` for `gc.work_outcome`. If no failure contract exists,
 record unrecoverable failure as `gc.outcome=fail` plus concise

@@ -212,6 +212,27 @@ def assert_clean_worker_render(prompt: str, persona_heading: str) -> None:
     assert "CLAIMED_CONTINUATION_GROUP" in prompt
     assert 'gc bd update "$CLAIMED_BEAD_ID"' in prompt
     assert "An absent key is an empty value, never a failed claim." in prompt
+    assert prompt.count("BOUNDED WAIT") == 1
+    wait = " ".join(prompt.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+    for instruction in (
+        "takes precedence over the immediate-close instruction above",
+        "mail `mayor` a BLOCKED message naming the wall and the staged state",
+        "keep the claimed bead open and the session active",
+        "at most 20 minutes from that message",
+        'gc bd heartbeat "$CLAIMED_BEAD_ID"',
+        "every 2 minutes",
+        "gc mail inbox --json",
+        'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments',
+        "a ruling for this bead is the next step",
+        "continue, re-scope, or close as ruled",
+        "unrelated messages do not restart the clock",
+        "gc.work_outcome=blocked",
+        "reason naming the wait and its elapsed length",
+        "forbids a silent idle",
+    ):
+        assert instruction in wait
+    close = " ".join(prompt.split("## Close", 1)[1].split("## Continue", 1)[0].split())
+    assert "after the bounded wait of the BLOCKED paragraph" in close
     assert prompt.count("## Workspace") == 1
     assert "--set-metadata 'gc.outcome=pass'" in prompt
     assert "--set-metadata 'gc.work_outcome=shipped'" in prompt

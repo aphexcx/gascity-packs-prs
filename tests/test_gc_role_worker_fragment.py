@@ -33,6 +33,44 @@ def test_claim_section_tolerates_omitted_lifecycle_keys() -> None:
     assert "An absent key is an empty value, never a failed claim." in claim
 
 
+def blocked_wait_paragraph() -> str:
+    text = fragment()
+    assert text.count("BOUNDED WAIT") == 1
+    return " ".join(text.split("BOUNDED WAIT", 1)[1].split("\n\n", 1)[0].split())
+
+
+def test_blocked_wait_ruling_resumes_work_before_expiry() -> None:
+    wait = blocked_wait_paragraph()
+    assert "on entry, every 2 minutes, and once at the deadline" in wait
+    assert "gc mail inbox --json" in wait
+    assert 'gc bd show "$CLAIMED_BEAD_ID" --json --include-comments' in wait
+    assert "a ruling for this bead is the next step" in wait
+    assert "continue, re-scope, or close as ruled" in wait
+    assert wait.index("a ruling for this bead") < wait.index("Only at expiry")
+
+
+def test_blocked_wait_expiry_is_bounded_and_records_the_wait() -> None:
+    wait = blocked_wait_paragraph()
+    assert "keep the claimed bead open and the session active" in wait
+    assert "at most 20 minutes from that message" in wait
+    assert 'gc bd heartbeat "$CLAIMED_BEAD_ID"' in wait
+    assert "unrelated messages do not restart the clock" in wait
+    assert "Only at expiry, after the final reads find no ruling" in wait
+    assert "gc.work_outcome=blocked" in wait
+    assert "reason naming the wait and its elapsed length" in wait
+
+
+def test_blocked_wait_reassignment_stops_without_closing_transferred_work() -> None:
+    wait = blocked_wait_paragraph()
+    assert "Before any heartbeat or close" in wait
+    assert "status is still `in_progress`" in wait
+    assert "assignee and `gc.session_id` still match this claim/session" in wait
+    assert "If reassigned or already closed" in wait
+    assert "no further heartbeat, update, or close" in wait
+    assert "mail the mayor, run `gc runtime drain-ack`, and exit" in wait
+    assert wait.index("If reassigned or already closed") < wait.index("gc bd heartbeat")
+
+
 def test_workspace_section_sits_between_claim_and_close() -> None:
     text = fragment()
     claim_at = text.index("## Claim")
