@@ -613,6 +613,11 @@ func (f *receiptFollowUps) lost(h heldDelivery, repostsLeft int, cause error) {
 		// to partial, which the verdict below would read as a standing
 		// loss (codex final round P2 #2). Same classifier, same outcome
 		// as the polled path.
+		// No later poll will conclude this receipt. Enroll its complete
+		// pending members in session-side ingestion monitoring now.
+		if h.observeReceipt != nil {
+			h.observeReceipt(receipt)
+		}
 		log.Printf("receipt follow-up: RECOVERED %s the recovery copy landed whole; only the submit went unconfirmed — holding, never re-posting (gp-2io) — %s",
 			where, receipt.logField(receipt.verdict(f.gated)))
 		return

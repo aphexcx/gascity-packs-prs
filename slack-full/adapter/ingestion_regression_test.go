@@ -63,6 +63,77 @@ func TestIngestionConcludedPendingAndMixedFanout(t *testing.T) {
 	}
 }
 
+func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
+	for _, rendered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rendered=%v", rendered), func(t *testing.T) {
+			at := time.Now().UTC()
+			now := at
+			j := &inboundJournal{dir: t.TempDir(), now: func() time.Time { return now }}
+			cfg := config{inboundJournal: j}
+			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.0", Text: "complete recovery body"}
+			mixed := concludedReceipt("recovered", "partial", 30, 30)
+			mixed.members = []deliveryReceiptMember{
+				{SessionID: "s1", Status: "delivered", Delivered: 10, Expected: 10, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
+				{SessionID: "s2", Status: "pending", Delivered: 20, Expected: 20, DeliveredOK: true, ExpectedOK: true, DeliveredUnit: "bytes", ExpectedUnit: "bytes"},
+			}
+			poll := newScriptedPoll()
+			poll.on("original", receiptPollAnswer{state: receiptPollUnknown})
+			h := &followUpHarness{repostAns: []receiptPollAnswer{{receipt: mixed}}}
+			f := testFollowUps(poll.poll, nil)
+			f.note(heldDelivery{receiptID: "original", leg: "inbound", channel: "C1", ts: msg.ProviderMessageID,
+				observeReceipt: func(r deliveryReceipt) { j.record(cfg, msg, r, "concluded") },
+				repost: func() (deliveryReceipt, error) {
+					r, err := h.repost()
+					// The real POST journals its immediate receipt as accepted.
+					j.record(cfg, msg, r)
+					return r, err
+				}, deadLetter: h.deadLetter})
+			if !f.wait(2 * time.Second) {
+				t.Fatal("recovery follow-up did not finish")
+			}
+			reposts, dead := h.snapshot()
+			if reposts != 1 || len(dead) != 0 || poll.count("recovered") != 0 {
+				t.Fatalf("recovery disposition: reposts=%d dead=%v polls=%d", reposts, dead, poll.count("recovered"))
+			}
+			reference := ingestionTestRecord(msg.ProviderMessageID, at, msg.Text)
+			entry := ingestionTestEntry(t, reference, msg.Text, "attachment")
+			now = at.Add(ingestionWindow + time.Second)
+			alerts := 0
+			o := &ingestionObserver{cfg: cfg, now: func() time.Time { return now },
+				fetch: func(_ context.Context, session string) ([]json.RawMessage, error) {
+					if session == "s1" || rendered {
+						return []json.RawMessage{entry}, nil
+					}
+					return nil, nil
+				}, notify: func(_ context.Context, r inboundJournalRecord) error {
+					alerts++
+					if r.ReceiptID != "recovered" || r.TargetSessions[0] != "s2" {
+						t.Errorf("wrong recovery alert: %+v", r)
+					}
+					return nil
+				}}
+			for pass := 0; pass < 2; pass++ {
+				if err := o.step(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			states := map[string]string{}
+			for _, row := range ingestionJournalRows(t, j) {
+				if row.Phase == "ingestion" {
+					states[row.TargetSessions[0]] = row.Status
+				}
+			}
+			want, wantAlerts := "delivered_unseen", 1
+			if rendered {
+				want, wantAlerts = "ingested", 0
+			}
+			if states["s1"] != "ingested" || states["s2"] != want || alerts != wantAlerts {
+				t.Fatalf("complete recovery handoff escaped observation: states=%v alerts=%d", states, alerts)
+			}
+		})
+	}
+}
+
 func TestIngestionHeldAliasKeepsDirectProof(t *testing.T) {
 	stub := &heldRouterStub{}
 	base := stub.handler()

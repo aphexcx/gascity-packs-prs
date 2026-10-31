@@ -23,7 +23,8 @@ original quoted-context windows.
 
 The journal preserves each member's handoff eligibility. Concluded `pending`
 members with complete byte counts are monitored too, including mixed fanouts;
-unconfirmed submission neither proves nor disproves ingestion. Direct reminder
+complete recovery handoffs enroll even when no further receipt poll is needed.
+Unconfirmed submission neither proves nor disproves ingestion. Direct reminder
 fingerprints and the original send timestamp survive delayed alias and
 mention-only confirmation. Name bindings are resolved
 through gc's session API and pinned durably to the canonical session ID for
