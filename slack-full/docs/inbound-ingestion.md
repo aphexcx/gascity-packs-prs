@@ -60,8 +60,13 @@ or repeated cursors fail visibly. Transcript text is never logged. It reads
 at most 64 MiB of retained journal segments per pass, under the journal lock.
 Malformed/over-budget journals fail visibly in the service log and require
 operator attention; they cannot generate trustworthy ingestion receipts.
-Existing journal retention still applies. Pre-upgrade rows without a payload
-fingerprint are excluded to avoid retroactive alerts. The journal is the
+Retention preserves the oldest unresolved delivery's day and all later
+segments until ingestion is proved or its unseen alert succeeds. This keeps
+one-day retention from erasing an observation at midnight and preserves
+failed alerts across restarts. Normal pruning resumes when observations settle;
+malformed or over-budget reconstruction defers pruning with an error.
+Pre-upgrade rows without a payload fingerprint are excluded to avoid retroactive
+alerts. The journal is the
 recovery record; deleting it discards alert completion history. A crash between
 mail acceptance and the completion append relies on gc's mailbox dedup until
 the earlier mail is archived.

@@ -134,6 +134,69 @@ func TestIngestionRecoveryUnconfirmedHandoff(t *testing.T) {
 	}
 }
 
+func TestIngestionRetentionPreservesUnresolvedAcrossMidnight(t *testing.T) {
+	at := time.Date(2026, 10, 30, 23, 59, 59, 0, time.UTC)
+	for _, rendered := range []bool{true, false} {
+		t.Run(fmt.Sprintf("rendered=%v", rendered), func(t *testing.T) {
+			now := at
+			j := &inboundJournal{dir: t.TempDir(), retentionDays: 1, now: func() time.Time { return now }}
+			cfg := config{inboundJournal: j}
+			msg := externalInboundMessage{Conversation: conversationRef{ConversationID: "C1"}, ProviderMessageID: "100.2", ReplyToMessageID: "100.0", Text: "midnight body"}
+			j.record(cfg, msg, deliveryReceipt{id: "midnight", status: "delivered", members: []deliveryReceiptMember{{SessionID: "s1"}}})
+			oldPath := filepath.Join(j.dir, at.Format("20060102")+".jsonl")
+			now = at.Add(2 * time.Second)
+			if err := j.append(inboundJournalRecord{Status: "unrelated"}); err != nil {
+				t.Fatal(err)
+			}
+			// Reconstruct as a restarted observer would, after midnight pruning.
+			o := &ingestionObserver{cfg: cfg, now: func() time.Time { return now }}
+			pending, err := o.pending()
+			if err != nil || len(pending) != 1 {
+				t.Fatalf("midnight pruning lost unresolved delivery: pending=%v err=%v", pending, err)
+			}
+			reference := ingestionTestRecord(msg.ProviderMessageID, at, msg.Text)
+			entry := ingestionTestEntry(t, reference, msg.Text, "attachment")
+			o.fetch = func(context.Context, string) ([]json.RawMessage, error) {
+				if rendered {
+					return []json.RawMessage{entry}, nil
+				}
+				return nil, nil
+			}
+			alerts := 0
+			o.notify = func(context.Context, inboundJournalRecord) error { alerts++; return fmt.Errorf("mail unavailable") }
+			now = at.Add(ingestionWindow + time.Second)
+			err = o.step(context.Background())
+			if rendered && err != nil {
+				t.Fatal(err)
+			}
+			if !rendered {
+				if err == nil || alerts != 1 {
+					t.Fatalf("missing unseen alert attempt: err=%v alerts=%d", err, alerts)
+				}
+				// A failed alert remains recoverable even across another day.
+				now = now.Add(24 * time.Hour)
+				if err := j.append(inboundJournalRecord{Status: "unrelated"}); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(oldPath); err != nil {
+					t.Fatalf("pruned unresolved alert evidence: %v", err)
+				}
+				o.notify = func(context.Context, inboundJournalRecord) error { alerts++; return nil }
+				if err := o.step(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pending, err = o.pending()
+			if err != nil || len(pending) != 0 {
+				t.Fatalf("unsettled midnight observation: pending=%v err=%v", pending, err)
+			}
+			if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+				t.Fatalf("settled evidence should resume normal pruning: %v", err)
+			}
+		})
+	}
+}
+
 func TestIngestionHeldAliasKeepsDirectProof(t *testing.T) {
 	stub := &heldRouterStub{}
 	base := stub.handler()

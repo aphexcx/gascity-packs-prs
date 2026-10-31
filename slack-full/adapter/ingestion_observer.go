@@ -96,6 +96,12 @@ func (o *ingestionObserver) pending() (map[string]inboundJournalRecord, error) {
 	j := o.cfg.inboundJournal
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	return j.pendingIngestionLocked()
+}
+
+// Shared with retention pruning. The caller holds j.mu so pending evidence
+// cannot be removed between reconstruction and the pruning decision.
+func (j *inboundJournal) pendingIngestionLocked() (map[string]inboundJournalRecord, error) {
 	paths, err := filepath.Glob(filepath.Join(j.dir, "*.jsonl"))
 	if err != nil {
 		return nil, err

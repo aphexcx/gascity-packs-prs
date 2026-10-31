@@ -179,6 +179,7 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 	if err != nil {
 		return err
 	}
+	var expired []string
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || len(name) < 14 || !strings.HasSuffix(name, ".jsonl") {
@@ -187,6 +188,27 @@ func (j *inboundJournal) append(r inboundJournalRecord) error {
 		if _, err := time.Parse("20060102", name[:8]); err != nil {
 			continue
 		}
+		if name[:8] < cutoff {
+			expired = append(expired, name)
+		}
+	}
+	if len(expired) == 0 {
+		return nil
+	}
+	// Retention must not erase the recovery record for a still-unseen
+	// delivery or an alert that has not reached the mayor. Preserve its
+	// original interval and all later updates until observation settles.
+	pending, err := j.pendingIngestionLocked()
+	if err != nil {
+		return fmt.Errorf("journal pruning deferred: %w", err)
+	}
+	for _, observation := range pending {
+		start := earlierIngestionTime(observation.StartedAt, observation.DeliveredAt)
+		if day := start.UTC().Format("20060102"); day < cutoff {
+			cutoff = day
+		}
+	}
+	for _, name := range expired {
 		if name[:8] < cutoff {
 			if err := os.Remove(filepath.Join(j.dir, name)); err != nil {
 				return err
