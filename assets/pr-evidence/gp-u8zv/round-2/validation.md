@@ -19,6 +19,19 @@ env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pyte
   The deadline assertion and all eight real-render cases also failed.
 - Updated fragment: 15 passed, 398 deselected (`green.log`, exit 0).
 - Final wording: 15 passed, 398 deselected (`green-final.log`, exit 0).
+- STANDARD Codex review r1 at `da0bdd78b7ce7c13e9885a10569056f74954b089`
+  returned BLOCK: the pre-existing no-lane test prohibited the word `fallback`
+  across the whole fragment. The new recipient fallback exposed that overly
+  broad assertion. A focused reproduction failed (`workspace-regression-red.log`,
+  1 failed, 412 deselected, exit 1).
+- Scoped only that generic word prohibition to Workspace. All concrete
+  workspace-creation prohibitions still apply to the entire fragment.
+  All worker fragment contracts plus eight real renders now pass:
+  `contracts-green.log`, 26 passed, 387 deselected, exit 0, using:
+
+```sh
+env -u GC_TEMPLATE GC_TEST_BIN=/Users/tailor512/.local/bin/gc uv run --with pytest --with pyyaml --with jsonschema python3 -m pytest tests -q -k 'gc_role_worker_fragment or role_prompts_render_public_worker_fragment'
+```
 
 The integration cases call real `gc prime --strict` for Gas City under `gc`,
 `gascity` and `custom` aliases and for bmad, superpowers, gstack,

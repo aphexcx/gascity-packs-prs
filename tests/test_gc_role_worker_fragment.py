@@ -252,7 +252,8 @@ def test_session_outside_a_lane_creates_no_worktree_and_fails_closed_no_lane() -
         "If `$GC_DIR` is the rig root",
     ):
         assert gone not in flat, f"the fragment still carries the lane-less fallback: {gone!r}"
-    assert "fallback" not in flat.lower()
+    # Recipient fallback in Claim is independent of the removed workspace fallback.
+    assert "fallback" not in workspace_section().lower()
     assert not any(para.startswith("If ") for para in paragraphs(workspace_section())), (
         "no conditional workspace paragraph: there is no fallback to condition"
     )

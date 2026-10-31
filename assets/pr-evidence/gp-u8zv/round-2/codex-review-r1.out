@@ -1,0 +1,22 @@
+# codex-gate review: base 052ec10e2efdcaa38fae88285b9354cf0fe07f32 (merge base of --base 052ec10e2efdcaa38fae88285b9354cf0fe07f32 = 052ec10e2efdcaa38fae88285b9354cf0fe07f32 and the head) head da0bdd78b7ce7c13e9885a10569056f74954b089; 11 file(s) (8 under assets/pr-evidence/, outside the --max-files cap; 3 counted); class STANDARD; model gpt-6-astra; 2026-10-31T04:27:59Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (HEAD of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-codex; 179 untracked entr(ies) there ignored)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  assets/pr-evidence/gp-u8zv/round-2/baseline.log         |   2 +
+#  assets/pr-evidence/gp-u8zv/round-2/green-final.log      |   2 +
+#  assets/pr-evidence/gp-u8zv/round-2/green.log            |   2 +
+#  assets/pr-evidence/gp-u8zv/round-2/measurement.md       |  58 ++++
+#  assets/pr-evidence/gp-u8zv/round-2/recipient-search.txt |  26 ++
+#  assets/pr-evidence/gp-u8zv/round-2/red.log              | 891 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  assets/pr-evidence/gp-u8zv/round-2/upstream-worker.md   | 105 +++++++
+#  assets/pr-evidence/gp-u8zv/round-2/validation.md        |  31 ++
+#  gascity/template-fragments/gc-role-worker.template.md   |  20 +-
+#  tests/test_gc_role_prompt_integration.py                |  18 +-
+#  tests/test_gc_role_worker_fragment.py                   |  34 ++-
+#  11 files changed, 1180 insertions(+), 9 deletions(-)
+
+- **Major — New wording breaks the unfiltered CI suite.** [gc-role-worker.template.md:54](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.hT6IOO/tree/gascity/template-fragments/gc-role-worker.template.md:54) introduces “fallback,” but [test_gc_role_worker_fragment.py:255](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.hT6IOO/tree/tests/test_gc_role_worker_fragment.py:255) asserts that word is absent from the entire fragment. Static inspection proves this assertion will fail in CI and `make test`. Scope the existing prohibition to the Workspace section; it concerns workspace creation, not notification recipients.
+
+Tests: **not run (sandbox)**. Committed `green-final.log` reports **15 passed, 398 deselected**, excluding the affected test. No completed full-suite result is recorded in this delta’s evidence.
+
+VERDICT: BLOCK
