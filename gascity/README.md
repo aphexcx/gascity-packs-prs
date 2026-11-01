@@ -49,6 +49,9 @@ and your project added as a rig (`gc rig add .` inside the repo). See the
 
    (Contributors hacking on packs can point this source at a local clone.)
 
+   Configure [parked-worker alerts](#parked-worker-alerts) so failed worker
+   starts that park a bead notify your mayor.
+
 2. Create a bead describing what you want built, and sling the starter
    factory at it:
 
@@ -74,6 +77,37 @@ the planning and launching:
 ```text
 Use skill gc.mayor
 ```
+
+## Parked-worker alerts
+
+The pack ships [`city-fragment.toml`](city-fragment.toml) with
+`[session] park_alert_to = "mayor"`, the mail recipient for a routed work bead
+parked after repeated failed worker starts. Importing the pack does not apply
+this city setting: `pack.toml` cannot carry `[session]` (the pack parser
+rejects unknown keys).
+
+**Check existing session settings first.** The current config loader replaces
+the entire `[session]` table when an included fragment defines it. If
+`city.toml` or another included file already defines `[session]`, add
+`park_alert_to = "mayor"` to that existing table instead of including this
+fragment. Preserve its other keys, such as `provider`, and any existing
+recipient you intend to keep.
+
+For a city without session settings, copy or symlink this pack's
+`city-fragment.toml` next to `city.toml` as `gascity-city-fragment.toml`.
+Add its path to the top-level `include` list in `city.toml`, before any
+table headers, preserving other entries:
+
+```toml
+include = ["gascity-city-fragment.toml"]
+```
+
+Use your coordinator's `gc mail send` address if it differs from `mayor`.
+The setting has no default: when unset, the bead still parks, carries
+`gc.park_mail_failed`, and produces one supervisor-log line, but no mail.
+A failed send also leaves the bead parked with that failure marker. With a
+configured recipient and working mail provider, the pool sends one mail
+each time it parks a routed work bead.
 
 ## Choosing an entrypoint
 

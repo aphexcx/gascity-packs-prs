@@ -1,0 +1,9 @@
+# City-config fragment: see README.md, "Parked-worker alerts", before including.
+# Include only when the city has no other [session] settings: an included
+# [session] replaces the whole table. Otherwise add this key to the existing table.
+# Fork docs/reference/config.md: park_alert_to has no default. An unset recipient
+# or failed send stamps gc.park_mail_failed and logs once; the bead still parks.
+# Introduced by fork commit d9d3a9b9aa4b67092206ecb1bf01ba4b2c3d1556 (2026-09-16).
+
+[session]
+park_alert_to = "mayor"
