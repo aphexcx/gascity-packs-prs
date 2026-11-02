@@ -1,0 +1,2 @@
+description = "Upload a file and optional text to Google Chat"
+run = "../upload.sh"
