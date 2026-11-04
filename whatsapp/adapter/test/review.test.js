@@ -145,8 +145,7 @@ test('Minor 6: an entry first posted before a clear-gap is never posted plain af
   const x = r.gw.addText(B, 'wamid.CGX', 'x');
   await waitFor(() => r.gc.count('wamid.CGX') === 1);
   r.gc.restore(backup);
-  await r.pump(3000);
-  await waitFor(() => r.journal().some((l) => l.t === 'restore_gap' && l.conversation_id === A));
+  await r.pumpUntil(() => r.journal().some((l) => l.t === 'restore_gap' && l.conversation_id === A), { what: 'the scheduled read finds A\'s gap' });
   const cleared = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { wa_id: A });
   assert.equal(cleared.status, 200);
   await r.pump(GRACE);

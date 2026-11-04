@@ -42,8 +42,7 @@ test('(11a) accepted pending at N, the store restored below it, the log empty: n
   await waitFor(() => lines(r, 'wamid.R1', 'accepted').length === 1);
   const n = lines(r, 'wamid.R1', 'accepted')[0].sequence;
   r.gc.restore(backup);
-  await r.pump(6000);
-  await acked(r, id);
+  await r.pumpUntil(() => r.gw.acked.has(id), { what: 'the read-back resolved and acked' });
   const posts = r.gc.postsFor('wamid.R1');
   assert.equal(posts.length, 2);
   assert.ok(posts[1].text.startsWith(MARKER('wamid.R1')), 'the marked path, never a plain post');
@@ -68,8 +67,7 @@ test('(11b) as (11a) with the paste in the surviving session log: acked with no 
   await waitFor(() => lines(r, 'wamid.R1b', 'accepted').length === 1);
   r.gc.restore(backup);
   r.gc.logPaste('s-mayor', { conversationId: A, text: 'one b', pmid: 'wamid.R1b' }); // the session survived
-  await r.pump(6000);
-  await acked(r, id);
+  await r.pumpUntil(() => r.gw.acked.has(id), { what: 'the read-back resolved and acked' });
   assert.equal(r.gc.count('wamid.R1b'), 1);
   assert.ok(gapLine(r, A), 'the gap is still shown');
 });
@@ -86,8 +84,7 @@ test('(11c) the store re-issued sequence N to another id: the watermark reads be
   r.gc.restore(backup);
   await deliver(r, A, 'wamid.R2c'); // re-issued sequence N
   assert.equal(r.gc.records(A).find((x) => x.Sequence === n).ProviderMessageID, 'wamid.R2c');
-  await r.pump(6000);
-  await acked(r, id);
+  await r.pumpUntil(() => r.gw.acked.has(id), { what: 'the read-back resolved and acked' });
   assert.equal(r.gc.count('wamid.R1c'), 2);
   assert.ok(r.gc.postsFor('wamid.R1c')[1].text.startsWith(MARKER('wamid.R1c')));
   assert.ok(gapLine(r, A));
@@ -121,8 +118,7 @@ test('(11d2) a never-accepted entry of B, B\'s watermark intact, while A\'s gap 
   const id = r.gw.addText(B, 'wamid.B1', 'b one');
   await waitFor(() => r.gc.count('wamid.B1') === 1);
   r.gc.restore(backup);
-  await r.pump(3000);
-  await waitFor(() => gapLine(r, A), { what: 'the scheduled read finds A\'s gap' });
+  await r.pumpUntil(() => gapLine(r, A), { what: 'the scheduled read finds A\'s gap' });
   assert.equal(gapLine(r, B), undefined, 'B intact');
   await r.pump(GRACE);
   await acked(r, id);
@@ -154,8 +150,7 @@ test('(11f) the watermark survives compaction: an acked rid compacted away leave
   await r.pumpUntil(() => lines(r, 'wamid.F0').length === 0, { what: 'the acked rid compacted away' });
   assert.equal(r.journal().filter((l) => l.t === 'watermark' && l.conversation_id === A).at(-1).sequence, 1);
   r.gc.restore(backup);
-  await r.pump(61000, { stepMs: 5000 });
-  await waitFor(() => gapLine(r, A), { what: 'the gap read after the compaction' });
+  await r.pumpUntil(() => gapLine(r, A), { stepMs: 5000, what: 'the gap read after the compaction' });
 });
 
 test('(11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before', async (t) => {
@@ -165,8 +160,7 @@ test('(11g) clear-gap prints the gap and the head, rebases the watermark; a SIGK
   const backup = r.gc.backup();
   await deliver(r, A, 'wamid.G1');
   r.gc.restore(backup);
-  await r.pump(61000, { stepMs: 5000 });
-  await waitFor(() => gapLine(r, A));
+  await r.pumpUntil(() => gapLine(r, A), { stepMs: 5000, what: 'the scheduled read finds the gap' });
   const cleared = await adapterRequest(r.socket, 'POST', '/inbound/clear-gap', { wa_id: A });
   assert.equal(cleared.status, 200);
   assert.equal(cleared.json.gap.watermark_sequence, 2);
@@ -178,6 +172,9 @@ test('(11g) clear-gap prints the gap and the head, rebases the watermark; a SIGK
   assert.equal((await adapterRequest(r.socket, 'GET', '/status')).json.inbound.gaps.length, 0, 'the restore row reads green');
   await r.adapter.kill();
   r.start();
+  // The cleared gap's lines leave the file at the restarted adapter's
+  // startup compaction; a loaded host can boot the child after any fixed pump.
+  await waitFor(() => r.journal().filter((l) => l.t === 'restore_gap').length === 0, { what: 'the restart compacted the cleared gap away' });
   await r.pump(61000, { stepMs: 5000 });
   await stays(() => r.journal().filter((l) => l.t === 'restore_gap').length === 0, { what: 'no gap after the clear' });
   await deliver(r, A, 'wamid.G2');
@@ -243,8 +240,7 @@ test('(11j) the scheduled read finds a restore with no in-doubt entry anywhere a
   await deliver(r, B, 'wamid.J1');
   r.gc.restore(backup);
   assert.equal(r.journal().some((l) => l.t === 'restore_gap'), false);
-  await r.pump(61000, { stepMs: 5000 });
-  await waitFor(() => gapLine(r, A) && gapLine(r, B), { what: 'both gaps from the scheduled read' });
+  await r.pumpUntil(() => gapLine(r, A) && gapLine(r, B), { stepMs: 5000, what: 'both gaps from the scheduled read' });
   assert.equal(gapLine(r, A).found_by, 'schedule');
   const status = await adapterRequest(r.socket, 'GET', '/status');
   assert.equal(status.json.inbound.gaps.length, 2);
