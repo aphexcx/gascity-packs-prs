@@ -14,6 +14,15 @@ shapes are read at gc's fork integration head
 `f22b3ed4a5b090e6960373ffc9e7a414aa085309` (and `92a7f383f` where they differ;
 the source comments cite file:line at both).
 
+The words around the code (gp-6mr7): the mayor reads the skill
+[`skills/whatsapp/SKILL.md`](skills/whatsapp/SKILL.md) before any WhatsApp
+reply; a WhatsApp-bound session composes the prompt fragment
+[`template-fragments/whatsapp-v0.template.md`](template-fragments/whatsapp-v0.template.md);
+an owner gets [`docs/owner-onboarding.md`](docs/owner-onboarding.md) (English
+and Portuguese) at the invite; Afik opens the Meta account with
+[`docs/meta-setup.md`](docs/meta-setup.md); [`docs/README.md`](docs/README.md)
+points at all of them.
+
 ## Components
 
 | Path | What it is |
