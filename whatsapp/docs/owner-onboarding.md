@@ -22,11 +22,13 @@ WhatsApp, the same mayor as on Slack.
   has an update" message, for a real update, and then it waits for your
   reply.
 - If you agree, the mayor also keeps the line open. On days with something
-  to report, it sends one short update and asks you to reply "ok". When
-  nobody from your business has written for almost a day, it sends up to
-  four short reminders in the last hour before the line closes (before the
-  end of your working day, if you give your hours and time zone). Any reply
-  from your business keeps the line open another day.
+  to report, it sends one short update and asks you to reply "ok". When you
+  haven't written for almost a day, it sends up to four short reminders in
+  the last hour before the line closes (before the end of your working day,
+  if you give your hours and time zone). Your reply keeps the line open
+  another day.
+- Each phone has its own chat and its own 24 hours: a colleague's reply
+  doesn't keep your line open.
 - To stop the updates and reminders, tell the mayor. It stops them the
   same day.
 
@@ -65,11 +67,13 @@ prefeito pelo WhatsApp, o mesmo prefeito do Slack.
   quando tiver uma novidade de verdade. Depois, espera a sua resposta.
 - Se você concordar, o prefeito também mantém a conversa aberta. Nos dias
   em que tiver alguma coisa para contar, ele manda um resumo curto e pede
-  para você responder "ok". Quando faz quase um dia que ninguém da sua
-  empresa escreve, ele manda até quatro lembretes rápidos na última hora antes de a
-  conversa fechar (antes do fim do expediente, se você informar o horário
-  de funcionamento e o fuso horário). Qualquer resposta da sua empresa
-  mantém a conversa aberta por mais um dia.
+  para você responder "ok". Quando faz quase um dia que você não escreve,
+  ele manda até quatro lembretes rápidos na última hora antes de a conversa
+  fechar (antes do fim do expediente, se você informar o horário de
+  funcionamento e o fuso horário). A sua resposta mantém a conversa aberta
+  por mais um dia.
+- Cada telefone tem a própria conversa e as próprias 24 horas: a resposta
+  de um colega não mantém a sua conversa aberta.
 - Para parar os resumos e os lembretes, é só falar com o prefeito. Ele para
   no mesmo dia.
 

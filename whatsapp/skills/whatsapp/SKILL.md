@@ -50,9 +50,10 @@ reads as being ignored. Answer in the language they write in.
 
 ## The 24-hour window
 
-WhatsApp lets you write freely only within 24 hours of the last message from
-the owner's side (the adapter keeps a two-minute margin). Each message from
-them opens the window for another 24 hours. Nothing you send opens it, the
+WhatsApp lets you write freely only within 24 hours of that person's last
+message (the adapter keeps a two-minute margin). Each message from them
+opens the window for another 24 hours. Every phone has its own window: one
+person's reply does not open another's. Nothing you send opens it, the
 update template included.
 
 A send refused with `window_closed` means the window has closed. You then
@@ -144,18 +145,20 @@ gc whatsapp consent <wa_id> --off
 ```
 
 `gc whatsapp consent <wa_id> --on` turns it back on when they ask. When they
-give their business hours or their time zone, record them. The verb takes
-both together, so ask for whichever one is missing:
+give their business hours, record them with their time zone; hours need a
+zone, so ask for it if it is missing:
 
 ```
 gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo
 ```
 
-When they say they no longer keep fixed hours, remove them; the update then
-comes at a fixed hour of their day and the nudges run at any hour:
+When they keep no fixed hours, or no longer do, remove the hours; the update
+then comes at a fixed hour of their day and the nudges run at any hour. Add
+`--tz` to record their time zone with no hours (a time zone alone is
+enough), or leave it off to keep the zone already recorded:
 
 ```
-gc whatsapp hours <wa_id> --clear
+gc whatsapp hours <wa_id> --clear [--tz America/Sao_Paulo]
 ```
 
 Both verbs take the phone in any form and print the last four digits they

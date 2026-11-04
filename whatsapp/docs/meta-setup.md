@@ -118,11 +118,22 @@ webhook URL the moment you save it.
    The adapter sends only the template's name, its language and the one
    parameter, so the closing line changes no code. A city sends the language
    its env names (`WHATSAPP_UPDATE_LANGUAGE`, `en_US` by default; a
-   Brazilian city sets `pt_BR`). Meta may file the template as marketing
-   instead of utility ("the template is approved as `MARKETING`"). Then it
-   costs more, and an owner who has turned off marketing messages from
-   businesses never receives it (Meta's error `131050`). Source for the
-   error: [Error codes](https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes).
+   Brazilian city sets `pt_BR`).
+
+   **The template must be approved as Utility. A Marketing approval is a
+   blocker, not a price change.** Meta can file a Utility submission as
+   marketing ("the template is approved as `MARKETING`"), and "WhatsApp does
+   not currently deliver marketing template messages to WhatsApp users with
+   United States phone numbers". Taylor's test phone and the first two
+   customers are US numbers, so a marketing `dynasty_update` never reaches
+   them; elsewhere it is capped per user and refused to anyone who turned
+   marketing messages off (error `131050`). If it comes back as Marketing,
+   change the wording and ask for a review (open for 60 days after the
+   category was set) before anyone relies on it. Meta also re-checks
+   categories over time, so look at the category again before each step
+   that depends on it. Sources: [Template categorization](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/template-categorization);
+   [Per-user marketing template limits, United States phone numbers](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/marketing-templates/per-user-limits);
+   [Error codes](https://developers.facebook.com/documentation/business-messaging/whatsapp/support/error-codes).
 
 ## After the first week, the real line
 
@@ -146,7 +157,8 @@ webhook URL the moment you save it.
 12. **The template again, on the new Messaging account.** Templates live on
     the Messaging account, and the real line came with a new one (step 10).
     Repeat step 9 there, with the same name, bodies and samples, and wait
-    for the approval. Only then does the mayor point the gateway at the new
+    for the approval **as Utility** (a Marketing approval stops here, step
+    9). Only then does the mayor point the gateway at the new
     number's phone number id (one gateway secret changes; no city
     re-keys). Sources: [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform);
     [WhatsApp Business Accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/whatsapp-business-accounts).

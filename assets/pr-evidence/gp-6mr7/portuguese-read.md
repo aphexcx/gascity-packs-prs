@@ -72,6 +72,17 @@ four NITs, all folded:
 4. "Quem te atende na Dynasty" vs "o seu contato na Dynasty" twice → one
    name for one person: **"O seu contato na Dynasty te passa o número."**
 
+## Third read (21:00Z), after codex's per-phone window finding
+
+Codex QUICK r1 (P2) found the window is per phone, not per business. The
+reminders bullet changed to "Quando faz quase um dia que você não escreve",
+"A sua resposta mantém a conversa aberta por mais um dia.", and a new line
+was added on each phone having its own chat. The same reviewer read the
+three sentences: **no MAJOR, no MINOR, pt-BR ready**, with one NIT, folded:
+the new line's first two "sua" (the phone's) next to the last one (yours)
+→ **"Cada telefone tem a própria conversa e as próprias 24 horas: a
+resposta de um colega não mantém a sua conversa aberta."**
+
 ## The template (meta-setup.md)
 
 17. "Sua cidade tem uma novidade: {{1}}" / "Responda aqui para continuar.":
