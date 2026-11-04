@@ -35,7 +35,8 @@ if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi
 code=$(printf '%s' "$WA_BODY" | jq -r '.code')
-expires=$(printf '%s' "$WA_BODY" | jq -r '.expires_at')
+# The gateway answers epoch seconds (its contract reading 1).
+expires=$(printf '%s' "$WA_BODY" | jq -r '.expires_at | if type == "number" then todate else . end')
 echo "Invite code: $code (expires $expires)"
 echo
 echo "Tell the owner:"

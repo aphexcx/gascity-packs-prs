@@ -61,14 +61,19 @@ function fromDisk(key, value) {
   return Number.isFinite(ms) ? ms : null;
 }
 
-// The gateway's instants: ISO-8601 strings or epoch-ms numbers, null for a
-// phone that has never written.
+// The gateway's instants: integer epoch SECONDS on the wire (the gateway
+// lane's contract reading 1, posted on gp-9hf1 18:20Z 11/4); ISO-8601
+// strings and epoch milliseconds are read too. Null for a phone that has
+// never written.
 export function parseInstant(value) {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value !== 'string' || !value.trim()) return null;
-  const text = value.trim();
-  const ms = /^\d+$/.test(text) ? Number(text) : Date.parse(text);
-  return Number.isFinite(ms) ? ms : null;
+  let ms;
+  if (typeof value === 'number') ms = value;
+  else if (typeof value === 'string' && value.trim()) {
+    const text = value.trim();
+    ms = /^\d+$/.test(text) ? Number(text) : Date.parse(text);
+  } else return null;
+  if (!Number.isFinite(ms)) return null;
+  return ms > 0 && ms < 1e11 ? ms * 1000 : ms;
 }
 
 const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());

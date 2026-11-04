@@ -225,6 +225,16 @@ export function createPublisher({
     } else if (err?.config) {
       reason = 'not_configured';
       hint = 'WHATSAPP_GATEWAY_URL is not set in the adapter\'s env.';
+    } else if (err?.json?.error === 'outcome_unknown') {
+      // The gateway's reading 4 (update 2): Meta may have sent this chunk and
+      // the key is spent; a repeat under it never calls Meta again.
+      reason = 'outcome_unknown';
+      hint = `The gateway cannot tell whether WhatsApp sent part ${delivered + 1} of ${chunks}: check the chat before resending. `
+        + 'A resend needs a fresh idempotency key (run gc whatsapp publish again without --idempotency-key), at the risk of the owner reading it twice.';
+    } else if (err?.json?.error === 'in_flight') {
+      kind = 'transient';
+      reason = 'in_flight';
+      hint = 'The gateway is still sending this key to WhatsApp: retry shortly with the same idempotency key.';
     } else if (isTransient(err) || err?.malformed || err?.noMessageId) {
       kind = 'transient';
       reason = 'gateway_unavailable';

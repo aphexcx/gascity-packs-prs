@@ -1,4 +1,6 @@
-// fakes.js — the fake gateway (the contract v1, route by route), the fake gc
+// fakes.js — the fake gateway (the contract v1, route by route, with the
+// gateway lane's posted readings: every time an integer of epoch SECONDS, the
+// ack answered {ok: true}), the fake gc
 // (extmsg inbound/receipts/transcript, sessions, session transcripts, the
 // adapter registration and the outbound transcript, modelled on gc's fork
 // head f22b3ed4a), a test clock, and the child-process harness the
@@ -116,7 +118,7 @@ export async function startFakeGateway({ clock } = {}) {
 
   g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message }) => {
     const id = g.nextId++;
-    const delivery = { id, received_at: new Date(now()).toISOString(), kind, wa_id: String(wa_id), profile_name, message };
+    const delivery = { id, received_at: Math.floor(now() / 1000), kind, wa_id: String(wa_id), profile_name: kind === 'status' ? null : profile_name, message };
     g.deliveries.set(id, delivery);
     g.bound.add(String(wa_id));
     if (kind === 'message' || kind === 'joined') g.lastInbound.set(String(wa_id), Number(message?.timestamp) * 1000 || now());
@@ -132,8 +134,8 @@ export async function startFakeGateway({ clock } = {}) {
     if (!last) return { conversation_id: String(waId), last_inbound_at: null, window_closes_at: null };
     return {
       conversation_id: String(waId),
-      last_inbound_at: new Date(last).toISOString(),
-      window_closes_at: new Date(last + DAY_MS - MARGIN_MS).toISOString(),
+      last_inbound_at: Math.floor(last / 1000),
+      window_closes_at: Math.floor(last / 1000) + 86400 - 120,
     };
   };
   g.windowOpen = (waId) => {
@@ -156,7 +158,7 @@ export async function startFakeGateway({ clock } = {}) {
     if (g.revoked || auth !== `Bearer ${g.credential}`) return send(res, 401, { error: 'unauthorized' });
 
     if (route === 'POST /v1/invites') {
-      const invite = { code: String(100000 + g.invites.length), expires_at: new Date(now() + DAY_MS).toISOString() };
+      const invite = { code: String(100000 + g.invites.length), expires_at: Math.floor((now() + DAY_MS) / 1000) };
       g.invites.push(invite);
       return send(res, 200, invite);
     }
@@ -177,7 +179,7 @@ export async function startFakeGateway({ clock } = {}) {
       if (behaviour === 'hang') { g.hung.push(res); return undefined; }
       if (behaviour !== 'ok') return send(res, behaviour, { error: 'ack failed' });
       for (const id of body.ids ?? []) g.acked.add(id); // deletes exactly the listed ids
-      return send(res, 200, { acknowledged: (body.ids ?? []).length });
+      return send(res, 200, { ok: true });
     }
     if (route === 'POST /v1/send') {
       const { to, idempotency_key: key, type } = body;

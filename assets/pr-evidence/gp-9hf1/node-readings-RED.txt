@@ -1,0 +1,75 @@
+✖ instants: epoch seconds, epoch milliseconds and ISO strings all read as the same instant (0.926042ms)
+✖ a send answered 502 outcome_unknown is a permanent failure telling the mayor to check the chat and resend under a fresh key (18.139958ms)
+✖ a send answered 409 in_flight is transient: retry with the same key (6.50375ms)
+✔ a send answered 502 meta_error (Meta refused; nothing sent) is transient: the same key sends on a retry (2.0075ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 1
+ℹ fail 3
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 100.831541
+
+✖ failing tests:
+
+test at test/readings.test.js:18:1
+✖ instants: epoch seconds, epoch milliseconds and ISO strings all read as the same instant (0.926042ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 1793815200
+  - 1793815200000
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red-readings/test/readings.test.js:20:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1793815200,
+    expected: 1793815200000,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/readings.test.js:65:1
+✖ a send answered 502 outcome_unknown is a permanent failure telling the mayor to check the chat and resend under a fresh key (18.139958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'transient'
+  - 'permanent'
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red-readings/test/readings.test.js:69:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'transient',
+    expected: 'permanent',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/readings.test.js:75:1
+✖ a send answered 409 in_flight is transient: retry with the same key (6.50375ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'permanent'
+  - 'transient'
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red-readings/test/readings.test.js:77:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'permanent',
+    expected: 'transient',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

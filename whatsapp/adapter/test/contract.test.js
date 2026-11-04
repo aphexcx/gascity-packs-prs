@@ -42,13 +42,13 @@ test('every contract route answers on the fake through the adapter\'s client', a
   assert.equal((await client.enroll({ code: 'enroll-ok', name: 'Hou Dynasty' })).credential, 'cred-minted-at-enroll');
   assert.match((await client.createInvite()).code, /^\d{6}$/);
   assert.deepEqual((await client.inbox({})).deliveries.map((d) => d.id), [id]);
-  assert.deepEqual(await client.ack([id]), { acknowledged: 1 });
+  assert.deepEqual(await client.ack([id]), { ok: true });
   assert.deepEqual((await client.inbox({})).deliveries, [], 'an acked delivery is gone');
   assert.equal((await client.send({ to: '5511900000001', idempotency_key: 'k1', type: 'text', text: 'hello' })).message_id, 'wamid.out.1');
   assert.deepEqual(await client.read('wamid.C1'), { ok: true });
   const windows = (await client.window()).windows;
   assert.equal(windows[0].conversation_id, '5511900000001');
-  assert.ok(windows[0].window_closes_at);
+  assert.equal(windows[0].window_closes_at, windows[0].last_inbound_at + 86400 - 120, 'epoch seconds, the 120 s margin');
   const media = await client.media('m1');
   assert.equal(media.bytes.toString(), 'jpeg');
   assert.equal(media.contentType, 'image/jpeg');

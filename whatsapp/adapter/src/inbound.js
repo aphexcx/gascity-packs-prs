@@ -21,6 +21,7 @@ import { readWholeInbox } from './gateway.js';
 import { recordField } from './gc.js';
 import { isRetryableAnswer, isTransient, ladderDelay } from './http.js';
 import { ackOwed, entryState } from './journal.js';
+import { toMs } from './ledger.js';
 import { pasteFound, probeShape } from './evidence.js';
 import {
   inboundAtMs, lastFour, pmidOfRid, providerMessageId, renderMessage, ridFor, statusOf,
@@ -46,6 +47,7 @@ export function ref(rid) {
   return `m-${createHash('sha256').update(String(rid)).digest('hex').slice(0, 10)}`;
 }
 
+const WINDOW_TYPES = new Set(['text', 'reaction', 'image', 'audio', 'video', 'document', 'sticker', 'location', 'contacts', 'interactive', 'button']);
 const CHAIN_STATES = new Set(['received', 'posted', 'redeliver', 'accepted:failed', 'accepted:partial', 'accepted:no_route']);
 
 export const NO_ROUTE_ON_MARKED_NOTE = 'gc took this message; either it was already delivered (gc suppressed the marked copy as a repeat) '
@@ -253,7 +255,8 @@ export function createInbound({
         oweAck(rid);
         return true;
       }
-      const at = Date.parse(delivery.received_at ?? '');
+      // received_at is integer epoch seconds on the wire (the gateway's reading 1).
+      const at = toMs(delivery.received_at);
       if (Number.isFinite(at) && at < (journal.genesisAt ?? 0) - LOST_JOURNAL_MARGIN_MS) {
         // The gateway took it before this journal was born: a journal that is
         // gone may have posted it. Never a plain first post: the in-doubt
@@ -263,7 +266,10 @@ export function createInbound({
         journal.append({ t: 'posted', rid, at, reposts: 0, boundary: 0, marked: false, synthetic: 'before-genesis' });
         log(`${ref(rid)}: received by the gateway before this journal began; resolved by the in-doubt rule`);
       }
-      if (delivery.kind === 'message' || delivery.kind === 'joined') {
+      // The window moves on the owner's message of every known type, the
+      // reaction included, never on a system notice or an unsupported type
+      // (the gateway's reading 7, update 2); the gateway stays the authority.
+      if (delivery.kind === 'joined' || (delivery.kind === 'message' && WINDOW_TYPES.has(String(delivery.message?.type ?? '')))) {
         ledger?.noteInbound?.(String(delivery.wa_id), inboundAtMs(delivery));
       }
       if (delivery.kind === 'joined') {
