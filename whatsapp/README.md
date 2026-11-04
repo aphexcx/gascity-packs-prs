@@ -123,9 +123,10 @@ to <path>; Read that path to view it" block (voice notes transcribed inline).
 
 gc publishes the mayor's replies through `/publish` (session attribution
 required). Text is chunked at 4096 characters, serialized per phone, and sent
-per chunk under `text:<sha256 of the idempotency key>:<n>`, so a retry resumes
-at the failed chunk; an update goes under `template:<sha256 of the key>`, a
-namespace no text chunk shares. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
+per chunk under `text:<sha256 of the idempotency key and the chunk>:<n>`, so a
+retry resumes at the failed chunk; an update goes under `template:<sha256 of
+the key and the text>`, a namespace no text chunk shares, and a key reused
+for another message is another gateway key. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
 120-second margin) is the gateway's to enforce: a free-form send outside it
 answers gc's permanent publish error with `metadata.reason window_closed` and
 a hint naming the update verb. `gc whatsapp publish --update --to <wa_id>

@@ -48,8 +48,12 @@ export const LOST_JOURNAL_MARGIN_MS = 60000;
 // delivery looking fresh to advance():
 //   - a dead-letter file line names it: a journal that is gone dead-lettered
 //     it; dead again, its ack owed, never posted;
-//   - fresh only on positive proof: the gateway took it at or after this
-//     journal's genesis less the margin (both instants finite);
+//   - fresh only on positive proof: both instants finite and the gateway
+//     took it at or after this journal's genesis less the margin (the
+//     margin, kept from the first cut, absorbs a box clock ahead of the
+//     gateway's; it also admits a delivery taken up to a minute before the
+//     genesis as fresh: a design question for the mayor, since moving it
+//     the other way delays every delivery of a new journal's first minute);
 //   - otherwise in doubt (a lost journal may have posted it): the in-doubt
 //     rule from a lookup at zero, never a plain first post; the grace and
 //     the pending deadline run from the gateway's receipt, or from now when
@@ -222,7 +226,7 @@ export function createInbound({
     try {
       keeper.bindInvite(code, String(delivery.wa_id));
     } catch (err) {
-      if (!bindOwed.has(rid)) log(`${who}: the invite's keeper fields were not bound (${err.message}); the join stays unacknowledged until the bind is saved (retried at every poll)`);
+      if (!bindOwed.has(rid)) log(`${who}: the invite's keeper fields were not bound (${err?.message ?? err}); the join stays unacknowledged until the bind is saved (retried at every poll)`);
       bindOwed.add(rid);
       return;
     }
@@ -245,8 +249,8 @@ export function createInbound({
   async function poll() {
     polling = true;
     const seq = ++pollSeq;
-    retryOwedBinds();
     try {
+      retryOwedBinds();
       const deliveries = await readWholeInbox(gateway);
       pollFailures = 0;
       lastCompletedPollSeq = seq;

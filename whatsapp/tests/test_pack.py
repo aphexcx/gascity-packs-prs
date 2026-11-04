@@ -293,7 +293,7 @@ def test_restore_row_reads_a_head_it_never_got_as_unknown(tmp_path):
     write_journal(tmp_path, [GAP_HEAD_UNKNOWN])
     result = doctor('restore', GC_CITY_PATH=str(tmp_path))
     assert result.returncode == 1
-    assert '(sequence unknown)' in result.stdout and 'null' not in result.stdout
+    assert '(sequence 9) is not in the gc store (its head unknown)' in result.stdout and 'null' not in result.stdout
 
 
 def test_probes_row_counts_snapshots_of_the_last_seven_days(tmp_path):
@@ -495,7 +495,8 @@ def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
     })})
     result = verb('status.sh', WHATSAPP_ADAPTER_URL=status.url)
     assert result.returncode == 0, result.stderr
-    assert 'journal watermark 9 ahead of the gc store head unknown' in result.stdout and 'null' not in result.stdout
+    assert 'journal watermark 9 not in the gc store (store head unknown)' in result.stdout and 'null' not in result.stdout
+    assert 'held for a keeper bind' not in result.stdout, 'no bind owed, no note'
 
 
 def test_invite_consent_hours(fake):
@@ -549,7 +550,7 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     close_ms = 1793900000000
     adapter = fake({'GET /status': (200, {
         'health': {'gateway_auth': 'ok'},
-        'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 0,
+        'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 1, 'binds_owed': 1,
                     'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
                     'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
         'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
@@ -563,7 +564,8 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     out = result.stdout
     assert 'Enrolled:      yes' in out and 'Dead letters:  2' in out
     assert 'm-0123456789  phone ...1234  receipt rcpt-9' in out
-    assert 'journal watermark 9 ahead of the gc store head 4' in out
+    assert 'acks owed 1 (1 held for a keeper bind)' in out
+    assert 'journal watermark 9 not in the gc store (store head 4)' in out
     assert '...1234  closes 2026-11-05T15:33:20Z (adapter ledger' in out
     assert 'keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)' in out
     assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '

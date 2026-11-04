@@ -24,10 +24,11 @@
 // template send is appended to <stateDir>/updates.jsonl (0600, fsynced).
 //
 // IDEMPOTENCY. Chunk i of a publish goes to the gateway under
-// textChunkKey(key, i) = `text:<sha256 of key>:<i>`, an update under
-// templateKey(key) = `template:<sha256 of key>` (disjoint namespaces), and
-// the gateway answers a repeated key with the same message_id without a
-// second Meta call. The adapter also persists per-key
+// textChunkKey(key, i, chunk) = `text:<sha256 of [key, chunk]>:<i>`, an
+// update under templateKey(key, text) = `template:<sha256 of [key, text]>`
+// (disjoint namespaces, one message per key), and the gateway answers a
+// repeated key with the same message_id without a second Meta call. The
+// adapter also persists per-key
 // progress (<stateDir>/outbound_progress.json: chunks delivered, their
 // message ids, the settled receipt), so a retry under the same key resumes
 // at the failed chunk and never asks for a delivered one again, and a
@@ -100,17 +101,20 @@ export function chunkText(text) {
 const sha256Hex = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 
 // THE GATEWAY'S IDEMPOTENCY KEY (the codex gate r1's third finding on PR 74).
-// The gateway remembers one answer per key per city and answers a repeat
-// with it, with no Meta call. A text chunk and a template therefore never
-// share a key: each operation has its own namespace, and the caller's key
-// enters as its sha256, so no caller key can reach into another namespace or
-// another chunk (an update keyed "K:0" and a text keyed "K" once both went
-// to the gateway as "K:0"), and a caller key of any length fits the
-// gateway's 1-200 character bound (gateway.ts:746 at 392f9c09). One caller
-// key and one chunk always give one gateway key: a retry still gets the
-// gateway's first answer (its REPEATED KEY rule).
-export const textChunkKey = (key, index) => `text:${sha256Hex(key)}:${index}`;
-export const templateKey = (key) => `template:${sha256Hex(key)}`;
+// The gateway remembers one answer per key per city for 30 days and answers
+// a repeat with it, with no Meta call. So a gateway key names exactly one
+// message: the operation in its own namespace (a text chunk and a template
+// never share a key: an update keyed "K:0" and a text keyed "K" once both
+// went to the gateway as "K:0"), then the sha256 of the caller's key WITH
+// the content it carries (a caller key reused for another text, once the
+// progress store below has forgotten it after 7 days or 1024 keys, is a new
+// gateway key, never the first message's receipt), then a text chunk's
+// index. Any caller key fits the gateway's 1-200 character bound
+// (gateway.ts:746 at 392f9c09). One caller key, one text and one chunk
+// always give one gateway key: a retry still gets the gateway's first
+// answer (its REPEATED KEY rule).
+export const textChunkKey = (key, index, chunk) => `text:${sha256Hex(JSON.stringify([key, chunk]))}:${index}`;
+export const templateKey = (key, text) => `template:${sha256Hex(JSON.stringify([key, text]))}`;
 
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -295,7 +299,7 @@ export function createPublisher({
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       try {
-        answer = await gateway.send({ to: waId, idempotency_key: textChunkKey(key, i), type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to: waId, idempotency_key: textChunkKey(key, i, chunks[i]), type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
@@ -411,7 +415,7 @@ export function createPublisher({
     try {
       answer = await gateway.send({
         to,
-        idempotency_key: templateKey(key),
+        idempotency_key: templateKey(key, text),
         type: 'template',
         template: { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] },
       });

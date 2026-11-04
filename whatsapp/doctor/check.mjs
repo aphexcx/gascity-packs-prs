@@ -179,7 +179,7 @@ function restore() {
   const { fold, error } = loadFold();
   if (error) return finish(1, error);
   if (!fold.gaps.size) return finish(0, `no restore gap (${fold.watermarks.size} watermark(s))`);
-  const lines = [...fold.gaps.values()].map((g) => `...${last4(g.conversation_id)}: the journal's accepted ${g.watermark_accepted_at ? new Date(g.watermark_accepted_at).toISOString() : '?'} (sequence ${g.watermark_sequence}) is ahead of the gc store's head ${g.head_created_at ?? 'none'} (sequence ${g.head_sequence ?? 'unknown'})`);
+  const lines = [...fold.gaps.values()].map((g) => `...${last4(g.conversation_id)}: the journal's accepted ${g.watermark_accepted_at ? new Date(g.watermark_accepted_at).toISOString() : '?'} (sequence ${g.watermark_sequence}) is not in the gc store (${g.head_sequence == null ? 'its head unknown' : `its head ${g.head_created_at ?? 'none'}, sequence ${g.head_sequence}`})`);
   finish(1, `restore gap: ${lines.join('; ')}; every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>`);
 }
 

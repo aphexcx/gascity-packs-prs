@@ -22,12 +22,12 @@ printf '%s' "$WA_BODY" | jq -r '
   def last4: tostring | gsub("[^0-9]"; "") | .[-4:];
   "Enrolled:      \(if .health.gateway_auth == "ok" then "yes" else .health.gateway_auth end)",
   "Last poll:     \(.inbound.last_poll_at | t)\(if (.inbound.last_poll_error // "") != "" then " (error: \(.inbound.last_poll_error))" else "" end)",
-  "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)",
+  "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)\(if (.inbound.binds_owed // 0) > 0 then " (\(.inbound.binds_owed) held for a keeper bind)" else "" end)",
   "Dead letters:  \(.inbound.dead_letters)",
   "Terminal holds: \(.inbound.held | length)",
   (.inbound.held[] | "  \(.ref)  phone ...\(.wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
   "Restore gaps:  \(.inbound.gaps | length)",
-  (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) ahead of the gc store head \(.head_sequence // "unknown")  (gc whatsapp inbound clear-gap <wa_id>)"),
+  (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) not in the gc store (store head \(.head_sequence // "unknown"))  (gc whatsapp inbound clear-gap <wa_id>)"),
   # The keeper reads GET /v1/window once a minute; while a read is failing
   # the ladder and the lapse count wait on a fresh clock.
   ((.keeper.window_read // {}) as $w |

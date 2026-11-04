@@ -316,7 +316,7 @@ async function lostJournalPending(w, pmid) {
   return id;
 }
 
-test('gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal\'s genesis, a crash right after its received line, a restart: the in-doubt rule from zero, never a plain post', async (t) => {
+test('gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal\'s genesis, a crash at the first append after its received line (before the round: the classification\'s own line), a restart: the in-doubt rule from zero, never a plain post', async (t) => {
   const w = await world(t);
   const pmid = 'wamid.GL1';
   const id = await lostJournalPending(w, pmid);
@@ -369,21 +369,27 @@ async function publisherWorld(t) {
   const clock = createTestClock(dir);
   const gw = await startFakeGateway({ clock });
   gw.bound.add(A);
-  const pub = createPublisher({
-    stateDir: path.join(dir, 'state'),
-    gateway: createGatewayClient({ url: gw.url, credential: CREDENTIAL, timeoutMs: 2000 }),
-    gc: createGcClient({ base: 'http://127.0.0.1:9', city: CITY }),
-    city: CITY,
-    clock: clock.now,
-  });
   t.after(async () => {
     await gw.close();
     fs.rmSync(dir, { recursive: true, force: true });
   });
-  const publish = (text, key) => pub.handlePublish(JSON.stringify({ session_id: 's-mayor', conversation: conversationRef(CITY, A), text, idempotency_key: key }));
-  const update = (text, key) => pub.handlePublishUpdate(JSON.stringify({ to: A, text, idempotency_key: key }));
+  // A publisher on its own state dir: a second one is the first with its
+  // progress store forgotten (the 7-day TTL, the 1024-entry cap, a lost dir).
+  const publisher = (state = 'state') => {
+    const pub = createPublisher({
+      stateDir: path.join(dir, state),
+      gateway: createGatewayClient({ url: gw.url, credential: CREDENTIAL, timeoutMs: 2000 }),
+      gc: createGcClient({ base: 'http://127.0.0.1:9', city: CITY }),
+      city: CITY,
+      clock: clock.now,
+    });
+    return {
+      publish: (text, key) => pub.handlePublish(JSON.stringify({ session_id: 's-mayor', conversation: conversationRef(CITY, A), text, idempotency_key: key })),
+      update: (text, key) => pub.handlePublishUpdate(JSON.stringify({ to: A, text, idempotency_key: key })),
+    };
+  };
   const sendKeys = () => gw.requests.filter((q) => q.route === 'POST /v1/send').map((q) => q.body.idempotency_key);
-  return { clock, gw, publish, update, sendKeys };
+  return { clock, gw, publisher, ...publisher(), sendKeys };
 }
 
 test('gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template\'s receipt', async (t) => {
@@ -411,6 +417,30 @@ test('gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, 
   const templates = s.gw.sends.filter((x) => x.type === 'template');
   assert.equal(templates.length, 1, `the template reached Meta (gateway keys ${JSON.stringify(s.sendKeys())})`);
   assert.notEqual(update.json.message_id, reply.json.message_id, 'the template\'s own message id, not chunk 1\'s');
+});
+
+test('self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message\'s receipt', async (t) => {
+  // The gateway keeps a key's answer 30 days (gateway.ts:56 at 392f9c09);
+  // the adapter's progress store, the one refusing a key reused for another
+  // message, keeps 7 days and 1024 keys.
+  const s = await publisherWorld(t);
+  s.gw.lastInbound.set(A, s.clock.now());
+  const first = await s.publish('the first message', 'K');
+  const firstUpdate = await s.update('the first update', 'U');
+  const forgot = s.publisher('state-after-eviction');
+  const second = await forgot.publish('another message', 'K');
+  const secondUpdate = await forgot.update('another update', 'U');
+  assert.equal(second.json.delivered, true);
+  assert.deepEqual(s.gw.sends.filter((x) => x.type === 'text').map((x) => x.text), ['the first message', 'another message'],
+    `the second text reached Meta (gateway keys ${JSON.stringify(s.sendKeys())})`);
+  assert.notEqual(second.json.message_id, first.json.message_id);
+  assert.deepEqual(s.gw.sends.filter((x) => x.type === 'template').map((x) => x.template.params[0]), ['the first update', 'another update'],
+    'the second update reached Meta');
+  assert.notEqual(secondUpdate.json.message_id, firstUpdate.json.message_id);
+  // The same text under the same key is one send, whatever the store forgot.
+  const again = await s.publisher('state-after-another-eviction').publish('another message', 'K');
+  assert.equal(again.json.message_id, second.json.message_id, 'the gateway\'s REPEATED KEY rule: the first answer, no second send');
+  assert.equal(s.gw.sends.filter((x) => x.type === 'text').length, 2);
 });
 
 // --- MINOR (inbound.js:197) ------------------------------------------------------
