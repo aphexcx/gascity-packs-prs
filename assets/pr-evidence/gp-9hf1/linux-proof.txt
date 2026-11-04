@@ -1,7 +1,7 @@
-# The Linux arm64 proof of the whatsapp pack (gp-9hf1) at b5669899, 2026-11-04 19:3xZ, OrbStack on citadel.
+# The Linux arm64 proof of the whatsapp pack (gp-9hf1) at 2a80d925, 2026-11-04 20:5xZ, OrbStack on citadel.
 # Commands (from the lane worktree root):
 #   docker build -q -t gp-9hf1-linux-proof -f assets/pr-evidence/gp-9hf1/Dockerfile assets/pr-evidence/gp-9hf1
-#   docker run --name gp-9hf1-proof-5 --user node -v $PWD/whatsapp:/src/whatsapp:ro -v $PWD/assets/pr-evidence/gp-9hf1/linux-proof.sh:/proof-run.sh:ro gp-9hf1-linux-proof bash /proof-run.sh
+#   docker run --name gp-9hf1-proof-6 --user node -v $PWD/whatsapp:/src/whatsapp:ro -v $PWD/assets/pr-evidence/gp-9hf1/linux-proof.sh:/proof-run.sh:ro gp-9hf1-linux-proof bash /proof-run.sh
 # The pack is mounted read-only and copied to /proof; no credential, gateway, gc or phone was used.
 #   (gc need not run here: the adapter suite, run.sh --deps-only and the doctor rows are the proof; a live round trip waits on bead D.)
 
@@ -19,9 +19,9 @@ exit=0 in 18 ms
 exit=1 (gc-whatsapp-adapter: env file not found at /tmp/no-such-secrets/env)
 
 == node --test 'test/*.test.js'
-ℹ tests 149
+ℹ tests 160
 ℹ suites 0
-ℹ pass 149
+ℹ pass 160
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
@@ -29,8 +29,8 @@ exit=1 (gc-whatsapp-adapter: env file not found at /tmp/no-such-secrets/env)
 exit=0
 
 == python3 -m pytest whatsapp/tests -q
-.......................................                                  [100%]
-39 passed in 9.74s
+..........................................                               [100%]
+42 passed in 11.30s
 exit=0
 
 == doctor rows on a clean env (fail closed) and on a fixture city
