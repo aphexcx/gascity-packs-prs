@@ -11,7 +11,7 @@ import { adapterRequest, pasteText, rid, rig, stays, waitFor } from './fakes.js'
 
 const A = '5511900000001';
 const B = '5511900000002';
-const GRACE = 11000;
+const GRACE = 16000; // the 5 s test client deadline plus the 10 s margin, and a second
 const MARKER = (pmid) => `[redelivery ${pmid}: a first copy may have reached you; if you already answered it, do nothing]`;
 
 async function setup(t, extra = {}) {

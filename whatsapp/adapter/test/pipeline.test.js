@@ -186,6 +186,77 @@ test('a 401 stops polling and sets the doctor fact', async (t) => {
   await stays(() => r.gw.requests.filter((q) => q.route === 'GET /v1/inbox').length === polls, { what: 'no further poll' });
 });
 
+// --- the keeper review r2 (self-review-r2.md), through the real child ---------
+
+const keeperRow = async (r, waId) => (await adapterRequest(r.socket, 'GET', '/status').catch(() => undefined))?.json?.keeper?.conversations?.[waId];
+const joined = (r, waId, pmid, code) => r.gw.addDelivery({
+  kind: 'joined',
+  wa_id: waId,
+  message: { from: waId, id: pmid, timestamp: String(Math.floor(r.clock.now() / 1000)), type: 'text', text: { body: code } },
+});
+
+test('(keeper r2 m6) a kill between a join\'s received line and its keeper bind loses nothing: the restart binds the invite at startup, consent ON', async (t) => {
+  const r = await setup(t);
+  r.start({ WHATSAPP_TEST_KILL_AT: `after-received@${rid('wamid.JOIN1')}` });
+  const invite = await waitFor(async () => {
+    const answer = await adapterRequest(r.socket, 'POST', '/invite', { proactive_consent: true }).catch(() => undefined);
+    return answer?.status === 200 ? answer : undefined;
+  }, { what: 'POST /invite' });
+  const code = String(invite.json.code);
+  const id = joined(r, X, 'wamid.JOIN1', code);
+  assert.equal((await r.adapter.exited).signal, 'SIGKILL', 'killed after the received line, before the bind');
+  assert.deepEqual(lines(r, 'wamid.JOIN1').map((l) => l.t), ['received']);
+  r.start();
+  const row = await waitFor(async () => {
+    const got = await keeperRow(r, X);
+    return got?.consent === true ? got : undefined;
+  }, { what: 'the invite bound to the joined phone' });
+  t.diagnostic(`after the restart: keeper ${row.keeper}, consent ${row.consent}`);
+  assert.equal((await adapterRequest(r.socket, 'GET', '/status')).json.keeper.invites_pending, 0);
+  await acked(r, id);
+
+  // A join with no code: logged by ref and last four, never the full number.
+  joined(r, Y, 'wamid.JOIN2', '');
+  await waitFor(() => r.adapter.log().includes('joined with no invite code'), { what: 'the empty-code log line' });
+  const line = r.adapter.log().split('\n').find((l) => l.includes('joined with no invite code')) ?? '';
+  t.diagnostic(line);
+  assert.ok(line.includes('…0002') && line.includes('m-'), 'the ref and the last four');
+  assert.ok(!line.includes(Y), 'never the full number');
+});
+
+test('(keeper r2 M2, n10) /consent and /hours match a phone by its digits and answer its last four; an unknown phone is 404 and records nothing; hours "" clears', async (t) => {
+  const r = await setup(t);
+  r.gw.addText(X, 'wamid.KC1', 'hello'); // binds X at the fake gateway
+  r.start();
+  await waitFor(() => keeperRow(r, X), { what: 'the keeper read the window' });
+  const typed = '+55 11 90000-0001'; // X as an operator types it
+  const on = await adapterRequest(r.socket, 'POST', '/consent', { wa_id: typed, on: true });
+  assert.equal(on.status, 200, JSON.stringify(on.json));
+  assert.equal(on.json.wa_id_last4, '0001');
+  const hours = await adapterRequest(r.socket, 'POST', '/hours', { wa_id: typed, hours: 'Mon-Fri 09:00-18:00', tz: 'America/Sao_Paulo' });
+  assert.equal(hours.status, 200, JSON.stringify(hours.json));
+  assert.equal(hours.json.wa_id_last4, '0001');
+  const cleared = await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: '' });
+  assert.equal(cleared.status, 200, JSON.stringify(cleared.json));
+  let row = await keeperRow(r, X);
+  assert.equal(row.hours, null, 'hours "" cleared them');
+  assert.equal(row.tz, 'America/Sao_Paulo', 'tz omitted keeps the recorded zone');
+  assert.equal(row.consent, true);
+
+  const unknown = await adapterRequest(r.socket, 'POST', '/consent', { wa_id: '+55 11 90000-0009', on: false });
+  t.diagnostic(`unknown phone: ${unknown.status} ${unknown.json.error}`);
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.json.error, /0009/);
+  assert.ok(!unknown.json.error.includes('5511900000009'), 'never the full number');
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: '5511900000009', hours: '' })).status, 404);
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: 'weekdays' , tz: 'America/Sao_Paulo' })).status, 400);
+  assert.equal((await adapterRequest(r.socket, 'POST', '/hours', { wa_id: X, hours: 'Mon-Fri 09:00-18:00' })).status, 400, 'tz is required with hours');
+  const status = (await adapterRequest(r.socket, 'GET', '/status')).json.keeper.conversations;
+  assert.deepEqual(Object.keys(status), [X], 'no row for a refused or typed phone');
+  row = status[X];
+  assert.equal(row.consent, true);
+});
+
 test('the journal is 0600 in a 0700 directory and holds the full envelope before the POST', async (t) => {
   const r = await setup(t);
   r.gc.policy = () => ({ withhold: true });

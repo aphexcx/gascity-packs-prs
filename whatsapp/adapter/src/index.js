@@ -12,6 +12,8 @@
 //   WHATSAPP_GC_POST_TIMEOUT_MS (30000), WHATSAPP_GATEWAY_TIMEOUT_MS (15000),
 //   WHATSAPP_COMPACT_MS (600000), WHATSAPP_ROUTE_AGENT (mayor),
 //   WHATSAPP_KEEPER_UPDATE_HOUR (10), WHATSAPP_CITY_TZ, WHATSAPP_UPDATE_LANGUAGE (en_US),
+//   WHATSAPP_KEEPER_WINDOW_READ_MS (60000), WHATSAPP_KEEPER_WINDOW_STAMP_MS (60000: how
+//   often a good window read alone is stamped in keeper.json for the doctor row),
 //   WHATSAPP_MEDIA_DIR and WHATSAPP_MEDIA_* limits, ELEVENLABS_API_KEY
 //   WHATSAPP_TEST_CLOCK, WHATSAPP_TEST_KILL_AT   test-only; unset in production
 
@@ -68,6 +70,7 @@ export function loadConfig() {
     gatewayTimeoutMs: intEnv('WHATSAPP_GATEWAY_TIMEOUT_MS', 15000),
     compactMs: intEnv('WHATSAPP_COMPACT_MS', 10 * 60 * 1000),
     keeperWindowReadMs: intEnv('WHATSAPP_KEEPER_WINDOW_READ_MS', 60000),
+    keeperWindowStampMs: intEnv('WHATSAPP_KEEPER_WINDOW_STAMP_MS', 60000),
     routeAgent: getenv('WHATSAPP_ROUTE_AGENT', 'mayor'),
     keeperUpdateHour: intEnv('WHATSAPP_KEEPER_UPDATE_HOUR', 10),
     cityTz: getenv('WHATSAPP_CITY_TZ', Intl.DateTimeFormat().resolvedOptions().timeZone),
@@ -149,17 +152,25 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
       keeper.recordInvite(String(invite.code), fields);
       return { status: 200, json: { code: invite.code, expires_at: invite.expires_at, keeper: fields } };
     },
+    // /consent and /hours answer the last four digits of the conversation
+    // the keeper matched (the verb prints those, never the operator's input);
+    // an unknown phone is refused 404 and nothing is recorded.
     'POST /consent': async (body) => {
       const req = parseJSON(body);
       if (!req?.wa_id || typeof req.on !== 'boolean') return { status: 400, json: { error: 'wa_id and on (boolean) are required' } };
-      keeper.setConsent(String(req.wa_id), req.on);
-      return { status: 200, json: { ok: true, consent: req.on } };
+      const id = keeper.setConsent(String(req.wa_id), req.on);
+      return { status: 200, json: { ok: true, consent: req.on, wa_id_last4: String(id).slice(-4) } };
     },
+    // hours "" clears the recorded hours (tz may then be omitted: the
+    // recorded zone is kept; tz "" clears it too).
     'POST /hours': async (body) => {
       const req = parseJSON(body);
-      if (!req?.wa_id || !req.hours || !req.tz) return { status: 400, json: { error: 'wa_id, hours and tz are required' } };
-      keeper.setHours(String(req.wa_id), String(req.hours), String(req.tz));
-      return { status: 200, json: { ok: true } };
+      if (!req?.wa_id || typeof req.hours !== 'string') return { status: 400, json: { error: 'wa_id and hours are required (hours "" clears them)' } };
+      const hours = req.hours.trim();
+      if (req.tz !== undefined && typeof req.tz !== 'string') return { status: 400, json: { error: 'tz must be a string' } };
+      if (hours && !req.tz?.trim()) return { status: 400, json: { error: 'tz is required with hours' } };
+      const id = keeper.setHours(String(req.wa_id), hours, req.tz);
+      return { status: 200, json: { ok: true, wa_id_last4: String(id).slice(-4), hours: hours || null } };
     },
   };
 
@@ -175,7 +186,12 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
       const { status, json } = await handler(body);
       res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(json ?? {}));
     } catch (err) {
-      const status = err.status === 413 ? 413 : err.status === 401 ? 502 : (err.message && /hours|zone|tz/i.test(err.message) ? 400 : 500);
+      // A refusal carries its status (the keeper's 400 and 404); a 401 from
+      // the gateway is the adapter's upstream failing (502).
+      const status = err.status === 413 ? 413
+        : err.status === 401 ? 502
+          : err.status === 400 || err.status === 404 ? err.status
+            : (err.message && /hours|zone|tz/i.test(err.message) ? 400 : 500);
       res.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify({ error: err.message }));
     }
   };
@@ -227,6 +243,7 @@ export async function main() {
     updateHour: cfg.keeperUpdateHour,
     cityTz: cfg.cityTz,
     windowReadMs: cfg.keeperWindowReadMs,
+    windowStampMs: cfg.keeperWindowStampMs,
   });
   // Media bytes get their own deadline: a 100 MB file outlives the 15 s
   // deadline of every other gateway call.

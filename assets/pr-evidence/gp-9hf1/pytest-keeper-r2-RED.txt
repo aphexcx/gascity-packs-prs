@@ -1,0 +1,109 @@
+.FFFFF                                                                   [100%]
+=================================== FAILURES ===================================
+_ test_keeper_row_is_red_when_the_window_clock_is_stale_while_the_keeper_is_on _
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-2080/test_keeper_row_is_red_when_th0')
+
+    def test_keeper_row_is_red_when_the_window_clock_is_stale_while_the_keeper_is_on(tmp_path):
+        # Never read OK, the keeper ON: red, the 7-day rows carried along.
+        write_keeper(tmp_path, lapses=1)
+        result = doctor('keeper', GC_CITY_PATH=str(tmp_path))
+>       assert result.returncode == 2, result.stdout
+E       AssertionError: window-keeper, last 7 days: ...1234: 1 lapse(s), 0 undelivered keeper event(s), 0 refused publish(es)
+E         
+E       assert 1 == 2
+E        +  where 1 = CompletedProcess(args=['/private/tmp/keeper-r2-red/whatsapp/doctor/check-keeper.sh'], returncode=1, stdout='window-keeper, last 7 days: ...1234: 1 lapse(s), 0 undelivered keeper event(s), 0 refused publish(es)\n', stderr='').returncode
+
+/tmp/keeper-r2-red/whatsapp/tests/test_pack.py:335: AssertionError
+__________________________ test_invite_consent_hours ___________________________
+
+fake = <function fake.<locals>.make at 0x10b2c6160>
+
+    def test_invite_consent_hours(fake):
+        adapter = fake({'POST /invite': (200, {'code': '482913', 'expires_at': '2026-11-05T18:00:00Z'}),
+                        'POST /consent': (200, {'ok': True, 'consent': False, 'wa_id_last4': '1234'}),
+                        'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234'})})
+        result = verb('invite.sh', '--proactive-consent', '--hours', 'Mon-Fri 09:00-18:00', '--tz', 'America/Sao_Paulo',
+                      WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0, result.stderr
+        assert '482913' in result.stdout and 'Save the Dynasty WhatsApp number' in result.stdout
+        assert adapter.requests[0][2] == {'proactive_consent': True, 'hours': 'Mon-Fri 09:00-18:00', 'tz': 'America/Sao_Paulo'}
+        assert verb('invite.sh', '--hours', 'Mon-Fri 09:00-18:00', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
+        # The verb sends the number as typed and prints the conversation the adapter matched.
+        off = verb('consent.sh', '+55 11 90000-9999', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert off.returncode == 0, off.stderr
+        assert adapter.requests[-1][2] == {'wa_id': '+55 11 90000-9999', 'on': False}
+>       assert 'OFF for ...1234' in off.stdout and '9999' not in off.stdout
+E       AssertionError: assert ('OFF for ...1234' in 'Window-keeper OFF for ...9999: no keeper event will be raised for it.\n')
+E        +  where 'Window-keeper OFF for ...9999: no keeper event will be raised for it.\n' = CompletedProcess(args=['/private/tmp/keeper-r2-red/whatsapp/commands/consent.sh', '+55 11 90000-9999', '--off'], returncode=0, stdout='Window-keeper OFF for ...9999: no keeper event will be raised for it.\n', stderr='').stdout
+
+/tmp/keeper-r2-red/whatsapp/tests/test_pack.py:484: AssertionError
+_______________________________ test_hours_clear _______________________________
+
+fake = <function fake.<locals>.make at 0x10b2c79c0>
+
+    def test_hours_clear(fake):
+        adapter = fake({'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234', 'hours': None})})
+        cleared = verb('hours.sh', '5511900001234', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
+>       assert cleared.returncode == 0, cleared.stderr
+E       AssertionError: gc whatsapp hours: unknown flag --clear
+E         
+E       assert 2 == 0
+E        +  where 2 = CompletedProcess(args=['/private/tmp/keeper-r2-red/whatsapp/commands/hours.sh', '5511900001234', '--clear'], returncode=2, stdout='', stderr='gc whatsapp hours: unknown flag --clear\n').returncode
+
+/tmp/keeper-r2-red/whatsapp/tests/test_pack.py:494: AssertionError
+_ test_consent_and_hours_refuse_an_unknown_phone_and_never_confirm_without_the_match _
+
+fake = <function fake.<locals>.make at 0x10b2c7ec0>
+
+    def test_consent_and_hours_refuse_an_unknown_phone_and_never_confirm_without_the_match(fake):
+        adapter = fake({'POST /consent': (404, {'error': 'no conversation ending 0009 is known to the window-keeper'}),
+                        'POST /hours': (200, {'ok': True})})
+        refused = verb('consent.sh', '5511900000009', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert refused.returncode == 1
+        assert 'HTTP 404' in refused.stderr and 'ending 0009' in refused.stderr
+        assert 'OFF for' not in refused.stdout
+        # An answer without the matched conversation confirms nothing.
+        unmatched = verb('hours.sh', '5511900000009', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
+>       assert unmatched.returncode == 1
+E       AssertionError: assert 2 == 1
+E        +  where 2 = CompletedProcess(args=['/private/tmp/keeper-r2-red/whatsapp/commands/hours.sh', '5511900000009', '--clear'], returncode=2, stdout='', stderr='gc whatsapp hours: unknown flag --clear\n').returncode
+
+/tmp/keeper-r2-red/whatsapp/tests/test_pack.py:513: AssertionError
+_______ test_status_renders_holds_gaps_and_windows_without_full_numbers ________
+
+fake = <function fake.<locals>.make at 0x10b24c180>
+
+    def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
+        close_ms = 1793900000000
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'},
+            'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 0,
+                        'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
+                        'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
+            'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
+                                                          'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}},
+                       'window_read': {'ok_at': '2026-11-05T15:20:00.000Z', 'error': 'HTTP 503 from https://gw.invalid/v1/window',
+                                       'error_at': '2026-11-05T15:21:00.000Z', 'failures': 3}},
+            'ledger': {'conversations': {'5511900001234': {'window_closes_at': close_ms - 60000}}},
+        })})
+        result = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+        assert 'Enrolled:      yes' in out and 'Dead letters:  2' in out
+        assert 'm-0123456789  phone ...1234  receipt rcpt-9' in out
+        assert 'journal watermark 9 ahead of the gc store head 4' in out
+        assert '...1234  closes 2026-11-05T15:33:20Z (adapter ledger' in out
+        assert 'keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)' in out
+>       assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '
+                'HTTP 503 from https://gw.invalid/v1/window') in out
+E       AssertionError: assert 'Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): HTTP 503 from https://gw.invalid/v1/window' in 'Enrolled:      yes\nLast poll:     2026-11-05T17:33:20Z\nEntries:       accepted:pending 1; acks owed 0\nDead letters...05T15:33:20Z (adapter ledger 2026-11-05T17:32:20Z)  keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)\n'
+
+/tmp/keeper-r2-red/whatsapp/tests/test_pack.py:538: AssertionError
+=========================== short test summary info ============================
+FAILED ../../../../../../tmp/keeper-r2-red/whatsapp/tests/test_pack.py::test_keeper_row_is_red_when_the_window_clock_is_stale_while_the_keeper_is_on
+FAILED ../../../../../../tmp/keeper-r2-red/whatsapp/tests/test_pack.py::test_invite_consent_hours
+FAILED ../../../../../../tmp/keeper-r2-red/whatsapp/tests/test_pack.py::test_hours_clear
+FAILED ../../../../../../tmp/keeper-r2-red/whatsapp/tests/test_pack.py::test_consent_and_hours_refuse_an_unknown_phone_and_never_confirm_without_the_match
+FAILED ../../../../../../tmp/keeper-r2-red/whatsapp/tests/test_pack.py::test_status_renders_holds_gaps_and_windows_without_full_numbers
+5 failed, 1 passed, 36 deselected in 3.28s

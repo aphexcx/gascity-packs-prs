@@ -2,15 +2,23 @@
 // test clock, the pack-adapter spec's SCOPE item 6 cases (10a)–(10h).
 //
 // In-test fakes: a gateway serving GET /v1/window from the inbound times a
-// test sets (and counting POST /v1/send, which the keeper must never call),
-// and a gc serving POST /v0/city/{city}/extmsg/inbound that records every
-// keeper event attempt by provider_message_id at the test clock's time and
-// answers 500, 400, no_route or no answer at all on demand. The clock is a
-// file (WHATSAPP_TEST_CLOCK); a test advances it and calls keeper.tick()
-// directly, no timers. A restart is a new createKeeper on the same state
-// dir; a SIGKILL is a real child process (WHATSAPP_TEST_KILL_AT, or a
-// self-kill between two marks). Every asserted local time is logged with
-// t.diagnostic so the transcript shows it.
+// test sets (each read's clock time recorded; a hook can run while a read
+// is in flight, after its answer is computed), and a gc serving POST
+// /v0/city/{city}/extmsg/inbound that records every keeper event attempt by
+// provider_message_id at the test clock's time and answers 500, 400, a
+// receipt status or no answer at all on demand (a hook can run while a post
+// is in flight). The clock is a file (WHATSAPP_TEST_CLOCK); a test advances
+// it and calls keeper.tick() directly, no timers. A restart is a new
+// createKeeper on the same state dir; a SIGKILL is a real child process
+// (WHATSAPP_TEST_KILL_AT, or a self-kill between two marks). Every asserted
+// local time is logged with t.diagnostic so the transcript shows it.
+//
+// The operator's verbs (setConsent, setHours) name a phone the keeper
+// knows, so a test onboards through h.start(): a keeper that has read the
+// gateway's window once. The window-read stamp (window_read_ok_at) is
+// written once a day here, not every minute, unless a test asks (the (10b)
+// failed-read test runs the production minute): these tests run whole days
+// at one-minute ticks and each stamp is an fsynced rewrite.
 
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -92,11 +100,12 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
   // The fake gateway: the window per phone from the last inbound the test
   // sets, as ISO strings or epoch ms (the contract accepts both).
   const lastInbound = new Map();
-  const gw = { reads: 0, sends: 0, failReads: false, format };
+  const gw = { reads: 0, readTimes: [], sends: 0, failReads: false, format, duringRead: null };
   const gateway = await listen(async (req, res) => {
     if (req.headers.authorization !== 'Bearer city-token') return sendJSON(res, 401, { error: 'unauthorized' });
     if (req.method === 'GET' && req.url === '/v1/window') {
       gw.reads += 1;
+      gw.readTimes.push(clock());
       if (gw.failReads) return sendJSON(res, 503, { error: 'down' });
       const fmt = (ms) => (ms == null ? null : gw.format === 'ms' ? ms : iso(ms));
       const windows = [...lastInbound].map(([id, last]) => ({
@@ -104,6 +113,10 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
         last_inbound_at: fmt(last),
         window_closes_at: fmt(last == null ? null : last + DAY - MARGIN),
       }));
+      // The answer is computed; what the hook changes reaches the next read.
+      const hook = gw.duringRead;
+      gw.duringRead = null;
+      if (hook) await hook();
       return sendJSON(res, 200, { windows });
     }
     if (req.method === 'POST' && req.url === '/v1/send') {
@@ -118,6 +131,7 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
   // the answers per provider_message_id queued on demand.
   const attempts = [];
   const answers = new Map();
+  const duringPost = new Map(); // provider_message_id -> a hook run once while that post is in flight
   let receipts = 0;
   const gcFake = await listen(async (req, res) => {
     const body = await readBody(req);
@@ -125,6 +139,9 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
     const { message } = JSON.parse(body);
     const id = message.provider_message_id;
     attempts.push({ id, message, at: clock() });
+    const hook = duringPost.get(id);
+    duringPost.delete(id);
+    if (hook) await hook();
     const answer = answers.get(id)?.shift() ?? 'delivered';
     if (answer === 'drop') return req.socket.destroy();
     if (typeof answer === 'number') return sendJSON(res, answer, { error: `status ${answer}` });
@@ -143,17 +160,37 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
   });
 
   const logs = [];
+  // Every gateway client method the keeper calls, by name (gw.calls).
+  gw.calls = [];
+  const recorded = (client) => new Proxy(client, {
+    get(target, prop) {
+      const value = target[prop];
+      if (typeof value !== 'function') return value;
+      return (...args) => {
+        gw.calls.push(String(prop));
+        return value(...args);
+      };
+    },
+  });
   const make = (opts = {}) => createKeeper({
     stateDir,
     clock,
     city: CITY,
     cityTz: tz,
-    gateway: createGatewayClient({ url: gateway.url, credential: 'city-token' }),
+    gateway: recorded(createGatewayClient({ url: gateway.url, credential: 'city-token' })),
     gc: createGcClient({ base: gcFake.url, city: CITY }),
     log: (line) => logs.push(String(line)),
+    windowStampMs: DAY,
     ...(windowReadMs ? { windowReadMs } : {}),
     ...opts,
   });
+  // A keeper that has read the gateway's window once, so the verbs find
+  // the phones the test set an inbound for.
+  async function start(opts) {
+    const keeper = make(opts);
+    await keeper.tick();
+    return keeper;
+  }
 
   // Advance the clock in steps, ticking at each, until `until`.
   async function run(keeper, until, step = MIN) {
@@ -185,6 +222,7 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
         cityTz: env.KEEPER_TZ,
         gateway: createGatewayClient({ url: env.KEEPER_GW, credential: 'city-token' }),
         gc: createGcClient({ base: env.KEEPER_GC, city: env.KEEPER_CITY }),
+        windowStampMs: 86400000,
       });
       for (const step of env.KEEPER_STEPS.split(',')) {
         writeFileSync(env.WHATSAPP_TEST_CLOCK, step);
@@ -214,7 +252,8 @@ async function harness(t, { tz = CHI, windowReadMs, format = 'iso' } = {}) {
   }
 
   return {
-    dir, stateDir, clock, setClock, gw, attempts, answers, logs, make, run, child,
+    dir, stateDir, clock, setClock, gw, attempts, answers, duringPost, logs, make, start, run, child,
+    disk: () => JSON.parse(fs.readFileSync(path.join(stateDir, 'keeper.json'), 'utf8')),
     inbound: (id, last) => lastInbound.set(id, last),
     count: (id) => attempts.filter((a) => a.id === id).length,
     // The marks raised for one close, in order of first attempt.
@@ -249,7 +288,7 @@ test('(10a) no hours: the four nudges fire at the close minus 60, 30, 15 and 5 (
   const close = last + DAY - MARGIN; // Wed 07:58 CST
   h.inbound(WA, last);
   h.setClock(last);
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T08:30:00-06:00'));
@@ -290,7 +329,7 @@ test('(10b) an inbound between the 60 and the 30 cancels the old close, empties 
   const close0 = last0 + DAY - MARGIN; // Wed 07:58
   h.inbound(WA, last0);
   h.setClock(last0);
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T07:10:00-06:00'));
@@ -390,7 +429,7 @@ test('(10c) hours crossing midnight: 18:00-02:00 and a close at 03:00 fire 01:00
   const last = close - DAY + MARGIN; // Tue 03:02
   h.inbound(BR, last);
   h.setClock(last);
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setHours(BR, '18:00-02:00', SAO);
   keeper.setConsent(BR, true);
   await keeper.tick();
@@ -438,7 +477,7 @@ test('(10c) quiet rule: the business wrote 16:20 Fri after the 16:00 update, so 
   const close0 = last0 + DAY - MARGIN; // Fri 16:58, inside the span
   h.inbound(BR, last0);
   h.setClock(at('2026-11-13T15:00:00-03:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setHours(BR, 'Mon-Fri 09:00-18:00', SAO);
   keeper.setConsent(BR, true);
   await keeper.tick();
@@ -471,14 +510,15 @@ test('(10d) no nudge after the close: one lapse, the next update says "Window cl
   const close = last + DAY - MARGIN; // Wed 07:58
   h.inbound(WA, last);
   h.setClock(last);
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, close);
   assert.deepEqual(h.marks(WA, close), [60, 30, 15, 5]);
   const before = h.attempts.length;
 
-  // The mayor's 5-minute nudge reaches the gateway after the close: refused window_closed.
+  // The mayor's 5-minute nudge reaches the gateway after the close: refused
+  // window_closed (outbound.js calls noteRefusedNudge; a second refusal too).
   keeper.noteRefusedNudge(WA);
   await h.run(keeper, at('2026-11-11T09:59:00-06:00'));
   assert.equal(h.attempts.length, before, 'nothing raised between the close and the next update');
@@ -486,6 +526,9 @@ test('(10d) no nudge after the close: one lapse, the next update says "Window cl
   assert.equal(row.window, 'closed');
   assert.equal(row.lapses_7d, 1);
   assert.equal(row.refused_nudges_7d, 1);
+  keeper.noteRefusedNudge(WA);
+  assert.equal(keeper.status().conversations[WA].refused_nudges_7d, 2, 'each refusal counted on the row');
+  assert.equal(h.disk().conversations[WA].refused_nudges.length, 2, 'and in keeper.json, which the doctor row reads');
 
   await h.run(keeper, at('2026-11-11T23:00:00-06:00'));
   assertFired(t, h, CHI, [
@@ -493,8 +536,16 @@ test('(10d) no nudge after the close: one lapse, the next update says "Window cl
   ]);
   row = keeper.status().conversations[WA];
   assert.equal(row.lapses_7d, 1, 'a lapse counted once per close');
-  assert.equal(h.gw.sends, 0, 'the keeper never sends: no template');
   assert.equal(h.attempts.length, before + 1);
+  // No template: a refused nudge never turns into one, and no keeper event
+  // is template-shaped. The keeper's only gateway call is the window read
+  // (it holds no send path), and every event is the plain extmsg shape.
+  t.diagnostic(`gateway calls by the keeper: ${[...new Set(h.gw.calls)].join(', ')}`);
+  assert.deepEqual([...new Set(h.gw.calls)], ['window'], 'the keeper never calls the gateway\'s send');
+  for (const a of h.attempts) {
+    assert.deepEqual(Object.keys(a.message).sort(), ['actor', 'conversation', 'provider_message_id', 'received_at', 'text'], `${a.id} has no template field`);
+    assert.match(a.message.text, /^\[window-keeper\] /);
+  }
 });
 
 test('(10d) a keeper down across the close raises no overdue nudge after it and counts one lapse', async (t) => {
@@ -503,7 +554,7 @@ test('(10d) a keeper down across the close raises no overdue nudge after it and 
   const close = last + DAY - MARGIN;
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:00:00-06:00'));
-  const first = h.make();
+  const first = await h.start();
   first.setConsent(WA, true);
   await first.tick();
   assert.deepEqual(first.status().conversations[WA].marks_planned.map((m) => m.mark), [60, 30, 15, 5]);
@@ -524,7 +575,7 @@ test('(10e) no hours: the daily update fires once per local day at 10:00 in the 
   h.inbound(WA, at('2026-11-09T12:00:00-06:00')); // closes Tue 11:58 CST
   h.inbound(BR, at('2026-11-09T15:00:00-03:00')); // closes Tue 14:58 São Paulo
   h.setClock(at('2026-11-10T00:00:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true); // no zone recorded: the city's (Chicago)
   keeper.setHours(BR, '', SAO); // a zone alone, no hours
   keeper.setConsent(BR, true);
@@ -547,7 +598,7 @@ test('(10e) hours: the daily update fires two hours before the close of business
   const h = await harness(t, { tz: CHI, windowReadMs: HOUR });
   h.inbound(BR, at('2026-11-12T12:00:00-03:00')); // closes Fri 11:58
   h.setClock(at('2026-11-13T00:00:00-03:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setHours(BR, 'Mon-Fri 09:00-18:00, Sat 10:00-11:00', SAO);
   keeper.setConsent(BR, true);
   await keeper.tick();
@@ -563,7 +614,7 @@ test('(10e) a SIGKILL between the update\'s state write and its post, then a res
   const h = await harness(t, { tz: CHI, windowReadMs: HOUR });
   h.inbound(WA, at('2026-11-09T12:00:00-06:00'));
   h.setClock(at('2026-11-10T09:00:00-06:00'));
-  h.make().setConsent(WA, true);
+  (await h.start()).setConsent(WA, true);
   const id = updateId(WA, '2026-11-10');
   const killed = await h.child({
     steps: [at('2026-11-10T09:59:00-06:00'), at('2026-11-10T10:00:00-06:00')],
@@ -589,7 +640,7 @@ test('(10e) the update posted, then a SIGKILL and a restart the same day: not ra
   const h = await harness(t, { tz: CHI, windowReadMs: HOUR });
   h.inbound(WA, at('2026-11-09T12:00:00-06:00'));
   h.setClock(at('2026-11-10T09:00:00-06:00'));
-  h.make().setConsent(WA, true);
+  (await h.start()).setConsent(WA, true);
   const id = updateId(WA, '2026-11-10');
   const killed = await h.child({ steps: steps(at('2026-11-10T09:58:00-06:00'), at('2026-11-10T10:02:00-06:00')), selfKill: true });
   assert.equal(killed.signal, 'SIGKILL');
@@ -608,7 +659,7 @@ test('(10f) a SIGKILL between the 30 and the 15 marks and a restart: the 15 and 
   const close = last + DAY - MARGIN; // Wed 07:58
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  h.make().setConsent(WA, true);
+  (await h.start()).setConsent(WA, true);
   const killed = await h.child({ steps: steps(at('2026-11-11T06:50:00-06:00'), at('2026-11-11T07:35:00-06:00')), selfKill: true });
   t.diagnostic(`child killed at ${local(h.clock(), CHI)} ${CHI}: signal ${killed.signal}`);
   assert.equal(killed.signal, 'SIGKILL');
@@ -632,7 +683,7 @@ test('(10f) a SIGKILL between the 30\'s state write and its post: the 30 is lost
   const close = last + DAY - MARGIN;
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  h.make().setConsent(WA, true);
+  (await h.start()).setConsent(WA, true);
   const killed = await h.child({
     steps: steps(at('2026-11-11T06:50:00-06:00'), at('2026-11-11T07:35:00-06:00')),
     killAt: `keeper-after-state@${nudgeId(WA, close, 30)}`,
@@ -658,7 +709,7 @@ test('(10f) a keeper down across the 60, 30 and 15 marks fires only the latest o
   const close = last + DAY - MARGIN; // Wed 07:58
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  const first = h.make();
+  const first = await h.start();
   first.setConsent(WA, true);
   await first.tick();
   // Down from 06:50 to 07:50: the 60, 30 and 15 are all overdue.
@@ -676,16 +727,18 @@ test('(10f) a keeper down across the 60, 30 and 15 marks fires only the latest o
   assert.deepEqual(row.marks_silent, [{ mark: 60, why: 'overdue' }, { mark: 30, why: 'overdue' }]);
 });
 
-test('(10b) a failed window read after a delivery is logged, never throws, is retried at the next tick, and holds the ladder until the clock is fresh', async (t) => {
+test('(10b) a failed window read after a delivery is retried on the ladder (1, 5, 15, 60 s) in clock time, never every tick; keeper.json keeps the last good read and the error; the ladder holds until the clock is fresh', async (t) => {
   const h = await harness(t, { tz: CHI });
   const last0 = at('2026-11-10T08:00:00-06:00');
   const close0 = last0 + DAY - MARGIN; // Wed 07:58
   h.inbound(WA, last0);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start({ windowStampMs: MIN }); // the production stamp cadence
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T06:57:30-06:00'), 30 * SEC);
+  const lastGood = at('2026-11-11T06:57:00-06:00'); // the minute read
+  const stamped = h.disk().window_read_ok_at;
 
   // The owner writes at 06:57:30; the gateway then fails every read.
   const last1 = at('2026-11-11T06:57:30-06:00');
@@ -693,19 +746,37 @@ test('(10b) a failed window read after a delivery is logged, never throws, is re
   h.gw.failReads = true;
   keeper.noteDelivery();
   const reads = h.gw.reads;
-  await h.run(keeper, at('2026-11-11T06:58:30-06:00'), 250); // across the old 60 mark
-  t.diagnostic(`reads while failing: ${h.gw.reads - reads}; log: ${h.logs.find((l) => l.includes('window read failed'))}`);
-  assert.equal(h.gw.reads - reads, 240, 'one read per tick (60 s of 250 ms ticks) while the owed read fails');
+  await h.run(keeper, last1 + MIN, 250); // 240 ticks across the old 60 mark
+  const offsets = h.gw.readTimes.slice(reads).map((ms) => ms - last1);
+  t.diagnostic(`${offsets.length} reads while failing, ms after 06:57:30: ${offsets.slice(0, 6).join(', ')}${offsets.length > 6 ? ', ...' : ''}; log: ${h.logs.find((l) => l.includes('window read failed'))}`);
+  // 06:57:30.25 fails, then +1 s, +5 s, +15 s; the next (+60 s) is after 06:58:30.
+  assert.equal(offsets.length, 4, `four reads in the minute, one per rung of the ladder, not one per tick (got ${offsets.length})`);
+  assert.deepEqual(offsets, [250, 1250, 6250, 21250], 'the owed read backs off on the ladder in clock time');
+  assert.equal(stamped, iso(lastGood), 'every good minute read was stamped in keeper.json');
   assert.ok(h.logs.some((l) => l.includes('window read failed')));
   assert.equal(h.count(nudgeId(WA, close0, 60)), 0, 'no nudge on a stale clock');
-  assert.equal(keeper.status().window_read.error !== null, true);
+  const read = keeper.status().window_read;
+  assert.equal(read.ok_at, iso(lastGood));
+  assert.match(read.error, /HTTP 503/);
+  assert.equal(read.failures, 4);
+  assert.equal(read.retry_at, iso(last1 + 21250 + MIN));
+  const onDisk = h.disk();
+  assert.equal(onDisk.window_read_ok_at, iso(lastGood), 'the last GOOD read stays the stamp');
+  assert.match(onDisk.window_read_error, /HTTP 503/);
+  assert.equal(onDisk.window_read_error_at, iso(last1 + 21250));
 
   h.gw.failReads = false;
-  await h.run(keeper, at('2026-11-11T08:30:00-06:00'));
+  // Ten-minute steps across the old close: each step reads and is stamped.
+  await h.run(keeper, at('2026-11-11T08:30:00-06:00'), 10 * MIN);
   const row = keeper.status().conversations[WA];
   assert.equal(row.window_closes_at, iso(last1 + DAY - MARGIN));
   assert.deepEqual(h.marks(WA, close0), [], 'the old close raised nothing');
   assert.equal(row.lapses_7d, 0);
+  const healed = h.disk();
+  t.diagnostic(`after the gateway recovered: window_read_ok_at ${healed.window_read_ok_at}, error ${healed.window_read_error}`);
+  assert.equal(healed.window_read_error, null, 'a good read clears the error');
+  assert.ok(Date.parse(healed.window_read_ok_at) >= at('2026-11-11T08:29:00-06:00'));
+  assert.equal(keeper.status().window_read.failures, 0);
 });
 
 // --- (10g) ---------------------------------------------------------------
@@ -736,7 +807,7 @@ test('(10g) consent --off mid-window stops the remaining marks; --on resumes fro
   const close = last + DAY - MARGIN;
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:00:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T07:00:00-06:00'));
@@ -765,7 +836,7 @@ test('(10h) a keeper event answered 500 is retried on the ladder in clock time (
   h.answers.set(id, [500, 500, 'delivered']);
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T06:58:00-06:00'));
@@ -788,7 +859,7 @@ test('(10h) an event answered no_route, answered 400 or dropped with no answer i
   h.answers.set(nudgeId(WA, close, 15), [400]);
   h.inbound(WA, last);
   h.setClock(at('2026-11-11T06:50:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-11T08:10:00-06:00'), 15 * SEC);
@@ -805,7 +876,7 @@ test('(10h) a keeper event answered 500 every time is dropped after the ladder (
   h.answers.set(id, [500, 500, 500, 500, 500, 500, 500]);
   h.inbound(WA, at('2026-11-09T12:00:00-06:00'));
   h.setClock(at('2026-11-10T09:59:00-06:00'));
-  const keeper = h.make();
+  const keeper = await h.start();
   keeper.setConsent(WA, true);
   await keeper.tick();
   await h.run(keeper, at('2026-11-10T10:05:00-06:00'), SEC);
@@ -814,6 +885,236 @@ test('(10h) a keeper event answered 500 every time is dropped after the ladder (
   const t0 = at('2026-11-10T10:00:00-06:00');
   assert.deepEqual(times, [t0, t0 + 1 * SEC, t0 + 6 * SEC, t0 + 21 * SEC, t0 + 81 * SEC]);
   assert.equal(keeper.status().conversations[WA].undelivered_7d, 1);
+});
+
+// --- the keeper review r2 (self-review-r2.md) --------------------------------
+
+test('(r2 M2) consent and hours name the phone by its digits ("+55 11 99999-0001" is 5511999990001); an unknown phone is refused 404, no row created', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  h.inbound(BR, at('2026-11-10T08:00:00-03:00'));
+  h.setClock(at('2026-11-10T08:00:00-03:00'));
+  const keeper = await h.start();
+  assert.equal(keeper.setConsent(BR, true), BR, 'the matched row\'s id');
+  assert.equal(keeper.setConsent('+55 11 99999-0001', false), BR, 'the typed form matches the same row');
+  const rows = keeper.status().conversations;
+  assert.deepEqual(Object.keys(rows), [BR], 'no second row for the typed form');
+  assert.equal(rows[BR].keeper, 'off', 'the real row is OFF: the --off was not a false confirmation');
+  assert.equal(keeper.setHours('+5511999990001', 'Mon-Fri 09:00-18:00', SAO), BR);
+  assert.equal(keeper.status().conversations[BR].hours, 'Mon-Fri 09:00-18:00');
+
+  for (const unknown of ['+55 11 99999-0009', '15550009999']) {
+    const digits = unknown.replace(/\D/g, '');
+    const refused = (err) => {
+      t.diagnostic(`${unknown}: ${err.status} ${err.message}`);
+      return err.status === 404 && err.message.includes(digits.slice(-4)) && !err.message.includes(digits);
+    };
+    assert.throws(() => keeper.setConsent(unknown, false), refused);
+    assert.throws(() => keeper.setHours(unknown, '', SAO), refused);
+  }
+  assert.throws(() => keeper.setConsent('the owner', true), (err) => err.status === 400);
+  assert.deepEqual(Object.keys(keeper.status().conversations), [BR], 'a refused verb records nothing');
+  assert.deepEqual(Object.keys(h.disk().conversations), [BR]);
+  // After a restart, before any read: the row on disk is known.
+  assert.equal(h.make().setConsent('+55 (11) 99999-0001', true), BR);
+});
+
+test('(r2 m3) a delivery noted while a window read is in flight owes the next read: the stale answer never clears it, and the old close raises no nudge', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  const last0 = at('2026-11-10T08:00:00-06:00');
+  const close0 = last0 + DAY - MARGIN; // Wed 07:58, the 60 mark at 06:58
+  h.inbound(WA, last0);
+  h.setClock(at('2026-11-11T06:50:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  await keeper.tick();
+  await h.run(keeper, at('2026-11-11T06:57:30-06:00'), 30 * SEC);
+
+  // 06:57:59: a delivery owes a read; while that read is in flight (its
+  // answer already computed) the owner writes again and the inbound path
+  // notes that delivery too.
+  const last1 = at('2026-11-11T06:57:59-06:00');
+  const close1 = last1 + DAY - MARGIN;
+  h.setClock(last1);
+  keeper.noteDelivery();
+  h.gw.duringRead = () => {
+    h.inbound(WA, last1);
+    keeper.noteDelivery();
+  };
+  const reads = h.gw.reads;
+  await keeper.tick();
+  assert.equal(keeper.status().conversations[WA].window_closes_at, iso(close0), 'the in-flight read answered the old close');
+  await h.run(keeper, at('2026-11-11T06:58:30-06:00'), 250);
+  const after = h.gw.readTimes.slice(reads).map((ms) => local(ms, CHI));
+  t.diagnostic(`reads from 06:57:59: ${after.join(', ')}`);
+  assert.equal(h.gw.readTimes[reads + 1], last1 + 250, 'the delivery noted in flight is read at the next tick');
+  assert.equal(keeper.status().conversations[WA].window_closes_at, iso(close1));
+  assert.equal(h.count(nudgeId(WA, close0, 60)), 0, 'no nudge for the close the owner just moved');
+});
+
+test('(r2 m4) a state write that fails before an event is raised undoes the record in memory: the nudge is raised at the first tick that can write it, never shown as fired while lost', async (t) => {
+  if (process.getuid?.() === 0) return t.skip('root ignores the directory mode');
+  const h = await harness(t, { tz: CHI });
+  const last = at('2026-11-10T08:00:00-06:00');
+  const close = last + DAY - MARGIN; // Wed 07:58, the 60 mark at 06:58
+  h.inbound(WA, last);
+  h.setClock(at('2026-11-11T06:50:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  await keeper.tick();
+  await h.run(keeper, at('2026-11-11T06:57:00-06:00'));
+  fs.chmodSync(h.stateDir, 0o500); // the temp file cannot be created: every write fails
+  try {
+    await h.run(keeper, at('2026-11-11T06:59:00-06:00'));
+  } finally {
+    fs.chmodSync(h.stateDir, 0o700);
+  }
+  assert.equal(h.count(nudgeId(WA, close, 60)), 0, 'not raised while its record cannot be written');
+  assert.deepEqual(keeper.status().conversations[WA].marks_fired, [], 'and not shown as fired');
+  assert.ok(h.logs.some((l) => l.includes('state write failed, nudge not raised yet')));
+  await h.run(keeper, at('2026-11-11T07:10:00-06:00'));
+  assertFired(t, h, CHI, [
+    { id: nudgeId(WA, close, 60), wall: '2026-11-11T07:00:00-06:00', text: plainText(WA, 58, '08:00') },
+  ]);
+  assert.deepEqual(keeper.status().conversations[WA].marks_fired, [60]);
+  assert.deepEqual(h.disk().conversations[WA].marks.fired.map((f) => f.mark), [60]);
+});
+
+test('(r2 m5) a failed write in setConsent, setHours, bindInvite or recordInvite throws and leaves memory as the disk has it', async (t) => {
+  if (process.getuid?.() === 0) return t.skip('root ignores the directory mode');
+  const h = await harness(t, { tz: CHI });
+  h.inbound(WA, at('2026-11-10T08:00:00-06:00'));
+  h.inbound(BR, at('2026-11-10T08:00:00-06:00'));
+  h.setClock(at('2026-11-10T08:00:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  keeper.recordInvite('555111', { consent: true, hours: 'Mon-Fri 09:00-18:00', tz: SAO });
+  const view = (s) => ({ wa: [s.conversations[WA].keeper, s.conversations[WA].hours], br: s.conversations[BR].consent, pending: s.invites_pending });
+  const was = view(keeper.status());
+  fs.chmodSync(h.stateDir, 0o500);
+  try {
+    assert.throws(() => keeper.setConsent(WA, false), /EACCES|EPERM/);
+    assert.throws(() => keeper.setHours(WA, 'Mon-Fri 09:00-18:00', SAO), /EACCES|EPERM/);
+    assert.throws(() => keeper.bindInvite('555111', BR), /EACCES|EPERM/);
+    assert.throws(() => keeper.recordInvite('777222', { consent: true }), /EACCES|EPERM/);
+  } finally {
+    fs.chmodSync(h.stateDir, 0o700);
+  }
+  t.diagnostic(`before ${JSON.stringify(was)}; after the failed writes ${JSON.stringify(view(keeper.status()))}`);
+  assert.deepEqual(view(keeper.status()), was, 'memory unchanged');
+  assert.deepEqual(view(h.make().status()), was, 'and the restart reads the same');
+  assert.equal(keeper.bindInvite('555111', BR), true, 'the write retried once the disk takes it');
+  assert.equal(keeper.status().conversations[BR].consent, true);
+});
+
+test('(r2 m6) bindInvite is idempotent: a second sight of the same join is a no-op true (consent --off stands), a code binds one phone only', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  h.inbound(WA, at('2026-11-10T08:00:00-06:00'));
+  h.inbound(BR, at('2026-11-10T08:00:00-06:00'));
+  h.setClock(at('2026-11-10T08:00:00-06:00'));
+  const keeper = await h.start();
+  keeper.recordInvite('424242', { consent: true, hours: 'Mon-Fri 09:00-18:00', tz: SAO });
+  assert.equal(keeper.status().invites_pending, 1);
+  assert.equal(keeper.bindInvite('424242', BR), true);
+  assert.equal(keeper.status().conversations[BR].consent, true);
+  keeper.setConsent(BR, false);
+  assert.equal(keeper.bindInvite('424242', BR), true, 'the same join seen again: bound, nothing changed');
+  assert.equal(keeper.status().conversations[BR].consent, false, 'the re-sight does not undo consent --off');
+  assert.equal(keeper.bindInvite('424242', WA), false, 'a code bound to one phone binds no other');
+  assert.equal(keeper.status().conversations[WA].consent, null);
+  assert.equal(keeper.status().invites_pending, 0);
+  assert.equal(h.make().bindInvite('424242', BR), true, 'through a restart too');
+});
+
+test('(r2 m7) a keeper event answered pending is accepted (gc took it); partial, failed and no_route are counted undelivered', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  const last = at('2026-11-10T08:00:00-06:00');
+  const close = last + DAY - MARGIN;
+  h.answers.set(nudgeId(WA, close, 60), ['pending']);
+  h.answers.set(nudgeId(WA, close, 30), ['partial']);
+  h.answers.set(nudgeId(WA, close, 15), ['failed']);
+  h.answers.set(nudgeId(WA, close, 5), ['no_route']);
+  h.inbound(WA, last);
+  h.setClock(at('2026-11-11T06:50:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  await keeper.tick();
+  await h.run(keeper, at('2026-11-11T08:10:00-06:00'));
+  const reasons = h.disk().conversations[WA].undelivered.map((u) => `${u.id.split(':').pop()} ${u.reason}`);
+  t.diagnostic(`undelivered: ${reasons.join('; ')}`);
+  assert.deepEqual(reasons, ['30 delivery partial', '15 delivery failed', '5 delivery no_route']);
+  assert.equal(keeper.status().conversations[WA].undelivered_7d, 3);
+});
+
+test('(r2 m8) the quiet rule compares business days: under 18:00-02:00 the owner writing at 00:30 Wed (Tuesday\'s span, after Tuesday\'s update) does not silence Wednesday\'s marks', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  const last0 = at('2026-11-09T21:00:00-03:00'); // Mon 21:00: close Tue 20:58
+  h.inbound(BR, last0);
+  h.setClock(at('2026-11-10T20:00:00-03:00')); // Tue 20:00
+  const keeper = await h.start();
+  keeper.setHours(BR, '18:00-02:00', SAO);
+  keeper.setConsent(BR, true);
+  await keeper.tick();
+  await h.run(keeper, at('2026-11-11T00:30:00-03:00'));
+  // Tuesday's update is raised 00:00 Wed; the owner writes 00:30 Wed.
+  const last1 = at('2026-11-11T00:30:00-03:00');
+  const close1 = last1 + DAY - MARGIN; // Thu 00:28, inside Wednesday's span
+  h.inbound(BR, last1);
+  keeper.noteDelivery();
+  await h.run(keeper, at('2026-11-12T01:00:00-03:00'));
+  const row = keeper.status().conversations[BR];
+  t.diagnostic(`new close ${local(close1, SAO)}; ladder ${row.ladder}; silent ${JSON.stringify(row.marks_silent)}`);
+  assertFired(t, h, SAO, [
+    { id: updateId(BR, '2026-11-10'), wall: '2026-11-11T00:00:00-03:00', text: closedText(BR, '20:58') },
+    { id: nudgeId(BR, close1, 60), wall: '2026-11-11T23:28:00-03:00', text: plainText(BR, 60, '00:30') },
+    { id: nudgeId(BR, close1, 30), wall: '2026-11-11T23:58:00-03:00', text: plainText(BR, 30, '00:30') },
+    { id: updateId(BR, '2026-11-11'), wall: '2026-11-12T00:00:00-03:00', text: openText(BR, '00:28') },
+    { id: nudgeId(BR, close1, 15), wall: '2026-11-12T00:13:00-03:00', text: plainText(BR, 15, '00:30') },
+    { id: nudgeId(BR, close1, 5), wall: '2026-11-12T00:23:00-03:00', text: plainText(BR, 5, '00:30') },
+  ]);
+  assert.deepEqual(row.marks_silent, [], 'nothing silenced as quiet: Wednesday is a new business day');
+});
+
+test('(r2 n13) a window read whose last_inbound_at went BACK is ignored: the fired set stands and no mark is raised twice', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  const last0 = at('2026-11-10T08:00:00-06:00'); // close Wed 07:58
+  const last1 = at('2026-11-10T09:00:00-06:00');
+  const close1 = last1 + DAY - MARGIN; // Wed 08:58, the 60 mark at 07:58
+  h.inbound(WA, last1);
+  h.setClock(at('2026-11-11T07:50:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  await keeper.tick();
+  await h.run(keeper, at('2026-11-11T08:00:00-06:00'));
+  assert.deepEqual(h.marks(WA, close1), [60]);
+  // A gateway replica behind answers the older inbound, then the right one again.
+  h.inbound(WA, last0);
+  keeper.noteDelivery();
+  await h.run(keeper, at('2026-11-11T08:05:00-06:00'));
+  h.inbound(WA, last1);
+  keeper.noteDelivery();
+  await h.run(keeper, at('2026-11-11T08:20:00-06:00'));
+  const row = keeper.status().conversations[WA];
+  t.diagnostic(String(h.logs.find((l) => l.includes('went back')) ?? 'no "went back" log line'));
+  assert.equal(h.count(nudgeId(WA, close1, 60)), 1, 'the 60 raised once');
+  assert.equal(row.window_closes_at, iso(close1));
+  assert.deepEqual(row.marks_fired, [60]);
+  assert.equal(row.lapses_7d, 0, 'the older close is no lapse');
+});
+
+test('(r2 n14) consent --off while the day\'s update is being posted: the ladder does not run for that phone in the same pass', async (t) => {
+  const h = await harness(t, { tz: CHI });
+  const close = at('2026-11-11T11:00:00-06:00'); // the 60 mark at 10:00, the update's hour
+  h.inbound(WA, close - DAY + MARGIN);
+  h.setClock(at('2026-11-11T09:58:00-06:00'));
+  const keeper = await h.start();
+  keeper.setConsent(WA, true);
+  await keeper.tick();
+  h.duringPost.set(updateId(WA, '2026-11-11'), () => keeper.setConsent(WA, false));
+  await h.run(keeper, at('2026-11-11T10:00:00-06:00'));
+  assert.equal(h.count(updateId(WA, '2026-11-11')), 1);
+  assert.equal(h.count(nudgeId(WA, close, 60)), 0, 'no nudge after --off in the same pass');
+  await h.run(keeper, at('2026-11-11T11:30:00-06:00'));
+  assert.equal(h.attempts.length, 1, 'nothing after --off');
 });
 
 // --- zoned.js and the onboarding fields -------------------------------------

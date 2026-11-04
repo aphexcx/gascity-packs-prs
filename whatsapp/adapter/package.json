@@ -10,6 +10,6 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test 'test/*.test.js'"
+    "test": "node --test --test-concurrency=2 'test/*.test.js'"
   }
 }

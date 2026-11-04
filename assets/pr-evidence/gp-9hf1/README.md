@@ -48,6 +48,11 @@ here, so a reader can rebuild them):
    posted plain at once). **The contract readings against `f303c69d`**
    (`node-readings-RED.txt`): 3 of 4 RED; the pass is the control (a 502
    meta_error was already transient).
+2c. **The keeper review r2 regressions against `185a6098`**
+   (`make_red_keeper_r2.py`, `node-keeper-r2-RED.txt`): 12 of 13 RED; the
+   pass is (10d), whose rewrite is the test-only NIT 12. The pack side
+   (`pytest-keeper-r2-RED.txt`, the doctor row and verbs at `185a6098`): 5
+   of 6 RED; the pass is the yellow keeper row, a control.
 3. **The helper modules' own TDD runs**: `node-keeper-RED.txt` (23 of 23
    against "not implemented" stubs) and `node-outbound-media-RED.txt` (24 of
    24, then 27 of 27 against stubs).
@@ -57,4 +62,17 @@ here, so a reader can rebuild them):
 | File | What |
 | --- | --- |
 | `self-review-r1.md` | the fresh self-review subagent's findings and what was done with each |
+| `self-review-r2.md` | the keeper review (round 2): each finding fixed with its test, or routed as a design question |
 | `codex-r*.out` | the worker's codex STANDARD rounds (`codex review --base origin/main`) |
+
+## Timing under host load (read before rerunning)
+
+The node suite drives real child processes under a clock file. On citadel at
+load average 7 to 9 (other lanes' work), runs at `--test-concurrency=2` (the
+package.json `test` script) were clean twice in a row (160/160, about 80 s),
+and one run during a load spike (125 s) had 5 failures, every one a WAIT
+TIMEOUT (a test advances the clock a fixed amount, then waits without
+advancing it, and the loaded child had not acted yet): never a wrong outcome
+(no unmarked duplicate, no ack before delivered or dead, no lost delivery).
+A failing run on a busy host: rerun; the fix (every fixed pump followed by a
+wait becomes `pumpUntil`) is a follow-up named in the READY mail.

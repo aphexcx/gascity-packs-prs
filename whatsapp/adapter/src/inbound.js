@@ -170,11 +170,35 @@ export function createInbound({
       if (ackOwed(e) && e.deliveryId !== undefined) ackOwedIds.set(e.deliveryId, e.rid);
       // Every pending entry is read back at once; the schedule is the fold's.
       if (entryState(e) === 'accepted:pending') nextAt.set(e.rid, 0);
+      // A kill between a join's received line and its bind loses nothing.
+      if (e.kind === 'joined' && e.received?.envelope) bindJoined(e.rid, e.received.envelope);
     }
     watermarkWanted = true;
     compact('start');
     started = true; // only once all of the above held: a throw is retried next tick
     void driveAcks(true);
+  }
+
+  // The invite's keeper fields (consent, hours, zone) move onto the phone
+  // that joined with its code. Called at EVERY sight of a joined delivery
+  // and at startup for every joined entry in the journal: keeper.bindInvite
+  // is idempotent, so a kill between the received line and the bind, or a
+  // failed keeper write, is retried rather than lost.
+  const emptyCodeSeen = new Set();
+  function bindJoined(rid, delivery) {
+    if (delivery?.kind !== 'joined' || !keeper?.bindInvite) return;
+    const who = `${ref(rid)} (…${lastFour(delivery.wa_id)})`;
+    const code = String(delivery.message?.text?.body ?? delivery.message?.code ?? '').trim();
+    if (!code) {
+      if (!emptyCodeSeen.has(rid)) log(`${who}: joined with no invite code; the keeper stays OFF for that phone until gc whatsapp consent --on`);
+      emptyCodeSeen.add(rid);
+      return;
+    }
+    try {
+      keeper.bindInvite(code, String(delivery.wa_id));
+    } catch (err) {
+      log(`${who}: the invite's keeper fields were not bound (${err.message}); retried at the next sight`);
+    }
   }
 
   // --- the gateway poll ------------------------------------------------------
@@ -272,12 +296,10 @@ export function createInbound({
       if (delivery.kind === 'joined' || (delivery.kind === 'message' && WINDOW_TYPES.has(String(delivery.message?.type ?? '')))) {
         ledger?.noteInbound?.(String(delivery.wa_id), inboundAtMs(delivery));
       }
-      if (delivery.kind === 'joined') {
-        const code = String(delivery.message?.text?.body ?? delivery.message?.code ?? '').trim();
-        if (code) keeper?.bindInvite?.(code, String(delivery.wa_id));
-      }
+      bindJoined(rid, delivery);
       return true;
     }
+    bindJoined(rid, delivery); // every sight: a no-op once bound
     // The gateway re-reads everything unacknowledged: the fold decides.
     // A dead entry whose ack failed meets its dead line here, never the
     // no-entry branch (the gate r7's second rule).

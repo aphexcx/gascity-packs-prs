@@ -26,6 +26,11 @@
 //
 // tick() is called often; every schedule is a function of clock() and the
 // state file, never of a timer's memory.
+//
+// The setters (recordInvite, bindInvite, setConsent, setHours) change a
+// COPY, write it, and only then commit it in place: a failed write throws
+// and leaves memory as the file on disk has it. The time of the last good
+// window read is in the file too (window_read_ok_at), for the doctor row.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -33,6 +38,7 @@ import path from 'node:path';
 import { killPoint } from './clock.js';
 import { conversationRef } from './gc.js';
 import { isRetryableAnswer, ladderDelay, ladderMs } from './http.js';
+import { verdictOf } from './inbound.js';
 import {
   addDays, assertZone, daySpans, formatHHMM, isoDate, localDate, localDay,
   parseHours, spanIntervals, zonedToInstant,
@@ -80,6 +86,9 @@ const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 // Logs name a conversation by its last four digits only.
 const tag = (waId) => `…${String(waId).slice(-4)}`;
 const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
+const digitsOf = (waId) => String(waId ?? '').replace(/\D/g, '');
+// A refusal the internal listener answers with its own status (index.js).
+const refusal = (status, message) => Object.assign(new Error(message), { status });
 
 function freshRow() {
   return {
@@ -108,7 +117,16 @@ function normalizeRow(raw) {
   return r;
 }
 
-const emptyState = () => ({ version: 1, conversations: {}, invites: {} });
+// window_read_ok_at: the last good GET /v1/window (the doctor row reads it);
+// window_read_error(_at): the last failure since, cleared by a good read.
+// An invite stays after its bind, as {..., bound_to, bound_at}, so a second
+// sight of the same join is a no-op; prune drops it after 30 days.
+const emptyState = () => ({
+  version: 1, conversations: {}, invites: {}, window_read_ok_at: null, window_read_error: null, window_read_error_at: null,
+});
+// A good read that changes nothing else is written at most once a minute
+// (windowStampMs; the doctor row turns red after 5 minutes without one).
+const WINDOW_STAMP_MS = MINUTE;
 
 export function createKeeper({
   stateDir,
@@ -120,6 +138,10 @@ export function createKeeper({
   updateHour = 10,
   cityTz = Intl.DateTimeFormat().resolvedOptions().timeZone,
   windowReadMs = 60000,
+  // How often a good read alone rewrites keeper.json (its
+  // window_read_ok_at stamp); each rewrite is fsynced. The unit tests that
+  // run whole days at one-minute ticks raise it.
+  windowStampMs = WINDOW_STAMP_MS,
 } = {}) {
   if (!stateDir) throw new Error('keeper: stateDir is required');
   const now = typeof clock === 'function' ? clock : typeof clock?.now === 'function' ? () => clock.now() : () => Date.now();
@@ -134,16 +156,34 @@ export function createKeeper({
     log(`keeper: city ${err.message}; using the host's ${homeZone}`);
   }
   const readEvery = Number(windowReadMs) > 0 ? Number(windowReadMs) : 60000;
+  const stampEvery = Number(windowStampMs) > 0 ? Number(windowStampMs) : WINDOW_STAMP_MS;
 
   const state = load();
-  let readOwed = true; // the first tick reads; noteDelivery() owes another
+  // A read is owed while the generation a good read satisfied is behind the
+  // one noteDelivery() raised: a delivery noted while a read is in flight
+  // owes the next read too (that read may have been computed before it).
+  let owedGen = 1; // the first tick reads
+  let readGen = 0;
+  const readOwed = () => readGen !== owedGen;
   let nextReadAt = -Infinity;
   let authHoldUntil = -Infinity;
-  let lastRead = { at: null, error: null };
-  let lastFailureLogAt = -Infinity;
+  // A failed read, owed or not, is retried on the ladder (1, 5, 15, 60 s) in
+  // clock time, never at every tick.
+  let readFailures = 0;
+  let readRetryAt = -Infinity;
+  let savedOkAt = state.window_read_ok_at;
+  let lastWindowIds = new Map(); // the last good read's conversations, digits -> id
+  let raiseFailLogAt = -Infinity;
+  const loggedOnce = new Set();
   const retries = []; // events waiting on the ladder (memory only: a kill loses them, never repeats them)
   let running = null;
   let tmpSeq = 0;
+
+  function logOnce(key, line) {
+    if (loggedOnce.has(key)) return;
+    loggedOnce.add(key);
+    log(line);
+  }
 
   // --- state file ------------------------------------------------------------
 
@@ -162,6 +202,9 @@ export function createKeeper({
       const s = emptyState();
       for (const [id, r] of Object.entries(raw.conversations ?? {})) s.conversations[id] = normalizeRow(r);
       for (const [code, inv] of Object.entries(raw.invites ?? {})) if (inv && typeof inv === 'object') s.invites[code] = inv;
+      if (typeof raw.window_read_ok_at === 'number') s.window_read_ok_at = raw.window_read_ok_at;
+      if (typeof raw.window_read_error === 'string') s.window_read_error = raw.window_read_error;
+      if (typeof raw.window_read_error_at === 'number') s.window_read_error_at = raw.window_read_error_at;
       return s;
     } catch (err) {
       // Never guess at a damaged record: set it aside and start with every
@@ -174,10 +217,11 @@ export function createKeeper({
   }
 
   // The atomic rewrite: a temp file 0600, fsynced, renamed over, the
-  // directory fsynced. Throws on failure.
-  function save() {
-    prune(now());
-    const text = `${JSON.stringify(state, toDisk, 2)}\n`;
+  // directory fsynced. Throws on failure, the file on disk then unchanged.
+  // `s` is the state as it is to be (commit() passes a copy).
+  function save(s = state) {
+    prune(s, now());
+    const text = `${JSON.stringify(s, toDisk, 2)}\n`;
     const tmp = `${file}.tmp-${process.pid}-${++tmpSeq}`;
     let fd;
     try {
@@ -197,6 +241,7 @@ export function createKeeper({
       const dfd = fs.openSync(stateDir, 'r');
       try { fs.fsyncSync(dfd); } finally { fs.closeSync(dfd); }
     } catch { /* not every platform fsyncs a directory */ }
+    savedOkAt = s.window_read_ok_at;
   }
 
   // A write that is not guarding an event: a failure is logged, not fatal.
@@ -208,18 +253,59 @@ export function createKeeper({
     }
   }
 
-  function prune(t) {
+  // The setters' write: `rows` (id -> the row as it is to be, a copy) and
+  // `invites` (code -> the record) are written as part of a copy of the
+  // state; only once that write succeeded are they committed, a row in place
+  // (Object.assign) so a tick holding it keeps the live row. Throws the
+  // write's error with memory unchanged.
+  function commit({ rows = {}, invites = {} } = {}) {
+    const next = {
+      ...state,
+      conversations: { ...state.conversations, ...rows },
+      invites: { ...state.invites, ...invites },
+    };
+    save(next);
+    for (const [id, r] of Object.entries(rows)) {
+      if (Object.hasOwn(state.conversations, id)) Object.assign(state.conversations[id], r);
+      else state.conversations[id] = r;
+    }
+    state.invites = next.invites;
+  }
+
+  // A copy of a row to change and commit (a fresh row for a new id).
+  const draftRow = (id) => (Object.hasOwn(state.conversations, id) ? structuredClone(state.conversations[id]) : freshRow());
+
+  function restoreRow(r, before) {
+    for (const key of Object.keys(r)) if (!Object.hasOwn(before, key)) delete r[key];
+    Object.assign(r, before);
+  }
+
+  function prune(s, t) {
     const keepAfter = t - RECORD_KEEP_MS;
-    for (const r of Object.values(state.conversations)) {
+    for (const r of Object.values(s.conversations)) {
       for (const key of ['lapses', 'undelivered', 'refused_nudges']) r[key] = r[key].filter((x) => !(x.at < keepAfter));
     }
-    for (const [code, inv] of Object.entries(state.invites)) if (inv.recorded_at < keepAfter) delete state.invites[code];
+    for (const [code, inv] of Object.entries(s.invites)) if (inv.recorded_at < keepAfter) delete s.invites[code];
   }
 
   function row(waId) {
     const id = String(waId);
     if (!Object.hasOwn(state.conversations, id)) state.conversations[id] = freshRow();
     return state.conversations[id];
+  }
+
+  // The operator's verbs name a phone as typed ("+55 11 99999-0001"); a row
+  // is keyed by the gateway's wa_id. The digits must match a row, or a
+  // conversation of the last good window read; a verb never creates a row
+  // for a phone the keeper does not know (consent --off on a mistyped number
+  // must not answer OK while the real one stays ON). Returns the row's id.
+  function knownConversation(waId) {
+    const digits = digitsOf(waId);
+    if (!digits) throw refusal(400, 'wa_id has no digits: give the phone number the owner joined from');
+    if (Object.hasOwn(state.conversations, digits)) return digits;
+    const id = Object.keys(state.conversations).find((key) => digitsOf(key) === digits) ?? lastWindowIds.get(digits);
+    if (id !== undefined) return id;
+    throw refusal(404, `no conversation ending ${digits.slice(-4)} is known to the window-keeper (it has not joined, or the gateway's window read does not list it yet): nothing recorded`);
   }
 
   const zoneOf = (r) => r.tz || homeZone;
@@ -242,12 +328,18 @@ export function createKeeper({
   }
 
   // Validates onboarding fields; returns them normalized (null when absent).
+  // A bad field throws with status 400.
   function checkFields(hours, tz) {
     const out = { hours: null, tz: null };
-    if (!blank(tz)) out.tz = assertZone(tz);
-    if (!blank(hours)) {
-      parseHours(String(hours));
-      out.hours = String(hours).trim().replace(/\s+/g, ' ');
+    try {
+      if (!blank(tz)) out.tz = assertZone(tz);
+      if (!blank(hours)) {
+        parseHours(String(hours));
+        out.hours = String(hours).trim().replace(/\s+/g, ' ');
+      }
+    } catch (err) {
+      err.status ??= 400;
+      throw err;
     }
     return out;
   }
@@ -255,36 +347,57 @@ export function createKeeper({
   // --- the window clock (a) --------------------------------------------------
 
   async function readWindow(t) {
-    if (t < authHoldUntil) return;
-    if (!readOwed && t < nextReadAt) return;
+    if (t < authHoldUntil || t < readRetryAt) return;
+    if (!readOwed() && t < nextReadAt) return;
+    const gen = owedGen;
     let answer;
     try {
       answer = await gateway.window();
     } catch (err) {
-      lastRead = { at: lastRead.at, error: err?.message ?? String(err) };
+      const error = err?.message ?? String(err);
+      const delay = ladderDelay(readFailures);
+      readFailures += 1;
+      readRetryAt = t + delay; // clock time, not a sleep
       // A 401 is never retried in a loop (gateway.js): wait the interval.
       if (err?.auth) authHoldUntil = t + readEvery;
-      if (t - lastFailureLogAt >= readEvery) {
-        lastFailureLogAt = t;
-        log(`keeper: window read failed, retried next tick: ${lastRead.error}`);
-      }
+      // Recorded on disk: the doctor row names it while the clock is stale.
+      state.window_read_error = error;
+      state.window_read_error_at = t;
+      persist();
+      log(`keeper: window read failed (${error}); retry ${readFailures} in ${Math.max(delay, err?.auth ? readEvery : 0) / 1000}s`);
       return;
     }
-    readOwed = false;
+    readGen = gen;
+    readFailures = 0;
+    readRetryAt = -Infinity;
     nextReadAt = t + readEvery;
-    lastRead = { at: t, error: null };
-    lastFailureLogAt = -Infinity;
+    const hadError = state.window_read_error != null;
+    state.window_read_ok_at = t;
+    state.window_read_error = null;
+    state.window_read_error_at = null;
     let dirty = false;
+    const ids = new Map();
     for (const w of Array.isArray(answer?.windows) ? answer.windows : []) {
       if (blank(w?.conversation_id)) continue;
-      if (applyWindow(String(w.conversation_id), parseInstant(w.last_inbound_at), parseInstant(w.window_closes_at), t)) dirty = true;
+      const id = String(w.conversation_id);
+      ids.set(digitsOf(id), id);
+      if (applyWindow(id, parseInstant(w.last_inbound_at), parseInstant(w.window_closes_at), t)) dirty = true;
     }
-    if (dirty) persist();
+    lastWindowIds = ids;
+    if (dirty || hadError || !(t - savedOkAt < stampEvery)) persist();
   }
 
   function applyWindow(waId, last, close, t) {
     const r = row(waId);
     if (r.window_closes_at === close && r.last_inbound_at === last) return false;
+    // Only an inbound moves last_inbound_at, and only forward. A read that
+    // carries an older one (a gateway restored from a backup, a replica
+    // behind) is ignored: taking it would empty the fired set and raise a
+    // mark's id a second time when the newer one comes back.
+    if (r.last_inbound_at != null && (last == null || last < r.last_inbound_at)) {
+      logOnce(`backward:${waId}:${last}`, `keeper: ${tag(waId)}: the gateway's last_inbound_at went back (${iso(last) ?? 'none'} after ${iso(r.last_inbound_at)}); read ignored`);
+      return false;
+    }
     const oldClose = r.window_closes_at;
     // (d) a close that passed before the message that moved it was a lapse,
     // counted here too in case no tick saw it pass (the keeper was down).
@@ -328,6 +441,14 @@ export function createKeeper({
     // Case (1): the close inside a span, or a span instant between the
     // 60-minute mark and the close: unshifted, a mark outside every span
     // dropped, not deferred.
+    //
+    // OPEN DESIGN QUESTION (keeper review r2, finding 8; the spec read
+    // literally, left as built): a close in the first ~5 minutes of a span
+    // (09:02 under 09:00-18:00) is case (1), and every mark (08:02 to 08:57)
+    // falls before the open and drops, so it gets NO nudge, while a close
+    // one minute earlier (08:57, before the open) is case (2) and gets four
+    // the evening before. Whether such a close should shift instead is the
+    // founders' call.
     if (touches(close - 60 * MINUTE, close)) return plan('unshifted', ladder(close).filter((m) => inside(m.at)));
     // Case (2): shifted to the close of business, the end of the last span
     // ending before the close. ("A mark outside hours never fires", (f),
@@ -382,6 +503,7 @@ export function createKeeper({
   async function raiseUpdate(waId, r, slot, t) {
     const close = r.window_closes_at;
     const open = close != null && t < close;
+    const before = structuredClone(r);
     r.update_day = slot.day;
     // (e) at most one update per window: a second business day inside the
     // same open window (a 23-hour DST day) is recorded without an event.
@@ -398,7 +520,7 @@ export function createKeeper({
     if (open) text = `${head} Window open, closes ${formatHHMM(close, zone)}.`;
     else if (close != null) text = `${head} Window closed since ${formatHHMM(close, zone)}: ${CLOSED_TAIL}`;
     else text = `${head} Window closed (nobody from the business has written yet): ${CLOSED_TAIL}`;
-    await raise(waId, { kind: 'update', id: `keeper:${waId}:${slot.day}:update`, text, close }, t);
+    await raise(waId, r, before, { kind: 'update', id: `keeper:${waId}:${slot.day}:update`, text, close }, t);
   }
 
   // --- the ladder (c), the lapse (d), the quiet rules (e) --------------------
@@ -421,6 +543,7 @@ export function createKeeper({
     if (!due.length) return;
     // Several marks due at once (a restart, a late first read): only the
     // latest fires; the earlier ones are recorded as fired without an event.
+    const before = structuredClone(r);
     const mark = due.pop();
     for (const m of due) r.marks.fired.push({ mark: m.mark, at: t, event: false, why: 'overdue' });
     const why = silence(r, mark, t);
@@ -431,7 +554,22 @@ export function createKeeper({
     }
     r.marks.fired.push({ mark: mark.mark, at: t, event: true });
     const id = `keeper:${waId}:${new Date(close).toISOString()}:${mark.mark}`;
-    await raise(waId, { kind: 'nudge', id, text: nudgeText(waId, r, mark, t), close }, t);
+    await raise(waId, r, before, { kind: 'nudge', id, text: nudgeText(waId, r, mark, t), close }, t);
+  }
+
+  // The business day an instant belongs to, as dueUpdate defines it: with
+  // hours, the date its span OPENS on (under 18:00-02:00, 00:30 Wednesday
+  // is Tuesday's); outside every span, or without hours, the local date.
+  function businessDay(r, ms) {
+    const zone = zoneOf(r);
+    const today = localDay(ms, zone);
+    const spans = spansOf(r);
+    if (spans) {
+      for (const day of [today, addDays(today, -1)]) {
+        if (daySpans(spans, zone, day).some((iv) => iv.start <= ms && ms < iv.end)) return isoDate(day);
+      }
+    }
+    return isoDate(today);
   }
 
   // Why a due mark raises no event, or null.
@@ -439,10 +577,12 @@ export function createKeeper({
     // (10g) consent --on resumes from the next mark.
     if (r.consent_at != null && mark.at < r.consent_at) return 'before consent';
     const zone = zoneOf(r);
-    // (e) the business wrote after the day's update, on the mark's local
-    // day: the update was acknowledged, no ladder that day.
+    // (e) the business wrote after the day's update, on the mark's business
+    // day: the update was acknowledged, no ladder that day. Business days,
+    // not calendar dates: under hours that cross midnight a calendar date
+    // would silence the NEXT business day's marks.
     if (r.update_at != null && r.last_inbound_at != null && r.last_inbound_at > r.update_at
-      && localDate(r.update_at, zone) === localDate(mark.at, zone)) return 'quiet';
+      && businessDay(r, r.update_at) === businessDay(r, mark.at)) return 'quiet';
     // A mark outside hours never fires, (f): a late one (a restart) whose
     // firing instant has left the span stays silent too.
     const spans = spansOf(r);
@@ -469,12 +609,21 @@ export function createKeeper({
 
   // --- raising and posting an event ------------------------------------------
 
-  async function raise(waId, ev, t) {
+  // `r` holds the event's record (the update day, the mark fired); `before`
+  // is the row as it was before that record was made.
+  async function raise(waId, r, before, ev, t) {
     // (a) the record reaches the disk before the event exists anywhere.
     try {
       save();
     } catch (err) {
-      log(`keeper: ${tag(waId)}: state write failed, ${ev.kind} not raised: ${err.message}`);
+      // The file on disk was not replaced: the record is undone in memory
+      // too, so the next tick raises the event again (never "fired" in
+      // memory alone, lost and shown as fired by status).
+      restoreRow(r, before);
+      if (t - raiseFailLogAt >= MINUTE) {
+        raiseFailLogAt = t;
+        log(`keeper: ${tag(waId)}: state write failed, ${ev.kind} not raised yet (retried every tick): ${err.message}`);
+      }
       return;
     }
     killPoint('keeper-after-state', ev.id);
@@ -514,8 +663,12 @@ export function createKeeper({
       // No answer (gc may have acted: never repeat) or a 4xx: dropped and counted.
       return undelivered(job, err?.noAnswer ? 'no answer' : err?.malformed ? 'malformed answer' : `HTTP ${err?.status ?? 'error'}`);
     }
-    const status = answer?.delivery?.status;
-    if (status !== 'delivered') undelivered(job, `delivery ${status ?? 'missing'}`);
+    // gc's receipt, read as the inbound path reads it (inbound.js verdictOf:
+    // the wire's no_route, case and separators normalized). Pending means gc
+    // took the event and holds it for a session: accepted, like delivered.
+    // Failed, partial, no_route and an unusable receipt are undelivered.
+    const { verdict } = verdictOf(answer?.delivery);
+    if (verdict !== 'delivered' && verdict !== 'pending') undelivered(job, `delivery ${verdict}`);
   }
 
   function undelivered(job, reason) {
@@ -551,17 +704,22 @@ export function createKeeper({
   async function tickOnce() {
     const t = now();
     await readWindow(t);
-    // A read still owed (the first one, or the one after a delivery) failed:
-    // the business may just have written, so the ladder and the lapse wait
-    // for a fresh clock rather than nudge on a stale one. The update does not.
-    const stale = readOwed;
     await retryDue(t);
     for (const [waId, r] of Object.entries(state.conversations)) {
       if (r.consent !== true) continue; // (e) OFF without recorded consent: no event at all
       try {
         const slot = dueUpdate(r, t);
         if (slot) await raiseUpdate(waId, r, slot, t);
-        if (!stale) await runLadder(waId, r, t);
+        // The update's post awaited gc: consent --off may have landed
+        // meanwhile (setters commit in place, so r is the live row).
+        if (r.consent !== true) continue;
+        // A read still owed (the first one, or the one after a delivery, a
+        // delivery noted during this pass included) has not succeeded: the
+        // business may just have written, so the ladder and the lapse wait
+        // for a fresh clock rather than nudge on a stale one. The update
+        // does not. The doctor row turns red when this lasts.
+        if (readOwed()) continue;
+        await runLadder(waId, r, t);
       } catch (err) {
         log(`keeper: ${tag(waId)}: ${err?.message ?? err}`);
       }
@@ -587,10 +745,11 @@ export function createKeeper({
     tick,
 
     noteDelivery() {
-      readOwed = true;
+      owedGen += 1;
     },
 
-    // Throws a clear Error on a bad hours string or zone; blank means absent.
+    // Throws a clear Error (status 400) on a bad hours string or zone; blank
+    // means absent.
     validateHours(hours, tz) {
       checkFields(hours, tz);
     },
@@ -598,51 +757,65 @@ export function createKeeper({
     // gc whatsapp invite [--proactive-consent] [--hours ...] [--tz ...]
     recordInvite(code, { consent = false, hours, tz } = {}) {
       const key = String(code ?? '').trim();
-      if (!key) throw new Error('invite code is empty');
+      if (!key) throw refusal(400, 'invite code is empty');
       const fields = checkFields(hours, tz);
-      state.invites[key] = { consent: consent === true, hours: fields.hours, tz: fields.tz, recorded_at: now() };
-      save();
+      commit({ invites: { [key]: { consent: consent === true, hours: fields.hours, tz: fields.tz, recorded_at: now() } } });
     },
 
     // The phone joined with that code: the fields move onto the conversation.
+    // Idempotent, so the inbound path calls it at every sight of the join
+    // and at startup: true when the code is bound to that phone (now, or
+    // already), false when there is nothing to bind. Throws on a failed
+    // write, nothing changed.
     bindInvite(code, waId) {
       const key = String(code ?? '').trim();
-      const invite = Object.hasOwn(state.invites, key) ? state.invites[key] : null;
+      const id = String(waId);
+      const invite = key && Object.hasOwn(state.invites, key) ? state.invites[key] : null;
       if (!invite) {
-        log(`keeper: no onboarding record for that invite code; ${tag(waId)} keeps its keeper record`);
+        logOnce(`no-invite:${key}:${id}`, `keeper: no onboarding record for that invite code; ${tag(id)} keeps its keeper record`);
+        return false;
+      }
+      if (invite.bound_to != null) {
+        if (invite.bound_to === id) return true; // a second sight of the same join
+        logOnce(`bound:${key}:${id}`, `keeper: that invite code is already bound to ${tag(invite.bound_to)}; ${tag(id)} keeps its keeper record`);
         return false;
       }
       const t = now();
-      const r = row(waId);
+      const r = draftRow(id);
       if (invite.consent === true && r.consent !== true) r.consent_at = t;
       r.consent = invite.consent === true;
       r.hours = invite.hours ?? null;
       r.tz = invite.tz ?? null;
-      delete state.invites[key];
       replan(r, t);
-      save();
+      commit({ rows: { [id]: r }, invites: { [key]: { ...invite, bound_to: id, bound_at: t } } });
       return true;
     },
 
-    // gc whatsapp consent <wa_id> --on|--off
+    // gc whatsapp consent <wa_id> --on|--off. Returns the matched row's id;
+    // an unknown phone is refused (404), never recorded.
     setConsent(waId, on) {
-      if (typeof on !== 'boolean') throw new Error('consent must be true (--on) or false (--off)');
-      const r = row(waId);
+      if (typeof on !== 'boolean') throw refusal(400, 'consent must be true (--on) or false (--off)');
+      const id = knownConversation(waId);
+      const r = draftRow(id);
       if (on && r.consent !== true) r.consent_at = now();
       r.consent = on;
-      if (!on) dropRetries((job) => job.waId === String(waId));
-      save();
+      commit({ rows: { [id]: r } });
+      if (!on) dropRetries((job) => job.waId === id);
+      return id;
     },
 
-    // gc whatsapp hours <wa_id> --hours "..." --tz <zone>. Blank hours clear
-    // them; tz undefined keeps the recorded zone, blank clears it.
+    // gc whatsapp hours <wa_id> --hours "..." --tz <zone> | --clear. Blank
+    // hours clear them; tz undefined keeps the recorded zone, blank clears
+    // it. Returns the matched row's id; an unknown phone is refused (404).
     setHours(waId, hoursText, tz) {
       const fields = checkFields(hoursText, tz);
-      const r = row(waId);
+      const id = knownConversation(waId);
+      const r = draftRow(id);
       r.hours = fields.hours;
       if (tz !== undefined) r.tz = fields.tz;
       replan(r, now());
-      save();
+      commit({ rows: { [id]: r } });
+      return id;
     },
 
     // The gateway refused a free-form publish window_closed: counted, never a template.
@@ -687,8 +860,16 @@ export function createKeeper({
       }
       return {
         conversations,
-        invites_pending: Object.keys(state.invites).length,
-        window_read: { at: iso(lastRead.at), error: lastRead.error },
+        invites_pending: Object.values(state.invites).filter((inv) => inv.bound_to == null).length,
+        // ok_at: the last good GET /v1/window; error: the last failure since.
+        window_read: {
+          ok_at: iso(state.window_read_ok_at),
+          error: state.window_read_error,
+          error_at: iso(state.window_read_error_at),
+          failures: readFailures,
+          retry_at: readFailures ? iso(readRetryAt) : null,
+          owed: readOwed(),
+        },
         retries_pending: retries.length,
       };
     },

@@ -10,7 +10,7 @@ import { adapterRequest, rid, rig, stays, waitFor } from './fakes.js';
 
 const A = '5511900000001';
 const B = '5511900000002';
-const GRACE = 11000;
+const GRACE = 16000; // the 5 s test client deadline plus the 10 s margin, and a second
 const MARKER = (pmid) => `[redelivery ${pmid}: a first copy may have reached you; if you already answered it, do nothing]`;
 
 async function setup(t, extra = {}) {
@@ -172,17 +172,17 @@ test('Minor 7: a transient media failure retries before the post; the message is
 
 test('Minor 9: acks go in batches of at most 100 ids', async (t) => {
   // A 120-message burst fsyncs 240 journal lines on the child's event loop;
-  // a 5 s gc deadline keeps every post answered, so 120 acks pile up owed.
-  const r = await setup(t, { WHATSAPP_GC_POST_TIMEOUT_MS: '5000' });
+  // production's 30 s gc deadline keeps every post answered under load, so
+  // 120 acks pile up owed (a shorter one sends some down the in-doubt path).
+  const r = await setup(t, { WHATSAPP_GC_POST_TIMEOUT_MS: '30000' });
   r.gw.ackMaxIds = 100;
   r.gw.ackBehaviour = [500];
   const ids = [];
   for (let i = 0; i < 120; i++) ids.push(r.gw.addText(`55119000${String(1000 + i)}`, `wamid.AB${i}`, `m${i}`));
   r.start();
-  await waitFor(() => r.gc.posts.length === 120, { timeoutMs: 20000, what: '120 posts' });
-  await waitFor(() => r.journal().filter((l) => l.t === 'accepted' && l.verdict === 'delivered').length === 120, { timeoutMs: 20000, what: '120 delivered' });
+  await waitFor(() => r.gc.posts.length === 120, { timeoutMs: 45000, what: '120 posts' });
+  await waitFor(() => r.journal().filter((l) => l.t === 'accepted' && l.verdict === 'delivered').length === 120, { timeoutMs: 45000, what: '120 delivered' });
   r.gw.ackBehaviour = ['ok'];
-  await r.pump(70000, { stepMs: 5000 });
-  await waitFor(() => ids.every((id) => r.gw.acked.has(id)), { timeoutMs: 10000, what: 'every id acked' });
+  await r.pumpUntil(() => ids.every((id) => r.gw.acked.has(id)), { stepMs: 5000, realMs: 100, timeoutMs: 45000, what: 'every id acked' });
   assert.ok(r.gw.ackCalls.every((c) => c.ids.length <= 100), 'no batch over 100');
 });

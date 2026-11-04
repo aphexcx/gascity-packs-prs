@@ -9,7 +9,7 @@ import test from 'node:test';
 import { adapterRequest, rid, rig, stays, waitFor } from './fakes.js';
 
 const WA = '5511900000001';
-const GRACE = 11000;
+const GRACE = 16000; // the 5 s test client deadline plus the 10 s margin, and a second
 
 async function setup(t, extra = {}) {
   const r = await rig({ extra: { WHATSAPP_COMPACT_MS: '1000', ...extra } });

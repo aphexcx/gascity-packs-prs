@@ -144,8 +144,12 @@ into the mayor's session (actor "Dynasty window-keeper", `is_bot: true`): the
 daily update (two hours before close of business, or at
 `WHATSAPP_KEEPER_UPDATE_HOUR`) and the close ladder at 60, 30, 15 and 5
 minutes before the window closes, kept inside the business's hours. State in
-`<city>/.gc/whatsapp/keeper.json`, written before each event. The mayor never
-replies to a keeper event; it publishes a real update or nothing.
+`<city>/.gc/whatsapp/keeper.json`, written before each event; a failed window
+read is retried on the ladder (1, 5, 15, 60 s) and the last good read is
+stamped in the file for the doctor row. The `consent` and `hours` verbs take
+a joined phone in any form and print the last four digits the adapter
+matched. The mayor never replies to a keeper event; it publishes a real
+update or nothing.
 
 ## The verbs
 
@@ -155,7 +159,7 @@ replies to a keeper event; it publishes a real update or nothing.
 | `gc whatsapp publish --update --to <wa_id> --text "..."` | the update template outside the window |
 | `gc whatsapp invite [--proactive-consent] [--hours "Mon-Fri 09:00-18:00"] [--tz <zone>]` | a 6-digit, 24-hour invite code and the two lines the owner is told |
 | `gc whatsapp consent <wa_id> --off\|--on` | the keeper's consent; `--off` on the owner's word, at once |
-| `gc whatsapp hours <wa_id> --hours "..." --tz <zone>` | the keeper's business hours |
+| `gc whatsapp hours <wa_id> --hours "..." --tz <zone>` \| `--clear` | the keeper's business hours; `--clear` removes them |
 | `gc whatsapp enroll --code <code> --name <city>` | enroll once; writes the credential 0600, prints nothing secret |
 | `gc whatsapp status` | enrollment, polls, entries, windows, keeper, holds, gaps, dead letters |
 | `gc whatsapp inbound resolve <rid> --delivered\|--dead` | the operator's way out of a terminal hold |
@@ -173,7 +177,7 @@ replies to a keeper event; it publishes a real update or nothing.
 | held | none | yellow: each terminal hold, the oldest's age, the resolve verb |
 | restore | no gap | yellow: the conversation, the journal's accepted time ahead of the store's head, the clear-gap verb |
 | probes | none | yellow: paste probes answered by a terminal snapshot in the last 7 days |
-| keeper | none | yellow: lapses, undelivered keeper events, refused publishes in the last 7 days |
+| keeper | none | red: no good `GET /v1/window` read in 5 minutes (`window_read_ok_at` in keeper.json) while a conversation has the keeper ON, the last error named; yellow: lapses, undelivered keeper events, refused publishes in the last 7 days |
 
 ## Setup for a city
 

@@ -12,7 +12,7 @@ import { ref } from '../src/inbound.js';
 import { adapterRequest, pasteText, rid, rig, sleep, stays, waitFor } from './fakes.js';
 
 const WA = '5511900000001';
-const GRACE = 11000; // the client deadline (600 ms in the tests) plus the 10 s margin
+const GRACE = 16000; // the client deadline (5 s in the tests) plus the 10 s margin, and a second
 const MARKER = (pmid) => `[redelivery ${pmid}: a first copy may have reached you; if you already answered it, do nothing]`;
 
 async function setup(t, extra = {}) {
@@ -255,9 +255,9 @@ test('(6e) the lost response without a kill never re-posts on the ladder: one PO
   const id = r.gw.addText(WA, 'wamid.K6e', 'six e');
   r.start();
   await waitFor(() => r.gc.count('wamid.K6e') === 1);
-  await r.pump(9000);
+  await r.pump(GRACE - 3000);
   await stays(() => r.gc.count('wamid.K6e') === 1, { forMs: 500, what: 'one POST inside the grace' });
-  await r.pump(2000);
+  await r.pump(3000);
   await acked(r, id);
   assert.equal(r.gc.count('wamid.K6e'), 2);
 });

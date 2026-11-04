@@ -193,14 +193,22 @@ function probes() {
   finish(1, `${snapshots.length} paste probe(s) answered by a terminal snapshot (format text) in the last 7 days (session ${sessions}): that session yields no provider log, so every in-doubt message there takes the marked path`);
 }
 
+// The keeper reads GET /v1/window once a minute and stamps the good reads
+// in keeper.json (window_read_ok_at, rewritten once a minute). Without a
+// fresh clock the ladder and the lapse count wait, so a stamp older than 5
+// minutes (or none) while any conversation has the keeper ON is red.
+const WINDOW_READ_STALE_MS = 5 * 60 * 1000;
+
 function keeper() {
   const dir = stateDir();
   if (!dir) return finish(1, 'GC_CITY_PATH is unset; cannot locate <city>/.gc/whatsapp');
   let state;
   try { state = JSON.parse(readFileSync(path.join(dir, 'keeper.json'), 'utf8')); } catch { return finish(0, 'the window-keeper has no state yet'); }
-  const since = Date.now() - WEEK_MS;
+  const now = Date.now();
+  const since = now - WEEK_MS;
   // keeper.json stores instants as ISO strings (keeper.js toDisk).
   const atMs = (x) => (typeof x === 'number' ? x : typeof x?.at === 'number' ? x.at : Date.parse(x?.at ?? '') || 0);
+  const instant = (x) => (typeof x === 'number' ? x : typeof x === 'string' ? Date.parse(x) : NaN);
   const recent = (list) => (Array.isArray(list) ? list.filter((x) => atMs(x) >= since).length : 0);
   const conversations = state.conversations ?? {};
   const rows = [];
@@ -209,6 +217,19 @@ function keeper() {
     const undelivered = recent(c.undelivered);
     const refused = recent(c.refused_nudges);
     if (lapses || undelivered || refused) rows.push(`...${last4(waId)}: ${lapses} lapse(s), ${undelivered} undelivered keeper event(s), ${refused} refused publish(es)`);
+  }
+  const on = Object.values(conversations).filter((c) => c?.consent === true).length;
+  const okAt = instant(state.window_read_ok_at);
+  if (on && !(now - okAt <= WINDOW_READ_STALE_MS)) {
+    const when = Number.isFinite(okAt)
+      ? `last read OK ${new Date(okAt).toISOString()} (${Math.round((now - okAt) / 60000)} min ago)`
+      : 'never read OK';
+    const errAt = instant(state.window_read_error_at);
+    const why = state.window_read_error
+      ? `; the last error${Number.isFinite(errAt) ? ` (${new Date(errAt).toISOString()})` : ''}: ${state.window_read_error}`
+      : '; no error recorded (is the adapter running? gc service list)';
+    const also = rows.length ? `; last 7 days: ${rows.join('; ')}` : '';
+    return finish(2, `window-keeper: the gateway's window clock (GET /v1/window) is ${when} while ${on} conversation(s) have the keeper ON: after a restart or a delivery the ladder and the lapse count wait for a fresh read${why}${also}`);
   }
   if (!rows.length) return finish(0, `window-keeper: no lapse and no undelivered event in the last 7 days (${Object.keys(conversations).length} conversation(s))`);
   finish(1, `window-keeper, last 7 days: ${rows.join('; ')}`);

@@ -306,16 +306,48 @@ def test_deadletters_row(tmp_path):
     assert 'either already delivered it or nobody is routed' in result.stdout
 
 
+def iso_ago(seconds):
+    return time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime(time.time() - seconds))
+
+
+def write_keeper(city, consent=True, lapses=0, **top):
+    # The shape keeper.js writes: {version, conversations, invites, window_read_ok_at, window_read_error, window_read_error_at}.
+    state = city / '.gc' / 'whatsapp'
+    state.mkdir(parents=True, exist_ok=True)
+    conversation = {'consent': consent, 'lapses': [{'close_at': '2026-11-04T09:28:00.000Z', 'at': iso_ago(60)}] * lapses,
+                    'undelivered': [], 'refused_nudges': []}
+    (state / 'keeper.json').write_text(json.dumps({'version': 1, 'conversations': {'5511900001234': conversation}, 'invites': {},
+                                                   'window_read_ok_at': None, 'window_read_error': None, 'window_read_error_at': None, **top}))
+
+
 def test_keeper_row(tmp_path):
     assert doctor('keeper', GC_CITY_PATH=str(tmp_path)).returncode == 0
-    state = tmp_path / '.gc' / 'whatsapp'
-    state.mkdir(parents=True)
-    (state / 'keeper.json').write_text(json.dumps({'conversations': {'5511900001234': {
-        'consent': True, 'lapses': [{'close_at': '2026-11-04T09:28:00.000Z', 'at': time.strftime('%Y-%m-%dT%H:%M:%S.000Z', time.gmtime())}],
-        'undelivered': [], 'refused_nudges': []}}}))
+    write_keeper(tmp_path, lapses=1, window_read_ok_at=iso_ago(60))
     result = doctor('keeper', GC_CITY_PATH=str(tmp_path))
-    assert result.returncode == 1
+    assert result.returncode == 1, result.stdout
     assert '...1234: 1 lapse(s)' in result.stdout
+
+
+def test_keeper_row_is_red_when_the_window_clock_is_stale_while_the_keeper_is_on(tmp_path):
+    # Never read OK, the keeper ON: red, the 7-day rows carried along.
+    write_keeper(tmp_path, lapses=1)
+    result = doctor('keeper', GC_CITY_PATH=str(tmp_path))
+    assert result.returncode == 2, result.stdout
+    assert 'never read OK' in result.stdout and '1 conversation(s) have the keeper ON' in result.stdout
+    assert '...1234: 1 lapse(s)' in result.stdout
+    # The last good read 10 minutes ago, an error since: red, naming the error.
+    write_keeper(tmp_path, window_read_ok_at=iso_ago(600), window_read_error='HTTP 404 from https://gw.invalid/v1/window',
+                 window_read_error_at=iso_ago(30))
+    result = doctor('keeper', GC_CITY_PATH=str(tmp_path))
+    assert result.returncode == 2, result.stdout
+    assert '(10 min ago)' in result.stdout and 'HTTP 404 from https://gw.invalid/v1/window' in result.stdout
+    assert '5511900001234' not in result.stdout
+    # Fresh (4 minutes): green.
+    write_keeper(tmp_path, window_read_ok_at=iso_ago(240))
+    assert doctor('keeper', GC_CITY_PATH=str(tmp_path)).returncode == 0
+    # Stale, but no conversation has the keeper ON: nothing depends on the clock.
+    write_keeper(tmp_path, consent=False, window_read_ok_at=iso_ago(3600))
+    assert doctor('keeper', GC_CITY_PATH=str(tmp_path)).returncode == 0
 
 
 # --- the verbs against a fake adapter --------------------------------------------
@@ -437,17 +469,49 @@ def test_clear_gap_prints_the_gap_and_the_head(fake):
 
 def test_invite_consent_hours(fake):
     adapter = fake({'POST /invite': (200, {'code': '482913', 'expires_at': '2026-11-05T18:00:00Z'}),
-                    'POST /consent': (200, {'ok': True}), 'POST /hours': (200, {'ok': True})})
+                    'POST /consent': (200, {'ok': True, 'consent': False, 'wa_id_last4': '1234'}),
+                    'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234'})})
     result = verb('invite.sh', '--proactive-consent', '--hours', 'Mon-Fri 09:00-18:00', '--tz', 'America/Sao_Paulo',
                   WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
     assert '482913' in result.stdout and 'Save the Dynasty WhatsApp number' in result.stdout
     assert adapter.requests[0][2] == {'proactive_consent': True, 'hours': 'Mon-Fri 09:00-18:00', 'tz': 'America/Sao_Paulo'}
     assert verb('invite.sh', '--hours', 'Mon-Fri 09:00-18:00', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
-    assert verb('consent.sh', '5511900001234', '--off', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 0
-    assert adapter.requests[-1][2] == {'wa_id': '5511900001234', 'on': False}
-    assert verb('hours.sh', '5511900001234', '--hours', 'Mon-Sat 18:00-02:00', '--tz', 'America/Chicago',
-                WHATSAPP_ADAPTER_URL=adapter.url).returncode == 0
+    # The verb sends the number as typed and prints the conversation the adapter matched.
+    off = verb('consent.sh', '+55 11 90000-9999', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert off.returncode == 0, off.stderr
+    assert adapter.requests[-1][2] == {'wa_id': '+55 11 90000-9999', 'on': False}
+    assert 'OFF for ...1234' in off.stdout and '9999' not in off.stdout
+    hours = verb('hours.sh', '5511900001234', '--hours', 'Mon-Sat 18:00-02:00', '--tz', 'America/Chicago',
+                 WHATSAPP_ADAPTER_URL=adapter.url)
+    assert hours.returncode == 0, hours.stderr
+    assert 'Hours recorded for ...1234: Mon-Sat 18:00-02:00 (America/Chicago).' in hours.stdout
+
+
+def test_hours_clear(fake):
+    adapter = fake({'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234', 'hours': None})})
+    cleared = verb('hours.sh', '5511900001234', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert cleared.returncode == 0, cleared.stderr
+    assert adapter.requests[-1][2] == {'wa_id': '5511900001234', 'hours': ''}
+    assert 'Hours cleared for ...1234 (the recorded zone kept).' in cleared.stdout
+    with_zone = verb('hours.sh', '5511900001234', '--clear', '--tz', 'America/Sao_Paulo', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert with_zone.returncode == 0, with_zone.stderr
+    assert adapter.requests[-1][2] == {'wa_id': '5511900001234', 'hours': '', 'tz': 'America/Sao_Paulo'}
+    assert verb('hours.sh', '5511900001234', '--clear', '--hours', 'Mon 09:00-10:00', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
+    assert verb('hours.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
+
+
+def test_consent_and_hours_refuse_an_unknown_phone_and_never_confirm_without_the_match(fake):
+    adapter = fake({'POST /consent': (404, {'error': 'no conversation ending 0009 is known to the window-keeper'}),
+                    'POST /hours': (200, {'ok': True})})
+    refused = verb('consent.sh', '5511900000009', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert refused.returncode == 1
+    assert 'HTTP 404' in refused.stderr and 'ending 0009' in refused.stderr
+    assert 'OFF for' not in refused.stdout
+    # An answer without the matched conversation confirms nothing.
+    unmatched = verb('hours.sh', '5511900000009', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert unmatched.returncode == 1
+    assert 'nothing confirmed' in unmatched.stderr and 'cleared' not in unmatched.stdout
 
 
 def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
@@ -458,7 +522,9 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
                     'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
                     'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
         'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
-                                                      'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}}},
+                                                      'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}},
+                   'window_read': {'ok_at': '2026-11-05T15:20:00.000Z', 'error': 'HTTP 503 from https://gw.invalid/v1/window',
+                                   'error_at': '2026-11-05T15:21:00.000Z', 'failures': 3}},
         'ledger': {'conversations': {'5511900001234': {'window_closes_at': close_ms - 60000}}},
     })})
     result = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
@@ -469,6 +535,8 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert 'journal watermark 9 ahead of the gc store head 4' in out
     assert '...1234  closes 2026-11-05T15:33:20Z (adapter ledger' in out
     assert 'keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)' in out
+    assert ('Window read:   last good 2026-11-05T15:20:00Z; failing since 2026-11-05T15:21:00Z (3 attempt(s)): '
+            'HTTP 503 from https://gw.invalid/v1/window') in out
     assert '5511900001234' not in out
 
 

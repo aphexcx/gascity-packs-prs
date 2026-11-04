@@ -21,7 +21,9 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function waitFor(predicate, { timeoutMs = 8000, stepMs = 15, what = 'condition' } = {}) {
+// 20 s: the suite runs four files at once and a child under that load can be
+// slow; a genuine failure only takes longer to report.
+export async function waitFor(predicate, { timeoutMs = 20000, stepMs = 15, what = 'condition' } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await predicate();
@@ -471,11 +473,17 @@ export function adapterEnv({ dir, clock, gw, gc, extra = {} }) {
     WHATSAPP_TEST_CLOCK: clock.file,
     WHATSAPP_TICK_MS: '10',
     WHATSAPP_POLL_MS: '0',
-    WHATSAPP_GC_POST_TIMEOUT_MS: '600',
+    // 5 s, not production's 30: a withheld answer still times out quickly,
+    // and a child on a loaded host still answers in time.
+    WHATSAPP_GC_POST_TIMEOUT_MS: '5000',
     WHATSAPP_GATEWAY_TIMEOUT_MS: '600',
     WHATSAPP_WATERMARK_CHECK_MS: '60000',
     WHATSAPP_COMPACT_MS: '3600000',
     WHATSAPP_KEEPER_WINDOW_READ_MS: '60000',
+    // These tests jump the clock by hours; a stamp at every jump is an
+    // fsynced keeper.json rewrite on the child's event loop. The stamp's own
+    // test (keeper.test.js (10b)) runs the production minute.
+    WHATSAPP_KEEPER_WINDOW_STAMP_MS: '86400000',
     WHATSAPP_CITY_TZ: 'America/Chicago',
     GC_SERVICE_SOCKET: path.join(dir, 's.sock'),
     GC_SERVICE_URL_PREFIX: '/v0/city/test-city/svc/whatsapp',
