@@ -102,8 +102,9 @@ A message reading
 
 is Meta's word that one of your sends to that phone never arrived: Meta took
 it, then could not deliver it. The code and the title are Meta's. It comes
-under the owner's name with the reply line beneath it, but the owner did not
-write it, and it does not open the window. Never answer it as their words.
+in that person's conversation, sent as their WhatsApp id (the number, not
+their name), with the reply line beneath it. They did not write it, and it
+does not open the window. Never answer it as their words.
 
 Send it again once, by the window rule: free-form only while their window is
 open, otherwise the update template and only for an actual update. If the

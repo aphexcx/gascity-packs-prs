@@ -27,8 +27,9 @@ you there. Load the `whatsapp` skill before you answer one.
   keeper itself: the reply line sends to the owner's phone.
 - **Redelivery**: a message starting `[redelivery <wamid>: ...]` is the
   adapter's recovery copy. If you already answered that id, do nothing.
-- **Delivery failed**: `[delivery failed: <code> <title>]` under the owner's
-  name is Meta's word on one of your sends, not theirs, and it does not open
-  the window. Send it again once by the window rule, else say it on Slack
-  with the code; never resend a marketing refusal (`131049`, `131050`).
+- **Delivery failed**: `[delivery failed: <code> <title>]`, sent as the
+  person's bare WhatsApp id, is Meta's word on one of your sends, not
+  theirs, and it does not open the window. Send it again once by the window
+  rule, else say it on Slack with the code; never resend a marketing
+  refusal (`131049`, `131050`).
 {{- end }}

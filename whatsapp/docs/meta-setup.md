@@ -171,8 +171,8 @@ dynasty.computer zone (step 7).
 
    Never delete it to file it again: "If you delete an approved template,
    you cannot create a new template with the same name for 30 days", and
-   the adapter sends this name. If Meta files it as Utility after all,
-   nothing more is needed.
+   the adapter sends this name. If both languages come back status
+   **APPROVED** with category **UTILITY** after all, nothing more is needed.
 
    Meta rejects a template that starts or ends with a variable: "The
    message template cannot start or end with a parameter (dangling
@@ -226,13 +226,14 @@ The real line waits on step 10, which is under way now.
     21:5xZ. Taylor is asking the founders' accountant to file a DBA for
     "Dynasty Computer", the name the app carries, under Houmanoids Inc. Keep
     the filing at hand in case Meta's review asks how that name and the
-    legal business connect. The display name and the real line wait on both. Verification
-    matters three ways. "Newly created business portfolios have a messaging
-    limit of 250", and verifying is one path to 2,000. It lifts the cap of
-    two registered numbers to 20. And a number's display name is checked
-    "When you reach a higher messaging limit". YOURS only if Meta asks for
-    documents. Check: App Dashboard > **Settings** > **Basic** >
-    **Verification** shows whether the app's business is verified. Sources:
+    legal business connect. The display name and the real line wait on
+    both. Verification matters three ways. "Newly created business
+    portfolios have a messaging limit of 250", and verifying is one path to
+    2,000. It lifts the cap of two registered numbers to 20. And a number's
+    display name is checked "When you reach a higher messaging limit".
+    YOURS only if Meta asks for documents. Check: App Dashboard >
+    **Settings** > **Basic** > **Verification** shows whether the app's
+    business is verified. Sources:
     [Messaging limits](https://developers.facebook.com/documentation/business-messaging/whatsapp/messaging-limits);
     [Business phone numbers](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/phone-numbers);
     [Display names](https://developers.facebook.com/documentation/business-messaging/whatsapp/display-names);
@@ -262,8 +263,10 @@ The real line waits on step 10, which is under way now.
     File `dynasty_update` there with the same name, bodies and samples (by
     hand: [WhatsApp Manager > Message templates](https://business.facebook.com/latest/whatsapp_manager/message_templates) >
     that Messaging account > create, category **Utility**, languages
-    `en_US` and `pt_BR`), and wait until it stands **as Utility** (a
-    Marketing approval stops here, step 9). Only then does the mayor point
+    `en_US` and `pt_BR`), and wait until both languages read status
+    **APPROVED** with category **UTILITY**: a template can show Utility
+    while still pending, and a Marketing approval stops here (step 9). Only
+    then does the mayor point
     the gateway at the new number's phone number id (one gateway secret
     changes; no city re-keys). Sources: [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform);
     [WhatsApp Business Accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/whatsapp-business-accounts).

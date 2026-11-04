@@ -99,8 +99,9 @@ the DBA as Taylor's plan, not as Meta's rule.
 The skill's failed-delivery line: a `status` delivery exists only from
 Meta's status webhook (whatsapp/gateway/src/gateway.ts:612-632 on main at
 54f53be7, the row routed to the city whose send recorded the wamid, with the
-send's recipient as `wa_id`); the adapter renders a failed one at
-whatsapp/adapter/src/render.js:80-83 and posts it under that `wa_id`'s actor
-(:123), and only `message` and `joined` deliveries move the window
+send's recipient as `wa_id` and `profile_name` NULL, also at :815-816); the
+adapter renders a failed one at whatsapp/adapter/src/render.js:80-83 and
+posts it under that `wa_id`'s actor (:123), whose display name falls back to
+the bare `wa_id` (codex QUICK r2's P3), and only `message` and `joined` deliveries move the window
 (inbound.js:293-298, the test at :296). A refusal at send time is the publish verb's error
 instead (gateway.ts:790-805).
