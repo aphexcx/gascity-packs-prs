@@ -151,6 +151,16 @@ both together, so ask for whichever one is missing:
 gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo
 ```
 
+When they say they no longer keep fixed hours, remove them; the update then
+comes at a fixed hour of their day and the nudges run at any hour:
+
+```
+gc whatsapp hours <wa_id> --clear
+```
+
+Both verbs take the phone in any form and print the last four digits they
+matched. Check those digits against the conversation.
+
 ## Files, voice notes, reactions
 
 Files arrive saved on this machine. The message ends with a block that

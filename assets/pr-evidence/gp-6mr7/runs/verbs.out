@@ -1,5 +1,6 @@
 PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --off' in A's help.md
 PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --on' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --clear' in A's help.md
 PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo' in A's help.md
 PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <wa_id>' in A's help.md
 PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound resolve <rid> --dead' in A's help.md
