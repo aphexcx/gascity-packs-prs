@@ -46,3 +46,18 @@
 - After the fold: verbs.py 46/46 PASS, red.py RED OK (three FAIL),
   fragparse `slack-v0` + `whatsapp-v0` OK, whatsapp/tests 42 passed
   (`runs/*.r2.*`).
+
+## Round 3 (confirmation of the fold): CLEAN
+
+- Command: the same hub launcher, `codex exec --sandbox read-only -` with
+  `codex-quick-r3-prompt.md` on stdin: the diff `git diff 20631a49..HEAD`
+  (the fold commit d1b17769 only), each fold checked against render.js and
+  the gateway on main, plus the evidence it adds.
+- Header: OpenAI Codex v0.153.3, model gpt-6-astra, provider hub, sandbox
+  read-only, reasoning effort xhigh, session
+  01a1a8cd-b67f-7e40-9913-4dec75e97a11.
+- Started 2026-11-04T23:03:35Z, ended 23:04:22Z, rc 0, 41,209 tokens.
+
+Codex's verdict (verbatim):
+
+> CLEAN. Both fixes are correct: cutover requires APPROVED and UTILITY in both languages, and failed deliveries display the recipient’s bare WhatsApp ID. No new contradictions found in the three documents or the reviewed evidence files.
