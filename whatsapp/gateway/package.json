@@ -1,0 +1,20 @@
+{
+  "name": "whatsapp-gateway",
+  "version": "0.1.0",
+  "description": "whatsapp.dynasty.computer: the key holder and router for the one Dynasty WhatsApp number (Meta Cloud API webhook in, per-city inbox out, send proxy)",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "wrangler deploy --dry-run --outdir dist"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.9",
+    "@cloudflare/workers-types": "5.20261024.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12",
+    "wrangler": "4.154.0"
+  }
+}

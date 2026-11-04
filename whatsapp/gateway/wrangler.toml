@@ -1,0 +1,40 @@
+# whatsapp.dynasty.computer: the key holder and router for the one Dynasty WhatsApp number.
+#
+# No account_id and no database_id of record live in this file. The deployer's `wrangler login`
+# selects the Houmanoids Cloudflare account. At deploy the mayor's hand creates the D1 and adds
+# the database_id it prints to the [[d1_databases]] block below, in the deploy checkout only
+# (README.md, "Deploy"). The five secrets are set with `wrangler secret put` and never live in a file.
+name = "whatsapp-gateway"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "whatsapp.dynasty.computer", custom_domain = true }
+]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "whatsapp-gateway"
+migrations_dir = "migrations"
+
+# One daily maintenance run: bodies past the 7-day hold, expired codes, aged idempotency keys.
+[triggers]
+crons = ["17 4 * * *"]
+
+[observability]
+enabled = true
+
+[vars]
+PUBLIC_URL = "https://whatsapp.dynasty.computer"
+DISPLAY_NAME = "Dynasty"
+# Read 2026-11-04 on https://developers.facebook.com/docs/graph-api/changelog/versions:
+# v26.0, released July 29, 2026, expiry TBD (the newest version on that page).
+GRAPH_VERSION = "v26.0"
+
+# Secrets (wrangler secret put <NAME>; never in this file or the repo):
+#   META_ACCESS_TOKEN     the system user's permanent token
+#   META_APP_SECRET       the Meta app's secret (verifies X-Hub-Signature-256)
+#   META_VERIFY_TOKEN     the string Meta echoes in the webhook subscription handshake
+#   META_PHONE_NUMBER_ID  the Dynasty number's phone number id (gateway-side configuration only)
+#   ADMIN_TOKEN           the operator's bearer for /v1/admin/*

@@ -1,0 +1,901 @@
+/**
+ * The gateway: the one place that holds the Dynasty number's Meta keys. It receives Meta's webhook,
+ * verifies the signature, routes each owner's message to the city its phone is bound to, holds each
+ * delivery until that city acknowledges it by id, and sends each city's replies with the 24-hour
+ * window enforced. The contract (v1) is README.md's "The contract"; the bead spec is the record.
+ *
+ * Durability: the Worker keeps nothing between requests. Meta is answered 200 only after every D1
+ * write for the payload has committed in one batch (a failure answers 500 and Meta redelivers), and
+ * the UNIQUE (city_id, wamid, status) index makes any redelivery one row. Routing is decided
+ * INSIDE that transaction (INSERT ... SELECT ... FROM phones), never from a read taken before it, so
+ * a bind that lands between the read and the write cannot misroute a message.
+ *
+ * Logs: fixed event names and counts only. Never a body, a phone number, a profile name, a code, a
+ * token or a secret, and never an error's message (a parse error can quote its input).
+ */
+import {
+  GraphError,
+  graphMarkRead,
+  graphMedia,
+  graphSend,
+  type GraphClient,
+  type InboundMessage,
+  MAX_TEXT_CHARS,
+  parseWebhook,
+  sameSecret,
+  type SendRequest,
+  sendBody,
+  sha256Hex,
+  verifySignature,
+} from "./meta.js";
+import { movesWindow, windowClosesAt, windowOpen } from "./window.js";
+
+const DAY = 86_400;
+
+/** Meta's bodies are stored whole; D1 holds a value up to 2 MB. */
+export const MAX_BODY_BYTES = 1_900_000;
+/** Held deliveries per city before Meta is told to retry later (503). */
+export const MAX_PENDING = 5000;
+/** How long a delivery's body is held without an ack. */
+export const HOLD_SECONDS = 7 * DAY;
+/** How long a body-less row stays to dedup a late Meta redelivery (Meta retries up to 7 days). */
+export const TOMBSTONE_SECONDS = 8 * DAY;
+/** Meta keeps a webhook media id for 7 days. */
+export const MEDIA_SECONDS = 7 * DAY;
+export const INVITE_SECONDS = DAY;
+export const ENROLL_SECONDS = 3 * DAY;
+/** An unknown sender hears the canned line at most once per this. */
+export const CANNED_EVERY_SECONDS = 7 * DAY;
+/** Invite-code texts a stranger may send per day; the sixth is ignored, a right code included. */
+export const MAX_CODE_ATTEMPTS = 5;
+/** A send claim with no wamid this old is abandoned (the Worker died mid-call) and may be taken over. */
+export const SEND_CLAIM_STALE_SECONDS = 60;
+const SENDS_KEEP_SECONDS = 30 * DAY;
+const SPENT_CODES_KEEP_SECONDS = 7 * DAY;
+const ENROLL_CODES_KEEP_SECONDS = 30 * DAY;
+/**
+ * Statements per D1 batch. A payload that needs more is written in several batches, in order. That
+ * is safe because every write here is idempotent on Meta's redelivery: a failure after an early
+ * batch committed answers 500, and the redelivery finds those rows already there.
+ */
+const MAX_BATCH_STATEMENTS = 400;
+const MAX_JSON_BYTES = 256 * 1024;
+const MAX_ACK_IDS = 500;
+const META_OUTSIDE_WINDOW = 131047;
+
+export type LogEvent = Record<string, string | number | boolean | null>;
+
+export interface GatewayConfig {
+  metaAccessToken: string;
+  metaAppSecret: string;
+  metaVerifyToken: string;
+  metaPhoneNumberId: string;
+  adminToken: string;
+  graphVersion: string;
+  displayName: string;
+  graphBase?: string;
+}
+
+export interface Deps {
+  db: D1Database;
+  config: GatewayConfig;
+  /** Epoch seconds. */
+  now(): number;
+  fetch: typeof fetch;
+  log(event: LogEvent): void;
+}
+
+class HttpError extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly extra: Record<string, unknown>;
+  constructor(status: number, code: string, extra: Record<string, unknown> = {}) {
+    super(code);
+    this.status = status;
+    this.code = code;
+    this.extra = extra;
+  }
+}
+
+type Obj = Record<string, unknown>;
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const json = (data: unknown, status = 200) =>
+  Response.json(data, { status, headers: { "cache-control": "no-store" } });
+const fail = (status: number, error: string, extra: Record<string, unknown> = {}) => json({ error, ...extra }, status);
+const errorName = (e: unknown) => (e instanceof Error ? e.name : typeof e);
+const changes = (r: D1Result | undefined) => r?.meta.changes ?? 0;
+const decoder = new TextDecoder();
+
+const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const ENROLL_CODE = /^[0-9A-HJKMNP-TV-Z]{16}$/;
+const INVITE_TEXT = /^\s*(\d{6})\s*$/;
+
+function randomBytes(n: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+
+function base64url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** 16 Crockford base32 characters (80 bits), stored bare, shown as XXXX-XXXX-XXXX-XXXX. */
+function newEnrollCode(): string {
+  return [...randomBytes(16)].map((b) => CROCKFORD[b & 31]).join("");
+}
+
+function showEnrollCode(code: string): string {
+  return code.match(/.{4}/g)?.join("-") ?? code;
+}
+
+/** A uniform 6-digit code (rejection sampling, no modulo bias). */
+function newInviteCode(): string {
+  const limit = Math.floor(0x1_0000_0000 / 1_000_000) * 1_000_000;
+  for (;;) {
+    const n = crypto.getRandomValues(new Uint32Array(1))[0] ?? limit;
+    if (n < limit) return String(n % 1_000_000).padStart(6, "0");
+  }
+}
+
+function inviteCodeIn(m: InboundMessage): string | null {
+  if (m.type !== "text" || m.text === null) return null;
+  return INVITE_TEXT.exec(m.text)?.[1] ?? null;
+}
+
+function cleanName(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: a name carries no control characters
+  return s.length >= 1 && s.length <= 100 && !/[\u0000-\u001f\u007f]/.test(s) ? s : null;
+}
+
+function boundedString(v: unknown, min: number, max: number): string | null {
+  return typeof v === "string" && v.length >= min && v.length <= max ? v : null;
+}
+
+function bearer(request: Request): string | null {
+  return /^Bearer +(\S+)\s*$/i.exec(request.headers.get("authorization") ?? "")?.[1] ?? null;
+}
+
+function intParam(url: URL, name: string, fallback: number, min: number, max: number): number {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return fallback;
+  if (!/^\d{1,16}$/.test(raw)) throw new HttpError(400, "bad_request");
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < min || n > max) throw new HttpError(400, "bad_request");
+  return n;
+}
+
+async function readJson(request: Request): Promise<Obj> {
+  const declared = Number(request.headers.get("content-length") ?? "0");
+  if (declared > MAX_JSON_BYTES) throw new HttpError(413, "too_large");
+  const buf = await request.arrayBuffer();
+  if (buf.byteLength > MAX_JSON_BYTES) throw new HttpError(413, "too_large");
+  let v: unknown;
+  try {
+    v = JSON.parse(decoder.decode(buf));
+  } catch {
+    throw new HttpError(400, "bad_request");
+  }
+  if (!isObj(v)) throw new HttpError(400, "bad_request");
+  return v;
+}
+
+function parseTo(v: unknown): string {
+  const s = typeof v === "string" ? v.replace(/^\+/, "") : "";
+  if (!/^\d{6,20}$/.test(s)) throw new HttpError(400, "bad_request");
+  return s;
+}
+
+function parseSend(body: Obj): SendRequest {
+  switch (body.type) {
+    case "text": {
+      const text = typeof body.text === "string" ? body.text : null;
+      if (!text) throw new HttpError(400, "bad_request");
+      if ([...text].length > MAX_TEXT_CHARS) throw new HttpError(400, "text_too_long");
+      return { type: "text", text };
+    }
+    case "reaction": {
+      const r = isObj(body.reaction) ? body.reaction : null;
+      const messageId = boundedString(r?.message_id, 1, 256);
+      const emoji = boundedString(r?.emoji, 0, 32);
+      if (!messageId || emoji === null) throw new HttpError(400, "bad_request");
+      return { type: "reaction", messageId, emoji };
+    }
+    case "template": {
+      const t = isObj(body.template) ? body.template : null;
+      const name = typeof t?.name === "string" && /^[a-z0-9_]{1,512}$/.test(t.name) ? t.name : null;
+      const language =
+        typeof t?.language === "string" && /^[A-Za-z]{2,3}(_[A-Za-z0-9]{2,4})?$/.test(t.language) ? t.language : null;
+      const params = Array.isArray(t?.params) ? t.params : null;
+      if (!name || !language || !params || params.length > 20) throw new HttpError(400, "bad_request");
+      if (!params.every((p) => boundedString(p, 1, 1024) !== null)) throw new HttpError(400, "bad_request");
+      return { type: "template", name, language, params: params as string[] };
+    }
+    default:
+      throw new HttpError(400, "bad_request");
+  }
+}
+
+interface Plan {
+  statements: D1PreparedStatement[];
+  /** Statement indexes whose one changed row means "this payload bound this phone". */
+  binds: Array<{ index: number; wa: string }>;
+  /** Statement indexes whose one changed row means "send this stranger the canned line now". */
+  canned: Array<{ index: number; wa: string }>;
+  unroutedStatuses: number;
+  /** Messages Meta stamped longer ago than the hold: past any dedup row, so dropped and counted. */
+  stale: number;
+  overCap: boolean;
+}
+
+export function createGateway(deps: Deps) {
+  const { db, config: cfg } = deps;
+  const log = (e: LogEvent) => deps.log(e);
+
+  function graph(): GraphClient {
+    if (!cfg.metaAccessToken || !cfg.metaPhoneNumberId) throw new HttpError(503, "not_configured");
+    return {
+      base: cfg.graphBase ?? "https://graph.facebook.com",
+      version: cfg.graphVersion,
+      phoneNumberId: cfg.metaPhoneNumberId,
+      accessToken: cfg.metaAccessToken,
+      fetch: deps.fetch,
+    };
+  }
+
+  async function bump(name: string, by = 1): Promise<void> {
+    try {
+      await db
+        .prepare("INSERT INTO stats (name, value) VALUES (?1, ?2) ON CONFLICT (name) DO UPDATE SET value = value + excluded.value")
+        .bind(name, by)
+        .run();
+    } catch (e) {
+      log({ event: "stats_write_failed", stat: name, error: errorName(e) });
+    }
+  }
+
+  const bumpStatement = (name: string, by: number) =>
+    db
+      .prepare("INSERT INTO stats (name, value) VALUES (?1, ?2) ON CONFLICT (name) DO UPDATE SET value = value + excluded.value")
+      .bind(name, by);
+
+  async function cityOf(request: Request): Promise<string> {
+    const token = bearer(request);
+    if (!token) throw new HttpError(401, "unauthorized");
+    const row = await db
+      .prepare("SELECT city_id FROM credentials WHERE token_sha256 = ? AND revoked_at IS NULL")
+      .bind(await sha256Hex(token))
+      .first<{ city_id: string }>();
+    if (!row) throw new HttpError(401, "unauthorized");
+    return row.city_id;
+  }
+
+  async function requireAdmin(request: Request): Promise<void> {
+    const token = bearer(request);
+    if (!token || !(await sameSecret(token, cfg.adminToken))) throw new HttpError(401, "unauthorized");
+  }
+
+  // ---------------------------------------------------------------- Meta side
+
+  async function handshake(_request: Request, url: URL): Promise<Response> {
+    const mode = url.searchParams.get("hub.mode");
+    const token = url.searchParams.get("hub.verify_token") ?? "";
+    if (mode !== "subscribe" || !(await sameSecret(token, cfg.metaVerifyToken))) {
+      log({ event: "handshake_refused" });
+      return fail(403, "forbidden");
+    }
+    log({ event: "handshake" });
+    return new Response(url.searchParams.get("hub.challenge") ?? "", {
+      status: 200,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+    });
+  }
+
+  async function webhook(request: Request): Promise<Response> {
+    if (!cfg.metaAppSecret || !cfg.metaPhoneNumberId) {
+      log({ event: "webhook_refused", reason: "not_configured" });
+      return fail(503, "not_configured");
+    }
+    if (Number(request.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) {
+      log({ event: "webhook_refused", reason: "too_large" });
+      return fail(413, "too_large");
+    }
+    const raw = new Uint8Array(await request.arrayBuffer());
+    if (raw.byteLength > MAX_BODY_BYTES) {
+      log({ event: "webhook_refused", reason: "too_large" });
+      return fail(413, "too_large");
+    }
+    if (!(await verifySignature(raw, request.headers.get("x-hub-signature-256"), cfg.metaAppSecret))) {
+      log({ event: "webhook_refused", reason: "signature" });
+      return fail(401, "bad_signature");
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(decoder.decode(raw));
+    } catch {
+      log({ event: "webhook_refused", reason: "bad_json" });
+      return fail(400, "bad_request");
+    }
+    const batch = parseWebhook(payload, cfg.metaPhoneNumberId);
+    const now = deps.now();
+    const plan = await planWebhook(batch.messages, batch.statuses, now);
+    if (plan.overCap) {
+      log({ event: "webhook_deferred", reason: "pending_cap" });
+      return fail(503, "pending_cap");
+    }
+    plan.statements.push(
+      db
+        .prepare("INSERT INTO stats (name, value) VALUES ('last_webhook_at', ?1) ON CONFLICT (name) DO UPDATE SET value = excluded.value")
+        .bind(now),
+    );
+    for (const [name, n] of [
+      ["dropped_wrong_number", batch.wrongNumber],
+      ["ignored_changes", batch.ignored],
+      ["unrouted_statuses", plan.unroutedStatuses],
+      ["stale_messages", plan.stale],
+    ] as const) {
+      if (n > 0) plan.statements.push(bumpStatement(name, n));
+    }
+    const results: D1Result[] = [];
+    try {
+      for (let i = 0; i < plan.statements.length; i += MAX_BATCH_STATEMENTS) {
+        results.push(...(await db.batch(plan.statements.slice(i, i + MAX_BATCH_STATEMENTS))));
+      }
+    } catch (e) {
+      log({ event: "webhook_store_failed", error: errorName(e) });
+      return fail(500, "store_failed");
+    }
+    // Committed. Everything below is best effort: a failure is counted, never a 5xx to Meta.
+    let welcomed = 0;
+    let canned = 0;
+    for (const b of plan.binds) {
+      if (changes(results[b.index]) !== 1) continue;
+      const city = await db
+        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.wa_id = ?")
+        .bind(b.wa)
+        .first<{ name: string }>();
+      if (await tell(b.wa, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
+    }
+    for (const c of plan.canned) {
+      if (changes(results[c.index]) !== 1) continue;
+      if (await tell(c.wa, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
+        canned += 1;
+      }
+    }
+    log({
+      event: "webhook",
+      messages: batch.messages.length,
+      statuses: batch.statuses.length,
+      wrong_number: batch.wrongNumber,
+      ignored: batch.ignored,
+      unrouted_statuses: plan.unroutedStatuses,
+      stale: plan.stale,
+      bound: plan.binds.filter((b) => changes(results[b.index]) === 1).length,
+      welcomed,
+      canned,
+    });
+    return json({ ok: true });
+  }
+
+  /** One gateway-authored text (the welcome, the canned line). Never throws. */
+  async function tell(wa: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
+    try {
+      await graphSend(graph(), sendBody(wa, { type: "text", text }));
+      return true;
+    } catch (e) {
+      log({
+        event: `${kind}_failed`,
+        meta_status: e instanceof GraphError ? e.status : null,
+        meta_code: e instanceof GraphError ? e.code : null,
+      });
+      await bump(`${kind}_failed`);
+      return false;
+    }
+  }
+
+  async function planWebhook(
+    messages: InboundMessage[],
+    statuses: Array<{ wamid: string; status: string; recipientId: string | null; raw: Obj }>,
+    now: number,
+  ): Promise<Plan> {
+    const plan: Plan = { statements: [], binds: [], canned: [], unroutedStatuses: 0, stale: 0, overCap: false };
+    // Meta retries a delivery for up to 7 days, and a body-less row dedups a wamid for 8. A message
+    // Meta stamped longer ago than the hold can be neither a live retry nor deduplicated, so it
+    // is dropped and counted rather than delivered a second time.
+    const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - HOLD_SECONDS);
+    plan.stale = messages.length - fresh.length;
+    messages = fresh;
+    const each = async <T>(sql: string, values: string[], ...extra: unknown[]): Promise<T[]> =>
+      values.length
+        ? (await db.prepare(sql).bind(JSON.stringify(values), ...extra).all<T>()).results
+        : [];
+
+    // Reads taken before the write, for the 5,000 cap and the stranger paths only. The write
+    // itself routes from the tables as they stand inside its own transaction.
+    const senders = [...new Set(messages.map((m) => m.from))];
+    const bound = new Map(
+      (
+        await each<{ wa_id: string; city_id: string }>(
+          "SELECT wa_id, city_id FROM phones WHERE wa_id IN (SELECT value FROM json_each(?1))",
+          senders,
+        )
+      ).map((r) => [r.wa_id, r.city_id]),
+    );
+    const codes = [
+      ...new Set(messages.filter((m) => !bound.has(m.from)).map(inviteCodeIn).filter((c): c is string => c !== null)),
+    ];
+    const codeCities = await each<{ city_id: string }>(
+      "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL AND expires_at > ?2",
+      codes,
+      now,
+    );
+    const statusCities = new Map(
+      (
+        await each<{ wamid: string; city_id: string }>(
+          "SELECT wamid, city_id FROM sends WHERE wamid IN (SELECT value FROM json_each(?1))",
+          [...new Set(statuses.map((s) => s.wamid))],
+        )
+      ).map((r) => [r.wamid, r.city_id]),
+    );
+    const cities = [...new Set([...bound.values(), ...codeCities.map((r) => r.city_id), ...statusCities.values()])];
+    const held = await each<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM deliveries WHERE body IS NOT NULL AND city_id IN (SELECT value FROM json_each(?1)) GROUP BY city_id",
+      cities,
+    );
+    if (held.some((r) => r.n >= MAX_PENDING)) {
+      plan.overCap = true;
+      return plan;
+    }
+
+    const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
+    for (const m of messages) {
+      const at = Math.min(m.timestamp ?? now, now);
+      const body = JSON.stringify(m.raw);
+      const code = bound.has(m.from) ? null : inviteCodeIn(m);
+      if (code !== null) {
+        // A stranger's code attempt: counted per day, then the bind, conditional on a live code
+        // and on the attempt count, never on this read.
+        push(
+          db
+            .prepare(
+              `INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since)
+               SELECT ?1, 1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
+               ON CONFLICT (wa_id) DO UPDATE SET
+                 code_attempts = CASE WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
+                 attempts_since = CASE WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END`,
+            )
+            .bind(m.from, now, now - DAY),
+        );
+        const bindIndex = push(
+          db
+            .prepare(
+              `INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
+               SELECT ?1, i.city_id, ?2, ?3, ?4, ?5 FROM invite_codes i
+               WHERE i.code = ?6 AND i.used_at IS NULL AND i.expires_at > ?3
+                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE wa_id = ?1), 0) <= ?7
+               ON CONFLICT (wa_id) DO NOTHING`,
+            )
+            .bind(m.from, m.profileName, now, m.wamid, at, code, MAX_CODE_ATTEMPTS),
+        );
+        push(
+          db
+            .prepare(
+              `UPDATE invite_codes SET used_at = ?1
+               WHERE code = ?2 AND used_at IS NULL
+                 AND EXISTS (SELECT 1 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?4)`,
+            )
+            .bind(now, code, m.from, m.wamid),
+        );
+        push(
+          db
+            .prepare(
+              `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
+               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?2`,
+            )
+            .bind(now, m.wamid, m.from, m.profileName, body),
+        );
+        plan.binds.push({ index: bindIndex, wa: m.from });
+      }
+      // The message itself, routed by the phone's binding as it stands inside this transaction.
+      // After a bind by this very text its wamid is already the joined row's, so this is one row.
+      push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
+             SELECT city_id, ?1, 'message', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3`,
+          )
+          .bind(now, m.wamid, m.from, m.profileName, body),
+      );
+      if (m.mediaId) {
+        push(
+          db
+            .prepare("INSERT OR IGNORE INTO media (city_id, media_id, received_at) SELECT city_id, ?1, ?2 FROM phones WHERE wa_id = ?3")
+            .bind(m.mediaId, now, m.from),
+        );
+      }
+      push(
+        db
+          .prepare(
+            `UPDATE phones SET
+               profile_name = COALESCE(?1, profile_name),
+               last_inbound_at = CASE WHEN ?2 THEN MAX(COALESCE(last_inbound_at, 0), ?3) ELSE last_inbound_at END
+             WHERE wa_id = ?4`,
+          )
+          .bind(m.profileName, movesWindow(m.type) ? 1 : 0, at, m.from),
+      );
+      if (!bound.has(m.from)) {
+        // A stranger hears the canned line at most once per 7 days, claimed before it is sent.
+        const cannedIndex = push(
+          db
+            .prepare(
+              `INSERT INTO unknown_senders (wa_id, last_replied_at)
+               SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
+               ON CONFLICT (wa_id) DO UPDATE SET last_replied_at = excluded.last_replied_at
+               WHERE unknown_senders.last_replied_at IS NULL OR unknown_senders.last_replied_at <= ?3`,
+            )
+            .bind(m.from, now, now - CANNED_EVERY_SECONDS),
+        );
+        plan.canned.push({ index: cannedIndex, wa: m.from });
+      }
+    }
+    for (const s of statuses) {
+      if (!statusCities.has(s.wamid)) plan.unroutedStatuses += 1;
+      push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
+             SELECT city_id, ?1, 'status', ?2, ?3, ?4, NULL, ?5 FROM sends WHERE wamid = ?2 LIMIT 1`,
+          )
+          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+      );
+    }
+    return plan;
+  }
+
+  // ---------------------------------------------------------------- City side
+
+  async function enroll(request: Request): Promise<Response> {
+    const body = await readJson(request);
+    const name = cleanName(body.name);
+    if (typeof body.code !== "string" || !name) throw new HttpError(400, "bad_request");
+    const code = body.code.toUpperCase().replace(/[\s-]/g, "");
+    if (!ENROLL_CODE.test(code)) throw new HttpError(403, "forbidden");
+    const now = deps.now();
+    const cityId = `city_${[...randomBytes(12)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+    const credential = `wgc_${base64url(randomBytes(32))}`;
+    const results = await db.batch([
+      db
+        .prepare(
+          `INSERT INTO cities (id, name, box_name, created_at)
+           SELECT ?1, city_name, ?2, ?3 FROM enroll_codes WHERE code = ?4 AND used_at IS NULL AND expires_at > ?3`,
+        )
+        .bind(cityId, name, now, code),
+      db
+        .prepare(
+          `UPDATE enroll_codes SET used_at = ?1, city_id = ?2
+           WHERE code = ?3 AND used_at IS NULL AND EXISTS (SELECT 1 FROM cities WHERE id = ?2)`,
+        )
+        .bind(now, cityId, code),
+      db
+        .prepare("INSERT INTO credentials (token_sha256, city_id, created_at) SELECT ?1, id, ?2 FROM cities WHERE id = ?3")
+        .bind(await sha256Hex(credential), now, cityId),
+    ]);
+    if (changes(results[0]) !== 1) {
+      log({ event: "enroll_refused" });
+      throw new HttpError(403, "forbidden");
+    }
+    log({ event: "city_enrolled" });
+    return json({ city_id: cityId, credential });
+  }
+
+  async function invites(request: Request): Promise<Response> {
+    const cityId = await cityOf(request);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const now = deps.now();
+      const code = newInviteCode();
+      const results = await db.batch([
+        db.prepare("DELETE FROM invite_codes WHERE city_id = ? AND used_at IS NULL").bind(cityId),
+        db
+          .prepare("INSERT OR IGNORE INTO invite_codes (code, city_id, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)")
+          .bind(code, cityId, now, now + INVITE_SECONDS),
+      ]);
+      if (changes(results[1]) === 1) {
+        log({ event: "invite_minted" });
+        return json({ code, expires_at: now + INVITE_SECONDS });
+      }
+    }
+    log({ event: "invite_failed" });
+    throw new HttpError(503, "no_code");
+  }
+
+  async function inbox(request: Request, url: URL): Promise<Response> {
+    const cityId = await cityOf(request);
+    const after = intParam(url, "after", 0, 0, Number.MAX_SAFE_INTEGER);
+    const limit = intParam(url, "limit", 100, 1, 200);
+    const { results } = await db
+      .prepare(
+        `SELECT id, received_at, kind, wa_id, profile_name, body FROM deliveries
+         WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
+      )
+      .bind(cityId, after, limit)
+      .all<{ id: number; received_at: number; kind: string; wa_id: string | null; profile_name: string | null; body: string }>();
+    const deliveries = results.map((r) => ({
+      id: r.id,
+      received_at: r.received_at,
+      kind: r.kind,
+      wa_id: r.wa_id,
+      profile_name: r.profile_name,
+      message: JSON.parse(r.body) as unknown,
+    }));
+    return json({ deliveries, cursor: deliveries.at(-1)?.id ?? after });
+  }
+
+  async function ack(request: Request): Promise<Response> {
+    const cityId = await cityOf(request);
+    const body = await readJson(request);
+    const ids = body.ids;
+    if (
+      !Array.isArray(ids) ||
+      ids.length < 1 ||
+      ids.length > MAX_ACK_IDS ||
+      !ids.every((i) => typeof i === "number" && Number.isSafeInteger(i) && i > 0)
+    ) {
+      throw new HttpError(400, "bad_request");
+    }
+    // Exactly the listed rows of THIS city lose their bodies; an id already acknowledged, already
+    // past the hold, deleted, or another city's is a no-op. The body-less row keeps the wamid so a
+    // late Meta redelivery is still one row.
+    const r = await db
+      .prepare(
+        `UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL, acked_at = ?1
+         WHERE city_id = ?2 AND body IS NOT NULL AND id IN (SELECT value FROM json_each(?3))`,
+      )
+      .bind(deps.now(), cityId, JSON.stringify(ids))
+      .run();
+    log({ event: "ack", listed: ids.length, acknowledged: changes(r) });
+    return json({ ok: true });
+  }
+
+  async function send(request: Request): Promise<Response> {
+    const cityId = await cityOf(request);
+    const body = await readJson(request);
+    const to = parseTo(body.to);
+    const key = boundedString(body.idempotency_key, 1, 200);
+    if (!key) throw new HttpError(400, "bad_request");
+    const req = parseSend(body);
+    const now = deps.now();
+    const phone = await db
+      .prepare("SELECT last_inbound_at FROM phones WHERE wa_id = ? AND city_id = ?")
+      .bind(to, cityId)
+      .first<{ last_inbound_at: number | null }>();
+    if (!phone) {
+      log({ event: "send_refused", reason: "not_bound" });
+      throw new HttpError(403, "not_bound");
+    }
+    // The key first: a repeat answers the first answer, whatever the window says now.
+    const prior = await db
+      .prepare("SELECT wamid, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+      .bind(cityId, key)
+      .first<{ wamid: string | null; created_at: number }>();
+    if (prior?.wamid) return json({ message_id: prior.wamid });
+    if (prior && prior.created_at > now - SEND_CLAIM_STALE_SECONDS) throw new HttpError(409, "in_flight");
+    if (req.type !== "template" && !windowOpen(phone.last_inbound_at, now)) {
+      log({ event: "send_refused", reason: "window_closed", type: req.type });
+      throw new HttpError(422, "window_closed");
+    }
+    const client = graph();
+    const claim = await db
+      .prepare(
+        `INSERT INTO sends (city_id, idempotency_key, wamid, type, created_at) VALUES (?1, ?2, NULL, ?3, ?4)
+         ON CONFLICT (city_id, idempotency_key) DO UPDATE SET created_at = excluded.created_at, type = excluded.type
+         WHERE sends.wamid IS NULL AND sends.created_at <= ?5`,
+      )
+      .bind(cityId, key, req.type, now, now - SEND_CLAIM_STALE_SECONDS)
+      .run();
+    if (changes(claim) !== 1) {
+      const raced = await db
+        .prepare("SELECT wamid FROM sends WHERE city_id = ? AND idempotency_key = ?")
+        .bind(cityId, key)
+        .first<{ wamid: string | null }>();
+      if (raced?.wamid) return json({ message_id: raced.wamid });
+      throw new HttpError(409, "in_flight");
+    }
+    let wamid: string;
+    try {
+      wamid = await graphSend(client, sendBody(to, req));
+    } catch (e) {
+      // Nothing recorded: the claim goes, so a retry under the same key sends.
+      await db
+        .prepare("DELETE FROM sends WHERE city_id = ? AND idempotency_key = ? AND wamid IS NULL AND created_at = ?")
+        .bind(cityId, key, now)
+        .run();
+      if (!(e instanceof GraphError)) throw e;
+      log({ event: "send_failed", type: req.type, meta_status: e.status, meta_code: e.code });
+      if (e.code === META_OUTSIDE_WINDOW) throw new HttpError(422, "window_closed");
+      throw new HttpError(502, "meta_error", { meta_status: e.status, meta_code: e.code });
+    }
+    await db
+      .prepare("UPDATE sends SET wamid = ? WHERE city_id = ? AND idempotency_key = ?")
+      .bind(wamid, cityId, key)
+      .run();
+    log({ event: "send", type: req.type });
+    return json({ message_id: wamid });
+  }
+
+  async function read(request: Request): Promise<Response> {
+    const cityId = await cityOf(request);
+    const body = await readJson(request);
+    const messageId = boundedString(body.message_id, 1, 256);
+    if (!messageId) throw new HttpError(400, "bad_request");
+    const known = await db
+      .prepare("SELECT 1 AS one FROM deliveries WHERE city_id = ? AND wamid = ? AND kind IN ('message', 'joined') LIMIT 1")
+      .bind(cityId, messageId)
+      .first();
+    if (!known) throw new HttpError(404, "not_found");
+    try {
+      await graphMarkRead(graph(), messageId);
+    } catch (e) {
+      if (!(e instanceof GraphError)) throw e;
+      log({ event: "read_failed", meta_status: e.status, meta_code: e.code });
+      throw new HttpError(502, "meta_error", { meta_status: e.status, meta_code: e.code });
+    }
+    return json({ ok: true });
+  }
+
+  async function windows(request: Request): Promise<Response> {
+    const cityId = await cityOf(request);
+    const { results } = await db
+      .prepare("SELECT wa_id, last_inbound_at FROM phones WHERE city_id = ? ORDER BY bound_at, wa_id")
+      .bind(cityId)
+      .all<{ wa_id: string; last_inbound_at: number | null }>();
+    return json({
+      windows: results.map((r) => ({
+        conversation_id: r.wa_id,
+        last_inbound_at: r.last_inbound_at,
+        window_closes_at: windowClosesAt(r.last_inbound_at),
+      })),
+    });
+  }
+
+  async function media(request: Request, mediaId: string): Promise<Response> {
+    const cityId = await cityOf(request);
+    if (!/^[A-Za-z0-9_.-]{1,128}$/.test(mediaId)) throw new HttpError(404, "not_found");
+    const known = await db
+      .prepare("SELECT 1 AS one FROM media WHERE city_id = ? AND media_id = ? AND received_at > ?")
+      .bind(cityId, mediaId, deps.now() - MEDIA_SECONDS)
+      .first();
+    if (!known) throw new HttpError(404, "not_found");
+    try {
+      return await graphMedia(graph(), mediaId);
+    } catch (e) {
+      if (!(e instanceof GraphError)) throw e;
+      log({ event: "media_failed", meta_status: e.status, meta_code: e.code });
+      if (e.status >= 400 && e.status < 500) throw new HttpError(404, "not_found");
+      throw new HttpError(502, "meta_error", { meta_status: e.status, meta_code: e.code });
+    }
+  }
+
+  async function healthz(): Promise<Response> {
+    const row = await db
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM deliveries WHERE body IS NOT NULL) AS pending_total,
+                (SELECT value FROM stats WHERE name = 'last_webhook_at') AS last_webhook_at`,
+      )
+      .first<{ pending_total: number; last_webhook_at: number | null }>();
+    return json({ ok: true, pending_total: row?.pending_total ?? 0, last_webhook_at: row?.last_webhook_at ?? null });
+  }
+
+  // ---------------------------------------------------------------- Operator side
+
+  async function mintEnrollCode(request: Request): Promise<Response> {
+    await requireAdmin(request);
+    const body = await readJson(request);
+    const cityName = cleanName(body.city_name);
+    if (!cityName) throw new HttpError(400, "bad_request");
+    const now = deps.now();
+    const code = newEnrollCode();
+    await db
+      .prepare("INSERT INTO enroll_codes (code, city_name, created_at, expires_at) VALUES (?, ?, ?, ?)")
+      .bind(code, cityName, now, now + ENROLL_SECONDS)
+      .run();
+    log({ event: "enroll_code_minted" });
+    return json({ code: showEnrollCode(code), expires_at: now + ENROLL_SECONDS });
+  }
+
+  async function listCities(request: Request): Promise<Response> {
+    await requireAdmin(request);
+    const [cities, phones, stats] = await db.batch([
+      db.prepare(
+        `SELECT c.id, c.name, c.box_name, c.created_at,
+           (SELECT COUNT(*) FROM phones p WHERE p.city_id = c.id) AS phones,
+           (SELECT COUNT(*) FROM deliveries d WHERE d.city_id = c.id AND d.body IS NOT NULL) AS held,
+           (SELECT COUNT(*) FROM credentials k WHERE k.city_id = c.id AND k.revoked_at IS NULL) AS credentials
+         FROM cities c ORDER BY c.created_at, c.id`,
+      ),
+      // Only the last four digits ever leave D1 on this route.
+      db.prepare("SELECT city_id, substr(wa_id, -4) AS last4 FROM phones ORDER BY bound_at"),
+      db.prepare("SELECT name, value FROM stats ORDER BY name"),
+    ]);
+    const last4 = new Map<string, string[]>();
+    for (const p of (phones?.results ?? []) as Array<{ city_id: string; last4: string }>) {
+      last4.set(p.city_id, [...(last4.get(p.city_id) ?? []), p.last4]);
+    }
+    return json({
+      cities: ((cities?.results ?? []) as Array<Record<string, unknown> & { id: string }>).map((c) => ({
+        ...c,
+        phones_last4: last4.get(c.id) ?? [],
+      })),
+      counters: Object.fromEntries(((stats?.results ?? []) as Array<{ name: string; value: number }>).map((s) => [s.name, s.value])),
+    });
+  }
+
+  // ---------------------------------------------------------------- Router
+
+  type Handler = (request: Request, url: URL) => Promise<Response>;
+  const routes: Record<string, Partial<Record<string, Handler>>> = {
+    "/healthz": { GET: () => healthz() },
+    "/meta/webhook": { GET: handshake, POST: (r) => webhook(r) },
+    "/v1/enroll": { POST: (r) => enroll(r) },
+    "/v1/invites": { POST: (r) => invites(r) },
+    "/v1/inbox": { GET: inbox },
+    "/v1/inbox/ack": { POST: (r) => ack(r) },
+    "/v1/send": { POST: (r) => send(r) },
+    "/v1/read": { POST: (r) => read(r) },
+    "/v1/window": { GET: (r) => windows(r) },
+    "/v1/admin/enroll-codes": { POST: (r) => mintEnrollCode(r) },
+    "/v1/admin/cities": { GET: (r) => listCities(r) },
+  };
+  const MEDIA_PREFIX = "/v1/media/";
+
+  async function handle(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const isMedia = path.startsWith(MEDIA_PREFIX);
+    const route = isMedia ? "/v1/media/:id" : path;
+    try {
+      if (isMedia) {
+        if (request.method !== "GET") return fail(405, "method_not_allowed");
+        return await media(request, path.slice(MEDIA_PREFIX.length));
+      }
+      const methods = routes[path];
+      if (!methods) return fail(404, "not_found");
+      const handler = methods[request.method];
+      if (!handler) return fail(405, "method_not_allowed");
+      return await handler(request, url);
+    } catch (e) {
+      if (e instanceof HttpError) return fail(e.status, e.code, e.extra);
+      log({ event: "internal_error", route: routes[route] || isMedia ? route : "unknown", error: errorName(e) });
+      return fail(500, "internal");
+    }
+  }
+
+  /** The daily cron: bodies past the hold, body-less rows past the dedup day, aged codes and keys. */
+  async function maintain(): Promise<Record<string, number>> {
+    const now = deps.now();
+    const results = await db.batch([
+      db
+        .prepare("UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL WHERE body IS NOT NULL AND received_at <= ?")
+        .bind(now - HOLD_SECONDS),
+      db.prepare("DELETE FROM deliveries WHERE received_at <= ?").bind(now - TOMBSTONE_SECONDS),
+      db.prepare("DELETE FROM media WHERE received_at <= ?").bind(now - MEDIA_SECONDS),
+      db
+        .prepare("DELETE FROM unknown_senders WHERE COALESCE(last_replied_at, 0) <= ? AND attempts_since <= ?")
+        .bind(now - CANNED_EVERY_SECONDS, now - DAY),
+      db.prepare("DELETE FROM invite_codes WHERE expires_at <= ?").bind(now - SPENT_CODES_KEEP_SECONDS),
+      db.prepare("DELETE FROM enroll_codes WHERE expires_at <= ?").bind(now - ENROLL_CODES_KEEP_SECONDS),
+      db.prepare("DELETE FROM sends WHERE created_at <= ?").bind(now - SENDS_KEEP_SECONDS),
+    ]);
+    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone] = results.map(changes);
+    return {
+      bodies_expired: bodies ?? 0,
+      rows_deleted: rows ?? 0,
+      media_deleted: mediaRows ?? 0,
+      strangers_deleted: strangers ?? 0,
+      invite_codes_deleted: invitesGone ?? 0,
+      enroll_codes_deleted: enrollGone ?? 0,
+      sends_deleted: sendsGone ?? 0,
+    };
+  }
+
+  return { handle, maintain };
+}

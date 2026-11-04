@@ -1,0 +1,5 @@
+# esbuild and workerd ship their platform binaries as optional dependencies; their install
+# scripts only re-check them, so no dependency runs a build script here.
+allowBuilds:
+  esbuild: false
+  workerd: false
