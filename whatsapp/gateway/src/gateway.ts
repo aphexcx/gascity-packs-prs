@@ -10,16 +10,24 @@
  * INSIDE that transaction (INSERT ... SELECT ... FROM phones), never from a read taken before it, so
  * a bind that lands between the read and the write cannot misroute a message.
  *
- * Logs: fixed event names and counts only. Never a body, a phone number, a profile name, a code, a
- * token or a secret, and never an error's message (a parse error can quote its input).
+ * Owners: Meta names a WhatsApp user by a wa_id (a phone number), a user_id (a business-scoped
+ * user id), or both. An owner row is keyed by its conversation_id, set once at the bind and never
+ * changed; its wa_id and user_id are the ids Meta names it by now (README.md, "Business-scoped user
+ * ids").
+ *
+ * Logs: fixed event names and counts only. Never a body, a phone number, a user id, a username, a
+ * profile name, a code, a token or a secret, and never an error's message (a parse error can quote
+ * its input).
  */
 import {
+  BSUID,
   GraphError,
   graphMarkRead,
   graphMedia,
   graphSend,
   type GraphClient,
   type InboundMessage,
+  type InboundStatus,
   MAX_TEXT_CHARS,
   parseWebhook,
   sameSecret,
@@ -215,10 +223,47 @@ async function readJson(request: Request): Promise<Obj> {
   return v;
 }
 
+/** A send's `to`: a user_id exactly as given, or a phone number's digits (a leading + dropped). */
 function parseTo(v: unknown): string {
-  const s = typeof v === "string" ? v.replace(/^\+/, "") : "";
+  if (typeof v !== "string") throw new HttpError(400, "bad_request");
+  if (BSUID.test(v)) return v;
+  const s = v.replace(/^\+/, "");
   if (!/^\d{6,20}$/.test(s)) throw new HttpError(400, "bad_request");
   return s;
+}
+
+/**
+ * The ids a message names its sender by. A number-change notice carries no from_user_id: the
+ * previous user_id is the one the gateway knows the owner by.
+ */
+function senderOf(m: InboundMessage): { wa: string | null; user: string | null } {
+  return { wa: m.from, user: m.fromUserId ?? m.change?.previousUserId ?? null };
+}
+
+/**
+ * The phones rows a sender's ids (SQL parameters wa and user) name: the row holding the user_id,
+ * or the row holding the wa_id unless that row's user_id is another user's. A phone number Meta
+ * reports beside a different user_id is someone else's now (a recycled number), never the owner.
+ */
+const ownerMatch = (wa: string, user: string) => `(user_id = ${user} OR (wa_id = ${wa} AND (user_id IS NULL OR ${user} IS NULL)))`;
+/** The one owner of a match: the user_id's row before the wa_id's (they differ only for two rows). */
+const ownerFirst = (user: string) => `ORDER BY CASE WHEN user_id = ${user} THEN 0 ELSE 1 END LIMIT 1`;
+const ownerKey = (wa: string, user: string) =>
+  `(SELECT conversation_id FROM phones WHERE ${ownerMatch(wa, user)} ${ownerFirst(user)})`;
+
+interface OwnerRow {
+  conversation_id: string;
+  wa_id: string | null;
+  user_id: string | null;
+  city_id: string;
+}
+
+/** ownerMatch and ownerFirst over rows already read (the plan's reads, never its writes). */
+function ownerIn(rows: OwnerRow[], ids: { wa: string | null; user: string | null }): OwnerRow | undefined {
+  return (
+    rows.find((r) => ids.user !== null && r.user_id === ids.user) ??
+    rows.find((r) => ids.wa !== null && r.wa_id === ids.wa && (r.user_id === null || ids.user === null))
+  );
 }
 
 function parseSend(body: Obj): SendRequest {
@@ -255,10 +300,10 @@ interface Plan {
   statements: D1PreparedStatement[];
   /** The index where each group starts: one message's (or one status's) statements, never split. */
   groupStarts: number[];
-  /** Statement indexes whose one changed row means "this payload bound this phone". */
-  binds: Array<{ index: number; wa: string }>;
+  /** Statement indexes whose one changed row means "this payload bound this owner" (id: its key). */
+  binds: Array<{ index: number; id: string }>;
   /** Statement indexes whose one changed row means "send this stranger the canned line now". */
-  canned: Array<{ index: number; wa: string }>;
+  canned: Array<{ index: number; id: string }>;
   /** Statuses no send has claimed yet (read before the write): kept apart for adoption. */
   orphanedStatuses: number;
   /** Messages Meta stamped longer ago than any dedup row lives: dropped and counted. */
@@ -392,14 +437,14 @@ export function createGateway(deps: Deps) {
     for (const b of plan.binds) {
       if (!committed(b.index)) continue;
       const city = await db
-        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.wa_id = ?")
-        .bind(b.wa)
+        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.conversation_id = ?")
+        .bind(b.id)
         .first<{ name: string }>();
-      if (await tell(b.wa, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
+      if (await tell(b.id, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
     }
     for (const c of plan.canned) {
       if (!committed(c.index)) continue;
-      if (await tell(c.wa, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
+      if (await tell(c.id, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
         canned += 1;
       }
     }
@@ -436,10 +481,10 @@ export function createGateway(deps: Deps) {
     return ranges;
   }
 
-  /** One gateway-authored text (the welcome, the canned line). Never throws. */
-  async function tell(wa: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
+  /** One gateway-authored text (the welcome, the canned line) to a wa_id or a user_id. Never throws. */
+  async function tell(id: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
     try {
-      await graphSend({ ...graph(), timeoutMs: TELL_TIMEOUT_MS }, sendBody(wa, { type: "text", text }));
+      await graphSend({ ...graph(), timeoutMs: TELL_TIMEOUT_MS }, sendBody(id, { type: "text", text }));
       return true;
     } catch (e) {
       log({
@@ -452,11 +497,7 @@ export function createGateway(deps: Deps) {
     }
   }
 
-  async function planWebhook(
-    messages: InboundMessage[],
-    statuses: Array<{ wamid: string; status: string; recipientId: string | null; raw: Obj }>,
-    now: number,
-  ): Promise<Plan> {
+  async function planWebhook(messages: InboundMessage[], statuses: InboundStatus[], now: number): Promise<Plan> {
     const plan: Plan = {
       statements: [],
       groupStarts: [],
@@ -479,17 +520,24 @@ export function createGateway(deps: Deps) {
 
     // Reads taken before the write, for the 5,000 cap and the stranger paths only. The write
     // itself routes from the tables as they stand inside its own transaction.
-    const senders = [...new Set(messages.map((m) => m.from))];
-    const bound = new Map(
-      (
-        await each<{ wa_id: string; city_id: string }>(
-          "SELECT wa_id, city_id FROM phones WHERE wa_id IN (SELECT value FROM json_each(?1))",
-          senders,
-        )
-      ).map((r) => [r.wa_id, r.city_id]),
-    );
+    const ids = messages.map(senderOf);
+    const waIds = [...new Set(ids.map((s) => s.wa).filter((v): v is string => v !== null))];
+    const userIds = [...new Set(ids.map((s) => s.user).filter((v): v is string => v !== null))];
+    const rows =
+      waIds.length || userIds.length
+        ? (
+            await db
+              .prepare(
+                `SELECT conversation_id, wa_id, user_id, city_id FROM phones
+                 WHERE wa_id IN (SELECT value FROM json_each(?1)) OR user_id IN (SELECT value FROM json_each(?2))`,
+              )
+              .bind(JSON.stringify(waIds), JSON.stringify(userIds))
+              .all<OwnerRow>()
+          ).results
+        : [];
+    const owners = ids.map((s) => ownerIn(rows, s));
     const codes = [
-      ...new Set(messages.filter((m) => !bound.has(m.from)).map(inviteCodeIn).filter((c): c is string => c !== null)),
+      ...new Set(messages.filter((_, i) => !owners[i]).map(inviteCodeIn).filter((c): c is string => c !== null)),
     ];
     const codeCities = await each<{ city_id: string }>(
       "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL",
@@ -503,7 +551,13 @@ export function createGateway(deps: Deps) {
         )
       ).map((r) => [r.wamid, r.city_id]),
     );
-    const cities = [...new Set([...bound.values(), ...codeCities.map((r) => r.city_id), ...statusCities.values()])];
+    const cities = [
+      ...new Set([
+        ...owners.flatMap((o) => (o ? [o.city_id] : [])),
+        ...codeCities.map((r) => r.city_id),
+        ...statusCities.values(),
+      ]),
+    ];
     const held = await each<{ n: number }>(
       "SELECT COUNT(*) AS n FROM deliveries WHERE body IS NOT NULL AND city_id IN (SELECT value FROM json_each(?1)) GROUP BY city_id",
       cities,
@@ -514,11 +568,19 @@ export function createGateway(deps: Deps) {
     }
 
     const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
-    for (const m of messages) {
+    for (const [i, m] of messages.entries()) {
+      const { wa, user } = ids[i] ?? { wa: null, user: null };
+      // The id an owner is bound under (its conversation_id) and told at: the wa_id when Meta
+      // shares one, else the user_id. A stranger is counted under its user_id when Meta sends one,
+      // which stays the same when Meta starts sharing its phone.
+      const key = wa ?? user;
+      const strangerKey = user ?? wa;
+      if (key === null || strangerKey === null) continue; // parseWebhook never yields one
       plan.groupStarts.push(plan.statements.length);
       const at = Math.min(m.timestamp ?? now, now);
       const body = JSON.stringify(m.raw);
-      const code = bound.has(m.from) ? null : inviteCodeIn(m);
+      const owned = owners[i] !== undefined;
+      const code = owned ? null : inviteCodeIn(m);
       if (code !== null) {
         // A stranger's code attempt: counted per day and once per wamid (a redelivery is not a
         // second attempt), then the bind, conditional on a code that was live when Meta stamped
@@ -526,87 +588,123 @@ export function createGateway(deps: Deps) {
         push(
           db
             .prepare(
-              `INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since, last_code_wamid)
-               SELECT ?1, 1, ?2, ?4 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
-               ON CONFLICT (wa_id) DO UPDATE SET
+              `INSERT INTO unknown_senders (sender_key, code_attempts, attempts_since, last_code_wamid)
+               SELECT ?1, 1, ?2, ?4 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE ${ownerMatch("?5", "?6")})
+               ON CONFLICT (sender_key) DO UPDATE SET
                  code_attempts = CASE WHEN last_code_wamid IS ?4 THEN code_attempts
                                       WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
                  attempts_since = CASE WHEN last_code_wamid IS ?4 THEN attempts_since
                                        WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END,
                  last_code_wamid = ?4`,
             )
-            .bind(m.from, now, now - DAY, m.wamid),
+            .bind(strangerKey, now, now - DAY, m.wamid, wa, user),
         );
+        // A new owner row holds every id the text named; no id may already name another owner.
         const bindIndex = push(
           db
             .prepare(
-              `INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
-               SELECT ?1, i.city_id, ?2, ?3, ?4, ?5 FROM invite_codes i
-               WHERE i.code = ?6 AND i.used_at IS NULL AND i.expires_at > ?5
-                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE wa_id = ?1), 0) <= ?7
-               ON CONFLICT (wa_id) DO NOTHING`,
+              `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
+               SELECT ?1, ?2, ?3, ?4, i.city_id, ?5, ?6, ?7, ?8 FROM invite_codes i
+               WHERE i.code = ?9 AND i.used_at IS NULL AND i.expires_at > ?8
+                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?10), 0) <= ?11
+                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = ?1 OR p.wa_id = ?2 OR p.user_id = ?3)
+               ON CONFLICT DO NOTHING`,
             )
-            .bind(m.from, m.profileName, now, m.wamid, at, code, MAX_CODE_ATTEMPTS),
+            .bind(key, wa, user, m.username, m.profileName, now, m.wamid, at, code, strangerKey, MAX_CODE_ATTEMPTS),
         );
         push(
           db
             .prepare(
               `UPDATE invite_codes SET used_at = ?1
                WHERE code = ?2 AND used_at IS NULL
-                 AND EXISTS (SELECT 1 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?4)`,
+                 AND EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?3 AND bound_wamid = ?4)`,
             )
-            .bind(now, code, m.from, m.wamid),
+            .bind(now, code, key, m.wamid),
         );
         push(
           db
             .prepare(
-              `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3 AND bound_wamid = ?2`,
+              `INSERT OR IGNORE INTO deliveries
+                 (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones
+               WHERE conversation_id = ?8 AND bound_wamid = ?2`,
             )
-            .bind(now, m.wamid, m.from, m.profileName, body),
+            .bind(now, m.wamid, wa, user, m.username, m.profileName, body, key),
         );
-        plan.binds.push({ index: bindIndex, wa: m.from });
+        plan.binds.push({ index: bindIndex, id: key });
       }
-      // The message itself, routed by the phone's binding as it stands inside this transaction.
+      // The message itself, routed by the owner's ids as they stand inside this transaction.
       // After a bind by this very text its wamid is already the joined row's, so this is one row.
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT city_id, ?1, 'message', ?2, '', ?3, ?4, ?5 FROM phones WHERE wa_id = ?3`,
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT city_id, ?1, 'message', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones
+             WHERE ${ownerMatch("?3", "?4")} ${ownerFirst("?4")}`,
           )
-          .bind(now, m.wamid, m.from, m.profileName, body),
+          .bind(now, m.wamid, wa, user, m.username, m.profileName, body),
       );
       if (m.mediaId) {
         push(
           db
-            .prepare("INSERT OR IGNORE INTO media (city_id, media_id, received_at) SELECT city_id, ?1, ?2 FROM phones WHERE wa_id = ?3")
-            .bind(m.mediaId, now, m.from),
+            .prepare(
+              `INSERT OR IGNORE INTO media (city_id, media_id, received_at)
+               SELECT city_id, ?1, ?2 FROM phones WHERE ${ownerMatch("?3", "?4")} ${ownerFirst("?4")}`,
+            )
+            .bind(m.mediaId, now, wa, user),
         );
       }
+      // The owner's window moves on a message from either id. An id the owner row lacks is filled
+      // the first time a message carries it beside the other (one owner, two ids, one row), unless
+      // another row already holds it.
       push(
         db
           .prepare(
             `UPDATE phones SET
                profile_name = COALESCE(?1, profile_name),
-               last_inbound_at = CASE WHEN ?2 THEN MAX(COALESCE(last_inbound_at, 0), ?3) ELSE last_inbound_at END
-             WHERE wa_id = ?4`,
+               username = COALESCE(?2, username),
+               last_inbound_at = CASE WHEN ?3 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,
+               wa_id = CASE WHEN wa_id IS NULL AND ?5 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.wa_id = ?5)
+                            THEN ?5 ELSE wa_id END,
+               user_id = CASE WHEN user_id IS NULL AND ?6 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = ?6)
+                              THEN ?6 ELSE user_id END
+             WHERE conversation_id = ${ownerKey("?5", "?6")}`,
           )
-          .bind(m.profileName, movesWindow(m.type) ? 1 : 0, at, m.from),
+          .bind(m.profileName, m.username, movesWindow(m.type) ? 1 : 0, at, wa, user),
       );
-      if (!bound.has(m.from)) {
-        // A stranger hears the canned line at most once per 7 days, claimed before it is sent.
+      if (m.change?.userId) {
+        // A number change: the owner's ids become the new ones (the old phone number is no longer
+        // the owner's, so no new number shared means none held), its conversation_id stays. An id
+        // another row already holds is never taken from it.
+        push(
+          db
+            .prepare(
+              `UPDATE phones SET
+                 user_id = ?1,
+                 wa_id = CASE WHEN ?2 IS NOT NULL AND NOT EXISTS
+                                (SELECT 1 FROM phones o WHERE o.wa_id = ?2 AND o.conversation_id <> phones.conversation_id)
+                              THEN ?2 ELSE NULL END
+               WHERE conversation_id = ${ownerKey("?3", "?4")}
+                 AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = ?1 AND o.conversation_id <> phones.conversation_id)`,
+            )
+            .bind(m.change.userId, m.change.waId, wa, user),
+        );
+      }
+      if (!owned && !m.change) {
+        // A stranger hears the canned line at most once per 7 days, claimed before it is sent. A
+        // number change is Meta's notice, not the user writing: never answered.
         const cannedIndex = push(
           db
             .prepare(
-              `INSERT INTO unknown_senders (wa_id, last_replied_at)
-               SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
-               ON CONFLICT (wa_id) DO UPDATE SET last_replied_at = excluded.last_replied_at
+              `INSERT INTO unknown_senders (sender_key, last_replied_at)
+               SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE ${ownerMatch("?4", "?5")})
+               ON CONFLICT (sender_key) DO UPDATE SET last_replied_at = excluded.last_replied_at
                WHERE unknown_senders.last_replied_at IS NULL OR unknown_senders.last_replied_at <= ?3`,
             )
-            .bind(m.from, now, now - CANNED_EVERY_SECONDS),
+            .bind(strangerKey, now, now - CANNED_EVERY_SECONDS, wa, user),
         );
-        plan.canned.push({ index: cannedIndex, wa: m.from });
+        plan.canned.push({ index: cannedIndex, id: key });
       }
     }
     for (const s of statuses) {
@@ -615,21 +713,25 @@ export function createGateway(deps: Deps) {
       // Routed to the city whose send recorded this wamid; when no send has recorded it yet (Meta's
       // "sent" can beat the send's own write), kept apart for that send to adopt. Exactly one of the
       // two applies, decided inside the transaction.
+      // The delivery's conversation_id is the owner the send went to (a v1 send recorded none and
+      // went to the wa_id that is its owner's key).
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT city_id, ?1, 'status', ?2, ?3, ?4, NULL, ?5 FROM sends WHERE wamid = ?2 LIMIT 1`,
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT city_id, ?1, 'status', ?2, ?3, ?4, ?5, NULL, COALESCE(conversation_id, ?4, ?5), NULL, ?6
+             FROM sends WHERE wamid = ?2 LIMIT 1`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw)),
       );
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, body)
-             SELECT ?2, ?3, ?1, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
+            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, recipient_user_id, body)
+             SELECT ?2, ?3, ?1, ?4, ?5, ?6 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw)),
       );
     }
     return plan;
@@ -697,16 +799,29 @@ export function createGateway(deps: Deps) {
     const limit = intParam(url, "limit", 100, 1, 200);
     const { results } = await db
       .prepare(
-        `SELECT id, received_at, kind, wa_id, profile_name, body FROM deliveries
+        `SELECT id, received_at, kind, wa_id, user_id, username, conversation_id, profile_name, body FROM deliveries
          WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
       )
       .bind(cityId, after, limit)
-      .all<{ id: number; received_at: number; kind: string; wa_id: string | null; profile_name: string | null; body: string }>();
+      .all<{
+        id: number;
+        received_at: number;
+        kind: string;
+        wa_id: string | null;
+        user_id: string | null;
+        username: string | null;
+        conversation_id: string | null;
+        profile_name: string | null;
+        body: string;
+      }>();
     const deliveries = results.map((r) => ({
       id: r.id,
       received_at: r.received_at,
       kind: r.kind,
       wa_id: r.wa_id,
+      user_id: r.user_id,
+      username: r.username,
+      conversation_id: r.conversation_id,
       profile_name: r.profile_name,
       message: JSON.parse(r.body) as unknown,
     }));
@@ -730,7 +845,8 @@ export function createGateway(deps: Deps) {
     // late Meta redelivery is still one row.
     const r = await db
       .prepare(
-        `UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL, acked_at = ?1
+        `UPDATE deliveries SET body = NULL, wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL,
+           profile_name = NULL, acked_at = ?1
          WHERE city_id = ?2 AND body IS NOT NULL AND id IN (SELECT value FROM json_each(?3))`,
       )
       .bind(deps.now(), cityId, JSON.stringify(ids))
@@ -747,11 +863,21 @@ export function createGateway(deps: Deps) {
     if (!key) throw new HttpError(400, "bad_request");
     const req = parseSend(body);
     const now = deps.now();
-    const phone = await db
-      .prepare("SELECT last_inbound_at FROM phones WHERE wa_id = ? AND city_id = ?")
+    // `to` names one of THIS city's owners by its conversation_id (the id the box files it under,
+    // first), its wa_id or its user_id.
+    const owner = await db
+      .prepare(
+        `SELECT conversation_id, wa_id, user_id, last_inbound_at FROM phones
+         WHERE city_id = ?2 AND (conversation_id = ?1 OR wa_id = ?1 OR user_id = ?1)
+         ORDER BY CASE WHEN conversation_id = ?1 THEN 0 ELSE 1 END LIMIT 1`,
+      )
       .bind(to, cityId)
-      .first<{ last_inbound_at: number | null }>();
-    if (!phone) {
+      .first<{ conversation_id: string; wa_id: string | null; user_id: string | null; last_inbound_at: number | null }>();
+    // Meta gets `to` exactly as given while it is one of the owner's ids. A conversation_id the
+    // owner no longer answers to (its phone number before a number change) is sent to the owner's
+    // current id instead: never to a number that may be someone else's now.
+    const address = owner && (to === owner.wa_id || to === owner.user_id ? to : (owner.wa_id ?? owner.user_id));
+    if (!owner || !address) {
       log({ event: "send_refused", reason: "not_bound" });
       throw new HttpError(403, "not_bound");
     }
@@ -762,17 +888,18 @@ export function createGateway(deps: Deps) {
       .bind(cityId, key)
       .first<{ wamid: string | null; state: string; created_at: number }>();
     if (prior) return repeatAnswer(prior, now);
-    if (req.type !== "template" && !windowOpen(phone.last_inbound_at, now)) {
+    if (req.type !== "template" && !windowOpen(owner.last_inbound_at, now)) {
       log({ event: "send_refused", reason: "window_closed", type: req.type });
       throw new HttpError(422, "window_closed");
     }
     const client = graph();
     const claim = await db
       .prepare(
-        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at) VALUES (?1, ?2, NULL, 'claimed', ?3, ?4)
+        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at, conversation_id)
+         VALUES (?1, ?2, NULL, 'claimed', ?3, ?4, ?5)
          ON CONFLICT (city_id, idempotency_key) DO NOTHING`,
       )
-      .bind(cityId, key, req.type, now)
+      .bind(cityId, key, req.type, now, owner.conversation_id)
       .run();
     if (changes(claim) !== 1) {
       const raced = await db
@@ -784,7 +911,7 @@ export function createGateway(deps: Deps) {
     }
     let wamid: string;
     try {
-      wamid = await graphSend(client, sendBody(to, req));
+      wamid = await graphSend(client, sendBody(address, req));
     } catch (e) {
       if (!(e instanceof GraphError)) throw e;
       log({ event: "send_failed", type: req.type, meta_status: e.status, meta_code: e.code });
@@ -812,11 +939,13 @@ export function createGateway(deps: Deps) {
           .bind(wamid, cityId, key),
         db
           .prepare(
-            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
-             SELECT ?1, received_at, 'status', wamid, status, recipient_id, NULL, body FROM orphan_statuses WHERE wamid = ?2
+            `INSERT OR IGNORE INTO deliveries
+               (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
+             SELECT ?1, received_at, 'status', wamid, status, recipient_id, recipient_user_id, NULL, ?3, NULL, body
+             FROM orphan_statuses WHERE wamid = ?2
              ORDER BY received_at, rowid`,
           )
-          .bind(cityId, wamid),
+          .bind(cityId, wamid, owner.conversation_id),
         db.prepare("DELETE FROM orphan_statuses WHERE wamid = ?").bind(wamid),
       ]);
     } catch (e) {
@@ -859,12 +988,13 @@ export function createGateway(deps: Deps) {
   async function windows(request: Request): Promise<Response> {
     const cityId = await cityOf(request);
     const { results } = await db
-      .prepare("SELECT wa_id, last_inbound_at FROM phones WHERE city_id = ? ORDER BY bound_at, wa_id")
+      .prepare("SELECT conversation_id, user_id, last_inbound_at FROM phones WHERE city_id = ? ORDER BY bound_at, conversation_id")
       .bind(cityId)
-      .all<{ wa_id: string; last_inbound_at: number | null }>();
+      .all<{ conversation_id: string; user_id: string | null; last_inbound_at: number | null }>();
     return json({
       windows: results.map((r) => ({
-        conversation_id: r.wa_id,
+        conversation_id: r.conversation_id,
+        user_id: r.user_id,
         last_inbound_at: r.last_inbound_at,
         window_closes_at: windowClosesAt(r.last_inbound_at),
       })),
@@ -926,8 +1056,11 @@ export function createGateway(deps: Deps) {
            (SELECT COUNT(*) FROM credentials k WHERE k.city_id = c.id AND k.revoked_at IS NULL) AS credentials
          FROM cities c ORDER BY c.created_at, c.id`,
       ),
-      // Only the last four digits ever leave D1 on this route.
-      db.prepare("SELECT city_id, substr(wa_id, -4) AS last4 FROM phones ORDER BY bound_at"),
+      // Only the last four digits of a phone number ever leave D1 on this route; an owner Meta
+      // shares no phone number of shows as "id", never any part of its user_id.
+      db.prepare(
+        "SELECT city_id, CASE WHEN wa_id IS NULL THEN 'id' ELSE substr(wa_id, -4) END AS last4 FROM phones ORDER BY bound_at, conversation_id",
+      ),
       db.prepare("SELECT name, value FROM stats ORDER BY name"),
     ]);
     const last4 = new Map<string, string[]>();
@@ -989,7 +1122,10 @@ export function createGateway(deps: Deps) {
     const now = deps.now();
     const results = await db.batch([
       db
-        .prepare("UPDATE deliveries SET body = NULL, wa_id = NULL, profile_name = NULL WHERE body IS NOT NULL AND received_at <= ?")
+        .prepare(
+          `UPDATE deliveries SET body = NULL, wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL, profile_name = NULL
+           WHERE body IS NOT NULL AND received_at <= ?`,
+        )
         .bind(now - HOLD_SECONDS),
       db.prepare("DELETE FROM deliveries WHERE received_at <= ?").bind(now - TOMBSTONE_SECONDS),
       db.prepare("DELETE FROM media WHERE received_at <= ?").bind(now - MEDIA_SECONDS),

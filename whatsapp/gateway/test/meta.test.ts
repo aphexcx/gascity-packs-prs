@@ -22,9 +22,15 @@ import { movesWindow, WINDOW_MARGIN_SECONDS, windowClosesAt, windowOpen } from "
 import audio from "./fixtures/audio.json";
 import image from "./fixtures/image.json";
 import reaction from "./fixtures/reaction.json";
+import statusBsuid from "./fixtures/status-delivered-bsuid.json";
+import statusPhoneBsuid from "./fixtures/status-delivered-phone-bsuid.json";
 import statusFailed from "./fixtures/status-failed.json";
 import statusSent from "./fixtures/status-sent.json";
+import changedNumber from "./fixtures/system-user-changed-number.json";
+import changedUserId from "./fixtures/system-user-changed-user-id.json";
 import text from "./fixtures/text.json";
+import textBsuid from "./fixtures/text-bsuid.json";
+import textPhoneBsuid from "./fixtures/text-phone-bsuid.json";
 import { fakeGraph, PNID } from "./harness.js";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -138,6 +144,101 @@ describe("webhook payloads (Meta's reference examples)", () => {
     const noId = JSON.parse(JSON.stringify(text));
     delete noId.entry[0].changes[0].value.messages[0].id;
     expect(parseWebhook(noId, PNID).messages).toEqual([]);
+  });
+});
+
+describe("business-scoped user ids (Meta's BSUID examples)", () => {
+  const BSUID = "US.13491208655302741918";
+  const WAMID = "wamid.HBgLMTY1MDM4Nzk0MzkVAgASGBQzQTRBNjU5OUFFRTAzODEwMTQ0RgA=";
+  const copy = <T>(v: T): any => JSON.parse(JSON.stringify(v));
+
+  it("a text from a username user: no from, the BSUID, the username and the profile name", () => {
+    const b = parseWebhook(textBsuid, PNID);
+    expect(b.messages).toHaveLength(1);
+    expect(b.messages[0]).toMatchObject({
+      wamid: WAMID,
+      from: null,
+      fromUserId: BSUID,
+      username: "realsheenanelson",
+      profileName: "Sheena Nelson",
+      type: "text",
+      text: "Does it come in another color?",
+      change: null,
+    });
+    expect(b.messages[0]!.raw).toEqual(textBsuid.entry[0]!.changes[0]!.value.messages[0]);
+  });
+
+  it("a text carrying both ids, and today's shape with the wa_id alone", () => {
+    expect(parseWebhook(textPhoneBsuid, PNID).messages[0]).toMatchObject({
+      from: "16505551234",
+      fromUserId: BSUID,
+      username: null,
+      profileName: "Sheena Nelson",
+    });
+    expect(parseWebhook(text, PNID).messages[0]).toMatchObject({ from: "16505551234", fromUserId: null, username: null, change: null });
+  });
+
+  it("an id the message lacks is read from its contacts entry: the user_id by the wa_id, the wa_id by the user_id", () => {
+    const noFromUserId = copy(textPhoneBsuid);
+    delete noFromUserId.entry[0].changes[0].value.messages[0].from_user_id;
+    expect(parseWebhook(noFromUserId, PNID).messages[0]).toMatchObject({ from: "16505551234", fromUserId: BSUID });
+    const noFrom = copy(textPhoneBsuid);
+    delete noFrom.entry[0].changes[0].value.messages[0].from;
+    expect(parseWebhook(noFrom, PNID).messages[0]).toMatchObject({ from: "16505551234", fromUserId: BSUID });
+    // A contacts entry for someone else lends nothing.
+    const stranger = copy(textBsuid);
+    stranger.entry[0].changes[0].value.contacts[0].user_id = "US.99999999999999999999";
+    expect(parseWebhook(stranger, PNID).messages[0]).toMatchObject({ from: null, fromUserId: BSUID, username: null, profileName: null });
+  });
+
+  it("statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone", () => {
+    expect(parseWebhook(statusPhoneBsuid, PNID).statuses[0]).toMatchObject({ status: "delivered", recipientId: "16505551234", recipientUserId: BSUID });
+    expect(parseWebhook(statusBsuid, PNID).statuses[0]).toMatchObject({ status: "delivered", recipientId: null, recipientUserId: BSUID });
+    expect(parseWebhook(statusFailed, PNID).statuses[0]).toMatchObject({ status: "failed", recipientId: "16505551234", recipientUserId: null });
+  });
+
+  it("a number change: the new and previous user ids and the new phone; with no phone shared, the previous user id alone names the sender", () => {
+    expect(parseWebhook(changedNumber, PNID).messages[0]).toMatchObject({
+      from: "16505551234",
+      fromUserId: null,
+      type: "system",
+      change: { type: "user_changed_number", userId: "US.70412958836127405533", previousUserId: BSUID, waId: "16505559876" },
+    });
+    expect(parseWebhook(changedUserId, PNID).messages[0]).toMatchObject({
+      from: null,
+      fromUserId: null,
+      type: "system",
+      change: { type: "user_changed_user_id", userId: "US.70412958836127405533", previousUserId: BSUID, waId: null },
+    });
+  });
+
+  it("a message naming no wa_id, no user_id and no previous user id is skipped, never thrown", () => {
+    const nobody = copy(textBsuid);
+    const value = nobody.entry[0].changes[0].value;
+    delete value.messages[0].from_user_id;
+    delete value.contacts[0].user_id;
+    expect(parseWebhook(nobody, PNID).messages).toEqual([]);
+    const notice = copy(changedUserId);
+    delete notice.entry[0].changes[0].value.messages[0].system.previous_user_id;
+    expect(parseWebhook(notice, PNID).messages).toEqual([]);
+  });
+
+  it("a send to a BSUID puts it in `recipient`, byte for byte, with `to` omitted; a phone number stays in `to`", () => {
+    for (const id of [BSUID, "US.ENT.11815799212886844830", "BR.aZ09"]) {
+      expect(sendBody(id, { type: "text", text: "hello" })).toEqual({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        recipient: id,
+        type: "text",
+        text: { body: "hello", preview_url: false },
+      });
+    }
+    const tpl = sendBody(BSUID, { type: "template", name: "dynasty_update", language: "en_US", params: ["x"] });
+    expect(tpl).toMatchObject({ recipient: BSUID, type: "template" });
+    expect("to" in tpl).toBe(false);
+    const byPhone = sendBody("16505551234", { type: "text", text: "hello" });
+    expect(byPhone.to).toBe("16505551234");
+    expect("recipient" in byPhone).toBe(false);
   });
 });
 

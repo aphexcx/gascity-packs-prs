@@ -3,6 +3,7 @@
 declare namespace Cloudflare {
   interface Env {
     DB: D1Database;
+    MIGRATION_DB: D1Database;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];
     PUBLIC_URL: string;
     DISPLAY_NAME: string;

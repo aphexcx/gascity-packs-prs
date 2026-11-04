@@ -10,8 +10,12 @@ import { signatureHeader } from "../src/meta.js";
 import audioFixture from "./fixtures/audio.json";
 import imageFixture from "./fixtures/image.json";
 import reactionFixture from "./fixtures/reaction.json";
+import statusBsuidFixture from "./fixtures/status-delivered-bsuid.json";
 import statusFixture from "./fixtures/status-sent.json";
+import changedNumberFixture from "./fixtures/system-user-changed-number.json";
+import changedUserIdFixture from "./fixtures/system-user-changed-user-id.json";
 import textFixture from "./fixtures/text.json";
+import textPhoneBsuidFixture from "./fixtures/text-phone-bsuid.json";
 
 export const PNID = "106540352242922";
 export const SECRETS = {
@@ -35,6 +39,19 @@ export function uniq(): string {
 export function phone(): string {
   const n = crypto.getRandomValues(new Uint32Array(2));
   return `55${String(n[0]).padStart(10, "0").slice(0, 6)}${String(n[1]).padStart(10, "0").slice(0, 5)}`;
+}
+
+/** A fresh business-scoped user id in the shape of Meta's examples: a country code, a period, 20 digits. */
+export function bsuid(): string {
+  const n = crypto.getRandomValues(new Uint32Array(2));
+  return `US.${String(n[0]).padStart(10, "0")}${String(n[1]).padStart(10, "0")}`;
+}
+
+/** The ids a payload names its WhatsApp user by; one left out is deleted, as Meta omits it. */
+export interface Ids {
+  wa?: string | null;
+  user?: string | null;
+  username?: string | null;
 }
 
 export interface GraphCall {
@@ -205,6 +222,73 @@ export function statusPayload(wamid: string, status: string, recipient: string, 
   return p;
 }
 
+/** Meta's text with both ids (text-phone-bsuid.json), re-addressed to these ids. */
+export function textAs(ids: Ids, text: string, o: InboundOpts & { wamid: string; ts: number }) {
+  const p = clone(textPhoneBsuidFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  value.metadata.phone_number_id = o.pnid ?? PNID;
+  const contact = value.contacts[0];
+  const m = value.messages[0];
+  contact.profile.name = o.name ?? "Owner Name";
+  if (ids.username) contact.profile.username = ids.username;
+  if (ids.wa) {
+    contact.wa_id = ids.wa;
+    m.from = ids.wa;
+  } else {
+    delete contact.wa_id;
+    delete m.from;
+  }
+  if (ids.user) {
+    contact.user_id = ids.user;
+    m.from_user_id = ids.user;
+  } else {
+    delete contact.user_id;
+    delete m.from_user_id;
+  }
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  m.text.body = text;
+  return p;
+}
+
+/** Meta's delivered-to-a-BSUID status (status-delivered-bsuid.json), re-addressed to these ids. */
+export function statusAs(wamid: string, status: string, ids: Ids, ts: number) {
+  const p = clone(statusBsuidFixture) as any;
+  const value = p.entry[0].changes[0].value;
+  const s = value.statuses[0];
+  Object.assign(s, { id: wamid, status, timestamp: String(ts) });
+  if (ids.wa) {
+    s.recipient_id = ids.wa;
+    value.contacts[0].wa_id = ids.wa;
+  }
+  if (ids.user) {
+    s.recipient_user_id = ids.user;
+    value.contacts[0].user_id = ids.user;
+  } else {
+    delete s.recipient_user_id;
+    delete value.contacts[0].user_id;
+  }
+  return p;
+}
+
+/** A number-change system notice (Meta's syntax block, filled; SOURCES.md), re-addressed. */
+export function changeAs(
+  type: "user_changed_number" | "user_changed_user_id",
+  ids: { from?: string | null; previousUser: string; newUser: string; newWa?: string | null },
+  o: { wamid: string; ts: number },
+) {
+  const p = clone(type === "user_changed_number" ? changedNumberFixture : changedUserIdFixture) as any;
+  const m = p.entry[0].changes[0].value.messages[0];
+  Object.assign(m, { id: o.wamid, timestamp: String(o.ts) });
+  if (ids.from) m.from = ids.from;
+  else delete m.from;
+  m.system.user_id = ids.newUser;
+  m.system.previous_user_id = ids.previousUser;
+  if (ids.newWa) m.system.wa_id = ids.newWa;
+  else delete m.system.wa_id;
+  m.system.body = `User changed from ${ids.from ?? ids.previousUser} to ${ids.newWa ?? ids.newUser}`;
+  return p;
+}
+
 export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database } = {}) {
   const clock = { now: T0 };
   const graph = fakeGraph();
@@ -277,6 +361,13 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     return { res, wamid };
   }
 
+  /** A text from a user named by these ids (either may be absent, as in Meta's BSUID payloads). */
+  async function sayAs(ids: Ids, text: string, o: InboundOpts = {}) {
+    const wamid = o.wamid ?? `wamid.IN${uniq()}`;
+    const res = await webhook(textAs(ids, text, { ...o, wamid, ts: o.ts ?? clock.now }));
+    return { res, wamid };
+  }
+
   async function invite(city: City): Promise<string> {
     const r = await call("POST", "/v1/invites", { token: city.token });
     if (r.status !== 200) throw new Error(`invites answered ${r.status}`);
@@ -289,6 +380,13 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     const { res } = await say(wa, code);
     if (res.status !== 200) throw new Error(`join webhook answered ${res.status}`);
     return wa;
+  }
+
+  /** Binds an owner named by these ids to the city by its invite code. */
+  async function joinAs(city: City, ids: Ids, o: InboundOpts = {}): Promise<void> {
+    const code = await invite(city);
+    const { res } = await sayAs(ids, code, o);
+    if (res.status !== 200) throw new Error(`join webhook answered ${res.status}`);
   }
 
   const inbox = (city: City, query = "") => call("GET", `/v1/inbox${query}`, { token: city.token });
@@ -319,8 +417,10 @@ export function setup(opts: { config?: Partial<GatewayConfig>; db?: D1Database }
     enrollCity,
     webhook,
     say,
+    sayAs,
     invite,
     join,
+    joinAs,
     inbox,
     ack,
     send,

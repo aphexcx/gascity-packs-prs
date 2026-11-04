@@ -789,15 +789,18 @@ describe("City side: the 24-hour window", () => {
     const wa = await t.join(a); // the invite text is the owner's first message
     const waB = await t.join(b);
     const silent = phone();
-    await env.DB.prepare("INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at) VALUES (?, ?, NULL, ?, ?, NULL)")
+    await env.DB.prepare(
+      "INSERT INTO phones (conversation_id, wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at) VALUES (?1, ?1, ?2, NULL, ?3, ?4, NULL)",
+    )
       .bind(silent, a.id, t.clock.now, `wamid.${uniq()}`)
       .run();
-    const read = async () => (await t.window(a)).body.windows as Array<{ conversation_id: string; last_inbound_at: number | null; window_closes_at: number | null }>;
+    const read = async () =>
+      (await t.window(a)).body.windows as Array<{ conversation_id: string; user_id: string | null; last_inbound_at: number | null; window_closes_at: number | null }>;
     let w = await read();
     expect(w.map((x) => x.conversation_id).sort()).toEqual([silent, wa].sort());
     expect(w.some((x) => x.conversation_id === waB)).toBe(false);
-    expect(w.find((x) => x.conversation_id === silent)).toEqual({ conversation_id: silent, last_inbound_at: null, window_closes_at: null });
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, last_inbound_at: T0, window_closes_at: T0 + CLOSE });
+    expect(w.find((x) => x.conversation_id === silent)).toEqual({ conversation_id: silent, user_id: null, last_inbound_at: null, window_closes_at: null });
+    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: null, last_inbound_at: T0, window_closes_at: T0 + CLOSE });
 
     t.clock.now = T0 + 2 * HOUR;
     const sends = [
@@ -812,7 +815,7 @@ describe("City side: the 24-hour window", () => {
     t.clock.now = T0 + 3 * HOUR;
     await t.say(wa, "the owner again", { ts: T0 + 3 * HOUR });
     w = await read();
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
+    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: null, last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
   });
 
   it("an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement)", async () => {
@@ -1007,7 +1010,9 @@ describe("Health, logs, the entry point", () => {
       const cityId = `city_entry_${uniq()}`;
       await env.DB.batch([
         env.DB.prepare("INSERT INTO cities (id, name, box_name, created_at) VALUES (?, 'Entry City', 'entry-box', 0)").bind(cityId),
-        env.DB.prepare("INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at) VALUES (?, ?, NULL, 0, ?, NULL)").bind(wa, cityId, `wamid.${uniq()}`),
+        env.DB.prepare(
+          "INSERT INTO phones (conversation_id, wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at) VALUES (?1, ?1, ?2, NULL, 0, ?3, NULL)",
+        ).bind(wa, cityId, `wamid.${uniq()}`),
       ]);
       const payload = textPayload(wa, "entry body text 9876", { wamid: `wamid.${uniq()}`, ts: Math.floor(Date.now() / 1000) });
       const raw = new TextEncoder().encode(JSON.stringify(payload));

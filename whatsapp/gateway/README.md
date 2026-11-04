@@ -29,6 +29,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 |---|---|
 | `wrangler.toml` | The Worker: name, custom domain, the D1 binding `DB`, the daily cron, the vars. It names no account id and no database id. |
 | `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, orphan_statuses, unknown_senders, stats. |
+| `migrations/0002_bsuid.sql` | Business-scoped user ids (gp-ac0u): phones keyed by `conversation_id` with `wa_id`, `user_id` and `username`; the ids on deliveries, sends and orphan statuses; strangers keyed by `sender_key`. |
 | `src/index.ts` | The Worker entry: env to gateway, the cron to `maintain()`. |
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
@@ -40,7 +41,9 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 This section is the contract **verbatim** from the bead spec of record,
 `/Users/tailor512/city/assets/ops/beads/whatsapp-gateway-20261103.md` (SCOPE item 3). It is frozen.
 A change to it is a bead comment on BOTH the gateway bead (gp-nn90) and the adapter bead (gp-9hf1),
-never a silent edit.
+never a silent edit. The text below is unchanged. The fields bead gp-ac0u added for Meta's
+business-scoped user ids are additive, and are listed under "Business-scoped user ids" below. They
+were posted on both beads.
 
 - Meta side: GET /meta/webhook answers hub.challenge only when hub.verify_token equals META_VERIFY_TOKEN (403 otherwise); POST /meta/webhook verifies X-Hub-Signature-256 over the raw body with META_APP_SECRET (401 and nothing stored on a mismatch or a missing header), accepts only payloads whose metadata.phone_number_id equals META_PHONE_NUMBER_ID (others counted and dropped), and for each messages[] entry: a sender in phones is appended to that city's deliveries (dedup by wamid), a sender not in phones whose text is a live invite code binds that phone to the code's city, marks the code used and appends a synthetic "owner joined" delivery to the city (carrying the invite text's wamid, so a redelivery is one row), the three writes one D1 batch committed before anything else, then sends the owner one text "You're connected to <city name>'s mayor. Say hi." (a failed welcome send is counted, never a 5xx to Meta, so a redelivery never re-binds or lands the code as a message); any other unknown sender gets ONE text "This number serves Dynasty cities. Ask your city for an invite code." at most once per 7 days per phone and is otherwise ignored; statuses[] for the city's sends are appended as kind status; then 200, answered only after every D1 append for the payload has committed: a failed write answers 500 with nothing acknowledged and Meta redelivers, and the wamid UNIQUE constraint makes the redelivery one row (the Worker keeps nothing between requests; the D1 row is Meta's acknowledgement). Over 5,000 pending for one city: 503 (Meta retries). Bodies over 1.9 MB: 413.
 - City side, all under Authorization: Bearer <credential> (401 on unknown or revoked; the credential is compared by sha256): POST /v1/enroll {code, name} with NO bearer mints a city and ONE credential for a live enrollment code and returns {city_id, credential} once (the code is then used); POST /v1/invites returns {code, expires_at} (6 digits, 24 hours, one live code per city at a time); GET /v1/inbox?after=<id>&limit=<1..200> returns the city's unacknowledged deliveries with id greater than after, oldest first, as {deliveries:[{id, received_at, kind: message|status|joined, wa_id, profile_name, message}], cursor} with cursor the last id in the page (after omitted returns the oldest unacknowledged, so a restarted box re-reads everything it never acknowledged; within one process the box skips ids it already holds in flight); POST /v1/inbox/ack {ids:[...]} deletes exactly the listed deliveries' bodies and no other, never a cumulative position, because the box delivers on independent per-sender chains and one sender's later delivery can be confirmed before another sender's earlier one (the city acks an id only on terminal success, gc's delivered receipt on the first response or read back later, or on the box's dead-letter transition, a repost bound reached, no_route (the marked copy's included), a second doubt or bead B's 24-hour pending deadline, the envelope then on the box's disk, or on the operator's resolution of a terminal hold (gc's pending with terminal true, which bead B never replays and never acks on its own: that delivery stays held here, returned by every poll, until the resolution's ack or this retention); never on a pending receipt before that deadline, bead B's rule; until then the gateway holds the delivery and every poll returns it again; bead B's deadline runs from its first post and this retention from receipt, so on an ordinary day the body is still here when that ack arrives, and an ack for an id the cron already deleted is a no-op, never an error); POST /v1/send {to, idempotency_key, type: text|reaction|template, text?, reaction?{message_id, emoji}, template?{name, language, params[]}} sends through Meta's Graph API only when `to` is bound to THIS city (403 otherwise), answers {message_id} and the SAME answer again for a repeated idempotency_key without a second Meta call, refuses a text or reaction outside the phone's window with 422 {error: window_closed}, and never refuses a template on the window (a template is the only send allowed outside it and does not open or extend it); POST /v1/read {message_id} marks read with the typing indicator; GET /v1/window returns {windows:[{conversation_id, last_inbound_at, window_closes_at}]} for every phone bound to THIS city (conversation_id the wa_id; a group id when Groups land), window_closes_at = last_inbound_at + 24 hours - the 120-second margin, the same arithmetic window.ts applies to a send so the box and the gateway never disagree on whether a send will be refused, both null for a phone that has never written, no profile name and no body (the window-keeper of the design's section of that name reads it once a minute; only an inbound customer message moves it, never a send of any type); GET /v1/media/<media_id> streams the bytes with Meta's mime type for a media id that was delivered to THIS city (404 otherwise), minting the URL from Meta and fetching with the token; GET /healthz {ok, pending_total, last_webhook_at} with no body text and no numbers of phones.
@@ -64,7 +67,7 @@ changes a route or a field.
      a failed status carries `errors[]`).
    - `joined`: the invite text's Meta `messages[]` object.
 
-   `profile_name` is null on a status.
+   `profile_name` and `username` are null on a status.
 3. **Ack.** `POST /v1/inbox/ack {ids: [1..500 positive integers]}` answers `200 {ok: true}`. It
    drops the listed bodies of THIS city and no other. Three kinds of id are each a no-op 200,
    never an error:
@@ -126,6 +129,76 @@ owner's **reaction** as the owner writing, so it moves the clock. Two reasons:
   never a lost message.
 
 **This is a judgment call for the founders.** One line in `src/window.ts` flips it.
+
+## Business-scoped user ids (gp-ac0u)
+
+Meta names a WhatsApp user by a **wa_id** (the phone number), a **user_id** (a business-scoped
+user id, or BSUID), or both. A BSUID is the user's ISO 3166 alpha-2 country code, a period, then up
+to 128 alphanumerics: `US.13491208655302741918`. Meta's page on them is
+developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids; its
+changelog's newest entry is October 23, 2026, and it was read 2026-11-04. Meta requires every
+business to support BSUIDs.
+
+What Meta sends:
+
+- **Messages.** A message carries `from_user_id` beside `from`. A user who has a WhatsApp username
+  is named by the user_id **alone**, with `from` and the contacts `wa_id` omitted. The exception is
+  a business that has a reason to see the phone: it wrote to or heard from the user in the last
+  30 days, or the user is in its contact book. The username is `contacts[].profile.username`.
+- **Statuses.** A status carries `recipient_user_id`, except a failed status of a send to a phone
+  number. `recipient_id` is omitted for a send to a user_id when the phone is not shared.
+- **Number changes.** Meta regenerates the user_id when the user changes phone number. It sends a
+  `system` message, `user_changed_number` or (with no phone shared) `user_changed_user_id`. That
+  message carries `system.user_id` (the new id), `system.previous_user_id` and `system.wa_id` (the
+  new phone, when shared), and no `from_user_id`.
+- **Sends to a user_id** put it in `recipient`, with `to` omitted. When both are given, `to`
+  wins.
+
+What the gateway does:
+
+1. **The owner key.** An owner row is keyed by its `conversation_id`. It is set once, at the bind,
+   to the binding text's wa_id, or its user_id when Meta shared no phone. It never changes after
+   that. Every owner bound before this change keeps its wa_id as its key, so no box sees a new
+   conversation. The row also holds the ids Meta names the owner by now: `wa_id` and `user_id`,
+   each unique where present.
+2. **Routing.** A message routes to the row holding its user_id. Failing that, it routes to the row
+   holding its wa_id, unless that row's user_id is a different one. A phone number that Meta
+   reports beside another user's id belongs to someone else now (a recycled number). Its messages
+   are a stranger's, and that stranger hears the canned line. An operator unbinds the old owner
+   before the new one can join.
+3. **One owner, two ids.** An id the owner row lacks is filled the first time a message carries it
+   beside the other, unless another row already holds it. That never makes a second row.
+4. **The window** is the owner row's, so it moves on a message from either id.
+5. **Number changes.** The notice is delivered to the owner's city as kind `message` with
+   `message.type` `system`, the shape every system notice already has. It moves no window and is
+   never answered. It also **re-keys** the owner: `user_id` becomes the new id, and `wa_id` becomes
+   the new phone, or NULL when none is shared, because the old number is no longer the owner's.
+   The `conversation_id` stays. The owner's next message, under its new ids, therefore continues
+   the same conversation.
+6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
+   canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
+   starts sharing the stranger's phone, which the canned line itself causes.
+7. **Sends.** `POST /v1/send`'s `to` names one of the city's owners by its `conversation_id`, its
+   `wa_id` or its `user_id`. The gateway sends `to` to Meta exactly as given (a user_id byte for
+   byte in `recipient`) while it is one of the owner's current ids. A `conversation_id` the owner
+   no longer answers to, its phone number before a number change, goes to the owner's current id
+   instead, never to a number that may be someone else's now. The gateway's own welcome and canned
+   line go to the wa_id when Meta shared one, else the user_id.
+8. **Authentication templates.** One-tap, zero-tap and copy-code authentication templates cannot be
+   sent to a user_id. Meta refuses them with code 131062, and the gateway answers `502 meta_error`
+   with `meta_code` 131062, freeing the key. The one template here (`dynasty_update`, utility) is
+   not one of them.
+
+Contract v1, additive only (nothing renamed, nothing removed, no kind added):
+
+| Where | Added |
+|---|---|
+| `GET /v1/inbox`, each delivery | `user_id`, `username`, `conversation_id`: null when unknown, and null on a status for `username`. `conversation_id` is the owner's key: the field a box files a delivery under, the same for every delivery of one owner whichever ids it carries. `wa_id` is now null on a delivery from an owner Meta shares no phone of. |
+| `GET /v1/window`, each window | `user_id` (null when unknown). `conversation_id` is the owner's key. |
+| `POST /v1/send` | `to` also takes a user_id (`^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$`) or an owner's `conversation_id`. A malformed one answers 400 `bad_request`; one that is no owner of this city answers 403 `not_bound`. |
+| `GET /v1/admin/cities` | `phones_last4` holds `"id"` for an owner Meta shares no phone number of. No part of a user_id ever appears. |
+
+An owner may join and write with a WhatsApp username: the gateway knows them by their user_id.
 
 ## Behaviours the box adapter relies on
 
@@ -210,6 +283,13 @@ Never Robert's account or his domain.
    ```sh
    $PNPM exec wrangler d1 migrations apply whatsapp-gateway --remote
    ```
+
+   On a gateway that is already deployed, the same command applies only the migrations it has not
+   yet seen. 0002 (business-scoped user ids) keeps every bound owner, and that owner's wa_id
+   becomes its conversation id. Run the deploy (step 4) right after it. Between the two commands,
+   the Worker still running serves bound owners' messages, sends and statuses. A stranger's text
+   or an invite text, however, answers Meta 500 (that code knows neither the new key nor
+   `sender_key`), and Meta redelivers it once the new code is live.
 
 4. **Deploy.**
 
@@ -309,9 +389,10 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   curl -s https://whatsapp.dynasty.computer/v1/admin/cities -H "Authorization: Bearer $ADMIN_TOKEN"
   ```
 
-  Each city carries its phone count, the last four digits of each phone, its held deliveries and
-  its live credentials, plus the gateway's counters: dropped_wrong_number, orphaned_statuses,
-  stale_messages, welcome_failed and canned_failed. No phone number appears in clear.
+  Each city carries its owner count (`phones`), the last four digits of each owner's phone (`id`
+  for an owner Meta shares no phone of), its held deliveries and its live credentials. The
+  gateway's counters follow: dropped_wrong_number, orphaned_statuses, stale_messages,
+  welcome_failed and canned_failed. No phone number and no user_id appears in clear.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
   ```sh
@@ -334,17 +415,23 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
 
   The new city is fresh, so no row collides. The box re-reads every held delivery from
   `after=0`.
-- **Unbind a phone** (so it can join another city by a new invite code):
+- **Unbind an owner** (so it can join another city by a new invite code), by any id it is known
+  by:
 
   ```sh
-  DELETE FROM phones WHERE wa_id = '<digits>'
+  DELETE FROM phones WHERE conversation_id = '<id>' OR wa_id = '<digits>' OR user_id = '<user id>'
   ```
+
+  The same unbinding lets a new person join from a recycled number. Until then, the new person's
+  messages (Meta names them by that phone and a different user_id) are a stranger's, and their
+  invite code does not bind.
 
 ## Data, retention, logs
 
 - **Bodies.** A delivery's body is deleted on the city's ack, or by the daily cron 7 days after
-  receipt. The body-less row keeps only (city, wamid, status) for one more day, to dedup a late
-  Meta redelivery.
+  receipt, and its wa_id, user_id, username, conversation_id and profile name go with it. The
+  body-less row keeps only (city, wamid, status) for one more day, to dedup a late Meta
+  redelivery.
 - **Media.** Media ids are kept 7 days (Meta's lifetime for a webhook media id). No media bytes
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.
@@ -352,13 +439,19 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
-- **Phones** are kept until an operator unbinds them.
+- **Owners** (the phones table: the ids, the username, the profile name) are kept until an
+  operator unbinds them.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
-  number, a profile name, a code, a token, a secret or an error's message. Two tests check every
-  line against those values:
+  number, a user_id, a username, a profile name, a code, a token, a secret or an error's message.
+  Three tests check every line against those values:
   - "no log line carries a phone number, a message body, a token or a secret" drives the
     gateway's logging paths: a bind, a message, a stranger, sends refused by Meta (with a phone in
     Meta's error text), by `not_bound` and by `window_closed`, an `outcome_unknown` send, a bad
     signature and a failed D1 write.
   - "the Worker entry's own console lines" drives `src/index.ts` itself: a webhook, a refused
     handshake and the cron.
+  - "no log line carries a user_id, a username or a phone on the BSUID paths"
+    (`test/bsuid.test.ts`) covers the user_id paths. It drives a bind and a message by user_id with
+    a username, a stranger by user_id, sends to a user_id (Meta's 131062 refusal quoting the id, an
+    `outcome_unknown`, `not_bound`, a malformed id and `window_closed`), a status and a number
+    change.

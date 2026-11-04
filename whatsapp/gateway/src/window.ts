@@ -1,10 +1,11 @@
 /**
- * The 24-hour customer service window, per phone. Meta: "When a WhatsApp user messages you or
+ * The 24-hour customer service window, per owner. Meta: "When a WhatsApp user messages you or
  * calls you, a 24-hour timer called a customer service window starts", and only template messages
  * may be sent outside it (developers.facebook.com/docs/whatsapp/pricing, read 2026-11-04).
  *
- * The clock is the phone's last_inbound_at: Meta's own timestamp of the owner's last customer
- * message. Only an inbound customer message moves it. No send of any type moves it, a template
+ * The clock is the owner row's last_inbound_at: Meta's own timestamp of the owner's last customer
+ * message, whichever of its ids (wa_id or user_id) the message named. Only an inbound customer
+ * message moves it. No send of any type moves it, a template
  * included, so a template leaves a closed window closed until the owner writes again. The 120-second
  * margin keeps a send that leaves at the edge from reaching Meta after the close. GET /v1/window
  * answers with the same arithmetic the send check uses, so the box and the gateway never disagree on
