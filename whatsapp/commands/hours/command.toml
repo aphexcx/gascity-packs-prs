@@ -1,0 +1,2 @@
+description = "Record a business's hours and time zone for the window-keeper"
+run = "../hours.sh"

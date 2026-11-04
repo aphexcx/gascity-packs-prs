@@ -1,0 +1,2 @@
+description = "the gateway answers /healthz and accepts this city's credential (a 401 reads not enrolled)"
+run = '../check-gateway.sh'

@@ -1,0 +1,2 @@
+description = 'window-keeper lapses, undelivered events and refused publishes in the last 7 days'
+run = '../check-keeper.sh'

@@ -1,0 +1,15 @@
+{
+  "name": "gc-whatsapp-adapter",
+  "version": "0.0.1",
+  "description": "WhatsApp box adapter for Gas City: polls the Dynasty WhatsApp gateway, delivers each owner's messages to gc extmsg through a write-ahead journal, and publishes the mayor's replies.",
+  "type": "module",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test 'test/*.test.js'"
+  }
+}

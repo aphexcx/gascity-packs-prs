@@ -1,0 +1,13 @@
+# City-config fragment for the whatsapp pack — add this file's path to the
+# `include` list in city.toml (pack.toml cannot carry extmsg config; the
+# pack parser rejects unknown keys).
+#
+# Routes inbound WhatsApp conversations with no existing binding to the
+# mayor session. Without a default route gc acknowledges the inbound POST
+# and then drops it as unrouted, and the adapter dead-letters the message
+# under reason no_route (gc's word that nobody is routed). Rebind an
+# individual conversation with `gc extmsg bind` when it should go elsewhere.
+
+[[extmsg.default_route]]
+provider = "whatsapp"
+agent = "mayor"

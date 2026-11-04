@@ -1,0 +1,2 @@
+description = "Send text to an owner's WhatsApp chat inside the 24-hour window, or the one update template (--update) outside it"
+run = "../publish.sh"
