@@ -24,13 +24,17 @@ export function windowOpen(lastInboundAt: number | null, now: number): boolean {
 }
 
 /**
- * The message types that are the owner writing to the business. A reaction, a system notice and
- * a type Meta marks unsupported are delivered to the city but do not move the clock. Meta's pages
- * name only "messages or calls" as triggers, so the conservative reading: a wrong refusal costs a
- * template, while a wrong open costs a send that Meta refuses with 131047.
+ * The message types that are the owner writing to the business. A system notice, a type Meta marks
+ * unsupported and a type this code does not know are delivered to the city but do not move the
+ * clock. Meta's pages name only "messages or calls" as triggers and say nothing of reactions. A
+ * REACTION moves it (a judgment call, README "The window"): a thumbs-up is how an owner most
+ * often acknowledges the window-keeper's nudge. If Meta disagrees, its 131047 refusal reads
+ * window_closed, which costs one refused send and never a lost message. Refusing it here instead
+ * would keep nudging an owner who had already answered.
  */
 const CUSTOMER_MESSAGE_TYPES = new Set([
   "text",
+  "reaction",
   "image",
   "audio",
   "video",

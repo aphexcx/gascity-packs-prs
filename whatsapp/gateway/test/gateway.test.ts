@@ -3,11 +3,12 @@
  * with a fake Graph API. Every case of the bead's test list is here, with the 11/4 additions (the
  * hold until the ack by id, the no-op ack of a deleted id, the no-op repeated ack).
  */
-import { env, SELF } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { createScheduledController, env, SELF } from "cloudflare:test";
+import { describe, expect, it, vi } from "vitest";
 import { HOLD_SECONDS, MAX_BODY_BYTES, MAX_PENDING } from "../src/gateway.js";
 import { signatureHeader } from "../src/meta.js";
-import { DAY, HOUR, mediaPayload, PNID, phone, reactionPayload, SECRETS, setup, statusPayload, T0, textPayload, uniq } from "./harness.js";
+import worker from "../src/index.js";
+import { DAY, flakyDb, HOUR, mediaPayload, PNID, phone, reactionPayload, SECRETS, setup, statusPayload, T0, textPayload, uniq } from "./harness.js";
 
 const CLOSE = DAY - 120; // the window's length after the margin
 
@@ -39,10 +40,18 @@ describe("Meta side: the signature", () => {
     const payload = textPayload(wa, "hello", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
     const raw = new TextEncoder().encode(JSON.stringify(payload));
     const good = await signatureHeader(raw, SECRETS.app);
-    raw[20] = (raw[20] ?? 0) ^ 0x01;
+    // Tamper inside the message text, so the payload stays one the gateway would store: only the
+    // signature check stands between it and the inbox.
+    const at = new TextDecoder().decode(raw).indexOf('"hello"') + 1;
+    expect(at).toBeGreaterThan(0);
+    raw[at] = "j".charCodeAt(0);
     const r = await t.call("POST", "/meta/webhook", { raw, headers: { "x-hub-signature-256": good } });
     expect(r.status).toBe(401);
     expect((await t.held(city)).length).toBe(before);
+    // The same tampered bytes signed properly would have been stored (the check is what refused it).
+    const resigned = await t.call("POST", "/meta/webhook", { raw, headers: { "x-hub-signature-256": await signatureHeader(raw, SECRETS.app) } });
+    expect(resigned.status).toBe(200);
+    expect((await t.held(city)).length).toBe(before + 1);
   });
 
   it("a missing header answers 401 and stores nothing", async () => {
@@ -160,14 +169,17 @@ describe("Meta side: routing by phone", () => {
     expect(rows).toHaveLength(1);
   });
 
-  it("a message Meta stamped longer ago than the hold is dropped and counted, never delivered", async () => {
+  it("a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands", async () => {
     const t = setup();
     const city = await t.enrollCity();
     const wa = await t.join(city);
-    t.clock.now = T0 + 8 * DAY;
-    const { res, wamid } = await t.say(wa, "from last week", { ts: T0 + DAY - 1 });
-    expect(res.status).toBe(200);
-    expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
+    t.clock.now = T0 + 9 * DAY;
+    const old = await t.say(wa, "from long ago", { ts: T0 + DAY - 1 });
+    expect(old.res.status).toBe(200);
+    const late = await t.say(wa, "a late first delivery", { ts: T0 + 9 * DAY - Math.floor(7.5 * DAY) });
+    const ids = (await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id);
+    expect(ids).not.toContain(old.wamid);
+    expect(ids).toContain(late.wamid);
     const stale = await env.DB.prepare("SELECT value FROM stats WHERE name = 'stale_messages'").first<{ value: number }>();
     expect(stale?.value ?? 0).toBeGreaterThanOrEqual(1);
   });
@@ -179,11 +191,55 @@ describe("Meta side: routing by phone", () => {
     const payload = textPayload(wa, "m0", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
     const value = payload.entry[0].changes[0].value;
     const first = value.messages[0];
-    for (let i = 1; i < 150; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `m${i}` } });
+    for (let i = 1; i < 250; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `m${i}` } });
     expect((await t.webhook(payload)).status).toBe(200);
     expect((await t.webhook(payload)).status).toBe(200);
-    const got = (await t.inbox(city, "?limit=200")).body.deliveries.filter((d: any) => d.kind === "message");
-    expect(got.map((d: any) => d.message.text.body)).toEqual(Array.from({ length: 150 }, (_, i) => `m${i}`));
+    const got = [
+      ...(await t.inbox(city, "?limit=200")).body.deliveries,
+      ...(await t.inbox(city, "?limit=200&after=" + (await t.inbox(city, "?limit=200")).body.cursor)).body.deliveries,
+    ].filter((d: any) => d.kind === "message");
+    expect(got.map((d: any) => d.message.text.body)).toEqual(Array.from({ length: 250 }, (_, i) => `m${i}`));
+  });
+
+  it("a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const owner = await t.join(city);
+    const code = await t.invite(city);
+    const stranger = phone();
+    // 199 messages of a bound owner (2 statements each = 398), then a stranger's invite text whose
+    // 7 statements would straddle a cut at 400.
+    const payload = textPayload(owner, "b0", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    const value = payload.entry[0].changes[0].value;
+    const first = value.messages[0];
+    for (let i = 1; i < 199; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `b${i}` } });
+    const inviteWamid = `wamid.${uniq()}`;
+    value.messages.push({ ...first, from: stranger, id: inviteWamid, text: { body: code } });
+    value.contacts.push({ profile: { name: "New Owner" }, wa_id: stranger });
+    const welcomesBefore = t.graph.sends().filter((c) => c.body?.to === stranger).length;
+    flaky.arm(1); // the first batch commits, the second fails
+    expect((await t.webhook(payload)).status).toBe(500);
+    const boundAfterFailure = await env.DB.prepare("SELECT city_id FROM phones WHERE wa_id = ?").bind(stranger).first();
+    expect(boundAfterFailure).toBeNull();
+    const codeAfterFailure = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(code).first<{ used_at: number | null }>();
+    expect(codeAfterFailure?.used_at).toBeNull();
+    expect(t.graph.sends().filter((c) => c.body?.to === stranger)).toHaveLength(welcomesBefore);
+
+    expect((await t.webhook(payload)).status).toBe(200);
+    const all = (await t.inbox(city, "?limit=200")).body.deliveries.concat(
+      (await t.inbox(city, `?limit=200&after=${(await t.inbox(city, "?limit=200")).body.cursor}`)).body.deliveries,
+    );
+    const joined = all.filter((d: any) => d.kind === "joined" && d.wa_id === stranger);
+    expect(joined).toHaveLength(1);
+    expect(joined[0].message.id).toBe(inviteWamid);
+    expect(all.filter((d: any) => d.message?.id === inviteWamid)).toHaveLength(1);
+    expect(all.filter((d: any) => d.kind === "message" && d.wa_id === owner).map((d: any) => d.message.text.body)).toEqual(
+      Array.from({ length: 199 }, (_, i) => `b${i}`),
+    );
+    const usedNow = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(code).first<{ used_at: number | null }>();
+    expect(usedNow?.used_at).toBe(t.clock.now);
+    expect(t.graph.sends().filter((c) => c.body?.to === stranger)).toHaveLength(welcomesBefore + 1);
   });
 
   it("a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row", async () => {
@@ -283,6 +339,39 @@ describe("Meta side: routing by phone", () => {
     const fresh = await t.invite(city);
     await t.say(wa, fresh);
     expect((await t.inbox(city)).body.deliveries).toHaveLength(1);
+  });
+});
+
+describe("Meta side: invite-code edges", () => {
+  it("a wrong-code text Meta redelivers is one attempt, not two", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const code = await t.invite(city);
+    const wa = phone();
+    for (let i = 0; i < 4; i++) {
+      const wrong = String((Number(code) + 1 + i) % 1_000_000).padStart(6, "0");
+      const { wamid } = await t.say(wa, wrong);
+      await t.say(wa, wrong, { wamid });
+    }
+    await t.say(wa, code); // the fifth attempt, within the limit
+    expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+  });
+
+  it("an invite text Meta stamped before the code expired binds on a redelivery after the expiry", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const code = await t.invite(city); // expires T0 + 24 h
+    const wa = phone();
+    const sentAt = T0 + DAY - 10;
+    t.clock.now = sentAt;
+    flaky.arm(0);
+    const first = await t.say(wa, code, { ts: sentAt });
+    expect(first.res.status).toBe(500);
+    t.clock.now = T0 + DAY + HOUR;
+    const again = await t.say(wa, code, { ts: sentAt, wamid: first.wamid });
+    expect(again.res.status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
   });
 });
 
@@ -537,18 +626,37 @@ describe("City side: send", () => {
     expect(one.body.message_id).not.toBe(two.body.message_id);
   });
 
-  it("a failed Graph call records nothing, so a retry under the same key sends", async () => {
+  it("Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends", async () => {
     const t = setup();
     const city = await t.enrollCity();
     const wa = await t.join(city);
     const key = uniq();
-    t.graph.failNext({ status: 500, body: { error: { code: 2, message: "Service temporarily unavailable" } } });
+    t.graph.failNext({ status: 400, body: { error: { code: 131056, message: "Pair rate limit hit" } } });
     const failed = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "retry me" });
     expect(failed.status).toBe(502);
-    expect(failed.body).toMatchObject({ error: "meta_error", meta_status: 500, meta_code: 2 });
+    expect(failed.body).toEqual({ error: "meta_error", meta_status: 400, meta_code: 131056 });
     const retried = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "retry me" });
     expect(retried.status).toBe(200);
     expect(retried.body.message_id).toMatch(/^wamid\./);
+  });
+
+  it("an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = await t.join(city);
+    for (const failure of ["network", { status: 500, body: { error: { code: 2, message: "Service temporarily unavailable" } } }] as const) {
+      const key = uniq();
+      t.graph.failNext(failure);
+      const first = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "did it go?" });
+      expect(first.status).toBe(502);
+      expect(first.body.error).toBe("outcome_unknown");
+      const calls = t.graph.sends().length;
+      t.clock.now += 120;
+      const again = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "did it go?" });
+      expect(again.status).toBe(409);
+      expect(again.body).toEqual({ error: "outcome_unknown" });
+      expect(t.graph.sends()).toHaveLength(calls);
+    }
   });
 
   it("Meta's own outside-window answer (131047) reads window_closed", async () => {
@@ -561,20 +669,46 @@ describe("City side: send", () => {
     expect(r.body).toEqual({ error: "window_closed" });
   });
 
-  it("a key whose first request is still at Meta answers 409 in_flight; a claim older than 60 s is taken over", async () => {
+  it("a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again", async () => {
     const t = setup();
     const city = await t.enrollCity();
     const wa = await t.join(city);
     const key = uniq();
-    await env.DB.prepare("INSERT INTO sends (city_id, idempotency_key, wamid, type, created_at) VALUES (?, ?, NULL, 'text', ?)")
+    await env.DB.prepare("INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at) VALUES (?, ?, NULL, 'claimed', 'text', ?)")
       .bind(city.id, key, t.clock.now)
       .run();
+    const calls = t.graph.sends().length;
     const busy = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "x" });
     expect(busy.status).toBe(409);
     expect(busy.body).toEqual({ error: "in_flight" });
     t.clock.now += 61;
-    const taken = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "x" });
-    expect(taken.status).toBe(200);
+    const abandoned = await t.send(city, { to: wa, idempotency_key: key, type: "text", text: "x" });
+    expect(abandoned.status).toBe(409);
+    expect(abandoned.body).toEqual({ error: "outcome_unknown" });
+    expect(t.graph.sends()).toHaveLength(calls);
+  });
+
+  it("a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = await t.join(city);
+    t.graph.hooks.onSend = async (wamid) => {
+      t.graph.hooks.onSend = null;
+      expect((await t.webhook(statusPayload(wamid, "sent", wa, t.clock.now))).status).toBe(200);
+    };
+    const sent = await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "raced" });
+    expect(sent.status).toBe(200);
+    const statuses = (await t.inbox(city)).body.deliveries.filter((d: any) => d.kind === "status");
+    expect(statuses.map((d: any) => [d.message.id, d.message.status])).toEqual([[sent.body.message_id, "sent"]]);
+    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM orphan_statuses WHERE wamid = ?").bind(sent.body.message_id).first<{ n: number }>();
+    expect(left?.n).toBe(0);
+    // A status for a wamid no city ever sent stays apart and is dropped by the cron after a day.
+    const stray = `wamid.${uniq()}`;
+    await t.webhook(statusPayload(stray, "sent", wa, t.clock.now));
+    t.clock.now += DAY;
+    await t.gateway.maintain();
+    const gone = await env.DB.prepare("SELECT COUNT(*) AS n FROM orphan_statuses WHERE wamid = ?").bind(stray).first<{ n: number }>();
+    expect(gone?.n).toBe(0);
   });
 
   it("refuses malformed sends with 400 and over-long text with text_too_long", async () => {
@@ -618,6 +752,9 @@ describe("City side: the 24-hour window", () => {
     expect(atClose.status).toBe(422);
     expect(atClose.body).toEqual({ error: "window_closed" });
     t.clock.now = t0 + DAY + 60;
+    const lateText = await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "a day late" });
+    expect(lateText.status).toBe(422);
+    expect(lateText.body).toEqual({ error: "window_closed" });
     const late = await t.send(city, { to: wa, idempotency_key: uniq(), type: "reaction", reaction: { message_id: "wamid.X", emoji: "\u{1F44D}" } });
     expect(late.status).toBe(422);
     expect(t.graph.sends()).toHaveLength(calls);
@@ -663,9 +800,12 @@ describe("City side: the 24-hour window", () => {
     expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, last_inbound_at: T0, window_closes_at: T0 + CLOSE });
 
     t.clock.now = T0 + 2 * HOUR;
-    await t.send(a, { to: wa, idempotency_key: uniq(), type: "text", text: "a text" });
-    await t.send(a, { to: wa, idempotency_key: uniq(), type: "reaction", reaction: { message_id: "wamid.X", emoji: "\u{1F44D}" } });
-    await t.send(a, { to: wa, idempotency_key: uniq(), type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } });
+    const sends = [
+      await t.send(a, { to: wa, idempotency_key: uniq(), type: "text", text: "a text" }),
+      await t.send(a, { to: wa, idempotency_key: uniq(), type: "reaction", reaction: { message_id: "wamid.X", emoji: "\u{1F44D}" } }),
+      await t.send(a, { to: wa, idempotency_key: uniq(), type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } }),
+    ];
+    expect(sends.map((s) => s.status)).toEqual([200, 200, 200]);
     w = await read();
     expect(w.find((x) => x.conversation_id === wa)?.last_inbound_at).toBe(T0);
 
@@ -675,7 +815,7 @@ describe("City side: the 24-hour window", () => {
     expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
   });
 
-  it("an owner's reaction is delivered but does not move the window", async () => {
+  it("an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement)", async () => {
     const t = setup();
     const city = await t.enrollCity();
     const wa = await t.join(city);
@@ -684,7 +824,22 @@ describe("City side: the 24-hour window", () => {
     await t.webhook(reactionPayload(wa, "wamid.OUT1", { wamid, ts: t.clock.now }));
     expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === wamid && d.message.type === "reaction")).toBe(true);
     const w = (await t.window(city)).body.windows[0];
-    expect(w.last_inbound_at).toBe(T0);
+    expect(w.last_inbound_at).toBe(T0 + 5 * HOUR);
+  });
+
+  it("a system notice is delivered but does not move the window", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = await t.join(city);
+    t.clock.now = T0 + 5 * HOUR;
+    const payload = textPayload(wa, "ignored", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    const m = payload.entry[0].changes[0].value.messages[0];
+    delete m.text;
+    m.type = "system";
+    m.system = { body: "User changed number", type: "user_changed_number" };
+    await t.webhook(payload);
+    expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.type === "system")).toBe(true);
+    expect((await t.window(city)).body.windows[0].last_inbound_at).toBe(T0);
   });
 
   it("Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped", async () => {
@@ -821,17 +976,60 @@ describe("Health, logs, the entry point", () => {
     await t.say(wa, code, { name: "Taylor Owner" });
     await t.say(wa, "the vault code is 4242");
     await t.say(stranger, "who is this");
-    t.graph.failNext({ status: 400, body: { error: { code: 131047, message: "Re-engagement message" } } });
+    t.graph.failNext({ status: 400, body: { error: { code: 131047, message: `Re-engagement message to ${wa}` } } });
     await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "a private reply" });
     await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "a private reply 2" });
+    t.graph.failNext("network");
+    await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "a private reply 3" });
+    await t.send(city, { to: stranger, idempotency_key: uniq(), type: "text", text: "a private reply to a stranger" });
+    t.clock.now += 2 * DAY;
+    await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "a private reply, too late" });
     await t.webhook(textPayload(wa, "bad sig", { wamid: `wamid.${uniq()}`, ts: t.clock.now }), "sha256=00");
     const broken = setup({ db: { prepare: (q: string) => env.DB.prepare(q), batch: async () => { throw new Error(`D1 down ${wa}`); } } as unknown as D1Database });
     await broken.say(wa, "the vault code is 4242");
     await t.gateway.maintain();
     const lines = [...t.logs, ...broken.logs].map((e) => JSON.stringify(e));
+    const events = new Set([...t.logs, ...broken.logs].map((e) => e.event));
+    for (const e of ["webhook", "send", "send_failed", "send_refused", "webhook_refused", "webhook_store_failed", "invite_minted", "city_enrolled"]) {
+      expect(events).toContain(e);
+    }
     expect(lines.length).toBeGreaterThan(0);
     for (const needle of [wa, wa.slice(2), stranger, "4242", "vault", "private reply", "Taylor", code, city.token, SECRETS.app, SECRETS.access, SECRETS.verify, SECRETS.admin]) {
       for (const line of lines) expect(line).not.toContain(needle);
+    }
+  });
+
+  it("the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret", async () => {
+    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      // A bound sender, so the entry makes no Graph call (the entry's fetch is the real one).
+      const wa = phone();
+      const cityId = `city_entry_${uniq()}`;
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO cities (id, name, box_name, created_at) VALUES (?, 'Entry City', 'entry-box', 0)").bind(cityId),
+        env.DB.prepare("INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at) VALUES (?, ?, NULL, 0, ?, NULL)").bind(wa, cityId, `wamid.${uniq()}`),
+      ]);
+      const payload = textPayload(wa, "entry body text 9876", { wamid: `wamid.${uniq()}`, ts: Math.floor(Date.now() / 1000) });
+      const raw = new TextEncoder().encode(JSON.stringify(payload));
+      const res = await worker.fetch(
+        new Request("https://whatsapp.dynasty.computer/meta/webhook", {
+          method: "POST",
+          body: raw,
+          headers: { "x-hub-signature-256": await signatureHeader(raw, env.META_APP_SECRET) },
+        }),
+        env,
+      );
+      expect(res.status).toBe(200);
+      await worker.fetch(new Request(`https://whatsapp.dynasty.computer/meta/webhook?hub.mode=subscribe&hub.verify_token=nope-${wa}&hub.challenge=1`), env);
+      await worker.scheduled(createScheduledController({ scheduledTime: Date.now(), cron: "17 4 * * *" }), env);
+      const lines = spy.mock.calls.map((c) => c.map(String).join(" "));
+      expect(lines.some((l) => l.includes('"event":"maintenance"'))).toBe(true);
+      expect(lines.some((l) => l.includes('"event":"webhook"'))).toBe(true);
+      for (const needle of [wa, "9876", "entry body", "nope-", env.META_APP_SECRET, env.META_ACCESS_TOKEN, env.META_VERIFY_TOKEN, env.ADMIN_TOKEN]) {
+        for (const line of lines) expect(line).not.toContain(needle);
+      }
+    } finally {
+      spy.mockRestore();
     }
   });
 

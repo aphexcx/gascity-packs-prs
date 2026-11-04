@@ -51,6 +51,8 @@ export function fakeGraph() {
   const calls: GraphCall[] = [];
   const failures: Failure[] = [];
   const media = new Map<string, { mime: string; bytes: Uint8Array }>();
+  /** Runs after Meta "accepts" a send and before the answer leaves (a status can race the send). */
+  const hooks: { onSend: ((wamid: string) => Promise<void>) | null } = { onSend: null };
   let sent = 0;
   const impl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const req = new Request(input, init);
@@ -63,10 +65,12 @@ export function fakeGraph() {
     if (url.hostname === "graph.facebook.com" && url.pathname.endsWith("/messages")) {
       if (body?.status === "read") return Response.json({ success: true });
       sent += 1;
+      const wamid = `wamid.OUT${sent}x${uniq()}`;
+      if (hooks.onSend) await hooks.onSend(wamid);
       return Response.json({
         messaging_product: "whatsapp",
         contacts: [{ input: body?.to, wa_id: body?.to }],
-        messages: [{ id: `wamid.OUT${sent}x${uniq()}` }],
+        messages: [{ id: wamid }],
       });
     }
     if (url.hostname === "graph.facebook.com") {
@@ -95,6 +99,7 @@ export function fakeGraph() {
     fetch: impl as typeof fetch,
     calls,
     media,
+    hooks,
     failNext(...f: Failure[]) {
       failures.push(...f);
     },
@@ -104,6 +109,34 @@ export function fakeGraph() {
     },
     reads(): GraphCall[] {
       return calls.filter((c) => c.body?.status === "read");
+    },
+  };
+}
+
+/**
+ * The real D1 behind a switch: arm(k) lets k more batch() calls through, then fails the next one
+ * (once). Everything else is the real database.
+ */
+export function flakyDb() {
+  let allow: number | null = null;
+  const db = {
+    prepare: (q: string) => env.DB.prepare(q),
+    batch: async (statements: D1PreparedStatement[]) => {
+      if (allow !== null) {
+        if (allow === 0) {
+          allow = null;
+          throw new Error("D1_ERROR: storage unavailable");
+        }
+        allow -= 1;
+      }
+      return env.DB.batch(statements);
+    },
+    exec: (q: string) => env.DB.exec(q),
+  } as unknown as D1Database;
+  return {
+    db,
+    arm(k: number) {
+      allow = k;
     },
   };
 }

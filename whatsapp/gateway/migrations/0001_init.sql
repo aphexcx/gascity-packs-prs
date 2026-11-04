@@ -79,24 +79,40 @@ CREATE TABLE media (
   PRIMARY KEY (city_id, media_id)
 );
 
--- A city's sends by idempotency key; wamid is NULL while the Graph call is in flight.
--- Statuses route to the city by wamid.
+-- A city's sends by idempotency key. state: claimed (the Graph call may be in flight), sent (wamid
+-- recorded), unknown (the call may have reached Meta and no answer said so; the key never sends
+-- again). Statuses route to the city by wamid.
 CREATE TABLE sends (
   city_id TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   wamid TEXT,
+  state TEXT NOT NULL DEFAULT 'claimed' CHECK (state IN ('claimed', 'sent', 'unknown')),
   type TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   PRIMARY KEY (city_id, idempotency_key)
 );
 CREATE INDEX sends_wamid ON sends(wamid);
 
--- Strangers: when the canned line was last sent, and wrong invite-code attempts in the last day.
+-- Statuses whose wamid no send has recorded yet: Meta's "sent" can race the send's own write.
+-- The send adopts them into its city when it records its wamid; the cron drops them after a day
+-- (the gateway's own welcome and canned lines leave theirs here).
+CREATE TABLE orphan_statuses (
+  wamid TEXT NOT NULL,
+  status TEXT NOT NULL,
+  received_at INTEGER NOT NULL,
+  recipient_id TEXT,
+  body TEXT NOT NULL,
+  PRIMARY KEY (wamid, status)
+);
+
+-- Strangers: when the canned line was last sent, and wrong invite-code attempts in the last day
+-- (counted once per wamid, so a Meta redelivery of one attempt is not a second attempt).
 CREATE TABLE unknown_senders (
   wa_id TEXT PRIMARY KEY,
   last_replied_at INTEGER,
   code_attempts INTEGER NOT NULL DEFAULT 0,
-  attempts_since INTEGER NOT NULL DEFAULT 0
+  attempts_since INTEGER NOT NULL DEFAULT 0,
+  last_code_wamid TEXT
 );
 
 -- Counters and last_webhook_at; numbers only.

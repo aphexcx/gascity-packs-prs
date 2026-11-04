@@ -25,6 +25,13 @@ crons = ["17 4 * * *"]
 [observability]
 enabled = true
 
+# The Worker's own log lines stay (event names and counts only). The platform's per-request
+# invocation logs are off: they record the request URL, and Meta's handshake carries the verify
+# token in its query string.
+[observability.logs]
+enabled = true
+invocation_logs = false
+
 [vars]
 PUBLIC_URL = "https://whatsapp.dynasty.computer"
 DISPLAY_NAME = "Dynasty"

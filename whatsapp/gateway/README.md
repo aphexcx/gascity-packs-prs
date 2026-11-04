@@ -28,7 +28,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 | Path | What |
 |---|---|
 | `wrangler.toml` | The Worker: name, custom domain, the D1 binding `DB`, the daily cron, the vars. It names no account id and no database id. |
-| `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, unknown_senders, stats. |
+| `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, orphan_statuses, unknown_senders, stats. |
 | `src/index.ts` | The Worker entry: env to gateway, the cron to `maintain()`. |
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
@@ -48,8 +48,9 @@ never a silent edit.
 
 ### Readings of what the contract leaves unstated
 
-These readings were posted as a bead comment on gp-nn90 and gp-9hf1 on 2026-11-04. None of them
-changes a route, a field or a rule.
+These readings were posted as bead comments on gp-nn90 and gp-9hf1 on 2026-11-04 (the first
+before the code, the second after the self-review, which changed items 4 and 7). None of them
+changes a route or a field.
 
 1. **Times.** Every time field is an integer of Unix epoch **seconds**: `received_at`,
    `expires_at`, `last_inbound_at`, `window_closes_at` and `last_webhook_at`. `last_inbound_at` is
@@ -83,20 +84,26 @@ changes a route, a field or a rule.
    | 400 | `text_too_long` | Text over 4096 characters (code points); the box chunks. |
    | 403 | `not_bound` | `to` is not bound to this city. |
    | 422 | `window_closed` | A text or a reaction outside the window: the gateway's own check, or Meta's 131047. |
-   | 409 | `in_flight` | Another request with the same `idempotency_key` is still at Meta. Retry it; a claim older than 60 s is taken over. |
-   | 502 | `meta_error` (with `meta_status`, `meta_code`) | Meta refused, or never answered. Nothing was recorded, so a retry under the same key sends. |
+   | 409 | `in_flight` | Another request with the same `idempotency_key` is still at Meta (claimed under 60 s ago). Retry it. |
+   | 502 | `meta_error` (with `meta_status`, `meta_code`) | Meta answered and refused (a 4xx). Nothing was sent, so a retry under the same key sends. |
+   | 502 | `outcome_unknown` (with `meta_status`, `meta_code`) | No answer, a 5xx, or a 2xx without a message id: Meta may have sent it. The key is spent. |
+   | 409 | `outcome_unknown` | A repeat of a key whose first call ended `outcome_unknown`, or whose claim was abandoned (the Worker died between the call and the record) over 60 s ago. No second Meta call is ever made for it. |
 
    The idempotency key is per city. A repeat answers the stored `{message_id}` with no Meta call,
    and this is checked **before** the window, so a retry after the close still gets the first
-   answer.
+   answer. The contract's "the SAME answer again for a repeated idempotency_key without a second
+   Meta call" is read strictly: once a call may have reached Meta, that key never calls again, and
+   the box decides what an `outcome_unknown` reply means (a new key resends, at the risk of the
+   owner reading it twice).
 5. **Read.** `POST /v1/read {message_id}` answers `200 {ok: true}`. It answers `404 not_found`
    when that wamid was never delivered to this city, and `502 meta_error` when Meta refuses it.
 6. **Media.** `GET /v1/media/<id>` answers `404 not_found` for a media id not delivered to this
    city, or older than Meta's 7-day media lifetime.
 7. **Window.** `window_closes_at = last_inbound_at + 86400 - 120`, and a free-form send is
-   allowed while `now < window_closes_at`. The inbound types that move the window are text, image,
-   audio, video, document, sticker, location, contacts, interactive, button and order. A reaction,
-   a system notice and an unsupported type are delivered but do not move it.
+   allowed while `now < window_closes_at`. The inbound types that move the window are text,
+   reaction, image, audio, video, document, sticker, location, contacts, interactive, button and
+   order. A system notice, an unsupported type and a type the gateway does not know are delivered
+   but do not move it.
 8. **Errors.** `401 {error: unauthorized}` answers a missing, unknown or revoked credential (or a
    wrong admin token). `404 {error: not_found}` answers an unknown route, and
    `405 {error: method_not_allowed}` a known route called with the wrong method.
@@ -110,12 +117,15 @@ free-form send is allowed is **23 h 57 m 59 s** after the owner's message.
 The bead's test line "a text at t0 plus 23h59 sends" cannot hold beside the frozen margin. The
 tests therefore send at the close minus one second, and refuse at the close and at 24 h 01 m.
 
-Meta's pages name only "messages or calls" as what opens the window. Whether an owner's
-**reaction** opens it is not stated anywhere I could find, so the gateway reads it
-conservatively: a reaction is delivered to the city but does not move the clock. The cost of
-this reading is a refusal the mayor answers with a template. The opposite reading risks a
-free-form send that Meta refuses with 131047. **This is a judgment call for the founders.** One
-line in `src/window.ts` flips it.
+Meta's pages name only "messages or calls" as what opens the window, and say nothing of
+reactions (developers.facebook.com/docs/whatsapp/pricing, read 2026-11-04). The gateway counts an
+owner's **reaction** as the owner writing, so it moves the clock. Two reasons:
+- A thumbs-up is how an owner most often answers the window-keeper's "reply ok so I can keep this
+  line open". Refusing it would keep nudging an owner who had already answered.
+- If Meta disagrees, its 131047 refusal reads `window_closed`, so the cost is one refused send,
+  never a lost message.
+
+**This is a judgment call for the founders.** One line in `src/window.ts` flips it.
 
 ## Behaviours the box adapter relies on
 
@@ -130,6 +140,33 @@ line in `src/window.ts` flips it.
 - **Meta is answered after the commit.** The gateway answers Meta 200 only after every D1 write
   for the payload has committed. A failed write answers 500 with nothing acknowledged, and Meta
   redelivers.
+- **Statuses of the city's own sends.** A status reaches a city only for a wamid one of its sends
+  recorded. A status that beats the send's own record is held apart, and the send adopts it into
+  its city when it records its wamid.
+
+## Beyond the contract
+
+These rules add to the contract without changing a route or a field. Each has its own test.
+
+- **Stale messages.** A message Meta stamped more than 8 days ago is dropped and counted
+  (`stale_messages`). That is longer than any dedup row lives, so it could otherwise be a second
+  delivery of something already acknowledged. Meta's own retries stop at 7 days.
+- **Invite-code attempts.** A stranger may text 6-digit codes 5 times a day. The sixth is not
+  bound even by a live code, and a Meta redelivery of one attempt is not a second attempt. Codes
+  are checked against the time Meta stamped the text, so a code texted while live still binds on
+  a redelivery after its expiry. The residual risk is many WhatsApp accounts guessing in parallel:
+  each live code is one in a million per guess, and a code lives 24 hours.
+- **Sends Meta never confirmed.** See `outcome_unknown` above. Only Meta's explicit refusal frees
+  a key for a retry.
+- **Batches.** A payload is written in D1 batches of at most 400 statements, cut only between
+  messages. One message's bind, code, joined row and delivery always commit together. On a later
+  batch's failure the earlier batches stand (their welcomes and canned lines still go), and Meta's
+  redelivery writes only the rest.
+- **Body limits.** Request bodies are read as a stream and abandoned at the cap: 1.9 MB for
+  Meta's webhook, 256 KB for a city's call. That holds whether or not the request declared a
+  length.
+- **Platform logs.** The Worker's per-request invocation logs are off (`wrangler.toml`): they
+  would record the URL, and Meta's handshake carries the verify token in its query string.
 
 ## Develop and test
 
@@ -273,7 +310,7 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   ```
 
   Each city carries its phone count, the last four digits of each phone, its held deliveries and
-  its live credentials, plus the gateway's counters: dropped_wrong_number, unrouted_statuses,
+  its live credentials, plus the gateway's counters: dropped_wrong_number, orphaned_statuses,
   stale_messages, welcome_failed and canned_failed. No phone number appears in clear.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
@@ -283,13 +320,20 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   ```
 
 - **Re-key a rebuilt box.** Mint an enrollment code and let the box enroll, which mints a new
-  city. Then move the old city's phones to it:
+  city. Then move everything the old city owns to it in one `wrangler d1 execute --remote
+  --command`. That includes its held deliveries, which are what a rebuilt box needs most:
 
-  ```sh
-  UPDATE phones SET city_id = '<new>' WHERE city_id = '<old>'
+  ```sql
+  UPDATE phones SET city_id = '<new>' WHERE city_id = '<old>';
+  UPDATE deliveries SET city_id = '<new>' WHERE city_id = '<old>';
+  UPDATE media SET city_id = '<new>' WHERE city_id = '<old>';
+  UPDATE sends SET city_id = '<new>' WHERE city_id = '<old>';
+  DELETE FROM invite_codes WHERE city_id = '<old>' AND used_at IS NULL;
+  UPDATE credentials SET revoked_at = unixepoch() WHERE city_id = '<old>' AND revoked_at IS NULL
   ```
 
-  Then revoke the old credential as above.
+  The new city is fresh, so no row collides. The box re-reads every held delivery from
+  `after=0`.
 - **Unbind a phone** (so it can join another city by a new invite code):
 
   ```sh
@@ -304,15 +348,17 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
 - **Media.** Media ids are kept 7 days (Meta's lifetime for a webhook media id). No media bytes
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.
+- **Orphan statuses** (a status no send has recorded) are pruned after one day. The gateway's own
+  welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
 - **Phones** are kept until an operator unbinds them.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
-  number, a profile name, a code, a token, a secret or an error's message. The test "no log line
-  carries a phone number, a message body, a token or a secret" drives each logging path (a bind,
-  a message, a stranger, a refused and an accepted send, a bad signature, a failed D1 write, the
-  cron) and checks every line against those values.
-- **Invite-code brute force.** A stranger who texts a sixth 6-digit code in one day is not bound
-  even by a live code.
-- **Statuses** reach a city only for the city's own sends. The welcome and the canned line are
-  the gateway's, and their statuses are counted as `unrouted_statuses`.
+  number, a profile name, a code, a token, a secret or an error's message. Two tests check every
+  line against those values:
+  - "no log line carries a phone number, a message body, a token or a secret" drives the
+    gateway's logging paths: a bind, a message, a stranger, sends refused by Meta (with a phone in
+    Meta's error text), by `not_bound` and by `window_closed`, an `outcome_unknown` send, a bad
+    signature and a failed D1 write.
+  - "the Worker entry's own console lines" drives `src/index.ts` itself: a webhook, a refused
+    handshake and the cron.

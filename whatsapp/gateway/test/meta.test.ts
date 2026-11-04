@@ -258,11 +258,11 @@ describe("the 24-hour window (120-second margin)", () => {
     expect(windowOpen(null, 1000)).toBe(false);
   });
 
-  it("a customer message moves it; a reaction, a system message and an unknown type do not", () => {
-    for (const t of ["text", "image", "audio", "video", "document", "sticker", "location", "contacts", "interactive", "button"]) {
+  it("a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not", () => {
+    for (const t of ["text", "reaction", "image", "audio", "video", "document", "sticker", "location", "contacts", "interactive", "button", "order"]) {
       expect(movesWindow(t)).toBe(true);
     }
-    for (const t of ["reaction", "system", "unsupported", "unknown", "request_welcome", ""]) {
+    for (const t of ["system", "unsupported", "unknown", "request_welcome", ""]) {
       expect(movesWindow(t)).toBe(false);
     }
   });

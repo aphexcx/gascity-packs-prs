@@ -48,15 +48,23 @@ export const ENROLL_SECONDS = 3 * DAY;
 export const CANNED_EVERY_SECONDS = 7 * DAY;
 /** Invite-code texts a stranger may send per day; the sixth is ignored, a right code included. */
 export const MAX_CODE_ATTEMPTS = 5;
-/** A send claim with no wamid this old is abandoned (the Worker died mid-call) and may be taken over. */
+/**
+ * A send claim with no wamid this old reads as outcome unknown, never in flight: the Worker that
+ * held it died somewhere between the claim and the record, maybe after Meta took the message.
+ */
 export const SEND_CLAIM_STALE_SECONDS = 60;
 const SENDS_KEEP_SECONDS = 30 * DAY;
 const SPENT_CODES_KEEP_SECONDS = 7 * DAY;
 const ENROLL_CODES_KEEP_SECONDS = 30 * DAY;
+/** A status no send claimed within this is the gateway's own (the welcome, the canned line) or lost. */
+const ORPHAN_SECONDS = DAY;
+/** The gateway's own texts (the welcome, the canned line) must not hold Meta's answer long. */
+const TELL_TIMEOUT_MS = 8000;
 /**
- * Statements per D1 batch. A payload that needs more is written in several batches, in order. That
- * is safe because every write here is idempotent on Meta's redelivery: a failure after an early
- * batch committed answers 500, and the redelivery finds those rows already there.
+ * Statements per D1 batch. A payload that needs more is written in several batches, in order,
+ * and a batch boundary never falls inside one message's statements (its bind, its code, its
+ * joined row and its delivery commit together). A failure after an early batch committed answers
+ * 500; Meta's redelivery finds those messages' rows already there, each one row.
  */
 const MAX_BATCH_STATEMENTS = 400;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -165,11 +173,38 @@ function intParam(url: URL, name: string, fallback: number, min: number, max: nu
   return n;
 }
 
+/**
+ * The request body, read as a stream and abandoned the moment it passes max bytes (null), so an
+ * unauthenticated sender cannot make the isolate buffer more than the cap, declared length or not.
+ */
+async function readCapped(request: Request, max: number): Promise<Uint8Array | null> {
+  if (Number(request.headers.get("content-length") ?? "0") > max) return null;
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.byteLength;
+  }
+  return out;
+}
+
 async function readJson(request: Request): Promise<Obj> {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_JSON_BYTES) throw new HttpError(413, "too_large");
-  const buf = await request.arrayBuffer();
-  if (buf.byteLength > MAX_JSON_BYTES) throw new HttpError(413, "too_large");
+  const buf = await readCapped(request, MAX_JSON_BYTES);
+  if (!buf) throw new HttpError(413, "too_large");
   let v: unknown;
   try {
     v = JSON.parse(decoder.decode(buf));
@@ -218,12 +253,15 @@ function parseSend(body: Obj): SendRequest {
 
 interface Plan {
   statements: D1PreparedStatement[];
+  /** The index where each group starts: one message's (or one status's) statements, never split. */
+  groupStarts: number[];
   /** Statement indexes whose one changed row means "this payload bound this phone". */
   binds: Array<{ index: number; wa: string }>;
   /** Statement indexes whose one changed row means "send this stranger the canned line now". */
   canned: Array<{ index: number; wa: string }>;
-  unroutedStatuses: number;
-  /** Messages Meta stamped longer ago than the hold: past any dedup row, so dropped and counted. */
+  /** Statuses no send has claimed yet (read before the write): kept apart for adoption. */
+  orphanedStatuses: number;
+  /** Messages Meta stamped longer ago than any dedup row lives: dropped and counted. */
   stale: number;
   overCap: boolean;
 }
@@ -296,12 +334,8 @@ export function createGateway(deps: Deps) {
       log({ event: "webhook_refused", reason: "not_configured" });
       return fail(503, "not_configured");
     }
-    if (Number(request.headers.get("content-length") ?? "0") > MAX_BODY_BYTES) {
-      log({ event: "webhook_refused", reason: "too_large" });
-      return fail(413, "too_large");
-    }
-    const raw = new Uint8Array(await request.arrayBuffer());
-    if (raw.byteLength > MAX_BODY_BYTES) {
+    const raw = await readCapped(request, MAX_BODY_BYTES);
+    if (!raw) {
       log({ event: "webhook_refused", reason: "too_large" });
       return fail(413, "too_large");
     }
@@ -323,6 +357,7 @@ export function createGateway(deps: Deps) {
       log({ event: "webhook_deferred", reason: "pending_cap" });
       return fail(503, "pending_cap");
     }
+    plan.groupStarts.push(plan.statements.length);
     plan.statements.push(
       db
         .prepare("INSERT INTO stats (name, value) VALUES ('last_webhook_at', ?1) ON CONFLICT (name) DO UPDATE SET value = excluded.value")
@@ -331,25 +366,31 @@ export function createGateway(deps: Deps) {
     for (const [name, n] of [
       ["dropped_wrong_number", batch.wrongNumber],
       ["ignored_changes", batch.ignored],
-      ["unrouted_statuses", plan.unroutedStatuses],
+      ["orphaned_statuses", plan.orphanedStatuses],
       ["stale_messages", plan.stale],
     ] as const) {
       if (n > 0) plan.statements.push(bumpStatement(name, n));
     }
+    // Write in batches cut only at group boundaries. On a failure the batches already committed
+    // stand (each message's rows are whole), their welcomes and canned lines still go below, and
+    // Meta gets 500: its redelivery finds those rows and writes only the rest.
     const results: D1Result[] = [];
-    try {
-      for (let i = 0; i < plan.statements.length; i += MAX_BATCH_STATEMENTS) {
-        results.push(...(await db.batch(plan.statements.slice(i, i + MAX_BATCH_STATEMENTS))));
+    let failed = false;
+    for (const [from, to] of batchRanges(plan)) {
+      try {
+        results.push(...(await db.batch(plan.statements.slice(from, to))));
+      } catch (e) {
+        log({ event: "webhook_store_failed", error: errorName(e), committed_statements: results.length });
+        failed = true;
+        break;
       }
-    } catch (e) {
-      log({ event: "webhook_store_failed", error: errorName(e) });
-      return fail(500, "store_failed");
     }
-    // Committed. Everything below is best effort: a failure is counted, never a 5xx to Meta.
+    const committed = (index: number) => index < results.length && changes(results[index]) === 1;
+    // Best effort from here: a failed send is counted, never a 5xx to Meta.
     let welcomed = 0;
     let canned = 0;
     for (const b of plan.binds) {
-      if (changes(results[b.index]) !== 1) continue;
+      if (!committed(b.index)) continue;
       const city = await db
         .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.wa_id = ?")
         .bind(b.wa)
@@ -357,30 +398,48 @@ export function createGateway(deps: Deps) {
       if (await tell(b.wa, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
     }
     for (const c of plan.canned) {
-      if (changes(results[c.index]) !== 1) continue;
+      if (!committed(c.index)) continue;
       if (await tell(c.wa, `This number serves ${cfg.displayName} cities. Ask your city for an invite code.`, "canned")) {
         canned += 1;
       }
     }
+    if (failed) return fail(500, "store_failed");
     log({
       event: "webhook",
       messages: batch.messages.length,
       statuses: batch.statuses.length,
       wrong_number: batch.wrongNumber,
       ignored: batch.ignored,
-      unrouted_statuses: plan.unroutedStatuses,
+      orphaned_statuses: plan.orphanedStatuses,
       stale: plan.stale,
-      bound: plan.binds.filter((b) => changes(results[b.index]) === 1).length,
+      bound: plan.binds.filter((b) => committed(b.index)).length,
       welcomed,
       canned,
     });
     return json({ ok: true });
   }
 
+  /** [from, to) statement ranges of at most MAX_BATCH_STATEMENTS, cut only where a group starts. */
+  function batchRanges(plan: Plan): Array<[number, number]> {
+    const ranges: Array<[number, number]> = [];
+    const ends = [...plan.groupStarts.slice(1), plan.statements.length];
+    let from = 0;
+    let to = 0;
+    for (const end of ends) {
+      if (end - from > MAX_BATCH_STATEMENTS && to > from) {
+        ranges.push([from, to]);
+        from = to;
+      }
+      to = end;
+    }
+    if (to > from) ranges.push([from, to]);
+    return ranges;
+  }
+
   /** One gateway-authored text (the welcome, the canned line). Never throws. */
   async function tell(wa: string, text: string, kind: "welcome" | "canned"): Promise<boolean> {
     try {
-      await graphSend(graph(), sendBody(wa, { type: "text", text }));
+      await graphSend({ ...graph(), timeoutMs: TELL_TIMEOUT_MS }, sendBody(wa, { type: "text", text }));
       return true;
     } catch (e) {
       log({
@@ -398,11 +457,19 @@ export function createGateway(deps: Deps) {
     statuses: Array<{ wamid: string; status: string; recipientId: string | null; raw: Obj }>,
     now: number,
   ): Promise<Plan> {
-    const plan: Plan = { statements: [], binds: [], canned: [], unroutedStatuses: 0, stale: 0, overCap: false };
-    // Meta retries a delivery for up to 7 days, and a body-less row dedups a wamid for 8. A message
-    // Meta stamped longer ago than the hold can be neither a live retry nor deduplicated, so it
-    // is dropped and counted rather than delivered a second time.
-    const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - HOLD_SECONDS);
+    const plan: Plan = {
+      statements: [],
+      groupStarts: [],
+      binds: [],
+      canned: [],
+      orphanedStatuses: 0,
+      stale: 0,
+      overCap: false,
+    };
+    // Meta retries a delivery for up to 7 days, and a body-less row dedups a wamid for 8 days from
+    // its receipt (never earlier than Meta's stamp). A message stamped longer ago than that could
+    // be a copy whose dedup row is gone, so it is dropped and counted, never delivered again.
+    const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - TOMBSTONE_SECONDS);
     plan.stale = messages.length - fresh.length;
     messages = fresh;
     const each = async <T>(sql: string, values: string[], ...extra: unknown[]): Promise<T[]> =>
@@ -425,9 +492,8 @@ export function createGateway(deps: Deps) {
       ...new Set(messages.filter((m) => !bound.has(m.from)).map(inviteCodeIn).filter((c): c is string => c !== null)),
     ];
     const codeCities = await each<{ city_id: string }>(
-      "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL AND expires_at > ?2",
+      "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL",
       codes,
-      now,
     );
     const statusCities = new Map(
       (
@@ -449,29 +515,34 @@ export function createGateway(deps: Deps) {
 
     const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
     for (const m of messages) {
+      plan.groupStarts.push(plan.statements.length);
       const at = Math.min(m.timestamp ?? now, now);
       const body = JSON.stringify(m.raw);
       const code = bound.has(m.from) ? null : inviteCodeIn(m);
       if (code !== null) {
-        // A stranger's code attempt: counted per day, then the bind, conditional on a live code
-        // and on the attempt count, never on this read.
+        // A stranger's code attempt: counted per day and once per wamid (a redelivery is not a
+        // second attempt), then the bind, conditional on a code that was live when Meta stamped
+        // the text and on the attempt count, never on this read.
         push(
           db
             .prepare(
-              `INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since)
-               SELECT ?1, 1, ?2 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
+              `INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since, last_code_wamid)
+               SELECT ?1, 1, ?2, ?4 WHERE NOT EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1)
                ON CONFLICT (wa_id) DO UPDATE SET
-                 code_attempts = CASE WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
-                 attempts_since = CASE WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END`,
+                 code_attempts = CASE WHEN last_code_wamid IS ?4 THEN code_attempts
+                                      WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
+                 attempts_since = CASE WHEN last_code_wamid IS ?4 THEN attempts_since
+                                       WHEN attempts_since <= ?3 THEN ?2 ELSE attempts_since END,
+                 last_code_wamid = ?4`,
             )
-            .bind(m.from, now, now - DAY),
+            .bind(m.from, now, now - DAY, m.wamid),
         );
         const bindIndex = push(
           db
             .prepare(
               `INSERT INTO phones (wa_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
                SELECT ?1, i.city_id, ?2, ?3, ?4, ?5 FROM invite_codes i
-               WHERE i.code = ?6 AND i.used_at IS NULL AND i.expires_at > ?3
+               WHERE i.code = ?6 AND i.used_at IS NULL AND i.expires_at > ?5
                  AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE wa_id = ?1), 0) <= ?7
                ON CONFLICT (wa_id) DO NOTHING`,
             )
@@ -539,12 +610,24 @@ export function createGateway(deps: Deps) {
       }
     }
     for (const s of statuses) {
-      if (!statusCities.has(s.wamid)) plan.unroutedStatuses += 1;
+      plan.groupStarts.push(plan.statements.length);
+      if (!statusCities.has(s.wamid)) plan.orphanedStatuses += 1;
+      // Routed to the city whose send recorded this wamid; when no send has recorded it yet (Meta's
+      // "sent" can beat the send's own write), kept apart for that send to adopt. Exactly one of the
+      // two applies, decided inside the transaction.
       push(
         db
           .prepare(
             `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
              SELECT city_id, ?1, 'status', ?2, ?3, ?4, NULL, ?5 FROM sends WHERE wamid = ?2 LIMIT 1`,
+          )
+          .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
+      );
+      push(
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, body)
+             SELECT ?2, ?3, ?1, ?4, ?5 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
           )
           .bind(now, s.wamid, s.status, s.recipientId, JSON.stringify(s.raw)),
       );
@@ -672,13 +755,13 @@ export function createGateway(deps: Deps) {
       log({ event: "send_refused", reason: "not_bound" });
       throw new HttpError(403, "not_bound");
     }
-    // The key first: a repeat answers the first answer, whatever the window says now.
+    // The key first: a repeat answers the first answer, whatever the window says now. A key whose
+    // first call may have reached Meta without an answer saying so never makes a second call.
     const prior = await db
-      .prepare("SELECT wamid, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
+      .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
       .bind(cityId, key)
-      .first<{ wamid: string | null; created_at: number }>();
-    if (prior?.wamid) return json({ message_id: prior.wamid });
-    if (prior && prior.created_at > now - SEND_CLAIM_STALE_SECONDS) throw new HttpError(409, "in_flight");
+      .first<{ wamid: string | null; state: string; created_at: number }>();
+    if (prior) return repeatAnswer(prior, now);
     if (req.type !== "template" && !windowOpen(phone.last_inbound_at, now)) {
       log({ event: "send_refused", reason: "window_closed", type: req.type });
       throw new HttpError(422, "window_closed");
@@ -686,40 +769,71 @@ export function createGateway(deps: Deps) {
     const client = graph();
     const claim = await db
       .prepare(
-        `INSERT INTO sends (city_id, idempotency_key, wamid, type, created_at) VALUES (?1, ?2, NULL, ?3, ?4)
-         ON CONFLICT (city_id, idempotency_key) DO UPDATE SET created_at = excluded.created_at, type = excluded.type
-         WHERE sends.wamid IS NULL AND sends.created_at <= ?5`,
+        `INSERT INTO sends (city_id, idempotency_key, wamid, state, type, created_at) VALUES (?1, ?2, NULL, 'claimed', ?3, ?4)
+         ON CONFLICT (city_id, idempotency_key) DO NOTHING`,
       )
-      .bind(cityId, key, req.type, now, now - SEND_CLAIM_STALE_SECONDS)
+      .bind(cityId, key, req.type, now)
       .run();
     if (changes(claim) !== 1) {
       const raced = await db
-        .prepare("SELECT wamid FROM sends WHERE city_id = ? AND idempotency_key = ?")
+        .prepare("SELECT wamid, state, created_at FROM sends WHERE city_id = ? AND idempotency_key = ?")
         .bind(cityId, key)
-        .first<{ wamid: string | null }>();
-      if (raced?.wamid) return json({ message_id: raced.wamid });
+        .first<{ wamid: string | null; state: string; created_at: number }>();
+      if (raced) return repeatAnswer(raced, now);
       throw new HttpError(409, "in_flight");
     }
     let wamid: string;
     try {
       wamid = await graphSend(client, sendBody(to, req));
     } catch (e) {
-      // Nothing recorded: the claim goes, so a retry under the same key sends.
-      await db
-        .prepare("DELETE FROM sends WHERE city_id = ? AND idempotency_key = ? AND wamid IS NULL AND created_at = ?")
-        .bind(cityId, key, now)
-        .run();
       if (!(e instanceof GraphError)) throw e;
       log({ event: "send_failed", type: req.type, meta_status: e.status, meta_code: e.code });
-      if (e.code === META_OUTSIDE_WINDOW) throw new HttpError(422, "window_closed");
-      throw new HttpError(502, "meta_error", { meta_status: e.status, meta_code: e.code });
+      if (e.status >= 400 && e.status < 500) {
+        // Meta answered and refused: nothing was sent, so the key is free for a retry.
+        await db
+          .prepare("DELETE FROM sends WHERE city_id = ? AND idempotency_key = ? AND state = 'claimed' AND created_at = ?")
+          .bind(cityId, key, now)
+          .run();
+        if (e.code === META_OUTSIDE_WINDOW) throw new HttpError(422, "window_closed");
+        throw new HttpError(502, "meta_error", { meta_status: e.status, meta_code: e.code });
+      }
+      // No answer, a 5xx, or a 2xx without an id: Meta may have sent it. The key stays spent.
+      await db
+        .prepare("UPDATE sends SET state = 'unknown' WHERE city_id = ? AND idempotency_key = ? AND state = 'claimed'")
+        .bind(cityId, key)
+        .run();
+      throw new HttpError(502, "outcome_unknown", { meta_status: e.status, meta_code: e.code });
     }
-    await db
-      .prepare("UPDATE sends SET wamid = ? WHERE city_id = ? AND idempotency_key = ?")
-      .bind(wamid, cityId, key)
-      .run();
+    try {
+      // Record the wamid and adopt any status Meta delivered before this record existed.
+      await db.batch([
+        db
+          .prepare("UPDATE sends SET wamid = ?1, state = 'sent' WHERE city_id = ?2 AND idempotency_key = ?3")
+          .bind(wamid, cityId, key),
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO deliveries (city_id, received_at, kind, wamid, status, wa_id, profile_name, body)
+             SELECT ?1, received_at, 'status', wamid, status, recipient_id, NULL, body FROM orphan_statuses WHERE wamid = ?2
+             ORDER BY received_at, rowid`,
+          )
+          .bind(cityId, wamid),
+        db.prepare("DELETE FROM orphan_statuses WHERE wamid = ?").bind(wamid),
+      ]);
+    } catch (e) {
+      // Meta took it; the answer stands. A repeat of the key reads outcome_unknown, never a resend.
+      log({ event: "send_record_failed", type: req.type, error: errorName(e) });
+    }
     log({ event: "send", type: req.type });
     return json({ message_id: wamid });
+  }
+
+  /** What a repeated idempotency key answers: the first message_id, or why there is none. */
+  function repeatAnswer(prior: { wamid: string | null; state: string; created_at: number }, now: number): Response {
+    if (prior.wamid) return json({ message_id: prior.wamid });
+    if (prior.state === "claimed" && prior.created_at > now - SEND_CLAIM_STALE_SECONDS) {
+      throw new HttpError(409, "in_flight");
+    }
+    throw new HttpError(409, "outcome_unknown");
   }
 
   async function read(request: Request): Promise<Response> {
@@ -857,14 +971,15 @@ export function createGateway(deps: Deps) {
         if (request.method !== "GET") return fail(405, "method_not_allowed");
         return await media(request, path.slice(MEDIA_PREFIX.length));
       }
-      const methods = routes[path];
+      // Own properties only: a path or a method named like an Object.prototype key is not a route.
+      const methods = Object.hasOwn(routes, path) ? routes[path] : undefined;
       if (!methods) return fail(404, "not_found");
-      const handler = methods[request.method];
+      const handler = Object.hasOwn(methods, request.method) ? methods[request.method] : undefined;
       if (!handler) return fail(405, "method_not_allowed");
       return await handler(request, url);
     } catch (e) {
       if (e instanceof HttpError) return fail(e.status, e.code, e.extra);
-      log({ event: "internal_error", route: routes[route] || isMedia ? route : "unknown", error: errorName(e) });
+      log({ event: "internal_error", route: Object.hasOwn(routes, route) || isMedia ? route : "unknown", error: errorName(e) });
       return fail(500, "internal");
     }
   }
@@ -884,8 +999,9 @@ export function createGateway(deps: Deps) {
       db.prepare("DELETE FROM invite_codes WHERE expires_at <= ?").bind(now - SPENT_CODES_KEEP_SECONDS),
       db.prepare("DELETE FROM enroll_codes WHERE expires_at <= ?").bind(now - ENROLL_CODES_KEEP_SECONDS),
       db.prepare("DELETE FROM sends WHERE created_at <= ?").bind(now - SENDS_KEEP_SECONDS),
+      db.prepare("DELETE FROM orphan_statuses WHERE received_at <= ?").bind(now - ORPHAN_SECONDS),
     ]);
-    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone] = results.map(changes);
+    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone, orphansGone] = results.map(changes);
     return {
       bodies_expired: bodies ?? 0,
       rows_deleted: rows ?? 0,
@@ -894,6 +1010,7 @@ export function createGateway(deps: Deps) {
       invite_codes_deleted: invitesGone ?? 0,
       enroll_codes_deleted: enrollGone ?? 0,
       sends_deleted: sendsGone ?? 0,
+      orphan_statuses_deleted: orphansGone ?? 0,
     };
   }
 
