@@ -5,7 +5,7 @@
  */
 import { applyD1Migrations, env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import { bsuid, changeAs, DAY, HOUR, mediaPayload, phone, setup, statusAs, statusPayload, T0, textAs, uniq } from "./harness.js";
+import { bsuid, changeAs, DAY, flakyDb, HOUR, mediaPayload, phone, setup, statusAs, statusPayload, T0, textAs, textPayload, uniq } from "./harness.js";
 
 const CLOSE = DAY - 120;
 const CANNED = "This number serves Dynasty cities. Ask your city for an invite code.";
@@ -274,6 +274,71 @@ describe("BSUID: sends", () => {
     expect((await t.send(a, { to: mine, idempotency_key: uniq(), type: "text", text: "mine" })).status).toBe(200);
   });
 
+  it("a `to` naming two owners of the city (one's retained key, the other's current number) answers 409 ambiguous_recipient and reaches neither; each owner's current ids reach that owner alone (gp-0g2s, the mayor's R1)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    // A binds on P (A's conversation_id is P), then changes number to Q.
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    const q = phone();
+    const a2 = bsuid();
+    expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    const template = { type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } };
+    // A send to A's key before the number has a new holder: one owner, sent to A's current number.
+    const early = uniq();
+    const first = await t.send(city, { to: p, idempotency_key: early, ...template });
+    expect(first.status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: q });
+    // B joins the same city on the recycled P; P is A's key, so B's key is B's BSUID.
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b });
+    expect(await owners(p, q, a2, b)).toEqual([
+      { conversation_id: p, wa_id: q, user_id: a2, username: null, city_id: city.id },
+      { conversation_id: b, wa_id: p, user_id: b, username: null, city_id: city.id },
+    ]);
+    const calls = t.graph.sends().length;
+    // A repeat of a key Meta already took answers its first answer (the contract's "the SAME answer
+    // again"): it makes no new call, so there is nothing to route.
+    expect(await t.send(city, { to: p, idempotency_key: early, ...template })).toMatchObject({ status: 200, body: { message_id: first.body.message_id } });
+    expect(t.graph.sends()).toHaveLength(calls);
+    const key = uniq();
+    const r = await t.send(city, { to: p, idempotency_key: key, ...template });
+    expect([r.status, r.body]).toEqual([409, { error: "ambiguous_recipient", hint: "send to the owner's current id" }]);
+    expect(t.graph.sends()).toHaveLength(calls);
+    for (const needle of [p, q, a, a2, b]) expect(JSON.stringify(r.body)).not.toContain(needle);
+    expect(t.logs).toContainEqual({ event: "send_refused", reason: "ambiguous_recipient" });
+    // The refusal spends no key: the same key sent to B's own id goes, and reaches B alone.
+    expect((await t.send(city, { to: b, idempotency_key: key, ...template })).status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: b, type: "template" });
+    expect("to" in t.graph.sends().at(-1)!.body!).toBe(false);
+    expect((await t.send(city, { to: q, idempotency_key: uniq(), ...template })).status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: q, type: "template" });
+    expect((await t.send(city, { to: a2, idempotency_key: uniq(), ...template })).status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: a2, type: "template" });
+    // Nothing went to P.
+    expect(t.graph.sends().slice(calls).some((c) => c.body?.to === p)).toBe(false);
+    for (const line of t.logs.map((e) => JSON.stringify(e))) for (const needle of [p, q, a, a2, b]) expect(line).not.toContain(needle);
+  });
+
+  it("the recycled number in ANOTHER city is no ambiguity: each city's `to: P` names its own one owner (gp-0g2s)", async () => {
+    const t = setup();
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(first, { wa: p, user: a });
+    const q = phone();
+    expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: bsuid(), newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    const b = bsuid();
+    await t.joinAs(second, { wa: p, user: b });
+    const template = { type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } };
+    expect((await t.send(first, { to: p, idempotency_key: uniq(), ...template })).status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: q }); // the retained key goes to A's current number
+    expect((await t.send(second, { to: p, idempotency_key: uniq(), ...template })).status).toBe(200);
+    expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: p }); // B's own current number
+  });
+
   it("Meta's refusal of a BSUID recipient (131062: an authentication template) reads meta_error and frees the key", async () => {
     const t = setup();
     const city = await t.enrollCity();
@@ -484,6 +549,8 @@ describe("BSUID: a number change", () => {
     expect((await notice(c.wa, c.user, d, phone())).status).toBe(200);
     expect(await owners(c.wa)).toEqual([{ conversation_id: c.wa, wa_id: c.wa, user_id: c.user, username: null, city_id: city.id }]);
     expect(await owners(d)).toEqual([{ conversation_id: d, wa_id: null, user_id: d, username: null, city_id: city.id }]);
+    // No re-key, so no alias (gp-0g2s): C's ids are still its current ones.
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phone_aliases WHERE id IN (?, ?)").bind(c.wa, c.user).first()).toEqual({ n: 0 });
 
     // E's new number is F's, bound before Meta sent user ids: F keeps it, E holds no number.
     const e = { wa: phone(), user: bsuid() };
@@ -510,6 +577,227 @@ describe("BSUID: a number change", () => {
     expect("to" in sent).toBe(false);
     const r = await t.admin("GET", "/v1/admin/cities");
     expect(r.body.cities.find((c: any) => c.id === city.id).phones_last4).toEqual(["id"]);
+  });
+});
+
+describe("BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s)", () => {
+  /** The wamid of a payload's one message. */
+  const wamidOf = (p: any): string => p.entry[0].changes[0].value.messages[0].id;
+  const notice = (from: string | null, previousUser: string, newUser: string, newWa: string | null, ts: number) =>
+    changeAs(newWa ? "user_changed_number" : "user_changed_user_id", { from, previousUser, newUser, newWa }, { wamid: `wamid.${uniq()}`, ts });
+
+  it("a message sent before the change whose first delivery failed, retried after the notice committed, reaches the owner's conversation: no canned line, no id changes, its window moves", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const wa = phone();
+    const user = bsuid();
+    await t.joinAs(city, { wa, user });
+    const newWa = phone();
+    const newUser = bsuid();
+    // The gate's order: the owner writes at T0 + 1 h and the gateway's write fails (Meta will retry),
+    // the number change commits at T0 + 2 h, and Meta's retry arrives at T0 + 3 h under the old ids.
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa, user }, "sent before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(wa, user, newUser, newWa, t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(before)).status).toBe(200);
+    const d = (await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(before));
+    expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: wa });
+    expect(d.message.text.body).toBe("sent before the change");
+    expect(t.graph.sends()).toHaveLength(calls); // no canned line, least of all to the old number
+    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, wa_id: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect((await t.window(city)).body.windows).toEqual([
+      { conversation_id: wa, user_id: newUser, last_inbound_at: T0 + HOUR, window_closes_at: T0 + HOUR + CLOSE },
+    ]);
+    // A second retry of the same message is still one delivery.
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.filter((x: any) => x.message?.id === wamidOf(before))).toHaveLength(1);
+  });
+
+  it("with no phone shared (user_changed_user_id) a retry under the previous user_id is the owner's, even when its text is another city's live invite code; a retry in today's shape (the old number alone) is the owner's too", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const other = await t.enrollCity();
+    // Known by phone and BSUID, keyed by the phone; Meta later names it by the user_id alone.
+    const wa1 = phone();
+    const user = bsuid();
+    const newUser = bsuid();
+    await t.joinAs(city, { wa: wa1, user });
+    const wa2 = phone();
+    const user2 = bsuid();
+    await t.joinAs(city, { wa: wa2, user: user2 });
+    t.clock.now = T0 + HOUR;
+    // The owner passes on another city's invite code: an owner's message, never an attempt or a bind.
+    const otherCode = await t.invite(other);
+    const byId = textAs({ user }, otherCode, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(byId)).status).toBe(500);
+    const byPhone = textPayload(wa2, "today's shape, before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(byPhone)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(null, user, newUser, null, t.clock.now))).status).toBe(200);
+    expect((await t.webhook(notice(wa2, user2, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(byId)).status).toBe(200);
+    expect((await t.webhook(byPhone)).status).toBe(200);
+    const deliveries = (await t.inbox(city)).body.deliveries;
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(byId))).toMatchObject({ kind: "message", wa_id: null, user_id: user, conversation_id: wa1 });
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(byPhone))).toMatchObject({ kind: "message", wa_id: wa2, conversation_id: wa2 });
+    expect(t.graph.sends()).toHaveLength(calls);
+    // The owner's own join counted its one attempt; the retries add none and claim no canned line.
+    expect(
+      (
+        await env.DB.prepare("SELECT sender_key, code_attempts, last_replied_at FROM unknown_senders WHERE sender_key IN (?, ?)")
+          .bind(user, wa2)
+          .all()
+      ).results,
+    ).toEqual([{ sender_key: user, code_attempts: 1, last_replied_at: null }]);
+    expect(await owners(wa1, user, newUser)).toEqual([{ conversation_id: wa1, wa_id: null, user_id: newUser, username: null, city_id: city.id }]);
+    expect((await t.inbox(other)).body.deliveries).toEqual([]);
+    expect(await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(otherCode).first()).toEqual({ used_at: null });
+  });
+
+  it("a retry under the old ids reaches the owner and never the person who holds the old number now: in Meta's BSUID shape or in today's (the number alone); it takes nothing from that person, whose own messages stay theirs", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa: p, user: a }, "before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    const legacy = textPayload(p, "before the change, today's shape", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A, before" });
+    flaky.arm(0);
+    expect((await t.webhook(legacy)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    const q = phone();
+    const a2 = bsuid();
+    expect((await t.webhook(notice(p, a, a2, q, t.clock.now))).status).toBe(200);
+    // The old number is someone else's now, and that person joins the same city.
+    t.clock.now = T0 + 3 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b }, { name: "B" });
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.webhook(legacy)).status).toBe(200);
+    const deliveries = (await t.inbox(city)).body.deliveries;
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(before))).toMatchObject({ conversation_id: p, user_id: a });
+    // Meta shows the number alone, and B holds it now; Meta stamped it while it was A's, so it is A's.
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(legacy))).toMatchObject({ conversation_id: p, wa_id: p });
+    expect(await owners(p, q, a, a2, b)).toEqual([
+      { conversation_id: p, wa_id: q, user_id: a2, username: null, city_id: city.id },
+      { conversation_id: b, wa_id: p, user_id: b, username: null, city_id: city.id },
+    ]);
+    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(b).first()).toEqual({ profile_name: "B" });
+    const mine = await t.say(p, "the number's holder now, today's shape");
+    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === mine.wamid)).toMatchObject({ conversation_id: b });
+  });
+
+  it("one number two owners left in turn: a retry goes to the owner that held it when Meta stamped it", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const fromA = textPayload(p, "A's, today's shape", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(fromA)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(notice(p, a, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b });
+    t.clock.now = T0 + 4 * HOUR;
+    const fromB = textPayload(p, "B's, today's shape", { wamid: `wamid.${uniq()}`, ts: T0 + 4 * HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(fromB)).status).toBe(500);
+    t.clock.now = T0 + 5 * HOUR;
+    expect((await t.webhook(notice(p, b, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 6 * HOUR;
+    expect((await t.webhook(fromA)).status).toBe(200);
+    expect((await t.webhook(fromB)).status).toBe(200);
+    const deliveries = (await t.inbox(city)).body.deliveries;
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: p });
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(fromB))).toMatchObject({ conversation_id: b });
+  });
+
+  it("the old number's message Meta stamped after the change is not the owner's, nor is one naming the number beside another user_id: each a stranger's", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    expect((await t.webhook(notice(p, a, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 2 * HOUR;
+    const later = await t.say(p, "a new holder of the old number, today's shape");
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === later.wamid)).toBe(false);
+    expect(t.graph.sends().filter((c) => c.body?.to === p && c.body?.text?.body === CANNED)).toHaveLength(1);
+    // Meta stamped it before the change, but beside another person's user_id: rule 2, the number is theirs.
+    const other = await t.sayAs({ wa: p, user: bsuid() }, "someone else's", { ts: T0 + HOUR - 60 });
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === other.wamid)).toBe(false);
+  });
+
+  it("an alias names the owner's binding: once the operator unbinds the owner and the old number binds again, a retry under the old ids reaches no city and takes nothing from the new holder", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const p = phone();
+    const a = bsuid();
+    await t.joinAs(first, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const before = textAs({ wa: p, user: a }, "before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    const q = phone();
+    const a2 = bsuid();
+    expect((await t.webhook(notice(p, a, a2, q, t.clock.now))).status).toBe(200);
+    // README, "Unbind an owner", by any id it is known by.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?2 OR user_id = ?3").bind(p, q, a2).run();
+    t.clock.now = T0 + 3 * HOUR;
+    const c = bsuid();
+    await t.joinAs(second, { wa: p, user: c }); // its key is the number, which is free again
+    expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: p, user_id: c, username: null, city_id: second.id }]);
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(before)).status).toBe(200);
+    for (const city of [first, second]) {
+      expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(before))).toBe(false);
+    }
+    expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: p, user_id: c, username: null, city_id: second.id }]);
+  });
+
+  it("the cron deletes an alias at the horizon: 8 days (TOMBSTONE_SECONDS) after the change Meta stamped", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = phone();
+    const user = bsuid();
+    await t.joinAs(city, { wa, user });
+    t.clock.now = T0 + HOUR;
+    expect((await t.webhook(notice(wa, user, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    const aliases = async () =>
+      (await env.DB.prepare("SELECT id FROM phone_aliases WHERE id IN (?, ?) ORDER BY id").bind(wa, user).all<{ id: string }>()).results.map((r) => r.id);
+    expect(await aliases()).toEqual([wa, user].sort());
+    t.clock.now = T0 + HOUR + 8 * DAY - 1;
+    await t.gateway.maintain();
+    expect(await aliases()).toEqual([wa, user].sort());
+    t.clock.now = T0 + HOUR + 8 * DAY;
+    const report = await t.gateway.maintain();
+    expect(report.aliases_deleted).toBeGreaterThanOrEqual(2);
+    expect(await aliases()).toEqual([]);
   });
 });
 
@@ -609,11 +897,11 @@ describe("BSUID: the operator's view and the logs", () => {
   });
 });
 
-describe("BSUID: migration 0002 over schema v1 rows", () => {
-  it("a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, and user_id is unique where present", async () => {
+describe("BSUID: migrations 0002 and 0003 over schema v1 rows", () => {
+  it("a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, user_id is unique where present, and a wamid is one row whichever city", async () => {
     const db = env.MIGRATION_DB;
     const all = env.TEST_MIGRATIONS;
-    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql"]);
+    expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsuid.sql", "0003_retries.sql"]);
     await applyD1Migrations(db, all.slice(0, 1));
     const wa = phone();
     await db.batch([
@@ -658,6 +946,20 @@ describe("BSUID: migration 0002 over schema v1 rows", () => {
     await insert(user, null, user, "wamid.3");
     await expect(insert("k4", null, user, "wamid.4")).rejects.toThrow(/UNIQUE/);
     await expect(insert("k5", wa, null, "wamid.5")).rejects.toThrow(/UNIQUE/);
+    // 0003 over the same rows: the rebuilt dedup key refuses a second city's copy of a held wamid,
+    // still takes another status of it, and its two new tables are empty.
+    const copy = (city: string, wamid: string, status: string) =>
+      db
+        .prepare("INSERT INTO deliveries (city_id, received_at, kind, wamid, status, body) VALUES (?, 70, ?, ?, ?, '{}')")
+        .bind(city, status ? "status" : "message", wamid, status)
+        .run();
+    await expect(copy("city_other", "wamid.H", "")).rejects.toThrow(/UNIQUE/);
+    await expect(copy("city_m", "wamid.H", "")).rejects.toThrow(/UNIQUE/);
+    await copy("city_m", "wamid.S", "sent");
+    await expect(copy("city_other", "wamid.S", "sent")).rejects.toThrow(/UNIQUE/);
+    for (const table of ["phone_aliases", "code_attempt_wamids"]) {
+      expect(await db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).first()).toEqual({ n: 0 });
+    }
     await expect(
       db.prepare("INSERT INTO phones (wa_id, city_id, bound_at, bound_wamid) VALUES (?, 'city_m', 1, 'wamid.6')").bind(phone()).run(),
     ).rejects.toThrow(/NOT NULL/);

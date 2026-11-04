@@ -373,6 +373,116 @@ describe("Meta side: invite-code edges", () => {
     expect(again.res.status).toBe(200);
     expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
   });
+
+  it("redeliveries of two wrong-code texts interleaved (A, B, A, B, A) are two attempts, and the owner's right code then binds (gp-0g2s)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const code = await t.invite(city);
+    const wa = phone();
+    const wrong = (i: number) => String((Number(code) + 1 + i) % 1_000_000).padStart(6, "0");
+    const a = `wamid.${uniq()}`;
+    const b = `wamid.${uniq()}`;
+    for (const [wamid, text] of [
+      [a, wrong(0)],
+      [b, wrong(1)],
+      [a, wrong(0)],
+      [b, wrong(1)],
+      [a, wrong(0)],
+    ] as const) {
+      expect((await t.say(wa, text, { wamid })).res.status).toBe(200);
+    }
+    expect(await env.DB.prepare("SELECT code_attempts FROM unknown_senders WHERE sender_key = ?").bind(wa).first()).toEqual({ code_attempts: 2 });
+    await t.say(wa, code);
+    expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+  });
+
+  it("the limit and the day are unchanged by the dedup: three more wrong codes after A, B, A, B, A make five, and the right code is then the sixth (gp-0g2s)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const code = await t.invite(city);
+    const wa = phone();
+    const wrong = (i: number) => String((Number(code) + 1 + i) % 1_000_000).padStart(6, "0");
+    const a = `wamid.${uniq()}`;
+    const b = `wamid.${uniq()}`;
+    for (const [wamid, text] of [
+      [a, wrong(0)],
+      [b, wrong(1)],
+      [a, wrong(0)],
+      [b, wrong(1)],
+      [a, wrong(0)],
+    ] as const) {
+      await t.say(wa, text, { wamid });
+    }
+    for (let i = 2; i < 5; i++) await t.say(wa, wrong(i));
+    await t.say(wa, code);
+    expect((await t.inbox(city)).body.deliveries).toHaveLength(0);
+    t.clock.now += DAY + 1;
+    await t.say(wa, await t.invite(city));
+    expect((await t.inbox(city)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+  });
+
+  it("the cron deletes a counted wrong code's wamid once Meta can no longer redeliver it: 8 days (TOMBSTONE_SECONDS) after it was counted (gp-0g2s)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const code = await t.invite(city);
+    const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, "0");
+    const { wamid } = await t.say(phone(), wrong);
+    const kept = async () => (await env.DB.prepare("SELECT wamid FROM code_attempt_wamids WHERE wamid = ?").bind(wamid).all()).results.length;
+    expect(await kept()).toBe(1);
+    t.clock.now = T0 + 8 * DAY - 1;
+    await t.gateway.maintain();
+    expect(await kept()).toBe(1);
+    t.clock.now = T0 + 8 * DAY;
+    expect((await t.gateway.maintain()).code_wamids_deleted).toBeGreaterThanOrEqual(1);
+    expect(await kept()).toBe(0);
+  });
+});
+
+describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s)", () => {
+  it("after the phone is unbound and joins another city, Meta's retry of an acknowledged image reaches no city again and grants the new city no media; the joining text likewise; Meta gets 200", async () => {
+    const t = setup();
+    const a = await t.enrollCity();
+    const b = await t.enrollCity();
+    const wa = phone();
+    const codeA = await t.invite(a);
+    const joining = await t.say(wa, codeA);
+    const joinPayload = textPayload(wa, codeA, { wamid: joining.wamid, ts: t.clock.now });
+    const mediaId = `7${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+    const wamid = `wamid.${uniq()}`;
+    const image = mediaPayload("image", wa, mediaId, { wamid, ts: t.clock.now });
+    expect((await t.webhook(image)).status).toBe(200);
+    const held = (await t.inbox(a)).body.deliveries;
+    expect(held.map((d: any) => d.kind)).toEqual(["joined", "message"]);
+    expect((await t.ack(a, held.map((d: any) => d.id))).status).toBe(200);
+    // README, "Unbind an owner"; then the phone joins city B by B's invite code.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    t.clock.now += HOUR;
+    await t.join(b, wa);
+    t.clock.now += HOUR;
+    expect((await t.webhook(image)).status).toBe(200);
+    expect((await t.webhook(joinPayload)).status).toBe(200);
+    expect((await t.inbox(b)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+    expect((await env.DB.prepare("SELECT city_id FROM media WHERE media_id = ?").bind(mediaId).all()).results).toEqual([{ city_id: a.id }]);
+    expect((await t.call("GET", `/v1/media/${mediaId}`, { token: b.token })).status).toBe(404);
+    expect((await t.call("POST", "/v1/read", { token: b.token, body: { message_id: wamid } })).status).toBe(404);
+    // City A still holds only its acknowledged rows: the retries are no new delivery anywhere.
+    expect((await t.inbox(a)).body.deliveries).toHaveLength(0);
+  });
+
+  it("the same holds for a retry of a message A never acknowledged: it stays A's, held for A alone", async () => {
+    const t = setup();
+    const a = await t.enrollCity();
+    const b = await t.enrollCity();
+    const wa = await t.join(a);
+    const said = await t.say(wa, "still held for A");
+    const payload = textPayload(wa, "still held for A", { wamid: said.wamid, ts: t.clock.now });
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    await t.join(b, wa);
+    expect((await t.webhook(payload)).status).toBe(200);
+    expect((await t.inbox(a)).body.deliveries.filter((d: any) => d.message?.id === said.wamid)).toHaveLength(1);
+    expect((await t.inbox(b)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+  });
 });
 
 describe("City side: the inbox, the hold and the ack by id", () => {
