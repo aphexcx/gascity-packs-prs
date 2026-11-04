@@ -14,9 +14,13 @@ most of week one. Each step is marked:
 - **WAITING**: waits on what the step names. Nothing to do until it lands.
 - **YOURS**: your hand, now or when its turn comes.
 
-The ids on this page are Meta's names for things, not secrets. The token,
-the app secret and the verify token are never on this page or in a chat:
-the mayor holds them in files and sets them in the gateway. The gateway is
+This page names Meta's things as Meta's panels show them. Their ids are
+not secrets, but this repo is public, so the ids live in citadel's records
+(`~/.config/citadel-mayor/whatsapp/meta-ids.env`, and the mayor's notes of
+11/4 for the system user and the template); the mayor reads them there,
+never from a page. The token, the app secret and the verify token are
+never on this page or in a chat: the mayor holds them in files and sets
+them in the gateway. The gateway is
 live for the test week at `https://whatsapp-gateway.houmanoids.workers.dev`
 (deployed 11/4); `whatsapp.dynasty.computer` follows the move of the
 dynasty.computer zone (step 7).
@@ -37,44 +41,48 @@ dynasty.computer zone (step 7).
 
 ## Week one, on Meta's test number
 
-1. **Business portfolio.** DONE. The app, the WhatsApp Business account and
-   the test number live in the one business portfolio, **Houdini**
-   (1997564454198611), which belongs to Houmanoids Inc. Meta would not let
-   Taylor add a second portfolio on 11/4, and none is needed: an owner sees
-   the number's display name and business profile, never the portfolio's
-   name. Check: [Business settings](https://business.facebook.com/latest/settings)
+1. **Business portfolio.** DONE. The app, the two accounts (step 3) and
+   the test number live in the one business portfolio, **Houdini**, which
+   belongs to Houmanoids Inc. Meta would not let Taylor add a second
+   portfolio on 11/4, and none is needed: an owner sees the number's
+   display name and business profile, never the portfolio's name. Check:
+   [Business settings](https://business.facebook.com/latest/settings)
    lists you as an admin.
    Source: [Get started, step 1](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started).
-2. **The app.** DONE. **Dynasty Computer**, app id 1705864634866180, use
-   case **Connect with customers through WhatsApp**, in the Houdini
-   portfolio. Check: the [App Dashboard](https://developers.facebook.com/apps)
+2. **The app.** DONE. **Dynasty Computer**, use case **Connect with
+   customers through WhatsApp**, in the Houdini portfolio. Check: the
+   [App Dashboard](https://developers.facebook.com/apps)
    lists it, and it opens on **Customize use case > Connect on WhatsApp**.
    To make it again: **Create App** > app name and email > use case
    **Connect with customers through WhatsApp** > **Next** > the portfolio >
    the publishing requirements > **Next** > confirm > **Create app**.
    Source: [Get started, step 1](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started).
-3. **The accounts.** DONE for week one. The WhatsApp Business account
-   1706944460848228, named "Test Messaging Account" in Meta's panel, holds
-   the test number, the template (step 9) and the webhook subscription
-   (step 7). Meta now splits an account in two: the WhatsApp account holds
-   the number and the display name, the Messaging account holds the
-   templates and the billing. The real line brings its own pair (step 11).
-   Check: **API Setup** shows the account's id with the test number. To
-   make it again: Quickstart > **Start using the API** > **API Setup** >
-   connect a Messaging account, or **Create a WhatsApp Business account**.
+3. **The accounts.** DONE for week one. Meta now splits an account in two:
+   the WhatsApp account holds the number and the display name, the
+   Messaging account holds the templates and the billing. Week one has one
+   of each: the WhatsApp account ("Test WhatsApp Account" in Taylor's words
+   of 11/4) with the test number, and the Messaging account named "Test
+   Messaging Account", with the template (step 9) and the webhook
+   subscription (step 7). Where Meta's API writes `<WABA_ID>`, it takes the
+   Messaging account's id. The real line brings its own pair (step 11).
+   Check: **API Setup** shows the Messaging account's id with the test
+   number. To make it again: Quickstart > **Start using the API** >
+   **API Setup** > connect a Messaging account, or **Create a WhatsApp
+   Business account**.
    Sources: [Get started, step 2](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started);
-   [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform).
-4. **The test number.** DONE. +1 555 164-0489, phone number id
-   1429503880250022 (the id is not the phone number). Taylor's phone is its
-   allowed recipient, and a test message from it reached that phone on 11/4
-   (Taylor, 21:35Z). A test number has relaxed limits and needs no payment
+   [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform);
+   [Manage webhooks](https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/manage-webhooks).
+4. **The test number.** DONE. Meta's test number, with its phone number
+   id (the id is not the phone number; the gateway holds the id). Taylor's
+   phone is its allowed recipient, and a test message from it reached that
+   phone on 11/4 (Taylor, 21:35Z). A test number has relaxed limits and needs no payment
    method to send templates. Check: **API Setup** > **From** shows it. To
    add another test phone: **API Setup** > **To**. The design read the
    recipient cap as five phones on 11/3; the pages read 11/4 state no
    number. Sources: [Get started, step 3](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started);
    [About the platform, Test resources](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform).
-5. **The permanent token.** DONE. The system user **dynastywhatsapp**
-   (61596426292660) has the **Admin** role, with the app assigned to it.
+5. **The permanent token.** DONE. The system user **dynastywhatsapp** has
+   the **Admin** role, with the app assigned to it.
    Its token is a system user token that never expires, with the WhatsApp
    permissions, and the gateway sends with it. Check: [Business settings](https://business.facebook.com/latest/settings) >
    **System users** shows dynastywhatsapp with the app among its assets.
@@ -99,7 +107,7 @@ dynasty.computer zone (step 7).
    Sources: [Basic settings](https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/basic-settings);
    [Get started, step 3](https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started).
 7. **The webhook.** DONE by the API on 11/4; nothing to paste. The mayor
-   subscribed the WhatsApp Business account to the app
+   subscribed the Messaging account (step 3) to the app
    (`POST /<WABA_ID>/subscribed_apps`), then set the app's webhook with the
    app token (`POST /<APP_ID>/subscriptions`: object
    `whatsapp_business_account`, field `messages`, the callback
@@ -118,9 +126,9 @@ dynasty.computer zone (step 7).
    `https://whatsapp.dynasty.computer/healthz`, and points the callback at
    `https://whatsapp.dynasty.computer/meta/webhook` by the same API call,
    with the same verify token. You confirm the new URL in
-   **Configuration**. Meta's Graph API reference for that call says
-   WhatsApp webhooks must be set in the App Dashboard; Meta's WhatsApp page
-   names the call as the alternative, and the 11/4 call took. If it is ever
+   **Configuration**. Meta's Graph API reference for that call lists
+   "Webhooks for WhatsApp is not supported" under its limitations; Meta's
+   WhatsApp page names the call as the alternative, and the 11/4 call took. If it is ever
    refused, set the URL in **Configuration**, with the verify token the
    mayor sends by a sealed channel. Sources: [Create a webhook endpoint, Configure webhooks](https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/create-webhook-endpoint);
    [Manage webhooks](https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/manage-webhooks);
@@ -140,8 +148,8 @@ dynasty.computer zone (step 7).
    [WhatsApp use case, Publish](https://developers.facebook.com/documentation/development/create-an-app/whatsapp-use-case).
 9. **The one template, `dynasty_update`.** Filed on 11/4; WAITING on Meta's
    review; then YOURS, with Taylor. The mayor filed it by the API at 21:17Z
-   as category **Utility**, in `en_US` (1539785464624038) and `pt_BR`
-   (1442968537981131), with the bodies and samples below. Both read
+   as category **Utility**, in `en_US` and `pt_BR`, with the bodies and
+   samples below. Both read
    **PENDING**, and Meta classed both **MARKETING** at the filing (the
    API's read, 21:5xZ). So the Marketing case below is the state in effect,
    not a later risk. Review takes up to 24 hours. Sources:
@@ -219,15 +227,19 @@ dynasty.computer zone (step 7).
 
 ## After the first week, the real line
 
-The real line waits on step 10, which is under way now.
+On the founders' plan, the real line waits on step 10, which is under way
+now.
 
 10. **Business verification and the DBA.** WAITING. Taylor submitted Meta's
     business verification on 11/4 at 21:30Z; the API read it as pending at
     21:5xZ. Taylor is asking the founders' accountant to file a DBA for
     "Dynasty Computer", the name the app carries, under Houmanoids Inc. Keep
     the filing at hand in case Meta's review asks how that name and the
-    legal business connect. The display name and the real line wait on
-    both. Verification matters three ways. "Newly created business
+    legal business connect. The order is the founders' plan, not a Meta
+    rule: Meta's display name guidelines name no DBA, only that a display
+    name "must have a clear relationship with the business's legal name".
+    On that plan, the display name and the real line wait on both.
+    Verification matters three ways. "Newly created business
     portfolios have a messaging limit of 250", and verifying is one path to
     2,000. It lifts the cap of two registered numbers to 20. And a number's
     display name is checked "When you reach a higher messaging limit".
@@ -236,7 +248,8 @@ The real line waits on step 10, which is under way now.
     business is verified. Sources:
     [Messaging limits](https://developers.facebook.com/documentation/business-messaging/whatsapp/messaging-limits);
     [Business phone numbers](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/phone-numbers);
-    [Display names](https://developers.facebook.com/documentation/business-messaging/whatsapp/display-names);
+    [Display names](https://developers.facebook.com/documentation/business-messaging/whatsapp/display-names)
+    and the display name guidelines it links;
     [Business verification](https://developers.facebook.com/docs/development/release/business-verification).
 11. **The line.** YOURS, after step 10. A phone line on no WhatsApp app
     (personal or Business) that can receive an SMS or a voice call:
@@ -257,10 +270,19 @@ The real line waits on step 10, which is under way now.
     to the mayor by a sealed channel; the mayor holds the token, so it
     makes the call.
     Source: [Register a phone number](https://developers.facebook.com/documentation/business-messaging/whatsapp/business-phone-numbers/registration).
-13. **The template again, on the new Messaging account.** WAITING on step
-    11; the mayor can file it by the API, as on 11/4. Templates live on the
-    Messaging account, and the real line came with a new one (step 11).
-    File `dynasty_update` there with the same name, bodies and samples (by
+13. **The new Messaging account: its webhook, then the template again.**
+    WAITING on step 11; the mayor does both by the API, as on 11/4. First
+    the mayor subscribes the new Messaging account to the app with the
+    system user token (`POST /<NEW_WABA_ID>/subscribed_apps`, as in step
+    7): "You must individually subscribe to every Messaging account for
+    which you want to receive webhooks." The app's webhook stays as step 7
+    set it: Meta sends "all webhook notifications to the app's callback
+    URL". The mayor reads it back (`GET /<NEW_WABA_ID>/subscribed_apps`
+    lists Dynasty Computer, as the 11/4 read did for the test account) and
+    tells you; Meta's pages name no dashboard view of it. Then the
+    template: templates live on the Messaging account, and the real line
+    came with a new one (step 11). File `dynasty_update` there with the
+    same name, bodies and samples (by
     hand: [WhatsApp Manager > Message templates](https://business.facebook.com/latest/whatsapp_manager/message_templates) >
     that Messaging account > create, category **Utility**, languages
     `en_US` and `pt_BR`), and wait until both languages read status
@@ -268,7 +290,8 @@ The real line waits on step 10, which is under way now.
     while still pending, and a Marketing approval stops here (step 9). Only
     then does the mayor point
     the gateway at the new number's phone number id (one gateway secret
-    changes; no city re-keys). Sources: [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform);
+    changes; no city re-keys). Sources: [Manage webhooks](https://developers.facebook.com/documentation/business-messaging/whatsapp/solution-providers/manage-webhooks);
+    [About the platform, WhatsApp accounts and Messaging accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/about-the-platform);
     [WhatsApp Business Accounts](https://developers.facebook.com/documentation/business-messaging/whatsapp/whatsapp-business-accounts).
 14. **The name and the photo.** YOURS. [WhatsApp Manager](https://business.facebook.com/latest/whatsapp_manager/) >
     **Account tools** > **Phone numbers** > the number > **Profile**:

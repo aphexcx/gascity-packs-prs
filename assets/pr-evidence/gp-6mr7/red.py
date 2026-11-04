@@ -1,6 +1,7 @@
 """RED for verbs.py: mirror whatsapp/ into a scratch root, mutate one quoted
-verb form, one keeper quote and the failed-delivery line in the skill, and
-expect verbs.py to fail on exactly those three.
+verb form, one keeper quote and the failed-delivery line in the skill, put a
+made-up Meta id on the setup page, and expect verbs.py to fail on exactly
+those four.
 Usage: python3 -I red.py <worktree> <scratch-root>"""
 
 import pathlib
@@ -23,14 +24,22 @@ for old, new in mutations:
     assert old in text, old
     text = text.replace(old, new)
 skill.write_text(text, encoding="utf-8")
+# Round 3 (gp-28td): a made-up 16-digit id on the setup page must fail the
+# no-Meta-id check. Built here, so no digit run sits in this file.
+fake_id = "1" + "0" * 14 + "1"
+page = dst / "whatsapp/docs/meta-setup.md"
+ptext = page.read_text(encoding="utf-8")
+assert "**Houdini**, which" in ptext
+page.write_text(ptext.replace("**Houdini**, which", f"**Houdini** ({fake_id}), which", 1), encoding="utf-8")
 r = subprocess.run([sys.executable, "-I", str(pathlib.Path(__file__).with_name("verbs.py")), str(dst)], capture_output=True, text=True)
 fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
 print(f"verbs.py rc={r.returncode} on the mutated mirror; {len(fails)} FAIL lines:")
 for l in fails:
     print("  " + l)
-ok = (r.returncode == 1 and len(fails) == 3
+ok = (r.returncode == 1 and len(fails) == 4
       and any("clear-gap <conversation>" in l for l in fails)
       and any("nudge (unshifted)" in l for l in fails)
-      and any("skill quotes the failed delivery" in l for l in fails))
+      and any("skill quotes the failed delivery" in l for l in fails)
+      and any("meta-setup.md: no Meta id or 555 number" in l for l in fails))
 print("RED OK" if ok else "RED NOT SEEN")
 sys.exit(0 if ok else 1)

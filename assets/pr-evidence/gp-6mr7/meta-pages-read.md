@@ -85,11 +85,12 @@ the DBA as Taylor's plan, not as Meta's rule.
 
 | On the page | Source (city records, read by the lane) |
 | --- | --- |
-| The Houdini portfolio 1997564454198611; the app 'Dynasty Computer' 1705864634866180; the WhatsApp Business account 1706944460848228; the test number and its phone number id 1429503880250022; the system user dynastywhatsapp 61596426292660 | the 498th session file, 20:46Z to 21:07Z and 20:59Z bullets (assets/handoff/sessions/2026-11-04-498th.md); the bead gp-awtb |
+| The Houdini portfolio; the app 'Dynasty Computer'; the Messaging account (the id the API used as `<WABA_ID>`); the test number and its phone number id; the system user dynastywhatsapp (round 3: every id taken off this map and the page, the repo being public; the ids stay in the sources at right and in `~/.config/citadel-mayor/whatsapp/meta-ids.env`) | the 498th session file, 20:46Z to 21:07Z and 20:59Z bullets (assets/handoff/sessions/2026-11-04-498th.md); the bead gp-awtb |
+| The two account names (round 3, the read r2's NOTE 3): the Messaging account "Test Messaging Account"; the WhatsApp account "Test WhatsApp Account" | the bead gp-awtb's facts ("('Test Messaging Account')" beside the account the API used); the 498th session file, 20:59Z bullet (Taylor 20:56:28Z: "the Test WhatsApp Account its one asset") |
 | No second portfolio | the 498th session file, 20:39Z bullet (Taylor 20:35:46Z) |
 | The gateway live on workers.dev; the five secrets; the custom-domain switch | assets/ops/records/whatsapp-gateway-deploy-20261104/README.md |
 | The WABA subscribed to the app (21:17Z); the webhook set by `POST /<APP_ID>/subscriptions` with the app token (21:23Z), validated, active | the 498th session file, 21:17Z and 21:23Z bullets |
-| The template filed by the API 21:17Z as UTILITY, en_US 1539785464624038, pt_BR 1442968537981131, PENDING | the 498th session file, 21:17Z bullet |
+| The template filed by the API 21:17Z as UTILITY, en_US and pt_BR (one template id each, in the source at right), PENDING | the 498th session file, 21:17Z bullet |
 | Meta classed both MARKETING; the verification status pending (the Graph reads 21:5xZ) | the bead gp-awtb (the 499th mayor's reads) |
 | The test message (21:35Z); the payment method | assets/records/founder-words/taylor-20261104-213516Z-whatsapp-test-sent-handoff.md |
 | The business verification submitted (21:30Z); the DBA | assets/records/founder-words/taylor-20261104-213054Z-business-verification-dba-dynasty-computer.md |
@@ -105,3 +106,25 @@ posts it under that `wa_id`'s actor (:123), whose display name falls back to
 the bare `wa_id` (codex QUICK r2's P3), and only `message` and `joined` deliveries move the window
 (inbound.js:293-298, the test at :296). A refusal at send time is the publish verb's error
 instead (gateway.ts:790-805).
+
+## Round 3 (gp-28td, 2026-11-04 23:41Z to 23:42Z): the cutover's subscription and the DBA clause
+
+Fetched by curl into a fresh scratch directory. The Help Center article
+answers with its title in the HTML, but its body is in the page's script
+data, every `<` JSON-escaped; unescaped and its tags stripped, the section
+text below was read. The raw page differs fetch to fetch, so the
+hash of the extracted section text is given beside it.
+
+| Page | sha256[:16] | What the setup page takes from it (quoted) |
+| --- | --- | --- |
+| `solution-providers/manage-webhooks` | 9ffae682743246e3 | "You must individually subscribe to every Messaging account for which you want to receive webhooks."; `POST /<WABA_ID>/subscribed_apps` "to subscribe your app to webhooks on the business customer's Messaging account"; with several accounts subscribed, Meta sends "all webhook notifications to the app's callback URL"; `GET /<WABA_ID>/subscribed_apps` lists the subscribed apps; the page names no dashboard view of the subscription (steps 3, 7 and 13). |
+| `display-names` | cbc2ea5a580ea382 | "See our Display name guidelines for the WhatsApp Business Platform Help Center article for naming guidelines." (the link to the article below; step 10). |
+| The Help Center article `display-names` links as "Display name guidelines for the WhatsApp Business Platform" (HTML; fetched at that link with `?locale=en_US&_fb_noscript=1`; its number is left in the link, out of this file, so the no-id check reads it clean) | raw 2b4fbe84d2ea9ec3; the section "Legal name relationship and branding" as text 76ae9882f9169982 | "A WhatsApp Business Platform display name must have a clear relationship with the business's legal name." The article names no DBA (no "DBA", "doing business", "trade name" or "registered" in its text, 8,143 characters from its first heading to the language list). Its examples want a brand's tie to the company "clearly mentioned on external websites" (step 10). |
+
+What round 3 changed against round 2: step 13 subscribes the new Messaging
+account before the cutover (the read r2's MINOR 1); step 10 says the DBA is
+the founders' plan and quotes the one Meta rule on display names (the
+bead's draft clause, "the legal name or a registered DBA", was not Meta's
+wording, so the page quotes Meta instead); step 7 quotes the Graph
+reference's own words (the read r2's NOTE 1, the round-2 row above); step 3
+names both accounts (NOTE 3).

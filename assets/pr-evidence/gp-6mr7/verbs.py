@@ -11,6 +11,12 @@
    must appear in A's
    adapter source (keeper.js, render.js, index.js, media.js) as literal
    fragments, with the skill's <placeholders> standing for ${...} parts.
+3. No Meta id and no 555 number in this PR's own files (round 3, gp-28td:
+   the repo is public; the ids live in citadel's records): no run of 13 to
+   16 digits standing alone (a run inside a hex commit id is not one) and
+   no 555 phone number, in whatsapp/docs, whatsapp/skills,
+   whatsapp/template-fragments and assets/pr-evidence/gp-6mr7. A's adapter
+   tests are out of scope: their 13-digit runs are epoch milliseconds.
 
 Usage: python3 -I verbs.py <worktree>
 Exit 0 when every check passes; 1 otherwise. Prints one line per check.
@@ -141,5 +147,13 @@ afik = "only if there is an actual update"
 report(afik in skill and afik in frag, "Afik's words quoted in the skill and the fragment")
 ask = "reply ok so I can keep this line open"
 report(ask in skill and ask in frag, "the keeper's one ask quoted in the skill and the fragment")
+
+meta_id = re.compile(r"(?<![0-9A-Za-z])[0-9]{13,16}(?![0-9A-Za-z])")
+test_number = re.compile(r"(?<![0-9])555[ .-]?[0-9]{3}[ .-]?[0-9]{4}(?![0-9])")
+own = ("whatsapp/docs", "whatsapp/skills", "whatsapp/template-fragments", "assets/pr-evidence/gp-6mr7")
+for f in sorted(p for d in own if (root / d).is_dir() for p in (root / d).rglob("*") if p.is_file()):
+    text = f.read_text(encoding="utf-8", errors="replace")
+    hits = sorted(set(meta_id.findall(text) + test_number.findall(text)))
+    report(not hits, f"{f.relative_to(root)}: no Meta id or 555 number" + (f" (found {len(hits)})" if hits else ""))
 
 sys.exit(1 if failures else 0)
