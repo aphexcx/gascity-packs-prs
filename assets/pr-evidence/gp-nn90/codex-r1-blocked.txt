@@ -1,0 +1,23 @@
+# codex round 1, attempted 2026-11-04 19:05Z at head 11285f36: BLOCKED by the account's usage limit (no review ran)
+
+## codex review --base origin/main -c 'sandbox_workspace_write.network_access=true' - < codex-deep-prompt.md   (refused: --base takes no prompt)
+
+error: the argument '--base <BRANCH>' cannot be used with '[PROMPT]'
+codex rc=2
+
+## codex review --base origin/main -c 'sandbox_workspace_write.network_access=true'   (the spec's command)
+
+OpenAI Codex v0.164.0
+model: gpt-6-astra
+ERROR: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at 6:31 PM.
+Review was interrupted. Please re-run /review and wait for it to complete.
+ERROR: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at 6:31 PM.
+codex rc=1
+
+## codex exec --sandbox read-only -c 'sandbox_workspace_write.network_access=true' - < codex-deep-exec-prompt.md   (the DEEP prompt)
+
+OpenAI Codex v0.164.0
+model: gpt-6-astra
+ERROR: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at 6:31 PM.
+ERROR: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at 6:31 PM.
+codex rc=1
