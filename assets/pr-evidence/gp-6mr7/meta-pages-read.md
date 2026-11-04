@@ -55,3 +55,52 @@ Base: `https://developers.facebook.com/documentation/business-messaging/whatsapp
    is made again there and approved before the gateway switches numbers.
 8. **The display name** is checked only when the number reaches a higher
    messaging limit; until then the owner sees the contact name they saved.
+
+## Round 2 (gp-awtb, 2026-11-04 22:55Z): the pages the done/waiting rewrite cites
+
+Fetched 22:55Z the same way (the `.md` form under the base; the two
+`/docs/` pages have no `.md` form, so their HTML was read and its tags
+stripped). Every quote below was matched in the fetched copy after
+stripping Markdown links, backticks and bold.
+
+| Page | sha256[:16] | What the setup page takes from it (quoted) |
+| --- | --- | --- |
+| `messaging-limits` | 4fdffd2516ee044d | "Newly created business portfolios have a messaging limit of 250"; business verification is one of the paths to 2,000 (step 10). |
+| `business-phone-numbers/phone-numbers` | 2507b2973bf57cce | "New business portfolios are initially capped at two registered business phone numbers"; on verification "Meta will automatically increase your cap to 20" (step 10). |
+| `display-names` | a7b9cee65c9b277d | "When you reach a higher messaging limit, your business phone number's display name automatically undergoes verification" (step 10). |
+| `templates/template-categorization` | 2af970d92798fd95 | The review: "Go to Business Support", "Template Category Updates", "Request Review", "up to 60 days from the date the category was updated"; utility: "non-promotional" and "specific to or requested by the user (clearly related to their order, account, services, or transactions)" (step 9). Same copy as round 1. |
+| `templates/template-management` | 304b55aba384afd9 | "Only templates with an APPROVED, REJECTED, or PAUSED status can be edited."; "up to 10 times in a 30-day window, or 1 time in a 24-hour window"; "If you delete an approved template, you cannot create a new template with the same name for 30 days" (step 9). |
+| `templates/marketing-templates/per-user-limits` | 0add1eb271296926 | Error `131049` for the per-user marketing limit (step 9, the skill). Same copy as round 1. |
+| `webhooks/create-webhook-endpoint` | 5e8ca0d7dd4bc41e | The Application Subscriptions API as the alternative to the panel, with an app token and `whatsapp_business_account` as the object; "Anytime you set or edit the Callback URL field or the Verify token field in the App Dashboard, Meta sends a GET request" (step 7). Same copy as round 1. |
+| `solution-providers/manage-webhooks` | c3598a378798245d | "You must individually subscribe to every Messaging account for which you want to receive webhooks."; `POST /<WABA_ID>/subscribed_apps` (step 7). |
+| `https://developers.facebook.com/docs/graph-api/reference/application/subscriptions/` (HTML) | 84a516ae70e9cebb | "An app access token is required to add new subscriptions for that app."; under Limitations "Webhooks for WhatsApp is not supported": the conflict step 7 names, with the panel as the fallback. |
+| `https://developers.facebook.com/docs/development/release/business-verification` (HTML) | 80f932a10fb9c3e0 | The status path "Settings > Basic > Verification" (step 10). |
+
+Not read: Meta's Help Center articles on verification documents and display
+name guidelines (www.facebook.com/business/help/..., which answer a fetch
+with the title only). No Meta page read here names a DBA; the page states
+the DBA as Taylor's plan, not as Meta's rule.
+
+### The facts of the day and where each comes from
+
+| On the page | Source (city records, read by the lane) |
+| --- | --- |
+| The Houdini portfolio 1997564454198611; the app 'Dynasty Computer' 1705864634866180; the WhatsApp Business account 1706944460848228; the test number and its phone number id 1429503880250022; the system user dynastywhatsapp 61596426292660 | the 498th session file, 20:46Z to 21:07Z and 20:59Z bullets (assets/handoff/sessions/2026-11-04-498th.md); the bead gp-awtb |
+| No second portfolio | the 498th session file, 20:39Z bullet (Taylor 20:35:46Z) |
+| The gateway live on workers.dev; the five secrets; the custom-domain switch | assets/ops/records/whatsapp-gateway-deploy-20261104/README.md |
+| The WABA subscribed to the app (21:17Z); the webhook set by `POST /<APP_ID>/subscriptions` with the app token (21:23Z), validated, active | the 498th session file, 21:17Z and 21:23Z bullets |
+| The template filed by the API 21:17Z as UTILITY, en_US 1539785464624038, pt_BR 1442968537981131, PENDING | the 498th session file, 21:17Z bullet |
+| Meta classed both MARKETING; the verification status pending (the Graph reads 21:5xZ) | the bead gp-awtb (the 499th mayor's reads) |
+| The test message (21:35Z); the payment method | assets/records/founder-words/taylor-20261104-213516Z-whatsapp-test-sent-handoff.md |
+| The business verification submitted (21:30Z); the DBA | assets/records/founder-words/taylor-20261104-213054Z-business-verification-dba-dynasty-computer.md |
+| The two Live-mode URLs | houmanoids/dynasty PR 20, merged 22:45:04Z (gh); `curl` 22:47:49Z: both 200, titles 'Privacy Policy \| Dynasty' and 'Data Deletion \| Dynasty' |
+| The icon sizes (48 and 180 px PNG; `app/icon.svg`) | houmanoids/dynasty main, `sips` on `app/icon.png` and `app/apple-icon.png` |
+
+The skill's failed-delivery line: a `status` delivery exists only from
+Meta's status webhook (whatsapp/gateway/src/gateway.ts:612-632 on main at
+54f53be7, the row routed to the city whose send recorded the wamid, with the
+send's recipient as `wa_id`); the adapter renders a failed one at
+whatsapp/adapter/src/render.js:80-83 and posts it under that `wa_id`'s actor
+(:123), and only `message` and `joined` deliveries move the window
+(inbound.js:293-298, the test at :296). A refusal at send time is the publish verb's error
+instead (gateway.ts:790-805).
