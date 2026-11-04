@@ -278,17 +278,21 @@ const ownerFirst = (user: string) => `ORDER BY CASE WHEN user_id = ${user} THEN 
 const ownerKey = (wa: string, user: string, stamp: string) =>
   `(SELECT conversation_id FROM phones WHERE ${heldAt(wa, user, stamp)} ${ownerFirst(user)})`;
 /**
- * The previous holding of the message's id whose span holds the stamp: the first change at or
- * after it. No expiry test is needed: a message stamped at or before changed_at that passes the
- * stale filter arrives before changed_at + ALIAS_SECONDS.
+ * The previous holdings of the message's id whose spans hold the stamp. No expiry test is needed:
+ * a message stamped at or before changed_at that passes the stale filter arrives before
+ * changed_at + ALIAS_SECONDS.
  */
 const pastHolding = (wa: string, user: string, stamp: string) =>
   `(SELECT conversation_id, bound_wamid FROM phone_aliases
-    WHERE id = COALESCE(${user}, ${wa}) AND since <= ${stamp} AND changed_at >= ${stamp} ORDER BY changed_at LIMIT 1)`;
-/** That holding's owner, while its binding stands; nobody once an operator unbound it. */
+    WHERE id = COALESCE(${user}, ${wa}) AND since <= ${stamp} AND changed_at >= ${stamp})`;
+/**
+ * Their owner: the one binding they name, while it stands; nobody once an operator unbound it.
+ * Two bindings' spans holding one stamp (records that disagree) name nobody.
+ */
 const aliasKey = (wa: string, user: string, stamp: string) =>
   `(SELECT p.conversation_id FROM phones p JOIN ${pastHolding(wa, user, stamp)} a
-    ON p.conversation_id = a.conversation_id AND p.bound_wamid = a.bound_wamid)`;
+    ON p.conversation_id = a.conversation_id AND p.bound_wamid = a.bound_wamid
+    WHERE (SELECT COUNT(DISTINCT bound_wamid) FROM ${pastHolding(wa, user, stamp)}) = 1)`;
 /**
  * The owner a message routes to: the one binding whose span holds the stamp. A previous holding
  * that holds it routes to its binding while that stands, and to nobody once it is gone; never on

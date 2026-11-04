@@ -985,9 +985,12 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     flaky.arm(0);
     expect((await t.webhook(between)).status).toBe(500);
     // A's notice says A held P until T0 + 3 h. The notice's own ids are what A leaves: they take
-    // nothing from B.
+    // nothing from B, on its first landing or when Meta redelivers it after A's re-key.
     t.clock.now = T0 + 3 * HOUR;
-    expect((await t.webhook(notice(p, a, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    const change = notice(p, a, bsuid(), phone(), t.clock.now);
+    expect((await t.webhook(change)).status).toBe(200);
+    expect(await owners(b)).toEqual([{ conversation_id: b, wa_id: p, user_id: b, username: null, city_id: city.id }]);
+    expect((await t.webhook(change)).status).toBe(200);
     expect(await owners(b)).toEqual([{ conversation_id: b, wa_id: p, user_id: b, username: null, city_id: city.id }]);
     t.clock.now = T0 + 4 * HOUR;
     const calls = t.graph.sends().length;
@@ -996,6 +999,13 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect(t.graph.sends()).toHaveLength(calls);
     // Nor does it touch B's row.
     expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(b).first()).toEqual({ profile_name: "B" });
+    // B changes number too: now two previous spans hold that stamp, and it still goes to nobody.
+    t.clock.now = T0 + 5 * HOUR;
+    expect((await t.webhook(notice(p, b, bsuid(), phone(), t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 6 * HOUR;
+    expect((await t.webhook(between)).status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(between))).toBe(false);
+    expect(t.graph.sends()).toHaveLength(calls);
   });
 
   it("the cron deletes an alias at the horizon: 8 days (TOMBSTONE_SECONDS) after the change Meta stamped", async () => {

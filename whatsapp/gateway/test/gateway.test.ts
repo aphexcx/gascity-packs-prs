@@ -8,7 +8,23 @@ import { describe, expect, it, vi } from "vitest";
 import { HOLD_SECONDS, MAX_BODY_BYTES, MAX_PENDING } from "../src/gateway.js";
 import { signatureHeader } from "../src/meta.js";
 import worker from "../src/index.js";
-import { DAY, flakyDb, HOUR, mediaPayload, PNID, phone, reactionPayload, SECRETS, setup, statusPayload, T0, textPayload, uniq } from "./harness.js";
+import {
+  bsuid,
+  DAY,
+  flakyDb,
+  HOUR,
+  mediaPayload,
+  PNID,
+  phone,
+  reactionPayload,
+  SECRETS,
+  setup,
+  statusPayload,
+  T0,
+  textAs,
+  textPayload,
+  uniq,
+} from "./harness.js";
 
 const CLOSE = DAY - 120; // the window's length after the margin
 
@@ -208,12 +224,13 @@ describe("Meta side: routing by phone", () => {
     const owner = await t.join(city);
     const code = await t.invite(city);
     const stranger = phone();
-    // 199 messages of a bound owner (2 statements each = 398), then a stranger's invite text whose
-    // 7 statements would straddle a cut at 400.
+    // 99 messages of a bound owner (4 statements each since gp-0g2s = 396), then a stranger's
+    // invite text whose 10 statements would straddle a cut at 400. Re-cut these counts whenever a
+    // message's statements change: the mutation check's "naive batch slicing" survives otherwise.
     const payload = textPayload(owner, "b0", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
     const value = payload.entry[0].changes[0].value;
     const first = value.messages[0];
-    for (let i = 1; i < 199; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `b${i}` } });
+    for (let i = 1; i < 99; i++) value.messages.push({ ...first, id: `wamid.${uniq()}`, text: { body: `b${i}` } });
     const inviteWamid = `wamid.${uniq()}`;
     value.messages.push({ ...first, from: stranger, id: inviteWamid, text: { body: code } });
     value.contacts.push({ profile: { name: "New Owner" }, wa_id: stranger });
@@ -235,7 +252,7 @@ describe("Meta side: routing by phone", () => {
     expect(joined[0].message.id).toBe(inviteWamid);
     expect(all.filter((d: any) => d.message?.id === inviteWamid)).toHaveLength(1);
     expect(all.filter((d: any) => d.kind === "message" && d.wa_id === owner).map((d: any) => d.message.text.body)).toEqual(
-      Array.from({ length: 199 }, (_, i) => `b${i}`),
+      Array.from({ length: 99 }, (_, i) => `b${i}`),
     );
     const usedNow = await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(code).first<{ used_at: number | null }>();
     expect(usedNow?.used_at).toBe(t.clock.now);
@@ -475,9 +492,12 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const t = setup({ db: flaky.db });
     const first = await t.enrollCity();
     const second = await t.enrollCity();
-    const wa = await t.join(first);
+    // Known by phone and BSUID: the text names both (Meta's shape), the image the number alone.
+    const wa = phone();
+    const user = bsuid();
+    await t.joinAs(first, { wa, user });
     t.clock.now = T0 + HOUR;
-    const text = textPayload(wa, "for the first city's mayor", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    const text = textAs({ wa, user }, "for the first city's mayor", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
     flaky.arm(0);
     expect((await t.webhook(text)).status).toBe(500);
     const mediaId = `6${Date.now()}${Math.floor(Math.random() * 1000)}`;
@@ -485,9 +505,9 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const image = mediaPayload("image", wa, mediaId, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
     flaky.arm(0);
     expect((await t.webhook(image)).status).toBe(500);
-    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1 OR user_id = ?2").bind(wa, user).run();
     t.clock.now = T0 + 2 * HOUR;
-    await t.join(second, wa);
+    await t.joinAs(second, { wa, user });
     t.clock.now = T0 + 3 * HOUR;
     const calls = t.graph.sends().length;
     expect((await t.webhook(text)).status).toBe(200);
