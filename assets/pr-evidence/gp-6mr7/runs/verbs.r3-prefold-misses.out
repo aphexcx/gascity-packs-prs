@@ -1,0 +1,5 @@
+# the pre-fold verbs.py (git show ec1a5d7d) on red.py's eight-mutation mirror: it misses the four new forms
+FAIL whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <conversation>' in A's help.md
+FAIL skill quotes the nudge (unshifted)
+FAIL skill quotes the failed delivery
+FAIL whatsapp/docs/meta-setup.md: no Meta id or 555 number (found 1)

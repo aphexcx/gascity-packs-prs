@@ -12,11 +12,16 @@
    adapter source (keeper.js, render.js, index.js, media.js) as literal
    fragments, with the skill's <placeholders> standing for ${...} parts.
 3. No Meta id and no 555 number in this PR's own files (round 3, gp-28td:
-   the repo is public; the ids live in citadel's records): no run of 13 to
-   16 digits standing alone (a run inside a hex commit id is not one) and
-   no 555 phone number, in whatsapp/docs, whatsapp/skills,
-   whatsapp/template-fragments and assets/pr-evidence/gp-6mr7. A's adapter
-   tests are out of scope: their 13-digit runs are epoch milliseconds.
+   the repo is public; the ids live in citadel's records), in
+   whatsapp/docs, whatsapp/skills, whatsapp/template-fragments and
+   assets/pr-evidence/gp-6mr7. Whole hex hashes (commit ids, sha256
+   prefixes: hex tokens with at least one letter) and compact UTC stamps
+   (YYYYMMDD-HHMMSS, as in the city's record file names) are taken out
+   first; then no run of 13 or more digits, also when grouped by single
+   spaces, dashes or dots or when touching letters, and no 555 phone number
+   in any of the +1 555 NNN NNNN, +1555NNNNNNN, (555) NNN-NNNN or
+   555-NNN-NNNN forms. A's adapter tests are out of scope: their 13-digit
+   runs are epoch milliseconds.
 
 Usage: python3 -I verbs.py <worktree>
 Exit 0 when every check passes; 1 otherwise. Prints one line per check.
@@ -148,11 +153,13 @@ report(afik in skill and afik in frag, "Afik's words quoted in the skill and the
 ask = "reply ok so I can keep this line open"
 report(ask in skill and ask in frag, "the keeper's one ask quoted in the skill and the fragment")
 
-meta_id = re.compile(r"(?<![0-9A-Za-z])[0-9]{13,16}(?![0-9A-Za-z])")
-test_number = re.compile(r"(?<![0-9])555[ .-]?[0-9]{3}[ .-]?[0-9]{4}(?![0-9])")
+hex_hash = re.compile(r"(?<![0-9A-Za-z])(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}(?![0-9A-Za-z])")
+utc_stamp = re.compile(r"(?<![0-9])20[0-9]{6}-[0-9]{6}(?![0-9])")
+meta_id = re.compile(r"(?<![0-9])[0-9](?:[ .-]?[0-9]){12,}(?![0-9])")
+test_number = re.compile(r"(?<![0-9])(?:\+?1[ .-]?)?\(?555\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}(?![0-9])")
 own = ("whatsapp/docs", "whatsapp/skills", "whatsapp/template-fragments", "assets/pr-evidence/gp-6mr7")
 for f in sorted(p for d in own if (root / d).is_dir() for p in (root / d).rglob("*") if p.is_file()):
-    text = f.read_text(encoding="utf-8", errors="replace")
+    text = utc_stamp.sub(" ", hex_hash.sub(" ", f.read_text(encoding="utf-8", errors="replace")))
     hits = sorted(set(meta_id.findall(text) + test_number.findall(text)))
     report(not hits, f"{f.relative_to(root)}: no Meta id or 555 number" + (f" (found {len(hits)})" if hits else ""))
 
