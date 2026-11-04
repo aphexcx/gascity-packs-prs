@@ -1,0 +1,13 @@
+# Local discovery and full machine transcripts; portable results are committed.
+bead.json
+file-inventory.txt
+papercuts-slack.json
+mail-inbox.json
+pr-status.json
+mayor-measure-mail.txt
+python-setup.log
+python-setup.status
+*.jsonl
+*.out.log
+*.out.pid
+gate-launch.log

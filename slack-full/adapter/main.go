@@ -2048,28 +2048,61 @@ func main() {
 	}
 	internalMux.HandleFunc("/healthz", handleHealthz)
 
+	startup := &startupGate{}
+	if cfg.registerOnStart {
+		startup.attempt.Store(1)
+	}
 	publicSrv := &http.Server{
 		Addr:              cfg.publicListen,
-		Handler:           publicMux,
+		Handler:           startup.wrap(publicMux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	internalSrv := &http.Server{
-		Handler:           internalMux,
+		Handler:           startup.wrap(internalMux),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
+	// Serve health before registration: gc starts proxy_process services
+	// before publishing the city API route. Normal requests stay gated
+	// until registration and startup recovery finish below.
+	errCh := make(chan error, 2)
+	go func() {
+		log.Printf("public listener serving on %s (Slack events)", cfg.publicListen)
+		errCh <- publicSrv.ListenAndServe()
+	}()
+	go func() {
+		if cfg.serviceSocket != "" {
+			log.Printf("internal listener serving on UDS %s (gc proxy_process)", cfg.serviceSocket)
+			lis, err := listenUDS(cfg.serviceSocket)
+			if err != nil {
+				errCh <- fmt.Errorf("listen unix %s: %w", cfg.serviceSocket, err)
+				return
+			}
+			errCh <- internalSrv.Serve(lis)
+		} else {
+			internalSrv.Addr = cfg.internalListen
+			log.Printf("internal listener serving on %s (gc publish only)", cfg.internalListen)
+			errCh <- internalSrv.ListenAndServe()
+		}
+	}()
+
 	if cfg.registerOnStart {
-		if err := registerAdapter(cfg); err != nil {
-			// A gc predating extmsg reply_instructions (hq-fh9,
-			// 2026-07-06) may reject the unknown field outright.
-			// The template is a token nicety — never worth failing
-			// startup over — so retry once without it before the
-			// fatal verdict; gc then keeps its generic fallback text.
-			log.Printf("WARN: register adapter with reply_instructions failed (%v); retrying without the template", err)
-			if err := registerAdapterWithoutReplyInstructions(cfg); err != nil {
+		registerCtx, stopRegister := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		registered := make(chan error, 1)
+		go func() {
+			registered <- registerAdapterOnStart(registerCtx, cfg, startup, bootRegistrationPolicy)
+		}()
+		select {
+		case err := <-registered:
+			stopRegister()
+			if err != nil {
 				log.Fatalf("register adapter: %v", err)
 			}
+		case err := <-errCh:
+			stopRegister()
+			log.Fatalf("listener during registration: %v", err)
 		}
+		startup.attempt.Store(0)
 		mode := "LOCALHOST ONLY"
 		if cfg.serviceSocket != "" {
 			mode = "via gc /svc proxy"
@@ -2084,7 +2117,7 @@ func main() {
 	// reactions rejoin the no-wake side lane. The watermark advanced at
 	// their ADMISSION, so the startup watermark backfill can never
 	// re-fetch these; the spool is their only redelivery path. Runs
-	// before the listeners start, after gc registration.
+	// before normal requests are admitted, after gc registration.
 	n, rerr := cfg.inboundSpool.replay(cfg.coalescer)
 	if rerr != nil {
 		// The ledger of refused messages could not be rebuilt (codex r20
@@ -2152,26 +2185,7 @@ func main() {
 	// pass and sweep are no-ops when the gateway is nil.
 	companyGW.startRecovery(janitorCtx)
 
-	errCh := make(chan error, 2)
-	go func() {
-		log.Printf("public listener serving on %s (Slack events)", cfg.publicListen)
-		errCh <- publicSrv.ListenAndServe()
-	}()
-	go func() {
-		if cfg.serviceSocket != "" {
-			log.Printf("internal listener serving on UDS %s (gc proxy_process)", cfg.serviceSocket)
-			lis, err := listenUDS(cfg.serviceSocket)
-			if err != nil {
-				errCh <- fmt.Errorf("listen unix %s: %w", cfg.serviceSocket, err)
-				return
-			}
-			errCh <- internalSrv.Serve(lis)
-		} else {
-			internalSrv.Addr = cfg.internalListen
-			log.Printf("internal listener serving on %s (gc publish only)", cfg.internalListen)
-			errCh <- internalSrv.ListenAndServe()
-		}
-	}()
+	startup.ready.Store(true)
 
 	// SIGHUP-driven reload of the four CLI-written registry files
 	// (apps, channel mappings, rig mappings, room launch mappings) —
@@ -2394,6 +2408,10 @@ func listenUDS(path string) (net.Listener, error) {
 }
 
 func registerAdapter(cfg config) error {
+	return registerAdapterRequest(cfg, registrationReplyInstructions(cfg))
+}
+
+func registrationReplyInstructions(cfg config) string {
 	tmpl := cfg.replyInstructions
 	if cfg.minimalInjection() {
 		tmpl = slackReplyInstructionsCompactTemplate
@@ -2401,7 +2419,7 @@ func registerAdapter(cfg config) error {
 	if tmpl == "" {
 		tmpl = slackReplyInstructionsTemplate
 	}
-	return registerAdapterRequest(cfg, tmpl)
+	return tmpl
 }
 
 // registerAdapterWithoutReplyInstructions is the compatibility retry for
@@ -2411,6 +2429,10 @@ func registerAdapterWithoutReplyInstructions(cfg config) error {
 }
 
 func registerAdapterRequest(cfg config, replyInstructions string) error {
+	return registerAdapterRequestContext(context.Background(), cfg, replyInstructions)
+}
+
+func registerAdapterRequestContext(ctx context.Context, cfg config, replyInstructions string) error {
 	body, _ := json.Marshal(adapterRegisterRequest{
 		Provider:    cfg.provider,
 		AccountID:   cfg.accountID,
@@ -2429,7 +2451,7 @@ func registerAdapterRequest(cfg config, replyInstructions string) error {
 	// per-call escape keeps the wire format correct regardless and matches
 	// the dispatch paths that cby-set-c hardened. gc-cby.28.
 	target := fmt.Sprintf("%s/v0/city/%s/extmsg/adapters", cfg.gcAPIBase, url.PathEscape(cfg.cityName))
-	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
@@ -2440,9 +2462,12 @@ func registerAdapterRequest(cfg config, replyInstructions string) error {
 		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return fmt.Errorf("read registration response: %w", err)
+	}
 	if resp.StatusCode >= 400 {
-		return fmt.Errorf("register failed: %s — %s", resp.Status, string(respBody))
+		return &registrationHTTPError{status: resp.StatusCode, body: string(respBody)}
 	}
 	return nil
 }

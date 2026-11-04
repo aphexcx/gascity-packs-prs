@@ -1,0 +1,1 @@
+/tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q (slack-full) exit=0

@@ -1,0 +1,185 @@
+=== RUN   TestRegistrationProcessHelper
+--- PASS: TestRegistrationProcessHelper (0.00s)
+=== RUN   TestRegistrationStartupRetriesCityNotRunning
+    registration_startup_test.go:159: health: registering: attempt 1
+    registration_startup_test.go:169: health: registering: attempt 2
+    registration_startup_test.go:170: health: ok
+    registration_startup_test.go:106: 2026/11/03 23:02:49 starting gc-slack-adapter public=127.0.0.1:64039 internal=uds:/tmp/slack-register-197613026/internal.sock gc=http://127.0.0.1:64038 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:106: 2026/11/03 23:02:49 identity registry: store=/tmp/slack-register-197613026/identities.json
+    registration_startup_test.go:106: 2026/11/03 23:02:49 handle alias registry: store=/tmp/slack-register-197613026/aliases.json
+    registration_startup_test.go:106: 2026/11/03 23:02:49 thread session registry: store=/tmp/slack-register-197613026/.gc/slack/thread_sessions.json
+    registration_startup_test.go:106: 2026/11/03 23:02:49 mention-only registry: store=/tmp/slack-register-197613026/.gc/slack/mention_only_bindings.json channels=0
+    registration_startup_test.go:106: 2026/11/03 23:02:49 own-thread registry: store=/tmp/slack-register-197613026/.gc/slack/own_threads.json
+    registration_startup_test.go:106: 2026/11/03 23:02:49 room launch mapping registry: store=/tmp/slack-register-197613026/.gc/slack/room_launch_mappings.json (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 subteam alias map: store=/tmp/slack-register-197613026/.gc/slack/subteam-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 user alias map: store=/tmp/slack-register-197613026/.gc/slack/slack-user-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 peer bots registry: store=/tmp/slack-register-197613026/.gc/slack/peer_bots.json peers=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 channel mapping registry: store=/tmp/slack-register-197613026/.gc/slack/channel_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 rig mapping registry: store=/tmp/slack-register-197613026/.gc/slack/rig_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 apps registry: store=/tmp/slack-register-197613026/.gc/slack/apps.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 company gateway: directory=/tmp/slack-register-197613026/.gc/slack/company_directory.json bindings=/tmp/slack-register-197613026/.gc/slack/company_bindings.json dm_bindings=/tmp/slack-register-197613026/.gc/slack/dm_bindings.json agent_apps=/tmp/slack-register-197613026/.gc/slack/agent_apps.json ingress=/tmp/slack-register-197613026/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:106: 2026/11/03 23:02:49 delivery policy registry: store=/tmp/slack-register-197613026/.gc/slack/delivery_policy.json channels=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 inbound coalescer: window=8s (0 disables) policy_channels=0 spool="/tmp/slack-register-197613026/.gc/slack/inbound_spool.jsonl" dead_letter_dir="/tmp/slack-register-197613026/.gc/slack/inbound_dead_letter"
+    registration_startup_test.go:106: 2026/11/03 23:02:49 inbound liveness: watchdog stall_after=10m0s backfill_window=1h0m0s pinned_channels=0 alert_channel="" state=/tmp/slack-register-197613026/.gc/slack/inbound_liveness.json
+    registration_startup_test.go:106: 2026/11/03 23:02:49 internal listener serving on UDS /tmp/slack-register-197613026/internal.sock (gc proxy_process)
+    registration_startup_test.go:106: 2026/11/03 23:02:49 register adapter: attempt 1 failed (register failed: 404 Not Found — {"status":404,"title":"Not Found","detail":"not_found: city not found or not running: test-city"}); next wait=1s
+    registration_startup_test.go:106: 2026/11/03 23:02:50 register adapter: attempt 2 failed (register failed: 404 Not Found — {"status":404,"title":"Not Found","detail":"not_found: city not found or not running: test-city"}); next wait=2s
+    registration_startup_test.go:106: 2026/11/03 23:02:52 register adapter: attempt 3 succeeded; next wait=0s
+    registration_startup_test.go:106: 2026/11/03 23:02:52 registered with gc as provider=slack account=TBOOT callback=http://127.0.0.1:64038/v0/city/test-city/svc/slack/publish (via gc /svc proxy)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound file janitor started: store=/tmp/slack-register-197613026/inbound ttl=168h0m0s interval=1h0m0s
+--- PASS: TestRegistrationStartupRetriesCityNotRunning (3.04s)
+=== RUN   TestRegistrationStartupReplyInstructionsCompatibility
+=== RUN   TestRegistrationStartupReplyInstructionsCompatibility/400
+    registration_startup_test.go:208: health: ok
+    registration_startup_test.go:106: 2026/11/03 23:02:52 starting gc-slack-adapter public=127.0.0.1:64071 internal=uds:/tmp/slack-register-251712001/internal.sock gc=http://127.0.0.1:64070 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:106: 2026/11/03 23:02:52 identity registry: store=/tmp/slack-register-251712001/identities.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 handle alias registry: store=/tmp/slack-register-251712001/aliases.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 thread session registry: store=/tmp/slack-register-251712001/.gc/slack/thread_sessions.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 mention-only registry: store=/tmp/slack-register-251712001/.gc/slack/mention_only_bindings.json channels=0
+    registration_startup_test.go:106: 2026/11/03 23:02:52 own-thread registry: store=/tmp/slack-register-251712001/.gc/slack/own_threads.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 room launch mapping registry: store=/tmp/slack-register-251712001/.gc/slack/room_launch_mappings.json (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 subteam alias map: store=/tmp/slack-register-251712001/.gc/slack/subteam-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 user alias map: store=/tmp/slack-register-251712001/.gc/slack/slack-user-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 peer bots registry: store=/tmp/slack-register-251712001/.gc/slack/peer_bots.json peers=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 channel mapping registry: store=/tmp/slack-register-251712001/.gc/slack/channel_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 rig mapping registry: store=/tmp/slack-register-251712001/.gc/slack/rig_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 apps registry: store=/tmp/slack-register-251712001/.gc/slack/apps.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 company gateway: directory=/tmp/slack-register-251712001/.gc/slack/company_directory.json bindings=/tmp/slack-register-251712001/.gc/slack/company_bindings.json dm_bindings=/tmp/slack-register-251712001/.gc/slack/dm_bindings.json agent_apps=/tmp/slack-register-251712001/.gc/slack/agent_apps.json ingress=/tmp/slack-register-251712001/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:106: 2026/11/03 23:02:52 delivery policy registry: store=/tmp/slack-register-251712001/.gc/slack/delivery_policy.json channels=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound coalescer: window=8s (0 disables) policy_channels=0 spool="/tmp/slack-register-251712001/.gc/slack/inbound_spool.jsonl" dead_letter_dir="/tmp/slack-register-251712001/.gc/slack/inbound_dead_letter"
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound liveness: watchdog stall_after=10m0s backfill_window=1h0m0s pinned_channels=0 alert_channel="" state=/tmp/slack-register-251712001/.gc/slack/inbound_liveness.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 internal listener serving on UDS /tmp/slack-register-251712001/internal.sock (gc proxy_process)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 register adapter: attempt 1 failed (register failed: 400 Bad Request — {"error":"bad_request","message":"json: unknown field \"reply_instructions\""}); next wait=0s (retrying without reply_instructions)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 register adapter: attempt 2 succeeded; next wait=0s
+    registration_startup_test.go:106: 2026/11/03 23:02:52 registered with gc as provider=slack account=TBOOT callback=http://127.0.0.1:64070/v0/city/test-city/svc/slack/publish (via gc /svc proxy)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound file janitor started: store=/tmp/slack-register-251712001/inbound ttl=168h0m0s interval=1h0m0s
+=== RUN   TestRegistrationStartupReplyInstructionsCompatibility/422
+    registration_startup_test.go:208: health: ok
+    registration_startup_test.go:106: 2026/11/03 23:02:52 starting gc-slack-adapter public=127.0.0.1:64075 internal=uds:/tmp/slack-register-704260927/internal.sock gc=http://127.0.0.1:64074 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:106: 2026/11/03 23:02:52 identity registry: store=/tmp/slack-register-704260927/identities.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 handle alias registry: store=/tmp/slack-register-704260927/aliases.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 thread session registry: store=/tmp/slack-register-704260927/.gc/slack/thread_sessions.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 mention-only registry: store=/tmp/slack-register-704260927/.gc/slack/mention_only_bindings.json channels=0
+    registration_startup_test.go:106: 2026/11/03 23:02:52 own-thread registry: store=/tmp/slack-register-704260927/.gc/slack/own_threads.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 room launch mapping registry: store=/tmp/slack-register-704260927/.gc/slack/room_launch_mappings.json (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 subteam alias map: store=/tmp/slack-register-704260927/.gc/slack/subteam-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 user alias map: store=/tmp/slack-register-704260927/.gc/slack/slack-user-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 peer bots registry: store=/tmp/slack-register-704260927/.gc/slack/peer_bots.json peers=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 channel mapping registry: store=/tmp/slack-register-704260927/.gc/slack/channel_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 rig mapping registry: store=/tmp/slack-register-704260927/.gc/slack/rig_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 apps registry: store=/tmp/slack-register-704260927/.gc/slack/apps.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 company gateway: directory=/tmp/slack-register-704260927/.gc/slack/company_directory.json bindings=/tmp/slack-register-704260927/.gc/slack/company_bindings.json dm_bindings=/tmp/slack-register-704260927/.gc/slack/dm_bindings.json agent_apps=/tmp/slack-register-704260927/.gc/slack/agent_apps.json ingress=/tmp/slack-register-704260927/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:106: 2026/11/03 23:02:52 delivery policy registry: store=/tmp/slack-register-704260927/.gc/slack/delivery_policy.json channels=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound coalescer: window=8s (0 disables) policy_channels=0 spool="/tmp/slack-register-704260927/.gc/slack/inbound_spool.jsonl" dead_letter_dir="/tmp/slack-register-704260927/.gc/slack/inbound_dead_letter"
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound liveness: watchdog stall_after=10m0s backfill_window=1h0m0s pinned_channels=0 alert_channel="" state=/tmp/slack-register-704260927/.gc/slack/inbound_liveness.json
+    registration_startup_test.go:106: 2026/11/03 23:02:52 internal listener serving on UDS /tmp/slack-register-704260927/internal.sock (gc proxy_process)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 register adapter: attempt 1 failed (register failed: 422 Unprocessable Entity — {"status":422,"code":"validation-failed","errors":[{"message":"unexpected property","location":"body.reply_instructions"}]}); next wait=0s (retrying without reply_instructions)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 register adapter: attempt 2 succeeded; next wait=0s
+    registration_startup_test.go:106: 2026/11/03 23:02:52 registered with gc as provider=slack account=TBOOT callback=http://127.0.0.1:64074/v0/city/test-city/svc/slack/publish (via gc /svc proxy)
+    registration_startup_test.go:106: 2026/11/03 23:02:52 inbound file janitor started: store=/tmp/slack-register-704260927/inbound ttl=168h0m0s interval=1h0m0s
+--- PASS: TestRegistrationStartupReplyInstructionsCompatibility (0.08s)
+    --- PASS: TestRegistrationStartupReplyInstructionsCompatibility/400 (0.05s)
+    --- PASS: TestRegistrationStartupReplyInstructionsCompatibility/422 (0.03s)
+=== RUN   TestRegistrationStartupDelayedPort
+    registration_startup_test.go:225: health: registering: attempt 1
+    registration_startup_test.go:236: health: ok
+    registration_startup_test.go:237: same adapter PID 30886 registered after the port opened at +20s
+    registration_startup_test.go:106: 2026/11/03 23:02:53 starting gc-slack-adapter public=127.0.0.1:64080 internal=uds:/tmp/slack-register-3889463819/internal.sock gc=http://127.0.0.1:64079 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:106: 2026/11/03 23:02:53 identity registry: store=/tmp/slack-register-3889463819/identities.json
+    registration_startup_test.go:106: 2026/11/03 23:02:53 handle alias registry: store=/tmp/slack-register-3889463819/aliases.json
+    registration_startup_test.go:106: 2026/11/03 23:02:53 thread session registry: store=/tmp/slack-register-3889463819/.gc/slack/thread_sessions.json
+    registration_startup_test.go:106: 2026/11/03 23:02:53 mention-only registry: store=/tmp/slack-register-3889463819/.gc/slack/mention_only_bindings.json channels=0
+    registration_startup_test.go:106: 2026/11/03 23:02:53 own-thread registry: store=/tmp/slack-register-3889463819/.gc/slack/own_threads.json
+    registration_startup_test.go:106: 2026/11/03 23:02:53 room launch mapping registry: store=/tmp/slack-register-3889463819/.gc/slack/room_launch_mappings.json (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 subteam alias map: store=/tmp/slack-register-3889463819/.gc/slack/subteam-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 user alias map: store=/tmp/slack-register-3889463819/.gc/slack/slack-user-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 peer bots registry: store=/tmp/slack-register-3889463819/.gc/slack/peer_bots.json peers=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 channel mapping registry: store=/tmp/slack-register-3889463819/.gc/slack/channel_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 rig mapping registry: store=/tmp/slack-register-3889463819/.gc/slack/rig_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 apps registry: store=/tmp/slack-register-3889463819/.gc/slack/apps.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 company gateway: directory=/tmp/slack-register-3889463819/.gc/slack/company_directory.json bindings=/tmp/slack-register-3889463819/.gc/slack/company_bindings.json dm_bindings=/tmp/slack-register-3889463819/.gc/slack/dm_bindings.json agent_apps=/tmp/slack-register-3889463819/.gc/slack/agent_apps.json ingress=/tmp/slack-register-3889463819/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:106: 2026/11/03 23:02:53 delivery policy registry: store=/tmp/slack-register-3889463819/.gc/slack/delivery_policy.json channels=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 inbound coalescer: window=8s (0 disables) policy_channels=0 spool="/tmp/slack-register-3889463819/.gc/slack/inbound_spool.jsonl" dead_letter_dir="/tmp/slack-register-3889463819/.gc/slack/inbound_dead_letter"
+    registration_startup_test.go:106: 2026/11/03 23:02:53 inbound liveness: watchdog stall_after=10m0s backfill_window=1h0m0s pinned_channels=0 alert_channel="" state=/tmp/slack-register-3889463819/.gc/slack/inbound_liveness.json
+    registration_startup_test.go:106: 2026/11/03 23:02:53 internal listener serving on UDS /tmp/slack-register-3889463819/internal.sock (gc proxy_process)
+    registration_startup_test.go:106: 2026/11/03 23:02:53 register adapter: attempt 1 failed (Post "http://127.0.0.1:64079/v0/city/test-city/extmsg/adapters": dial tcp 127.0.0.1:64079: connect: connection refused); next wait=1s
+    registration_startup_test.go:106: 2026/11/03 23:02:54 register adapter: attempt 2 failed (Post "http://127.0.0.1:64079/v0/city/test-city/extmsg/adapters": dial tcp 127.0.0.1:64079: connect: connection refused); next wait=2s
+    registration_startup_test.go:106: 2026/11/03 23:02:56 register adapter: attempt 3 failed (Post "http://127.0.0.1:64079/v0/city/test-city/extmsg/adapters": dial tcp 127.0.0.1:64079: connect: connection refused); next wait=4s
+    registration_startup_test.go:106: 2026/11/03 23:03:00 register adapter: attempt 4 failed (Post "http://127.0.0.1:64079/v0/city/test-city/extmsg/adapters": dial tcp 127.0.0.1:64079: connect: connection refused); next wait=8s
+    registration_startup_test.go:106: 2026/11/03 23:03:08 register adapter: attempt 5 failed (Post "http://127.0.0.1:64079/v0/city/test-city/extmsg/adapters": dial tcp 127.0.0.1:64079: connect: connection refused); next wait=16s
+    registration_startup_test.go:106: 2026/11/03 23:03:24 register adapter: attempt 6 succeeded; next wait=0s
+    registration_startup_test.go:106: 2026/11/03 23:03:24 registered with gc as provider=slack account=TBOOT callback=http://127.0.0.1:64079/v0/city/test-city/svc/slack/publish (via gc /svc proxy)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 inbound file janitor started: store=/tmp/slack-register-3889463819/inbound ttl=168h0m0s interval=1h0m0s
+--- PASS: TestRegistrationStartupDelayedPort (31.04s)
+=== RUN   TestRegistrationFailureClassification
+=== RUN   TestRegistrationFailureClassification/refused
+=== RUN   TestRegistrationFailureClassification/unready
+=== RUN   TestRegistrationFailureClassification/missing-route
+=== RUN   TestRegistrationFailureClassification/old-gc
+=== RUN   TestRegistrationFailureClassification/current-gc
+=== RUN   TestRegistrationFailureClassification/wrong-field
+=== RUN   TestRegistrationFailureClassification/bad-value
+=== RUN   TestRegistrationFailureClassification/not-json
+=== RUN   TestRegistrationFailureClassification/city-code
+=== RUN   TestRegistrationFailureClassification/invalid-account
+=== RUN   TestRegistrationFailureClassification/auth
+=== RUN   TestRegistrationFailureClassification/server
+=== RUN   TestRegistrationFailureClassification/dns
+--- PASS: TestRegistrationFailureClassification (0.00s)
+    --- PASS: TestRegistrationFailureClassification/refused (0.00s)
+    --- PASS: TestRegistrationFailureClassification/unready (0.00s)
+    --- PASS: TestRegistrationFailureClassification/missing-route (0.00s)
+    --- PASS: TestRegistrationFailureClassification/old-gc (0.00s)
+    --- PASS: TestRegistrationFailureClassification/current-gc (0.00s)
+    --- PASS: TestRegistrationFailureClassification/wrong-field (0.00s)
+    --- PASS: TestRegistrationFailureClassification/bad-value (0.00s)
+    --- PASS: TestRegistrationFailureClassification/not-json (0.00s)
+    --- PASS: TestRegistrationFailureClassification/city-code (0.00s)
+    --- PASS: TestRegistrationFailureClassification/invalid-account (0.00s)
+    --- PASS: TestRegistrationFailureClassification/auth (0.00s)
+    --- PASS: TestRegistrationFailureClassification/server (0.00s)
+    --- PASS: TestRegistrationFailureClassification/dns (0.00s)
+=== RUN   TestRegistrationDeadlineRetainsLastStatus
+2026/11/03 23:03:24 register adapter: attempt 1 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=1ms
+2026/11/03 23:03:24 register adapter: attempt 2 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=2ms
+2026/11/03 23:03:24 register adapter: attempt 3 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=4ms
+2026/11/03 23:03:24 register adapter: attempt 4 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=5ms
+2026/11/03 23:03:24 register adapter: attempt 5 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=5ms
+2026/11/03 23:03:24 register adapter: attempt 6 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=5ms
+2026/11/03 23:03:24 register adapter: attempt 7 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=5ms
+2026/11/03 23:03:24 register adapter: attempt 8 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=2.406459ms
+2026/11/03 23:03:24 register adapter: attempt 9 failed (Post "http://127.0.0.1:64898/v0/city/test-city/extmsg/adapters": context deadline exceeded); next wait=0s (stopped)
+--- PASS: TestRegistrationDeadlineRetainsLastStatus (0.04s)
+=== RUN   TestRegistrationStartupDeadlineExitsFatal
+    registration_startup_test.go:106: 2026/11/03 23:03:24 starting gc-slack-adapter public=127.0.0.1:64901 internal=uds:/tmp/slack-register-1175573335/internal.sock gc=http://127.0.0.1:64900 city=test-city dispatch_concurrency=50
+    registration_startup_test.go:106: 2026/11/03 23:03:24 identity registry: store=/tmp/slack-register-1175573335/identities.json
+    registration_startup_test.go:106: 2026/11/03 23:03:24 handle alias registry: store=/tmp/slack-register-1175573335/aliases.json
+    registration_startup_test.go:106: 2026/11/03 23:03:24 thread session registry: store=/tmp/slack-register-1175573335/.gc/slack/thread_sessions.json
+    registration_startup_test.go:106: 2026/11/03 23:03:24 mention-only registry: store=/tmp/slack-register-1175573335/.gc/slack/mention_only_bindings.json channels=0
+    registration_startup_test.go:106: 2026/11/03 23:03:24 own-thread registry: store=/tmp/slack-register-1175573335/.gc/slack/own_threads.json
+    registration_startup_test.go:106: 2026/11/03 23:03:24 room launch mapping registry: store=/tmp/slack-register-1175573335/.gc/slack/room_launch_mappings.json (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 subteam alias map: store=/tmp/slack-register-1175573335/.gc/slack/subteam-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 user alias map: store=/tmp/slack-register-1175573335/.gc/slack/slack-user-aliases.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 peer bots registry: store=/tmp/slack-register-1175573335/.gc/slack/peer_bots.json peers=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 channel mapping registry: store=/tmp/slack-register-1175573335/.gc/slack/channel_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 rig mapping registry: store=/tmp/slack-register-1175573335/.gc/slack/rig_mappings.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 apps registry: store=/tmp/slack-register-1175573335/.gc/slack/apps.json entries=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 company gateway: directory=/tmp/slack-register-1175573335/.gc/slack/company_directory.json bindings=/tmp/slack-register-1175573335/.gc/slack/company_bindings.json dm_bindings=/tmp/slack-register-1175573335/.gc/slack/dm_bindings.json agent_apps=/tmp/slack-register-1175573335/.gc/slack/agent_apps.json ingress=/tmp/slack-register-1175573335/.gc/slack/chat-ingress self_bot="" dir_loaded=false bindings_loaded=false dm_bindings_loaded=false registered_agent_apps=0 verify_sessions=false store_ready=true
+    registration_startup_test.go:106: 2026/11/03 23:03:24 delivery policy registry: store=/tmp/slack-register-1175573335/.gc/slack/delivery_policy.json channels=0 (read-only; SIGHUP or restart to reload)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 inbound coalescer: window=8s (0 disables) policy_channels=0 spool="/tmp/slack-register-1175573335/.gc/slack/inbound_spool.jsonl" dead_letter_dir="/tmp/slack-register-1175573335/.gc/slack/inbound_dead_letter"
+    registration_startup_test.go:106: 2026/11/03 23:03:24 inbound liveness: watchdog stall_after=10m0s backfill_window=1h0m0s pinned_channels=0 alert_channel="" state=/tmp/slack-register-1175573335/.gc/slack/inbound_liveness.json
+    registration_startup_test.go:106: 2026/11/03 23:03:24 internal listener serving on UDS /tmp/slack-register-1175573335/internal.sock (gc proxy_process)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 register adapter: attempt 1 failed (register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}); next wait=99.056292ms
+    registration_startup_test.go:106: 2026/11/03 23:03:24 register adapter: attempt 2 failed (Post "http://127.0.0.1:64900/v0/city/test-city/extmsg/adapters": context deadline exceeded); next wait=0s (stopped)
+    registration_startup_test.go:106: 2026/11/03 23:03:24 register adapter: registration stopped: context deadline exceeded; last failure: register failed: 404 Not Found — {"detail":"not_found: city not found or not running: test-city"}
+--- PASS: TestRegistrationStartupDeadlineExitsFatal (0.13s)
+=== RUN   TestRegistrationDeadlineCancelsRequest
+2026/11/03 23:03:24 register adapter: attempt 1 failed (Post "http://127.0.0.1:64906/v0/city/test-city/extmsg/adapters": context deadline exceeded); next wait=0s (stopped)
+--- PASS: TestRegistrationDeadlineCancelsRequest (0.04s)
+=== RUN   TestRegistrationCompatibilityOnlyOnceAcrossBootRetries
+2026/11/03 23:03:24 register adapter: attempt 1 failed (register failed: 400 Bad Request — json: unknown field "reply_instructions"); next wait=0s (retrying without reply_instructions)
+2026/11/03 23:03:24 register adapter: attempt 2 failed (register failed: 404 Not Found — city not found or not running: test-city); next wait=1ms
+2026/11/03 23:03:24 register adapter: attempt 3 failed (register failed: 400 Bad Request — json: unknown field "reply_instructions"); next wait=0s (not retryable)
+--- PASS: TestRegistrationCompatibilityOnlyOnceAcrossBootRetries (0.00s)
+PASS
+ok  	github.com/sjarmak/gc-slack-adapter	35.722s

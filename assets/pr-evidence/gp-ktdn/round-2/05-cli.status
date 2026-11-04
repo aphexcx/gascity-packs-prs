@@ -1,0 +1,1 @@
+cli: go test -race -count=1 -timeout=5m -json ./... | exit=0

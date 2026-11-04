@@ -1,0 +1,8 @@
+go test -count=1 -run ^TestRegistrationStartup(RetriesCityNotRunning|ReplyInstructionsCompatibility)$ -v . exit=1
+go test -race -count=1 -timeout=60s -run ^TestRegistration -v . exit=0
+go build -o /tmp/gp-ktdn-slack-adapter . exit=0
+go test -race -count=1 -timeout=5m -json ./... (adapter) exit=0
+go test -race -count=1 -timeout=5m -json ./... (cli) exit=0
+/tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q (slack-full) exit=0
+SLACK_TEST_BOOT_DELAY=1 go test -race -count=1 -timeout=90s -run ^TestRegistration -v . exit=0
+codex-gate review --base origin/main --class STANDARD --model gpt-6-astra exit=0

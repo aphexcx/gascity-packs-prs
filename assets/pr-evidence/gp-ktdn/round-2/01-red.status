@@ -1,0 +1,1 @@
+adapter: go test -race -count=1 -timeout=45s -run ^TestRegistrationStartupRetries(ServiceUnavailable|ClientTimeout)$ -v . | exit=1

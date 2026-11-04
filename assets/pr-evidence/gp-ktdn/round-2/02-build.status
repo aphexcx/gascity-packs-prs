@@ -1,0 +1,1 @@
+adapter: go build -o /tmp/gp-xgjf-slack-adapter . | exit=0

@@ -1,0 +1,12 @@
+{
+  "passed": 12876,
+  "top_level_passed": 1443,
+  "failed": 0,
+  "skipped": 3,
+  "skipped_tests": [
+    "TestIngestionLiveBusySessionProof",
+    "TestMinimalReplayMeasurement",
+    "TestRegistrationStartupDelayedPort"
+  ],
+  "packages_passed": 2
+}
