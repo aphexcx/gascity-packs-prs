@@ -66,7 +66,8 @@ export function ref(rid) {
   return `m-${createHash('sha256').update(String(rid)).digest('hex').slice(0, 10)}`;
 }
 
-const WINDOW_TYPES = new Set(['text', 'reaction', 'image', 'audio', 'video', 'document', 'sticker', 'location', 'contacts', 'interactive', 'button']);
+// The gateway's reading 7 (its README and window.ts CUSTOMER_MESSAGE_TYPES at 392f9c09), order included.
+const WINDOW_TYPES = new Set(['text', 'reaction', 'image', 'audio', 'video', 'document', 'sticker', 'location', 'contacts', 'interactive', 'button', 'order']);
 const CHAIN_STATES = new Set(['received', 'posted', 'redeliver', 'accepted:failed', 'accepted:partial', 'accepted:no_route']);
 
 export const NO_ROUTE_ON_MARKED_NOTE = 'gc took this message; either it was already delivered (gc suppressed the marked copy as a repeat) '

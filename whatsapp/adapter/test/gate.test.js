@@ -19,6 +19,7 @@ import { createGatewayClient } from '../src/gateway.js';
 import { conversationRef, createGcClient } from '../src/gc.js';
 import { createInbound } from '../src/inbound.js';
 import { JOURNAL_FILE, ackOwed, entryState, openJournal } from '../src/journal.js';
+import { createLedger } from '../src/ledger.js';
 import { createPublisher } from '../src/outbound.js';
 import {
   CITY, CREDENTIAL, createTestClock, deadLetterLines, rid, sleep, startFakeGateway, startFakeGc, stays, tempDir, waitFor,
@@ -52,7 +53,7 @@ async function world(t) {
 // true makes that journal append throw ENOSPC (the line is not written);
 // crashOnFail stops the engine at that instant, before the throw, as a
 // SIGKILL between two journal lines would.
-function startEngine(w, { keeper, wrapGc = (c) => c, failAppend, crashOnFail = false } = {}) {
+function startEngine(w, { keeper, ledger, wrapGc = (c) => c, failAppend, crashOnFail = false } = {}) {
   const real = openJournal({ stateDir: w.stateDir, clock: w.clock.now });
   const engine = { journal: real, logs: [], failures: 0 };
   let journal = real;
@@ -76,6 +77,7 @@ function startEngine(w, { keeper, wrapGc = (c) => c, failAppend, crashOnFail = f
     clock: w.clock.now,
     log: (line) => engine.logs.push(String(line)),
     keeper,
+    ledger,
     pollMs: 0,
     gcPostTimeoutMs: POST_TIMEOUT_MS,
     watermarkCheckMs: 60000,
@@ -444,4 +446,18 @@ test('gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not reti
   await waitFor(() => w.gw.acked.has(id), { what: 'the ack once the bind is saved' });
   assert.ok(keeper.attempts > attempts, 'the bind was retried');
   assert.deepEqual(keeper.bound, { code: '123456', waId: A });
+});
+
+// --- the Fable read r1's MINOR 1 (inbound.js:50, read in takeDelivery) -----------
+
+test('Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not', async (t) => {
+  const w = await world(t);
+  const ledger = createLedger({ stateDir: w.stateDir, clock: w.clock.now });
+  startEngine(w, { ledger });
+  const ts = String(Math.floor(w.clock.now() / 1000));
+  const order = w.gw.addDelivery({ wa_id: A, message: { from: A, id: 'wamid.GO1', timestamp: ts, type: 'order', order: { catalog_id: 'c1', product_items: [] } } });
+  const notice = w.gw.addDelivery({ wa_id: B, message: { from: B, id: 'wamid.GS1', timestamp: ts, type: 'system', system: { body: 'a system notice' } } });
+  await waitFor(() => w.gw.acked.has(order) && w.gw.acked.has(notice), { what: 'both delivered and acked' });
+  assert.equal(ledger.windowOpen(A), true, 'an order opens the window in the ledger, as at the gateway');
+  assert.equal(ledger.windowOpen(B), false, 'a system notice does not');
 });
