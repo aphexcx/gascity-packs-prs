@@ -1,6 +1,6 @@
 {
   "tests_including_subtests": {
-    "pass": 12851,
+    "pass": 12858,
     "skip": 3
   },
   "top_level_tests": {
@@ -11,12 +11,12 @@
     {
       "package": "github.com/sjarmak/gc-slack-adapter/redact",
       "action": "pass",
-      "elapsed": 1.184
+      "elapsed": 1.246
     },
     {
       "package": "github.com/sjarmak/gc-slack-adapter",
       "action": "pass",
-      "elapsed": 151.748
+      "elapsed": 151.148
     }
   ],
   "skipped": [

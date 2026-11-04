@@ -23,4 +23,8 @@ Toolchain: city toolchain directory first on PATH; `go version go1.27.3 darwin/a
 - Full race suites: `go test -race -count=1 -timeout=5m -json ./...` from each of `slack-full/adapter` and `slack-full/cli`. See `05-adapter-summary.json`, `06-cli-summary.json` and their completion status files. Summaries are parsed from full local JSONL logs; counts distinguish top-level tests from subtests.
 - Pack tests: `/tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q` from `slack-full`: 907 passed, 2 skipped. Two multiprocessing/fork deprecation warnings; no test failures. See `07-pytest.log`.
 
-The first full adapter run passed before the measured 422 classification addition. A final full adapter run is being collected for the final handoff; its summary replaces the initial summary once complete. CLI and Python sources were unchanged by that addition.
+The full adapter suite was rerun after the measured 422 classification addition: 12,858 passing tests/subtests (1,440 top-level), 3 opt-in skips, 2 passing packages, no failures. The delayed-port skip was separately exercised successfully with its opt-in enabled. CLI: 237 passing tests/subtests (199 top-level), 8 passing packages. All final completion status files report exit 0. CLI and Python sources were unchanged by the 422 addition.
+
+## Worker Codex gate
+
+The installed helper reviewed committed implementation `f5f9fa6c035dad5b62b0fb268522ea5b00dba79d` against `origin/main` at `8cb01a83bdaa6b4b42aeb63bae1ee4a6d369262f`, using `--class STANDARD --model gpt-6-astra`. It returned `VERDICT: CLEAN`, exit 0, with no actionable correctness or regression findings. See `10-codex.out`, `.rc`, `.reason` and `.status`. Later handoff changes contain only evidence and PR-description updates; production code and tests remain identical to the reviewed commit. This worker review does not replace the mayor's merge and cross-model gates.
