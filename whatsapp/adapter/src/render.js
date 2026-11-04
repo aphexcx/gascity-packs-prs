@@ -65,6 +65,11 @@ async function mediaText(type, message, delivery, media) {
     kind: type,
     media: { ...item, voice: type === 'audio' ? Boolean(item.voice) : undefined },
   });
+  if (result?.transient) {
+    // Thrown before the posted line: the step retries on the ladder and the
+    // gateway keeps the delivery; a permanent failure posts with its note.
+    throw Object.assign(new Error(`media download did not complete (${result.note ?? 'transient'}); retrying`), { transientMedia: true });
+  }
   const block = media.describe([result]);
   const text = [caption, block].filter(Boolean).join('\n\n');
   return { text, attachments: result?.attachment ? [result.attachment] : [] };

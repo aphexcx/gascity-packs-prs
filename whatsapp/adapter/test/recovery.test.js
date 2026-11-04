@@ -8,6 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { ref } from '../src/inbound.js';
 import { adapterRequest, pasteText, rid, rig, sleep, stays, waitFor } from './fakes.js';
 
 const WA = '5511900000001';
@@ -22,6 +23,9 @@ async function setup(t, extra = {}) {
 
 const acked = (r, id) => waitFor(() => r.gw.acked.has(id), { what: `the ack of delivery ${id}` });
 const lines = (r, pmid, type) => r.journal().filter((l) => l.rid === rid(pmid) && (!type || l.t === type));
+// The in-doubt lookup (limit 500, oldest first) from the given cursor returned pmid.
+const foundFrom = (r, pmid, after) => r.gc.requests.some((q) => q.route === 'GET /extmsg/transcript' && q.query.limit === '500'
+  && q.query.after_sequence === String(after) && (q.returned ?? []).includes(pmid));
 
 test('(1) killed after the poll and before the received line: the restart re-reads the held delivery; one POST', async (t) => {
   const r = await setup(t);
@@ -144,8 +148,13 @@ test('(3f) the snapshot probe line survives a SIGKILL, a restart and a compactio
   await acked(r, id);
   await r.adapter.kill();
   r.start();
-  await r.pump(3000);
-  await waitFor(() => !r.journal().some((l) => l.rid === rid('wamid.K3f') && l.t === 'received'), { what: 'the acked rid compacted away' });
+  // Compaction drops an acknowledged rid once a poll that began after the
+  // ack has completed (the review's M2): keep the clock moving until it does.
+  await waitFor(async () => {
+    r.clock.advance(1000);
+    await sleep(30);
+    return !r.journal().some((l) => l.rid === rid('wamid.K3f') && l.t === 'received');
+  }, { what: 'the acked rid compacted away' });
   const probes = r.journal().filter((l) => l.t === 'probe' && l.rid === rid('wamid.K3f'));
   assert.equal(probes.length, 1);
   assert.equal(probes[0].shape, 'pane');
@@ -272,6 +281,7 @@ test('(7a) the lookup boundary: accepted pending at N with no later message, gc 
   await r.pump(6000);
   await acked(r, id);
   assert.ok(boundary < n, `boundary ${boundary} < N ${n}`);
+  assert.ok(foundFrom(r, 'wamid.B1', boundary), 'the lookup from the posted boundary returned the record');
   const posts = r.gc.postsFor('wamid.B1');
   assert.equal(posts.length, 2);
   assert.equal(posts[0].text, 'one');
@@ -295,6 +305,7 @@ test('(7b) the same with two later messages accepted at N+1 and N+2 before the r
   await r.pump(6000);
   await acked(r, id);
   assert.ok(boundary < n);
+  assert.ok(foundFrom(r, 'wamid.C1', boundary), 'the lookup from the posted boundary returned the record past N+1, N+2');
   assert.equal(r.gc.count('wamid.C1'), 2);
   assert.ok(r.gc.postsFor('wamid.C1')[1].text.startsWith(MARKER('wamid.C1')));
   t.diagnostic(`posted boundary ${boundary}, N=${n}, later messages at ${n + 1} and ${n + 2}`);
@@ -389,6 +400,7 @@ test('(8b) the same with the adapter killed through the conclusion and restarted
   await r.pump(2000);
   await acked(r, id);
   assert.equal(r.gc.count('wamid.K8b'), 2);
+  assert.ok(foundFrom(r, 'wamid.K8b', lines(r, 'wamid.K8b', 'posted')[0].boundary), 'the lookup from the posted boundary found the record');
   assert.ok(r.gc.postsFor('wamid.K8b')[1].text.startsWith(MARKER('wamid.K8b')));
 });
 
@@ -405,8 +417,9 @@ test('(8c) the terminal hold, then unknown, then 24 h: no further POST, no read-
   assert.equal(r.gc.requests.filter((q) => q.route.includes('receipts')).length, 0, 'no read-back of a terminal hold');
   assert.equal(r.gw.held(id1) && r.gw.held(id2), true);
   const status = await adapterRequest(r.socket, 'GET', '/status');
-  assert.deepEqual(status.json.inbound.held.map((h) => h.rid).sort(), [rid('wamid.T1'), rid('wamid.T2')]);
-  const dead = await adapterRequest(r.socket, 'POST', '/inbound/resolve', { rid: rid('wamid.T1'), as: 'dead' });
+  assert.deepEqual(status.json.inbound.held.map((h) => h.ref).sort(), [ref(rid('wamid.T1')), ref(rid('wamid.T2'))].sort());
+  assert.ok(!JSON.stringify(status.json).includes('wamid.T1'), 'status never names the rid (a wamid encodes the phone)');
+  const dead = await adapterRequest(r.socket, 'POST', '/inbound/resolve', { rid: ref(rid('wamid.T1')), as: 'dead' });
   assert.equal(dead.status, 200);
   assert.equal(dead.json.wa_id_last4, '0001');
   await acked(r, id1);
@@ -432,7 +445,7 @@ test('(8d) the hold across a SIGKILL, and a kill between the accepted (terminal)
   await stays(() => r.gc.count('wamid.T3') === 1, { what: 'no POST' });
   assert.equal(r.gc.requests.filter((q) => q.route.includes('receipts') || q.query.limit === '500').length, 0, 'no read-back, no lookup');
   const status = await adapterRequest(r.socket, 'GET', '/status');
-  assert.deepEqual(status.json.inbound.held.map((h) => h.rid), [rid('wamid.T3')]);
+  assert.deepEqual(status.json.inbound.held.map((h) => h.ref), [ref(rid('wamid.T3'))]);
   await r.adapter.kill();
   r.start();
   await r.pump(25 * 60 * 60000, { stepMs: 60 * 60000, realMs: 20 });

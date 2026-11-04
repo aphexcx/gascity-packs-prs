@@ -149,8 +149,7 @@ test('(11f) the watermark survives compaction: an acked rid compacted away leave
   r.start();
   const backup = r.gc.backup();
   await deliver(r, A, 'wamid.F0');
-  await r.pump(2000);
-  await waitFor(() => lines(r, 'wamid.F0').length === 0, { what: 'the acked rid compacted away' });
+  await r.pumpUntil(() => lines(r, 'wamid.F0').length === 0, { what: 'the acked rid compacted away' });
   assert.equal(r.journal().filter((l) => l.t === 'watermark' && l.conversation_id === A).at(-1).sequence, 1);
   r.gc.restore(backup);
   await r.pump(61000, { stepMs: 5000 });

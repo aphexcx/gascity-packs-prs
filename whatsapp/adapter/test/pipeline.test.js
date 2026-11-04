@@ -167,8 +167,7 @@ test('every acknowledged entry is compacted away; the watermark stays', async (t
   const id = r.gw.addText(X, 'wamid.CP', 'compact me');
   r.start();
   await acked(r, id);
-  await r.pump(2000);
-  await waitFor(() => lines(r, 'wamid.CP').length === 0, { what: 'the rid compacted away' });
+  await r.pumpUntil(() => lines(r, 'wamid.CP').length === 0, { what: 'the rid compacted away' });
   assert.equal(r.journal().filter((l) => l.t === 'watermark' && l.conversation_id === X).length, 1);
 });
 

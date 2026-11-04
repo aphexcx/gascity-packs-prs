@@ -35,12 +35,17 @@ wa_call() {
   method="$1"
   path="$2"
   data="${3:-}"
+  # A jq failure inside "$(...)" yields an empty body without stopping the
+  # script: never send a POST without its JSON.
+  if [ "$method" = POST ] && [ -z "$data" ]; then
+    wa_die "internal error: the request body for $path is empty (jq failed?)"
+  fi
   url="$(wa_adapter_base)$path"
   rc=0
   if [ -n "$data" ]; then
-    response=$(curl -sS -X "$method" "$url" -H 'Content-Type: application/json' -H 'X-GC-Request: gc-whatsapp' -d "$data" -w '\n%{http_code}') || rc=$?
+    response=$(curl -sS --max-time "${WA_MAX_TIME:-120}" -X "$method" "$url" -H 'Content-Type: application/json' -H 'X-GC-Request: gc-whatsapp' -d "$data" -w '\n%{http_code}') || rc=$?
   else
-    response=$(curl -sS -X "$method" "$url" -H 'X-GC-Request: gc-whatsapp' -w '\n%{http_code}') || rc=$?
+    response=$(curl -sS --max-time "${WA_MAX_TIME:-120}" -X "$method" "$url" -H 'X-GC-Request: gc-whatsapp' -w '\n%{http_code}') || rc=$?
   fi
   if [ "$rc" -ne 0 ]; then
     wa_die "transport failure (curl exit $rc): is the whatsapp service running? (gc service list)"

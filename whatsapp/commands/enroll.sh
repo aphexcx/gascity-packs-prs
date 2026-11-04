@@ -39,7 +39,7 @@ if [ -f "$env_file" ] && grep -q '^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\
 fi
 
 rc=0
-response=$(curl -sS -X POST "$gateway/v1/enroll" -H 'Content-Type: application/json' \
+response=$(curl -sS --max-time 60 -X POST "$gateway/v1/enroll" -H 'Content-Type: application/json' \
   -d "$(jq -n --arg code "$code" --arg name "$name" '{code: $code, name: $name}')" -w '\n%{http_code}') || rc=$?
 [ "$rc" -eq 0 ] || wa_die "transport failure reaching $gateway (curl exit $rc)"
 status=$(printf '%s' "$response" | tail -n 1)
@@ -50,6 +50,10 @@ fi
 credential=$(printf '%s' "$payload" | jq -r '.credential // empty')
 city_id=$(printf '%s' "$payload" | jq -r '.city_id // empty')
 [ -n "$credential" ] || wa_die "the gateway answered without a credential"
+# run.sh sources this file: accept only a token-shaped credential.
+case "$credential" in
+  *[!A-Za-z0-9._~+/=-]*) wa_die "the gateway answered a credential with unexpected characters; refusing to write it" ;;
+esac
 
 umask 077
 mkdir -p "$(dirname "$env_file")"

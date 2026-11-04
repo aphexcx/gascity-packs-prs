@@ -1,5 +1,6 @@
 """Pack discovery, the doctor rows' contracts (each failing closed with its
 documented message in a clean env), and the verbs against a fake adapter."""
+import hashlib
 import http.server
 import json
 import os
@@ -402,14 +403,18 @@ def test_publish_update_and_usage_errors(fake):
 
 def test_resolve_prints_last_four_and_receipt_never_the_text(fake):
     rid = 'whatsapp:dynasty:wamid.H'
+    ref = 'm-' + hashlib.sha256(rid.encode()).hexdigest()[:10]
     adapter = fake({
-        'GET /status': (200, {'inbound': {'held': [{'rid': rid, 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': NOW_MS}]}}),
+        'GET /status': (200, {'inbound': {'held': [{'ref': ref, 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': NOW_MS}]}}),
         'POST /inbound/resolve': (200, {'ok': True}),
     })
     result = verb('resolve.sh', 'wamid.H', '--dead', WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
     assert '...1234' in result.stdout and 'rcpt-9' in result.stdout
-    assert adapter.requests[-1][2] == {'rid': rid, 'as': 'dead'}
+    assert adapter.requests[-1][2] == {'rid': ref, 'as': 'dead'}
+    by_ref = verb('resolve.sh', ref, '--delivered', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert by_ref.returncode == 0, by_ref.stderr
+    assert 'wamid.H' not in by_ref.stdout
     assert verb('resolve.sh', 'wamid.H', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
 
 
@@ -450,7 +455,7 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     adapter = fake({'GET /status': (200, {
         'health': {'gateway_auth': 'ok'},
         'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 0,
-                    'dead_letters': 2, 'held': [{'rid': 'whatsapp:dynasty:wamid.H', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
+                    'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
                     'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
         'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
                                                       'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}}},
@@ -460,7 +465,7 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert result.returncode == 0, result.stderr
     out = result.stdout
     assert 'Enrolled:      yes' in out and 'Dead letters:  2' in out
-    assert 'wamid.H  phone ...1234  receipt rcpt-9' in out
+    assert 'm-0123456789  phone ...1234  receipt rcpt-9' in out
     assert 'journal watermark 9 ahead of the gc store head 4' in out
     assert '...1234  closes 2026-11-05T15:33:20Z (adapter ledger' in out
     assert 'keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)' in out

@@ -45,7 +45,15 @@ export function createGcClient({ base, city, postTimeoutMs = 30000, readTimeoutM
       if (limit !== undefined) q.set('limit', String(limit));
       return get(`/extmsg/transcript?${q}`);
     },
-    sessions: () => get('/sessions'),
+    // ?state=active and the keyset cursor (SessionListInput and
+    // PaginationParam, huma_types_sessions.go:15-21, huma_types.go:142-145).
+    sessions: ({ state, cursor } = {}) => {
+      const q = new URLSearchParams();
+      if (state) q.set('state', state);
+      if (cursor) q.set('cursor', cursor);
+      const qs = q.toString();
+      return get(`/sessions${qs ? `?${qs}` : ''}`);
+    },
     sessionTranscript: (id) => get(`/session/${encodeURIComponent(id)}/transcript`),
     register: (body) => post('/extmsg/adapters', body),
     recordOutbound: (body) => post('/extmsg/outbound', body),

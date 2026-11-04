@@ -24,7 +24,7 @@ printf '%s' "$WA_BODY" | jq -r '
   "Entries:       \(.inbound.entries | to_entries | map("\(.key) \(.value)") | join(", ") | if . == "" then "none" else . end); acks owed \(.inbound.acks_owed)",
   "Dead letters:  \(.inbound.dead_letters)",
   "Terminal holds: \(.inbound.held | length)",
-  (.inbound.held[] | "  \(.rid)  phone ...\(.wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <rid> --delivered|--dead)"),
+  (.inbound.held[] | "  \(.ref)  phone ...\(.wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
   "Restore gaps:  \(.inbound.gaps | length)",
   (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) ahead of the gc store head \(.head_sequence)  (gc whatsapp inbound clear-gap <wa_id>)"),
   "Windows:",

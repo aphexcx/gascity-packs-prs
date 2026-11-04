@@ -43,8 +43,17 @@ export function createDeadLetters({ stateDir }) {
       const file = path.join(dir, `${safeWaId(waId)}.jsonl`);
       const fd = fs.openSync(file, 'a', 0o600);
       try {
-        fs.writeSync(fd, `${JSON.stringify(line)}\n`);
-        fs.fsyncSync(fd);
+        // All of the line or none of it (a short write on ENOSPC is cut back).
+        const buf = Buffer.from(`${JSON.stringify(line)}\n`);
+        const before = fs.fstatSync(fd).size;
+        try {
+          let off = 0;
+          while (off < buf.length) off += fs.writeSync(fd, buf, off, buf.length - off);
+          fs.fsyncSync(fd);
+        } catch (err) {
+          try { fs.ftruncateSync(fd, before); } catch { /* dropped as a torn tail at the next start */ }
+          throw err;
+        }
       } finally {
         fs.closeSync(fd);
       }

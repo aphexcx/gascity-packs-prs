@@ -148,12 +148,21 @@ export function applyLine(fold, line) {
       return;
     case 'gap_cleared':
       fold.gaps.delete(String(line.conversation_id));
+      // An entry first posted before a clear took its post into a store the
+      // operator has since rebased: the in-doubt rule sends it marked.
+      if ((line.at ?? 0) > (fold.lastGapClearedAt ?? 0)) fold.lastGapClearedAt = line.at;
       return;
     case 'probe':
       fold.probes.push(line);
       return;
+    case 'genesis':
+      // The journal's birth. A gateway delivery received before it may have
+      // been posted by a journal that is gone (design line 114: a box that
+      // loses its journal resolves every held delivery by the lookup).
+      if (fold.genesisAt === undefined) fold.genesisAt = line.at;
+      return;
     default:
-      return; // An unknown line from a newer adapter is kept and ignored.
+      return; // An unknown line from a newer adapter is ignored (and dropped by compaction).
   }
 }
 
@@ -182,10 +191,11 @@ export function entryState(e) {
 }
 
 // An ack is owed for a dead entry and for one gc delivered (or the probe or
-// the operator vouched for), until the gateway confirms it.
+// the operator vouched for), until the gateway confirms it. Nothing else:
+// never on a pending receipt, never on an answer without a usable receipt.
 export function ackOwed(e) {
   const state = entryState(e);
-  return state === 'dead' || state === 'accepted:delivered' || state === 'accepted:unsupported';
+  return state === 'dead' || state === 'accepted:delivered';
 }
 
 export function readLines(file) {
@@ -234,39 +244,62 @@ export function openJournal({ stateDir, clock = () => Date.now() }) {
   const file = path.join(stateDir, JOURNAL_FILE);
   const { lines, tornAt } = readLines(file);
   if (tornAt >= 0) fs.truncateSync(file, tornAt);
-  let fold = foldLines(lines);
+  const fold = foldLines(lines);
   let fd = fs.openSync(file, 'a', 0o600);
   fs.chmodSync(file, 0o600);
+  let closed = false;
+
+  // One line, all of it or none of it: a short write (ENOSPC) is cut back to
+  // the size before it, so a later append never lands after half a line.
+  function writeLine(handle, text) {
+    const buf = Buffer.from(text);
+    const before = fs.fstatSync(handle).size;
+    try {
+      let off = 0;
+      while (off < buf.length) off += fs.writeSync(handle, buf, off, buf.length - off);
+      fs.fsyncSync(handle);
+    } catch (err) {
+      try { fs.ftruncateSync(handle, before); } catch { /* the torn tail is dropped at the next open */ }
+      throw err;
+    }
+  }
 
   function append(line) {
+    if (closed) throw new Error('the inbound journal is closed');
     const stamped = { ...line };
     if (stamped.at === undefined && !('found_at' in stamped)) stamped.at = clock();
-    fs.writeSync(fd, `${JSON.stringify(stamped)}\n`);
-    fs.fsyncSync(fd);
+    writeLine(fd, `${JSON.stringify(stamped)}\n`);
     applyLine(fold, stamped);
     return stamped;
   }
 
+  // A journal born empty (the first start, or a journal lost with the box)
+  // records its genesis, kept through every compaction.
+  if (fold.genesisAt === undefined) append({ t: 'genesis' });
+
   // Compaction: an atomic rewrite (temp file, fsync, rename, directory
   // fsync). Keeps every line of an rid with no acknowledged line (a dead rid
-  // whose ack is unconfirmed included: the gate r7's second rule), each
-  // conversation's current watermark, every standing gap, and the probe lines
-  // of the last seven days (the probes doctor row counts them).
-  function compact() {
+  // whose ack is unconfirmed included: the gate r7's second rule), and of an
+  // acknowledged rid that canDrop refuses (a poll that began before its ack
+  // may still bring it back), each conversation's current watermark, every
+  // standing gap, the latest gap clear, the genesis, and the probe lines of
+  // the last seven days (the probes doctor row counts them).
+  function compact(canDrop = () => true) {
     const { lines: current } = readLines(file);
     const now = clock();
-    const kept = [];
+    const drops = new Set();
+    for (const [rid, e] of fold.entries) if (e.acknowledged && canDrop(e)) drops.add(rid);
+    const kept = [{ t: 'genesis', at: fold.genesisAt }];
     for (const line of current) {
       if (ridTypes.has(line.t)) {
-        const e = fold.entries.get(line.rid);
-        if (e && !e.acknowledged) kept.push(line);
+        if (fold.entries.has(line.rid) && !drops.has(line.rid)) kept.push(line);
       } else if (line.t === 'probe') {
-        const e = fold.entries.get(line.rid);
-        if ((e && !e.acknowledged) || now - (line.at ?? 0) < PROBE_RETENTION_MS) kept.push(line);
+        if ((fold.entries.has(line.rid) && !drops.has(line.rid)) || now - (line.at ?? 0) < PROBE_RETENTION_MS) kept.push(line);
       }
     }
     // The gap and watermark lines go last, from the fold, so their final
     // value after replay is exactly the current one.
+    if (fold.lastGapClearedAt !== undefined) kept.push({ t: 'gap_cleared', conversation_id: '', at: fold.lastGapClearedAt });
     for (const gap of fold.gaps.values()) kept.push(gap);
     for (const [conversationId, wm] of fold.watermarks) {
       kept.push({ t: 'watermark', conversation_id: conversationId, ...wm });
@@ -274,26 +307,22 @@ export function openJournal({ stateDir, clock = () => Date.now() }) {
     const tmp = `${file}.tmp-${process.pid}`;
     const out = fs.openSync(tmp, 'w', 0o600);
     try {
-      fs.writeSync(out, kept.map((l) => `${JSON.stringify(l)}\n`).join(''));
-      fs.fsyncSync(out);
+      writeLine(out, kept.map((l) => `${JSON.stringify(l)}\n`).join(''));
     } finally {
       fs.closeSync(out);
     }
-    fs.closeSync(fd);
+    // Rename first: if it throws, the old fd still names the live journal.
     fs.renameSync(tmp, file);
     fsyncDir(stateDir);
-    fd = fs.openSync(file, 'a', 0o600);
+    const fresh = fs.openSync(file, 'a', 0o600);
+    const old = fd;
+    fd = fresh;
+    fs.closeSync(old);
     // Prune the live fold to what the rewritten file folds to, keeping the
     // surviving entry objects themselves (in-flight steps hold them).
-    let dropped = 0;
-    for (const [rid, e] of fold.entries) {
-      if (e.acknowledged) { fold.entries.delete(rid); dropped += 1; }
-    }
-    fold.probes = fold.probes.filter((p) => {
-      const e = fold.entries.get(p.rid);
-      return (e && !e.acknowledged) || now - (p.at ?? 0) < PROBE_RETENTION_MS;
-    });
-    return { lines: kept.length, droppedEntries: dropped };
+    for (const rid of drops) fold.entries.delete(rid);
+    fold.probes = fold.probes.filter((p) => (fold.entries.has(p.rid)) || now - (p.at ?? 0) < PROBE_RETENTION_MS);
+    return { lines: kept.length, droppedEntries: drops.size };
   }
 
   return {
@@ -302,8 +331,14 @@ export function openJournal({ stateDir, clock = () => Date.now() }) {
     get entries() { return fold.entries; },
     get watermarks() { return fold.watermarks; },
     get gaps() { return fold.gaps; },
+    get genesisAt() { return fold.genesisAt; },
+    get lastGapClearedAt() { return fold.lastGapClearedAt; },
     append,
     compact,
-    close() { try { fs.closeSync(fd); } catch { /* already closed */ } },
+    close() {
+      if (closed) return;
+      closed = true;
+      try { fs.closeSync(fd); } catch { /* already closed */ }
+    },
   };
 }

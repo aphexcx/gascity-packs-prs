@@ -392,7 +392,10 @@ export function createMedia({
       try {
         got = await gateway.media(mediaId);
       } catch (err) {
-        return fail(describeGatewayError(err));
+        // A transient failure (no answer, 5xx, 408, 429) is not final: the
+        // caller retries before it posts, the gateway still holding the delivery.
+        const transient = Boolean(err?.noAnswer) || err?.status >= 500 || err?.status === 408 || err?.status === 429;
+        return { ...fail(describeGatewayError(err)), transient };
       }
       bytes = got?.bytes;
       contentType = String(got?.contentType ?? '');

@@ -26,6 +26,10 @@ export function isTransient(err) {
   return Boolean(err?.noAnswer) || isRetryableAnswer(err);
 }
 
+// A failure in the connect phase means the request never left: no server
+// can have acted on it. Anything later (a reset, a deadline) is no answer.
+const CONNECT_CODES = new Set(['ECONNREFUSED', 'ENOENT', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT']);
+
 export async function requestJSON(url, {
   method = 'GET',
   headers = {},
@@ -54,7 +58,9 @@ export async function requestJSON(url, {
       }
       resp = await fetchImpl(url, init);
     } catch (err) {
-      throw Object.assign(new Error(`no answer from ${redactURL(url)}: ${err?.message ?? err}`), { noAnswer: true, cause: err });
+      const code = err?.cause?.code ?? err?.code;
+      const notSent = CONNECT_CODES.has(code);
+      throw Object.assign(new Error(`no answer from ${redactURL(url)}: ${code ?? err?.message ?? err}`), { noAnswer: true, notSent, cause: err });
     }
     let payload;
     try {
@@ -68,7 +74,9 @@ export async function requestJSON(url, {
       const text = expect === 'bytes' ? payload.toString('utf8') : payload;
       let json;
       try { json = JSON.parse(text); } catch { json = undefined; }
-      throw Object.assign(new Error(`HTTP ${resp.status} from ${redactURL(url)}: ${String(text).slice(0, 200)}`), {
+      // The body stays on err.body / err.json, never in the message: a
+      // message is logged, and a gc error body can echo the inbound text.
+      throw Object.assign(new Error(`HTTP ${resp.status} from ${redactURL(url)}`), {
         status: resp.status,
         body: text,
         json,

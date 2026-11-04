@@ -14,6 +14,8 @@
 // waits for the operator; no answer leaves the entry posted for the in-doubt
 // rule; every dead entry owes its ack until the gateway confirms it.
 
+import { createHash } from 'node:crypto';
+
 import { killPoint } from './clock.js';
 import { readWholeInbox } from './gateway.js';
 import { recordField } from './gc.js';
@@ -32,6 +34,17 @@ export const READBACK_TAIL_MS = 5 * 60 * 1000;
 export const PENDING_DEADLINE_MS = 24 * 60 * 60 * 1000;
 export const REPOST_BOUND = 3;
 export const GRACE_MARGIN_MS = 10000;
+export const ACK_BATCH = 100;
+// A delivery the gateway took this long before the journal's genesis may have
+// been posted by a lost journal (the margin absorbs clock skew between the
+// gateway and the box).
+export const LOST_JOURNAL_MARGIN_MS = 60000;
+
+// Logs and operator surfaces name an entry by a digest, never by its rid: a
+// wamid base64-encodes the sender's phone number.
+export function ref(rid) {
+  return `m-${createHash('sha256').update(String(rid)).digest('hex').slice(0, 10)}`;
+}
 
 const CHAIN_STATES = new Set(['received', 'posted', 'redeliver', 'accepted:failed', 'accepted:partial', 'accepted:no_route']);
 
@@ -128,13 +141,19 @@ export function createInbound({
   let nextCompactAt = 0;
   let stopped = false;
   let keeperBusy = false;
+  // Polls are single-flight; an acknowledged rid is dropped by compaction
+  // only once a poll that BEGAN after its ack has completed, since a page the
+  // gateway computed before deleting the delivery may still bring it back.
+  let pollSeq = 0;
+  let lastCompletedPollSeq = 0;
+  const ackedAtPoll = new Map();
+  const malformedSeen = new Set();
 
   const entries = () => journal.entries;
 
   // --- startup ---------------------------------------------------------------
 
   function startup() {
-    started = true;
     // A kill between the dead-letter file line and the dead journal line:
     // the file holds the rid, the fold does not show it dead. Repeat the
     // transition from the file line, with no second file line.
@@ -142,7 +161,7 @@ export function createInbound({
       const e = entries().get(line.rid);
       if (e && !e.dead && !e.acknowledged) {
         journal.append({ t: 'dead', rid: line.rid, reason: line.reason, replayed: true });
-        log(`${line.rid}: dead-letter line found without its journal line; dead transition repeated (${line.reason})`);
+        log(`${ref(line.rid)}: dead-letter line found without its journal line; dead transition repeated (${line.reason})`);
       }
     }
     for (const e of entries().values()) {
@@ -152,6 +171,7 @@ export function createInbound({
     }
     watermarkWanted = true;
     compact('start');
+    started = true; // only once all of the above held: a throw is retried next tick
     void driveAcks(true);
   }
 
@@ -159,9 +179,11 @@ export function createInbound({
 
   async function poll() {
     polling = true;
+    const seq = ++pollSeq;
     try {
       const deliveries = await readWholeInbox(gateway);
       pollFailures = 0;
+      lastCompletedPollSeq = seq;
       stats.polls += 1;
       stats.lastPollAt = clock();
       stats.lastPollError = '';
@@ -196,7 +218,10 @@ export function createInbound({
   async function takeDelivery(delivery) {
     const pmid = providerMessageId(delivery);
     if (!pmid || delivery?.id === undefined || !delivery.wa_id) {
-      log(`gateway delivery ${JSON.stringify(delivery?.id)} has no message id or wa_id; left unacknowledged`);
+      if (!malformedSeen.has(delivery?.id)) {
+        malformedSeen.add(delivery?.id);
+        log(`gateway delivery ${JSON.stringify(delivery?.id)} has no message id or wa_id; left unacknowledged`);
+      }
       return false;
     }
     if (delivery.kind === 'status' && statusOf(delivery) !== 'failed') {
@@ -207,6 +232,7 @@ export function createInbound({
     const rid = ridFor(pmid);
     const existing = entries().get(rid);
     if (!existing) {
+      const dead = deadLetters.get(rid);
       killPoint('before-received', rid);
       journal.append({
         t: 'received',
@@ -219,6 +245,24 @@ export function createInbound({
         received_at: delivery.received_at ?? null,
       });
       killPoint('after-received', rid);
+      if (dead) {
+        // Dead-lettered by a journal that is gone (its ack never confirmed):
+        // the file line is the record. Dead again, ack owed, never posted.
+        journal.append({ t: 'dead', rid, reason: dead.reason, replayed: true });
+        log(`${ref(rid)}: already dead-lettered (${dead.reason}) by a lost journal; ack owed, never posted`);
+        oweAck(rid);
+        return true;
+      }
+      const at = Date.parse(delivery.received_at ?? '');
+      if (Number.isFinite(at) && at < (journal.genesisAt ?? 0) - LOST_JOURNAL_MARGIN_MS) {
+        // The gateway took it before this journal was born: a journal that is
+        // gone may have posted it. Never a plain first post: the in-doubt
+        // rule, from a lookup at zero (design line 114, a lost journal).
+        // Its time is the gateway's receipt: the grace has long passed, and
+        // the pending deadline runs from there.
+        journal.append({ t: 'posted', rid, at, reposts: 0, boundary: 0, marked: false, synthetic: 'before-genesis' });
+        log(`${ref(rid)}: received by the gateway before this journal began; resolved by the in-doubt rule`);
+      }
       if (delivery.kind === 'message' || delivery.kind === 'joined') {
         ledger?.noteInbound?.(String(delivery.wa_id), inboundAtMs(delivery));
       }
@@ -241,37 +285,78 @@ export function createInbound({
 
   // --- acks ------------------------------------------------------------------
 
-  async function driveAcks(force) {
-    if (acking || ackOwedIds.size === 0 || authFailed) return;
-    if (!force && clock() < ackNextAt) return;
-    acking = true;
-    const batch = [...ackOwedIds.entries()];
-    try {
-      killPoint('before-ack', batch.find(([, rid]) => rid)?.[1] ?? '');
-      await gateway.ack(batch.map(([id]) => id));
-      ackAttempt = 0;
-      ackNextAt = 0;
-      for (const [id, rid] of batch) {
-        if (ackOwedIds.get(id) === rid) ackOwedIds.delete(id);
-        if (!rid) continue;
+  function confirmAcked(batch) {
+    for (const [id, rid] of batch) {
+      if (rid) {
         const e = entries().get(rid);
         if (e && !e.acknowledged) {
+          // The acknowledged line first: if it cannot be written, the ack
+          // stays owed and is sent again (the gateway's ack is idempotent).
           journal.append({ t: 'acknowledged', rid });
+          ackedAtPoll.set(rid, pollSeq);
           stats.acks += 1;
           nextAt.delete(rid);
           attempts.delete(rid);
         }
       }
-    } catch (err) {
-      if (err.auth) {
-        authFailed = true;
-        onAuthFailure(err);
+      if (ackOwedIds.get(id) === rid) ackOwedIds.delete(id);
+    }
+  }
+
+  // Acks go in batches of at most ACK_BATCH ids; a batch the gateway refuses
+  // with a 4xx (a parameter cap, a bad id) is split to single ids so one bad
+  // id never wedges every ack.
+  async function driveAcks(force) {
+    if (acking || ackOwedIds.size === 0 || authFailed) return;
+    if (!force && clock() < ackNextAt) return;
+    acking = true;
+    const owed = [...ackOwedIds.entries()];
+    const batches = [];
+    for (let i = 0; i < owed.length; i += ACK_BATCH) batches.push(owed.slice(i, i + ACK_BATCH));
+    let failed = 0;
+    let lastError = '';
+    try {
+      killPoint('before-ack', owed.find(([, rid]) => rid)?.[1] ?? '');
+      for (const batch of batches) {
+        try {
+          await gateway.ack(batch.map(([id]) => id));
+          confirmAcked(batch);
+        } catch (err) {
+          if (err.auth) {
+            authFailed = true;
+            onAuthFailure(err);
+            throw err;
+          }
+          const refused = Number.isInteger(err.status) && err.status >= 400 && err.status < 500 && !isRetryableAnswer(err);
+          if (refused && batch.length > 1) {
+            for (const one of batch) {
+              try {
+                await gateway.ack([one[0]]);
+                confirmAcked([one]);
+              } catch (inner) {
+                failed += 1;
+                lastError = inner.message;
+              }
+            }
+          } else {
+            failed += batch.length;
+            lastError = err.message;
+          }
+        }
       }
-      const delay = ladderDelay(ackAttempt++);
-      ackNextAt = clock() + delay;
-      log(`gateway ack of ${batch.length} id(s) failed (${err.message}); the dead or delivered lines stay owed, retry in ${delay / 1000}s`);
+    } catch (err) {
+      failed = ackOwedIds.size;
+      lastError = err.message;
     } finally {
       acking = false;
+    }
+    if (failed) {
+      const delay = ladderDelay(ackAttempt++);
+      ackNextAt = clock() + delay;
+      log(`gateway ack of ${failed} id(s) failed (${lastError}); the dead or delivered lines stay owed, retry in ${delay / 1000}s`);
+    } else {
+      ackAttempt = 0;
+      ackNextAt = 0;
     }
   }
 
@@ -302,6 +387,11 @@ export function createInbound({
         if (intact || journal.gaps.has(conversationId)) continue;
         const headPage = await gc.transcript({ scopeId: city, conversationId, limit: 1, order: 'desc' });
         const head = Array.isArray(headPage?.items) ? headPage.items[0] : undefined;
+        // The read walked a snapshot: if the watermark moved meanwhile (an
+        // accept raised it, or a clear rebased it), this reading is stale.
+        const live = journal.watermarks.get(conversationId);
+        if (!live || live.sequence !== wm.sequence || live.provider_message_id !== wm.provider_message_id
+          || live.rebased_at !== wm.rebased_at || journal.gaps.has(conversationId)) continue;
         journal.append({
           t: 'restore_gap',
           conversation_id: conversationId,
@@ -372,20 +462,21 @@ export function createInbound({
     try {
       answer = await gc.postInbound(message);
     } catch (err) {
-      if (err.noAnswer || err.malformed) {
-        // No HTTP answer: gc may have taken it. Never re-posted on the ladder;
-        // the in-doubt rule resolves it after the grace.
-        log(`${rid}: gc post got no answer (${err.message}); in doubt after the grace`);
-        nextAt.set(rid, posted.at + graceMs);
-        return;
-      }
-      if (isRetryableAnswer(err)) {
-        // gc answers 5xx/404/408/429 before any fan-out: a repeat is clean.
+      if (err.notSent || isRetryableAnswer(err)) {
+        // The connection was refused (the request never left), or gc answered
+        // 5xx/404/408/429 before any fan-out: a repeat is clean.
         httpRefused.add(rid);
         const attempt = attempts.get(rid) ?? 0;
         attempts.set(rid, attempt + 1);
         nextAt.set(rid, clock() + ladderDelay(attempt));
-        log(`${rid}: gc answered ${err.status}; retry ${attempt + 1} in ${ladderDelay(attempt) / 1000}s`);
+        log(`${ref(rid)}: gc ${err.notSent ? 'unreachable (not sent)' : `answered ${err.status}`}; retry ${attempt + 1} in ${ladderDelay(attempt) / 1000}s`);
+        return;
+      }
+      if (err.noAnswer || err.malformed) {
+        // No HTTP answer: gc may have taken it. Never re-posted on the ladder;
+        // the in-doubt rule resolves it after the grace.
+        log(`${ref(rid)}: gc post got no answer (${err.message}); in doubt after the grace`);
+        nextAt.set(rid, posted.at + graceMs);
         return;
       }
       if (err.status >= 400 && err.status < 500) {
@@ -407,7 +498,13 @@ export function createInbound({
     const { verdict, terminal } = verdictOf(delivery);
     const transcriptEntry = answer?.TranscriptEntry;
     const sequence = recordField(transcriptEntry, 'Sequence');
-    if (verdict === 'unsupported') log(`${rid}: gc answered without a usable receipt; accepting HTTP success`);
+    if (verdict === 'unsupported') {
+      // A 2xx without a usable receipt is no verdict: never an ack on it. The
+      // entry stays posted and the in-doubt rule decides after the grace.
+      log(`${ref(rid)}: gc answered without a usable receipt; in doubt after the grace`);
+      nextAt.set(rid, (e.lastPosted?.at ?? clock()) + graceMs);
+      return;
+    }
     const firstAcceptance = !e.everAccepted;
     const watermarkBefore = journal.watermarks.get(e.waId)?.sequence;
     journal.append({
@@ -432,7 +529,7 @@ export function createInbound({
     // On gc's first acceptance the owner sees the read receipt (the blue
     // ticks and the typing indicator). Best effort: it changes no state.
     if (firstAcceptance && e.kind === 'message') {
-      gateway.read(pmidOfRid(rid)).catch((err) => log(`${rid}: read receipt failed (${err.message})`));
+      gateway.read(pmidOfRid(rid)).catch((err) => log(`${ref(rid)}: read receipt failed (${err.message})`));
     }
     await afterVerdict(rid, verdict, terminal, delivery);
   }
@@ -442,12 +539,11 @@ export function createInbound({
     if (terminal) {
       journal.append({ t: 'held_terminal', rid, receipt_id: delivery?.receipt_id ?? e.accepted?.receipt_id ?? '', members: membersOf(delivery) });
       nextAt.delete(rid);
-      log(`${rid}: TERMINAL HOLD (gc: stop polling, do not redeliver); waiting for gc whatsapp inbound resolve`);
+      log(`${ref(rid)}: TERMINAL HOLD (gc: stop polling, do not redeliver); waiting for gc whatsapp inbound resolve`);
       return;
     }
     switch (verdict) {
       case 'delivered':
-      case 'unsupported':
         oweAck(rid);
         return;
       case 'pending':
@@ -513,10 +609,13 @@ export function createInbound({
     // Step 1, before the lookup, the probe and any post: EVERY watermark.
     await readAllWatermarks('in-doubt');
     const present = await lookup(e);
-    if (present || e.everAccepted || journal.gaps.size > 0) {
+    // An entry first posted before the operator's last clear-gap went into a
+    // store that has since been rebased: its absence proves nothing either.
+    const postedBeforeClear = (journal.lastGapClearedAt ?? -Infinity) > (e.firstPosted?.at ?? Infinity);
+    if (present || e.everAccepted || journal.gaps.size > 0 || postedBeforeClear) {
       // PRESENT, or the journal's own acceptance outranks the store's silence
-      // (the restore rule), or a gap stands anywhere: the probe, then the
-      // marked copy; never a plain post.
+      // (the restore rule), or a gap stands anywhere (or stood when it was
+      // posted): the probe, then the marked copy; never a plain post.
       if (await probe(rid)) return markDelivered(rid, 'probe');
       return redeliver(rid);
     }
@@ -526,7 +625,7 @@ export function createInbound({
     // taken after the probe and immediately before the post.
     await readAllWatermarks('before-plain-post');
     if (journal.gaps.size > 0) return redeliver(rid);
-    log(`${rid}: absent from the gc store with every watermark intact and the probe NOT FOUND; one plain post`);
+    log(`${ref(rid)}: absent from the gc store with every watermark intact and the probe NOT FOUND; one plain post`);
     return postEntry(rid, { marked: false, reposts: e.lastPosted?.reposts ?? 0 });
   }
 
@@ -557,15 +656,23 @@ export function createInbound({
     return false;
   }
 
+  // The receipt's members, else the default route's agent's live sessions:
+  // GET /sessions?state=active, every page (next_cursor), newest first.
   async function targetSessions(e) {
     if (e.members.length) return e.members;
-    const list = await gc.sessions();
-    const items = Array.isArray(list?.items) ? list.items : [];
-    return items
-      .filter((s) => (s.template === routeAgent || String(s.template ?? '').endsWith(`/${routeAgent}`) || s.alias === routeAgent)
-        && (s.running === true || s.state === 'active'))
-      .map((s) => s.id)
-      .filter(Boolean);
+    const ids = [];
+    let cursor;
+    for (let page = 0; page < 50; page++) {
+      const list = await gc.sessions({ state: 'active', cursor });
+      const items = Array.isArray(list?.items) ? list.items : [];
+      for (const s of items) {
+        const isAgent = s.template === routeAgent || String(s.template ?? '').endsWith(`/${routeAgent}`) || s.alias === routeAgent;
+        if (isAgent && (s.running === true || s.state === 'active') && s.id) ids.push(s.id);
+      }
+      cursor = list?.next_cursor;
+      if (!cursor) break;
+    }
+    return ids;
   }
 
   // The paste probe under THE EVIDENCE RULE. A 404 or 409 is an answer (not
@@ -592,7 +699,7 @@ export function createInbound({
       const shape = probeShape(answer);
       const found = pasteFound(answer, e.waId, pmid);
       journal.append({ t: 'probe', rid, session_id: sessionId, shape, found });
-      if (shape === 'pane') log(`${rid}: session ${sessionId} answered a terminal snapshot (format text): no evidence`);
+      if (shape === 'pane') log(`${ref(rid)}: session ${sessionId} answered a terminal snapshot (format text): no evidence`);
       if (found) return true;
     }
     return false;
@@ -600,7 +707,7 @@ export function createInbound({
 
   async function markDelivered(rid, via) {
     journal.append({ t: 'accepted', rid, receipt_id: '', verdict: 'delivered', via, at: clock() });
-    log(`${rid}: delivered (${via})`);
+    log(`${ref(rid)}: delivered (${via})`);
     oweAck(rid);
   }
 
@@ -638,38 +745,44 @@ export function createInbound({
     killPoint('between-deadletter-and-dead', rid);
     journal.append({ t: 'dead', rid, reason });
     nextAt.delete(rid);
-    log(`${rid}: dead-lettered (${reason}); ack owed until the gateway confirms it`);
+    log(`${ref(rid)}: dead-lettered (${reason}); ack owed until the gateway confirms it`);
     oweAck(rid);
   }
 
   // --- the read-back ---------------------------------------------------------
 
+  // The receipt is read FIRST, every time: a conclusion that lands just
+  // before the deadline is acted on; only a receipt that still reads
+  // pending at the deadline is dead-lettered.
   async function readBack(rid) {
     const e = entries().get(rid);
-    const now = clock();
-    if (now - (e.firstPosted?.at ?? now) >= PENDING_DEADLINE_MS) {
-      return deadLetter(rid, 'pending_deadline', { detail: 'gc receipt still pending 24 hours after the first post' });
-    }
+    const pastDeadline = () => clock() - (e.firstPosted?.at ?? clock()) >= PENDING_DEADLINE_MS;
+    const expire = () => deadLetter(rid, 'pending_deadline', { detail: 'gc receipt still pending 24 hours after the first post' });
     const receiptId = e.accepted?.receipt_id;
     if (!receiptId) return resolveInDoubt(rid);
     const answer = await gc.receipt(receiptId);
     const reads = readCounts.get(rid) ?? { count: 0, last: null };
     readCounts.set(rid, { count: reads.count + 1, last: clock() });
     const state = key(answer?.state);
-    const schedule = () => nextAt.set(rid, clock() + readbackInterval(clock() - (e.accepted?.at ?? clock())));
+    const schedule = () => (pastDeadline() ? expire() : nextAt.set(rid, clock() + readbackInterval(clock() - (e.accepted?.at ?? clock()))));
     if (answer?.receipt_id !== receiptId && answer?.receipt_id !== undefined) {
-      log(`${rid}: receipt answer names another id; read again later`);
+      log(`${ref(rid)}: receipt answer names another id; read again later`);
       return schedule();
     }
     if (state === 'pending') return schedule();
     if (state === 'unknown') {
-      log(`${rid}: receipt ${receiptId} reads unknown; the in-doubt rule`);
+      log(`${ref(rid)}: receipt reads unknown; the in-doubt rule`);
       return resolveInDoubt(rid);
     }
     if (state !== 'concluded') return schedule();
     const { verdict, terminal } = verdictOf(answer.delivery);
     if (terminal) return afterVerdict(rid, verdict, terminal, answer.delivery);
     if (verdict === 'pending') return schedule(); // gc's hold: stays on the schedule until gc forgets it
+    if (verdict === 'unsupported') {
+      // A concluded receipt without a usable delivery is no verdict.
+      log(`${ref(rid)}: concluded receipt without a usable delivery; the in-doubt rule`);
+      return resolveInDoubt(rid);
+    }
     journal.append({ t: 'accepted', rid, receipt_id: receiptId, verdict, members: membersOf(answer.delivery), via: 'readback', at: clock() });
     return afterVerdict(rid, verdict, false, answer.delivery);
   }
@@ -685,7 +798,7 @@ export function createInbound({
         const attempt = attempts.get(rid) ?? 0;
         attempts.set(rid, attempt + 1);
         nextAt.set(rid, clock() + ladderDelay(attempt));
-        log(`${rid}: step failed (${err.message}); retry in ${ladderDelay(attempt) / 1000}s`);
+        log(`${ref(rid)}: step failed (${err.message}); retry in ${ladderDelay(attempt) / 1000}s`);
       })
       .finally(() => {
         ridBusy.delete(rid);
@@ -706,7 +819,11 @@ export function createInbound({
 
   function compact(reason) {
     try {
-      const result = journal.compact();
+      // An acknowledged rid goes only once a poll that began after its ack
+      // has completed (a page computed before the gateway's delete would
+      // otherwise bring it back to the no-entry branch).
+      const result = journal.compact((e) => lastCompletedPollSeq > (ackedAtPoll.get(e.rid) ?? 0));
+      for (const rid of ackedAtPoll.keys()) if (!entries().has(rid)) ackedAtPoll.delete(rid);
       stats.lastCompactAt = clock();
       log(`journal compacted (${reason}): ${result.droppedEntries} acknowledged entr(ies) dropped, ${result.lines} line(s) kept`);
     } catch (err) {
@@ -756,12 +873,16 @@ export function createInbound({
 
   // --- the operator's verbs --------------------------------------------------
 
-  async function resolve(rid, as) {
-    const e = entries().get(rid);
-    if (!e) return { status: 404, json: { error: `no journal entry for ${rid}` } };
-    if (entryState(e) !== 'held') return { status: 409, json: { error: `${rid} is not a terminal hold (state ${entryState(e)})` } };
+  // The operator names a hold by its ref (what status and the doctor show)
+  // or by its rid (the journal's received line).
+  async function resolve(name, as) {
+    let e = entries().get(name);
+    if (!e) e = [...entries().values()].find((x) => ref(x.rid) === name);
+    if (!e) return { status: 404, json: { error: `no journal entry for ${name}` } };
+    const rid = e.rid;
+    if (entryState(e) !== 'held') return { status: 409, json: { error: `${ref(rid)} is not a terminal hold (state ${entryState(e)})` } };
     const info = {
-      rid,
+      ref: ref(rid),
       wa_id_last4: lastFour(e.waId),
       receipt_id: e.held?.receipt_id ?? e.accepted?.receipt_id ?? '',
       held_at: e.held?.at ?? null,
@@ -777,7 +898,15 @@ export function createInbound({
     return { status: 200, json: { ok: true, as, ...info } };
   }
 
-  async function clearGap(waId) {
+  // Serialized with the watermark reads, so a read in flight can never write
+  // a gap from the watermark the clear just rebased.
+  function clearGap(waId) {
+    const run = watermarkChain.catch(() => {}).then(() => clearGapNow(waId));
+    watermarkChain = run.catch(() => {});
+    return run;
+  }
+
+  async function clearGapNow(waId) {
     const conversationId = String(waId);
     const gap = journal.gaps.get(conversationId);
     if (!gap) return { status: 404, json: { error: `no restore gap stands for ...${lastFour(conversationId)}` } };
@@ -813,7 +942,7 @@ export function createInbound({
     for (const e of entries().values()) {
       const state = entryState(e);
       counts[state] = (counts[state] ?? 0) + 1;
-      if (state === 'held') held.push({ rid: e.rid, wa_id_last4: lastFour(e.waId), receipt_id: e.held?.receipt_id ?? '', held_at: e.held?.at ?? null });
+      if (state === 'held') held.push({ ref: ref(e.rid), wa_id_last4: lastFour(e.waId), receipt_id: e.held?.receipt_id ?? e.accepted?.receipt_id ?? '', held_at: e.held?.at ?? null });
     }
     return {
       auth_failed: authFailed,

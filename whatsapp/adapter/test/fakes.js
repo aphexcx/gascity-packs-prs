@@ -109,6 +109,9 @@ export async function startFakeGateway({ clock } = {}) {
     windowCalls: 0,
     requests: [],
     hung: [],
+    inboxDelayMs: 0, // a page computed now, answered later (the poll/ack race)
+    mediaFailures: 0, // media downloads that answer 503 before one succeeds
+    ackMaxIds: Infinity, // a batch over this answers 413
   };
 
   g.addDelivery = ({ kind = 'message', wa_id, profile_name = 'Owner', message }) => {
@@ -164,11 +167,13 @@ export async function startFakeGateway({ clock } = {}) {
         .filter((d) => !g.acked.has(d.id) && d.id > after)
         .sort((a, b) => a.id - b.id)
         .slice(0, limit);
+      if (g.inboxDelayMs) await new Promise((r) => setTimeout(r, g.inboxDelayMs));
       return send(res, 200, { deliveries: page, cursor: page.length ? page[page.length - 1].id : (Number.isFinite(after) ? after : null) });
     }
     if (route === 'POST /v1/inbox/ack') {
       const behaviour = takeBehaviour(g.ackBehaviour, 'ok');
       g.ackCalls.push({ ids: body.ids, behaviour, at: now() });
+      if ((body.ids ?? []).length > g.ackMaxIds) return send(res, 413, { error: 'too many ids' });
       if (behaviour === 'hang') { g.hung.push(res); return undefined; }
       if (behaviour !== 'ok') return send(res, behaviour, { error: 'ack failed' });
       for (const id of body.ids ?? []) g.acked.add(id); // deletes exactly the listed ids
@@ -194,6 +199,7 @@ export async function startFakeGateway({ clock } = {}) {
     if (req.method === 'GET' && media) {
       const item = g.media.get(decodeURIComponent(media[1]));
       if (!item) return send(res, 404, { error: 'not found' });
+      if (g.mediaFailures > 0) { g.mediaFailures -= 1; return send(res, 503, { error: 'graph unavailable' }); }
       return send(res, 200, item.bytes, { 'Content-Type': item.mime });
     }
     return send(res, 404, { error: `no route ${route}` });
@@ -240,7 +246,10 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     pastes: [], // every paste into a session {pmid, text, session}
     receipts: new Map(),
     fanout: new Map(), // pmid -> {receiptId, status} (the fork head's dedup memory)
-    dedupFanout: false, // model the fork head's fan-out dedup (hq-703om)
+    // Off by default: the fake models gc at 92a7f383f (and the fork head once
+    // its receipt store has forgotten the first fan-out: a restart or the
+    // hour); on, it models the fork head's live fan-out dedup (hq-703om).
+    dedupFanout: false,
     nextReceipt: 1,
     policy: () => ({}), // (pmid, message, postIndex) -> {status, verdict, terminal, withhold, noMembers, paste}
     sessions: [{ id: 's-mayor', template: 'mayor', state: 'active', running: true }],
@@ -317,7 +326,9 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     const c = conv(conversationId);
     let record = c.records.find((r) => r.ProviderMessageID === pmid);
     const duplicate = Boolean(record);
-    if (!record) {
+    // An unrouted message is acknowledged and appended nowhere
+    // (internal/extmsg/inbound.go:380-384 at f22b3ed4a).
+    if (!record && !plan.noMembers) {
       record = {
         ID: `rec-${conversationId}-${c.nextSequence}`,
         Conversation: message.conversation,
@@ -372,6 +383,8 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
       return undefined;
     }
     post.answered = true;
+    // gc took it and the 2xx carries no usable body.
+    if (plan.emptyBody) { res.writeHead(200).end(); return undefined; }
     post.answer = JSON.parse(JSON.stringify(answer));
     return send(res, 200, answer);
   }
@@ -407,8 +420,9 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
       // at earliest_available_sequence (transcript_service.go:862-864, 888).
       const start = Math.max(after + 1, c.earliest);
       let items = c.records.filter((r) => r.Sequence >= start).sort((a, b) => a.Sequence - b.Sequence);
-      if (desc) items = c.records.slice().sort((a, b) => b.Sequence - a.Sequence);
+      if (desc) items.reverse();
       items = items.slice(0, limit);
+      entry.returned = items.map((r) => r.ProviderMessageID);
       return send(res, 200, { items, total: items.length });
     }
     if (req.method === 'GET' && p === '/sessions') return send(res, 200, { items: f.sessions, total: f.sessions.length });
@@ -428,7 +442,12 @@ export async function startFakeGc({ clock, city = CITY } = {}) {
     return send(res, 404, { title: `no route ${req.method} ${p}` });
   });
   f.url = await listen(server);
+  const port = server.address().port;
+  // gc down: the port refuses connections (a connect-phase failure), then up.
+  f.down = () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(() => resolve()); });
+  f.up = () => new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve()));
   f.close = () => new Promise((resolve) => {
+    if (!server.listening) { resolve(); return; }
     f.releaseWithheld();
     server.closeAllConnections?.();
     server.close(() => resolve());
@@ -554,6 +573,16 @@ export async function rig({ extra = {}, startMs } = {}) {
         const step = Math.min(stepMs, left);
         clock.advance(step);
         left -= step;
+        await sleep(realMs);
+      }
+    },
+    // Advance the clock a step at a time until the condition holds.
+    async pumpUntil(predicate, { stepMs = 1000, realMs = 30, timeoutMs = 15000, what = 'condition' } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      for (;;) {
+        if (await predicate()) return;
+        if (Date.now() > deadline) throw new Error(`timed out pumping for ${what}`);
+        clock.advance(stepMs);
         await sleep(realMs);
       }
     },

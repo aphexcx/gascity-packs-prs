@@ -6,6 +6,7 @@
 // adapter's own code (../adapter/src/journal.js), so the row and the adapter
 // can never disagree about what a line means.
 
+import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -20,6 +21,8 @@ function finish(code, message) {
 }
 
 const last4 = (id) => String(id ?? '').replace(/\D/g, '').slice(-4) || '????';
+// The adapter's ref for an entry (inbound.js ref): a wamid encodes the phone, so never the rid.
+const ref = (rid) => `m-${createHash('sha256').update(String(rid)).digest('hex').slice(0, 10)}`;
 
 function stateDir() {
   const e = process.env;
@@ -168,8 +171,8 @@ function held() {
   if (!holds.length) return finish(0, 'no terminal holds');
   const now = Date.now();
   const oldest = Math.max(...holds.map((e) => now - (e.held?.at ?? now)));
-  const list = holds.map((e) => `${e.rid} (...${last4(e.waId)})`).join(', ');
-  finish(1, `${holds.length} terminal hold(s), the oldest ${Math.round(oldest / 60000)} min: ${list}; resolve each with gc whatsapp inbound resolve <rid> --delivered|--dead`);
+  const list = holds.map((e) => `${ref(e.rid)} (...${last4(e.waId)}, receipt ${e.held?.receipt_id || e.accepted?.receipt_id || '?'}, held ${e.held?.at ? new Date(e.held.at).toISOString() : '?'})`).join(', ');
+  finish(1, `${holds.length} terminal hold(s), the oldest ${Math.round(oldest / 60000)} min: ${list}; resolve each with gc whatsapp inbound resolve <ref> --delivered|--dead`);
 }
 
 function restore() {
