@@ -1,0 +1,100 @@
+# pnpm exec vitest run --reporter=verbose   (GREEN: the committed implementation)
+# cwd: whatsapp/gateway   head: 11285f36597ec3ab0aedbfec9dfc3bf324a93e22   node: v24.21.0   exit: 0
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/whatsapp/gateway
+
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a known body and secret give the known sha256= header 1ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a header in upper-case hex still verifies (the digest, not its spelling) 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > one tampered byte fails 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a missing header, a wrong prefix, a short digest, non-hex and a wrong secret all fail 1ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > the constant-time compare and the secret compare answer exactly equality 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a text message: sender, wamid, Meta's timestamp, the body and the profile name 1ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a reaction carries no text and no media 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > an image and a voice note carry their media id 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > statuses: sent and failed, with the recipient and Meta's object whole 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a payload for another phone number id is counted and yields nothing 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > other objects, other fields and malformed entries are ignored, never thrown 1ms
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > text, reaction and template 0ms
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > mark-as-read carries the typing indicator 0ms
+ ✓ test/meta.test.ts > the Graph client > send posts to /<version>/<phone number id>/messages with the token and returns the wamid 0ms
+ ✓ test/meta.test.ts > the Graph client > a Graph error becomes a GraphError with Meta's status and code; a network failure has status 0 0ms
+ ✓ test/meta.test.ts > the Graph client > an answer without a message id is an error, never an empty wamid 1ms
+ ✓ test/meta.test.ts > the Graph client > mark-as-read posts the read body 0ms
+ ✓ test/meta.test.ts > the Graph client > media: mints the URL for the phone number id, then fetches the bytes with the token 0ms
+ ✓ test/meta.test.ts > the Graph client > media: a URL that is not https is refused before the token is sent 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > closes at last inbound + 24 h - 120 s; null when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > open strictly before the close, closed at and after it, closed when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not 0ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > echoes hub.challenge only for the verify token 1ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > refuses the handshake while no verify token is configured 1ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a tampered byte answers 401 and stores nothing 8ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a missing header answers 401 and stores nothing 4ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a body over 1.9 MB answers 413 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload for another phone number id is dropped and counted 5ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a bound sender's text lands in exactly its city's inbox and in no other 8ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a live invite code binds the phone, marks the code used, appends the joined entry and sends the welcome once 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload carrying the invite text twice binds once and welcomes once 4ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an unknown sender gets the canned line once and silence on the next message within 7 days 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a Meta redelivery of the same wamid yields one delivery 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands 4ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload too big for one D1 batch lands whole, every message once 26ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once 23ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row 5ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite text whose welcome send fails still binds and answers 200; its redelivery is one row and no second bind 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a phone bound to one city texting another city's code stays put; the code stays live 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > minting a new invite code retires the city's previous live one 5ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite code expires after 24 hours 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > five wrong codes in a day stop a phone's code attempts, the right one included 10ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > a wrong-code text Meta redelivers is one attempt, not two 11ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > an invite text Meta stamped before the code expired binds on a redelivery after the expiry 4ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a poll with no after returns every unacknowledged delivery again, oldest first 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > after and limit page the held deliveries; an empty page keeps the cursor 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ack deletes exactly the listed ids and leaves an unlisted earlier id in the inbox 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > HOLD: a delivery is held, body and all, and returned by every poll until the ack names its id 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ACK OF A DELETED ID: an ack for an id the cron already deleted is a no-op 200 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > REPEATED ACK: acking an id an earlier ack already deleted is the same no-op, and touches nothing else 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an ack naming another city's id is a no-op for it: the other city still holds it 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a malformed ack answers 400 and deletes nothing 5ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a delivery never acknowledged survives the ack of other ids until the cron deletes it at 7 days 20ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an acknowledged wamid redelivered by Meta is still one row: no second delivery 5ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > over 5,000 held for one city Meta gets 503 and nothing is stored; below it again, 200 15ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > the cron deletes bodies older than 7 days and keeps phones 8ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > sent, delivered and read for one wamid land as three status rows; a redelivery of one makes no fourth 8ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > a status for a wamid no city sent reaches no city 4ms
+ ✓ test/gateway.test.ts > City side: send > a send to an unbound phone, or to another city's phone, answers 403 without a Graph call 5ms
+ ✓ test/gateway.test.ts > City side: send > a repeated idempotency_key makes one Graph call and answers the same message_id 5ms
+ ✓ test/gateway.test.ts > City side: send > the same idempotency_key in two cities is two sends (the key is per city) 7ms
+ ✓ test/gateway.test.ts > City side: send > Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends 4ms
+ ✓ test/gateway.test.ts > City side: send > an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call 6ms
+ ✓ test/gateway.test.ts > City side: send > Meta's own outside-window answer (131047) reads window_closed 5ms
+ ✓ test/gateway.test.ts > City side: send > a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again 4ms
+ ✓ test/gateway.test.ts > City side: send > a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send 6ms
+stdout | test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route
+{"event":"handshake"}
+
+ ✓ test/gateway.test.ts > City side: send > refuses malformed sends with 400 and over-long text with text_too_long 7ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a text just before the close sends; at the close and at 24h01 it answers window_closed without a Graph call 6ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a template at 24h01 sends and leaves the window closed; the owner's next message reopens it 7ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > GET /v1/window: close = last inbound + 24 h - 120 s, moves on the owner's message, not on any send; null for a phone that never wrote; no other city's phone 11ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement) 8ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a system notice is delivered but does not move the window 4ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped 6ms
+ ✓ test/gateway.test.ts > City side: read, media > read marks a delivered message read with the typing indicator; another city's message is 404 5ms
+ ✓ test/gateway.test.ts > City side: read, media > media streams the bytes with Meta's mime type to its city; another city's media id is 404 6ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > enroll mints a city and one credential for a live code, once; a used code is 403 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > an unknown or expired enrollment code is 403; a malformed enroll is 400 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > a revoked credential is 401; so are an unknown one and none 3ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin routes need ADMIN_TOKEN; an unset admin token opens nothing 0ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin cities lists counts and the last four digits of each phone, never a number in clear 4ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > healthz answers ok, the held total and the last webhook time, with no phone and no body 4ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > no log line carries a phone number, a message body, a token or a secret 10ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret 2ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route 5ms
+
+ Test Files  2 passed (2)
+      Tests  84 passed (84)
+   Start at  13:07:16
+   Duration  788ms (transform 78ms, setup 92ms, import 86ms, tests 400ms, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)

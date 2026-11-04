@@ -1,0 +1,5 @@
+# pnpm typecheck   (tsc -p tsconfig.json --noEmit)
+# cwd: whatsapp/gateway   head: 11285f36597ec3ab0aedbfec9dfc3bf324a93e22   node: v24.21.0   exit: 0
+
+pnpm wrapper: verify-deps off for run typecheck (round 3)
+$ tsc -p tsconfig.json --noEmit
