@@ -1,0 +1,52 @@
+{
+  "tests_including_subtests": {
+    "pass": 237
+  },
+  "top_level_tests": {
+    "pass": 199
+  },
+  "packages": [
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/rooms",
+      "action": "pass",
+      "elapsed": 1.211
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/blockkit",
+      "action": "pass",
+      "elapsed": 1.212
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/channels",
+      "action": "pass",
+      "elapsed": 1.246
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/apps",
+      "action": "pass",
+      "elapsed": 1.2469999999999999
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli",
+      "action": "pass",
+      "elapsed": 1.252
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/workspace",
+      "action": "pass",
+      "elapsed": 1.275
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/internal/state/rigs",
+      "action": "pass",
+      "elapsed": 1.343
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-cli/cmd",
+      "action": "pass",
+      "elapsed": 1.6360000000000001
+    }
+  ],
+  "skipped": [],
+  "failed": []
+}

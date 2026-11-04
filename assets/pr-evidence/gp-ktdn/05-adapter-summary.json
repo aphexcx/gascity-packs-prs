@@ -1,0 +1,28 @@
+{
+  "tests_including_subtests": {
+    "pass": 12851,
+    "skip": 3
+  },
+  "top_level_tests": {
+    "pass": 1440,
+    "skip": 3
+  },
+  "packages": [
+    {
+      "package": "github.com/sjarmak/gc-slack-adapter/redact",
+      "action": "pass",
+      "elapsed": 1.184
+    },
+    {
+      "package": "github.com/sjarmak/gc-slack-adapter",
+      "action": "pass",
+      "elapsed": 151.748
+    }
+  ],
+  "skipped": [
+    "TestIngestionLiveBusySessionProof",
+    "TestMinimalReplayMeasurement",
+    "TestRegistrationStartupDelayedPort"
+  ],
+  "failed": []
+}

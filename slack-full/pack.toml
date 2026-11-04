@@ -45,6 +45,12 @@ schema = 2
 # /v0/city/<cityName>/svc/<name>, which matches the supervisor's
 # router. Phase A cutover from legacy nohup → proxy_process.
 
+# gc constructs proxy_process services before publishing the city API route.
+# The adapter serves /healthz as 200 + advisory "registering: attempt N" while
+# registration retries connection refusal / city-not-running 404s for up to
+# 10 minutes (1s doubling to 30s). Other routes stay 503 until startup completes.
+# Template fallback requires a 400 naming reply_instructions, or a 422 whose
+# validation errors identify body.reply_instructions as an unexpected property.
 [[service]]
 name = "slack"
 kind = "proxy_process"
