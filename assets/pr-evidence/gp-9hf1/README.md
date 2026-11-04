@@ -36,10 +36,18 @@ here, so a reader can rebuild them):
      "the dead line survives the compaction" (the replay guard gone while the
      gateway still holds the delivery: the gate r7's second finding); (12c)
      never acks; the journal unit test of the compaction rule fails.
-2. **The engine against stubs** (`make_red0.py`, `node-engine-RED.txt`): the
-   journal, inbound, evidence, render and dead-letter modules replaced by
-   stubs exporting the same names and implementing nothing; every engine case
-   fails.
+2. **The engine against stubs** (`make_red0.py`, `node-engine-RED.txt`, run
+   with `--test-timeout=20000` since a stub never reaches a SIGKILL
+   failpoint): the journal, inbound, evidence, render and dead-letter modules
+   replaced by stubs exporting the same names and implementing nothing: 80
+   tests, 70 fail, 9 cancelled at the timeout, 1 pass (the gc registration,
+   which index.js makes without the engine).
+2b. **The self-review regressions against the pre-review source**
+   (`make_red_review.py` at `864d2f0a`, `node-review-RED.txt`): 9 of 10 RED;
+   the pass is the negative control (a delivery after the journal began is
+   posted plain at once). **The contract readings against `f303c69d`**
+   (`node-readings-RED.txt`): 3 of 4 RED; the pass is the control (a 502
+   meta_error was already transient).
 3. **The helper modules' own TDD runs**: `node-keeper-RED.txt` (23 of 23
    against "not implemented" stubs) and `node-outbound-media-RED.txt` (24 of
    24, then 27 of 27 against stubs).
