@@ -1,0 +1,688 @@
+# gp-ac0u RED: the new tests against the stack base's source
+# HEAD 392f9c09649dd37eea414dbc520270ba586ed18c; src/ and migrations/ unchanged from HEAD:
+#   git diff --stat HEAD -- whatsapp/gateway/src whatsapp/gateway/migrations => []
+# changed: tests, fixtures, vitest.config.ts (the MIGRATION_DB binding) only
+# 2026-11-04T21:01:59Z pnpm exec vitest run --reporter=verbose (from whatsapp/gateway)
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/whatsapp/gateway
+
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a known body and secret give the known sha256= header 1ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a header in upper-case hex still verifies (the digest, not its spelling) 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > one tampered byte fails 1ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a missing header, a wrong prefix, a short digest, non-hex and a wrong secret all fail 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > the constant-time compare and the secret compare answer exactly equality 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a text message: sender, wamid, Meta's timestamp, the body and the profile name 1ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a reaction carries no text and no media 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > an image and a voice note carry their media id 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > statuses: sent and failed, with the recipient and Meta's object whole 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a payload for another phone number id is counted and yields nothing 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > other objects, other fields and malformed entries are ignored, never thrown 1ms
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text from a username user: no from, the BSUID, the username and the profile name 3ms
+   → expected [] to have a length of 1 but got +0
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text carrying both ids, and today's shape with the wa_id alone 1ms
+   → expected { …(8) } to match object { from: '16505551234', …(3) }
+(12 matching properties omitted from actual)
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > an id the message lacks is read from its contacts entry: the user_id by the wa_id, the wa_id by the user_id 1ms
+   → expected { …(8) } to match object { from: '16505551234', …(1) }
+(12 matching properties omitted from actual)
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone 0ms
+   → expected { …(4) } to match object { status: 'delivered', …(2) }
+(9 matching properties omitted from actual)
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a number change: the new and previous user ids and the new phone; with no phone shared, the previous user id alone names the sender 1ms
+   → expected { …(8) } to match object { from: '16505551234', …(3) }
+(11 matching properties omitted from actual)
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a message naming no wa_id, no user_id and no previous user id is skipped, never thrown 0ms
+ × test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a send to a BSUID puts it in `recipient`, byte for byte, with `to` omitted; a phone number stays in `to` 1ms
+   → expected { messaging_product: 'whatsapp', …(4) } to deeply equal { messaging_product: 'whatsapp', …(4) }
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > text, reaction and template 0ms
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > mark-as-read carries the typing indicator 0ms
+ ✓ test/meta.test.ts > the Graph client > send posts to /<version>/<phone number id>/messages with the token and returns the wamid 0ms
+ ✓ test/meta.test.ts > the Graph client > a Graph error becomes a GraphError with Meta's status and code; a network failure has status 0 0ms
+ ✓ test/meta.test.ts > the Graph client > an answer without a message id is an error, never an empty wamid 1ms
+ ✓ test/meta.test.ts > the Graph client > mark-as-read posts the read body 0ms
+ ✓ test/meta.test.ts > the Graph client > media: mints the URL for the phone number id, then fetches the bytes with the token 0ms
+ ✓ test/meta.test.ts > the Graph client > media: a URL that is not https is refused before the token is sent 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > closes at last inbound + 24 h - 120 s; null when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > open strictly before the close, closed at and after it, closed when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not 1ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > echoes hub.challenge only for the verify token 1ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > refuses the handshake while no verify token is configured 1ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a tampered byte answers 401 and stores nothing 9ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a missing header answers 401 and stores nothing 6ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a body over 1.9 MB answers 413 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload for another phone number id is dropped and counted 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a bound sender's text lands in exactly its city's inbox and in no other 12ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a live invite code binds the phone, marks the code used, appends the joined entry and sends the welcome once 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload carrying the invite text twice binds once and welcomes once 5ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an unknown sender gets the canned line once and silence on the next message within 7 days 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a Meta redelivery of the same wamid yields one delivery 8ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload too big for one D1 batch lands whole, every message once 30ms
+ × test/bsuid.test.ts > BSUID: binding and routing > an invite text carrying only a user_id binds the owner by it, welcomes it at the BSUID in `recipient`, and its messages reach only that city 16ms
+   → expected [] to deeply equal [ { …(5) } ]
+ × test/bsuid.test.ts > BSUID: binding and routing > an owner bound with both ids is one row keyed by its wa_id; a later message carrying only its user_id routes to it and moves its window 7ms
+   → expected undefined to match object { kind: 'message', wa_id: null, …(2) }
+ × test/bsuid.test.ts > BSUID: binding and routing > an owner bound by wa_id alone gains its user_id from the first message carrying both, never a second row; a user_id-only message then routes to it 6ms
+   → D1_ERROR: no such column: conversation_id at offset 7: SQLITE_ERROR
+ × test/bsuid.test.ts > BSUID: binding and routing > the window moves on a message from either id: a user_id-only message reopens it for a send to the wa_id, a wa_id-only one for a send to the BSUID 8ms
+   → expected 422 to be 200 // Object.is equality
+ × test/bsuid.test.ts > BSUID: binding and routing > a message from an owner's phone carrying another user_id is not the owner (the number is someone else's now): never routed, it hears the canned line 6ms
+   → expected true to be false // Object.is equality
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > a message naming neither a wa_id nor a user_id is skipped, and Meta still gets 200 5ms
+ × test/bsuid.test.ts > BSUID: sends > a send to a BSUID reaches Meta in `recipient`, byte for byte and with no `to`; a send to the wa_id goes in `to` 4ms
+   → expected 400 to be 200 // Object.is equality
+ × test/bsuid.test.ts > BSUID: sends > a malformed BSUID is 400 without a Graph call; a well-formed one that is no owner of this city is 403 11ms
+   → expected [ Array(3) ] to deeply equal [ Array(3) ]
+ × test/bsuid.test.ts > BSUID: sends > Meta's refusal of a BSUID recipient (131062: an authentication template) reads meta_error and frees the key 3ms
+   → expected 400 to be 502 // Object.is equality
+ × test/bsuid.test.ts > BSUID: strangers > a stranger is known by its user_id: one canned line in `recipient`, and none again within 7 days when a later message also carries its phone 1ms
+   → expected [] to deeply equal [ { …(5) } ]
+ × test/bsuid.test.ts > BSUID: strangers > five wrong codes from one user_id stop its sixth, the right one included, whichever ids each text carries 9ms
+   → expected [ { id: 16, …(5) } ] to have a length of +0 but got 1
+ × test/bsuid.test.ts > BSUID: statuses > statuses of a send to the BSUID and of a send to the phone reach the city with the owner's conversation_id; a raced one is adopted with its user_id 10ms
+   → expected [ [ …(7) ], [ …(7) ] ] to deeply equal [ …(4) ]
+ × test/bsuid.test.ts > BSUID: a number change > user_changed_number reaches the owner's city as a system message, moves no window, re-keys the owner, and its next message by the new ids keeps the conversation 11ms
+   → expected { id: 26, …(5) } to match object { kind: 'message', …(3) }
+(9 matching properties omitted from actual)
+ × test/bsuid.test.ts > BSUID: a number change > user_changed_user_id, with no phone shared, routes by the previous user_id and re-keys; a send to the old key goes to the new BSUID; an unknown user's notice is dropped silently 3ms
+   → expected undefined to match object { kind: 'message', wa_id: null, …(2) }
+ × test/bsuid.test.ts > BSUID: the operator's view and the logs > the admin listing shows a phone's last four digits and 'id' for an owner with no phone, never a full id 7ms
+   → expected 1 to be 2 // Object.is equality
+ × test/bsuid.test.ts > BSUID: the operator's view and the logs > no log line carries a user_id, a username or a phone on the BSUID paths 8ms
+   → expected [ 'enroll_code_minted', …(4) ] to include 'send'
+ × test/bsuid.test.ts > BSUID: migration 0002 over schema v1 rows > a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, and user_id is unique where present 0ms
+   → expected [ '0001_init.sql' ] to deeply equal [ '0001_init.sql', '0002_bsuid.sql' ]
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once 28ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite text whose welcome send fails still binds and answers 200; its redelivery is one row and no second bind 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a phone bound to one city texting another city's code stays put; the code stays live 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > minting a new invite code retires the city's previous live one 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite code expires after 24 hours 4ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > five wrong codes in a day stop a phone's code attempts, the right one included 10ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > a wrong-code text Meta redelivers is one attempt, not two 13ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > an invite text Meta stamped before the code expired binds on a redelivery after the expiry 4ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a poll with no after returns every unacknowledged delivery again, oldest first 15ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > after and limit page the held deliveries; an empty page keeps the cursor 9ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ack deletes exactly the listed ids and leaves an unlisted earlier id in the inbox 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > HOLD: a delivery is held, body and all, and returned by every poll until the ack names its id 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ACK OF A DELETED ID: an ack for an id the cron already deleted is a no-op 200 8ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > REPEATED ACK: acking an id an earlier ack already deleted is the same no-op, and touches nothing else 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an ack naming another city's id is a no-op for it: the other city still holds it 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a malformed ack answers 400 and deletes nothing 5ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a delivery never acknowledged survives the ack of other ids until the cron deletes it at 7 days 20ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an acknowledged wamid redelivered by Meta is still one row: no second delivery 5ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > over 5,000 held for one city Meta gets 503 and nothing is stored; below it again, 200 14ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > the cron deletes bodies older than 7 days and keeps phones 9ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > sent, delivered and read for one wamid land as three status rows; a redelivery of one makes no fourth 8ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > a status for a wamid no city sent reaches no city 5ms
+ ✓ test/gateway.test.ts > City side: send > a send to an unbound phone, or to another city's phone, answers 403 without a Graph call 6ms
+ ✓ test/gateway.test.ts > City side: send > a repeated idempotency_key makes one Graph call and answers the same message_id 5ms
+ ✓ test/gateway.test.ts > City side: send > the same idempotency_key in two cities is two sends (the key is per city) 8ms
+ ✓ test/gateway.test.ts > City side: send > Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends 6ms
+ ✓ test/gateway.test.ts > City side: send > an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call 8ms
+ ✓ test/gateway.test.ts > City side: send > Meta's own outside-window answer (131047) reads window_closed 4ms
+ ✓ test/gateway.test.ts > City side: send > a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again 4ms
+ ✓ test/gateway.test.ts > City side: send > a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send 6ms
+ ✓ test/gateway.test.ts > City side: send > refuses malformed sends with 400 and over-long text with text_too_long 7ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a text just before the close sends; at the close and at 24h01 it answers window_closed without a Graph call 6ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a template at 24h01 sends and leaves the window closed; the owner's next message reopens it 7ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > GET /v1/window: close = last inbound + 24 h - 120 s, moves on the owner's message, not on any send; null for a phone that never wrote; no other city's phone 14ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement) 9ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a system notice is delivered but does not move the window 4ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped 6ms
+ ✓ test/gateway.test.ts > City side: read, media > read marks a delivered message read with the typing indicator; another city's message is 404 5ms
+stdout | test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route
+{"event":"handshake"}
+
+ ✓ test/gateway.test.ts > City side: read, media > media streams the bytes with Meta's mime type to its city; another city's media id is 404 7ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > enroll mints a city and one credential for a live code, once; a used code is 403 2ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > an unknown or expired enrollment code is 403; a malformed enroll is 400 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > a revoked credential is 401; so are an unknown one and none 2ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin routes need ADMIN_TOKEN; an unset admin token opens nothing 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin cities lists counts and the last four digits of each phone, never a number in clear 3ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > healthz answers ok, the held total and the last webhook time, with no phone and no body 4ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > no log line carries a phone number, a message body, a token or a secret 12ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret 3ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route 5ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 22 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > an invite text carrying only a user_id binds the owner by it, welcomes it at the BSUID in `recipient`, and its messages reach only that city
+AssertionError: expected [] to deeply equal [ { …(5) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "messaging_product": "whatsapp",
+-     "recipient": "US.35547992963286844327",
+-     "recipient_type": "individual",
+-     "text": {
+-       "body": "You're connected to Hou Dynasty's mayor. Say hi.",
+-       "preview_url": false,
+-     },
+-     "type": "text",
+-   },
+- ]
++ []
+
+ ❯ test/bsuid.test.ts:36:90
+     34|     const join = await t.sayAs({ user, username: "taylor.hou" }, code,…
+     35|     expect(join.res.status).toBe(200);
+     36|     expect(t.graph.sends().filter((c) => c.body?.recipient === user).m…
+       |                                                                                          ^
+     37|       {
+     38|         messaging_product: "whatsapp",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > an owner bound with both ids is one row keyed by its wa_id; a later message carrying only its user_id routes to it and moves its window
+AssertionError: expected undefined to match object { kind: 'message', wa_id: null, …(2) }
+
+- Expected:
+{
+  "conversation_id": "5524202033628",
+  "kind": "message",
+  "user_id": "US.13252567991384574079",
+  "wa_id": null,
+}
+
++ Received:
+undefined
+
+ ❯ test/bsuid.test.ts:72:15
+     70|     const { wamid } = await t.sayAs({ user }, "no phone this time");
+     71|     const d = (await t.inbox(city)).body.deliveries.find((x: any) => x…
+     72|     expect(d).toMatchObject({ kind: "message", wa_id: null, user_id: u…
+       |               ^
+     73|     expect(await owners(wa, user)).toEqual([{ conversation_id: wa, wa_…
+     74|     expect((await t.window(city)).body.windows).toEqual([
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > an owner bound by wa_id alone gains its user_id from the first message carrying both, never a second row; a user_id-only message then routes to it
+Error: D1_ERROR: no such column: conversation_id at offset 7: SQLITE_ERROR
+ ❯ D1DatabaseSessionAlwaysPrimary._sendOrThrow cloudflare-internal:d1-api:193:19
+ ❯ cloudflare-internal:d1-api:474:19
+ ❯ owners test/bsuid.test.ts:15:23
+     13| /** The owner rows naming any of these ids, as D1 holds them. */
+     14| async function owners(...ids: string[]) {
+     15|   const { results } = await env.DB.prepare(
+       |                       ^
+     16|     `SELECT conversation_id, wa_id, user_id, username, city_id FROM ph…
+     17|      WHERE conversation_id IN (SELECT value FROM json_each(?1)) OR wa_…
+ ❯ test/bsuid.test.ts:84:12
+
+Caused by: Error: no such column: conversation_id at offset 7: SQLITE_ERROR
+ ❯ D1DatabaseSessionAlwaysPrimary._sendOrThrow cloudflare-internal:d1-api:194:24
+ ❯ cloudflare-internal:d1-api:474:19
+ ❯ owners test/bsuid.test.ts:15:23
+ ❯ test/bsuid.test.ts:84:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > the window moves on a message from either id: a user_id-only message reopens it for a send to the wa_id, a wa_id-only one for a send to the BSUID
+AssertionError: expected 422 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 422
+
+ ❯ test/bsuid.test.ts:111:110
+    109|     expect((await t.send(city, { to: wa, idempotency_key: uniq(), type…
+    110|     await t.sayAs({ user }, "back");
+    111|     expect((await t.send(city, { to: wa, idempotency_key: uniq(), type…
+       |                                                                                                              ^
+    112|     t.clock.now += DAY + HOUR;
+    113|     expect((await t.send(city, { to: user, idempotency_key: uniq(), ty…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: binding and routing > a message from an owner's phone carrying another user_id is not the owner (the number is someone else's now): never routed, it hears the canned line
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/bsuid.test.ts:126:93
+    124|     await t.joinAs(city, { wa, user: owner });
+    125|     const { wamid } = await t.sayAs({ wa, user: bsuid() }, "is this th…
+    126|     expect((await t.inbox(city)).body.deliveries.some((d: any) => d.me…
+       |                                                                                             ^
+    127|     expect(t.graph.sends().filter((c) => c.body?.to === wa && c.body?.…
+    128|     expect(await owners(wa)).toEqual([{ conversation_id: wa, wa_id: wa…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: sends > a send to a BSUID reaches Meta in `recipient`, byte for byte and with no `to`; a send to the wa_id goes in `to`
+AssertionError: expected 400 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 400
+
+ ❯ test/bsuid.test.ts:158:24
+    156|     for (const body of bodies) {
+    157|       const r = await t.send(city, { to: user, idempotency_key: uniq()…
+    158|       expect(r.status).toBe(200);
+       |                        ^
+    159|       const sent = t.graph.sends().at(-1)!.body!;
+    160|       expect(sent).toMatchObject({ messaging_product: "whatsapp", reci…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: sends > a malformed BSUID is 400 without a Graph call; a well-formed one that is no owner of this city is 403
+AssertionError: expected [ Array(3) ] to deeply equal [ Array(3) ]
+
+- Expected
++ Received
+
+  [
+    "US.41840494940491050542",
+-   403,
++   400,
+    {
+-     "error": "not_bound",
++     "error": "bad_request",
+    },
+  ]
+
+ ❯ test/bsuid.test.ts:197:38
+    195|     for (const to of [theirs, bsuid(), "US.ENT.11815799212886844830", …
+    196|       const r = await t.send(a, { to, idempotency_key: uniq(), type: "…
+    197|       expect([to, r.status, r.body]).toEqual([to, 403, { error: "not_b…
+       |                                      ^
+    198|     }
+    199|     expect(t.graph.sends()).toHaveLength(calls);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: sends > Meta's refusal of a BSUID recipient (131062: an authentication template) reads meta_error and frees the key
+AssertionError: expected 400 to be 502 // Object.is equality
+
+- Expected
++ Received
+
+- 502
++ 400
+
+ ❯ test/bsuid.test.ts:211:22
+    209|     t.graph.failNext({ status: 400, body: { error: { code: 131062, mes…
+    210|     const r = await t.send(city, { to: user, idempotency_key: key, typ…
+    211|     expect(r.status).toBe(502);
+       |                      ^
+    212|     expect(r.body).toEqual({ error: "meta_error", meta_status: 400, me…
+    213|     const again = await t.send(city, { to: user, idempotency_key: key,…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: strangers > a stranger is known by its user_id: one canned line in `recipient`, and none again within 7 days when a later message also carries its phone
+AssertionError: expected [] to deeply equal [ { …(5) } ]
+
+- Expected
++ Received
+
+- [
+-   {
+-     "messaging_product": "whatsapp",
+-     "recipient": "US.41917337972298757562",
+-     "recipient_type": "individual",
+-     "text": {
+-       "body": "This number serves Dynasty cities. Ask your city for an invite code.",
+-       "preview_url": false,
+-     },
+-     "type": "text",
+-   },
+- ]
++ []
+
+ ❯ test/bsuid.test.ts:225:45
+    223|     const toStranger = () => t.graph.sends().filter((c) => c.body?.rec…
+    224|     await t.sayAs({ user }, "hello?");
+    225|     expect(toStranger().map((c) => c.body)).toEqual([
+       |                                             ^
+    226|       { messaging_product: "whatsapp", recipient_type: "individual", r…
+    227|     ]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: strangers > five wrong codes from one user_id stop its sixth, the right one included, whichever ids each text carries
+AssertionError: expected [ { id: 16, …(5) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ test/bsuid.test.ts:249:51
+    247|     }
+    248|     await t.sayAs({ wa, user }, code);
+    249|     expect((await t.inbox(city)).body.deliveries).toHaveLength(0);
+       |                                                   ^
+    250|     expect(await owners(wa, user)).toEqual([]);
+    251|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: statuses > statuses of a send to the BSUID and of a send to the phone reach the city with the owner's conversation_id; a raced one is adopted with its user_id
+AssertionError: expected [ [ …(7) ], [ …(7) ] ] to deeply equal [ …(4) ]
+
+- Expected
++ Received
+
+  [
+    [
+-     undefined,
+-     "delivered",
+-     null,
+-     "US.32953352802512610538",
+-     "5511556634039",
+-     null,
+-     null,
+-   ],
+-   [
+      "wamid.OUT2x78eff76e4e87",
+      "read",
+      "5511556634039",
+-     "US.32953352802512610538",
+-     "5511556634039",
+-     null,
++     undefined,
++     undefined,
++     undefined,
+      null,
+    ],
+    [
+      "wamid.OUT2x78eff76e4e87",
+      "failed",
+      "5511556634039",
+-     null,
+-     "5511556634039",
+-     null,
+-     null,
+-   ],
+-   [
+      undefined,
+-     "sent",
+-     null,
+-     "US.32953352802512610538",
+-     "5511556634039",
+-     null,
++     undefined,
++     undefined,
+      null,
+    ],
+  ]
+
+ ❯ test/bsuid.test.ts:273:139
+    271|     const raced = (await t.send(city, { to: user, idempotency_key: uni…
+    272|     const statuses = (await t.inbox(city)).body.deliveries.filter((d: …
+    273|     expect(statuses.map((d: any) => [d.message.id, d.message.status, d…
+       |                                                                                                                                           ^
+    274|       [byUser, "delivered", null, user, wa, null, null],
+    275|       [byPhone, "read", wa, user, wa, null, null],
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: a number change > user_changed_number reaches the owner's city as a system message, moves no window, re-keys the owner, and its next message by the new ids keeps the conversation
+AssertionError: expected { id: 26, …(5) } to match object { kind: 'message', …(3) }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "conversation_id": "5500867201921",
+    "kind": "message",
+-   "user_id": "US.25315562103222810293",
+    "wa_id": "5500867201921",
+  }
+
+ ❯ test/bsuid.test.ts:299:20
+    297|     expect(r.status).toBe(200);
+    298|     const notice = (await t.inbox(city)).body.deliveries.find((d: any)…
+    299|     expect(notice).toMatchObject({ kind: "message", wa_id: wa, user_id…
+       |                    ^
+    300|     expect(notice.message).toMatchObject({
+    301|       type: "system",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: a number change > user_changed_user_id, with no phone shared, routes by the previous user_id and re-keys; a send to the old key goes to the new BSUID; an unknown user's notice is dropped silently
+AssertionError: expected undefined to match object { kind: 'message', wa_id: null, …(2) }
+
+- Expected:
+{
+  "conversation_id": "US.05836146860003157354",
+  "kind": "message",
+  "user_id": "US.05836146860003157354",
+  "wa_id": null,
+}
+
++ Received:
+undefined
+
+ ❯ test/bsuid.test.ts:333:93
+    331|     const wamid = `wamid.${uniq()}`;
+    332|     expect((await t.webhook(changeAs("user_changed_user_id", { previou…
+    333|     expect((await t.inbox(city)).body.deliveries.find((d: any) => d.me…
+       |                                                                                             ^
+    334|       kind: "message",
+    335|       wa_id: null,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's view and the logs > the admin listing shows a phone's last four digits and 'id' for an owner with no phone, never a full id
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ test/bsuid.test.ts:366:24
+    364|     expect(r.status).toBe(200);
+    365|     const row = r.body.cities.find((c: any) => c.id === city.id);
+    366|     expect(row.phones).toBe(2);
+       |                        ^
+    367|     expect([...row.phones_last4].sort()).toEqual([wa.slice(-4), "id"].…
+    368|     const text = JSON.stringify(r.body);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: the operator's view and the logs > no log line carries a user_id, a username or a phone on the BSUID paths
+AssertionError: expected [ 'enroll_code_minted', …(4) ] to include 'send'
+ ❯ test/bsuid.test.ts:396:88
+    394|     await t.gateway.maintain();
+    395|     const events = new Set(t.logs.map((e) => e.event));
+    396|     for (const e of ["webhook", "send", "send_failed", "send_refused"]…
+       |                                                                                        ^
+    397|     const lines = t.logs.map((e) => JSON.stringify(e));
+    398|     for (const needle of [user, user.slice(3), stranger, stranger.slic…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/22]⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: migration 0002 over schema v1 rows > a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, and user_id is unique where present
+AssertionError: expected [ '0001_init.sql' ] to deeply equal [ '0001_init.sql', '0002_bsuid.sql' ]
+
+- Expected
++ Received
+
+  [
+    "0001_init.sql",
+-   "0002_bsuid.sql",
+  ]
+
+ ❯ test/bsuid.test.ts:408:36
+    406|     const db = env.MIGRATION_DB;
+    407|     const all = env.TEST_MIGRATIONS;
+    408|     expect(all.map((m) => m.name)).toEqual(["0001_init.sql", "0002_bsu…
+       |                                    ^
+    409|     await applyD1Migrations(db, all.slice(0, 1));
+    410|     const wa = phone();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text from a username user: no from, the BSUID, the username and the profile name
+AssertionError: expected [] to have a length of 1 but got +0
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ test/meta.test.ts:157:24
+    155|   it("a text from a username user: no from, the BSUID, the username an…
+    156|     const b = parseWebhook(textBsuid, PNID);
+    157|     expect(b.messages).toHaveLength(1);
+       |                        ^
+    158|     expect(b.messages[0]).toMatchObject({
+    159|       wamid: WAMID,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text carrying both ids, and today's shape with the wa_id alone
+AssertionError: expected { …(8) } to match object { from: '16505551234', …(3) }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "from": "16505551234",
+-   "fromUserId": "US.13491208655302741918",
+    "profileName": "Sheena Nelson",
+-   "username": null,
+  }
+
+ ❯ test/meta.test.ts:172:60
+    170|
+    171|   it("a text carrying both ids, and today's shape with the wa_id alone…
+    172|     expect(parseWebhook(textPhoneBsuid, PNID).messages[0]).toMatchObje…
+       |                                                            ^
+    173|       from: "16505551234",
+    174|       fromUserId: BSUID,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > an id the message lacks is read from its contacts entry: the user_id by the wa_id, the wa_id by the user_id
+AssertionError: expected { …(8) } to match object { from: '16505551234', …(1) }
+(12 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "from": "16505551234",
+-   "fromUserId": "US.13491208655302741918",
+  }
+
+ ❯ test/meta.test.ts:184:58
+    182|     const noFromUserId = copy(textPhoneBsuid);
+    183|     delete noFromUserId.entry[0].changes[0].value.messages[0].from_use…
+    184|     expect(parseWebhook(noFromUserId, PNID).messages[0]).toMatchObject…
+       |                                                          ^
+    185|     const noFrom = copy(textPhoneBsuid);
+    186|     delete noFrom.entry[0].changes[0].value.messages[0].from;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone
+AssertionError: expected { …(4) } to match object { status: 'delivered', …(2) }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "recipientId": "16505551234",
+-   "recipientUserId": "US.13491208655302741918",
+    "status": "delivered",
+  }
+
+ ❯ test/meta.test.ts:195:62
+    193|
+    194|   it("statuses: recipient_user_id beside recipient_id, alone for a sen…
+    195|     expect(parseWebhook(statusPhoneBsuid, PNID).statuses[0]).toMatchOb…
+       |                                                              ^
+    196|     expect(parseWebhook(statusBsuid, PNID).statuses[0]).toMatchObject(…
+    197|     expect(parseWebhook(statusFailed, PNID).statuses[0]).toMatchObject…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a number change: the new and previous user ids and the new phone; with no phone shared, the previous user id alone names the sender
+AssertionError: expected { …(8) } to match object { from: '16505551234', …(3) }
+(11 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+-   "change": {
+-     "previousUserId": "US.13491208655302741918",
+-     "type": "user_changed_number",
+-     "userId": "US.70412958836127405533",
+-     "waId": "16505559876",
+-   },
+    "from": "16505551234",
+-   "fromUserId": null,
+    "type": "system",
+  }
+
+ ❯ test/meta.test.ts:201:59
+    199|
+    200|   it("a number change: the new and previous user ids and the new phone…
+    201|     expect(parseWebhook(changedNumber, PNID).messages[0]).toMatchObjec…
+       |                                                           ^
+    202|       from: "16505551234",
+    203|       fromUserId: null,
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/22]⎯
+
+ FAIL  test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a send to a BSUID puts it in `recipient`, byte for byte, with `to` omitted; a phone number stays in `to`
+AssertionError: expected { messaging_product: 'whatsapp', …(4) } to deeply equal { messaging_product: 'whatsapp', …(4) }
+
+- Expected
++ Received
+
+  {
+    "messaging_product": "whatsapp",
+-   "recipient": "US.13491208655302741918",
+    "recipient_type": "individual",
+    "text": {
+      "body": "hello",
+      "preview_url": false,
+    },
++   "to": "US.13491208655302741918",
+    "type": "text",
+  }
+
+ ❯ test/meta.test.ts:228:61
+    226|   it("a send to a BSUID puts it in `recipient`, byte for byte, with `t…
+    227|     for (const id of [BSUID, "US.ENT.11815799212886844830", "BR.aZ09"]…
+    228|       expect(sendBody(id, { type: "text", text: "hello" })).toEqual({
+       |                                                             ^
+    229|         messaging_product: "whatsapp",
+    230|         recipient_type: "individual",
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/22]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  22 failed | 86 passed (108)
+   Start at  15:02:00
+   Duration  937ms (transform 157ms, setup 153ms, import 201ms, tests 585ms, environment 0ms)
+
