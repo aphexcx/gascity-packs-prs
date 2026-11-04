@@ -27,7 +27,7 @@ printf '%s' "$WA_BODY" | jq -r '
   "Terminal holds: \(.inbound.held | length)",
   (.inbound.held[] | "  \(.ref)  phone ...\(.wa_id_last4)  receipt \(.receipt_id)  since \(.held_at | t)  (gc whatsapp inbound resolve <ref> --delivered|--dead)"),
   "Restore gaps:  \(.inbound.gaps | length)",
-  (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) ahead of the gc store head \(.head_sequence)  (gc whatsapp inbound clear-gap <wa_id>)"),
+  (.inbound.gaps[] | "  \(.conversation_id)  journal watermark \(.watermark_sequence) ahead of the gc store head \(.head_sequence // "unknown")  (gc whatsapp inbound clear-gap <wa_id>)"),
   # The keeper reads GET /v1/window once a minute; while a read is failing
   # the ladder and the lapse count wait on a fresh clock.
   ((.keeper.window_read // {}) as $w |

@@ -21,7 +21,9 @@ async function setup(t, extra = {}) {
 }
 const acked = (r, id) => waitFor(() => r.gw.acked.has(id), { what: `the ack of delivery ${id}` });
 const lines = (r, pmid, type) => r.journal().filter((l) => l.rid === rid(pmid) && (!type || l.t === type));
-const gapLine = (r, conversationId) => r.journal().find((l) => l.t === 'restore_gap' && l.conversation_id === conversationId);
+// The gap as it stands: the detection's line, then the same gap again with
+// the head once read (the codex gate r1's first finding on PR 74).
+const gapLine = (r, conversationId) => r.journal().findLast((l) => l.t === 'restore_gap' && l.conversation_id === conversationId);
 const indexOf = (r, predicate) => r.journal().findIndex(predicate);
 
 async function deliver(r, wa, pmid, body = pmid) {

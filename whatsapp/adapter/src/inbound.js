@@ -41,6 +41,25 @@ export const ACK_BATCH = 100;
 // gateway and the box).
 export const LOST_JOURNAL_MARGIN_MS = 60000;
 
+// THE CLASSIFICATION OF A NEW RID (the codex gate r1's second finding on PR
+// 74). One function decides what a delivery the journal has never seen IS,
+// and the decision is written IN that delivery's received line (journal.js
+// applies it in the fold), so no crash and no failed append can leave the
+// delivery looking fresh to advance():
+//   - a dead-letter file line names it: a journal that is gone dead-lettered
+//     it; dead again, its ack owed, never posted;
+//   - fresh only on positive proof: the gateway took it at or after this
+//     journal's genesis less the margin (both instants finite);
+//   - otherwise in doubt (a lost journal may have posted it): the in-doubt
+//     rule from a lookup at zero, never a plain first post; the grace and
+//     the pending deadline run from the gateway's receipt, or from now when
+//     the delivery carries none.
+export function classifyNew({ receivedAtMs, genesisAt, deadLetter, now }) {
+  if (deadLetter) return { recovery: 'dead', recovery_reason: deadLetter.reason };
+  if (Number.isFinite(receivedAtMs) && Number.isFinite(genesisAt) && receivedAtMs >= genesisAt - LOST_JOURNAL_MARGIN_MS) return {};
+  return { recovery: 'in_doubt', recovery_at: Number.isFinite(receivedAtMs) ? receivedAtMs : now };
+}
+
 // Logs and operator surfaces name an entry by a digest, never by its rid: a
 // wamid base64-encodes the sender's phone number.
 export function ref(rid) {
@@ -180,11 +199,16 @@ export function createInbound({
   }
 
   // The invite's keeper fields (consent, hours, zone) move onto the phone
-  // that joined with its code. Called at EVERY sight of a joined delivery
-  // and at startup for every joined entry in the journal: keeper.bindInvite
-  // is idempotent, so a kill between the received line and the bind, or a
-  // failed keeper write, is retried rather than lost.
+  // that joined with its code. Called at the join's first sight, at every
+  // later sight, at startup for every joined entry in the journal, and at
+  // every poll for each bind still owed: keeper.bindInvite is idempotent.
+  // A failed keeper write is never swallowed (the codex gate r1's MINOR on
+  // PR 74): the rid is a bind OWED, and driveAcks holds its ack until the
+  // bind is saved, so the gateway keeps the delivery and the journal keeps
+  // its envelope (compaction drops only an acknowledged rid) for the retry,
+  // across a restart too.
   const emptyCodeSeen = new Set();
+  const bindOwed = new Set();
   function bindJoined(rid, delivery) {
     if (delivery?.kind !== 'joined' || !keeper?.bindInvite) return;
     const who = `${ref(rid)} (…${lastFour(delivery.wa_id)})`;
@@ -197,7 +221,21 @@ export function createInbound({
     try {
       keeper.bindInvite(code, String(delivery.wa_id));
     } catch (err) {
-      log(`${who}: the invite's keeper fields were not bound (${err.message}); retried at the next sight`);
+      if (!bindOwed.has(rid)) log(`${who}: the invite's keeper fields were not bound (${err.message}); the join stays unacknowledged until the bind is saved (retried at every poll)`);
+      bindOwed.add(rid);
+      return;
+    }
+    if (bindOwed.delete(rid)) {
+      log(`${who}: the invite's keeper fields are bound; the join's ack goes now`);
+      void driveAcks(true);
+    }
+  }
+
+  function retryOwedBinds() {
+    for (const rid of [...bindOwed]) {
+      const envelope = entries().get(rid)?.received?.envelope;
+      if (envelope) bindJoined(rid, envelope);
+      else bindOwed.delete(rid); // no entry left to bind from
     }
   }
 
@@ -206,6 +244,7 @@ export function createInbound({
   async function poll() {
     polling = true;
     const seq = ++pollSeq;
+    retryOwedBinds();
     try {
       const deliveries = await readWholeInbox(gateway);
       pollFailures = 0;
@@ -258,7 +297,13 @@ export function createInbound({
     const rid = ridFor(pmid);
     const existing = entries().get(rid);
     if (!existing) {
-      const dead = deadLetters.get(rid);
+      // Classified first, then ONE received line carrying the decision.
+      const verdict = classifyNew({
+        receivedAtMs: toMs(delivery.received_at), // integer epoch seconds on the wire (the gateway's reading 1)
+        genesisAt: journal.genesisAt,
+        deadLetter: deadLetters.get(rid),
+        now: clock(),
+      });
       killPoint('before-received', rid);
       journal.append({
         t: 'received',
@@ -269,25 +314,18 @@ export function createInbound({
         profile_name: delivery.profile_name ?? '',
         envelope: delivery,
         received_at: delivery.received_at ?? null,
+        ...verdict,
       });
       killPoint('after-received', rid);
-      if (dead) {
+      if (verdict.recovery === 'dead') {
         // Dead-lettered by a journal that is gone (its ack never confirmed):
         // the file line is the record. Dead again, ack owed, never posted.
-        journal.append({ t: 'dead', rid, reason: dead.reason, replayed: true });
-        log(`${ref(rid)}: already dead-lettered (${dead.reason}) by a lost journal; ack owed, never posted`);
+        log(`${ref(rid)}: already dead-lettered (${verdict.recovery_reason}) by a lost journal; ack owed, never posted`);
+        bindJoined(rid, delivery);
         oweAck(rid);
         return true;
       }
-      // received_at is integer epoch seconds on the wire (the gateway's reading 1).
-      const at = toMs(delivery.received_at);
-      if (Number.isFinite(at) && at < (journal.genesisAt ?? 0) - LOST_JOURNAL_MARGIN_MS) {
-        // The gateway took it before this journal was born: a journal that is
-        // gone may have posted it. Never a plain first post: the in-doubt
-        // rule, from a lookup at zero (design line 114, a lost journal).
-        // Its time is the gateway's receipt: the grace has long passed, and
-        // the pending deadline runs from there.
-        journal.append({ t: 'posted', rid, at, reposts: 0, boundary: 0, marked: false, synthetic: 'before-genesis' });
+      if (verdict.recovery === 'in_doubt') {
         log(`${ref(rid)}: received by the gateway before this journal began; resolved by the in-doubt rule`);
       }
       // The window moves on the owner's message of every known type, the
@@ -337,8 +375,10 @@ export function createInbound({
   async function driveAcks(force) {
     if (acking || ackOwedIds.size === 0 || authFailed) return;
     if (!force && clock() < ackNextAt) return;
+    // A join whose keeper bind is owed is not retired yet (bindJoined).
+    const owed = [...ackOwedIds.entries()].filter(([, rid]) => !rid || !bindOwed.has(rid));
+    if (!owed.length) return;
     acking = true;
-    const owed = [...ackOwedIds.entries()];
     const batches = [];
     for (let i = 0; i < owed.length; i += ACK_BATCH) batches.push(owed.slice(i, i + ACK_BATCH));
     let failed = 0;
@@ -413,24 +453,38 @@ export function createInbound({
           && recordField(record, 'Sequence') === wm.sequence
           && recordField(record, 'ProviderMessageID') === wm.provider_message_id;
         if (intact || journal.gaps.has(conversationId)) continue;
-        const headPage = await gc.transcript({ scopeId: city, conversationId, limit: 1, order: 'desc' });
-        const head = Array.isArray(headPage?.items) ? headPage.items[0] : undefined;
-        // The read walked a snapshot: if the watermark moved meanwhile (an
-        // accept raised it, or a clear rebased it), this reading is stale.
-        const live = journal.watermarks.get(conversationId);
-        if (!live || live.sequence !== wm.sequence || live.provider_message_id !== wm.provider_message_id
-          || live.rebased_at !== wm.rebased_at || journal.gaps.has(conversationId)) continue;
-        journal.append({
+        // DETECTED: the store's record at this watermark's sequence is not
+        // the watermark's message. The gap line is written NOW, before any
+        // further await (the codex gate r1's first finding on PR 74), so an
+        // acceptance that raises the watermark meanwhile, a failed head read
+        // or a crash cannot un-make the detection: the record this read
+        // found missing stays missing whatever the watermark does next, and
+        // the gap stands until the operator's clear-gap, which runs on
+        // watermarkChain with every read, never inside one.
+        const gap = journal.append({
           t: 'restore_gap',
           conversation_id: conversationId,
           watermark_sequence: wm.sequence,
           watermark_accepted_at: wm.accepted_at ?? null,
-          head_sequence: head ? recordField(head, 'Sequence') ?? 0 : 0,
-          head_created_at: head ? recordField(head, 'CreatedAt') ?? null : null,
+          head_sequence: null, // unknown until the head read below
+          head_created_at: null,
           found_at: clock(),
           found_by: reason,
         });
-        log(`restore gap: conversation ...${lastFour(conversationId)} watermark ${wm.sequence} not in the gc store (head ${head ? recordField(head, 'Sequence') : 0}); in-doubt entries everywhere take the marked path until gc whatsapp inbound clear-gap`);
+        // The store's head is the operator's context only (status, the
+        // doctor row, clear-gap's print): read after, recorded on the same
+        // gap; a failed read leaves it unknown.
+        let headNote;
+        try {
+          const headPage = await gc.transcript({ scopeId: city, conversationId, limit: 1, order: 'desc' });
+          const head = Array.isArray(headPage?.items) ? headPage.items[0] : undefined;
+          const headSequence = head ? recordField(head, 'Sequence') ?? 0 : 0;
+          journal.append({ ...gap, head_sequence: headSequence, head_created_at: head ? recordField(head, 'CreatedAt') ?? null : null });
+          headNote = `head ${headSequence}`;
+        } catch (err) {
+          headNote = `head unknown: ${err.message}`;
+        }
+        log(`restore gap: conversation ...${lastFour(conversationId)} watermark ${wm.sequence} not in the gc store (${headNote}); in-doubt entries everywhere take the marked path until gc whatsapp inbound clear-gap`);
       }
       stats.lastWatermarkReadAt = clock();
       watermarkFailures = 0;
@@ -979,6 +1033,7 @@ export function createInbound({
       polls: stats.polls,
       entries: counts,
       acks_owed: ackOwedIds.size,
+      binds_owed: bindOwed.size,
       held,
       gaps: [...journal.gaps.values()].map((g) => ({ ...g, conversation_id: `...${lastFour(g.conversation_id)}` })),
       watermarks: journal.watermarks.size,

@@ -283,6 +283,19 @@ def test_restore_row(tmp_path):
     assert doctor('restore', GC_CITY_PATH=str(tmp_path)).returncode == 0
 
 
+# The codex gate r1's first finding on PR 74: a detected rollback is written
+# at once with the head null (unknown); a head read that fails leaves it so.
+GAP_HEAD_UNKNOWN = {'t': 'restore_gap', 'conversation_id': '5511900001234', 'watermark_sequence': 9, 'watermark_accepted_at': NOW_MS,
+                    'head_sequence': None, 'head_created_at': None, 'found_at': NOW_MS, 'found_by': 'schedule'}
+
+
+def test_restore_row_reads_a_head_it_never_got_as_unknown(tmp_path):
+    write_journal(tmp_path, [GAP_HEAD_UNKNOWN])
+    result = doctor('restore', GC_CITY_PATH=str(tmp_path))
+    assert result.returncode == 1
+    assert '(sequence unknown)' in result.stdout and 'null' not in result.stdout
+
+
 def test_probes_row_counts_snapshots_of_the_last_seven_days(tmp_path):
     old = NOW_MS - 8 * 24 * 3600 * 1000
     write_journal(tmp_path, [{'t': 'probe', 'rid': 'r', 'session_id': 's-mayor', 'shape': 'pane', 'found': False, 'at': old},
@@ -465,6 +478,24 @@ def test_clear_gap_prints_the_gap_and_the_head(fake):
     result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
     assert 'sequence 9' in result.stdout and 'rebased to the store head now: sequence 4' in result.stdout
+
+
+def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
+    gap = {key: value for key, value in GAP_HEAD_UNKNOWN.items() if key != 't'}
+    adapter = fake({'POST /inbound/clear-gap': (200, {'ok': True, 'gap': gap, 'head': {'sequence': 4, 'created_at': '2026-11-01T00:00:00Z'}})})
+    result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
+    assert result.returncode == 0, result.stderr
+    assert 'gc store head:     sequence unknown' in result.stdout and 'null' not in result.stdout
+    status = fake({'GET /status': (200, {
+        'health': {'gateway_auth': 'ok'},
+        'inbound': {'last_poll_at': NOW_MS, 'last_poll_error': '', 'entries': {}, 'acks_owed': 0, 'dead_letters': 0, 'held': [],
+                    'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': None}]},
+        'keeper': {'conversations': {}, 'window_read': {'ok_at': None, 'error': None, 'error_at': None, 'failures': 0}},
+        'ledger': {'conversations': {}},
+    })})
+    result = verb('status.sh', WHATSAPP_ADAPTER_URL=status.url)
+    assert result.returncode == 0, result.stderr
+    assert 'journal watermark 9 ahead of the gc store head unknown' in result.stdout and 'null' not in result.stdout
 
 
 def test_invite_consent_hours(fake):

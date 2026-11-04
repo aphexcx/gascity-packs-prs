@@ -24,8 +24,10 @@
 // template send is appended to <stateDir>/updates.jsonl (0600, fsynced).
 //
 // IDEMPOTENCY. Chunk i of a publish goes to the gateway under
-// `<key>:<i>`, and the gateway answers a repeated key with the same
-// message_id without a second Meta call. The adapter also persists per-key
+// textChunkKey(key, i) = `text:<sha256 of key>:<i>`, an update under
+// templateKey(key) = `template:<sha256 of key>` (disjoint namespaces), and
+// the gateway answers a repeated key with the same message_id without a
+// second Meta call. The adapter also persists per-key
 // progress (<stateDir>/outbound_progress.json: chunks delivered, their
 // message ids, the settled receipt), so a retry under the same key resumes
 // at the failed chunk and never asks for a delivered one again, and a
@@ -96,6 +98,20 @@ export function chunkText(text) {
 }
 
 const sha256Hex = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+
+// THE GATEWAY'S IDEMPOTENCY KEY (the codex gate r1's third finding on PR 74).
+// The gateway remembers one answer per key per city and answers a repeat
+// with it, with no Meta call. A text chunk and a template therefore never
+// share a key: each operation has its own namespace, and the caller's key
+// enters as its sha256, so no caller key can reach into another namespace or
+// another chunk (an update keyed "K:0" and a text keyed "K" once both went
+// to the gateway as "K:0"), and a caller key of any length fits the
+// gateway's 1-200 character bound (gateway.ts:746 at 392f9c09). One caller
+// key and one chunk always give one gateway key: a retry still gets the
+// gateway's first answer (its REPEATED KEY rule).
+export const textChunkKey = (key, index) => `text:${sha256Hex(key)}:${index}`;
+export const templateKey = (key) => `template:${sha256Hex(key)}`;
+
 const str = (v) => (typeof v === 'string' ? v.trim() : '');
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -279,7 +295,7 @@ export function createPublisher({
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       try {
-        answer = await gateway.send({ to: waId, idempotency_key: `${key}:${i}`, type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to: waId, idempotency_key: textChunkKey(key, i), type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
@@ -395,7 +411,7 @@ export function createPublisher({
     try {
       answer = await gateway.send({
         to,
-        idempotency_key: key,
+        idempotency_key: templateKey(key),
         type: 'template',
         template: { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] },
       });

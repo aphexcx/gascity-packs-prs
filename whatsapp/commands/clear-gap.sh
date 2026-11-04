@@ -28,6 +28,6 @@ fi
 printf '%s' "$WA_BODY" | jq -r '
   "Gap cleared for ...\(.gap.conversation_id | tostring | .[-4:]):",
   "  journal watermark: sequence \(.gap.watermark_sequence), accepted \(.gap.watermark_accepted_at // "?")",
-  "  gc store head:     sequence \(.gap.head_sequence) at \(.gap.head_created_at // "-") when found",
+  "  gc store head:     sequence \(.gap.head_sequence // "unknown") at \(.gap.head_created_at // "-") when found",
   (if .head then "  watermark rebased to the store head now: sequence \(.head.sequence) (\(.head.created_at))"
    else "  the store holds no record for the conversation now: watermark removed" end)'

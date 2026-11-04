@@ -44,7 +44,10 @@ test('M1: a journal lost with the box resolves a held delivery by the lookup fro
   assert.ok(posts[1].text.startsWith(MARKER('wamid.LJ1')), `never an unmarked repost: ${JSON.stringify(posts[1].text)}`);
   assert.ok(r.gc.requests.some((q) => q.route === 'GET /extmsg/transcript' && q.query.after_sequence === '0' && (q.returned ?? []).includes('wamid.LJ1')),
     'the lookup from zero found the record');
-  assert.equal(lines(r, 'wamid.LJ1', 'posted')[0].synthetic, 'before-genesis');
+  // The classification rides IN the received line (the codex gate r1's
+  // second finding; gate.test.js MAJOR 2): no separate synthetic posted line.
+  assert.equal(lines(r, 'wamid.LJ1', 'received')[0].recovery, 'in_doubt');
+  assert.equal(lines(r, 'wamid.LJ1', 'posted')[0].marked, true, 'the first posted line on disk is the marked copy');
 });
 
 test('M1: a dead entry whose ack failed, its journal lost: the dead-letter file line keeps it dead, acked, never posted', async (t) => {

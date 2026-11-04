@@ -18,7 +18,9 @@ import { createClock } from '../src/clock.js';
 import { createGatewayClient } from '../src/gateway.js';
 import { conversationRef, createGcClient } from '../src/gc.js';
 import { createLedger } from '../src/ledger.js';
-import { chunkText, createPublisher, outboundChunkChars } from '../src/outbound.js';
+import {
+  chunkText, createPublisher, outboundChunkChars, templateKey, textChunkKey,
+} from '../src/outbound.js';
 
 const CITY = 'testcity';
 const PHONE = '15551234567';
@@ -208,7 +210,8 @@ test('the same idempotency key yields one gateway send and the same receipt', as
   assert.equal(first.json.delivered, true);
   assert.equal(first.json.message_id, 'wamid.fake1');
   assert.deepEqual(first.json.conversation, conversationRef(CITY, PHONE));
-  assert.equal(sendsFor(s.gw, 'gc-k1:0').length, 1, 'chunk 0 goes out under <key>:0');
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-k1', 0)).length, 1, 'chunk 0 goes out under text:<sha256 of key>:0');
+  assert.match(textChunkKey('gc-k1', 0), /^text:[0-9a-f]{64}:0$/);
 
   const again = await s.pub.handlePublish(publishBody('hello owner', { key: 'gc-k1' }));
   assert.deepEqual(again, first);
@@ -255,9 +258,9 @@ test('a mid-chunk failure resumes at the failed chunk', async (t) => {
   const { pub } = s.make();
   const resumed = await pub.handlePublish(publishBody(text, { key: 'gc-mid' }));
   assert.equal(resumed.json.delivered, true);
-  assert.equal(sendsFor(s.gw, 'gc-mid:0').length, 1, 'the delivered chunk is never repeated');
-  assert.equal(sendsFor(s.gw, 'gc-mid:1').length, 2, 'the failed chunk is retried once');
-  assert.equal(sendsFor(s.gw, 'gc-mid:2').length, 1);
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 0)).length, 1, 'the delivered chunk is never repeated');
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 1)).length, 2, 'the failed chunk is retried once');
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 2)).length, 1);
   assert.deepEqual(s.gw.metaCalls.map((c) => c.text[0]), ['a', 'b', 'c']);
   assert.equal(resumed.json.message_id, s.gw.metaCalls[2].message_id);
   assert.equal(resumed.json.metadata.message_ids, s.gw.metaCalls.map((c) => c.message_id).join(','));
@@ -325,8 +328,8 @@ test('sends to one wa_id are serialized: a second publish waits for every chunk 
     s.pub.handlePublish(publishBody('C', { to: OTHER, key: 'gc-C' })),
   ]);
   const forPhone = s.gw.requests.filter((r) => r.to === PHONE).map((r) => r.idempotency_key);
-  assert.deepEqual(forPhone, ['gc-A:0', 'gc-A:1', 'gc-A:2', 'gc-B:0']);
-  const cAt = s.gw.requests.findIndex((r) => r.idempotency_key === 'gc-C:0');
+  assert.deepEqual(forPhone, [textChunkKey('gc-A', 0), textChunkKey('gc-A', 1), textChunkKey('gc-A', 2), textChunkKey('gc-B', 0)]);
+  const cAt = s.gw.requests.findIndex((r) => r.idempotency_key === textChunkKey('gc-C', 0));
   assert.ok(cAt < 3, 'another phone does not wait behind the first');
 });
 
@@ -396,7 +399,8 @@ test('/publish-update journaled to updates.jsonl when sent', async (t) => {
   const call = s.gw.metaCalls[0];
   assert.equal(call.type, 'template');
   assert.equal(call.to, PHONE);
-  assert.equal(call.idempotency_key, 'upd-1');
+  assert.equal(call.idempotency_key, templateKey('upd-1'), 'the update goes out under template:<sha256 of key>');
+  assert.match(call.idempotency_key, /^template:[0-9a-f]{64}$/);
   assert.deepEqual(call.template, { name: 'dynasty_update', language: 'en_US', params: ['Sales up 4% today. Reply OK to confirm.'] });
 
   const file = path.join(s.stateDir, 'updates.jsonl');

@@ -7,7 +7,8 @@
 // in process memory is the record.
 //
 // Line types (field t):
-//   received      {rid, delivery_id, kind, wa_id, profile_name, envelope, received_at}
+//   received      {rid, delivery_id, kind, wa_id, profile_name, envelope, received_at,
+//                  recovery?: dead (+recovery_reason) | in_doubt (+recovery_at)}
 //   posted        {rid, at, reposts, boundary, marked}       before each POST /extmsg/inbound
 //   accepted      {rid, receipt_id, verdict, terminal, sequence, members, via, at}
 //   redelivered   {rid, at}                                  before the one marked copy
@@ -16,7 +17,9 @@
 //   acknowledged  {rid, at}                                  after the gateway CONFIRMED the ack
 //   watermark     {conversation_id, sequence, provider_message_id, accepted_at, rebased_at?}
 //   watermark_cleared {conversation_id, at}                  clear-gap on an empty store
-//   restore_gap   {conversation_id, watermark_sequence, watermark_accepted_at, head_sequence, head_created_at, found_at}
+//   restore_gap   {conversation_id, watermark_sequence, watermark_accepted_at, head_sequence, head_created_at,
+//                  found_at, found_by}: written at the detection with the head null (unknown), then
+//                  again with the head once it is read (the later line of a conversation stands)
 //   gap_cleared   {conversation_id, at}
 //   probe         {rid, session_id, shape: log|pane|none|error, found, at}
 //
@@ -76,6 +79,17 @@ export function applyLine(fold, line) {
         e.waId = String(line.wa_id ?? '');
         e.deliveryId = line.delivery_id;
         e.kind = line.kind;
+        // The classification of a new rid rides IN its received line (the
+        // codex gate r1's second finding: inbound.js classifyNew), applied
+        // through the one meaning each progress line already has, so no
+        // crash or failed append can leave a lost journal's delivery fresh.
+        if (line.recovery === 'dead') {
+          applyLine(fold, { t: 'dead', rid: line.rid, reason: line.recovery_reason, replayed: true, at: line.at });
+        } else if (line.recovery === 'in_doubt') {
+          applyLine(fold, {
+            t: 'posted', rid: line.rid, at: line.recovery_at, reposts: 0, boundary: 0, marked: false, synthetic: 'before-genesis',
+          });
+        }
       }
       return;
     }
