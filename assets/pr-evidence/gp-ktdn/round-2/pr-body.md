@@ -15,6 +15,7 @@ property. Deadline failures retain the last status or transport error.
 Round base: `eae795ac4f904d65bebd75a7778731a8dec32995`. Main at start:
 `8cb01a83bdaa6b4b42aeb63bae1ee4a6d369262f`. This round fast-forwards the
 existing PR; it does not rewrite round 1.
+Main was remeasured immediately before push at the same SHA.
 
 Measure first: the complete Fable r1 record was read, including Findings and
 NOTEs 2, 4, 5 and 6. Its Findings at line 93 describe the 5xx/transport gap;
@@ -72,6 +73,9 @@ No pnpm/Node tests apply. Commands run from the named module directories:
 - From `slack-full`, `/tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q`:
   **907 passed**, two skipped, two existing multiprocessing/fork warnings.
 
-The lane's Codex self-review is recorded in the round-2 evidence before READY.
-The mayor's round-2 gate and cross-model read follow READY. This PR stays draft;
-the merge and any box rollout require the mayor's separate handoff.
+Lane self-review: installed Codex gate, `ROUND_BASE=1`, `--class STANDARD`,
+`--model gpt-6-astra`, base `eae795ac`, implementation `8e56df88` —
+**VERDICT: CLEAN**, exit 0, zero actionable findings (`08-codex.out`).
+The subsequent commit contains evidence and handoff documentation only.
+The mayor's round-2 gate and cross-model read follow READY. This PR stays
+draft; the merge and any box rollout require the mayor's separate handoff.

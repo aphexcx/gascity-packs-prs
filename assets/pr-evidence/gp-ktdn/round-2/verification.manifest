@@ -5,3 +5,4 @@ adapter: go test -race -count=1 -timeout=5m -json ./... | exit=0
 cli: go test -race -count=1 -timeout=5m -json ./... | exit=0
 slack-full: /tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q | exit=0
 python3: compare measuredCityNotFoundBody bytes with mayor boot-measure README section (b) | exit=0
+ROUND_BASE=1 codex-gate.sh review --base eae795ac4f904d65bebd75a7778731a8dec32995 --class STANDARD --model gpt-6-astra | exit=0
