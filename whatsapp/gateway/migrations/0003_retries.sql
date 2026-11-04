@@ -7,24 +7,33 @@
 --    the first city's row, held or acknowledged, and never a second city's delivery. The media
 --    proxy's grant follows the wamid's row (src/gateway.ts), so the new city is granted nothing.
 --    A status stays one row per (wamid, status): an outbound wamid is one send's, of one city.
---    The index is built over the rows already there. It can fail only where two cities already
---    hold one wamid, which only the misroute this fixes could have written.
+--    The new index is built over the rows already there, before the old one is dropped, so a
+--    failed build leaves the old dedup in place. It can fail only where two cities already hold
+--    one wamid, which only the misroute this fixes could have written.
+CREATE UNIQUE INDEX deliveries_wamid_once ON deliveries(wamid, status);
 DROP INDEX deliveries_once;
-CREATE UNIQUE INDEX deliveries_once ON deliveries(wamid, status);
 
--- 2. The ids an owner was named by before a number change, kept as aliases of that owner's
---    binding. A message Meta stamped at or before the change and retried after it routes to the
---    owner under its old ids, never to a stranger or to the number's next holder. An alias routes
---    only what Meta stamped at or before changed_at, and a message stamped longer ago than 8 days
---    is dropped, so nothing can use an alias past changed_at + 8 days. The cron deletes it then
---    (expires_at). One id can be an alias of two bindings (a number one owner left and another
---    took and left too); each change is its own row, and a message goes to the first change at or
---    after its stamp: the binding that held the id then.
+-- 2. Who held an id when Meta stamped a message. A message routes to the binding that held its
+--    sender's id at the stamp, or to nobody: never to a binding that took the id later (a later
+--    holder of a recycled number, or the same person bound again in another city after an
+--    unbind). A current id is held from bound_stamp, or, for a wa_id the row took later, from
+--    wa_since. bound_stamp is NULL on a row bound before this migration: held from the start, as
+--    before.
+ALTER TABLE phones ADD COLUMN bound_stamp INTEGER; -- Meta's stamp of the binding's invite text
+ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later message that gave the row its wa_id; NULL: the invite text's
+
+--    A previous id, one a number change replaced, is held from since until changed_at. A
+--    message Meta stamped in that span and retried after the change routes to the owner under
+--    its old ids, while its binding stands, or to nobody. No message can use it past
+--    changed_at + 8 days: an alias routes only what Meta stamped at or before changed_at, and a
+--    message stamped longer ago than 8 days is dropped. The cron deletes it then (expires_at).
+--    One id can be held by two bindings in turn; each change is its own row.
 CREATE TABLE phone_aliases (
   id TEXT NOT NULL,              -- the previous wa_id or user_id
   conversation_id TEXT NOT NULL, -- the owner it named
   bound_wamid TEXT NOT NULL,     -- the owner's binding: a later binding under the same key is another owner
-  changed_at INTEGER NOT NULL,   -- Meta's timestamp of the change, clamped to the gateway's clock
+  since INTEGER NOT NULL,        -- Meta's stamp from which the binding held it
+  changed_at INTEGER NOT NULL,   -- Meta's stamp of the change that replaced it
   expires_at INTEGER NOT NULL,   -- changed_at + 8 days
   PRIMARY KEY (id, bound_wamid, changed_at)
 );

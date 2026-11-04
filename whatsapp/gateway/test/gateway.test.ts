@@ -470,6 +470,65 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     expect((await t.inbox(a)).body.deliveries).toHaveLength(0);
   });
 
+  it("a message whose first delivery failed, retried after the owner moved to another city, reaches neither city and grants no media: the new binding holds only what Meta stamped after it (self-review r1 S1a)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const wa = await t.join(first);
+    t.clock.now = T0 + HOUR;
+    const text = textPayload(wa, "for the first city's mayor", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(text)).status).toBe(500);
+    const mediaId = `6${Date.now()}${Math.floor(Math.random() * 1000)}`;
+    t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+    const image = mediaPayload("image", wa, mediaId, { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(image)).status).toBe(500);
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    t.clock.now = T0 + 2 * HOUR;
+    await t.join(second, wa);
+    t.clock.now = T0 + 3 * HOUR;
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(text)).status).toBe(200);
+    expect((await t.webhook(image)).status).toBe(200);
+    expect((await t.inbox(second)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+    expect((await t.inbox(first)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]); // its own join, nothing more
+    expect((await t.call("GET", `/v1/media/${mediaId}`, { token: second.token })).status).toBe(404);
+    expect(t.graph.sends()).toHaveLength(calls); // no canned line: the number is an owner's
+    const unrouted = await env.DB.prepare("SELECT value FROM stats WHERE name = 'unrouted_messages'").first<{ value: number }>();
+    expect(unrouted?.value ?? 0).toBeGreaterThanOrEqual(2);
+    // The owner's own messages in the new city, stamped after its join, are delivered as ever.
+    const now = await t.say(wa, "for the second city");
+    expect((await t.inbox(second)).body.deliveries.some((d: any) => d.message?.id === now.wamid)).toBe(true);
+  });
+
+  it("the same for another person who binds the number next (today's shape, the number alone), and for a stranger's text sent before it joined (self-review r1 S1b)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const first = await t.enrollCity();
+    const second = await t.enrollCity();
+    const wa = await t.join(first);
+    t.clock.now = T0 + HOUR;
+    const before = textPayload(wa, "A's words for city one", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A" });
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?1").bind(wa).run();
+    // Someone else, still a stranger, writes; the write fails; then they join the second city.
+    t.clock.now = T0 + 2 * HOUR;
+    const hello = textPayload(wa, "hello, who is this?", { wamid: `wamid.${uniq()}`, ts: T0 + 2 * HOUR, name: "B" });
+    flaky.arm(0);
+    expect((await t.webhook(hello)).status).toBe(500);
+    t.clock.now = T0 + 3 * HOUR;
+    await t.join(second, wa);
+    t.clock.now = T0 + 4 * HOUR;
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await t.webhook(hello)).status).toBe(200);
+    expect((await t.inbox(second)).body.deliveries.map((d: any) => d.kind)).toEqual(["joined"]);
+    expect(t.graph.sends()).toHaveLength(calls);
+  });
+
   it("the same holds for a retry of a message A never acknowledged: it stays A's, held for A alone", async () => {
     const t = setup();
     const a = await t.enrollCity();
