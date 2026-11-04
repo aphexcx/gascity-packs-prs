@@ -522,16 +522,26 @@ describe("BSUID: retention", () => {
     await t.sayAs({ user, username: "kept.too.long" }, "acked");
     await t.sayAs({ user, username: "kept.too.long" }, "expires");
     const [joined, acked] = (await t.inbox(city)).body.deliveries.map((d: any) => d.id);
+    const rows = async () =>
+      (
+        await env.DB.prepare("SELECT id, body, wa_id, user_id, username, conversation_id, profile_name FROM deliveries WHERE city_id = ? ORDER BY id")
+          .bind(city.id)
+          .all<Record<string, unknown>>()
+      ).results;
+    const cleared = { body: null, wa_id: null, user_id: null, username: null, conversation_id: null, profile_name: null };
     await t.ack(city, [joined, acked]);
+    // The ack itself clears them, before any cron.
+    const afterAck = await rows();
+    expect(afterAck.filter((r) => r.id === joined || r.id === acked)).toEqual([
+      { id: joined, ...cleared },
+      { id: acked, ...cleared },
+    ]);
+    expect(afterAck.find((r) => r.id !== joined && r.id !== acked)).toMatchObject({ user_id: user, username: "kept.too.long", conversation_id: user });
     t.clock.now += 7 * DAY;
     await t.gateway.maintain();
-    const { results } = await env.DB.prepare(
-      "SELECT body, wa_id, user_id, username, conversation_id, profile_name FROM deliveries WHERE city_id = ?",
-    )
-      .bind(city.id)
-      .all();
-    expect(results).toHaveLength(3);
-    for (const row of results) expect(row).toEqual({ body: null, wa_id: null, user_id: null, username: null, conversation_id: null, profile_name: null });
+    const afterCron = await rows();
+    expect(afterCron).toHaveLength(3);
+    for (const row of afterCron) expect(row).toEqual({ id: row.id, ...cleared });
   });
 
   it("the cron clears the ids a v1 Worker's ack left on a body-less row (the conversation_id migration 0002 wrote)", async () => {
