@@ -67,7 +67,7 @@ changes a route or a field.
      a failed status carries `errors[]`).
    - `joined`: the invite text's Meta `messages[]` object.
 
-   `profile_name` and `username` are null on a status.
+   `profile_name` is null on a status.
 3. **Ack.** `POST /v1/inbox/ack {ids: [1..500 positive integers]}` answers `200 {ok: true}`. It
    drops the listed bodies of THIS city and no other. Three kinds of id are each a no-op 200,
    never an error:
@@ -157,24 +157,40 @@ What Meta sends:
 What the gateway does:
 
 1. **The owner key.** An owner row is keyed by its `conversation_id`. It is set once, at the bind,
-   to the binding text's wa_id, or its user_id when Meta shared no phone. It never changes after
-   that. Every owner bound before this change keeps its wa_id as its key, so no box sees a new
-   conversation. The row also holds the ids Meta names the owner by now: `wa_id` and `user_id`,
+   to the binding text's wa_id. It is the user_id instead when Meta shared no phone, or when that
+   phone number is already another owner's `conversation_id` (a recycled number). It never changes
+   after that. Every owner bound before this change keeps its wa_id as its key, so no box sees a
+   new conversation. The row also holds the ids Meta names the owner by now, `wa_id` and `user_id`,
    each unique where present.
 2. **Routing.** A message routes to the row holding its user_id. Failing that, it routes to the row
    holding its wa_id, unless that row's user_id is a different one. A phone number that Meta
-   reports beside another user's id belongs to someone else now (a recycled number). Its messages
-   are a stranger's, and that stranger hears the canned line. An operator unbinds the old owner
-   before the new one can join.
+   reports beside another user's id belongs to someone else now (a recycled number), and the
+   gateway acts on that in three ways:
+   - The new holder's messages are a stranger's: they hear the canned line, and they can join any
+     city with an invite code.
+   - The row that held the number **loses it**. Its city's sends then go to its user_id, never to
+     the new holder.
 3. **One owner, two ids.** An id the owner row lacks is filled the first time a message carries it
-   beside the other, unless another row already holds it. That never makes a second row.
+   beside the other, unless another row already holds it. That never makes a second row. A
+   delivery carries the owner row's id for any id the message omits. An owner known by phone keeps
+   its `wa_id` on every delivery even when Meta names them by user_id alone.
 4. **The window** is the owner row's, so it moves on a message from either id.
 5. **Number changes.** The notice is delivered to the owner's city as kind `message` with
    `message.type` `system`, the shape every system notice already has. It moves no window and is
    never answered. It also **re-keys** the owner: `user_id` becomes the new id, and `wa_id` becomes
    the new phone, or NULL when none is shared, because the old number is no longer the owner's.
+   If another row holds the new phone, the re-key goes as follows:
+   - A row that holds it beside another user_id loses it to the owner, as in rule 2.
+   - A row that holds it with no user_id (bound before Meta sent user ids) keeps it, and the
+     owner's `wa_id` stays NULL.
+
    The `conversation_id` stays. The owner's next message, under its new ids, therefore continues
    the same conversation.
+
+   **A known limit.** Meta does not promise webhook order. Say a notice's first delivery fails, and
+   the owner writes under the new ids before Meta's retry. That message is a stranger's: it hears
+   the canned line and is not delivered. Once the notice lands, the owner's next message reaches
+   their city. An invite code texted in that window binds a second owner row.
 6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
    canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
    starts sharing the stranger's phone, which the canned line itself causes.
@@ -193,7 +209,7 @@ Contract v1, additive only (nothing renamed, nothing removed, no kind added):
 
 | Where | Added |
 |---|---|
-| `GET /v1/inbox`, each delivery | `user_id`, `username`, `conversation_id`: null when unknown, and null on a status for `username`. `conversation_id` is the owner's key: the field a box files a delivery under, the same for every delivery of one owner whichever ids it carries. `wa_id` is now null on a delivery from an owner Meta shares no phone of. |
+| `GET /v1/inbox`, each delivery | `user_id`, `username`, `conversation_id`: null when unknown. `conversation_id` is the owner's key: the field a box files a delivery under, the same for every delivery of one owner whichever ids it carries. On a message or joined delivery, `wa_id` and `user_id` are the owner row's when the message omits them, so `wa_id` is null only for an owner whose phone the gateway has never been shown. A status carries the recipient's ids as Meta sent them, and its `username` when Meta sends one (delivered, read). |
 | `GET /v1/window`, each window | `user_id` (null when unknown). `conversation_id` is the owner's key. |
 | `POST /v1/send` | `to` also takes a user_id (`^[A-Z]{2}\.(ENT\.)?[A-Za-z0-9]{1,128}$`) or an owner's `conversation_id`. A malformed one answers 400 `bad_request`; one that is no owner of this city answers 403 `not_bound`. |
 | `GET /v1/admin/cities` | `phones_last4` holds `"id"` for an owner Meta shares no phone number of. No part of a user_id ever appears. |
@@ -287,9 +303,17 @@ Never Robert's account or his domain.
    On a gateway that is already deployed, the same command applies only the migrations it has not
    yet seen. 0002 (business-scoped user ids) keeps every bound owner, and that owner's wa_id
    becomes its conversation id. Run the deploy (step 4) right after it. Between the two commands,
-   the Worker still running serves bound owners' messages, sends and statuses. A stranger's text
-   or an invite text, however, answers Meta 500 (that code knows neither the new key nor
-   `sender_key`), and Meta redelivers it once the new code is live.
+   the Worker still running behaves like this:
+   - **It serves** bound owners' messages, sends, statuses and the window.
+   - **It answers 500 to** a payload that holds a stranger's text or an invite text, because that
+     code knows neither the new key nor `sender_key`. The owners' messages in the same payload
+     wait with it, and Meta redelivers the whole payload once the new code is live.
+   - **It leaves two traces, both handled:**
+     - Its rows carry no `conversation_id`, and the new inbox reads their `wa_id` as one.
+     - Its acks leave the backfilled `conversation_id` on a body-less row, and the daily cron
+       clears it.
+
+   (`assets/pr-evidence/gp-ac0u/deploy-gap.txt` runs the old code on the new schema.)
 
 4. **Deploy.**
 
@@ -422,16 +446,18 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   DELETE FROM phones WHERE conversation_id = '<id>' OR wa_id = '<digits>' OR user_id = '<user id>'
   ```
 
-  The same unbinding lets a new person join from a recycled number. Until then, the new person's
-  messages (Meta names them by that phone and a different user_id) are a stranger's, and their
-  invite code does not bind.
+  No unbinding is needed for a recycled number. When Meta names that phone beside a different
+  user_id, the old owner loses the number, and the new person joins by an invite code under their
+  user_id.
 
 ## Data, retention, logs
 
 - **Bodies.** A delivery's body is deleted on the city's ack, or by the daily cron 7 days after
   receipt, and its wa_id, user_id, username, conversation_id and profile name go with it. The
   body-less row keeps only (city, wamid, status) for one more day, to dedup a late Meta
-  redelivery.
+  redelivery. The daily cron also clears any id left on a body-less row.
+- **Sends** keep the owner's `conversation_id` with their idempotency key for 30 days (statuses
+  reach the city under it), even after the owner is unbound.
 - **Media.** Media ids are kept 7 days (Meta's lifetime for a webhook media id). No media bytes
   are ever stored: `GET /v1/media/<id>` streams Meta's bytes through.
 - **Strangers.** An unknown sender's row (last canned reply, code attempts) is pruned after 7 days.
@@ -439,8 +465,8 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
-- **Owners** (the phones table: the ids, the username, the profile name) are kept until an
-  operator unbinds them.
+- **Owners** (the phones table: the ids, the last username and profile name Meta showed) are kept
+  until an operator unbinds them. A username the owner later drops stays until then.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
   number, a user_id, a username, a profile name, a code, a token, a secret or an error's message.
   Three tests check every line against those values:

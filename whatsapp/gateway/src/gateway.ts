@@ -300,8 +300,8 @@ interface Plan {
   statements: D1PreparedStatement[];
   /** The index where each group starts: one message's (or one status's) statements, never split. */
   groupStarts: number[];
-  /** Statement indexes whose one changed row means "this payload bound this owner" (id: its key). */
-  binds: Array<{ index: number; id: string }>;
+  /** Statement indexes whose one changed row means "the text whose wamid this is bound an owner, told at id". */
+  binds: Array<{ index: number; id: string; wamid: string }>;
   /** Statement indexes whose one changed row means "send this stranger the canned line now". */
   canned: Array<{ index: number; id: string }>;
   /** Statuses no send has claimed yet (read before the write): kept apart for adoption. */
@@ -437,8 +437,8 @@ export function createGateway(deps: Deps) {
     for (const b of plan.binds) {
       if (!committed(b.index)) continue;
       const city = await db
-        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.conversation_id = ?")
-        .bind(b.id)
+        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.bound_wamid = ?")
+        .bind(b.wamid)
         .first<{ name: string }>();
       if (await tell(b.id, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
     }
@@ -570,17 +570,27 @@ export function createGateway(deps: Deps) {
     const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
     for (const [i, m] of messages.entries()) {
       const { wa, user } = ids[i] ?? { wa: null, user: null };
-      // The id an owner is bound under (its conversation_id) and told at: the wa_id when Meta
-      // shares one, else the user_id. A stranger is counted under its user_id when Meta sends one,
-      // which stays the same when Meta starts sharing its phone.
-      const key = wa ?? user;
+      // The gateway's own texts go to the wa_id when Meta shares one, else the user_id. A stranger
+      // is counted under its user_id when Meta sends one, which stays the same when Meta starts
+      // sharing its phone.
+      const address = wa ?? user;
       const strangerKey = user ?? wa;
-      if (key === null || strangerKey === null) continue; // parseWebhook never yields one
+      if (address === null || strangerKey === null) continue; // parseWebhook never yields one
       plan.groupStarts.push(plan.statements.length);
       const at = Math.min(m.timestamp ?? now, now);
       const body = JSON.stringify(m.raw);
       const owned = owners[i] !== undefined;
       const code = owned ? null : inviteCodeIn(m);
+      if (wa !== null && user !== null) {
+        // Meta names this phone number beside this user_id: a row holding the number beside
+        // another user_id holds a number that is someone else's now (a recycled number), and loses
+        // it, so its city's sends never reach the new holder. Setting NULL never hits a UNIQUE.
+        push(
+          db
+            .prepare("UPDATE phones SET wa_id = NULL WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2")
+            .bind(wa, user),
+        );
+      }
       if (code !== null) {
         // A stranger's code attempt: counted per day and once per wamid (a redelivery is not a
         // second attempt), then the bind, conditional on a code that was live when Meta stamped
@@ -599,49 +609,55 @@ export function createGateway(deps: Deps) {
             )
             .bind(strangerKey, now, now - DAY, m.wamid, wa, user),
         );
-        // A new owner row holds every id the text named; no id may already name another owner.
+        // A new owner row holds every id the text named; no id may already name another owner. Its
+        // conversation_id is the wa_id, unless that number is already another owner's
+        // conversation_id (a recycled number), else the user_id. The rows below find it by the
+        // wamid that bound it.
         const bindIndex = push(
           db
             .prepare(
               `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at)
-               SELECT ?1, ?2, ?3, ?4, i.city_id, ?5, ?6, ?7, ?8 FROM invite_codes i
-               WHERE i.code = ?9 AND i.used_at IS NULL AND i.expires_at > ?8
-                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?10), 0) <= ?11
-                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = ?1 OR p.wa_id = ?2 OR p.user_id = ?3)
+               SELECT k.id, ?1, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7
+               FROM invite_codes i,
+                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1)
+                                 THEN ?1 ELSE ?2 END AS id) k
+               WHERE i.code = ?8 AND i.used_at IS NULL AND i.expires_at > ?7 AND k.id IS NOT NULL
+                 AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?9), 0) <= ?10
+                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = k.id OR p.wa_id = ?1 OR p.user_id = ?2)
                ON CONFLICT DO NOTHING`,
             )
-            .bind(key, wa, user, m.username, m.profileName, now, m.wamid, at, code, strangerKey, MAX_CODE_ATTEMPTS),
+            .bind(wa, user, m.username, m.profileName, now, m.wamid, at, code, strangerKey, MAX_CODE_ATTEMPTS),
         );
         push(
           db
             .prepare(
               `UPDATE invite_codes SET used_at = ?1
-               WHERE code = ?2 AND used_at IS NULL
-                 AND EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?3 AND bound_wamid = ?4)`,
+               WHERE code = ?2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM phones WHERE bound_wamid = ?3)`,
             )
-            .bind(now, code, key, m.wamid),
+            .bind(now, code, m.wamid),
         );
         push(
           db
             .prepare(
               `INSERT OR IGNORE INTO deliveries
                  (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
-               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones
-               WHERE conversation_id = ?8 AND bound_wamid = ?2`,
+               SELECT city_id, ?1, 'joined', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones WHERE bound_wamid = ?2`,
             )
-            .bind(now, m.wamid, wa, user, m.username, m.profileName, body, key),
+            .bind(now, m.wamid, wa, user, m.username, m.profileName, body),
         );
-        plan.binds.push({ index: bindIndex, id: key });
+        plan.binds.push({ index: bindIndex, id: address, wamid: m.wamid });
       }
       // The message itself, routed by the owner's ids as they stand inside this transaction.
       // After a bind by this very text its wamid is already the joined row's, so this is one row.
+      // An id the message omits is the owner row's (a known phone stays on the delivery when Meta
+      // names the owner by user_id alone).
       push(
         db
           .prepare(
             `INSERT OR IGNORE INTO deliveries
                (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
-             SELECT city_id, ?1, 'message', ?2, '', ?3, ?4, ?5, conversation_id, ?6, ?7 FROM phones
-             WHERE ${ownerMatch("?3", "?4")} ${ownerFirst("?4")}`,
+             SELECT city_id, ?1, 'message', ?2, '', COALESCE(?3, wa_id), COALESCE(?4, user_id), ?5, conversation_id, ?6, ?7
+             FROM phones WHERE ${ownerMatch("?3", "?4")} ${ownerFirst("?4")}`,
           )
           .bind(now, m.wamid, wa, user, m.username, m.profileName, body),
       );
@@ -675,8 +691,16 @@ export function createGateway(deps: Deps) {
       );
       if (m.change?.userId) {
         // A number change: the owner's ids become the new ones (the old phone number is no longer
-        // the owner's, so no new number shared means none held), its conversation_id stays. An id
-        // another row already holds is never taken from it.
+        // the owner's, so no new number shared means none held), its conversation_id stays. A row
+        // holding the new number beside another user_id loses it first, as above. An id another
+        // row still holds is never taken from it.
+        if (m.change.waId) {
+          push(
+            db
+              .prepare("UPDATE phones SET wa_id = NULL WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2")
+              .bind(m.change.waId, m.change.userId),
+          );
+        }
         push(
           db
             .prepare(
@@ -704,7 +728,7 @@ export function createGateway(deps: Deps) {
             )
             .bind(strangerKey, now, now - CANNED_EVERY_SECONDS, wa, user),
         );
-        plan.canned.push({ index: cannedIndex, id: key });
+        plan.canned.push({ index: cannedIndex, id: address });
       }
     }
     for (const s of statuses) {
@@ -720,18 +744,18 @@ export function createGateway(deps: Deps) {
           .prepare(
             `INSERT OR IGNORE INTO deliveries
                (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
-             SELECT city_id, ?1, 'status', ?2, ?3, ?4, ?5, NULL, COALESCE(conversation_id, ?4, ?5), NULL, ?6
+             SELECT city_id, ?1, 'status', ?2, ?3, ?4, ?5, ?7, COALESCE(conversation_id, ?4, ?5), NULL, ?6
              FROM sends WHERE wamid = ?2 LIMIT 1`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw), s.username),
       );
       push(
         db
           .prepare(
-            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, recipient_user_id, body)
-             SELECT ?2, ?3, ?1, ?4, ?5, ?6 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
+            `INSERT OR IGNORE INTO orphan_statuses (wamid, status, received_at, recipient_id, recipient_user_id, username, body)
+             SELECT ?2, ?3, ?1, ?4, ?5, ?7, ?6 WHERE NOT EXISTS (SELECT 1 FROM sends WHERE wamid = ?2)`,
           )
-          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw)),
+          .bind(now, s.wamid, s.status, s.recipientId, s.recipientUserId, JSON.stringify(s.raw), s.username),
       );
     }
     return plan;
@@ -799,8 +823,10 @@ export function createGateway(deps: Deps) {
     const limit = intParam(url, "limit", 100, 1, 200);
     const { results } = await db
       .prepare(
-        `SELECT id, received_at, kind, wa_id, user_id, username, conversation_id, profile_name, body FROM deliveries
-         WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
+        // A row the v1 Worker wrote (between migration 0002 and this code's deploy) has no
+        // conversation_id; its wa_id is its owner's key.
+        `SELECT id, received_at, kind, wa_id, user_id, username, COALESCE(conversation_id, wa_id) AS conversation_id, profile_name, body
+         FROM deliveries WHERE city_id = ?1 AND body IS NOT NULL AND id > ?2 ORDER BY id LIMIT ?3`,
       )
       .bind(cityId, after, limit)
       .all<{
@@ -941,7 +967,7 @@ export function createGateway(deps: Deps) {
           .prepare(
             `INSERT OR IGNORE INTO deliveries
                (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
-             SELECT ?1, received_at, 'status', wamid, status, recipient_id, recipient_user_id, NULL, ?3, NULL, body
+             SELECT ?1, received_at, 'status', wamid, status, recipient_id, recipient_user_id, username, ?3, NULL, body
              FROM orphan_statuses WHERE wamid = ?2
              ORDER BY received_at, rowid`,
           )
@@ -1136,8 +1162,14 @@ export function createGateway(deps: Deps) {
       db.prepare("DELETE FROM enroll_codes WHERE expires_at <= ?").bind(now - ENROLL_CODES_KEEP_SECONDS),
       db.prepare("DELETE FROM sends WHERE created_at <= ?").bind(now - SENDS_KEEP_SECONDS),
       db.prepare("DELETE FROM orphan_statuses WHERE received_at <= ?").bind(now - ORPHAN_SECONDS),
+      // A body-less row keeps no id: one the v1 Worker acknowledged after migration 0002 kept the
+      // conversation_id the migration wrote.
+      db.prepare(
+        `UPDATE deliveries SET wa_id = NULL, user_id = NULL, username = NULL, conversation_id = NULL, profile_name = NULL
+         WHERE body IS NULL AND COALESCE(wa_id, user_id, username, conversation_id, profile_name) IS NOT NULL`,
+      ),
     ]);
-    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone, orphansGone] = results.map(changes);
+    const [bodies, rows, mediaRows, strangers, invitesGone, enrollGone, sendsGone, orphansGone, idsLeft] = results.map(changes);
     return {
       bodies_expired: bodies ?? 0,
       rows_deleted: rows ?? 0,
@@ -1147,6 +1179,7 @@ export function createGateway(deps: Deps) {
       enroll_codes_deleted: enrollGone ?? 0,
       sends_deleted: sendsGone ?? 0,
       orphan_statuses_deleted: orphansGone ?? 0,
+      stray_ids_cleared: idsLeft ?? 0,
     };
   }
 

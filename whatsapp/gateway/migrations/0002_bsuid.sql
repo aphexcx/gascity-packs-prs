@@ -8,8 +8,9 @@
 -- read 2026-11-04.)
 --
 -- An owner row is keyed by conversation_id. It is set once, at the bind: the binding message's
--- wa_id, else its user_id. It never changes, because it is the id the city's box files the
--- conversation under. wa_id and user_id are the ids Meta names the owner by now. Each is unique
+-- wa_id, unless that phone number is already another owner's conversation_id (a recycled number),
+-- else its user_id. It never changes, because it is the id the city's box files the conversation
+-- under. wa_id and user_id are the ids Meta names the owner by now. Each is unique
 -- where present and NULL where Meta shares none. A number change replaces both and leaves the
 -- conversation_id alone.
 
@@ -46,8 +47,10 @@ UPDATE deliveries SET conversation_id = wa_id WHERE wa_id IS NOT NULL;
 -- their recipient_id (a v1 send always went to the wa_id that is its key).
 ALTER TABLE sends ADD COLUMN conversation_id TEXT;
 
--- orphan_statuses: the status's recipient_user_id, carried into the delivery at adoption.
+-- orphan_statuses: the status's recipient_user_id and username, carried into the delivery at
+-- adoption.
 ALTER TABLE orphan_statuses ADD COLUMN recipient_user_id TEXT;
+ALTER TABLE orphan_statuses ADD COLUMN username TEXT;
 
 -- unknown_senders: a stranger is keyed by its user_id when Meta sends one, else its wa_id, so its
 -- canned line and its code attempts do not split when Meta starts sharing its phone.

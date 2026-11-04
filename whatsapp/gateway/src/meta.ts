@@ -62,6 +62,8 @@ export interface InboundStatus {
   recipientId: string | null;
   /** The recipient's user_id; Meta omits it on a failed status of a send to a phone number. */
   recipientUserId: string | null;
+  /** The recipient's WhatsApp username (Meta sends it on delivered and read statuses). */
+  username: string | null;
   /** Meta's statuses[] object exactly as received. */
   raw: Record<string, unknown>;
 }
@@ -176,11 +178,25 @@ function epochSeconds(v: unknown): number | null {
   return Number(s);
 }
 
+interface Person {
+  wa: string | null;
+  user: string | null;
+  name: string | null;
+  username: string | null;
+}
+
+/** The contacts entry for a user: matched by the user_id first, then by the wa_id. */
+function contactOf(people: Person[], wa: string | null, user: string | null): Person | null {
+  return people.find((p) => user !== null && p.user === user) ?? people.find((p) => wa !== null && p.wa === wa) ?? null;
+}
+
 function idChange(m: Obj): IdChange | null {
   if (m.type !== "system" || !isObj(m.system)) return null;
   const type = m.system.type;
   if (type !== "user_changed_number" && type !== "user_changed_user_id") return null;
-  return { type, userId: str(m.system.user_id), previousUserId: str(m.system.previous_user_id), waId: str(m.system.wa_id) };
+  // Meta's general webhook reference names the new number new_wa_id; the BSUID page names it wa_id.
+  const waId = str(m.system.wa_id) ?? str(m.system.new_wa_id);
+  return { type, userId: str(m.system.user_id), previousUserId: str(m.system.previous_user_id), waId };
 }
 
 /**
@@ -190,8 +206,9 @@ function idChange(m: Obj): IdChange | null {
  *
  * A message names its sender by `from` (the wa_id) and `from_user_id` (the user_id). Either may be
  * absent; the contacts entry for the same user (matched by either id) supplies the other, the
- * profile name and the username. A message naming its sender by neither, and a number change
- * naming no previous user id, is skipped.
+ * profile name and the username. A message is skipped when it names no wa_id, no user_id and (on a
+ * number change) no previous user_id. A status's username comes from the contacts entry matched by
+ * its recipient ids.
  */
 export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBatch {
   const batch: WebhookBatch = { messages: [], statuses: [], wrongNumber: 0, ignored: 0 };
@@ -210,7 +227,7 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         batch.wrongNumber += 1;
         continue;
       }
-      const people: Array<{ wa: string | null; user: string | null; name: string | null; username: string | null }> = [];
+      const people: Person[] = [];
       for (const c of arr(value.contacts)) {
         if (!isObj(c)) continue;
         const profile = isObj(c.profile) ? c.profile : {};
@@ -223,8 +240,7 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         const change = idChange(m);
         const ownFrom = str(m.from);
         const ownUser = str(m.from_user_id);
-        const contact =
-          people.find((p) => ownUser !== null && p.user === ownUser) ?? people.find((p) => ownFrom !== null && p.wa === ownFrom) ?? null;
+        const contact = contactOf(people, ownFrom, ownUser);
         const from = ownFrom ?? contact?.wa ?? null;
         const fromUserId = ownUser ?? contact?.user ?? null;
         if (!wamid || (!from && !fromUserId && !change?.previousUserId)) continue;
@@ -253,7 +269,10 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         const wamid = str(s.id);
         const status = str(s.status);
         if (!wamid || !status) continue;
-        batch.statuses.push({ wamid, status, recipientId: str(s.recipient_id), recipientUserId: str(s.recipient_user_id), raw: s });
+        const recipientId = str(s.recipient_id);
+        const recipientUserId = str(s.recipient_user_id);
+        const username = contactOf(people, recipientId, recipientUserId)?.username ?? null;
+        batch.statuses.push({ wamid, status, recipientId, recipientUserId, username, raw: s });
       }
     }
   }

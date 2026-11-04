@@ -191,10 +191,28 @@ describe("business-scoped user ids (Meta's BSUID examples)", () => {
     expect(parseWebhook(stranger, PNID).messages[0]).toMatchObject({ from: null, fromUserId: BSUID, username: null, profileName: null });
   });
 
-  it("statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone", () => {
-    expect(parseWebhook(statusPhoneBsuid, PNID).statuses[0]).toMatchObject({ status: "delivered", recipientId: "16505551234", recipientUserId: BSUID });
-    expect(parseWebhook(statusBsuid, PNID).statuses[0]).toMatchObject({ status: "delivered", recipientId: null, recipientUserId: BSUID });
-    expect(parseWebhook(statusFailed, PNID).statuses[0]).toMatchObject({ status: "failed", recipientId: "16505551234", recipientUserId: null });
+  it("statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone; the username from the contacts entry", () => {
+    expect(parseWebhook(statusPhoneBsuid, PNID).statuses[0]).toMatchObject({
+      status: "delivered",
+      recipientId: "16505551234",
+      recipientUserId: BSUID,
+      username: "pablomorales",
+    });
+    expect(parseWebhook(statusBsuid, PNID).statuses[0]).toMatchObject({ status: "delivered", recipientId: null, recipientUserId: BSUID, username: "pablomorales" });
+    expect(parseWebhook(statusFailed, PNID).statuses[0]).toMatchObject({ status: "failed", recipientId: "16505551234", recipientUserId: null, username: null });
+  });
+
+  it("a number change naming the new number new_wa_id (Meta's general webhook reference) reads it as the new phone", () => {
+    const legacy = copy(changedNumber);
+    const system = legacy.entry[0].changes[0].value.messages[0].system;
+    system.new_wa_id = system.wa_id;
+    delete system.wa_id;
+    expect(parseWebhook(legacy, PNID).messages[0]!.change).toEqual({
+      type: "user_changed_number",
+      userId: "US.70412958836127405533",
+      previousUserId: BSUID,
+      waId: "16505559876",
+    });
   });
 
   it("a number change: the new and previous user ids and the new phone; with no phone shared, the previous user id alone names the sender", () => {
