@@ -1,0 +1,70 @@
+.FF.F                                                                    [100%]
+=================================== FAILURES ===================================
+____________ test_restore_row_reads_a_head_it_never_got_as_unknown _____________
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-2100/test_restore_row_reads_a_head_0')
+
+    def test_restore_row_reads_a_head_it_never_got_as_unknown(tmp_path):
+        write_journal(tmp_path, [GAP_HEAD_UNKNOWN])
+        result = doctor('restore', GC_CITY_PATH=str(tmp_path))
+        assert result.returncode == 1
+>       assert 'is not in the gc store (its head none, sequence unknown)' in result.stdout and 'null' not in result.stdout
+E       assert ('is not in the gc store (its head none, sequence unknown)' in "restore gap: ...1234: the journal's accepted 2026-11-04T23:26:21.689Z (sequence 9) is ahead of the gc store's head none (sequence unknown); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n")
+E        +  where "restore gap: ...1234: the journal's accepted 2026-11-04T23:26:21.689Z (sequence 9) is ahead of the gc store's head none (sequence unknown); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n" = CompletedProcess(args=['/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c...uence unknown); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n", stderr='').stdout
+
+whatsapp/tests/test_pack.py:296: AssertionError
+__________ test_clear_gap_and_status_read_a_head_never_got_as_unknown __________
+
+fake = <function fake.<locals>.make at 0x10bd4fec0>
+
+    def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
+        gap = {key: value for key, value in GAP_HEAD_UNKNOWN.items() if key != 't'}
+        adapter = fake({'POST /inbound/clear-gap': (200, {'ok': True, 'gap': gap, 'head': {'sequence': 4, 'created_at': '2026-11-01T00:00:00Z'}})})
+        result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0, result.stderr
+        assert 'gc store head:     sequence unknown' in result.stdout and 'null' not in result.stdout
+        status = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'},
+            'inbound': {'last_poll_at': NOW_MS, 'last_poll_error': '', 'entries': {}, 'acks_owed': 0, 'dead_letters': 0, 'held': [],
+                        'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': None}]},
+            'keeper': {'conversations': {}, 'window_read': {'ok_at': None, 'error': None, 'error_at': None, 'failures': 0}},
+            'ledger': {'conversations': {}},
+        })})
+        result = verb('status.sh', WHATSAPP_ADAPTER_URL=status.url)
+        assert result.returncode == 0, result.stderr
+>       assert 'journal watermark 9 not in the gc store (store head unknown)' in result.stdout and 'null' not in result.stdout
+E       AssertionError: assert ('journal watermark 9 not in the gc store (store head unknown)' in 'Enrolled:      yes\nLast poll:     2026-11-04T23:26:21Z\nEntries:       none; acks owed 0\nDead letters:  0\nTerminal... 9 ahead of the gc store head unknown  (gc whatsapp inbound clear-gap <wa_id>)\nWindow read:   last good -\nWindows:\n')
+E        +  where 'Enrolled:      yes\nLast poll:     2026-11-04T23:26:21Z\nEntries:       none; acks owed 0\nDead letters:  0\nTerminal... 9 ahead of the gc store head unknown  (gc whatsapp inbound clear-gap <wa_id>)\nWindow read:   last good -\nWindows:\n' = CompletedProcess(args=['/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c...the gc store head unknown  (gc whatsapp inbound clear-gap <wa_id>)\nWindow read:   last good -\nWindows:\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:498: AssertionError
+_______ test_status_renders_holds_gaps_and_windows_without_full_numbers ________
+
+fake = <function fake.<locals>.make at 0x10bd516c0>
+
+    def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
+        close_ms = 1793900000000
+        adapter = fake({'GET /status': (200, {
+            'health': {'gateway_auth': 'ok'},
+            'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 1, 'binds_owed': 1,
+                        'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
+                        'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
+            'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
+                                                          'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}},
+                       'window_read': {'ok_at': '2026-11-05T15:20:00.000Z', 'error': 'HTTP 503 from https://gw.invalid/v1/window',
+                                       'error_at': '2026-11-05T15:21:00.000Z', 'failures': 3}},
+            'ledger': {'conversations': {'5511900001234': {'window_closes_at': close_ms - 60000}}},
+        })})
+        result = verb('status.sh', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+        assert 'Enrolled:      yes' in out and 'Dead letters:  2' in out
+        assert 'm-0123456789  phone ...1234  receipt rcpt-9' in out
+>       assert 'acks owed 1 (1 held for a keeper bind)' in out
+E       AssertionError: assert 'acks owed 1 (1 held for a keeper bind)' in 'Enrolled:      yes\nLast poll:     2026-11-05T17:33:20Z\nEntries:       accepted:pending 1; acks owed 1\nDead letters...05T15:33:20Z (adapter ledger 2026-11-05T17:32:20Z)  keeper ON  update raised 2026-11-04  marks 60,30  lapses 1 (7 d)\n'
+
+whatsapp/tests/test_pack.py:567: AssertionError
+=========================== short test summary info ============================
+FAILED whatsapp/tests/test_pack.py::test_restore_row_reads_a_head_it_never_got_as_unknown
+FAILED whatsapp/tests/test_pack.py::test_clear_gap_and_status_read_a_head_never_got_as_unknown
+FAILED whatsapp/tests/test_pack.py::test_status_renders_holds_gaps_and_windows_without_full_numbers
+3 failed, 2 passed, 39 deselected in 2.37s
