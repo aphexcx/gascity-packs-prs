@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -84,10 +86,21 @@ func registrationNeedsCompatibility(err error) bool {
 
 func registrationCanRetry(err error) bool {
 	var e *registrationHTTPError
-	if errors.Is(err, syscall.ECONNREFUSED) {
+	var transportErr net.Error
+	// A slow or restarting gc can time out or drop the connection as well as
+	// refuse it. errors.Is/As also cover the client's url.Error wrappers.
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		(errors.As(err, &transportErr) && transportErr.Timeout()) {
 		return true
 	}
-	if !errors.As(err, &e) || e.status != http.StatusNotFound {
+	if !errors.As(err, &e) {
+		return false
+	}
+	if e.status >= 500 && e.status < 600 {
+		return true
+	}
+	if e.status != http.StatusNotFound {
 		return false
 	}
 	var problem struct {

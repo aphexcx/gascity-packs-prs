@@ -1,0 +1,7 @@
+adapter: go test -race -count=1 -timeout=45s -run ^TestRegistrationStartupRetries(ServiceUnavailable|ClientTimeout)$ -v . | exit=1
+adapter: go build -o /tmp/gp-xgjf-slack-adapter . | exit=0
+adapter: SLACK_TEST_BOOT_DELAY=1 go test -race -count=1 -timeout=90s -run ^TestRegistration -v . | exit=0
+adapter: go test -race -count=1 -timeout=5m -json ./... | exit=0
+cli: go test -race -count=1 -timeout=5m -json ./... | exit=0
+slack-full: /tmp/gp-ktdn-pytest/bin/python -m pytest tests/ -q | exit=0
+python3: compare measuredCityNotFoundBody bytes with mayor boot-measure README section (b) | exit=0

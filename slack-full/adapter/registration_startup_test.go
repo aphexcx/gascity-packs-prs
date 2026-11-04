@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,10 @@ func TestRegistrationProcessHelper(t *testing.T) {
 	}
 	if os.Getenv("SLACK_REGISTRATION_TEST_SHORT_DEADLINE") == "1" {
 		bootRegistrationPolicy.timeout = 100 * time.Millisecond
+	}
+	if os.Getenv("SLACK_TEST_REGISTRATION_CLIENT_TIMEOUT") == "1" {
+		// Only the isolated test process changes the production 20-second client.
+		gcForwardClient.Timeout = 100 * time.Millisecond
 	}
 	main()
 }
@@ -180,6 +185,85 @@ func TestRegistrationStartupRetriesCityNotRunning(t *testing.T) {
 	}
 }
 
+func TestRegistrationStartupRetriesServiceUnavailable(t *testing.T) {
+	var mu sync.Mutex
+	var templates []bool
+	fakeGC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v0/city/test-city/extmsg/adapters" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		defer mu.Unlock()
+		templates = append(templates, strings.Contains(string(b), "reply_instructions"))
+		if len(templates) <= 2 {
+			http.Error(w, "adapter registry not available", http.StatusServiceUnavailable)
+		}
+	}))
+	defer fakeGC.Close()
+	p := startRegistrationProcess(t, fakeGC.URL)
+	p.waitHealth(t, "registering: attempt 1", 2*time.Second)
+	p.waitHealth(t, "registering: attempt 2", 3*time.Second)
+	p.waitHealth(t, "ok", 5*time.Second)
+	mu.Lock()
+	got := fmt.Sprint(templates)
+	mu.Unlock()
+	if got != "[true true true]" {
+		t.Fatalf("503 retries must retain template: %s", got)
+	}
+	b, _ := os.ReadFile(p.log)
+	for _, want := range []string{"attempt 1 failed (register failed: 503", "next wait=1s", "attempt 2 failed (register failed: 503", "next wait=2s", "attempt 3 succeeded; next wait=0s"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("missing %q in registration log:\n%s", want, b)
+		}
+	}
+	if n := strings.Count(string(b), "register adapter: attempt "); n != 3 {
+		t.Fatalf("want one log per attempt (3), got %d:\n%s", n, b)
+	}
+	t.Logf("same adapter PID %d registered after two 503 responses", p.cmd.Process.Pid)
+}
+
+func TestRegistrationStartupRetriesClientTimeout(t *testing.T) {
+	var mu sync.Mutex
+	var templates []bool
+	fakeGC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v0/city/test-city/extmsg/adapters" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		templates = append(templates, strings.Contains(string(b), "reply_instructions"))
+		attempt := len(templates)
+		mu.Unlock()
+		if attempt == 1 {
+			// Drain the request first so cancellation reaches the server context.
+			<-r.Context().Done()
+		}
+	}))
+	defer fakeGC.Close()
+	p := startRegistrationProcess(t, fakeGC.URL, "SLACK_TEST_REGISTRATION_CLIENT_TIMEOUT=1")
+	p.waitHealth(t, "registering: attempt 1", 2*time.Second)
+	p.waitHealth(t, "ok", 5*time.Second)
+	mu.Lock()
+	got := fmt.Sprint(templates)
+	mu.Unlock()
+	if got != "[true true]" {
+		t.Fatalf("client timeout retry must retain template: %s", got)
+	}
+	b, _ := os.ReadFile(p.log)
+	for _, want := range []string{"attempt 1 failed", "Client.Timeout", "next wait=1s", "attempt 2 succeeded; next wait=0s"} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("missing %q in registration log:\n%s", want, b)
+		}
+	}
+	if n := strings.Count(string(b), "register adapter: attempt "); n != 2 {
+		t.Fatalf("want one log per attempt (2), got %d:\n%s", n, b)
+	}
+	t.Logf("same adapter PID %d registered after the client timeout", p.cmd.Process.Pid)
+}
+
 func TestRegistrationStartupReplyInstructionsCompatibility(t *testing.T) {
 	for _, status := range []int{http.StatusBadRequest, http.StatusUnprocessableEntity} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
@@ -237,6 +321,10 @@ func TestRegistrationStartupDelayedPort(t *testing.T) {
 	t.Logf("same adapter PID %d registered after the port opened at +20s", p.cmd.Process.Pid)
 }
 
+// Verbatim response body from the mayor's gp-ktdn-boot-measure/README.md (b),
+// service.log at 2026/11/03 15:35:47 and 20:25:17 on hou-dynasty.
+const measuredCityNotFoundBody = `{"type":"urn:gascity:error:city-not-found","title":"City Not Found","status":404,"detail":"not_found: city not found or not running: hou-dynasty","code":"city-not-found"}`
+
 func TestRegistrationFailureClassification(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -244,7 +332,13 @@ func TestRegistrationFailureClassification(t *testing.T) {
 		retry, compat bool
 	}{
 		{"refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), true, false},
+		{"timeout-url", &url.Error{Op: "Post", URL: "http://gc.test", Err: context.DeadlineExceeded}, true, false},
+		{"timeout-syscall", fmt.Errorf("dial: %w", syscall.ETIMEDOUT), true, false},
+		{"reset", &url.Error{Op: "Post", URL: "http://gc.test", Err: syscall.ECONNRESET}, true, false},
+		{"eof", &url.Error{Op: "Post", URL: "http://gc.test", Err: io.EOF}, true, false},
+		{"unexpected-eof", fmt.Errorf("read registration response: %w", io.ErrUnexpectedEOF), true, false},
 		{"unready", &registrationHTTPError{404, `{"detail":"not_found: city not found or not running: test-city"}`}, true, false},
+		{"measured-city-not-found", &registrationHTTPError{404, measuredCityNotFoundBody}, true, false},
 		{"missing-route", &registrationHTTPError{404, `{"detail":"route not found"}`}, false, false},
 		{"old-gc", &registrationHTTPError{400, `json: unknown field "reply_instructions"`}, false, true},
 		{"current-gc", &registrationHTTPError{422, `{"errors":[{"message":"unexpected property","location":"body.reply_instructions"}]}`}, false, true},
@@ -254,8 +348,15 @@ func TestRegistrationFailureClassification(t *testing.T) {
 		{"city-code", &registrationHTTPError{404, `{"code":"city-not-found"}`}, true, false},
 		{"invalid-account", &registrationHTTPError{400, `account_id is required`}, false, false},
 		{"auth", &registrationHTTPError{401, `reply_instructions not authorized`}, false, false},
-		{"server", &registrationHTTPError{500, `city not found or not running`}, false, false},
+		{"forbidden", &registrationHTTPError{403, `{"title":"Forbidden","status":403,"detail":"csrf: X-GC-Request header required on mutation endpoints"}`}, false, false},
+		{"rate-limit", &registrationHTTPError{429, `too many requests`}, false, false},
+		{"server", &registrationHTTPError{500, `internal server error`}, true, false},
+		{"bad-gateway", &registrationHTTPError{502, `bad gateway`}, true, false},
+		{"registry-unavailable", &registrationHTTPError{503, `adapter registry not available`}, true, false},
+		{"server-range-end", &registrationHTTPError{599, `upstream failure`}, true, false},
+		{"outside-server-range", &registrationHTTPError{600, `unknown status`}, false, false},
 		{"dns", &net.DNSError{Err: "no such host", Name: "invalid"}, false, false},
+		{"canceled", context.Canceled, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if registrationCanRetry(tc.err) != tc.retry || registrationNeedsCompatibility(tc.err) != tc.compat {
@@ -266,15 +367,43 @@ func TestRegistrationFailureClassification(t *testing.T) {
 }
 
 func TestRegistrationDeadlineRetainsLastStatus(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusServiceUnavailable} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			fakeGC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				if status == http.StatusNotFound {
+					_, _ = io.WriteString(w, measuredCityNotFoundBody)
+				} else {
+					_, _ = io.WriteString(w, "adapter registry not available")
+				}
+			}))
+			defer fakeGC.Close()
+			started := time.Now()
+			err := registerAdapterOnStart(context.Background(), config{gcAPIBase: fakeGC.URL, cityName: "test-city"}, &startupGate{}, registrationRetryPolicy{time.Millisecond, 5 * time.Millisecond, 40 * time.Millisecond})
+			if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), fmt.Sprintf("%d %s", status, http.StatusText(status))) {
+				t.Fatalf("deadline lost last status: %v", err)
+			}
+			if time.Since(started) > time.Second {
+				t.Fatal("registration exceeded its total deadline")
+			}
+		})
+	}
+}
+
+func TestRegistrationDeadlineRetainsLastTransportError(t *testing.T) {
 	fakeGC := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		_, _ = io.WriteString(w, `{"detail":"not_found: city not found or not running: test-city"}`)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack registration connection: %v", err)
+			return
+		}
+		_ = conn.Close() // No HTTP response: the client returns a wrapped EOF.
 	}))
 	defer fakeGC.Close()
 	started := time.Now()
 	err := registerAdapterOnStart(context.Background(), config{gcAPIBase: fakeGC.URL, cityName: "test-city"}, &startupGate{}, registrationRetryPolicy{time.Millisecond, 5 * time.Millisecond, 40 * time.Millisecond})
-	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "404 Not Found") {
-		t.Fatalf("deadline lost last status: %v", err)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "last failure: Post") || !strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("deadline lost last transport error: %v", err)
 	}
 	if time.Since(started) > time.Second {
 		t.Fatal("registration exceeded its total deadline")
