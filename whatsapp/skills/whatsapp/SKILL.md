@@ -92,6 +92,25 @@ copy after a crash or a lost response:
 If you already answered the message with that id, do nothing. Otherwise
 answer it as you would the original.
 
+## A delivery that failed
+
+A message reading
+
+```
+[delivery failed: <code> <title>]
+```
+
+is Meta's word that one of your sends to that phone never arrived: Meta took
+it, then could not deliver it. The code and the title are Meta's. It comes
+under the owner's name with the reply line beneath it, but the owner did not
+write it, and it does not open the window. Never answer it as their words.
+
+Send it again once, by the window rule: free-form only while their window is
+open, otherwise the update template and only for an actual update. If the
+second send fails too, or the rule leaves no send, say it on Slack with the
+code. Never resend a marketing refusal (`131049`, `131050`, or the template
+to a US number while Meta classes it as marketing): say it on Slack instead.
+
 ## The window-keeper
 
 For a business that agreed to it at the invite, the adapter watches the

@@ -6,8 +6,9 @@
    trailing "`" or code-fence context. A form may be a prefix of a help line
    (e.g. "gc whatsapp publish --update" names the flag) only when it ends at
    a token boundary of that help line.
-2. The keeper event texts, the redelivery marker, the reply line, the
-   attachment block and the actor name the skill quotes must appear in A's
+2. The keeper event texts, the redelivery marker, the failed-delivery line,
+   the reply line, the attachment block and the actor name the skill quotes
+   must appear in A's
    adapter source (keeper.js, render.js, index.js, media.js) as literal
    fragments, with the skill's <placeholders> standing for ${...} parts.
 
@@ -126,12 +127,14 @@ quotes = {
     "attachment line": "saved to <path>; Read that path to view it",
     "voice transcript": "[voice note transcript: <name>]",
     "reaction": "[reaction <emoji> to <message id>]",
+    # Round 2 (gp-awtb, the read's MINOR 5): render.js:80-83's failed status.
+    "failed delivery": "[delivery failed: <code> <title>]",
 }
 for what, q in quotes.items():
     report(q in skill, f"skill quotes the {what}")
     report(literal_in_source(q), f"A's adapter source carries the {what}: {q!r}")
 
-for q in ("[window-keeper] <wa_id>: daily update due.", "[window-keeper] <wa_id>: window closes in <N> minutes,", "[redelivery <wamid>:"):
+for q in ("[window-keeper] <wa_id>: daily update due.", "[window-keeper] <wa_id>: window closes in <N> minutes,", "[redelivery <wamid>:", "[delivery failed:"):
     report(q in frag, f"fragment quotes {q!r}")
 
 afik = "only if there is an actual update"

@@ -1,6 +1,7 @@
 """RED for verbs.py: mirror whatsapp/ into a scratch root, mutate one quoted
-verb form and one keeper quote in the skill, and expect verbs.py to fail on
-exactly those two. Usage: python3 -I red.py <worktree> <scratch-root>"""
+verb form, one keeper quote and the failed-delivery line in the skill, and
+expect verbs.py to fail on exactly those three.
+Usage: python3 -I red.py <worktree> <scratch-root>"""
 
 import pathlib
 import shutil
@@ -16,6 +17,7 @@ text = skill.read_text(encoding="utf-8")
 mutations = [
     ("gc whatsapp inbound clear-gap <wa_id>", "gc whatsapp inbound clear-gap <conversation>"),
     ("nobody from the business has written since <time>", "nobody from the owner has written since <time>"),
+    ("[delivery failed: <code> <title>]", "[delivery error: <code> <title>]"),
 ]
 for old, new in mutations:
     assert old in text, old
@@ -26,6 +28,9 @@ fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
 print(f"verbs.py rc={r.returncode} on the mutated mirror; {len(fails)} FAIL lines:")
 for l in fails:
     print("  " + l)
-ok = r.returncode == 1 and any("clear-gap <conversation>" in l for l in fails) and any("nudge (unshifted)" in l for l in fails)
+ok = (r.returncode == 1 and len(fails) == 3
+      and any("clear-gap <conversation>" in l for l in fails)
+      and any("nudge (unshifted)" in l for l in fails)
+      and any("skill quotes the failed delivery" in l for l in fails))
 print("RED OK" if ok else "RED NOT SEEN")
 sys.exit(0 if ok else 1)
