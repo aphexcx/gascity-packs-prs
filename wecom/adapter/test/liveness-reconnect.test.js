@@ -210,7 +210,9 @@ for (const dropAt of [1, 2]) {
     assert.equal(retry.body.delivery_outcome, 'retried-unacked-chunks');
     assert.equal(sends(server).length, 3);
     assert.equal(sends(server).filter((f) => f.body.markdown.content.startsWith('a')).length, dropAt === 1 ? 2 : 1);
-    assert.equal((await adapter.request('/publish', request)).status, 409);
+    const replay = await adapter.request('/publish', request);
+    assert.equal(replay.status, 200);
+    assert.deepEqual(replay.body, { ...retry.body, replayed: true });
     assert.equal(sends(server).length, 3);
   });
 }
@@ -677,7 +679,9 @@ test('process restart after a dropped chunk resumes the durable suffix', async (
   assert.equal(resumed.body.delivery_outcome, 'retried-unacked-chunks');
   assert.equal(sends(server).length, 3);
   assert.equal(sends(server)[2].body.markdown.content, 'last');
-  assert.equal((await after.request('/publish', body)).status, 409);
+  const replay = await after.request('/publish', body);
+  assert.equal(replay.status, 200);
+  assert.deepEqual(replay.body, { ...resumed.body, replayed: true });
   assert.equal(sends(server).length, 3);
 });
 
