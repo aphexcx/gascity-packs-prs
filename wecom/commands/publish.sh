@@ -287,7 +287,7 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
         ;;
       not_sent)
         if [ -n "$idempotency_key" ]; then
-          echo "gc wecom publish: the failed chunk was not written; retry with --idempotency-key $idempotency_key (safe — it resumes without repeating delivered chunks)" >&2
+          echo "gc wecom publish: this request did not write the failed chunk; retry with --idempotency-key $idempotency_key to resume after acknowledged chunks" >&2
         else
           echo "gc wecom publish: nothing was written; retrying is safe" >&2
         fi

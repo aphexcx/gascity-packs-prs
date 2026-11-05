@@ -1609,7 +1609,10 @@ export function createOutboundPublisher(deps) {
     try {
       await chainSend(chatid, send, authDeadline);
     } catch (err) {
-      if (err instanceof PublishWaitTimeout) sendFailure = 'not_written';
+      if (err instanceof PublishWaitTimeout) {
+        sendFailure = 'not_written';
+        chunkCount = chunkText(pub.text).length;
+      }
       token.finish(err);
       const chunk = state.chunksDelivered + 1;
       const delivered = state.chunksDelivered;
@@ -1666,8 +1669,10 @@ export function createOutboundPublisher(deps) {
           delivered: false,
           failure_kind: 'not_sent',
           delivery_outcome: 'nothing-written',
-          error: `not sent: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} is not in the chat. `
-            + (delivered === 0
+          error: `not sent: ${describeProviderError(err)} — this request did not write chunk ${chunk} of ${chunkCount}. `
+            + (state.retryUnacked || state.retriedUnackedChunks
+              ? 'An earlier unacknowledged attempt may already be visible; retry with the same key to preserve acknowledged progress.'
+              : delivered === 0
               ? 'Retrying is safe.'
               : `Chunks 1–${delivered} were delivered earlier; retry with the same idempotency key to resume at chunk ${chunk} without repeating them.`),
           ...extra,

@@ -3705,3 +3705,21 @@ test('ownership wait expires without stealing the active same-key send', async (
   assert.equal((await publishText(publisher, body)).statusCode, 409);
   assert.equal(frames, 1);
 });
+
+test('a pre-write refusal on retry does not erase an earlier ambiguous delivery', async () => {
+  let attempt = 0;
+  const { publisher } = makePublisher({ sendMessage: async () => {
+    if (++attempt === 1) throw ackTimeout();
+    if (attempt === 2) throw notConnected();
+    return {};
+  } });
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'mixed-outcomes' };
+  assert.equal((await publishText(publisher, body)).json().failure_kind, 'retryable');
+  const refused = (await publishText(publisher, body)).json();
+  assert.equal(refused.delivery_outcome, 'nothing-written');
+  assert.match(refused.error, /this request did not write chunk 1 of 1/);
+  assert.match(refused.error, /earlier unacknowledged attempt may already be visible/);
+  assert.doesNotMatch(refused.error, /not in the chat|Retrying is safe/);
+  const delivered = (await publishText(publisher, body)).json();
+  assert.equal(delivered.delivery_outcome, 'retried-unacked-chunks');
+});
