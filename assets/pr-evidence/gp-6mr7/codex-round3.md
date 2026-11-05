@@ -179,3 +179,38 @@ digits) and adds what r3 found to the table:
 - Left as stated limits: spelled-out digits and encodings (base64, HTML
   numeric entities); and an id not yet in the records, for the bead's
   grep.
+
+## Self-review r4, on the r3 fold `863362be` alone, and where the lane stopped
+
+- Same launcher and model, prompt `codex-round3-r4-prompt.md` (the diff
+  `git diff fcbb7a60..863362be`), session
+  01a1a908-0087-7943-ac75-7ab559eaa8c9, 00:07:15Z to 00:10:01Z (11/5),
+  rc 0, 42,234 tokens.
+
+Codex's verdict (verbatim):
+
+> One P2 finding; no P1 or P3 findings.
+>
+> - **P2 — verbs.py:185:** Markup handling remains incomplete. `FIRST_HALF<span title=">2"></span>SECOND_HALF` and `[FIRST_HALF](https://example.invalid/(v2)/3)SECOND_HALF` both passed with recorded halves in memory. The regex stops at the first `>` or `)`, leaving an intervening digit. HTML parsing confirmed the first example displays the complete ID.
+>   **Fix:** tokenize Markdown/HTML with support for balanced destinations and quoted attributes, and add both regression rows.
+>
+> The phone and synthetic-stamp findings are closed; the markup finding is only partially closed.
+>
+> Verification:
+>
+> - Requested worktree command: exit **0**, only PASS lines.
+> - In-memory red.py: exactly **23 FAIL**, no controls among them; all rows also behaved correctly individually.
+> - Phone extraction handled all 29 Python whitespace characters; missing kinds and unreadable records failed closed.
+> - No current false positives, additional per-kind proof findings, or mis-specified rows found.
+>
+> No files changed.
+
+Not folded, on purpose: the P2 is now a stated limit of the check (its
+docstring names both of codex's forms). A full fix is a Markdown and HTML
+tokenizer, and each round so far has found the next corner of whatever the
+check approximates; a fifth round would find the next markup corner. The
+check exists to stop an author pasting a recorded value back in, in any
+spacing, format, URL or plain markup, and the table pins every such form.
+Markup built to carry a digit inside a value is deliberate hiding, the
+same class as the encodings already left out. The READY mail names this
+as the lane's judgment call for the mayor.

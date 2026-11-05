@@ -53,6 +53,7 @@ PASS assets/pr-evidence/gp-6mr7/codex-quick-r3-prompt.md: no Meta value from cit
 PASS assets/pr-evidence/gp-6mr7/codex-round3-prompt.md: no Meta value from citadel's records
 PASS assets/pr-evidence/gp-6mr7/codex-round3-r2-prompt.md: no Meta value from citadel's records
 PASS assets/pr-evidence/gp-6mr7/codex-round3-r3-prompt.md: no Meta value from citadel's records
+PASS assets/pr-evidence/gp-6mr7/codex-round3-r4-prompt.md: no Meta value from citadel's records
 PASS assets/pr-evidence/gp-6mr7/codex-round3.md: no Meta value from citadel's records
 PASS assets/pr-evidence/gp-6mr7/fragparse.go: no Meta value from citadel's records
 PASS assets/pr-evidence/gp-6mr7/meta-pages-read.md: no Meta value from citadel's records

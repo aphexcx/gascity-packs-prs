@@ -22,11 +22,15 @@
    assets/pr-evidence/gp-6mr7 whose digits, every other character deleted,
    contain one of them, in the raw text or in the text a reader sees once
    Markdown link targets, reference labels and HTML tags are taken out. So
-   separators, spaces of any kind, letters around it, markup inside it or
-   a phone format do not hide a recorded value. It fails closed: an
+   separators, spaces of any kind, letters around it, plain markup inside
+   it or a phone format do not hide a recorded value. It fails closed: an
    unreadable record, records that yield fewer than the seven ids, or no
-   test number, is a FAIL. Its boundary: an
-   id the records do not hold yet is for the bead's acceptance grep to
+   test number, is a FAIL. Its limits, stated: the markup reading is a
+   plain one (a link target ends at its first ")", a tag at its first
+   ">"), so markup built to carry a digit past those (a quoted ">" in an
+   attribute, nested parentheses in a link target) is outside it, as are
+   spelled-out digits and encodings (base64, HTML numeric entities); and
+   an id the records do not hold yet is for the bead's acceptance grep to
    catch, not this check.
 
 Usage: python3 -I verbs.py <worktree> [<record>...]
