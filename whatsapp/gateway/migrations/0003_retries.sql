@@ -1,6 +1,7 @@
 -- whatsapp-gateway, schema v3 (gp-0g2s): Meta's retries. Meta redelivers a webhook it did not see
--- answered 200 for up to 7 days, in any order, and the gateway drops a message Meta stamped more
--- than 8 days ago (TOMBSTONE_SECONDS). Three rules hold across that horizon.
+-- answered 200, in any order, for up to 7 days (an assumption: README.md, "Business-scoped user
+-- ids", rule 5, "The horizon"), and the gateway drops a message Meta stamped more than 8 days ago
+-- (TOMBSTONE_SECONDS), whatever Meta's window is. Three rules hold across that horizon.
 
 -- 1. A wamid is one row whichever city holds it. The dedup key loses city_id, so a retry that
 --    arrives after the phone moved to another city (the operator's unbind, then a new invite) is
@@ -39,6 +40,13 @@ ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later 
 --    number change, when Meta names the number beside another current user_id, or at the daily
 --    cron once an operator unbound the owner. Both rows hold the number meanwhile, so a message
 --    naming it alone goes to nobody.
+--    Late evidence refuses, never routes (gp-sv2d; Afik's (A), 11:20Z 11/5). A span holds its id
+--    over [since, changed_at] and routes a message over [routes_from, changed_at]. A span the
+--    gateway learned on time routes from its start. What it learns late only refuses: a pairing
+--    Meta stamped before a span's start moves since back and leaves routes_from where it was, and a
+--    pairing under a previous user_id is kept as a span whose routes_from is 253402300799, so it
+--    never routes. A stamp a refuse-only part holds goes to nobody, counted: a conflict when
+--    another binding holds it too, and never to the span's own binding.
 CREATE TABLE phone_aliases (
   id TEXT NOT NULL,              -- the previous wa_id or user_id
   conversation_id TEXT NOT NULL, -- the owner it named
@@ -46,6 +54,7 @@ CREATE TABLE phone_aliases (
   since INTEGER NOT NULL,        -- Meta's stamp from which the binding held it
   changed_at INTEGER NOT NULL,   -- Meta's stamp of the change that replaced it
   expires_at INTEGER NOT NULL,   -- changed_at + 8 days
+  routes_from INTEGER NOT NULL,  -- Meta's stamp from which the span routes (gp-sv2d): since when learned on time, 253402300799 never
   PRIMARY KEY (id, bound_wamid, changed_at)
 );
 

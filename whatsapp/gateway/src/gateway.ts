@@ -47,7 +47,11 @@ export const MAX_BODY_BYTES = 1_900_000;
 export const MAX_PENDING = 5000;
 /** How long a delivery's body is held without an ack. */
 export const HOLD_SECONDS = 7 * DAY;
-/** How long a body-less row stays to dedup a late Meta redelivery (Meta retries up to 7 days). */
+/**
+ * How long a body-less row stays to dedup a late Meta redelivery. Meta retries for up to 7 days: an
+ * assumption (README.md, "Business-scoped user ids", rule 5, "The horizon"). The horizon's safety
+ * rests on these 8 days, not on Meta's 7: the stale filter drops whatever Meta stamped longer ago.
+ */
 export const TOMBSTONE_SECONDS = 8 * DAY;
 /**
  * How long an owner's ids from before a number change stay its aliases, from the change Meta
@@ -57,7 +61,10 @@ export const TOMBSTONE_SECONDS = 8 * DAY;
 export const ALIAS_SECONDS = TOMBSTONE_SECONDS;
 /** How long a counted wrong code's wamid is kept: as long as Meta may redeliver it. */
 const CODE_WAMIDS_KEEP_SECONDS = TOMBSTONE_SECONDS;
-/** Meta keeps a webhook media id for 7 days. */
+/**
+ * Meta keeps a webhook media id for 7 days. That is the media id's lifetime, not Meta's retry window
+ * (an assumption: README.md, "Business-scoped user ids", rule 5, "The horizon").
+ */
 export const MEDIA_SECONDS = 7 * DAY;
 export const INVITE_SECONDS = DAY;
 export const ENROLL_SECONDS = 3 * DAY;
@@ -274,6 +281,20 @@ function senderOf(m: InboundMessage): { wa: string | null; user: string | null }
  * or the same person bound again elsewhere). Two bindings holding one stamp is a conflict: the
  * records disagree, and the message goes to nobody, counted with the conflict as its reason.
  *
+ * Late evidence refuses, never routes (gp-sv2d; Afik's (A), 11:20Z 11/5). A previous id or paired
+ * number holds its stamps from since and routes them from routes_from. A span the gateway learned
+ * on time routes from its start: the owner's own number change, or a pairing under the binding's
+ * current user_id stamped at or after the start of the span it opens or falls in. What it learns
+ * late only refuses: a pairing under a previous user_id (Meta delivers it after the owner's change)
+ * is kept as a span that never routes, and a pairing stamped before a span's start moves only
+ * where the span holds from, never where it routes from. A stamp that only a refuse-only part holds
+ * goes to nobody, counted; one another binding holds too is a conflict. That fails closed, the cost
+ * (A) accepts: once the other row's owner is unbound, the owner's own messages stamped in a late
+ * part go to nobody, counted, never to the owner. A message that arrives late is still routed by
+ * the spans as they stand when it lands (a retry of the owner's text under a previous user_id goes
+ * by that id's previous holding, learned on time from the change); only the pairing it carries is
+ * late evidence.
+ *
  * Which id is matched: the user_id when the message names one (Meta gives one to no one else),
  * else the wa_id. A current wa_id also takes a message naming a user_id when its row holds none
  * (one owner, two ids, one row). It never takes a row holding another user_id: a phone number Meta
@@ -291,36 +312,41 @@ const ownerKey = (wa: string, user: string, stamp: string) =>
   `(SELECT conversation_id FROM phones WHERE ${heldAt(wa, user, stamp)} ${ownerFirst(user)})`;
 /**
  * The holdings in phone_aliases of the message's id whose spans hold the stamp: its previous ids
- * and its paired numbers. No expiry test is needed: a message stamped at or before changed_at that
- * passes the stale filter arrives before changed_at + ALIAS_SECONDS, and an open span has not ended.
+ * and its paired numbers, each with whether it routes the stamp (gp-sv2d: a refuse-only part, one
+ * learned late, holds and never routes). No expiry test is needed: a message stamped at or before
+ * changed_at that passes the stale filter arrives before changed_at + ALIAS_SECONDS, and an open
+ * span has not ended.
  */
 const otherHolding = (wa: string, user: string, stamp: string) =>
-  `(SELECT conversation_id, bound_wamid FROM phone_aliases
+  `(SELECT conversation_id, bound_wamid, routes_from <= ${stamp} AS routes FROM phone_aliases
     WHERE id = COALESCE(${user}, ${wa}) AND since <= ${stamp} AND changed_at >= ${stamp})`;
 /**
- * Every binding whose span holds the stamp: the current holder the message matches, and each other
- * holding. When that holder is a phone-only row the message reached by its number beside a user_id
- * no row holds (rule 3: one owner, two ids), each binding's span of the number holds it too
- * (gp-byp8): Meta has paired that number with another binding, so the phone-only row's claim is in
- * doubt. That only ever adds a second holder: it refuses, and never routes.
+ * Every binding whose span holds the stamp, each with whether that holding routes it: the current
+ * holder the message matches (it routes), and each other holding. When that holder is a phone-only
+ * row the message reached by its number beside a user_id no row holds (rule 3: one owner, two ids),
+ * each binding's span of the number holds it too (gp-byp8): Meta has paired that number with
+ * another binding, so the phone-only row's claim is in doubt. That only ever adds a second holder:
+ * it refuses, and never routes.
  */
 const holdings = (wa: string, user: string, stamp: string) =>
-  `(SELECT conversation_id, bound_wamid FROM phones WHERE conversation_id = ${ownerKey(wa, user, stamp)}
-    UNION ALL SELECT conversation_id, bound_wamid FROM ${otherHolding(wa, user, stamp)}
-    UNION ALL SELECT conversation_id, bound_wamid FROM phone_aliases
+  `(SELECT conversation_id, bound_wamid, 1 AS routes FROM phones WHERE conversation_id = ${ownerKey(wa, user, stamp)}
+    UNION ALL SELECT conversation_id, bound_wamid, routes FROM ${otherHolding(wa, user, stamp)}
+    UNION ALL SELECT conversation_id, bound_wamid, 0 FROM phone_aliases
     WHERE id = ${wa} AND since <= ${stamp} AND changed_at >= ${stamp}
       AND NOT EXISTS (SELECT 1 FROM phones WHERE user_id = ${user}) AND ${ownerKey(wa, user, stamp)} IS NOT NULL)`;
 /** How many bindings hold the stamp. A binding is its bind wamid: a later binding under the same key is another owner. */
 const holders = (wa: string, user: string, stamp: string) => `(SELECT COUNT(DISTINCT bound_wamid) FROM ${holdings(wa, user, stamp)})`;
 /**
- * The owner a message routes to: the one binding whose span holds the stamp, while it stands.
- * Nobody when no span holds it, when that binding is gone (an operator unbound it: a previous
- * holding never routes on to whoever holds the id now), or when two bindings hold it (a conflict).
- * One binding may hold a stamp twice (a paired number up to the stamp its row took it): it is one.
+ * The owner a message routes to: the one binding whose span holds the stamp, while it stands, and
+ * through a holding that routes it. Nobody when no span holds it, when that binding is gone (an
+ * operator unbound it: a previous holding never routes on to whoever holds the id now), when two
+ * bindings hold it (a conflict), or when the one binding holds it only by what it learned late
+ * (gp-sv2d: refuse-only). One binding may hold a stamp twice (a paired number up to the stamp its
+ * row took it): it is one binding, and it routes the stamp when any of its holdings does.
  */
 const routeKey = (wa: string, user: string, stamp: string) =>
   `(SELECT p.conversation_id FROM phones p JOIN ${holdings(wa, user, stamp)} h
-      ON p.conversation_id = h.conversation_id AND p.bound_wamid = h.bound_wamid
+      ON p.conversation_id = h.conversation_id AND p.bound_wamid = h.bound_wamid AND h.routes
     WHERE ${holders(wa, user, stamp)} = 1 LIMIT 1)`;
 /**
  * Two bindings hold the stamp: the records disagree, and the message goes to nobody. A number's
@@ -335,6 +361,25 @@ const conflict = (wa: string, user: string, stamp: string) => `(${holders(wa, us
  */
 const stranger = (wa: string, user: string, stamp: string) =>
   `(NOT EXISTS ${otherHolding(wa, user, stamp)} AND NOT EXISTS (SELECT 1 FROM phones WHERE ${ownerMatch(wa, user)}))`;
+/**
+ * A sender an invite code may bind: a stranger, or (gp-sv2d) a user_id no row holds now and no span
+ * holds at the stamp, named beside a number a phone-only row holds. Rule 3 would make that text the
+ * phone-only row's message; an invite code makes its sender a newcomer instead, whose attempts are
+ * counted as a stranger's and whom the bind keys by the user_id.
+ */
+const newcomer = (wa: string, user: string, stamp: string) =>
+  `(${stranger(wa, user, stamp)} OR (${user} IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE user_id = ${user}) AND NOT EXISTS ${otherHolding(wa, user, stamp)}))`;
+/**
+ * A newcomer's invite code that was live at the text's stamp and is still unspent after the bind
+ * (gp-sv2d): the bind was refused (the day's attempts used up, or ids another owner holds), so the
+ * text is no one's message. Rule 3 never gives it to a phone-only row: the other city's code would
+ * reach that row's city, and the row would take the sender's user_id. A text with no code (NULL) is
+ * never one, nor is a known sender's (an owner's retry under a previous user_id is its message,
+ * whatever it says).
+ */
+const refusedCode = (code: string, at: string, wa: string, user: string, stamp: string) =>
+  `(EXISTS (SELECT 1 FROM invite_codes WHERE code = ${code} AND used_at IS NULL AND expires_at > ${at})
+     AND ${newcomer(wa, user, stamp)})`;
 /**
  * The paired numbers (gp-byp8). Each statement takes a number (?1), the current user_id Meta
  * named beside it (?2) and Meta's stamp (?3).
@@ -353,35 +398,46 @@ const stranger = (wa: string, user: string, stamp: string) =>
  * number was the binding's at the stamp, kept by the two statements below.
  *
  * pairingWidens: the evidence belongs to the binding's first span of the number that ends at or
- * after the stamp, open or ended: its start moves back to the stamp when that is earlier. A
- * pairing a later span's end already covers (Meta's replay of history) never reopens anything.
+ * after the stamp, open or ended. A pairing stamped before that span's start is late (gp-sv2d,
+ * late (ii)): the span holds from the stamp, and still routes only from where it did, so the
+ * stamps it adds only refuse. A pairing a later span's end already covers (Meta's replay of
+ * history) never reopens anything, and a replay of the pairing that opened a span changes nothing.
  *
  * pairingOpens: when no span of the binding's ends at or after the stamp, the number is the row's
  * paired number from here: an open span, from where the owner came to it (wa_since: its number
  * change, when that brought the owner to the number Meta had not shared yet) or this stamp,
  * whichever is earlier, but never before the second after the binding's last ended span of it.
+ * It is on-time evidence: it routes from that start.
  *
  * pairingHistoryWidens, pairingHistory: the user_id is a previous one that the binding held at the
  * stamp (Meta delivers the pairing after the owner's number change, at the alias's changed_at).
- * The evidence follows the rule an on-time pairing follows. It belongs to the binding's first span
- * of the number that ends at or after the stamp and by that change (what the owner held under that
- * user_id), whose start moves back to the stamp when that is earlier; an end already recorded there
- * stands (the codex self-review r4). Only when there is none is it kept as a span from the stamp up
- * to the change, for the alias horizon. A pairing that lands late is never lost (the lane's self-review r1), and never extends
- * a span past its recorded end. A span another row's holding overlaps goes to nobody, as any
- * conflict does.
+ * It is late (gp-sv2d, late (i)), so it only refuses. It belongs to the binding's first span of
+ * the number that ends at or after the stamp and by that change (what the owner held under that
+ * user_id), which holds from the stamp when that is earlier and routes from where it did; an end
+ * already recorded there stands (the codex self-review r4). Only when there is none is it kept as
+ * a span from the stamp up to the change, for the alias horizon, that never routes. A pairing that
+ * lands late is never lost (the lane's self-review r1), never extends a span past its recorded
+ * end, and never routes a message (the codex self-review r5).
  *
  * So a binding's open span of a number starts after every ended one, and every statement that
  * ends an open span ends it at or after its start (the codex self-review r1). Each end still merges
- * into a row of the binding's that already ends at that stamp, keeping the earlier start (endedSince
- * with UPDATE OR REPLACE), so whatever order Meta delivers in, no end fails a payload on the key
- * (id, bound_wamid, changed_at).
+ * into a row of the binding's that already ends at that stamp (UPDATE OR REPLACE), keeping the
+ * earlier start of each kind (ended), so the merged span holds and routes exactly what the two did,
+ * and whatever order Meta delivers in, no end fails a payload on the key (id, bound_wamid,
+ * changed_at).
  */
-const OPEN = 253_402_300_799; // 9999-12-31T23:59:59Z: a span that has not ended
-/** The start an open span keeps when it ends at `at`: the earlier of its own and that of the binding's span of the number already ending there. */
-const endedSince = (at: string) =>
-  `MIN(since, COALESCE((SELECT c.since FROM phone_aliases c WHERE c.id = phone_aliases.id AND c.bound_wamid = phone_aliases.bound_wamid AND c.changed_at = ${at}), since))`;
-const pairingEnds = `UPDATE OR REPLACE phone_aliases SET changed_at = ?3, expires_at = ?4, since = ${endedSince("?3")}
+const OPEN = 253_402_300_799; // 9999-12-31T23:59:59Z: a span that has not ended, or a refuse-only span's routes_from
+/**
+ * What an open span keeps when it ends at `at`: for since and for routes_from, the earlier of its
+ * own and that of the binding's span of the number already ending there. Both spans end at `at`,
+ * so the earlier start of each is exactly the union of the two: it holds what either held, and
+ * routes what either routed, never more (gp-sv2d).
+ */
+const ended = (at: string) =>
+  (["since", "routes_from"] as const)
+    .map((col) => `${col} = MIN(${col}, COALESCE((SELECT c.${col} FROM phone_aliases c WHERE c.id = phone_aliases.id AND c.bound_wamid = phone_aliases.bound_wamid AND c.changed_at = ${at}), ${col}))`)
+    .join(", ");
+const pairingEnds = `UPDATE OR REPLACE phone_aliases SET changed_at = ?3, expires_at = ?4, ${ended("?3")}
    WHERE id = ?1 AND changed_at = ${OPEN} AND since <= ?3
      AND NOT EXISTS (SELECT 1 FROM phone_aliases x WHERE x.id = ?2)
      AND EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = phone_aliases.conversation_id
@@ -393,13 +449,14 @@ const pairingWidens = `UPDATE phone_aliases SET since = MIN(since, ?3)
    WHERE id = ?1 AND (conversation_id, bound_wamid) IN (SELECT conversation_id, bound_wamid FROM phones WHERE ${paired})
      AND changed_at = (SELECT MIN(h.changed_at) FROM phone_aliases h
                        WHERE h.id = ?1 AND h.bound_wamid = phone_aliases.bound_wamid AND h.changed_at >= ?3)`;
-const pairingOpens = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
-   SELECT ?1, conversation_id, bound_wamid,
-          MAX(MIN(COALESCE(wa_since, ?3), ?3),
-              COALESCE((SELECT MAX(h.changed_at) + 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid), 0)),
-          ${OPEN}, ${OPEN} FROM phones
-   WHERE ${paired}
-     AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid AND h.changed_at >= ?3)`;
+const pairingOpens = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at, routes_from)
+   SELECT ?1, conversation_id, bound_wamid, start, ${OPEN}, ${OPEN}, start FROM (
+     SELECT conversation_id, bound_wamid,
+            MAX(MIN(COALESCE(wa_since, ?3), ?3),
+                COALESCE((SELECT MAX(h.changed_at) + 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid), 0)) AS start
+     FROM phones
+     WHERE ${paired}
+       AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid AND h.changed_at >= ?3))`;
 const pairingHistoryWidens = `UPDATE phone_aliases SET since = MIN(since, ?3)
    WHERE id = ?1
      AND changed_at = (SELECT MIN(h.changed_at) FROM phone_aliases h
@@ -407,8 +464,8 @@ const pairingHistoryWidens = `UPDATE phone_aliases SET since = MIN(since, ?3)
      AND EXISTS (SELECT 1 FROM phone_aliases a WHERE a.id = ?2 AND a.since <= ?3
                    AND a.conversation_id = phone_aliases.conversation_id AND a.bound_wamid = phone_aliases.bound_wamid
                    AND phone_aliases.changed_at <= a.changed_at)`;
-const pairingHistory = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
-   SELECT ?1, conversation_id, bound_wamid, ?3, changed_at, expires_at FROM phone_aliases a
+const pairingHistory = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at, routes_from)
+   SELECT ?1, conversation_id, bound_wamid, ?3, changed_at, expires_at, ${OPEN} FROM phone_aliases a
    WHERE id = ?2 AND since <= ?3
      AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = a.bound_wamid
                        AND h.changed_at >= ?3 AND h.changed_at <= a.changed_at)`;
@@ -678,9 +735,11 @@ export function createGateway(deps: Deps) {
       stale: 0,
       overCap: false,
     };
-    // Meta retries a delivery for up to 7 days, and a body-less row dedups a wamid for 8 days from
-    // its receipt (never earlier than Meta's stamp). A message stamped longer ago than that could
-    // be a copy whose dedup row is gone, so it is dropped and counted, never delivered again.
+    // Meta retries a delivery for up to 7 days (an assumption: README.md, "Business-scoped user
+    // ids", rule 5, "The horizon"), and a body-less row dedups a wamid for 8 days from its receipt
+    // (never earlier than Meta's stamp). A message stamped longer ago than 8 days could be a copy
+    // whose dedup row is gone, so it is dropped and counted, never delivered again, whatever
+    // Meta's window is.
     const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - TOMBSTONE_SECONDS);
     plan.stale = messages.length - fresh.length;
     messages = fresh;
@@ -707,8 +766,12 @@ export function createGateway(deps: Deps) {
           ).results
         : [];
     const owners = ids.map((s) => ownerIn(rows, s));
+    // Who may send an invite code: a sender no row holds, or (gp-sv2d) a user_id no row holds beside
+    // a number a phone-only row holds, whose text rule 3 would otherwise make that row's. Any other
+    // owner's text is its message, whatever it says.
+    const mayBind = ids.map((s, i) => owners[i] === undefined || (owners[i]?.user_id === null && s.user !== null));
     const codes = [
-      ...new Set(messages.filter((_, i) => !owners[i]).map(inviteCodeIn).filter((c): c is string => c !== null)),
+      ...new Set(messages.filter((_, i) => mayBind[i]).map(inviteCodeIn).filter((c): c is string => c !== null)),
     ];
     const codeCities = await each<{ city_id: string }>(
       "SELECT city_id FROM invite_codes WHERE code IN (SELECT value FROM json_each(?1)) AND used_at IS NULL",
@@ -754,7 +817,7 @@ export function createGateway(deps: Deps) {
       const stamp = m.timestamp ?? now;
       const body = JSON.stringify(m.raw);
       const owned = owners[i] !== undefined;
-      const code = owned ? null : inviteCodeIn(m);
+      const code = mayBind[i] ? inviteCodeIn(m) : null;
       if (wa !== null && user !== null && !m.change) {
         // Meta names this phone number beside this user_id at the stamp: a row that held the
         // number since before then, beside another user_id, holds a number that was someone
@@ -776,15 +839,16 @@ export function createGateway(deps: Deps) {
         );
       }
       if (code !== null) {
-        // A stranger's code attempt: counted per day and once per wamid (a redelivery of any text
-        // already counted is not a second attempt), then the bind, conditional on a code that was
-        // live when Meta stamped the text and on the attempt count, never on this read. The wamid
-        // is recorded after the count, so the count reads it unrecorded the first time only.
+        // A newcomer's code attempt (a stranger's, or gp-sv2d's user_id beside a phone-only row's
+        // number): counted per day and once per wamid (a redelivery of any text already counted is
+        // not a second attempt), then the bind, conditional on a code that was live when Meta
+        // stamped the text and on the attempt count, never on this read. The wamid is recorded
+        // after the count, so the count reads it unrecorded the first time only.
         push(
           db
             .prepare(
               `INSERT INTO unknown_senders (sender_key, code_attempts, attempts_since)
-               SELECT ?1, 1, ?2 WHERE ${stranger("?5", "?6", "?7")}
+               SELECT ?1, 1, ?2 WHERE ${newcomer("?5", "?6", "?7")}
                ON CONFLICT (sender_key) DO UPDATE SET
                  code_attempts = CASE WHEN EXISTS (SELECT 1 FROM code_attempt_wamids WHERE wamid = ?4) THEN code_attempts
                                       WHEN attempts_since <= ?3 THEN 1 ELSE code_attempts + 1 END,
@@ -800,17 +864,24 @@ export function createGateway(deps: Deps) {
         // unless that number is already another owner's conversation_id (a recycled number), else
         // the user_id. It holds its ids from this text's stamp. The rows below find it by the
         // wamid that bound it.
+        // A number a phone-only row holds is the one exception (gp-sv2d; the Fable read r2 CRITICAL
+        // 2): the text binds by its user_id alone, keyed by it, and the number stays that row's.
+        // Meta paired the two at the stamp, so the number is the new owner's paired number from
+        // here (pairingOpens below): contested, so the number alone goes to nobody while both
+        // stand. A phone-only text (no user_id) is never bound that way: it would hold no id.
         const bindIndex = push(
           db
             .prepare(
               `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at, bound_stamp)
-               SELECT k.id, ?1, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?11
+               SELECT k.id, k.wa, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?11
                FROM invite_codes i,
-                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1)
-                                 THEN ?1 ELSE ?2 END AS id) k
+                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1 OR wa_id = ?1)
+                                 THEN ?1 ELSE ?2 END AS id,
+                            CASE WHEN EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1) THEN NULL ELSE ?1 END AS wa) k
                WHERE i.code = ?8 AND i.used_at IS NULL AND i.expires_at > ?7 AND k.id IS NOT NULL
                  AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?9), 0) <= ?10
-                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = k.id OR p.wa_id = ?1 OR p.user_id = ?2)
+                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = k.id OR p.user_id = ?2
+                                   OR (p.wa_id = ?1 AND (p.user_id IS NOT NULL OR ?2 IS NULL)))
                  AND NOT EXISTS ${otherHolding("?1", "?2", "?11")}
                ON CONFLICT DO NOTHING`,
             )
@@ -840,16 +911,16 @@ export function createGateway(deps: Deps) {
       // already the joined row's, so this is one row. A wamid any city already holds is that
       // city's: a retry after the phone moved cities is no new row. An id the message omits is the
       // owner row's (a known phone stays on the delivery when Meta names the owner by user_id
-      // alone).
+      // alone). A live invite code whose bind was refused is no one's message (gp-sv2d).
       push(
         db
           .prepare(
             `INSERT OR IGNORE INTO deliveries
                (city_id, received_at, kind, wamid, status, wa_id, user_id, username, conversation_id, profile_name, body)
              SELECT city_id, ?1, 'message', ?2, '', COALESCE(?3, wa_id), COALESCE(?4, user_id), ?5, conversation_id, ?6, ?7
-             FROM phones WHERE conversation_id = ${routeKey("?3", "?4", "?8")}`,
+             FROM phones WHERE conversation_id = ${routeKey("?3", "?4", "?8")} AND NOT ${refusedCode("?9", "?10", "?3", "?4", "?8")}`,
           )
-          .bind(now, m.wamid, wa, user, m.username, m.profileName, body, stamp),
+          .bind(now, m.wamid, wa, user, m.username, m.profileName, body, stamp, code, at),
       );
       // A known sender's message that no binding routes (the owner unbound since, a binding newer
       // than the message, or two bindings holding its stamp) reaches no city and hears nothing; it
@@ -895,9 +966,9 @@ export function createGateway(deps: Deps) {
       // The owner's window moves on a message from either id. An id the owner row lacks is filled
       // the first time a message carries it beside the other (one owner, two ids, one row), unless
       // another row already holds it; a number filled is held from this message's stamp. A
-      // message another holding spans (above: routed by it, or held by two bindings), or that no
-      // binding routes (no span holds it, or the phone-only row's rule-3 claim is in doubt), touches
-      // no row here.
+      // message another holding spans (above: routed by it, or held by two bindings), that no
+      // binding routes (no span holds it, or the phone-only row's rule-3 claim is in doubt), or a
+      // live invite code whose bind was refused (gp-sv2d), touches no row here.
       push(
         db
           .prepare(
@@ -911,16 +982,18 @@ export function createGateway(deps: Deps) {
                             THEN ?5 ELSE wa_id END,
                user_id = CASE WHEN user_id IS NULL AND ?6 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = ?6)
                               THEN ?6 ELSE user_id END
-             WHERE conversation_id = ${routeKey("?5", "?6", "?7")} AND NOT EXISTS ${otherHolding("?5", "?6", "?7")}`,
+             WHERE conversation_id = ${routeKey("?5", "?6", "?7")} AND NOT EXISTS ${otherHolding("?5", "?6", "?7")}
+               AND NOT ${refusedCode("?8", "?4", "?5", "?6", "?7")}`,
           )
-          .bind(m.profileName, m.username, movesWindow(m.type) ? 1 : 0, at, wa, user, stamp),
+          .bind(m.profileName, m.username, movesWindow(m.type) ? 1 : 0, at, wa, user, stamp, code),
       );
       if (wa !== null && user !== null && !m.change) {
         // The message names the number beside a user_id (gp-byp8): every other binding's span of
         // it ends here; and if a row still held the number at this stamp, so the fill above could
-        // not take it, the pairing widens the user_id row's span it belongs to, or opens its
-        // paired number, or, when the user_id is a previous one, is kept on the span the owner's
-        // change ended.
+        // not take it, the pairing opens the user_id row's paired number, or widens the span it
+        // belongs to, or, when the user_id is a previous one, is kept on the span the owner's
+        // change ended. A widening or a previous user_id's pairing is late evidence: it only
+        // refuses (gp-sv2d).
         push(db.prepare(pairingEnds).bind(wa, user, stamp, stamp + ALIAS_SECONDS));
         push(db.prepare(pairingWidens).bind(wa, user, stamp));
         push(db.prepare(pairingOpens).bind(wa, user, stamp));
@@ -960,7 +1033,7 @@ export function createGateway(deps: Deps) {
         push(
           db
             .prepare(
-              `UPDATE OR REPLACE phone_aliases SET changed_at = ?2, expires_at = ?3, since = ${endedSince("?2")}
+              `UPDATE OR REPLACE phone_aliases SET changed_at = ?2, expires_at = ?3, ${ended("?2")}
                WHERE changed_at = ${OPEN} AND since <= ?2 AND (conversation_id, bound_wamid) IN (
                  SELECT conversation_id, bound_wamid FROM phones WHERE conversation_id = ${ownerKey("?4", "?5", "?2")} AND conversation_id = ${routeKey("?4", "?5", "?2")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))`,
@@ -975,8 +1048,8 @@ export function createGateway(deps: Deps) {
                         COALESCE(bound_stamp, 0) AS b, COALESCE(wa_since, bound_stamp, 0) AS w, wa_since AS s
                  FROM phones WHERE conversation_id = ${ownerKey("?3", "?4", "?5")} AND conversation_id = ${routeKey("?3", "?4", "?5")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))
-               INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
-               SELECT c.id, o.conversation_id, o.bound_wamid, c.since, ?5, ?6 FROM o, (
+               INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at, routes_from)
+               SELECT c.id, o.conversation_id, o.bound_wamid, c.since, ?5, ?6, c.since FROM o, (
                  SELECT wa_id AS id, w AS since FROM o
                  UNION ALL SELECT user_id, b FROM o
                  UNION ALL SELECT ?3, s FROM o WHERE ?3 IS NOT o.wa_id AND s IS NOT NULL
@@ -1025,8 +1098,11 @@ export function createGateway(deps: Deps) {
         }
       }
       if (!owned && !m.change) {
-        // A stranger hears the canned line at most once per 7 days, claimed before it is sent. A
-        // number change is Meta's notice, not the user writing: never answered.
+        // A stranger hears the canned line at most once per 7 days (CANNED_EVERY_SECONDS, the
+        // gateway's own cadence, not Meta's retry window: README.md, rule 5, "The horizon"),
+        // claimed before it is sent. A number change is Meta's notice, not the user writing: never
+        // answered. Only a sender no binding holds now and no span holds at the stamp is a stranger
+        // (README.md, rule 6).
         const cannedIndex = push(
           db
             .prepare(
@@ -1508,7 +1584,7 @@ export function createGateway(deps: Deps) {
       db.prepare("DELETE FROM code_attempt_wamids WHERE counted_at <= ?").bind(now - CODE_WAMIDS_KEEP_SECONDS),
       db
         .prepare(
-          `UPDATE OR REPLACE phone_aliases SET changed_at = ?1, expires_at = ?2, since = ${endedSince("?1")}
+          `UPDATE OR REPLACE phone_aliases SET changed_at = ?1, expires_at = ?2, ${ended("?1")}
            WHERE changed_at = ${OPEN} AND since <= ?1 AND NOT EXISTS (SELECT 1 FROM phones p
              WHERE p.conversation_id = phone_aliases.conversation_id AND p.bound_wamid = phone_aliases.bound_wamid)`,
         )
