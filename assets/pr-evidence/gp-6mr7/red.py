@@ -1,10 +1,14 @@
 """RED for verbs.py: mirror whatsapp/ into a scratch root, mutate one quoted
-verb form, one keeper quote and the failed-delivery line in the skill, put a
-made-up Meta id on the setup page and four other id or 555 forms in files of
-their own, and expect verbs.py to fail on exactly those eight.
+verb form, one keeper quote and the failed-delivery line in the skill, put
+recorded Meta values into the setup page and into files of their own (the
+table below: one row per form the codex rounds named), add control files
+that must pass, and expect verbs.py to fail on exactly the mutations.
+The recorded values come from citadel's records at run time and are
+written only into the scratch mirror, never into this file.
 Usage: python3 -I red.py <worktree> <scratch-root>"""
 
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -24,33 +28,59 @@ for old, new in mutations:
     assert old in text, old
     text = text.replace(old, new)
 skill.write_text(text, encoding="utf-8")
-# Round 3 (gp-28td): a made-up 16-digit id on the setup page must fail the
-# no-Meta-id check. Built here, so no digit run sits in this file.
-fake_id = "1" + "0" * 14 + "1"
+
+# Round 3 (gp-28td): one recorded id and the recorded test number.
+rec = pathlib.Path("~/.config/citadel-mayor/whatsapp/meta-ids.env").expanduser().read_text(encoding="utf-8")
+an_id = re.findall(r"(?<![0-9])[0-9]{16}(?![0-9])", rec)[0]
+phone = re.sub(r"[^0-9]", "", re.findall(r"\+1[0-9 ().-]{10,16}", rec)[0])[-10:]
+a, b, c = phone[:3], phone[3:6], phone[6:]
+
+
+def g4(s, sep):
+    return sep.join(s[i:i + 4] for i in range(0, len(s), 4))
+
+
 page = dst / "whatsapp/docs/meta-setup.md"
 ptext = page.read_text(encoding="utf-8")
 assert "**Houdini**, which" in ptext
-page.write_text(ptext.replace("**Houdini**, which", f"**Houdini** ({fake_id}), which", 1), encoding="utf-8")
-# Codex's round-3 P2 and P3: each other form in its own file, so each must
-# fail on its own line.
-forms = {
-    "red-e164.md": "+1" + "555" + "0" * 7,
-    "red-parens.md": "+1 (" + "555" + ") " + "000-" + "0" * 4,
-    "red-grouped.md": " ".join(["1000"] * 3 + ["0001"]),
-    "red-touching.md": "id" + fake_id + "x",
+page.write_text(ptext.replace("**Houdini**, which", f"**Houdini** ({an_id}), which", 1), encoding="utf-8")
+# The spec: every row must FAIL, each on its own line (codex round-3 r1 and r2).
+hostile = {
+    "red-id-grouped.md": g4(an_id, " "),
+    "red-id-nbsp.md": g4(an_id, " "),
+    "red-id-double-space.md": g4(an_id, "  "),
+    "red-id-dashed.md": g4(an_id, "-"),
+    "red-id-touching.md": "id" + an_id + "x",
+    "red-id-hexlike.md": "a" + an_id,
+    "red-id-url.md": "https://example.invalid/" + an_id + "?v=1",
+    "red-id-stamp-shaped.md": an_id[:8] + "-" + an_id[8:],
+    "red-phone-e164.md": "+1" + phone,
+    "red-phone-e164-touching.md": "+1" + phone + "a",
+    "red-phone-parens.md": f"+1 ({a}) {b}-{c}",
+    "red-phone-nbsp.md": f"+1 {a} {b} {c}",
+    "red-phone-national.md": f"{a}-{b}-{c}",
 }
-for name, form in forms.items():
+# Controls: each must PASS (no false positive on what the evidence carries).
+control = {
+    "red-control-commit-id.md": "8062fa2c599095d9d58c7" + "2432663" + "411334d62b6b",
+    "red-control-utc-stamp.md": "taylor-" + "20261104" + "-213516Z.md",
+    "red-control-epoch-ms.md": "1793" + "835509" + "000",
+    "red-control-unrecorded-id.md": "1" + "0" * 14 + "1",
+}
+for name, form in {**hostile, **control}.items():
     (dst / "whatsapp/docs" / name).write_text(f"The value {form} is here.\n", encoding="utf-8")
 r = subprocess.run([sys.executable, "-I", str(pathlib.Path(__file__).with_name("verbs.py")), str(dst)], capture_output=True, text=True)
 fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
 print(f"verbs.py rc={r.returncode} on the mutated mirror; {len(fails)} FAIL lines:")
 for l in fails:
     print("  " + l)
-ok = (r.returncode == 1 and len(fails) == 4 + len(forms)
+value_fail = "no Meta value from citadel's records"
+ok = (r.returncode == 1 and len(fails) == 4 + len(hostile)
       and any("clear-gap <conversation>" in l for l in fails)
       and any("nudge (unshifted)" in l for l in fails)
       and any("skill quotes the failed delivery" in l for l in fails)
-      and any("meta-setup.md: no Meta id or 555 number" in l for l in fails)
-      and all(any(f"{name}: no Meta id or 555 number" in l for l in fails) for name in forms))
+      and any(f"meta-setup.md: {value_fail}" in l for l in fails)
+      and all(any(f"{name}: {value_fail}" in l for l in fails) for name in hostile)
+      and not any(name in l for l in fails for name in control))
 print("RED OK" if ok else "RED NOT SEEN")
 sys.exit(0 if ok else 1)

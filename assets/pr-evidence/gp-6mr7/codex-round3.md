@@ -44,8 +44,9 @@ this directory.
 ## The fold
 
 Both findings are about the guard this round added; neither touches the
-page. Both were reproduced, then fixed in verbs.py, with a mutation for
-each form in red.py.
+page. Both were reproduced, then patched in verbs.py at `8c31287a`, with a
+mutation for each form in red.py. The r2 below found that patch still
+open, and the check changed shape (the last section).
 
 - P2: the 555 pattern now takes an optional `+1` or `1` with a separator
   and optional parentheses around 555, so `+1555NNNNNNN` and
@@ -69,3 +70,54 @@ each form in red.py.
   (`runs/verbs.r3-fold.out`); against `git archive f881606f` it still fails
   on exactly `meta-setup.md` (8) and `meta-pages-read.md` (7)
   (`runs/verbs.r3-fold-red.out`).
+
+## Self-review r2, on the fold `8c31287a` alone
+
+- Same launcher and model, prompt `codex-round3-r2-prompt.md` (the diff
+  `git diff ec1a5d7d..8c31287a`), session
+  01a1a8fc-e1a4-7bf1-896e-2605884ec879, 23:55:06Z to 23:57:14Z, rc 0,
+  35,063 tokens.
+
+Codex's verdict, verbatim but for one example, whose 16-digit run is written
+`1NNNNNNNNNNNNNN1` here (the bead's acceptance grep reads this directory):
+
+> No P1 findings. The four new examples are caught, but the scanner still has gaps:
+>
+> - **P3 — verbs.py:156:** The hash exemption swallows `a1NNNNNNNNNNNNNN1` and `+15550000000a`. Hex-looking tokens need not be hashes, so P3 remains open. **Fix:** exempt known hashes or verified hash contexts and add these mutations.
+> - **P3 — verbs.py:157:** The timestamp exemption hides invalid `20999999-999999` and removes the timestamp-shaped portion of grouped ID `1-20261104-235959`, letting both pass. **Fix:** restrict exemptions to validated timestamps in recognized record filenames, excluding larger numeric candidates.
+> - **P2 — verbs.py:159:** The original E.164/parentheses examples are fixed, but `+1 555 000 0000` still passes (` ` means nonbreaking space). Double-space-grouped IDs also escape line 158. **Fix:** normalize horizontal whitespace within numeric candidates and add mutations.
+>
+> The requested worktree command exited **0 with only PASS lines**; no current false positives.
+>
+> No findings in **red.py**: in-memory execution confirmed each new form independently produces one failure; combined mutations produce eight. Its actual predicate rejects seven, nine, or a successful scanner exit.
+>
+> **codex-round3.md** clearly discloses the intentional `N` substitutions and correctly describes the tested mutations. However, “Both … fixed” at line 47 overstates closure given these bypasses.
+
+## The change of shape (after r2)
+
+Two rounds on the same check each found forms around the last patch. A
+third pattern would invite a third round, so the check no longer guesses
+at the shape of an id. It looks for the values citadel's records hold
+(the operand a writer cannot move): every run of 12 or more digits, and
+the last ten digits of every +1 phone number, in `meta-ids.env` and the
+mayor's 11/4 session record (nine values: the seven ids, the test number,
+one more long run of that record). A file fails if its digits, every other
+character deleted, contain one of them. Separators of any kind, letters
+around a value, a hex-looking token or a phone format leave the digits as
+they are, so the hash and stamp exemptions are gone, and with them both of
+r2's P3s. The check fails closed: an unreadable record, or fewer than eight
+values, is a FAIL (`runs/verbs.r3-known-closed.out`). Its stated boundary:
+an id the records do not hold yet is the bead's acceptance grep's to catch.
+
+red.py is now the table that specifies it: thirteen hostile rows, each a
+recorded value in one form named by r1 or r2 (grouped by spaces, by
+non-breaking spaces, by double spaces, by dashes; touching letters; behind
+a hex letter; in a URL; split like a stamp; the number in E.164, E.164
+touching a letter, with parentheses, with non-breaking spaces, national
+form), plus four controls that must pass (a commit id, a UTC stamp, epoch
+milliseconds, an unrecorded 16-digit number). The recorded values are read
+at run time and written only into the scratch mirror. Exactly seventeen
+FAIL (three skill mutations, the page, thirteen rows), no control among
+them, RED OK (`runs/red.r3-known.out`). At the head every check passes
+(`runs/verbs.r3-known.out`); against `git archive f881606f` the check fails
+on exactly the page (8) and the facts map (7) (`runs/verbs.r3-known-red.out`).
