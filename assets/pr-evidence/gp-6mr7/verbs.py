@@ -17,13 +17,15 @@
    default ~/.config/citadel-mayor/whatsapp/meta-ids.env and the mayor's
    11/4 session record, which holds the system user and template ids that
    file does not), takes every run of 12 or more digits and the last ten
-   digits of every +1 phone number there, and fails a file of
+   digits of every +1 phone number there (any spacing), and fails a file of
    whatsapp/docs, whatsapp/skills, whatsapp/template-fragments or
    assets/pr-evidence/gp-6mr7 whose digits, every other character deleted,
-   contain one of them. So separators, spaces of any kind, letters around
-   it or a phone format do not hide a recorded value. It fails closed: an
-   unreadable record, or records that yield fewer than the eight values
-   the page took off (seven ids, one number), is a FAIL. Its boundary: an
+   contain one of them, in the raw text or in the text a reader sees once
+   Markdown link targets, reference labels and HTML tags are taken out. So
+   separators, spaces of any kind, letters around it, markup inside it or
+   a phone format do not hide a recorded value. It fails closed: an
+   unreadable record, records that yield fewer than the seven ids, or no
+   test number, is a FAIL. Its boundary: an
    id the records do not hold yet is for the bead's acceptance grep to
    catch, not this check.
 
@@ -161,21 +163,33 @@ records = [pathlib.Path(p).expanduser() for p in (sys.argv[2:] or (
     "~/.config/citadel-mayor/whatsapp/meta-ids.env",
     "/Users/tailor512/city/assets/handoff/sessions/2026-11-04-498th.md",
 ))]
-values = set()
+ids, phones = set(), set()
 for rec in records:
     try:
         rtext = rec.read_text(encoding="utf-8")
     except OSError as e:
         report(False, f"record {rec} readable ({type(e).__name__})")
         continue
-    values |= set(re.findall(r"(?<![0-9])[0-9]{12,}(?![0-9])", rtext))
-    values |= {re.sub(r"[^0-9]", "", m)[-10:]
-               for m in re.findall(r"\+1[ .-]?\(?[0-9]{3}\)?[ .-]?[0-9]{3}[ .-]?[0-9]{4}(?![0-9])", rtext)}
-report(len(values) >= 8, f"citadel's records yield the Meta values to look for ({len(values)}, at least 8)")
+    ids |= set(re.findall(r"(?<![0-9])[0-9]{12,}(?![0-9])", rtext))
+    phones |= {re.sub(r"[^0-9]", "", m)[-10:] for m in re.findall(r"\+1(?:[\s.()-]*[0-9]){10}(?![0-9])", rtext)}
+# Positive proof on each kind: the seven ids and the one number the page took off.
+report(len(ids) >= 7, f"citadel's records yield the Meta ids to look for ({len(ids)}, at least 7)")
+report(len(phones) >= 1, f"citadel's records yield the test number to look for ({len(phones)}, at least 1)")
+values = ids | phones
+
+
+def digit_streams(text):
+    # The raw digits, and the digits a reader sees once Markdown link
+    # targets, reference labels and HTML tags are taken out (a digit in a
+    # link target must not split a value the page shows whole).
+    shown = re.sub(r"<[^>]*>", "", re.sub(r"\]\([^)]*\)|\]\[[^\]]*\]", "]", text))
+    return [re.sub(r"[^0-9]", "", t) for t in (text, shown)]
+
+
 own = ("whatsapp/docs", "whatsapp/skills", "whatsapp/template-fragments", "assets/pr-evidence/gp-6mr7")
 for f in sorted(p for d in own if (root / d).is_dir() for p in (root / d).rglob("*") if p.is_file()):
-    digits = re.sub(r"[^0-9]", "", f.read_text(encoding="utf-8", errors="replace"))
-    found = sum(1 for v in values if v in digits)
+    streams = digit_streams(f.read_text(encoding="utf-8", errors="replace"))
+    found = sum(1 for v in values if any(v in s for s in streams))
     report(found == 0, f"{f.relative_to(root)}: no Meta value from citadel's records" + (f" (found {found})" if found else ""))
 
 sys.exit(1 if failures else 0)

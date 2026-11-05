@@ -4,7 +4,8 @@ recorded Meta values into the setup page and into files of their own (the
 table below: one row per form the codex rounds named), add control files
 that must pass, and expect verbs.py to fail on exactly the mutations.
 The recorded values come from citadel's records at run time and are
-written only into the scratch mirror, never into this file.
+written only into the scratch mirror, never into this file; three rows use
+a synthetic record written into the scratch root beside the real ones.
 Usage: python3 -I red.py <worktree> <scratch-root>"""
 
 import pathlib
@@ -53,7 +54,16 @@ hostile = {
     "red-id-touching.md": "id" + an_id + "x",
     "red-id-hexlike.md": "a" + an_id,
     "red-id-url.md": "https://example.invalid/" + an_id + "?v=1",
-    "red-id-stamp-shaped.md": an_id[:8] + "-" + an_id[8:],
+    "red-id-split-8-8.md": an_id[:8] + "-" + an_id[8:],
+    # Codex r3: markup with a digit inside a value the reader sees whole.
+    "red-id-link-split.md": f"[{an_id[:8]}](https://example.invalid/v2){an_id[8:]}",
+    "red-id-ref-split.md": f"[{an_id[:8]}][9]{an_id[8:]}\n\n[9]: https://example.invalid/\n",
+    "red-id-html-split.md": f'{an_id[:8]}<span data-v="2"></span>{an_id[8:]}',
+    # Codex r2's exact stamp forms and r3's NBSP-spaced record phone, as
+    # values of the synthetic record below.
+    "red-synthetic-invalid-stamp.md": "20999999" + "-" + "999999",
+    "red-synthetic-prefixed-stamp.md": "1-" + "20261104" + "-" + "235959",
+    "red-synthetic-nbsp-phone.md": "212-" + "000-" + "0199",
     "red-phone-e164.md": "+1" + phone,
     "red-phone-e164-touching.md": "+1" + phone + "a",
     "red-phone-parens.md": f"+1 ({a}) {b}-{c}",
@@ -69,7 +79,14 @@ control = {
 }
 for name, form in {**hostile, **control}.items():
     (dst / "whatsapp/docs" / name).write_text(f"The value {form} is here.\n", encoding="utf-8")
-r = subprocess.run([sys.executable, "-I", str(pathlib.Path(__file__).with_name("verbs.py")), str(dst)], capture_output=True, text=True)
+# A synthetic record beside the real ones (outside the scanned tree): two
+# stamp-shaped values and a phone spaced with non-breaking spaces.
+synthetic = dst / "synthetic-record.txt"
+synthetic.write_text("A=" + "20999999" + "999999\nB=1" + "20261104" + "235959\n"
+                     + "C=+1 212 " + "000 " + "0199\n", encoding="utf-8")
+records = [str(pathlib.Path("~/.config/citadel-mayor/whatsapp/meta-ids.env").expanduser()),
+           "/Users/tailor512/city/assets/handoff/sessions/2026-11-04-498th.md", str(synthetic)]
+r = subprocess.run([sys.executable, "-I", str(pathlib.Path(__file__).with_name("verbs.py")), str(dst), *records], capture_output=True, text=True)
 fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
 print(f"verbs.py rc={r.returncode} on the mutated mirror; {len(fails)} FAIL lines:")
 for l in fails:

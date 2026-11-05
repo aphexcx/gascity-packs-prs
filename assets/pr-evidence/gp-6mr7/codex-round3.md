@@ -121,3 +121,61 @@ FAIL (three skill mutations, the page, thirteen rows), no control among
 them, RED OK (`runs/red.r3-known.out`). At the head every check passes
 (`runs/verbs.r3-known.out`); against `git archive f881606f` the check fails
 on exactly the page (8) and the facts map (7) (`runs/verbs.r3-known-red.out`).
+
+## Self-review r3, on the change of shape `fcbb7a60` alone
+
+- Same launcher and model, prompt `codex-round3-r3-prompt.md` (the diff
+  `git diff 8c31287a..fcbb7a60`), session
+  01a1a902-6974-7380-b6cd-758a2608829e, 00:01:08Z to 00:04:48Z (11/5),
+  rc 0, 43,760 tokens. Codex was asked not to copy a recorded value into
+  its answer, and did not.
+
+Codex's verdict (verbatim):
+
+> No P1 findings. Three findings:
+>
+> - **P2 — verbs.py:177:** Numeric markup can interrupt the digit stream while displaying the complete recorded ID. `[FIRST_HALF](https://example.invalid/v2)SECOND_HALF` passed with actual recorded halves in memory. The URL’s `2` breaks the match. **Fix:** scan rendered Markdown/HTML text alongside the raw digit stream.
+>
+> - **P2 — verbs.py:173:** Phone extraction still accepts only narrow separators. Reformatting the phone with NBSPs in both records drops it; eight other values satisfy the count, and a literal phone leak passes. **Fix:** normalize record phone whitespace and validate that the required phone was extracted independently of the aggregate count.
+>
+> - **P3 — red.py:56:** The “stamp-shaped” row splits sixteen digits **8–8**, which never matches r2’s **8–6** timestamp exemption. Its invalid-stamp and digit-prefixed-stamp cases remain untested. **Fix:** use synthetic record fixtures covering both exact r2 forms.
+>
+> Other checks:
+>
+> - The requested command exited **0 with only PASS lines**. Current records supply all seven IDs and the phone; no current extraction omission found. Nonphone values shorter than twelve digits are ignored.
+> - An empty env record passes because the session supplies all nine values. An empty session, unreadable record, or total below eight fails.
+> - In memory, all thirteen hostile rows failed individually, all four controls passed, and combined mutations produced exactly seventeen failures. The actual RED predicate rejects sixteen, eighteen, exit 0, or a control replacing a hostile failure.
+> - Joining unrelated numbers can produce false positives, but none occurred; ordinary growth from the current roughly 4,600 scanned digits seems unlikely to cause one.
+> - `codex-round3.md` faithfully preserves the historical verdicts and disclosed substitutions. Its timestamp-coverage claim inherits the table issue above.
+>
+> Spelled-out digits and encodings such as base64 were excluded. No files were changed.
+
+The fold keeps the shape (one function: the recorded values in a file's
+digits) and adds what r3 found to the table:
+
+- Markup: the check reads two digit streams per file, the raw text and the
+  text with Markdown link targets, reference labels and HTML tags taken
+  out, and fails a value found in either. Three rows: a value split by a
+  link with a digit in its target, by a reference label, by an HTML tag.
+- The phone: a record's `+1` number is read across any spacing (the
+  non-breaking space included), and each kind has its own proof: at least
+  seven ids, and at least one number, each a FAIL line when missing. The
+  aggregate count is gone.
+- The stamp rows: the 8-8 row is named for what it is (`red-id-split-8-8`),
+  and r2's two exact forms (`20999999-999999`, `1-20261104-235959`) and an
+  NBSP-spaced number are rows against a synthetic record that red.py
+  writes beside the real ones, outside the scanned tree. The known-values
+  shape had no stamp exemption left, so those two already failed; the rows
+  pin it.
+- RED for the fold: the new table against `fcbb7a60`'s verbs.py misses the
+  three markup rows and the NBSP-spaced number, RED NOT SEEN
+  (`runs/red.r3-known-prefold.out`). With the fold: exactly twenty-three
+  FAIL (three skill mutations, the page, nineteen rows), no control among
+  them, RED OK (`runs/red.r3-known-r3fold.out`). Against `git archive
+  f881606f`: the page (8) and the facts map (7) only
+  (`runs/verbs.r3-known-r3fold-red.out`). An unreadable record as the only
+  record: three FAIL, the record and each kind
+  (`runs/verbs.r3-known-r3fold-closed.out`).
+- Left as stated limits: spelled-out digits and encodings (base64, HTML
+  numeric entities); and an id not yet in the records, for the bead's
+  grep.
