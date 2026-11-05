@@ -1,0 +1,26 @@
+# codex-gate review: base e39c0b9040605cdb41de9d0d994747c44846b628 (merge base of --base e39c0b9040605cdb41de9d0d994747c44846b628 = e39c0b9040605cdb41de9d0d994747c44846b628 and the head) head 22dd129432a6182edf3d9755f949a8c14090a702; 4 file(s); class STANDARD; model gpt-6-astra; 2026-11-05T06:32:33Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (--head 22dd129432a6182edf3d9755f949a8c14090a702; the working tree of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs not consulted)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+# evidence dir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-byp8 (named to the reviewer in place of assets/pr-evidence/ at the head)
+#  whatsapp/gateway/README.md                   |  91 +++++--
+#  whatsapp/gateway/migrations/0003_retries.sql |   7 +
+#  whatsapp/gateway/src/gateway.ts              | 249 ++++++++++++++----
+#  whatsapp/gateway/test/bsuid.test.ts          | 915 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  4 files changed, 1199 insertions(+), 63 deletions(-)
+
+**CRITICAL — Pairing replays can expose another city’s messages and media** — [whatsapp/gateway/src/gateway.ts:400](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.HHb54s/tree/whatsapp/gateway/src/gateway.ts:400)
+
+`pairingHistory` copies the previous user ID’s `changed_at` without respecting an earlier recorded end of the number’s paired span. This sequence introduces a cross-city misroute:
+
+1. Phone-only C holds P in city W; A is bound by user ID U in city X. `(P, U)` at T1 opens A’s paired span.
+2. `(P, V)` at T2 closes that span. Another message just afterward lets C acquire V.
+3. A changes U to U2 at T4, sharing no phone number.
+4. Replaying the T1 pairing creates a second A span `[T1, T4]`, extending ownership beyond the recorded T2 end.
+5. After C is unbound, a previously undelivered P-only image stamped T3 routes to X and grants X its media.
+
+The base creates no such P alias and does not deliver that image to X. Preserve the existing number span’s end when incorporating historical pairing evidence, and add this replay/unbind regression case.
+
+Tests/builds: **not run (sandbox)**. Worker transcripts matching the head and file hashes report **192 passing tests**, successful typecheck and Wrangler dry run, and two passing deployment compatibility checks. This finding follows from static SQL tracing.
+
+VERDICT: BLOCK

@@ -1,0 +1,20 @@
+# codex-gate review: base e39c0b9040605cdb41de9d0d994747c44846b628 (merge base of --base e39c0b9040605cdb41de9d0d994747c44846b628 = e39c0b9040605cdb41de9d0d994747c44846b628 and the head) head 3b1ba73481b142f1ca58304c9bd484ad26bc1704; 4 file(s); class STANDARD; model gpt-6-astra; 2026-11-05T06:23:03Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (--head 3b1ba73481b142f1ca58304c9bd484ad26bc1704; the working tree of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs not consulted)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+# evidence dir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-byp8 (named to the reviewer in place of assets/pr-evidence/ at the head)
+#  whatsapp/gateway/README.md                   |  91 +++++--
+#  whatsapp/gateway/migrations/0003_retries.sql |   7 +
+#  whatsapp/gateway/src/gateway.ts              | 248 +++++++++++++++----
+#  whatsapp/gateway/test/bsuid.test.ts          | 893 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  4 files changed, 1175 insertions(+), 64 deletions(-)
+
+**MAJOR — Replayed number-change notices overwrite newer owner IDs** — [gateway.ts:996](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.7Kyv12/tree/whatsapp/gateway/src/gateway.ts:996)
+
+After an owner changes `(P, U0) → (Q, U1) → (R, U2)`, replaying the first notice resolves `U0` through its historical alias. The new `routeKey` predicate therefore updates the binding back to `(Q, U1)`. Delivery deduplication does not prevent this mutation. Subsequent messages under `(R, U2)` stop reaching the city, and replies target obsolete Q.
+
+Require a current-owner match alongside conflict checks for identity mutations. Extend the existing two-change replay test to assert that the original owner retains its latest IDs; it currently checks only the old number’s next holder.
+
+Tests/builds: **not run (sandbox)**. Worker transcripts matching the head and file hashes report **191 passing tests**, successful typecheck and Wrangler dry run, and two passing deployment compatibility checks. This finding follows from static SQL tracing.
+
+VERDICT: BLOCK

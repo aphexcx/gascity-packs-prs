@@ -1,0 +1,25 @@
+# codex-gate review: base e39c0b9040605cdb41de9d0d994747c44846b628 (merge base of --base e39c0b9040605cdb41de9d0d994747c44846b628 = e39c0b9040605cdb41de9d0d994747c44846b628 and the head) head 17a54f6e617a1d7cd42daebf7ed331dac7f325ca; 4 file(s); class STANDARD; model gpt-6-astra; 2026-11-05T05:56:44Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (--head 17a54f6e617a1d7cd42daebf7ed331dac7f325ca; the working tree of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs not consulted)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+# evidence dir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-byp8 (named to the reviewer in place of assets/pr-evidence/ at the head)
+#  whatsapp/gateway/README.md                   |  72 +++++++---
+#  whatsapp/gateway/migrations/0003_retries.sql |   7 +
+#  whatsapp/gateway/src/gateway.ts              | 181 +++++++++++++++++++------
+#  whatsapp/gateway/test/bsuid.test.ts          | 493 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  4 files changed, 694 insertions(+), 59 deletions(-)
+
+**MAJOR — Replayed messages reopen closed pairings and cause repeated webhook failures** — [whatsapp/gateway/src/gateway.ts:354](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.yRUNFn/tree/whatsapp/gateway/src/gateway.ts:354)
+
+With phone-only C holding P and A/B separately bound by user_id:
+
+1. `(P, A)` at T1 opens A’s paired span.
+2. `(P, B)` at T2 closes A’s span and opens B’s.
+3. Replaying A’s T1 message inserts another **open** A span. The guard checks aliases under A’s user_id, so it misses the closed span under P.
+4. Replaying B’s T2 message closes that new span to T2, colliding with the existing `(P, A.bound_wamid, T2)` primary key.
+
+The resulting constraint error rolls back the D1 batch and returns 500 on subsequent retries. Preserve the recorded end when processing historical pairing evidence, and add an A→B→A→B replay regression test.
+
+Tests/builds: **not run (sandbox)**. Worker evidence for the exact head reports 177 passing tests, successful typecheck and Wrangler dry run, and two passing deployment compatibility checks. The finding above follows from static SQL tracing.
+
+VERDICT: BLOCK

@@ -1,0 +1,38 @@
+// Reproduction of the codex self-review r5 CRITICAL at 17f86937 (not in the suite: it fails at the head).
+import { env } from "cloudflare:test";
+import { expect, it } from "vitest";
+import { bsuid, changeAs, flakyDb, HOUR, mediaPayload, phone, setup, T0, textAs, uniq } from "./harness.js";
+
+const [T1, T2, T3, T4] = [T0 + HOUR, T0 + 2 * HOUR, T0 + 3 * HOUR, T0 + 4 * HOUR];
+it("codex r5: a delayed first pairing, kept up to A's notice, ignores P's later pairing beside V; C's T3 image reaches X once C is unbound", async () => {
+  const flaky = flakyDb();
+  const t = setup({ db: flaky.db });
+  const x = await t.enrollCity();
+  const w = await t.enrollCity();
+  const p = phone();
+  await t.join(w, p); // C
+  const u = bsuid();
+  await t.joinAs(x, { user: u }); // A
+  const first = textAs({ wa: p, user: u }, "A's first pairing", { wamid: `wamid.${uniq()}`, ts: T1 });
+  t.clock.now = T1;
+  flaky.arm(0);
+  expect((await t.webhook(first)).status).toBe(500);
+  t.clock.now = T2;
+  await t.sayAs({ wa: p, user: bsuid() }, "V's: C takes V"); // rule 3
+  const mediaId = `9${Date.now()}`;
+  t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+  const image = mediaPayload("image", p, mediaId, { wamid: `wamid.${uniq()}`, ts: T3 });
+  t.clock.now = T3;
+  flaky.arm(0);
+  expect((await t.webhook(image)).status).toBe(500);
+  t.clock.now = T4;
+  expect((await t.webhook(changeAs("user_changed_user_id", { from: null, previousUser: u, newUser: bsuid(), newWa: null }, { wamid: `wamid.${uniq()}`, ts: T4 }))).status).toBe(200);
+  t.clock.now = T4 + HOUR / 4;
+  expect((await t.webhook(first)).status).toBe(200);
+  await env.DB.prepare("DELETE FROM phones WHERE wa_id = ?1").bind(p).run(); // unbind C
+  t.clock.now = T4 + HOUR / 2;
+  expect((await t.webhook(image)).status).toBe(200);
+  const inX = (await t.inbox(x)).body.deliveries.map((d: any) => d.message?.id);
+  expect.soft(inX).not.toContain(image.entry[0].changes[0].value.messages[0].id);
+  expect.soft((await t.call("GET", `/v1/media/${mediaId}`, { token: x.token })).status).toBe(404);
+});

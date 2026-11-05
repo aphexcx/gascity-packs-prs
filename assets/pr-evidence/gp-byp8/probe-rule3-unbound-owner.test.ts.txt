@@ -1,0 +1,29 @@
+// Probe (not committed): rule 3 and an unbound owner's retry naming P beside its user_id.
+import { env } from "cloudflare:test";
+import { expect, it } from "vitest";
+import { bsuid, flakyDb, HOUR, phone, setup, T0, textAs, uniq } from "./harness.js";
+
+it("probe: A unbound; A's retry naming P beside A's user_id, stamped while A stood", async () => {
+  const flaky = flakyDb();
+  const t = setup({ db: flaky.db });
+  const x = await t.enrollCity();
+  const w = await t.enrollCity();
+  const p = phone();
+  await t.join(w, p); // C, phone-only, holds P from T0
+  const a = bsuid();
+  await t.joinAs(x, { user: a });
+  t.clock.now = T0 + 2 * HOUR;
+  await t.sayAs({ wa: p, user: a }, "my phone, says Meta");
+  const retry = textAs({ wa: p, user: a }, "A's, while bound", { wamid: `wamid.${uniq()}`, ts: T0 + 3 * HOUR });
+  t.clock.now = T0 + 3 * HOUR;
+  flaky.arm(0);
+  expect((await t.webhook(retry)).status).toBe(500);
+  t.clock.now = T0 + 4 * HOUR;
+  await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR user_id = ?1").bind(a).run();
+  t.clock.now = T0 + 5 * HOUR;
+  expect((await t.webhook(retry)).status).toBe(200);
+  const inW = (await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === retry.entry[0].changes[0].value.messages[0].id);
+  const cRow = await env.DB.prepare("SELECT user_id FROM phones WHERE wa_id = ?").bind(p).first();
+  expect(inW).toMatchObject({ kind: "message" });
+  expect((cRow as any)?.user_id).toBe(a);
+});

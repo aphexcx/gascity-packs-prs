@@ -1,0 +1,25 @@
+# codex-gate review: base e39c0b9040605cdb41de9d0d994747c44846b628 (merge base of --base e39c0b9040605cdb41de9d0d994747c44846b628 = e39c0b9040605cdb41de9d0d994747c44846b628 and the head) head 17f8693751f1460d8b70ced435fb349a15d70c30; 4 file(s); class STANDARD; model gpt-6-astra; 2026-11-05T06:45:12Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (--head 17f86937; the working tree of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs not consulted)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+# evidence dir: /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/assets/pr-evidence/gp-byp8 (named to the reviewer in place of assets/pr-evidence/ at the head)
+#  whatsapp/gateway/README.md                   |  91 +++++--
+#  whatsapp/gateway/migrations/0003_retries.sql |   7 +
+#  whatsapp/gateway/src/gateway.ts              | 261 ++++++++++++++----
+#  whatsapp/gateway/test/bsuid.test.ts          | 970 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  4 files changed, 1266 insertions(+), 63 deletions(-)
+
+**CRITICAL — A delayed first pairing can expose another city’s messages and media** — [whatsapp/gateway/src/gateway.ts:410](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.NLR6Az/tree/whatsapp/gateway/src/gateway.ts:410)
+
+`pairingHistory` uses the owner’s change notice as the span’s end when no earlier span exists, overlooking intervening evidence that the number belongs to another user:
+
+1. Phone-only C holds P in city W; A is bound by user ID U in city X. A’s `(P, U)` message stamped T1 fails to commit.
+2. `(P, V)` succeeds at T2, giving C user ID V. C’s P-only image stamped T3 fails to commit.
+3. A’s notice changes U to U2 at T4 without sharing a number. The delayed T1 pairing then arrives and inserts A’s P span `[T1, T4]`.
+4. Unbind C and retry the T3 image: it routes to X and grants X its media.
+
+The base creates no such P alias and does not expose the image to X. Preserve intervening reassignment evidence when constructing historical spans, and add this delayed-first-pairing regression. The existing replay test requires the earlier span’s end to have been recorded already.
+
+Tests/builds: **not run (sandbox)**. Worker transcripts matching the requested head and file hashes report **193 passing tests**, successful typechecking and Wrangler dry run, and two passing deployment compatibility checks. The finding follows from static SQL tracing.
+
+VERDICT: BLOCK
