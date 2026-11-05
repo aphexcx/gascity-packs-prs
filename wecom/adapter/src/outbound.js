@@ -1026,6 +1026,7 @@ export function createOutboundPublisher(deps) {
       chunksTotal: e.chunksTotal,
       chunksAttempted: e.chunksAttempted,
       retriedUnackedChunks: !!e.retriedUnackedChunks,
+      retryUnacked: !!e.retryUnacked,
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
       receipt: e.receipt,
@@ -1039,7 +1040,7 @@ export function createOutboundPublisher(deps) {
       expectedTranscript: e.expectedTranscript,
       deliveryUnknown: !!e.deliveryUnknown
         || (!!e.sendAttempted && !e.mediaSent && !e.receipt)
-        || (!e.textCheckpoint && (e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
+        || ((!e.textCheckpoint || !e.retryUnacked) && (e.chunksAttempted ?? 0) > (e.chunksDelivered ?? 0) && !e.receipt),
     };
   }
 
@@ -1333,6 +1334,7 @@ export function createOutboundPublisher(deps) {
   }
 
   async function handlePublish(req, res, body) {
+    const authDeadline = Date.now() + (cfg.publishAuthWaitMs ?? 45000);
     let pub;
     try {
       pub = JSON.parse(body);
@@ -1497,13 +1499,18 @@ export function createOutboundPublisher(deps) {
     // Legacy ambiguous attempts remain refused: they have no trustworthy
     // checkpoint. A retry replays only the unacknowledged suffix; a lost
     // provider ack can still mean that suffix is already visible (at-least-once).
-    const journalTextState = () => {
+    const journalTextState = ({ pending = false } = {}) => {
       if (!key) return;
       const saved = journal.record(key, {
         endpoint: 'publish', textCheckpoint: true, fingerprint: textFingerprint,
         chunksTotal: state.chunksTotal, chunksAttempted: state.chunksAttempted ?? 0,
         chunksDelivered: state.chunksDelivered, messageID: state.messageID,
         deliveryUnknown: false, retriedUnackedChunks: !!state.retriedUnackedChunks,
+        retryUnacked: !!state.retryUnacked,
+        // Reserve room before writing a frame for a maximally escaped
+        // 256-byte receipt id plus counter growth. Ack persistence must
+        // not fail just because its own result makes the entry larger.
+        ackReserve: pending ? ' '.repeat(6 * 256 + 32) : '',
       }, { ifRoom: true });
       if (!saved) throw new JournalUnavailableError('text checkpoint journal is full — retry with the same key after capacity is available');
       state.textCheckpoint = true;
@@ -1534,7 +1541,8 @@ export function createOutboundPublisher(deps) {
       journalTextState();
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
         state.chunksAttempted = i + 1;
-        journalTextState();
+        state.retryUnacked = false;
+        journalTextState({ pending: true });
         let chunkReceipt;
         try {
           chunkReceipt = await sendMessage(chatid, {
@@ -1543,7 +1551,7 @@ export function createOutboundPublisher(deps) {
               content: chunks[i],
               ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
             },
-          });
+          }, { authDeadline });
         } catch (err) {
           if (isDefiniteSendFailure(err)) {
             // Nothing from this chunk is in the chat: keep the key retryable.
@@ -1553,6 +1561,10 @@ export function createOutboundPublisher(deps) {
           } else {
             sendFailure = key && state.textCheckpoint ? 'retryable' : 'unknown';
             if (sendFailure === 'unknown') state.deliveryUnknown = true;
+            else {
+              state.retryUnacked = true;
+              journalTextState();
+            }
           }
           throw err;
         }
@@ -1597,7 +1609,7 @@ export function createOutboundPublisher(deps) {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ conversation: convo, delivered: false,
           failure_kind: err instanceof JournalUnavailableError ? 'journal_unavailable' : 'retryable',
-          retry_safe: true,
+          retry_safe: !(err instanceof JournalUnavailableError),
           delivery_outcome: sendFailure === 'retryable' ? 'unacknowledged-chunks' : 'checkpoint-unavailable',
           error: err instanceof JournalUnavailableError ? err.message
             : 'Retry with the same key to resume at the first unacknowledged chunk. A lost acknowledgement may repeat that chunk; acknowledged chunks are not resent.',

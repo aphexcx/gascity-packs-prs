@@ -66,7 +66,7 @@ export function createOutboundConnection(wsClient, {
     });
   }
 
-  function waitForAuthenticated() {
+  function waitForAuthenticated(deadline) {
     const unavailable = () => new Error('WebSocket not connected, unable to send data');
     if (stopping) return Promise.reject(unavailable());
     if (authenticated && wsClient.isConnected) return Promise.resolve();
@@ -80,7 +80,7 @@ export function createOutboundConnection(wsClient, {
         if (stopping) finish(unavailable());
         else if (authenticated && wsClient.isConnected) finish();
       };
-      const timer = setTimeout(() => finish(unavailable()), authWaitMs);
+      const timer = setTimeout(() => finish(unavailable()), Math.max(0, deadline - now()));
       authWaiters.add(wake);
       wake();
     });
@@ -113,8 +113,8 @@ export function createOutboundConnection(wsClient, {
     });
   }
 
-  function sendMessage(chatid, body) {
-    return waitForAuthenticated().then(() => trackActivity(async () => {
+  function sendMessage(chatid, body, { authDeadline = now() + authWaitMs } = {}) {
+    return waitForAuthenticated(authDeadline).then(() => trackActivity(async () => {
       try {
         // Keep the SDK's wire format and request-id generation unchanged.
         // The publisher decides whether a keyed retry can resume.

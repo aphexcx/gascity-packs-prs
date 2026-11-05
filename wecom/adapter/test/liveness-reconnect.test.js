@@ -654,22 +654,22 @@ test('an upload admitted during a publish drain is protected beyond that drain d
   assert.equal(sends(server).length, 1);
 });
 
-test('process crash after a chunk acknowledgement resumes the durable suffix', async (t) => {
+test('process restart after a dropped chunk resumes the durable suffix', async (t) => {
   let dropped = false;
-  const server = await stubServer(t, (frame) => {
+  const server = await stubServer(t, (frame, connection) => {
     if (frame.cmd === 'aibot_send_msg' && frame.body.markdown.content === 'last' && !dropped) {
       dropped = true;
+      connection.socket.terminate();
       return false;
     }
   });
   const before = startAdapter(t, server);
   await before.waitForLog('wecom long connection authenticated');
   const body = textPublish('crash-key', 'a'.repeat(3800) + 'last');
-  const pending = before.request('/publish', body).catch(() => null);
-  await waitFor(() => sends(server).length === 2, 'unacknowledged second chunk');
+  const failed = await before.request('/publish', body);
+  assert.equal(failed.body.failure_kind, 'retryable');
   before.child.kill('SIGKILL');
   await before.exited;
-  await pending;
   const after = startAdapter(t, { ...server, extraEnv: { WECOM_MEDIA_DIR: path.join(before.dir, 'media') } });
   await after.waitForLog('wecom long connection authenticated');
   const resumed = await after.request('/publish', body);
@@ -700,4 +700,18 @@ test('a failed-probe drain cannot close a healthy SDK replacement socket', async
   await activity;
   await reconnect;
   assert.equal(closes, 0, 'the natural reconnect already restored transport health');
+});
+
+test('queued publishes share the authentication deadline measured from arrival', async (t) => {
+  const server = await stubServer(t, (frame) => frame.cmd !== 'aibot_subscribe');
+  const adapter = startAdapter(t, { ...server, extraEnv: { WECOM_PUBLISH_AUTH_WAIT_MS: '200' } });
+  await waitFor(() => frames(server, 'aibot_subscribe').length === 1, 'subscription');
+  const started = Date.now();
+  const replies = await Promise.all(Array.from({ length: 6 }, (_, i) => adapter.request('/publish', textPublish(`queued-${i}`))));
+  assert.ok(Date.now() - started < 700, 'six queued requests must not each wait another 200 ms');
+  for (const reply of replies) {
+    assert.equal(reply.status, 503);
+    assert.equal(reply.body.delivery_outcome, 'nothing-written');
+  }
+  assert.equal(sends(server).length, 0);
 });

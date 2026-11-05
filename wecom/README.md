@@ -243,7 +243,7 @@ the SDK/socket stops awaits any messages received during the drain. A
 1900 ms hard exit keeps shutdown within the supervisor's 2-second budget.
 
 Before writing, `/publish` waits up to `WECOM_PUBLISH_AUTH_WAIT_MS`
-(default 45000) for authentication during reconnect. An expired wait returns
+(default 45000, measured from request arrival) for authentication during reconnect. An expired wait returns
 `503 not_sent` without writing a frame.
 
 Keyed text publishes journal every chunk acknowledgement before advancing.
@@ -257,14 +257,17 @@ Successful responses include `delivery_outcome: acked-and-done` or
 `retried-unacked-chunks`; a refused completed-key retry reports `acked-and-done`.
 A pre-write refusal reports `nothing-written` with the failing chunk index
 and earlier acknowledged count. Missing acks report `unacknowledged-chunks`,
-and journal failures report `checkpoint-unavailable`.
+and journal failures report `checkpoint-unavailable` with `retry_safe: false`.
 A fully acknowledged key returns `409 already_delivered`; different text or
 conversation under the same key returns `409 idempotency_conflict`.
 
 Checkpoint retention is 24 hours from the last update, with the journal's
 512-entry / 4 MiB capacity. Entries cannot be evicted during retention;
 `503 journal_unavailable` stops a keyed send if a checkpoint cannot be saved.
-Keys are limited to 256 bytes. Legacy ambiguous text entries, degraded
+Keys are limited to 256 bytes. An attempt interrupted before its outcome was
+journaled refuses replay after restart: the lost write may have been an
+acknowledgement. Recorded timeout/drop outcomes remain resumable. Legacy
+ambiguous text entries, degraded
 journals, and recovery from an older backup fail closed. Media and keyless
 text retain `502 delivery_unknown` for missing acknowledgements; ambiguous
 media and legacy text keys remain refused on retry (`409`).

@@ -3628,3 +3628,30 @@ test('media admission cannot evict an acknowledged text checkpoint', async (t) =
   assert.equal((await publishText(publisher, text)).statusCode, 409);
   assert.equal(calls.length, 1);
 });
+
+test('an acknowledgement checkpoint failure refuses replay after restart', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const inner = createAttemptJournal({ filePath: journalPath });
+  const journal = { ...inner, record(key, patch, opts) {
+    if (patch.chunksDelivered > 0) return false;
+    return inner.record(key, patch, opts);
+  } };
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'failed-ack-write' };
+  const before = makePublisher({ journal });
+  const failed = await publishText(before.publisher, body);
+  assert.equal(failed.json().failure_kind, 'journal_unavailable');
+  assert.equal(failed.json().retry_safe, false);
+  assert.equal(before.calls.length, 1);
+  const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  assert.equal((await publishText(after.publisher, body)).statusCode, 409);
+  assert.equal(after.calls.length, 0, 'the received ack cannot be lost into a replay');
+});
+
+test('text reserves checkpoint growth before any provider write', async () => {
+  const journal = createAttemptJournal({ maxBytes: 1500 });
+  const { publisher, calls } = makePublisher({ journal });
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'no-ack-room' };
+  const failed = await publishText(publisher, body);
+  assert.equal(failed.json().failure_kind, 'journal_unavailable');
+  assert.equal(calls.length, 0, 'the initial entry fits but a worst-case acknowledgement would not');
+});
