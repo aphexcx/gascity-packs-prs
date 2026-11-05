@@ -3734,6 +3734,31 @@ test('backup recovery refuses a new text key when the main journal is lost durin
   assert.equal(after.calls.length, 0, 'backup recovery cannot treat the first send as a new key');
 });
 
+test('a cached zero-progress text key refreshes backup evidence after journal expiry', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  let clock = Date.now();
+  const journal = createAttemptJournal({ filePath: journalPath, now: () => clock });
+  let attempts = 0;
+  let crashBackup;
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'expired-cached' };
+  const before = makePublisher({ journal, sendMessage: async () => {
+    if (++attempts === 1) throw notConnected();
+    crashBackup = fs.readFileSync(`${journalPath}.bak`, 'utf8');
+    return {};
+  } });
+  assert.equal((await publishText(before.publisher, body)).json().failure_kind, 'not_sent');
+  clock += 25 * 60 * 60 * 1000;
+  assert.equal(journal.get('expired-cached'), undefined);
+  assert.equal((await publishText(before.publisher, body)).statusCode, 200);
+  fs.writeFileSync(journalPath, 'main lost during the first send after expiry');
+  fs.writeFileSync(`${journalPath}.bak`, crashBackup);
+  const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath, now: () => clock }) });
+  const replay = await publishText(after.publisher, body);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(replay.json().failure_kind, 'delivery_unknown');
+  assert.equal(after.calls.length, 0);
+});
+
 test('a failed text checkpoint preserves oldest-receipt eviction order on retry', async (t) => {
   const journalPath = path.join(tmpDir(t), 'attempts.json');
   const journal = createAttemptJournal({ filePath: journalPath, cap: 2 });

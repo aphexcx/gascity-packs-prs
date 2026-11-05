@@ -1561,10 +1561,10 @@ export function createOutboundPublisher(deps) {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
       state.chunksTotal = chunks.length;
-      // Register a fresh key before its pre-send latch so even the backup
-      // knows it during the first send. Also repair an acknowledgement
-      // that failed to persist before changing its pre-send latch.
-      if (!state.textCheckpoint || !journalCovers(key, state)) journalTextState();
+      // Refresh registration before the pre-send latch so even the backup
+      // knows this attempt, including a cached key whose checkpoint expired.
+      // This also repairs an acknowledgement that failed to persist.
+      journalTextState();
       if (state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered) {
         state.retriedUnackedChunks = true;
       }
