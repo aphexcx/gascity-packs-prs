@@ -257,7 +257,9 @@ function senderOf(m: InboundMessage): { wa: string | null; user: string | null }
  * - A current user_id since the binding's own invite text (bound_stamp).
  * - A current wa_id since the invite text too, or, when the number came later (a message carrying
  *   it beside the user_id, or a number change), since that message (wa_since).
- * - A previous id (phone_aliases) from its since until the number change that replaced it.
+ * - A previous id (phone_aliases) from its since until the number change that replaced it. A
+ *   previous number's since is where the owner came to it (wa_since), and the bind only when no
+ *   message or change brought it a number since (gp-w376).
  * A message routes to the one binding whose span holds its stamp, or to nobody. It never routes to
  * a binding that took the id after Meta stamped the message (a later holder of a recycled number,
  * or the same person bound again elsewhere).
@@ -365,6 +367,8 @@ interface Plan {
   binds: Array<{ index: number; id: string; wamid: string }>;
   /** Statement indexes whose one changed row means "send this stranger the canned line now". */
   canned: Array<{ index: number; id: string }>;
+  /** Statement indexes whose one changed row means "a known sender's message no span held, counted". */
+  unrouted: number[];
   /** Statuses no send has claimed yet (read before the write): kept apart for adoption. */
   orphanedStatuses: number;
   /** Messages Meta stamped longer ago than any dedup row lives: dropped and counted. */
@@ -519,6 +523,7 @@ export function createGateway(deps: Deps) {
       orphaned_statuses: plan.orphanedStatuses,
       stale: plan.stale,
       bound: plan.binds.filter((b) => committed(b.index)).length,
+      unrouted: plan.unrouted.filter(committed).length,
       welcomed,
       canned,
     });
@@ -564,6 +569,7 @@ export function createGateway(deps: Deps) {
       groupStarts: [],
       binds: [],
       canned: [],
+      unrouted: [],
       orphanedStatuses: 0,
       stale: 0,
       overCap: false,
@@ -740,8 +746,9 @@ export function createGateway(deps: Deps) {
           .bind(now, m.wamid, wa, user, m.username, m.profileName, body, stamp),
       );
       // A known sender's message that no binding held at its stamp (the owner unbound since, or a
-      // binding newer than the message) reaches no city and hears nothing; it is counted.
-      push(
+      // binding newer than the message) reaches no city and hears nothing; it is counted, in the
+      // stats and on the payload's log line.
+      plan.unrouted.push(push(
         db
           .prepare(
             `INSERT INTO stats (name, value) SELECT 'unrouted_messages', 1
@@ -749,7 +756,7 @@ export function createGateway(deps: Deps) {
              ON CONFLICT (name) DO UPDATE SET value = value + 1`,
           )
           .bind(wa, user, stamp),
-      );
+      ));
       if (m.mediaId) {
         // The media goes to the city that holds the message's wamid, from when it first did: never
         // to a city that holds the phone only since (a retry after the phone moved cities).
@@ -1057,10 +1064,18 @@ export function createGateway(deps: Deps) {
     // A `to` naming two owners (one's conversation_id, kept from a phone number it no longer
     // holds, and another's current wa_id: a recycled number) is refused, and nothing is sent: the
     // box may mean either, and a guess hands one owner's message to the other. The box resends to
-    // the owner's current id. The answer names neither owner. (gp-0g2s; the mayor's rule R1.)
+    // the owner's current id. (gp-0g2s; the mayor's rule R1.)
+    // The box files an owner under its conversation_id, so the answer names the owner `to` keys by
+    // its current user_id (null when it has none), and the box can resend at once; GET /v1/window
+    // shows the same id. Both rows are this city's own owners; the answer carries neither the
+    // number nor the other owner. (gp-w376; the Fable read r1 MINOR 2.)
     if (named.length > 1) {
       log({ event: "send_refused", reason: "ambiguous_recipient" });
-      throw new HttpError(409, "ambiguous_recipient", { hint: "send to the owner's current id" });
+      const keyed = named.find((o) => o.conversation_id === to);
+      throw new HttpError(409, "ambiguous_recipient", {
+        hint: "send to the owner's current id",
+        owner_user_id: keyed?.user_id ?? null,
+      });
     }
     const owner = named[0]!;
     // Meta gets `to` exactly as given while it is one of the owner's ids. A conversation_id the

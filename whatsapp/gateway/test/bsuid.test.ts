@@ -304,9 +304,12 @@ describe("BSUID: sends", () => {
     expect(t.graph.sends()).toHaveLength(calls);
     const key = uniq();
     const r = await t.send(city, { to: p, idempotency_key: key, ...template });
-    expect([r.status, r.body]).toEqual([409, { error: "ambiguous_recipient", hint: "send to the owner's current id" }]);
+    // The answer names the owner the box files under `to` (its conversation_id) by its current
+    // user_id, so the box resends at once (gp-w376; the Fable read r1 MINOR 2). It names nothing
+    // else: not the number, not the other owner, not the owner's ids from before its change.
+    expect([r.status, r.body]).toEqual([409, { error: "ambiguous_recipient", hint: "send to the owner's current id", owner_user_id: a2 }]);
     expect(t.graph.sends()).toHaveLength(calls);
-    for (const needle of [p, q, a, a2, b]) expect(JSON.stringify(r.body)).not.toContain(needle);
+    for (const needle of [p, q, a, b]) expect(JSON.stringify(r.body)).not.toContain(needle);
     expect(t.logs).toContainEqual({ event: "send_refused", reason: "ambiguous_recipient" });
     // Where the box finds A's current id: GET /v1/window. A's newest delivery is the notice, which
     // still carries the old one (self-review r1 S6; README rule 7).
@@ -1069,6 +1072,7 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       const unrouted = async () =>
         (await env.DB.prepare("SELECT value FROM stats WHERE name = 'unrouted_messages'").first<{ value: number }>())?.value ?? 0;
       const unroutedBefore = await unrouted();
+      const logsBefore = t.logs.length;
       const calls = t.graph.sends().length;
       for (const m of [early, between]) {
         expect((await t.webhook(m.text)).status).toBe(200);
@@ -1099,8 +1103,12 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       }
       expect(theirs.some((x: any) => [wamidOf(between.text), wamidOf(between.image)].includes(x.message?.id))).toBe(false);
       for (const c of [other, ...elsewhere]) expect(await media(c, between.mediaId)).toBe(404);
-      // Every message no span held is counted; P is an owner's number, so none hears the canned line.
+      // Every message no span held is counted, in the stats row and in each payload's log line
+      // (the Fable read r1 NOTE 5); P is an owner's number, so none hears the canned line.
       expect((await unrouted()) - unroutedBefore).toBe(row.between === "A" ? 2 : 4);
+      expect(t.logs.slice(logsBefore).filter((e) => e.event === "webhook").map((e) => e.unrouted)).toEqual(
+        row.between === "A" ? [1, 1, 0, 0] : [1, 1, 1, 1],
+      );
       expect(t.graph.sends()).toHaveLength(calls);
       // P's holder keeps P and its name.
       expect((await owners(p)).find((o: any) => o.city_id === other.id)).toEqual(holder);
