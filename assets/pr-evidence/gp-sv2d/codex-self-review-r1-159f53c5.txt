@@ -1,0 +1,17 @@
+# codex-gate review: base c5c48f3b397476b423bc86045c5868ab16bc0581 (merge base of --base c5c48f3b397476b423bc86045c5868ab16bc0581 = c5c48f3b397476b423bc86045c5868ab16bc0581 and the head) head 159f53c5e8e6d8a37bffb721ebce69e867656f49; 4 file(s); class STANDARD; model gpt-6-astra; 2026-11-05T15:45:33Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+# reviewed in a pristine detached worktree at the head (--head 159f53c5; the working tree of /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs not consulted)
+# verdict rule: CLEAN with no CRITICAL or MAJOR finding (MINORs are reported, deferred by the lane, never blocking)
+#  whatsapp/gateway/README.md                   |  86 +++++++++++++-
+#  whatsapp/gateway/migrations/0003_retries.sql |  13 +-
+#  whatsapp/gateway/src/gateway.ts              | 225 +++++++++++++++++++++++------------
+#  whatsapp/gateway/test/bsuid.test.ts          | 431 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#  4 files changed, 674 insertions(+), 81 deletions(-)
+
+- **MAJOR — Late-pairing retries bypass the new refusal boundary.** [gateway.ts:332](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.t7BzMA/tree/whatsapp/gateway/src/gateway.ts:332): Let A’s pairing open P’s span at T3, then a delayed T1 pairing widen it to `since=T1, routes_from=T3`. Unbind phone-only C and replay that T1 pairing. The phone-fill update gives A `wa_id=P, wa_since=T1`; the current holding then supplies unconditional `routes=1`. A P-only image stamped T2 now reaches A’s city, including its media, despite falling in the refusal-only interval. Preserve the routing boundary when late evidence fills the current phone, and cover this replay after unbinding.
+
+- **MAJOR — A refused invite can attach its sender to the wrong city on retry.** [gateway.ts:381](/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/codex-gate-tree.t7BzMA/tree/whatsapp/gateway/src/gateway.ts:381): After U’s sixth attempt beside phone-only C’s number is refused, another sender can spend the code, or the city can replace it. Replaying U’s original webhook then makes `refusedCode` false. With no delivery tombstone for the refused text, it routes to C and fills C’s `user_id` with U, directing subsequent U-only messages there. Persist the refused invite’s classification by wamid through the retry horizon.
+
+Tests: **not run (sandbox)**. Committed evidence reports 193/193 tests and typecheck passing at `17f86937`, which predates this delta; no test evidence for the reviewed head was found.
+
+VERDICT: BLOCK

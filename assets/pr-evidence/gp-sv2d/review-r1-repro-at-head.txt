@@ -1,0 +1,449 @@
+# The fresh self-review r1 repro (review-r1-repro.test.ts.txt) run against this head's src/ and 0003
+# tree: a detached worktree of 082f5f3b (src/ and migrations identical to 159f53c5), the repro copied into test/
+# 2026-11-05T15:49:28Z pnpm exec vitest run --reporter=verbose test/review-sv2d.test.ts
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /private/tmp/gp-sv2d-probe/tree/whatsapp/gateway
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R1: a late pairing of B's ends A's on-time span below A's later pairing; A's image stamped after A's last pairing must not reach B's city
+R1 spans of P [{"conversation_id":"US.34846068742457089067","since":1800007200,"changed_at":1800010800,"routes_from":1800007200},{"conversation_id":"US.38358761090811281868","since":1800010800,"changed_at":253402300799,"routes_from":1800010800}] A US.34846068742457089067 B US.38358761090811281868
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R1: a late pairing of B's ends A's on-time span below A's later pairing; A's image stamped after A's last pairing must not reach B's city
+R1 landed {"status":200,"x":{"delivered":false,"media":404},"w":{"delivered":false,"media":404},"y":{"delivered":true,"media":200},"unrouted":0,"conflicts":0,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R2: A's late first pairing (T1, delivered after B's T2 pairing) opens a span that routes past B's evidence; B's later image must not reach A's city
+R2 spans of P after A's late pairing [{"conversation_id":"US.32007081733398025331","since":1800003600,"changed_at":253402300799,"routes_from":1800003600},{"conversation_id":"US.38838188560579383131","since":1800007200,"changed_at":253402300799,"routes_from":1800007200}]
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R2: A's late first pairing (T1, delivered after B's T2 pairing) opens a span that routes past B's evidence; B's later image must not reach A's city
+R2 spans of P after the cron [{"conversation_id":"US.32007081733398025331","since":1800003600,"changed_at":253402300799,"routes_from":1800003600},{"conversation_id":"US.38838188560579383131","since":1800007200,"changed_at":1800010800,"routes_from":1800007200}]
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R2: A's late first pairing (T1, delivered after B's T2 pairing) opens a span that routes past B's evidence; B's later image must not reach A's city
+R2 landed {"status":200,"x":{"delivered":true,"media":200},"w":{"delivered":false,"media":404},"y":{"delivered":false,"media":404},"unrouted":0,"conflicts":0,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R2b: A's late first pairing outlives B's number change; an image from P stamped after B left P must not reach A's city
+R2b spans of P [{"conversation_id":"US.28831414752603909580","since":1800003600,"changed_at":253402300799,"routes_from":1800003600},{"conversation_id":"US.23363417541813693441","since":1800007200,"changed_at":1800010800,"routes_from":1800007200}]
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R2b: A's late first pairing outlives B's number change; an image from P stamped after B left P must not reach A's city
+R2b landed {"status":200,"x":{"delivered":true,"media":200},"w":{"delivered":false,"media":404},"y":{"delivered":false,"media":404},"unrouted":0,"conflicts":0,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3: a paired span opened after rule 2 stripped the owner's old number starts at the OLD number's start; C's image stamped before A ever named P must not reach A's city
+R3 A's row after the strip {"wa_id":null,"wa_since":1800000000,"bound_stamp":1800000000}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3: a paired span opened after rule 2 stripped the owner's old number starts at the OLD number's start; C's image stamped before A ever named P must not reach A's city
+R3 spans of P [{"conversation_id":"5529491937059","since":1800000000,"changed_at":253402300799,"routes_from":1800000000}] T0 1800000000 T3 1800010800
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3: a paired span opened after rule 2 stripped the owner's old number starts at the OLD number's start; C's image stamped before A ever named P must not reach A's city
+R3 landed {"status":200,"x":{"delivered":true,"media":200},"w":{"delivered":false,"media":404},"unrouted":0,"conflicts":0,"sends":0}
+
+ × test/review-sv2d.test.ts > review gp-sv2d > R1: a late pairing of B's ends A's on-time span below A's later pairing; A's image stamped after A's last pairing must not reach B's city 39ms
+   → expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, y: { …(2) } }
+(9 matching properties omitted from actual)
+ × test/review-sv2d.test.ts > review gp-sv2d > R2: A's late first pairing (T1, delivered after B's T2 pairing) opens a span that routes past B's evidence; B's later image must not reach A's city 30ms
+   → expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, x: { …(2) }, …(2) }
+(3 matching properties omitted from actual)
+ × test/review-sv2d.test.ts > review gp-sv2d > R2b: A's late first pairing outlives B's number change; an image from P stamped after B left P must not reach A's city 29ms
+   → expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, x: { …(2) } }
+(9 matching properties omitted from actual)
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3b: (C standing) C's own image stamped T2, before A named P, delivered after A's pairing at T3: the base gives it to W
+R3b landed {"status":200,"x":{"delivered":false,"media":404},"w":{"delivered":false,"media":404},"unrouted":1,"conflicts":1,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R4: an invite text whose first write failed, retried after X re-minted (deleting its code): the text must not reach C's city and C's row must not adopt a
+R4 after the retry {"inW":true,"owners":[{"conversation_id":"5520374140654","wa_id":"5520374140654","user_id":"US.12168964452646116140","city_id":"city_b8d0ad1cc4deac26cbb309a9"}]} C 5520374140654 a US.12168964452646116140
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R4: an invite text whose first write failed, retried after X re-minted (deleting its code): the text must not reach C's city and C's row must not adopt a
+R4 after K2 {"k2InW":true,"k2InX":false,"owners":[{"conversation_id":"5520374140654","wa_id":"5520374140654","user_id":"US.12168964452646116140","city_id":"city_b8d0ad1cc4deac26cbb309a9"}]}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R4b: an invite text whose first write failed, retried after another phone spent its code: the text must not reach C's city and C's row must not adopt a
+R4b {"inW":true,"owners":[{"conversation_id":"5536035723004","wa_id":"5536035723004","user_id":"US.28593294873179330666","city_id":"city_2b1e48b7710ea64a28d0798d"}]}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R5: a refused invite text beside a phone-only holder (attempts used up) reaches nobody: is it counted?
+R5 {"inX":false,"inW":false,"unrouted":0,"line":[{"event":"webhook","messages":1,"statuses":0,"wrong_number":0,"ignored":0,"orphaned_statuses":0,"stale":0,"bound":0,"unrouted":0,"unrouted_conflicts":0,"welcomed":0,"canned":0}],"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R7: a stranger's late pairing (T2) cuts A's on-time span below A's T3 pairing; A's image stamped T3 + 30 min must not reach C's city while C stands
+R7 spans of P [{"conversation_id":"US.21810585871618076169","since":1800003600,"changed_at":1800007200,"routes_from":1800003600}]
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R7: a stranger's late pairing (T2) cuts A's on-time span below A's T3 pairing; A's image stamped T3 + 30 min must not reach C's city while C stands
+R7 landed {"status":200,"x":{"delivered":false,"media":404},"w":{"delivered":true,"media":200},"unrouted":0,"conflicts":0,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R7-control: the same messages in stamp order: A's image stamped T3 + 30 min is a counted conflict
+R7-control landed {"status":200,"x":{"delivered":false,"media":404},"w":{"delivered":false,"media":404},"unrouted":1,"conflicts":1,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3c: a paired span of P reaches back to the change that moved A to Q; C's image from P stamped between must not reach A's city
+R3c spans of P [{"conversation_id":"US.27954020121241621967","since":1800003600,"changed_at":253402300799,"routes_from":1800003600}] spans of Q [{"conversation_id":"US.27954020121241621967","since":1800003600,"changed_at":253402300799,"routes_from":1800003600}]
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R3c: a paired span of P reaches back to the change that moved A to Q; C's image from P stamped between must not reach A's city
+R3c landed {"status":200,"x":{"delivered":true,"media":200},"w":{"delivered":false,"media":404},"unrouted":0,"conflicts":0,"sends":0}
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R8: an invite text whose first write failed, retried after a joined with a re-minted code, must not reach C's city
+R8 {"inW":true,"inX":false,"owners":[{"conversation_id":"5530890511954","wa_id":"5530890511954","user_id":null,"city_id":"city_70811a88cb6cdb54bc026549"},{"conversation_id":"US.06838708700282590325","wa_id":null,"user_id":"US.06838708700282590325","city_id":"city_29e95d32f06f60e148ec5638"}]}
+
+ × test/review-sv2d.test.ts > review gp-sv2d > R3: a paired span opened after rule 2 stripped the owner's old number starts at the OLD number's start; C's image stamped before A ever named P must not reach A's city 18ms
+   → expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+ × test/review-sv2d.test.ts > review gp-sv2d > R3b: (C standing) C's own image stamped T2, before A named P, delivered after A's pairing at T3: the base gives it to W 17ms
+   → expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, w: { …(2) } }
+(6 matching properties omitted from actual)
+ × test/review-sv2d.test.ts > review gp-sv2d > R4: an invite text whose first write failed, retried after X re-minted (deleting its code): the text must not reach C's city and C's row must not adopt a 12ms
+   → expected true to be false // Object.is equality
+ × test/review-sv2d.test.ts > review gp-sv2d > R4b: an invite text whose first write failed, retried after another phone spent its code: the text must not reach C's city and C's row must not adopt a 12ms
+   → expected true to be false // Object.is equality
+ × test/review-sv2d.test.ts > review gp-sv2d > R5: a refused invite text beside a phone-only holder (attempts used up) reaches nobody: is it counted? 15ms
+   → expected 0 to be greater than 0
+ × test/review-sv2d.test.ts > review gp-sv2d > R7: a stranger's late pairing (T2) cuts A's on-time span below A's T3 pairing; A's image stamped T3 + 30 min must not reach C's city while C stands 14ms
+   → expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) }, …(3) }
+(1 matching property omitted from actual)
+ ✓ test/review-sv2d.test.ts > review gp-sv2d > R7-control: the same messages in stamp order: A's image stamped T3 + 30 min is a counted conflict 13ms
+ × test/review-sv2d.test.ts > review gp-sv2d > R3c: a paired span of P reaches back to the change that moved A to Q; C's image from P stamped between must not reach A's city 16ms
+   → expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R9: a typo'd code before the live one: X's live code text must not reach C's city, and C's row must not adopt a
+R9 {"typoInW":true,"liveInW":true,"liveInX":false,"codeUsedAt":null,"owners":[{"conversation_id":"5528866923433","wa_id":"5528866923433","user_id":"US.40266537143149776191","city_id":"city_d2f26bc210fd179e3c4acdc3"}]} C 5528866923433
+
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R6: A's late (P, a) text fills A's row with P from T1 after B held P [T2, T3]; an image from P stamped after T3 must not reach A's city
+R6 A's row {"wa_id":"5540224841812","wa_since":1800003600}
+
+console warning; message = Called .text() on an HTTP body which does not appear to be text. The body's Content-Type is "image/jpeg". The result will probably be corrupted. Consider checking the Content-Type header before interpreting entities as text.
+stdout | test/review-sv2d.test.ts > review gp-sv2d > R6: A's late (P, a) text fills A's row with P from T1 after B held P [T2, T3]; an image from P stamped after T3 must not reach A's city
+R6 landed {"status":200,"x":{"delivered":true,"media":200},"y":{"delivered":false,"media":404},"unrouted":0,"conflicts":0,"sends":0}
+
+ × test/review-sv2d.test.ts > review gp-sv2d > R8: an invite text whose first write failed, retried after a joined with a re-minted code, must not reach C's city 10ms
+   → expected true to be false // Object.is equality
+ × test/review-sv2d.test.ts > review gp-sv2d > R9: a typo'd code before the live one: X's live code text must not reach C's city, and C's row must not adopt a 9ms
+   → expected true to be false // Object.is equality
+ × test/review-sv2d.test.ts > review gp-sv2d > R6: A's late (P, a) text fills A's row with P from T1 after B held P [T2, T3]; an image from P stamped after T3 must not reach A's city 15ms
+   → expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 13 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R1: a late pairing of B's ends A's on-time span below A's later pairing; A's image stamped after A's last pairing must not reach B's city
+AssertionError: expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, y: { …(2) } }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "y": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:101:17
+     99|     const out = await landed(t, { x, w, y }, image);
+    100|     console.log("R1 landed", JSON.stringify(out));
+    101|     expect(out).toMatchObject({ status: 200, y: { delivered: false, me…
+       |                 ^
+    102|   });
+    103|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R2: A's late first pairing (T1, delivered after B's T2 pairing) opens a span that routes past B's evidence; B's later image must not reach A's city
+AssertionError: expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, x: { …(2) }, …(2) }
+(3 matching properties omitted from actual)
+
+- Expected
++ Received
+
+@@ -3,12 +3,12 @@
+    "w": {
+      "delivered": false,
+      "media": 404,
+    },
+    "x": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+    "y": {
+      "delivered": false,
+      "media": 404,
+    },
+
+ ❯ test/review-sv2d.test.ts:143:17
+    141|     const out = await landed(t, { x, w, y }, image);
+    142|     console.log("R2 landed", JSON.stringify(out));
+    143|     expect(out).toMatchObject({ status: 200, ...nowhere(["x", "w", "y"…
+       |                 ^
+    144|   });
+    145|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R2b: A's late first pairing outlives B's number change; an image from P stamped after B left P must not reach A's city
+AssertionError: expected { status: 200, x: { …(2) }, …(5) } to match object { status: 200, x: { …(2) } }
+(9 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "x": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:176:17
+    174|     const out = await landed(t, { x, w, y }, image);
+    175|     console.log("R2b landed", JSON.stringify(out));
+    176|     expect(out).toMatchObject({ status: 200, x: { delivered: false, me…
+       |                 ^
+    177|   });
+    178|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R3: a paired span opened after rule 2 stripped the owner's old number starts at the OLD number's start; C's image stamped before A ever named P must not reach A's city
+AssertionError: expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "x": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:210:17
+    208|     const out = await landed(t, { x, w }, image);
+    209|     console.log("R3 landed", JSON.stringify(out));
+    210|     expect(out).toMatchObject({ status: 200, x: { delivered: false, me…
+       |                 ^
+    211|   });
+    212|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R3b: (C standing) C's own image stamped T2, before A named P, delivered after A's pairing at T3: the base gives it to W
+AssertionError: expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, w: { …(2) } }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "w": {
+-     "delivered": true,
+-     "media": 200,
++     "delivered": false,
++     "media": 404,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:235:17
+    233|     const out = await landed(t, { x, w }, image);
+    234|     console.log("R3b landed", JSON.stringify(out));
+    235|     expect(out).toMatchObject({ status: 200, w: { delivered: true, med…
+       |                 ^
+    236|   });
+    237|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R4: an invite text whose first write failed, retried after X re-minted (deleting its code): the text must not reach C's city and C's row must not adopt a
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/review-sv2d.test.ts:269:28
+    267|     const second = await t.sayAs({ wa: p, user: a }, k2);
+    268|     console.log("R4 after K2", JSON.stringify({ k2InW: (await ids(t, w…
+    269|     expect(afterRetry.inW).toBe(false);
+       |                            ^
+    270|     expect(afterRetry.owners).toEqual([{ conversation_id: c.conversati…
+    271|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R4b: an invite text whose first write failed, retried after another phone spent its code: the text must not reach C's city and C's row must not adopt a
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/review-sv2d.test.ts:295:17
+    293|     const o = await owners(p, a);
+    294|     console.log("R4b", JSON.stringify({ inW, owners: o }));
+    295|     expect(inW).toBe(false);
+       |                 ^
+    296|     expect(o).toEqual([{ conversation_id: c.conversation_id, wa_id: p,…
+    297|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R5: a refused invite text beside a phone-only holder (attempts used up) reaches nobody: is it counted?
+AssertionError: expected 0 to be greater than 0
+ ❯ test/review-sv2d.test.ts:325:38
+    323|     console.log("R5", JSON.stringify(out));
+    324|     expect(out.inX || out.inW).toBe(false);
+    325|     expect(out.unrouted + out.sends).toBeGreaterThan(0);
+       |                                      ^
+    326|   });
+    327|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R7: a stranger's late pairing (T2) cuts A's on-time span below A's T3 pairing; A's image stamped T3 + 30 min must not reach C's city while C stands
+AssertionError: expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) }, …(3) }
+(1 matching property omitted from actual)
+
+- Expected
++ Received
+
+@@ -1,12 +1,12 @@
+  {
+-   "conflicts": 1,
++   "conflicts": 0,
+    "status": 200,
+-   "unrouted": 1,
++   "unrouted": 0,
+    "w": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+    "x": {
+      "delivered": false,
+      "media": 404,
+    },
+
+ ❯ test/review-sv2d.test.ts:359:17
+    357|     const out = await landed(t, { x, w }, image);
+    358|     console.log("R7 landed", JSON.stringify(out));
+    359|     expect(out).toMatchObject({ status: 200, ...nowhere(["x", "w"]), u…
+       |                 ^
+    360|   });
+    361|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R3c: a paired span of P reaches back to the change that moved A to Q; C's image from P stamped between must not reach A's city
+AssertionError: expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "x": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:417:17
+    415|     const out = await landed(t, { x, w }, image);
+    416|     console.log("R3c landed", JSON.stringify(out));
+    417|     expect(out).toMatchObject({ status: 200, x: { delivered: false, me…
+       |                 ^
+    418|   });
+    419|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R8: an invite text whose first write failed, retried after a joined with a re-minted code, must not reach C's city
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/review-sv2d.test.ts:446:21
+    444|     const out = { inW: (await ids(t, w)).includes(wamidOf(text)), inX:…
+    445|     console.log("R8", JSON.stringify(out));
+    446|     expect(out.inW).toBe(false);
+       |                     ^
+    447|   });
+    448|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R9: a typo'd code before the live one: X's live code text must not reach C's city, and C's row must not adopt a
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ test/review-sv2d.test.ts:477:25
+    475|     };
+    476|     console.log("R9", JSON.stringify(out), "C", c.conversation_id);
+    477|     expect(out.liveInW).toBe(false);
+       |                         ^
+    478|     expect(out.owners).not.toContainEqual(expect.objectContaining({ co…
+    479|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/13]⎯
+
+ FAIL  test/review-sv2d.test.ts > review gp-sv2d > R6: A's late (P, a) text fills A's row with P from T1 after B held P [T2, T3]; an image from P stamped after T3 must not reach A's city
+AssertionError: expected { status: 200, x: { …(2) }, …(4) } to match object { status: 200, x: { …(2) } }
+(6 matching properties omitted from actual)
+
+- Expected
++ Received
+
+  {
+    "status": 200,
+    "x": {
+-     "delivered": false,
+-     "media": 404,
++     "delivered": true,
++     "media": 200,
+    },
+  }
+
+ ❯ test/review-sv2d.test.ts:512:17
+    510|     const out = await landed(t, { x, y }, image);
+    511|     console.log("R6 landed", JSON.stringify(out));
+    512|     expect(out).toMatchObject({ status: 200, x: { delivered: false, me…
+       |                 ^
+    513|   });
+    514| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/13]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  13 failed | 1 passed (14)
+   Start at  09:49:28
+   Duration  609ms (transform 43ms, setup 55ms, import 33ms, tests 250ms, environment 0ms)
+

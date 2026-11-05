@@ -1,0 +1,8 @@
+# gp-sv2d typecheck (tsc --noEmit)
+# HEAD 159f53c5e8e6d8a37bffb721ebce69e867656f49
+# tree: HEAD as committed
+# 2026-11-05T15:49:03Z pnpm typecheck (cwd whatsapp/gateway) -> exit 0
+# sha256: {'src/gateway.ts': 'f52499693519', 'src/meta.ts': '861279d6cecb', 'src/window.ts': 'dfbd088efebf', 'src/index.ts': 'b7f65f18c48e', 'migrations/0003_retries.sql': 'd51ddd67d2e6', 'test/bsuid.test.ts': 'f934fa87b66c'}
+
+pnpm wrapper: verify-deps off for run typecheck (round 3)
+$ tsc -p tsconfig.json --noEmit

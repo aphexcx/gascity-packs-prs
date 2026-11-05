@@ -1,0 +1,14 @@
+# The probe run's two survivors (mutation-probe-082f5f3b.txt) against the tests of 159f53c5
+# tree: a detached worktree of 082f5f3b with test/bsuid.test.ts from 159f53c5 (src/ identical)
+
+## gp-nn90 (re-cut)
+## gp-ac0u (re-cut)
+## gp-0g2s (re-cut)
+## gp-w376 (re-cut)
+## gp-byp8 (re-cut)
+KILLED: the rule-3 doubt routes a message naming a user_id to a span :: Tests  1 failed | 214 passed (215)
+## gp-sv2d
+KILLED: an on-time pairing's span routes from its stamp, not from the change that brought the owner to the number :: Tests  1 failed | 214 passed (215)
+## equivalent (expected to survive; not counted)
+
+2/2 mutations killed
