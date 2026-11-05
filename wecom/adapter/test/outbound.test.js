@@ -3655,3 +3655,53 @@ test('text reserves checkpoint growth before any provider write', async () => {
   assert.equal(failed.json().failure_kind, 'journal_unavailable');
   assert.equal(calls.length, 0, 'the initial entry fits but a worst-case acknowledgement would not');
 });
+
+test('text expires behind media without later sending its cancelled callback', async (t) => {
+  const dir = tmpDir(t);
+  const file = writeFixture(dir, 'photo.png', pngBytes);
+  let release, started;
+  const began = new Promise((resolve) => { started = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  let textFrames = 0;
+  const { publisher } = makePublisher({ cfg: { publishAuthWaitMs: 30 },
+    sendMediaMessage: async () => { started(); await gate; return {}; },
+    sendMessage: async () => { textFrames++; return {}; } });
+  const media = { conversation: { conversation_id: 'u' }, file_path: file, media_kind: 'image' };
+  const first = publishMedia(publisher, { ...media, idempotency_key: 'media-first' });
+  await began;
+  const second = publishMedia(publisher, { ...media, idempotency_key: 'media-second' });
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'queued-text' };
+  const failed = await publishText(publisher, body);
+  assert.equal(failed.statusCode, 503);
+  assert.equal(failed.json().delivery_outcome, 'nothing-written');
+  assert.equal(textFrames, 0);
+  release();
+  await Promise.all([first, second]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(textFrames, 0, 'queue expiry must cancel the callback, not merely its response');
+  assert.equal((await publishText(publisher, body)).statusCode, 200);
+  assert.equal(textFrames, 1);
+});
+
+test('ownership wait expires without stealing the active same-key send', async (t) => {
+  let release, started;
+  const began = new Promise((resolve) => { started = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  let frames = 0;
+  const { publisher } = makePublisher({ cfg: { publishAuthWaitMs: 30 },
+    sendMessage: async () => { frames++; started(); await gate; return {}; } });
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'owned' };
+  const owner = publishText(publisher, body);
+  await began;
+  const waiter = await publishText(publisher, body);
+  assert.equal(waiter.statusCode, 503);
+  assert.equal(waiter.json().failure_kind, 'publish_pending');
+  assert.equal(waiter.json().delivery_outcome, 'in-progress');
+  assert.equal(frames, 1);
+  release();
+  assert.equal((await owner).statusCode, 200);
+  assert.equal((await publishText(publisher, body)).statusCode, 409);
+  assert.equal(frames, 1);
+});

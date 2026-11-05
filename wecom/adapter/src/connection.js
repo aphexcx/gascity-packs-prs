@@ -15,6 +15,7 @@ export function createOutboundConnection(wsClient, {
   let lastAckAt = null;
   let stopping = false;
   let cycle = null;
+  let failedProbeSocket = null;
   const idleWaiters = new Set();
   const authWaiters = new Set();
 
@@ -68,7 +69,7 @@ export function createOutboundConnection(wsClient, {
 
   function waitForAuthenticated(deadline) {
     const unavailable = () => new Error('WebSocket not connected, unable to send data');
-    if (stopping) return Promise.reject(unavailable());
+    if (stopping || now() >= deadline) return Promise.reject(unavailable());
     if (authenticated && wsClient.isConnected) return Promise.resolve();
     return new Promise((resolve, reject) => {
       const finish = (err) => {
@@ -101,7 +102,9 @@ export function createOutboundConnection(wsClient, {
         socket.off('close', failed);
         socket.off('error', failed);
         // Never cycle a replacement socket because an older probe failed.
-        resolve(healthy || stopping || wsClient.wsManager?.ws !== socket || !authenticated);
+        const obsolete = stopping || wsClient.wsManager?.ws !== socket || !authenticated;
+        if (!healthy && !obsolete) failedProbeSocket = socket;
+        resolve(healthy || obsolete);
       };
       const pong = (data) => { if (data.toString() === nonce) finish(true); };
       const failed = () => finish(false);
@@ -157,7 +160,8 @@ export function createOutboundConnection(wsClient, {
     if (!cycle) {
       // An SDK reconnect may replace the failed socket while publishes drain.
       // Remediation belongs to the probed connection, never its replacement.
-      const expectedSocket = wsClient.wsManager?.ws;
+      const expectedSocket = failedProbeSocket ?? wsClient.wsManager?.ws;
+      failedProbeSocket = null;
       cycle = whenIdle(() => cycleSocket(expectedSocket), drainTimeoutMs, true)
         .finally(() => { cycle = null; });
     }

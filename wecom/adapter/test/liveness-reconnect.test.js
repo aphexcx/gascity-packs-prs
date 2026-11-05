@@ -715,3 +715,23 @@ test('queued publishes share the authentication deadline measured from arrival',
   }
   assert.equal(sends(server).length, 0);
 });
+
+test('a replacement between failed probe and reconnect admission is left healthy', async () => {
+  const client = new EventEmitter();
+  const oldSocket = new EventEmitter();
+  oldSocket.ping = (_, callback) => callback();
+  client.wsManager = { ws: oldSocket };
+  client.isConnected = true;
+  let closes = 0;
+  client.disconnect = () => { closes++; client.emit('disconnected'); };
+  client.connect = () => {};
+  const connection = createOutboundConnection(client);
+  client.emit('authenticated');
+  const probe = connection.healthCheck();
+  oldSocket.emit('error', new Error('probe failed'));
+  client.wsManager.ws = {};
+  client.emit('authenticated');
+  assert.equal(await probe, false);
+  await connection.reconnect();
+  assert.equal(closes, 0);
+});

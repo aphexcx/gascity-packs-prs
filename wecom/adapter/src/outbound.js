@@ -883,6 +883,18 @@ async function readMediaFile({ fd, filePath, mediaKind, maxBytes }) {
 // Thrown when the upload gate is saturated; answered as HTTP 429 — the
 // caller retries with the SAME idempotency key once load drains.
 class BusyError extends Error {}
+class PublishWaitTimeout extends Error {
+  constructor() { super('publish admission deadline expired before sending'); }
+}
+
+function waitForPublishOwner(promise, deadline) {
+  if (deadline === undefined) return promise;
+  if (Date.now() >= deadline) return Promise.reject(new PublishWaitTimeout());
+  let timer;
+  return Promise.race([promise, new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new PublishWaitTimeout()), deadline - Date.now());
+  })]).finally(() => clearTimeout(timer));
+}
 
 // createUploadGate bounds outbound media admission globally (codex
 // jg-d0xr finding 9): at most `slots` requests hold a media buffer
@@ -1077,18 +1089,28 @@ export function createOutboundPublisher(deps) {
   // send per chatid; different chats stay concurrent.
   const sendChains = new Map();
 
-  function chainSend(chatid, fn) {
+  function chainSend(chatid, fn, deadline) {
     const prev = sendChains.get(chatid) ?? Promise.resolve();
-    const next = prev.catch(() => {}).then(fn);
+    let expired = false;
+    let timer;
+    const next = prev.catch(() => {}).then(() => {
+      clearTimeout(timer);
+      if (expired || (deadline !== undefined && Date.now() >= deadline)) throw new PublishWaitTimeout();
+      return fn();
+    });
+    // Keep the actual queue tail even when its caller times out. The
+    // cancelled callback stays inert, and later sends cannot jump the queue.
     sendChains.set(chatid, next);
-    // The cleanup must hang off a rejection-proofed derivative: `next` can
-    // reject (the caller handles that), and `.finally()` on a rejecting
-    // promise yields ANOTHER rejecting promise — left bare, that derived
-    // rejection is unhandled and kills the process on the first failed send.
     next.catch(() => {}).then(() => {
       if (sendChains.get(chatid) === next) sendChains.delete(chatid);
     });
-    return next;
+    if (deadline === undefined) return next;
+    return Promise.race([next, new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        expired = true;
+        reject(new PublishWaitTimeout());
+      }, Math.max(0, deadline - Date.now()));
+    })]).finally(() => clearTimeout(timer));
   }
 
   // countByEndpoint tallies the live in-memory pool for one endpoint.
@@ -1253,13 +1275,13 @@ export function createOutboundPublisher(deps) {
   // them). A captured state that settled WITH a receipt is still safe to
   // answer from directly even if it was evicted meanwhile — it is the
   // same dedup answer the map would have given.
-  async function claimPublishState(key, endpoint = 'publish') {
+  async function claimPublishState(key, endpoint = 'publish', deadline) {
     for (;;) {
       const state = publishStateFor(key, endpoint);
       if (!state) return { refused: true };
       if (state.receipt) return { receipt: state.receipt, state };
       if (!state.promise) return { state, token: installOwner(state) };
-      await state.promise.catch(() => {});
+      await waitForPublishOwner(state.promise.catch(() => {}), deadline);
       if (state.receipt) return { receipt: state.receipt, state };
       // Otherwise: refetch — never resume a possibly-retired reference.
     }
@@ -1396,7 +1418,18 @@ export function createOutboundPublisher(deps) {
     }
 
     const textFingerprint = { endpoint: 'publish', payload_sha256: sha256Hex(JSON.stringify([chatid, pub.text])) };
-    const claim = await claimPublishState(pub.idempotency_key, 'publish');
+    let claim;
+    try { claim = await claimPublishState(pub.idempotency_key, 'publish', authDeadline); }
+    catch (err) {
+      if (!(err instanceof PublishWaitTimeout)) throw err;
+      // Another request still owns this key; do not cancel or steal it.
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ conversation: convo, delivered: false,
+        failure_kind: 'publish_pending', delivery_outcome: 'in-progress', retry_safe: true,
+        idempotency_key: pub.idempotency_key,
+        error: 'another request still owns this key; retry with the same key to observe or resume it' }));
+      return;
+    }
     if (claim.refused) {
       // The idempotency map is at cap with nothing safely evictable:
       // refusing the NEW key beats evicting a live/pinned entry whose
@@ -1574,8 +1607,9 @@ export function createOutboundPublisher(deps) {
       }
     };
     try {
-      await chainSend(chatid, send);
+      await chainSend(chatid, send, authDeadline);
     } catch (err) {
+      if (err instanceof PublishWaitTimeout) sendFailure = 'not_written';
       token.finish(err);
       const chunk = state.chunksDelivered + 1;
       const delivered = state.chunksDelivered;

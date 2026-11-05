@@ -243,8 +243,10 @@ the SDK/socket stops awaits any messages received during the drain. A
 1900 ms hard exit keeps shutdown within the supervisor's 2-second budget.
 
 Before writing, `/publish` waits up to `WECOM_PUBLISH_AUTH_WAIT_MS`
-(default 45000, measured from request arrival) for authentication during reconnect. An expired wait returns
-`503 not_sent` without writing a frame.
+(default 45000, measured from request arrival) for authentication during reconnect. An expired queue/authentication wait returns `503 not_sent` without writing
+a frame; its queued callback is cancelled. A duplicate request that times out
+waiting for the same-key owner returns `503 publish_pending` with
+`delivery_outcome: in-progress`; that owner continues to hold the key.
 
 Keyed text publishes journal every chunk acknowledgement before advancing.
 After a timeout or drop, `503 retryable` includes the acknowledged count and
