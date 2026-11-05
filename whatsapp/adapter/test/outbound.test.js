@@ -200,6 +200,43 @@ test('chunking at 4096 prefers a newline past the midpoint', () => {
   assert.deepEqual(chunkText('z'.repeat(4096)), ['z'.repeat(4096)]);
 });
 
+// The gateway key's spec (the Opus read r2's MAJOR 1, round 3): every operand
+// of the message the progress store checks moves the key; nothing else does.
+test('a gateway key names the caller key, the recipient and the WHOLE message: each operand moves it, the same message keeps it', () => {
+  const long = `${'a'.repeat(4096)}FIRST TAIL`;
+  const text = (key, to, t, i) => textChunkKey(key, to, t, i);
+  const tpl = (params, { name = 'dynasty_update', language = 'en_US' } = {}) => ({ name, language, params });
+  const base = text('K', PHONE, long, 0);
+  const moves = [
+    ['another caller key', text('K2', PHONE, long, 0)],
+    ['another recipient', text('K', OTHER, long, 0)],
+    ['another text sharing chunk 0', text('K', PHONE, `${'a'.repeat(4096)}SECOND TAIL`, 0)],
+    ['another chunk index', text('K', PHONE, long, 1)],
+  ];
+  for (const [why, other] of moves) assert.notEqual(other, base, why);
+  assert.notEqual(text('K,1', '5', long, 0), text('K', '1,5', long, 0), 'the hash input is a JSON array, never a join two inputs could collide on');
+  assert.equal(text('K', PHONE, long, 0), base, 'the same caller key, recipient and text: the same key (the REPEATED KEY rule)');
+
+  const update = templateKey('U', PHONE, tpl(['the update']));
+  const templateMoves = [
+    ['another caller key', templateKey('U2', PHONE, tpl(['the update']))],
+    ['another recipient', templateKey('U', OTHER, tpl(['the update']))],
+    ['another parameter', templateKey('U', PHONE, tpl(['another update']))],
+    ['another template name', templateKey('U', PHONE, tpl(['the update'], { name: 'dynasty_other' }))],
+    ['another language', templateKey('U', PHONE, tpl(['the update'], { language: 'pt_BR' }))],
+  ];
+  for (const [why, other] of templateMoves) assert.notEqual(other, update, why);
+  assert.equal(templateKey('U', PHONE, tpl(['the update'])), update);
+  assert.notEqual(templateKey('U', PHONE, tpl(['the update'])), text('U', PHONE, 'the update', 0), 'a template and a text never share a key');
+
+  const longest = 'k'.repeat(1000);
+  for (const key of [text(longest, PHONE, long, 9999), templateKey(longest, PHONE, tpl([long]))]) {
+    assert.ok(key.length >= 1 && key.length <= 200, `${key.length} characters: inside the gateway's 1-200 bound whatever the caller key`);
+  }
+  assert.equal(templateKey('U', PHONE, tpl(['x'])).length, 73);
+  assert.equal(text('K', PHONE, 'x', 0).length, 71);
+});
+
 // --- /publish --------------------------------------------------------------
 
 test('the same idempotency key yields one gateway send and the same receipt', async (t) => {
@@ -210,8 +247,8 @@ test('the same idempotency key yields one gateway send and the same receipt', as
   assert.equal(first.json.delivered, true);
   assert.equal(first.json.message_id, 'wamid.fake1');
   assert.deepEqual(first.json.conversation, conversationRef(CITY, PHONE));
-  assert.equal(sendsFor(s.gw, textChunkKey('gc-k1', 0, 'hello owner')).length, 1, 'chunk 0 goes out under text:<sha256 of [key, chunk]>:0');
-  assert.match(textChunkKey('gc-k1', 0, 'hello owner'), /^text:[0-9a-f]{64}:0$/);
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-k1', PHONE, 'hello owner', 0)).length, 1, 'chunk 0 goes out under text:<sha256 of [key, to, text]>:0');
+  assert.match(textChunkKey('gc-k1', PHONE, 'hello owner', 0), /^text:[0-9a-f]{64}:0$/);
 
   const again = await s.pub.handlePublish(publishBody('hello owner', { key: 'gc-k1' }));
   assert.deepEqual(again, first);
@@ -258,10 +295,9 @@ test('a mid-chunk failure resumes at the failed chunk', async (t) => {
   const { pub } = s.make();
   const resumed = await pub.handlePublish(publishBody(text, { key: 'gc-mid' }));
   assert.equal(resumed.json.delivered, true);
-  const parts = chunkText(text);
-  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 0, parts[0])).length, 1, 'the delivered chunk is never repeated');
-  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 1, parts[1])).length, 2, 'the failed chunk is retried once under the same key');
-  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', 2, parts[2])).length, 1);
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', PHONE, text, 0)).length, 1, 'the delivered chunk is never repeated');
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', PHONE, text, 1)).length, 2, 'the failed chunk is retried once under the same key');
+  assert.equal(sendsFor(s.gw, textChunkKey('gc-mid', PHONE, text, 2)).length, 1);
   assert.deepEqual(s.gw.metaCalls.map((c) => c.text[0]), ['a', 'b', 'c']);
   assert.equal(resumed.json.message_id, s.gw.metaCalls[2].message_id);
   assert.equal(resumed.json.metadata.message_ids, s.gw.metaCalls.map((c) => c.message_id).join(','));
@@ -330,8 +366,8 @@ test('sends to one wa_id are serialized: a second publish waits for every chunk 
   ]);
   const forPhone = s.gw.requests.filter((r) => r.to === PHONE).map((r) => r.idempotency_key);
   const longParts = chunkText(long);
-  assert.deepEqual(forPhone, [...longParts.map((part, i) => textChunkKey('gc-A', i, part)), textChunkKey('gc-B', 0, 'B')]);
-  const cAt = s.gw.requests.findIndex((r) => r.idempotency_key === textChunkKey('gc-C', 0, 'C'));
+  assert.deepEqual(forPhone, [...longParts.map((_, i) => textChunkKey('gc-A', PHONE, long, i)), textChunkKey('gc-B', PHONE, 'B', 0)]);
+  const cAt = s.gw.requests.findIndex((r) => r.idempotency_key === textChunkKey('gc-C', OTHER, 'C', 0));
   assert.ok(cAt < 3, 'another phone does not wait behind the first');
 });
 
@@ -401,9 +437,9 @@ test('/publish-update journaled to updates.jsonl when sent', async (t) => {
   const call = s.gw.metaCalls[0];
   assert.equal(call.type, 'template');
   assert.equal(call.to, PHONE);
-  assert.equal(call.idempotency_key, templateKey('upd-1', 'Sales up 4% today. Reply OK to confirm.'), 'the update goes out under template:<sha256 of [key, text]>');
-  assert.match(call.idempotency_key, /^template:[0-9a-f]{64}$/);
   assert.deepEqual(call.template, { name: 'dynasty_update', language: 'en_US', params: ['Sales up 4% today. Reply OK to confirm.'] });
+  assert.equal(call.idempotency_key, templateKey('upd-1', PHONE, call.template), 'the update goes out under template:<sha256 of [key, to, name, language, params]>');
+  assert.match(call.idempotency_key, /^template:[0-9a-f]{64}$/);
 
   const file = path.join(s.stateDir, 'updates.jsonl');
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);

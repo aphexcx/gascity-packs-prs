@@ -20,7 +20,7 @@ import { conversationRef, createGcClient } from '../src/gc.js';
 import { createInbound } from '../src/inbound.js';
 import { JOURNAL_FILE, ackOwed, entryState, openJournal } from '../src/journal.js';
 import { createLedger } from '../src/ledger.js';
-import { createPublisher } from '../src/outbound.js';
+import { PROGRESS_FILE, createPublisher } from '../src/outbound.js';
 import {
   CITY, CREDENTIAL, createTestClock, deadLetterLines, rid, sleep, startFakeGateway, startFakeGc, stays, tempDir, waitFor,
 } from './fakes.js';
@@ -384,12 +384,26 @@ async function publisherWorld(t) {
       clock: clock.now,
     });
     return {
-      publish: (text, key) => pub.handlePublish(JSON.stringify({ session_id: 's-mayor', conversation: conversationRef(CITY, A), text, idempotency_key: key })),
-      update: (text, key) => pub.handlePublishUpdate(JSON.stringify({ to: A, text, idempotency_key: key })),
+      publish: (text, key, to = A) => pub.handlePublish(JSON.stringify({ session_id: 's-mayor', conversation: conversationRef(CITY, to), text, idempotency_key: key })),
+      update: (text, key, to = A) => pub.handlePublishUpdate(JSON.stringify({ to, text, idempotency_key: key })),
     };
   };
   const sendKeys = () => gw.requests.filter((q) => q.route === 'POST /v1/send').map((q) => q.body.idempotency_key);
-  return { clock, gw, publisher, ...publisher(), sendKeys };
+  const progressKeys = (state = 'state') => Object.keys(JSON.parse(fs.readFileSync(path.join(dir, state, PROGRESS_FILE), 'utf8')).entries);
+  return { clock, gw, publisher, ...publisher(), sendKeys, progressKeys };
+}
+
+// The progress store's own eviction by age (outbound.js createProgressStore:
+// a key older than its 7-day TTL is dropped at the store's next write). The
+// clock moves past the TTL, one unrelated update is that next write. The
+// gateway keeps a key's answer 30 days (gateway.ts:56 at 392f9c09), so it
+// still remembers every key the store just forgot.
+const PROGRESS_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+async function forgetByAge(s, keys) {
+  s.clock.advance(PROGRESS_TTL_MS + 60000);
+  const next = await s.update('an unrelated update, the store\'s next write', `next-write-${s.clock.now()}`);
+  assert.equal(next.json.delivered, true);
+  for (const key of keys) assert.ok(!s.progressKeys().includes(key), `the progress store forgot ${key}`);
 }
 
 test('gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template\'s receipt', async (t) => {
@@ -441,6 +455,65 @@ test('self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER
   const again = await s.publisher('state-after-another-eviction').publish('another message', 'K');
   assert.equal(again.json.message_id, second.json.message_id, 'the gateway\'s REPEATED KEY rule: the first answer, no second send');
   assert.equal(s.gw.sends.filter((x) => x.type === 'text').length, 2);
+});
+
+// --- the Opus read r2's MAJOR 1 (outbound.js:116-117; round 3, gp-szj9) ---------
+// The store refuses a caller key reused for "another phone, text or verb"
+// (409) only while it remembers the key; the gateway answers a repeated key
+// per city, whoever the recipient, for 30 days. So a gateway key must name
+// the recipient and the WHOLE message, or the store's refusal turns into a
+// silent "delivered" the day it forgets.
+
+const sentTexts = (s, to) => s.gw.sends.filter((x) => x.type === 'text' && (to === undefined || x.to === to));
+const sentTemplates = (s, param) => s.gw.sends.filter((x) => x.type === 'template' && x.template.params[0] === param);
+
+test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot, reused for the SAME text or update to ANOTHER owner inside the gateway\'s 30 days, is SENT to that owner under its own message id, never answered with the first owner\'s', async (t) => {
+  const s = await publisherWorld(t);
+  s.gw.bound.add(B);
+  s.gw.lastInbound.set(A, s.clock.now());
+  const textA = await s.publish('the same words', 'K', A);
+  const updateA = await s.update('the same update', 'U', A);
+  assert.equal(textA.json.delivered, true);
+  assert.equal(updateA.json.delivered, true);
+  // While the store remembers K and U, the reuse for B is refused, never sent.
+  assert.equal((await s.publish('the same words', 'K', B)).status, 409);
+  assert.equal((await s.update('the same update', 'U', B)).status, 409);
+  await forgetByAge(s, ['K', 'U']);
+  s.gw.lastInbound.set(B, s.clock.now()); // B writes: B's window is open
+  const textB = await s.publish('the same words', 'K', B);
+  const updateB = await s.update('the same update', 'U', B);
+  assert.deepEqual(
+    {
+      text: sentTexts(s).filter((x) => x.text === 'the same words').map((x) => x.to),
+      update: sentTemplates(s, 'the same update').map((x) => x.to),
+    },
+    { text: [A, B], update: [A, B] },
+    `each owner's copy reached Meta (gateway keys ${JSON.stringify(s.sendKeys())})`,
+  );
+  assert.equal(textB.json.delivered, true);
+  assert.notEqual(textB.json.message_id, textA.json.message_id, 'B\'s text has its own message id, never A\'s');
+  assert.equal(updateB.json.delivered, true);
+  assert.notEqual(updateB.json.message_id, updateA.json.message_id, 'B\'s update has its own message id, never A\'s');
+});
+
+test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot, reused for ANOTHER long text whose first 4,096-character chunk equals the earlier text\'s, sends the WHOLE text, every chunk under its own message id', async (t) => {
+  const s = await publisherWorld(t);
+  const head = 'a'.repeat(4096);
+  const show = (x) => (x.text === head ? `<${head.length} x a>` : x.text);
+  s.gw.lastInbound.set(A, s.clock.now());
+  const first = await s.publish(`${head}FIRST TAIL`, 'K');
+  assert.equal(first.json.metadata.chunks, '2');
+  await forgetByAge(s, ['K']);
+  s.gw.lastInbound.set(A, s.clock.now()); // the owner writes again
+  const second = await s.publish(`${head}SECOND TAIL`, 'K');
+  assert.equal(second.json.delivered, true);
+  assert.equal(second.json.metadata.chunks, '2');
+  assert.deepEqual(sentTexts(s, A).map(show), [`<${head.length} x a>`, 'FIRST TAIL', `<${head.length} x a>`, 'SECOND TAIL'],
+    `both texts reached Meta whole (gateway keys ${JSON.stringify(s.sendKeys())})`);
+  const firstIds = first.json.metadata.message_ids.split(',');
+  for (const id of second.json.metadata.message_ids.split(',')) {
+    assert.ok(!firstIds.includes(id), `the second text's chunk ${id} is its own message, never one of the first text's ${firstIds}`);
+  }
 });
 
 // --- MINOR (inbound.js:197) ------------------------------------------------------
