@@ -516,6 +516,88 @@ test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot,
   }
 });
 
+// --- gp-szj9 ADDENDUM 1: PR 76's 409 ambiguous_recipient (gp-0g2s; the mayor's rule R1) ---
+// A send whose `to` names two owners of the city (one's conversation_id, kept
+// from a phone number it no longer holds, and another's current wa_id: a
+// recycled number) is answered 409 {error: ambiguous_recipient}: nothing sent,
+// no key spent. The box resends, once, to the owner's current id, the user_id
+// of the owner's entry in GET /v1/window (whatsapp/gateway/README.md rule 7 at
+// ba82ab46). A second 409 is gateway_refused, as every 409 was before.
+
+const A_USER = 'US.ownerA1';
+const sendTos = (s) => s.gw.requests.filter((q) => q.route === 'POST /v1/send').map((q) => q.body.to);
+const windowReads = (s) => s.gw.requests.filter((q) => q.route === 'GET /v1/window').length;
+
+test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a text to a number naming two owners is resent once to the owner\'s user_id from GET /v1/window; every chunk reaches that owner, delivered under the resend\'s ids', async (t) => {
+  const s = await publisherWorld(t);
+  s.gw.userIds.set(A, A_USER);
+  s.gw.ambiguous.add(A);
+  s.gw.lastInbound.set(A, s.clock.now());
+  const reply = await s.publish(`${'a'.repeat(4096)}the tail`, 'K');
+  assert.deepEqual(
+    { delivered: reply.json.delivered, tos: sendTos(s), windowReads: windowReads(s) },
+    { delivered: true, tos: [A, A_USER, A_USER], windowReads: 1 },
+    `chunk 0 refused at the number and resent to the user_id, chunk 1 straight to it, one window read (${JSON.stringify(reply.json)})`,
+  );
+  assert.deepEqual(s.gw.sends.map((x) => x.to), [A_USER, A_USER], 'both chunks reached Meta addressed to the owner\'s current id');
+  assert.deepEqual(reply.json.metadata.message_ids.split(','), s.gw.sends.map((_, i) => `wamid.out.${i + 1}`));
+  const keys = s.sendKeys();
+  assert.equal(keys[1], keys[0], 'the resend is the same message under the same gateway key (the 409 spent none)');
+});
+
+test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): an update to a number naming two owners is resent once to the owner\'s user_id; the template reaches that owner', async (t) => {
+  const s = await publisherWorld(t);
+  s.gw.userIds.set(A, A_USER);
+  s.gw.ambiguous.add(A);
+  const update = await s.update('Weekly numbers are in.', 'U');
+  assert.deepEqual(
+    { delivered: update.json.delivered, tos: sendTos(s), windowReads: windowReads(s) },
+    { delivered: true, tos: [A, A_USER], windowReads: 1 },
+    `refused at the number, resent to the user_id (${JSON.stringify(update.json)})`,
+  );
+  assert.deepEqual(s.gw.sends.map((x) => [x.type, x.to]), [['template', A_USER]]);
+  assert.equal(update.json.message_id, 'wamid.out.1');
+});
+
+test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a 409 again after the resend, or no user_id on the owner\'s window entry, is gateway_refused as before; never a second resend, nothing sent', async (t) => {
+  const s = await publisherWorld(t);
+  s.gw.lastInbound.set(A, s.clock.now());
+  s.gw.ambiguous.add(A);
+  const refused = (answer) => ({
+    delivered: answer.json.delivered, kind: answer.json.failure_kind, reason: answer.json.metadata?.reason, status: answer.json.metadata?.gateway_status,
+  });
+  const want = { delivered: false, kind: 'permanent', reason: 'gateway_refused', status: '409' };
+
+  const noUser = await s.publish('no current id known', 'K1'); // the window entry has no user_id
+  assert.deepEqual({ ...refused(noUser), tos: sendTos(s), windowReads: windowReads(s) }, { ...want, tos: [A], windowReads: 1 },
+    'the window was read; no user_id to resend to, so the 409 stands');
+
+  s.gw.userIds.set(A, A_USER);
+  s.gw.ambiguous.add(A_USER); // the resend is refused too
+  const twice = await s.publish('refused twice', 'K2');
+  assert.deepEqual({ ...refused(twice), tos: sendTos(s).slice(1), windowReads: windowReads(s) }, { ...want, tos: [A, A_USER], windowReads: 2 },
+    'one resend, then the second 409 is gateway_refused');
+
+  const update = await s.update('refused twice too', 'U');
+  assert.deepEqual({ ...refused(update), tos: sendTos(s).slice(3) }, { ...want, tos: [A, A_USER] });
+  assert.equal(s.gw.sends.length, 0, 'nothing reached Meta');
+});
+
+test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a failed window read is transient; the retry under the same key reads it again and delivers to the user_id', async (t) => {
+  const s = await publisherWorld(t);
+  s.gw.userIds.set(A, A_USER);
+  s.gw.ambiguous.add(A);
+  s.gw.lastInbound.set(A, s.clock.now());
+  s.gw.windowFailures = 1;
+  const first = await s.publish('after the window read heals', 'K');
+  assert.deepEqual({ delivered: first.json.delivered, kind: first.json.failure_kind, windowReads: windowReads(s) },
+    { delivered: false, kind: 'transient', windowReads: 1 }, `the window read failed: retry later (${JSON.stringify(first.json)})`);
+  assert.equal(s.gw.sends.length, 0);
+  const retry = await s.publish('after the window read heals', 'K');
+  assert.equal(retry.json.delivered, true);
+  assert.deepEqual(s.gw.sends.map((x) => x.to), [A_USER]);
+});
+
 // --- MINOR (inbound.js:197) ------------------------------------------------------
 
 test('gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals', async (t) => {

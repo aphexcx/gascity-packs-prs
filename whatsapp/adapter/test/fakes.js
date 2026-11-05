@@ -105,12 +105,19 @@ export async function startFakeGateway({ clock } = {}) {
     sendAnswers: new Map(), // idempotency_key -> answer
     sendFailOn: new Set(), // idempotency keys that answer 500 once
     bound: new Set(),
+    // PR 76's additions (gp-ac0u, gp-0g2s at ba82ab46): an owner's user_id
+    // on its GET /v1/window entry, which a send's `to` may name; and the
+    // numbers that name two owners of the city (a recycled number), a send
+    // to which answers 409 ambiguous_recipient, sends nothing and spends no key.
+    userIds: new Map(), // wa_id -> the owner's user_id
+    ambiguous: new Set(), // `to` values naming two owners
     lastInbound: new Map(), // wa_id -> ms
     invites: [],
     enrollCodes: new Set(['enroll-ok']),
     media: new Map(),
     reads: [],
     windowCalls: 0,
+    windowFailures: 0, // window reads that answer 503 before one succeeds
     requests: [],
     hung: [],
     inboxDelayMs: 0, // a page computed now, answered later (the poll/ack race)
@@ -133,13 +140,17 @@ export async function startFakeGateway({ clock } = {}) {
   g.held = (id) => g.deliveries.has(id) && !g.acked.has(id);
   g.windowFor = (waId) => {
     const last = g.lastInbound.get(String(waId));
-    if (!last) return { conversation_id: String(waId), last_inbound_at: null, window_closes_at: null };
+    const userId = g.userIds.get(String(waId));
+    const ids = { conversation_id: String(waId), ...(userId ? { user_id: userId } : {}) };
+    if (!last) return { ...ids, last_inbound_at: null, window_closes_at: null };
     return {
-      conversation_id: String(waId),
+      ...ids,
       last_inbound_at: Math.floor(last / 1000),
       window_closes_at: Math.floor(last / 1000) + 86400 - 120,
     };
   };
+  // The bound owner a send's `to` names: its wa_id, or its user_id.
+  g.ownerOf = (to) => (g.bound.has(to) ? to : [...g.userIds].find(([waId, userId]) => userId === to && g.bound.has(waId))?.[0]);
   g.windowOpen = (waId) => {
     const last = g.lastInbound.get(String(waId));
     return Boolean(last) && now() < last + DAY_MS - MARGIN_MS;
@@ -184,11 +195,14 @@ export async function startFakeGateway({ clock } = {}) {
       return send(res, 200, { ok: true });
     }
     if (route === 'POST /v1/send') {
-      const { to, idempotency_key: key, type } = body;
-      if (!g.bound.has(String(to))) return send(res, 403, { error: 'not_bound' });
+      const { idempotency_key: key, type } = body;
+      const to = String(body.to);
+      const owner = g.ownerOf(to);
+      if (!owner) return send(res, 403, { error: 'not_bound' });
       if (g.sendAnswers.has(key)) return send(res, 200, g.sendAnswers.get(key));
+      if (g.ambiguous.has(to)) return send(res, 409, { error: 'ambiguous_recipient', hint: 'send to the owner\'s current id' });
       if (g.sendFailOn.has(key)) { g.sendFailOn.delete(key); return send(res, 500, { error: 'graph failed' }); }
-      if (type !== 'template' && !g.windowOpen(to)) return send(res, 422, { error: 'window_closed' });
+      if (type !== 'template' && !g.windowOpen(owner)) return send(res, 422, { error: 'window_closed' });
       const answer = { message_id: `wamid.out.${g.sends.length + 1}` };
       g.sends.push({ ...body, at: now() });
       g.sendAnswers.set(key, answer);
@@ -197,6 +211,7 @@ export async function startFakeGateway({ clock } = {}) {
     if (route === 'POST /v1/read') { g.reads.push(body.message_id); return send(res, 200, { ok: true }); }
     if (route === 'GET /v1/window') {
       g.windowCalls += 1;
+      if (g.windowFailures > 0) { g.windowFailures -= 1; return send(res, 503, { error: 'unavailable' }); }
       return send(res, 200, { windows: [...g.bound].map((waId) => g.windowFor(waId)) });
     }
     const media = url.pathname.match(/^\/v1\/media\/(.+)$/);
