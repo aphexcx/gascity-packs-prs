@@ -67,8 +67,8 @@ export function createOutboundConnection(wsClient, {
     });
   }
 
+  const unavailable = () => new Error('WebSocket not connected, unable to send data');
   function waitForAuthenticated(deadline) {
-    const unavailable = () => new Error('WebSocket not connected, unable to send data');
     if (stopping || now() >= deadline) return Promise.reject(unavailable());
     if (authenticated && wsClient.isConnected) return Promise.resolve();
     return new Promise((resolve, reject) => {
@@ -78,7 +78,7 @@ export function createOutboundConnection(wsClient, {
         if (err) reject(err); else resolve();
       };
       const wake = () => {
-        if (stopping) finish(unavailable());
+        if (stopping || now() >= deadline) finish(unavailable());
         else if (authenticated && wsClient.isConnected) finish();
       };
       const timer = setTimeout(() => finish(unavailable()), Math.max(0, deadline - now()));
@@ -119,6 +119,9 @@ export function createOutboundConnection(wsClient, {
   function sendMessage(chatid, body, { authDeadline = now() + authWaitMs } = {}) {
     return waitForAuthenticated(authDeadline).then(() => trackActivity(async () => {
       try {
+        // Authentication may have arrived after an overdue timer, or a
+        // microtask may have delayed us beyond admission after it resolved.
+        if (stopping || now() >= authDeadline || !authenticated || !wsClient.isConnected) throw unavailable();
         // Keep the SDK's wire format and request-id generation unchanged.
         // The publisher decides whether a keyed retry can resume.
         const ack = await wsClient.sendMessage(chatid, body);

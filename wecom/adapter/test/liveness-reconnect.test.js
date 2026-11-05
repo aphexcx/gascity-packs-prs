@@ -735,3 +735,22 @@ test('a replacement between failed probe and reconnect admission is left healthy
   await connection.reconnect();
   assert.equal(closes, 0);
 });
+
+for (const initiallyReady of [false, true]) {
+  test(`expired auth admission never sends (${initiallyReady ? 'ready promise delayed' : 'late authenticated event'})`, async () => {
+    let clock = 0;
+    const client = new EventEmitter();
+    client.isConnected = initiallyReady;
+    let frames = 0;
+    client.sendMessage = async () => { frames++; return {}; };
+    const connection = createOutboundConnection(client, { now: () => clock, authWaitMs: 1000 });
+    if (initiallyReady) client.emit('authenticated');
+    const sending = connection.sendMessage('u', { msgtype: 'markdown', markdown: { content: 'hello' } });
+    // Advance wall time without running timers: a late event or microtask
+    // must not win merely because the scheduled deadline callback is overdue.
+    clock = 1001;
+    if (!initiallyReady) { client.isConnected = true; client.emit('authenticated'); }
+    await assert.rejects(sending, /WebSocket not connected/);
+    assert.equal(frames, 0);
+  });
+}
