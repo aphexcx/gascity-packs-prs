@@ -253,6 +253,11 @@ chunk, including after restart. This is **at-least-once delivery** for the
 unacknowledged suffix: a provider acknowledgement lost in transit can cause
 that chunk to repeat. Acknowledged checkpoints are never replayed. The
 SDK request IDs are unchanged and are not provider-side deduplication keys.
+Successful responses include `delivery_outcome: acked-and-done` or
+`retried-unacked-chunks`; a refused completed-key retry reports `acked-and-done`.
+A pre-write refusal reports `nothing-written` with the failing chunk index
+and earlier acknowledged count. Missing acks report `unacknowledged-chunks`,
+and journal failures report `checkpoint-unavailable`.
 A fully acknowledged key returns `409 already_delivered`; different text or
 conversation under the same key returns `409 idempotency_conflict`.
 

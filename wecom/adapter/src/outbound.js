@@ -1024,6 +1024,8 @@ export function createOutboundPublisher(deps) {
       messageID: e.messageID,
       textCheckpoint: e.textCheckpoint,
       chunksTotal: e.chunksTotal,
+      chunksAttempted: e.chunksAttempted,
+      retriedUnackedChunks: !!e.retriedUnackedChunks,
       captionMessageID: e.captionMessageID,
       chunksDelivered: e.chunksDelivered ?? 0,
       receipt: e.receipt,
@@ -1442,7 +1444,7 @@ export function createOutboundPublisher(deps) {
       }
       const textDone = claim.state?.endpoint === 'publish';
       res.writeHead(textDone ? 409 : 200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ...claim.receipt, ...(textDone ? { failure_kind: 'already_delivered' } : {}) }));
+      res.end(JSON.stringify({ ...claim.receipt, ...(textDone ? { failure_kind: 'already_delivered', delivery_outcome: 'acked-and-done' } : {}) }));
       return;
     }
     const { state, token } = claim;
@@ -1501,7 +1503,7 @@ export function createOutboundPublisher(deps) {
         endpoint: 'publish', textCheckpoint: true, fingerprint: textFingerprint,
         chunksTotal: state.chunksTotal, chunksAttempted: state.chunksAttempted ?? 0,
         chunksDelivered: state.chunksDelivered, messageID: state.messageID,
-        deliveryUnknown: false,
+        deliveryUnknown: false, retriedUnackedChunks: !!state.retriedUnackedChunks,
       }, { ifRoom: true });
       if (!saved) throw new JournalUnavailableError('text checkpoint journal is full — retry with the same key after capacity is available');
       state.textCheckpoint = true;
@@ -1516,7 +1518,7 @@ export function createOutboundPublisher(deps) {
       }
       token.finish();
       res.writeHead(409, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ conversation: convo, delivered: true, failure_kind: 'already_delivered',
+      res.end(JSON.stringify({ conversation: convo, delivered: true, failure_kind: 'already_delivered', delivery_outcome: 'acked-and-done',
         message_id: state.messageID ?? '', chunks_delivered: state.chunksDelivered }));
       return;
     }
@@ -1526,9 +1528,13 @@ export function createOutboundPublisher(deps) {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
       state.chunksTotal = chunks.length;
+      if (state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered) {
+        state.retriedUnackedChunks = true;
+      }
       journalTextState();
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
         state.chunksAttempted = i + 1;
+        journalTextState();
         let chunkReceipt;
         try {
           chunkReceipt = await sendMessage(chatid, {
@@ -1543,6 +1549,7 @@ export function createOutboundPublisher(deps) {
             // Nothing from this chunk is in the chat: keep the key retryable.
             sendFailure = typeof err?.errcode === 'number' ? 'rejected' : 'not_written';
             state.chunksAttempted = state.chunksDelivered;
+            journalTextState();
           } else {
             sendFailure = key && state.textCheckpoint ? 'retryable' : 'unknown';
             if (sendFailure === 'unknown') state.deliveryUnknown = true;
@@ -1591,6 +1598,7 @@ export function createOutboundPublisher(deps) {
         res.end(JSON.stringify({ conversation: convo, delivered: false,
           failure_kind: err instanceof JournalUnavailableError ? 'journal_unavailable' : 'retryable',
           retry_safe: true,
+          delivery_outcome: sendFailure === 'retryable' ? 'unacknowledged-chunks' : 'checkpoint-unavailable',
           error: err instanceof JournalUnavailableError ? err.message
             : 'Retry with the same key to resume at the first unacknowledged chunk. A lost acknowledgement may repeat that chunk; acknowledged chunks are not resent.',
           ...extra }));
@@ -1611,6 +1619,7 @@ export function createOutboundPublisher(deps) {
           conversation: convo,
           delivered: false,
           failure_kind: 'not_sent',
+          delivery_outcome: 'nothing-written',
           error: `not sent: ${describeProviderError(err)} — chunk ${chunk} of ${chunkCount} is not in the chat. `
             + (delivered === 0
               ? 'Retrying is safe.'
@@ -1636,6 +1645,7 @@ export function createOutboundPublisher(deps) {
       conversation: convo,
       message_id: state.messageID ?? '',
       delivered: true,
+      delivery_outcome: state.retriedUnackedChunks ? 'retried-unacked-chunks' : 'acked-and-done',
     };
     token.finish();
     log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''}${feedbackBase ? ` feedback_base=${feedbackBase}` : ''})`);

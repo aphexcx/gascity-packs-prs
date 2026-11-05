@@ -128,8 +128,8 @@ export function createOutboundConnection(wsClient, {
     }));
   }
 
-  function cycleSocket() {
-    if (stopping) return;
+  function cycleSocket(expectedSocket) {
+    if (stopping || (expectedSocket && wsClient.wsManager?.ws !== expectedSocket)) return;
     return new Promise((resolve) => {
       let cycled = false;
       const connectOnce = () => {
@@ -154,7 +154,13 @@ export function createOutboundConnection(wsClient, {
 
   function reconnect() {
     if (stopping) return Promise.resolve();
-    if (!cycle) cycle = whenIdle(cycleSocket, drainTimeoutMs, true).finally(() => { cycle = null; });
+    if (!cycle) {
+      // An SDK reconnect may replace the failed socket while publishes drain.
+      // Remediation belongs to the probed connection, never its replacement.
+      const expectedSocket = wsClient.wsManager?.ws;
+      cycle = whenIdle(() => cycleSocket(expectedSocket), drainTimeoutMs, true)
+        .finally(() => { cycle = null; });
+    }
     return cycle;
   }
 

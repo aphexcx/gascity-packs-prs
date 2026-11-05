@@ -3120,13 +3120,16 @@ for (const failure of ['timeout', 'drop']) {
       assert.equal(journal.get('resume').chunksDelivered, dropAt - 1);
       const sent = [];
       const after = makePublisher({ journal, sendMessage: async (_, frame) => { sent.push(frame.markdown.content); return {}; } });
-      assert.equal((await publishText(after.publisher, body)).json().delivered, true);
+      const delivered = (await publishText(after.publisher, body)).json();
+      assert.equal(delivered.delivered, true);
+      assert.equal(delivered.delivery_outcome, 'retried-unacked-chunks');
       assert.deepEqual(sent, chunks.slice(dropAt - 1));
       assert.equal((await publishText(after.publisher, body)).statusCode, 409);
       const restarted = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
       const complete = await publishText(restarted.publisher, body);
       assert.equal(complete.statusCode, 409);
       assert.equal(complete.json().failure_kind, 'already_delivered');
+      assert.equal(complete.json().delivery_outcome, 'acked-and-done');
       assert.equal(restarted.calls.length, 0);
       assert.deepEqual(sent, chunks.slice(dropAt - 1));
     });
