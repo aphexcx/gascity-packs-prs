@@ -6,7 +6,9 @@ import { defineConfig } from "vitest/config";
 // nothing here reaches the network. The secrets below are test values for the entry-point tests
 // that go through SELF; every other test builds the gateway with its own config. MIGRATION_DB is a
 // second, empty D1 that only the migration test touches: it applies 0001, writes v1 rows, then
-// applies the rest, the order a deployed gateway sees them in.
+// applies the rest, the order a deployed gateway sees them in. BACKFILL_DB is a third, for the
+// 0003 backfill test (gp-w376), which does the same: storage is not reset between tests, so each
+// test that starts from schema v1 has its own D1.
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("migrations");
   return {
@@ -14,7 +16,7 @@ export default defineConfig(async () => {
       cloudflareTest({
         wrangler: { configPath: "./wrangler.toml" },
         miniflare: {
-          d1Databases: ["MIGRATION_DB"],
+          d1Databases: ["MIGRATION_DB", "BACKFILL_DB"],
           bindings: {
             TEST_MIGRATIONS: migrations,
             META_ACCESS_TOKEN: "test-access-token-entry",

@@ -48,3 +48,13 @@ CREATE TABLE code_attempt_wamids (
   wamid TEXT NOT NULL PRIMARY KEY,
   counted_at INTEGER NOT NULL
 );
+
+--    The one wamid each stranger's count already holds, the last code text the running Worker
+--    counted, is carried in, so Meta's redelivery of it after the deploy is still no new attempt
+--    (gp-w376). Its count happened in the day that began at attempts_since and so before a day
+--    later: kept from then, it lives at least as long as a row the gateway writes when it counts.
+--    No attempt is counted between this migration and the deploy: the running Worker's stranger
+--    path names unknown_senders.wa_id, which 0002 renames, so it answers 500 and Meta redelivers
+--    to the new code.
+INSERT OR IGNORE INTO code_attempt_wamids (wamid, counted_at)
+  SELECT last_code_wamid, attempts_since + 86400 FROM unknown_senders WHERE last_code_wamid IS NOT NULL;

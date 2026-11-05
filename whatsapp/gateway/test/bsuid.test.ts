@@ -1398,4 +1398,58 @@ describe("BSUID: migrations 0002 and 0003 over schema v1 rows", () => {
     ).rejects.toThrow(/NOT NULL/);
   });
 
+  it("0003 carries each stranger's last counted code text into the retry dedup (gp-w376): a fourth wrong code replayed after the deploy is still the fourth, so a right code as the fifth binds; another stranger's fifth counts five and its sixth is refused", async () => {
+    const db = env.BACKFILL_DB;
+    const all = env.TEST_MIGRATIONS;
+    await applyD1Migrations(db, all.slice(0, 1));
+    // Two strangers with four wrong codes each in the open day, as the deployed (v1) Worker
+    // writes them: the count, the day's start, and the wamid of the last code text it counted.
+    // A third stranger heard only the canned line.
+    const since = T0 - 2 * HOUR;
+    const s1 = phone();
+    const s2 = phone();
+    const w1 = `wamid.${uniq()}`;
+    const w2 = `wamid.${uniq()}`;
+    const v1Stranger = db.prepare("INSERT INTO unknown_senders (wa_id, code_attempts, attempts_since, last_code_wamid) VALUES (?, 4, ?, ?)");
+    await db.batch([
+      v1Stranger.bind(s1, since, w1),
+      v1Stranger.bind(s2, since, w2),
+      db.prepare("INSERT INTO unknown_senders (wa_id, last_replied_at) VALUES (?, ?)").bind(phone(), since),
+    ]);
+    await applyD1Migrations(db, all);
+    const t = setup({ db });
+    const city = await t.enrollCity();
+    const attempts = async (s: string) =>
+      (await db.prepare("SELECT code_attempts FROM unknown_senders WHERE sender_key = ?").bind(s).first<{ code_attempts: number }>())?.code_attempts;
+    const bound = async (s: string) =>
+      (await db.prepare("SELECT COUNT(*) AS n FROM phones WHERE wa_id = ?").bind(s).first<{ n: number }>())?.n;
+    const wrongFor = (code: string) => String((Number(code) + 1) % 1_000_000).padStart(6, "0");
+    const code = await t.invite(city);
+    // Meta redelivers each one's fourth after the deploy: still four.
+    for (const [s, w] of [
+      [s1, w1],
+      [s2, w2],
+    ] as const) {
+      expect((await t.say(s, wrongFor(code), { wamid: w, ts: since + HOUR })).res.status).toBe(200);
+      expect(await attempts(s)).toBe(4);
+    }
+    // s1's fifth is the right code: five, and it binds.
+    await t.say(s1, code);
+    expect(await attempts(s1)).toBe(5);
+    expect(await bound(s1)).toBe(1);
+    // s2's fifth is wrong: five. Its sixth, the right code, is refused.
+    const code2 = await t.invite(city);
+    await t.say(s2, wrongFor(code2));
+    expect(await attempts(s2)).toBe(5);
+    await t.say(s2, code2);
+    expect(await attempts(s2)).toBe(6);
+    expect(await bound(s2)).toBe(0);
+    expect((await t.inbox(city)).body.deliveries.map((d: any) => [d.kind, d.wa_id])).toEqual([["joined", s1]]);
+    // The migration counted each last wamid no later than a day after its day's start (the v1
+    // Worker opens a new day for an attempt a day after the last one opened), so the cron keeps
+    // it at least as long as a row the gateway writes when it counts; a redelivery keeps it.
+    expect(
+      (await db.prepare("SELECT wamid, counted_at FROM code_attempt_wamids WHERE wamid IN (?, ?) ORDER BY wamid").bind(w1, w2).all()).results,
+    ).toEqual([w1, w2].sort().map((wamid) => ({ wamid, counted_at: since + DAY })));
+  });
 });
