@@ -276,9 +276,10 @@ out of room. `503 journal_unavailable` stops a keyed send if a checkpoint cannot
 be saved, including an unwritable or quarantined journal. After 24 hours, retrying
 an expired key is a fresh send of the entire text.
 
-Successful N-chunk keyed sends perform 2N full journal rewrites: one pre-send
-latch and one acknowledgement per chunk, each with file/directory fsync and backup
-rotation. No receipt padding is stored. The pre-send latch preserves fail-closed
+Successful new N-chunk keyed sends perform 1 + 2N full journal rewrites: one
+registration to preserve the key in the backup, then one pre-send latch and one
+acknowledgement per chunk, each with file/directory fsync and backup rotation.
+No receipt padding is stored. The pre-send latch preserves fail-closed
 restart behavior if the process dies before recording a chunk's outcome.
 Keys are limited to 256 bytes. An attempt interrupted before its outcome was
 journaled refuses replay after restart: the lost write may have been an

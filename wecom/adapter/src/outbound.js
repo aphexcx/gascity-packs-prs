@@ -438,12 +438,17 @@ export function createAttemptJournal({
       };
       if (degraded) return fail(new Error('journal is degraded (quarantined corrupt state on startup)'));
       dropExpiredText();
-      const hadKey = entries.has(key);
+      // Rollback must preserve recency as well as contents: appending
+      // reclaimed receipts would make newer receipts the next victims.
+      const previousEntries = new Map(entries);
+      const rollback = () => {
+        entries.clear();
+        for (const [k, v] of previousEntries) entries.set(k, v);
+      };
       const prev = entries.get(key);
       const merged = { ...(prev ?? {}), ...patch, updatedAt: now() };
       entries.delete(key); // re-insert so Map order tracks recency
       entries.set(key, merged);
-      const pruned = [];
       // Retention policy (round-2 findings 7, 12): bound BOTH the entry
       // count and the total serialized bytes. Per-entry size is already
       // bounded (capped key, hashed caption), so the byte cap is a
@@ -461,9 +466,7 @@ export function createAttemptJournal({
         }
         if (dropped === null) {
           if (ifRoom) {
-            entries.delete(key);
-            if (hadKey) entries.set(key, prev);
-            for (const [k, v] of pruned) entries.set(k, v);
+            rollback();
             if (!textSkipLogged) {
               textSkipLogged = true;
               log('outbound attempt journal full: no settled media receipt can make room for a text checkpoint; pending entries and retained text are protected');
@@ -472,14 +475,11 @@ export function createAttemptJournal({
           }
           dropped = [...entries].find(([k, e]) => k !== key && !e.textCheckpoint)?.[0] ?? null;
           if (dropped === null) {
-            entries.delete(key);
-            if (hadKey) entries.set(key, prev);
-            for (const [k, v] of pruned) entries.set(k, v);
+            rollback();
             return fail(new Error('journal capacity is reserved by retained text checkpoints'));
           }
           log('outbound attempt journal at capacity with nothing settled: dropping unresolved entry for a key (its restart-resume protection is lost)');
         }
-        pruned.push([dropped, entries.get(dropped)]);
         entries.delete(dropped);
       }
       try {
@@ -488,11 +488,7 @@ export function createAttemptJournal({
         // Roll back: the caller aborts on a critical failure, and a later
         // successful persist must not resurrect this patch as if the
         // aborted action had happened.
-        entries.delete(key);
-        if (hadKey) entries.set(key, prev);
-        for (const [k, v] of pruned) {
-          if (!entries.has(k)) entries.set(k, v);
-        }
+        rollback();
         return fail(err);
       }
       if (ifRoom) textSkipLogged = false;
@@ -1565,9 +1561,10 @@ export function createOutboundPublisher(deps) {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
       state.chunksTotal = chunks.length;
-      // Repair an acknowledgement that failed to persist before changing
-      // its pre-send latch. Fresh attempts need only the latch below.
-      if (state.textCheckpoint && !journalCovers(key, state)) journalTextState();
+      // Register a fresh key before its pre-send latch so even the backup
+      // knows it during the first send. Also repair an acknowledgement
+      // that failed to persist before changing its pre-send latch.
+      if (!state.textCheckpoint || !journalCovers(key, state)) journalTextState();
       if (state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered) {
         state.retriedUnackedChunks = true;
       }

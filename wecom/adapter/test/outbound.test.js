@@ -3712,6 +3712,48 @@ test('backup recovery refuses text whose acknowledgement may be in the lost gene
   assert.equal(after.calls.length, 0);
 });
 
+test('backup recovery refuses a new text key when the main journal is lost during its first send', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const journal = createAttemptJournal({ filePath: journalPath });
+  journal.record('older-media', { receipt: { delivered: true } });
+  let crashBackup;
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'first-send' };
+  const before = makePublisher({ journal, sendMessage: async () => {
+    // Capture the surviving generation at the first provider write, before
+    // its outcome can be journaled. Restore that crash image below.
+    crashBackup = fs.readFileSync(`${journalPath}.bak`, 'utf8');
+    return {};
+  } });
+  assert.equal((await publishText(before.publisher, body)).statusCode, 200);
+  fs.writeFileSync(journalPath, 'corrupt main at first send');
+  fs.writeFileSync(`${journalPath}.bak`, crashBackup);
+  const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  const replay = await publishText(after.publisher, body);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(replay.json().failure_kind, 'delivery_unknown');
+  assert.equal(after.calls.length, 0, 'backup recovery cannot treat the first send as a new key');
+});
+
+test('a failed text checkpoint preserves oldest-receipt eviction order on retry', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const journal = createAttemptJournal({ filePath: journalPath, cap: 2 });
+  journal.record('oldest', { receipt: { delivered: true, message_id: 'OLD' } });
+  journal.record('newer', { receipt: { delivered: true, message_id: 'NEW' } });
+  const { publisher, calls } = makePublisher({ journal });
+  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'repair-order' };
+  const sync = t.mock.method(fs, 'fsyncSync', () => { throw Object.assign(new Error('disk full'), { code: 'ENOSPC' }); });
+  assert.equal((await publishText(publisher, body)).json().failure_kind, 'journal_unavailable');
+  assert.equal(calls.length, 0);
+  assert.ok(journal.get('oldest'));
+  assert.ok(journal.get('newer'));
+  sync.mock.restore();
+  assert.equal((await publishText(publisher, body)).statusCode, 200);
+  assert.equal(calls.length, 1);
+  const after = createAttemptJournal({ filePath: journalPath });
+  assert.equal(after.get('oldest'), undefined, 'retry must still reclaim the oldest receipt');
+  assert.equal(after.get('newer').receipt.message_id, 'NEW');
+});
+
 test('media admission cannot evict an acknowledged text checkpoint', async (t) => {
   const dir = tmpDir(t);
   const journal = createAttemptJournal({ cap: 1 });
