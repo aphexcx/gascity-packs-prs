@@ -282,9 +282,6 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
       journal_unavailable)
         echo "gc wecom publish: restore journal capacity/durability, then retry with the same idempotency key" >&2
         ;;
-      already_delivered)
-        echo "gc wecom publish: this key is already fully acknowledged; no message was resent" >&2
-        ;;
       not_sent)
         if [ -n "$idempotency_key" ]; then
           echo "gc wecom publish: this request did not write the failed chunk; retry with --idempotency-key $idempotency_key to resume after acknowledged chunks" >&2
@@ -311,6 +308,10 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
 fi
 
 [ -n "$payload" ] && echo "$payload"
+replayed=$(printf '%s' "$payload" | jq -rs 'last | .delivered == true and .replayed == true' 2>/dev/null || true)
+if [ "$replayed" = "true" ]; then
+  echo "gc wecom publish: already delivered under this key, nothing resent" >&2
+fi
 # Surface a transcript-recording miss without failing the (delivered)
 # publish — the adapter reports it in-band on media sends.
 note=$(printf '%s' "$payload" | jq -r '.transcript_note // empty' 2>/dev/null || true)

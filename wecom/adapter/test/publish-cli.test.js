@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
+import { chunkText, createAttemptJournal, createOutboundPublisher } from '../src/outbound.js';
 
 const scriptPath = fileURLToPath(new URL('../../commands/publish.sh', import.meta.url));
 
@@ -202,6 +203,66 @@ test('text publishes pass --idempotency-key through and omit it otherwise', { sk
   assert.equal(requests[1].body.idempotency_key, 'key-text');
 });
 
+test('a lost text HTTP receipt reconciles through the CLI, including after journal restart', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const sent = [];
+  const makePublisher = () => createOutboundPublisher({
+    cfg: {},
+    journal: createAttemptJournal({ filePath: journalPath }),
+    sendMessage: async (chatid, frame) => {
+      sent.push({ chatid, text: frame.markdown.content });
+      return { headers: { req_id: `TEXT_${sent.length}` } };
+    },
+  });
+  let publisher = makePublisher();
+  let originalReceipt;
+  let requests = 0;
+  const server = http.createServer(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    if (++requests === 1) {
+      // Delivery succeeds, but the CLI never receives its HTTP receipt.
+      await publisher.handlePublish(req, {
+        writeHead() {},
+        end(payload) { originalReceipt = JSON.parse(payload); res.destroy(); },
+      }, body);
+    } else {
+      await publisher.handlePublish(req, res, body);
+    }
+  });
+  t.after(() => server.close());
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${server.address().port}/publish`;
+  const text = 'a'.repeat(3800) + 'last chunk';
+  const args = ['--chat', 'u', '--text', text, '--idempotency-key', 'lost-receipt'];
+  const lost = await runPublish(args, url);
+  assert.equal(lost.code, 1);
+  assert.match(lost.stderr, /transport failure/);
+  const expectedSends = chunkText(text).map((text) => ({ chatid: 'u', text }));
+  assert.deepEqual(sent, expectedSends);
+  assert.equal(originalReceipt.delivered, true);
+  assert.equal(originalReceipt.message_id, `TEXT_${expectedSends.length}`);
+  assert.equal(originalReceipt.chunks_delivered, expectedSends.length);
+
+  for (const restart of [false, true]) {
+    if (restart) publisher = makePublisher();
+    const replay = await runPublish(args, url);
+    assert.equal(replay.code, 0, replay.stderr);
+    assert.deepEqual(JSON.parse(replay.stdout), { ...originalReceipt, replayed: true });
+    assert.match(replay.stderr, /already delivered under this key, nothing resent/);
+    assert.doesNotMatch(replay.stderr, /refused|HTTP 409|check.*chat|fresh key/i);
+
+    for (const [chat, content] of [['v', text], ['u', 'different text']]) {
+      const conflict = await runPublish(['--chat', chat, '--text', content, '--idempotency-key', 'lost-receipt'], url);
+      assert.equal(conflict.code, 1);
+      assert.match(conflict.stderr, /adapter returned HTTP 409/);
+      assert.match(conflict.stderr, /idempotency_conflict/);
+      assert.doesNotMatch(conflict.stderr, /already delivered under this key/);
+    }
+    assert.deepEqual(sent, expectedSends, 'neither replays nor conflicts send any further chunks');
+  }
+});
+
 // jg-qx7fek: the adapter's text failure_kind passes through verbatim and
 // the CLI says whether a retry is safe.
 test('a text not_sent failure passes through and says a same-key retry is safe', { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
@@ -295,7 +356,6 @@ test('a media not_sent failure keeps the same-key resume hint', { skip: !toolsPr
 for (const [failure, status, hint] of [
   ['retryable', 503, /first unacknowledged chunk; a lost acknowledgement may repeat that chunk/],
   ['journal_unavailable', 503, /restore journal capacity\/durability/],
-  ['already_delivered', 409, /already fully acknowledged; no message was resent/],
 ]) {
   test(`text CLI explains ${failure}`, { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
     const { url, requests } = await startCaptureServer(t, () => ({ status, payload: { failure_kind: failure } }));

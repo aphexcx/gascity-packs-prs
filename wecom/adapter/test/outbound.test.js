@@ -1431,8 +1431,8 @@ test('after an in-flight text failure only ONE waiting retry re-sends', async (t
   assert.equal(r1.statusCode, 503, 'a pre-write refusal is not_sent (jg-qx7fek)');
   assert.equal(r1.json().failure_kind, 'not_sent');
   assert.equal(r2.statusCode, 200);
-  assert.equal(r3.statusCode, 409);
-  assert.equal(r3.json().failure_kind, 'already_delivered');
+  assert.equal(r3.statusCode, 200);
+  assert.deepEqual(r3.json(), { ...r2.json(), replayed: true });
   assert.equal(sendAttempts, 2, 'the message must not be re-sent by both waiters');
 });
 
@@ -3051,7 +3051,9 @@ test('long text chunks at the UTF-8 byte cap and a keyed retry never re-sends', 
   assert.equal(expectedChunks.join(''), text);
 
   const retry = await publishText(publisher, body);
-  assert.equal(retry.statusCode, 409);
+  assert.equal(retry.statusCode, 200);
+  assert.deepEqual(retry.json(), { ...first.json(), replayed: true });
+  assert.equal(retry.json().chunks_delivered, expectedChunks.length);
   assert.equal(calls.length, expectedChunks.length, 'a keyed retry must not re-send chunks');
 });
 
@@ -3126,12 +3128,14 @@ for (const failure of ['timeout', 'drop']) {
       assert.equal(delivered.delivered, true);
       assert.equal(delivered.delivery_outcome, 'retried-unacked-chunks');
       assert.deepEqual(sent, chunks.slice(dropAt - 1));
-      assert.equal((await publishText(after.publisher, body)).statusCode, 409);
+      const replay = await publishText(after.publisher, body);
+      assert.equal(replay.statusCode, 200);
+      assert.deepEqual(replay.json(), { ...delivered, replayed: true });
       const restarted = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
       const complete = await publishText(restarted.publisher, body);
-      assert.equal(complete.statusCode, 409);
-      assert.equal(complete.json().failure_kind, 'already_delivered');
-      assert.equal(complete.json().delivery_outcome, 'acked-and-done');
+      assert.equal(complete.statusCode, 200);
+      assert.deepEqual(complete.json(), { ...delivered, replayed: true });
+      assert.equal(complete.json().chunks_delivered, chunks.length);
       assert.equal(restarted.calls.length, 0);
       assert.deepEqual(sent, chunks.slice(dropAt - 1));
     });
@@ -3348,7 +3352,11 @@ test('a keyed text reclaims the oldest settled receipt from a 512-entry media jo
   assert.equal((await publishText(publisher, body)).statusCode, 200);
   assert.deepEqual(sent, chunkText(text));
   const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
-  assert.equal((await publishText(after.publisher, body)).json().failure_kind, 'already_delivered');
+  const replay = await publishText(after.publisher, body);
+  assert.equal(replay.statusCode, 200);
+  assert.equal(replay.json().replayed, true);
+  assert.equal(replay.json().message_id, 'TEXT_2');
+  assert.equal(replay.json().chunks_delivered, 2);
   assert.equal(after.calls.length, 0);
 });
 
@@ -3464,7 +3472,7 @@ test('a completed text checkpoint expires after 24 h', async (t) => {
 
   clock += 23 * 60 * 60 * 1000;
   const at23h = makePublisher({ journal: createAttemptJournal({ filePath: journalPath, now }) });
-  assert.equal((await publishText(at23h.publisher, body)).statusCode, 409, 'still refused at 23 h');
+  assert.equal((await publishText(at23h.publisher, body)).statusCode, 200, 'receipt still available at 23 h');
   assert.equal(at23h.calls.length, 0);
 
   clock += 2 * 60 * 60 * 1000;
@@ -3789,7 +3797,7 @@ test('media admission cannot evict an acknowledged text checkpoint', async (t) =
     file_path: writeFixture(dir, 'photo.png', pngBytes), media_kind: 'image', idempotency_key: 'new-media' });
   assert.equal(media.statusCode, 503);
   assert.equal(journal.get('reserved').chunksDelivered, 1);
-  assert.equal((await publishText(publisher, text)).statusCode, 409);
+  assert.equal((await publishText(publisher, text)).statusCode, 200);
   assert.equal(calls.length, 1);
 });
 
@@ -3875,7 +3883,7 @@ test('ownership wait expires without stealing the active same-key send', async (
   assert.equal(frames, 1);
   release();
   assert.equal((await owner).statusCode, 200);
-  assert.equal((await publishText(publisher, body)).statusCode, 409);
+  assert.equal((await publishText(publisher, body)).statusCode, 200);
   assert.equal(frames, 1);
 });
 

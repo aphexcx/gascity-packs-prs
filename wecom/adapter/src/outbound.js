@@ -1329,6 +1329,16 @@ export function createOutboundPublisher(deps) {
 
   // --- /publish: text/markdown --------------------------------------------
 
+  function textDeliveryReceipt(conversation, state) {
+    return {
+      conversation,
+      message_id: state.messageID ?? '',
+      delivered: true,
+      chunks_delivered: state.chunksDelivered,
+      delivery_outcome: state.retriedUnackedChunks ? 'retried-unacked-chunks' : 'acked-and-done',
+    };
+  }
+
   // During shutdown only gc's matching media transcript callback may use
   // /publish. Answer directly from receipts: never claim a key, wait on its
   // owner, or fall through to a fresh send while the owner drains.
@@ -1472,8 +1482,8 @@ export function createOutboundPublisher(deps) {
         }
       }
       const textDone = claim.state?.endpoint === 'publish';
-      res.writeHead(textDone ? 409 : 200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ...claim.receipt, ...(textDone ? { failure_kind: 'already_delivered', delivery_outcome: 'acked-and-done' } : {}) }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...claim.receipt, ...(textDone ? { replayed: true } : {}) }));
       return;
     }
     const { state, token } = claim;
@@ -1549,10 +1559,10 @@ export function createOutboundPublisher(deps) {
         res.end(JSON.stringify({ delivered: false, failure_kind: 'journal_unavailable', error: err.message }));
         return;
       }
+      state.receipt = textDeliveryReceipt(convo, state);
       token.finish();
-      res.writeHead(409, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ conversation: convo, delivered: true, failure_kind: 'already_delivered', delivery_outcome: 'acked-and-done',
-        message_id: state.messageID ?? '', chunks_delivered: state.chunksDelivered }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ...state.receipt, replayed: true }));
       return;
     }
     let chunkCount = 0;
@@ -1698,12 +1708,7 @@ export function createOutboundPublisher(deps) {
     }
     // The receipt must be visible BEFORE the owner promise settles, so a
     // waiter woken by finish() answers from the map instead of re-claiming.
-    state.receipt = {
-      conversation: convo,
-      message_id: state.messageID ?? '',
-      delivered: true,
-      delivery_outcome: state.retriedUnackedChunks ? 'retried-unacked-chunks' : 'acked-and-done',
-    };
+    state.receipt = textDeliveryReceipt(convo, state);
     token.finish();
     log(`publish → ${chatid} delivered (session=${pub.session_id ?? ''}${feedbackBase ? ` feedback_base=${feedbackBase}` : ''})`);
     res.writeHead(200, { 'Content-Type': 'application/json' });

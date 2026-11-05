@@ -258,15 +258,18 @@ chunk, including after restart. This is **at-least-once delivery** for the
 unacknowledged suffix: a provider acknowledgement lost in transit can cause
 that chunk to repeat. The outbox runner treats HTTP 503 as a definite retryable
 failure and retries even when `OUTBOX_AMBIGUOUS_RETRIES=0`; this setting does
-not prevent retries of `503 retryable`. Acknowledged checkpoints are never replayed. The
+not prevent retries of `503 retryable`. Acknowledged chunks are never resent. The
 SDK request IDs are unchanged and are not provider-side deduplication keys.
 Successful responses include `delivery_outcome: acked-and-done` or
-`retried-unacked-chunks`; a refused completed-key retry reports `acked-and-done`.
+`retried-unacked-chunks`; a completed-key retry preserves that outcome.
 A pre-write refusal reports `nothing-written` with the failing chunk index
 and earlier acknowledged count. Missing acks report `unacknowledged-chunks`,
 and journal failures report `checkpoint-unavailable` with `retry_safe: false`.
-A fully acknowledged key returns `409 already_delivered`; different text or
-conversation under the same key returns `409 idempotency_conflict`.
+A fully acknowledged key returns HTTP `200` with the original delivery receipt
+(`delivered: true`, message ID, acknowledged chunk count) and `replayed: true`,
+including after journal recovery on restart. Nothing is resent; the CLI prints
+“already delivered under this key, nothing resent”. Different text or conversation
+under the same key still returns `409 idempotency_conflict`.
 
 Checkpoint retention is 24 hours from the last update, with the journal's
 512-entry / 4 MiB capacity. Text checkpoints cannot be evicted during retention.
