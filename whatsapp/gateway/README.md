@@ -30,7 +30,7 @@ A city box never holds a Meta secret. It holds one gateway credential, minted at
 | `wrangler.toml` | The Worker: name, custom domain, the D1 binding `DB`, the daily cron, the vars. It names no account id and no database id. |
 | `migrations/0001_init.sql` | The schema: cities, credentials, enroll_codes, invite_codes, phones, deliveries, media, sends, orphan_statuses, unknown_senders, stats. |
 | `migrations/0002_bsuid.sql` | Business-scoped user ids (gp-ac0u): phones keyed by `conversation_id` with `wa_id`, `user_id` and `username`; the ids on deliveries, sends and orphan statuses; strangers keyed by `sender_key`. |
-| `migrations/0003_retries.sql` | Meta's retries (gp-0g2s): the deliveries dedup key without the city; who held an id when (`phones.bound_stamp`, `phones.wa_since`, and `phone_aliases` for an owner's ids from before a number change); `code_attempt_wamids` (every counted wrong-code text, seeded from `unknown_senders.last_code_wamid`, gp-w376). |
+| `migrations/0003_retries.sql` | Meta's retries (gp-0g2s): the deliveries dedup key without the city; who held an id when (`phones.bound_stamp`, `phones.wa_since`, and `phone_aliases` for an owner's ids from before a number change, and for its paired numbers, gp-byp8); `code_attempt_wamids` (every counted wrong-code text, seeded from `unknown_senders.last_code_wamid`, gp-w376). |
 | `src/index.ts` | The Worker entry: env to gateway, the cron to `maintain()`. |
 | `src/gateway.ts` | The routes, the webhook plan and its one D1 transaction, enrollment, the inbox and ack, send, read, window, media, the operator routes, the cron. |
 | `src/meta.ts` | The Cloud API wire: the signature, the payload parse, the send bodies, the Graph calls. |
@@ -209,12 +209,23 @@ What the gateway does:
      keeps it when it takes the row's number. A number that came after the bind never reaches
      back to the bind, when it may have been anyone's: a phone-only message stamped before then
      goes to nobody, and no city is granted its media.
-   - **A number the records never gave the owner is no previous holding of it** (gp-w376). Say
-     another row held the number at every message that showed it beside the owner's user_id (a
-     phone-only owner, whom rule 2 never strips), or no message ever showed it, and then the
-     owner's notice names it as its old number. The gateway records no previous holding for it.
-     While the other row stands, what that row sent stays its own. Once an operator unbinds it,
-     such a message goes to nobody, and never to the owner.
+   - **A number the records never gave the owner is no previous holding of it** (gp-w376). Say no
+     message ever showed the number beside the owner's user_id, and then the owner's notice names
+     it as its old number. The gateway records no previous holding for it. What another row sent
+     from it stays that row's while it stands, and once an operator unbinds it, such a message
+     goes to nobody, and never to the owner.
+   - **A paired number** (gp-byp8). Say Meta shows a number beside the owner's user_id, by a
+     message or by the owner's number change, while another row holds it: a phone-only owner,
+     bound before Meta sent user ids, whom rule 2 never strips. The owner's row cannot take it
+     (`wa_id` is unique), but Meta has said whose it is. So the gateway keeps it as the owner's
+     **paired number**, an open span in `phone_aliases`, held from where the owner came to it:
+     the earliest stamp that showed it, or the number change that brought the owner to it when
+     that change shared no number. Both rows then hold the number, and a message naming it alone
+     goes to nobody (below). The span ends, and is kept as a previous holding for the 8-day
+     horizon, at the owner's next number change (whether or not its notice names the number),
+     when Meta names the number beside another current user_id (rule 2), or, once an operator
+     unbinds the owner, at the next daily cron. It stays open when the owner's row later takes
+     the number. A pairing Meta stamped before the other row held the number pairs nothing.
 
    A message routes to the one binding whose span holds its stamp, or to nobody:
    - **A previous holding routes to its binding.** If one holds the stamp, the message goes to
@@ -224,13 +235,20 @@ What the gateway does:
      owner's conversation under the old ids. When two owners each held the same number in turn,
      the message goes to the one that held it at the stamp.
    - **Two spans holding one stamp go to nobody.** That happens only when the records disagree:
-     a number's next holder showed it before the old owner's change notice landed.
+     a number's next holder showed it before the old owner's change notice landed, or a
+     phone-only owner holds a number Meta paired with another owner's user_id. Such a message,
+     its media included, reaches neither city, and is counted as `unrouted_messages` and again as
+     `unrouted_conflicts`, its reason. (One binding that holds a stamp twice, a paired number its
+     row later took, is one binding.) This is the codex gate r3's case: owner A, known by
+     user_id, is paired with number P at T2 while C, a phone-only owner in another city, holds
+     P. A's image in today's shape (P alone), stamped T3 and delivered after A's notice at T4,
+     goes to nobody while C stands, and never to C's city. Once C is unbound, it is A's.
    - **A binding newer than the message never takes it.** This covers the next holder of a
      recycled number, and the same person bound again in another city after an unbind. A message
      Meta stamped while the number was free is a stranger's.
    - **Which id is matched.** It is the user_id when the message names one, and the wa_id only
      when it names none, as in rule 2.
-   - **A known sender's message that no span holds is dropped.** It goes to no city, hears no
+   - **A known sender's message that no binding routes is dropped.** It goes to no city, hears no
      canned line and is counted as `unrouted_messages`, once for each delivery Meta makes of it.
    - **A routed retry is the owner's message.** It is delivered and moves the owner's window. It
      counts no code attempt, binds nothing and changes none of the owner's ids or names. It never
@@ -252,7 +270,9 @@ What the gateway does:
      previous holding never routes it.
    - **The 5,000-held cap.** It is read before the write, from the cities of the payload's current
      owners. A retry that a previous holding routes is not counted there. That is a bounded
-     overshoot: the retries are what the owner sent before the change.
+     overshoot: the retries are what the owner sent before the change. A message a paired number
+     routes (the other row unbound) is not counted there either, until the owner's row takes the
+     number from its next message beside its user_id.
 
    **A known limit.** Meta does not promise webhook order. Say a notice's first delivery fails, and
    the owner writes under the new ids before Meta's retry. That message is a stranger's: it hears
@@ -264,6 +284,20 @@ What the gateway does:
    notice names: the notice's own message is the first to show it. So a retry of what that owner
    sent from the number before the change, in today's shape (the number alone), is a stranger's.
    It hears the canned line at that number and is not delivered.
+
+   **Known limits of the paired number** (gp-byp8):
+   - **Evidence arrives when it arrives.** A message naming the number alone that the gateway
+     routes before it has seen any pairing (an earlier message in the same payload, or Meta's
+     redelivery order) goes by the records it has: to the phone-only owner.
+   - **Rule 3 is unchanged.** A message naming the number beside a user_id no row holds is the
+     phone-only owner's, whose row takes that user_id, as before. It also ends every other
+     binding's paired span of the number at its stamp (rule 2). A paired span holds only messages
+     that name no user_id.
+   - **One person bound twice** (by phone in one city, by user_id in another) has the number
+     paired with the second binding: what Meta sends from the number alone goes to nobody until
+     an operator unbinds one of them, and each is counted in `unrouted_conflicts`.
+   - **Sends are unchanged.** The phone-only owner's city still sends to the number, which reaches
+     whoever holds it now.
 6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
    canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
    starts sharing the stranger's phone, which the canned line itself causes.
@@ -532,10 +566,14 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   Each city carries its owner count (`phones`), the last four digits of each owner's phone (`id`
   for an owner Meta shares no phone of), its held deliveries and its live credentials. The
   gateway's counters follow: dropped_wrong_number, orphaned_statuses, stale_messages,
-  welcome_failed, canned_failed and unrouted_messages (a known sender's message that no binding
-  held when Meta stamped it). The webhook log line counts the same per payload (`unrouted`). Both
+  welcome_failed, canned_failed, unrouted_messages (a known sender's message that no binding
+  routed) and unrouted_conflicts (those of them that two bindings held at Meta's stamp, gp-byp8).
+  The webhook log line counts the same per payload (`unrouted`, `unrouted_conflicts`). Both
   count deliveries: a message Meta delivers twice counts twice, and a payload that answered 500
-  writes no log line. No phone number and no user_id appears in clear.
+  writes no log line. No phone number and no user_id appears in clear. A growing
+  unrouted_conflicts most likely means a phone-only owner holds a number Meta now shows beside
+  another owner's user_id: an owner who left that number, or one person bound twice. Unbinding
+  the stale binding settles it.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
   ```sh
@@ -573,7 +611,10 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   city stored stays that city's row. One it never stored goes nowhere, because the next binding,
   whoever it is, holds only what Meta stamped after its own invite text, and the owner's previous
   ids name nobody once its binding is gone. Such a retry is counted as `unrouted_messages`. The
-  cron deletes the owner's previous ids within 8 days.
+  cron deletes the owner's previous ids within 8 days. An owner's paired number (gp-byp8) keeps
+  holding the number until the next daily cron ends it at the cron's clock, so nothing the owner
+  sent before the unbind reaches the phone-only owner who holds the number; the cron deletes it
+  8 days after that.
 
 ## Data, retention, logs
 
@@ -589,7 +630,8 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   The wamid of each counted code text is kept for 8 days, with no id beside it.
 - **Previous ids.** When a number changes, the ids it replaces are kept for 8 days from the
   change, as previous holdings of the owner (`phone_aliases`). They hold the previous wa_id and
-  user_id, and the cron deletes them at the end of that time. An owner row also keeps Meta's stamp
+  user_id, and the cron deletes them at the end of that time. A paired number (gp-byp8) is kept
+  there too, open, while the owner holds it, and for 8 days from its end. An owner row also keeps Meta's stamp
   of its invite text and of the message or number change that brought it to its number
   (`bound_stamp`, `wa_since`), until an operator unbinds it.
 - **Orphan statuses** (a status no send has recorded) are pruned after one day. The gateway's own

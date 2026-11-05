@@ -32,6 +32,13 @@ ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later 
 --    changed_at + 8 days: an alias routes only what Meta stamped at or before changed_at, and a
 --    message stamped longer ago than 8 days is dropped. The cron deletes it then (expires_at).
 --    One id can be held by two bindings in turn; each change is its own row.
+--    A paired number (gp-byp8) is a row here too: a number Meta named beside the binding's
+--    user_id while another row (a phone-only owner) held it, so the binding's row could not take
+--    it. Its span is open while the owner holds it: changed_at and expires_at are 253402300799
+--    (9999-12-31). It ends, and expires 8 days later like any previous id, at the owner's next
+--    number change, when Meta names the number beside another current user_id, or at the daily
+--    cron once an operator unbound the owner. Both rows hold the number meanwhile, so a message
+--    naming it alone goes to nobody.
 CREATE TABLE phone_aliases (
   id TEXT NOT NULL,              -- the previous wa_id or user_id
   conversation_id TEXT NOT NULL, -- the owner it named
