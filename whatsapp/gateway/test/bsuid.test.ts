@@ -1522,8 +1522,13 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect((await t.webhook(notice(q, b, bsuid(), phone(), T3))).status).toBe(200);
     t.clock.now = T3 + HOUR / 4;
     expect((await t.webhook(lateB)).status).toBe(200);
-    // A's image stamped T2 + 45 min: A's span still holds it beside C's binding.
-    const image = mediaPayload("image", p, `8${Date.now()}`, { wamid: `wamid.${uniq()}`, ts: T2 + (3 * HOUR) / 4 });
+    // A's span is still open (B's late message kept B's own span, [T2 + 30 min, T3], beside it).
+    expect(
+      (await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ? AND conversation_id = ?").bind(p, a).all()).results,
+    ).toEqual([{ since: T2, changed_at: 253_402_300_799 }]);
+    // A's image stamped T3 + 15 min, past B's span: A's span still holds it beside C's binding.
+    t.clock.now = T3 + HOUR / 2;
+    const image = mediaPayload("image", p, `8${Date.now()}`, { wamid: `wamid.${uniq()}`, ts: T3 + HOUR / 4 });
     expect((await t.webhook(image)).status).toBe(200);
     for (const city of [w, x, y]) {
       expect((await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id)).not.toContain(wamidOf(image));
@@ -1587,6 +1592,22 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     for (const m of [...held, beforeA]) expect((await t.webhook(m)).status).toBe(200);
     for (const m of held) for (const city of [w, x, y]) expect(await ids(city)).not.toContain(wamidOf(m));
     expect((await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === wamidOf(beforeA))).toMatchObject({ conversation_id: c.conversation_id });
+    // A's notice at T4 ends A's second span. A pairing under A's old user_id stamped T0 + 10 min
+    // lands only now: it moves back the start of A's first span alone, never across B's.
+    t.clock.now = T4;
+    expect((await t.webhook(notice(null, a, bsuid(), null, T4))).status).toBe(200);
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(textAs({ wa: p, user: a }, "A's, oldest", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR / 6 }))).status).toBe(200);
+    expect(await spans()).toEqual([
+      { conversation_id: a, since: T0 + HOUR / 6, changed_at: T2 },
+      { conversation_id: b, since: T2, changed_at: T3 },
+      { conversation_id: a, since: T3, changed_at: T4 },
+    ]);
+    // Once C is unbound, P alone stamped inside B's span is B's alone.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(c.conversation_id).run();
+    const inBSpan = at(T2 + HOUR / 4);
+    expect((await t.webhook(inBSpan)).status).toBe(200);
+    expect((await t.inbox(y)).body.deliveries.find((d: any) => d.message?.id === wamidOf(inBSpan))).toMatchObject({ conversation_id: b });
   });
 
   it("a binding paired again after its span ended opens its new span after that end, even when the change that brought the owner to its number came earlier: Meta's replay of the pairing that ended it fails nothing (gp-byp8)", async () => {
@@ -1947,6 +1968,40 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       expect.soft(await ids(t, city)).not.toContain(wamidOf(image.payload));
       expect.soft(await mediaStatus(t, city, image.mediaId)).toBe(404);
     }
+  });
+
+  it("Meta's replay of a pairing, after the owner's notice, never extends its span past the end Meta recorded: once C is unbound, an image stamped after that end reaches no city (gp-byp8; the codex self-review r4 CRITICAL)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const c = (await owners(p))[0] as { conversation_id: string };
+    const u = bsuid();
+    await t.joinAs(x, { user: u });
+    const pairing = textAs({ wa: p, user: u }, "A's pairing", { wamid: `wamid.${uniq()}`, ts: T1 });
+    t.clock.now = T1;
+    expect((await t.webhook(pairing)).status).toBe(200); // A's span from T1
+    const v = bsuid();
+    t.clock.now = T2;
+    await t.sayAs({ wa: p, user: v }, "v's"); // ends A's span at T2
+    t.clock.now = T2 + HOUR / 6;
+    await t.sayAs({ wa: p, user: v }, "v's again"); // C takes v (rule 3)
+    const image = imageAt(t, p, T3);
+    t.clock.now = T3;
+    flaky.arm(0);
+    expect((await t.webhook(image.payload)).status).toBe(500);
+    t.clock.now = T4;
+    expect((await t.webhook(notice(null, u, bsuid(), null, T4))).status).toBe(200);
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(pairing)).status).toBe(200); // Meta's replay of the T1 pairing
+    expect((await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ?").bind(p).all()).results).toEqual([{ since: T1, changed_at: T2 }]);
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(c.conversation_id).run();
+    t.clock.now = T4 + HOUR / 2;
+    expect((await t.webhook(image.payload)).status).toBe(200);
+    expect.soft(await ids(t, x)).not.toContain(wamidOf(image.payload));
+    expect.soft(await mediaStatus(t, x, image.mediaId)).toBe(404);
   });
 
   it("a late pairing stamped before the owner bound keeps nothing from before the bind (gp-byp8)", async () => {

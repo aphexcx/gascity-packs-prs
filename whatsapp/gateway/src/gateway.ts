@@ -361,12 +361,15 @@ const stranger = (wa: string, user: string, stamp: string) =>
  * change, when that brought the owner to the number Meta had not shared yet) or this stamp,
  * whichever is earlier, but never before the second after the binding's last ended span of it.
  *
- * pairingHistory: the user_id is a previous one that the binding held at the stamp (Meta delivers
- * the pairing after the owner's number change): the evidence is kept as the owner's span of the
- * number up to that change, as an on-time pairing would have left it. It shares its key with the
- * span or previous number that change ended, so it merges into that one and moves its start back.
- * It lasts the alias horizon. A pairing that lands late is never lost (the lane's self-review r1).
- * A span another row's holding overlaps goes to nobody, as any conflict does.
+ * pairingHistoryWidens, pairingHistory: the user_id is a previous one that the binding held at the
+ * stamp (Meta delivers the pairing after the owner's number change, at the alias's changed_at).
+ * The evidence follows the rule an on-time pairing follows. It belongs to the binding's first span
+ * of the number that ends at or after the stamp and by that change (what the owner held under that
+ * user_id), whose start moves back to the stamp when that is earlier; an end already recorded there
+ * stands (the codex self-review r4). Only when there is none is it kept as a span from the stamp up
+ * to the change, for the alias horizon. A pairing that lands late is never lost (the lane's self-review r1), and never extends
+ * a span past its recorded end. A span another row's holding overlaps goes to nobody, as any
+ * conflict does.
  *
  * So a binding's open span of a number starts after every ended one, and every statement that
  * ends an open span ends it at or after its start (the codex self-review r1). Each end still merges
@@ -397,10 +400,18 @@ const pairingOpens = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, 
           ${OPEN}, ${OPEN} FROM phones
    WHERE ${paired}
      AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid AND h.changed_at >= ?3)`;
-const pairingHistory = `INSERT INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
-   SELECT ?1, conversation_id, bound_wamid, ?3, changed_at, expires_at FROM phone_aliases
+const pairingHistoryWidens = `UPDATE phone_aliases SET since = MIN(since, ?3)
+   WHERE id = ?1
+     AND changed_at = (SELECT MIN(h.changed_at) FROM phone_aliases h
+                       WHERE h.id = ?1 AND h.bound_wamid = phone_aliases.bound_wamid AND h.changed_at >= ?3)
+     AND EXISTS (SELECT 1 FROM phone_aliases a WHERE a.id = ?2 AND a.since <= ?3
+                   AND a.conversation_id = phone_aliases.conversation_id AND a.bound_wamid = phone_aliases.bound_wamid
+                   AND phone_aliases.changed_at <= a.changed_at)`;
+const pairingHistory = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
+   SELECT ?1, conversation_id, bound_wamid, ?3, changed_at, expires_at FROM phone_aliases a
    WHERE id = ?2 AND since <= ?3
-   ON CONFLICT (id, bound_wamid, changed_at) DO UPDATE SET since = MIN(since, excluded.since)`;
+     AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = a.bound_wamid
+                       AND h.changed_at >= ?3 AND h.changed_at <= a.changed_at)`;
 
 interface OwnerRow {
   conversation_id: string;
@@ -913,6 +924,7 @@ export function createGateway(deps: Deps) {
         push(db.prepare(pairingEnds).bind(wa, user, stamp, stamp + ALIAS_SECONDS));
         push(db.prepare(pairingWidens).bind(wa, user, stamp));
         push(db.prepare(pairingOpens).bind(wa, user, stamp));
+        push(db.prepare(pairingHistoryWidens).bind(wa, user, stamp));
         push(db.prepare(pairingHistory).bind(wa, user, stamp));
       }
       if (m.change?.userId) {
