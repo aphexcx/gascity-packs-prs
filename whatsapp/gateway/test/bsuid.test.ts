@@ -943,6 +943,24 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     }
   });
 
+  it("a stranger's stale message naming the number beside its own user_id never takes it from a holder that bound after the message's stamp (gp-0g2s)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity();
+    const p = phone();
+    t.clock.now = T0 + HOUR;
+    const stale = textAs({ wa: p, user: bsuid() }, "the number's earlier user", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    flaky.arm(0);
+    expect((await t.webhook(stale)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa: p, user: b });
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(stale)).status).toBe(200);
+    expect(await owners(b)).toEqual([{ conversation_id: p, wa_id: p, user_id: b, username: null, city_id: city.id }]);
+    expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(stale))).toBe(false);
+  });
+
   it("a late notice never takes its new number from a holder that showed it after the notice's stamp (self-review r1)", async () => {
     const flaky = flakyDb();
     const t = setup({ db: flaky.db });
@@ -984,6 +1002,10 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     const between = textPayload(p, "whose is this?", { wamid: `wamid.${uniq()}`, ts: t.clock.now, name: "unsure" });
     flaky.arm(0);
     expect((await t.webhook(between)).status).toBe(500);
+    // A writes in Meta's BSUID shape at the same moment; that write fails too.
+    const fromA = textAs({ wa: p, user: a }, "A, by BSUID", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    flaky.arm(0);
+    expect((await t.webhook(fromA)).status).toBe(500);
     // A's notice says A held P until T0 + 3 h. The notice's own ids are what A leaves: they take
     // nothing from B, on its first landing or when Meta redelivers it after A's re-key.
     t.clock.now = T0 + 3 * HOUR;
@@ -999,6 +1021,11 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect(t.graph.sends()).toHaveLength(calls);
     // Nor does it touch B's row.
     expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(b).first()).toEqual({ profile_name: "B" });
+    // A's own message names A's previous user_id, which no one else ever holds: it is A's, and its
+    // pairing with P is history, so B keeps P.
+    expect((await t.webhook(fromA)).status).toBe(200);
+    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: p, user_id: a });
+    expect(await owners(b)).toEqual([{ conversation_id: b, wa_id: p, user_id: b, username: null, city_id: city.id }]);
     // B changes number too: now two previous spans hold that stamp, and it still goes to nobody.
     t.clock.now = T0 + 5 * HOUR;
     expect((await t.webhook(notice(p, b, bsuid(), phone(), t.clock.now))).status).toBe(200);

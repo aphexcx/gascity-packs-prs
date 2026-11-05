@@ -649,14 +649,17 @@ export function createGateway(deps: Deps) {
         // Meta names this phone number beside this user_id at the stamp: a row that held the
         // number since before then, beside another user_id, holds a number that was someone
         // else's by then (a recycled number), and loses it, so its city's sends never reach the
-        // new holder. A row that took the number after the stamp keeps it: the pairing is history
-        // (a late retry). A change notice's ids are the ones the owner leaves at its stamp, never
-        // a claim on the number; the change below records them. Setting NULL never hits a UNIQUE.
+        // new holder. The pairing is history, and strips nobody, when the row took the number after
+        // the stamp (a late retry) or when the user_id is a previous one (a retry of what its owner
+        // sent before a number change; no one else ever holds it). A change notice's ids are the
+        // ones the owner leaves at its stamp, never a claim on the number; the change below
+        // records them. Setting NULL never hits a UNIQUE.
         push(
           db
             .prepare(
               `UPDATE phones SET wa_id = NULL
-               WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2 AND COALESCE(wa_since, bound_stamp, 0) <= ?3`,
+               WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2 AND COALESCE(wa_since, bound_stamp, 0) <= ?3
+                 AND NOT EXISTS (SELECT 1 FROM phone_aliases WHERE id = ?2)`,
             )
             .bind(wa, user, stamp),
         );
