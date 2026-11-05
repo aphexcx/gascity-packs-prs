@@ -117,11 +117,15 @@ export function createOutboundConnection(wsClient, {
   }
 
   function sendMessage(chatid, body, { authDeadline = now() + authWaitMs } = {}) {
-    return waitForAuthenticated(authDeadline).then(() => trackActivity(async () => {
+    // null means this request already admitted a chunk. Later chunks use
+    // the SDK's ack timeout and fail immediately if the socket is gone.
+    const admission = authDeadline === null ? Promise.resolve() : waitForAuthenticated(authDeadline);
+    return admission.then(() => trackActivity(async () => {
       try {
         // Authentication may have arrived after an overdue timer, or a
         // microtask may have delayed us beyond admission after it resolved.
-        if (stopping || now() >= authDeadline || !authenticated || !wsClient.isConnected) throw unavailable();
+        if (stopping || (authDeadline !== null && now() >= authDeadline)
+          || !authenticated || !wsClient.isConnected) throw unavailable();
         // Keep the SDK's wire format and request-id generation unchanged.
         // The publisher decides whether a keyed retry can resume.
         const ack = await wsClient.sendMessage(chatid, body);

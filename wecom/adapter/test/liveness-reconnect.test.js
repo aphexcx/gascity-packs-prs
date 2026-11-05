@@ -257,7 +257,7 @@ test('publish waits for subscription acknowledgement and times out without writi
   assert.equal(sends(server).length, 1);
 });
 
-test('provider rejection is not retried and its ack suppresses a quiet-inbound cycle', async (t) => {
+test('provider rejection is not retried and a healthy pong prevents a quiet-inbound cycle', async (t) => {
   const server = await stubServer(t, (frame, connection) => {
     if (frame.cmd === 'aibot_send_msg') {
       connection.socket.send(JSON.stringify({ headers: frame.headers, errcode: 40001, errmsg: 'test refusal' }));
@@ -265,7 +265,7 @@ test('provider rejection is not retried and its ack suppresses a quiet-inbound c
     }
   });
   const adapter = startAdapter(t, { ...server, extraEnv: {
-    ...remediationEnv, WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS: '10000',
+    ...remediationEnv,
   } });
   await adapter.waitForLog('wecom long connection authenticated');
   const response = await adapter.request('/publish', textPublish());
@@ -754,3 +754,33 @@ for (const initiallyReady of [false, true]) {
     assert.equal(frames, 0);
   });
 }
+
+// Scaled wall-clock counterpart to the exact 40 s / 45 s virtual-time test:
+// exercise HTTP -> publisher -> connection -> SDK -> WebSocket with slow acks.
+test('an admitted keyless HTTP publish streams three chunks beyond its arrival deadline', async (t) => {
+  let subscription;
+  const server = await stubServer(t, (frame, connection) => {
+    if (frame.cmd === 'aibot_subscribe') {
+      subscription = { frame, connection };
+      return false;
+    }
+    if (frame.cmd === 'aibot_send_msg') {
+      setTimeout(() => acknowledge(connection, frame), 120);
+      return false;
+    }
+  });
+  const adapter = startAdapter(t, { ...server, extraEnv: { WECOM_PUBLISH_AUTH_WAIT_MS: '500' } });
+  await waitFor(() => subscription, 'subscription');
+  const text = 'a'.repeat(7600) + 'last';
+  const started = Date.now();
+  const publishing = adapter.request('/publish', { conversation: { conversation_id: 'local-user' }, text });
+  await delay(350);
+  assert.equal(sends(server).length, 0);
+  acknowledge(subscription.connection, subscription.frame);
+  const response = await publishing;
+  assert.equal(response.status, 200);
+  assert.equal(response.body.delivered, true);
+  assert.ok(Date.now() - started > 500);
+  assert.equal(sends(server).length, 3);
+  assert.equal(sends(server).map((f) => f.body.markdown.content).join(''), text);
+});

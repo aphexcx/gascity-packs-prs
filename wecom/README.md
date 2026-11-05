@@ -244,7 +244,10 @@ the SDK/socket stops awaits any messages received during the drain. A
 
 Before writing, `/publish` waits up to `WECOM_PUBLISH_AUTH_WAIT_MS`
 (default 45000, measured from request arrival) for authentication during reconnect. An expired queue/authentication wait returns `503 not_sent` without writing
-a frame; its queued callback is cancelled. A duplicate request that times out
+a frame; its queued callback is cancelled. This deadline applies only until
+the first chunk of this request is admitted. Later chunks use the SDK acknowledgement
+timeout and require a connected, authenticated socket, with no renewed authentication
+wait. A duplicate request that times out
 waiting for the same-key owner returns `503 publish_pending` with
 `delivery_outcome: in-progress`; that owner continues to hold the key.
 
@@ -253,7 +256,9 @@ After a timeout or drop, `503 retryable` includes the acknowledged count and
 `retry_safe: true`: a same-key retry resumes at the first unacknowledged
 chunk, including after restart. This is **at-least-once delivery** for the
 unacknowledged suffix: a provider acknowledgement lost in transit can cause
-that chunk to repeat. Acknowledged checkpoints are never replayed. The
+that chunk to repeat. The outbox runner treats HTTP 503 as a definite retryable
+failure and retries even when `OUTBOX_AMBIGUOUS_RETRIES=0`; this setting does
+not prevent retries of `503 retryable`. Acknowledged checkpoints are never replayed. The
 SDK request IDs are unchanged and are not provider-side deduplication keys.
 Successful responses include `delivery_outcome: acked-and-done` or
 `retried-unacked-chunks`; a refused completed-key retry reports `acked-and-done`.
@@ -264,8 +269,17 @@ A fully acknowledged key returns `409 already_delivered`; different text or
 conversation under the same key returns `409 idempotency_conflict`.
 
 Checkpoint retention is 24 hours from the last update, with the journal's
-512-entry / 4 MiB capacity. Entries cannot be evicted during retention;
-`503 journal_unavailable` stops a keyed send if a checkpoint cannot be saved.
+512-entry / 4 MiB capacity. Text checkpoints cannot be evicted during retention.
+Text writes reclaim the oldest settled media receipts when needed; pending media
+entries are protected. A journal containing only protected entries can still run
+out of room. `503 journal_unavailable` stops a keyed send if a checkpoint cannot
+be saved, including an unwritable or quarantined journal. After 24 hours, retrying
+an expired key is a fresh send of the entire text.
+
+Successful N-chunk keyed sends perform 2N full journal rewrites: one pre-send
+latch and one acknowledgement per chunk, each with file/directory fsync and backup
+rotation. No receipt padding is stored. The pre-send latch preserves fail-closed
+restart behavior if the process dies before recording a chunk's outcome.
 Keys are limited to 256 bytes. An attempt interrupted before its outcome was
 journaled refuses replay after restart: the lost write may have been an
 acknowledgement. Recorded timeout/drop outcomes remain resumable. Legacy

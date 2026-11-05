@@ -353,7 +353,7 @@ export function createAttemptJournal({
     } else if (sawCorrupt) {
       degraded = true;
       log('outbound attempt journal: no valid generation survives its corruption — DEGRADED; '
-        + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+        + 'media and keyed text publishing fail closed until the quarantined journal files are inspected and removed');
     } else {
       // Nothing to load and nothing newly corrupt: a previous startup may
       // have quarantined every generation. Its block was in memory only,
@@ -368,7 +368,7 @@ export function createAttemptJournal({
         degraded = true;
         log(`outbound attempt journal: no generation to load but ${remaining.length} quarantined file(s) remain `
           + `(${remaining.join(', ')}) — still DEGRADED from an earlier startup's corruption; `
-          + 'media publishing fails closed until the quarantined journal files are inspected and removed');
+          + 'media and keyed text publishing fail closed until the quarantined journal files are inspected and removed');
       }
     }
   }
@@ -424,9 +424,8 @@ export function createAttemptJournal({
     // be established — callers must stop the send; critical:false logs,
     // rolls the in-memory mutation back, and returns false.
     //
-    // ifRoom (text writes): never displace another entry — when the
-    // write would exceed the cap or the byte cap, skip it (logged once
-    // until a text write fits again) and return false.
+    // ifRoom (text writes): reclaim oldest settled media receipts only.
+    // Pending media and retained text checkpoints must never be displaced.
     record(key, patch, { critical = true, ifRoom = false } = {}) {
       const fail = (err) => {
         const wrapped = new JournalUnavailableError(
@@ -451,27 +450,26 @@ export function createAttemptJournal({
       // belt-and-suspenders guard against a pathological in-cap burst.
       // Drop the oldest SETTLED entry first; only when nothing is settled
       // drop the oldest of all — that entry loses its delivery-unknown
-      // protection, so say so. An ifRoom write drops nothing.
+      // protection, so say so. Text writes never take that last resort.
       const overBytes = () =>
         Buffer.byteLength(JSON.stringify({ version: 2, entries: Object.fromEntries(entries) })) > maxBytes;
-      const overCap = () => entries.size > cap || (entries.size > 1 && overBytes());
-      // ifRoom checks the byte cap even for a lone entry: skipping it is
-      // free, whereas the prune loop below must keep at least one.
-      if (ifRoom && (entries.size > cap || overBytes())) {
-        entries.delete(key);
-        if (hadKey) entries.set(key, prev);
-        if (!textSkipLogged) {
-          textSkipLogged = true;
-          log('outbound attempt journal full: a text send is not journaled and will be refused (no entry is displaced for it)');
-        }
-        return false;
-      }
+      const overCap = () => entries.size > cap || ((ifRoom || entries.size > 1) && overBytes());
       while (overCap()) {
         let dropped = null;
         for (const [k, e] of entries) {
-          if (k !== key && !e.textCheckpoint && e.receipt) { dropped = k; break; }
+          if (k !== key && e.endpoint !== 'publish' && !e.textCheckpoint && e.receipt) { dropped = k; break; }
         }
         if (dropped === null) {
+          if (ifRoom) {
+            entries.delete(key);
+            if (hadKey) entries.set(key, prev);
+            for (const [k, v] of pruned) entries.set(k, v);
+            if (!textSkipLogged) {
+              textSkipLogged = true;
+              log('outbound attempt journal full: no settled media receipt can make room for a text checkpoint; pending entries and retained text are protected');
+            }
+            return false;
+          }
           dropped = [...entries].find(([k, e]) => k !== key && !e.textCheckpoint)?.[0] ?? null;
           if (dropped === null) {
             entries.delete(key);
@@ -1532,7 +1530,7 @@ export function createOutboundPublisher(deps) {
     // Legacy ambiguous attempts remain refused: they have no trustworthy
     // checkpoint. A retry replays only the unacknowledged suffix; a lost
     // provider ack can still mean that suffix is already visible (at-least-once).
-    const journalTextState = ({ pending = false } = {}) => {
+    const journalTextState = () => {
       if (!key) return;
       const saved = journal.record(key, {
         endpoint: 'publish', textCheckpoint: true, fingerprint: textFingerprint,
@@ -1540,10 +1538,9 @@ export function createOutboundPublisher(deps) {
         chunksDelivered: state.chunksDelivered, messageID: state.messageID,
         deliveryUnknown: false, retriedUnackedChunks: !!state.retriedUnackedChunks,
         retryUnacked: !!state.retryUnacked,
-        // Reserve room before writing a frame for a maximally escaped
-        // 256-byte receipt id plus counter growth. Ack persistence must
-        // not fail just because its own result makes the entry larger.
-        ackReserve: pending ? ' '.repeat(6 * 256 + 32) : '',
+        // Remove padding left by older checkpoints. A growing ack can
+        // reclaim a settled receipt; failed persistence stops the suffix.
+        ackReserve: undefined,
       }, { ifRoom: true });
       if (!saved) throw new JournalUnavailableError('text checkpoint journal is full — retry with the same key after capacity is available');
       state.textCheckpoint = true;
@@ -1568,14 +1565,25 @@ export function createOutboundPublisher(deps) {
       const chunks = chunkText(pub.text);
       chunkCount = chunks.length;
       state.chunksTotal = chunks.length;
+      // Repair an acknowledgement that failed to persist before changing
+      // its pre-send latch. Fresh attempts need only the latch below.
+      if (state.textCheckpoint && !journalCovers(key, state)) journalTextState();
       if (state.textCheckpoint && (state.chunksAttempted ?? 0) > state.chunksDelivered) {
         state.retriedUnackedChunks = true;
       }
-      journalTextState();
+      let admitted = false;
       for (let i = state.chunksDelivered; i < chunks.length; i++) {
+        const previousAttempted = state.chunksAttempted;
+        const previousRetryUnacked = state.retryUnacked;
         state.chunksAttempted = i + 1;
         state.retryUnacked = false;
-        journalTextState({ pending: true });
+        try { journalTextState(); } catch (err) {
+          // No provider call happened. A failed latch must not turn an
+          // unwritten attempt into a delivery-unknown refusal on retry.
+          state.chunksAttempted = previousAttempted;
+          state.retryUnacked = previousRetryUnacked;
+          throw err;
+        }
         let chunkReceipt;
         try {
           chunkReceipt = await sendMessage(chatid, {
@@ -1584,7 +1592,7 @@ export function createOutboundPublisher(deps) {
               content: chunks[i],
               ...(feedbackBase ? { feedback: { id: `${feedbackBase}.${i}` } } : {}),
             },
-          }, { authDeadline });
+          }, { authDeadline: admitted ? null : authDeadline });
         } catch (err) {
           if (isDefiniteSendFailure(err)) {
             // Nothing from this chunk is in the chat: keep the key retryable.
@@ -1601,6 +1609,7 @@ export function createOutboundPublisher(deps) {
           }
           throw err;
         }
+        admitted = true;
         state.messageID = latchedReqId(chunkReceipt) ?? state.messageID;
         state.chunksDelivered = i + 1;
         journalTextState();

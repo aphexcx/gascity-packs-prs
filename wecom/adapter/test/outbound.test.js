@@ -10,6 +10,8 @@
 
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { createOutboundConnection } from '../src/connection.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -3318,24 +3320,119 @@ test('a keyed text retry after a mid-message not_sent and a restart resumes at t
   assert.deepEqual(sent, chunks.slice(1), 'chunk 1 is not repeated; every later chunk goes once');
 });
 
-test('a text attempt never evicts a media receipt from a full journal — the send is refused and logged once', async (t) => {
+test('a keyed text reclaims the oldest settled receipt from a 512-entry media journal', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const entries = Object.fromEntries(Array.from({ length: 512 }, (_, i) => [`media-${i}`, {
+    fingerprint: { endpoint: 'publish-media', conversation_id: 'u', file_sha256: `sha-${i}` },
+    updatedAt: Date.parse('2026-08-20T00:00:00Z') + i * 1000,
+    mediaId: `MEDIA_${i}`, sendAttempted: true,
+    ...(i > 0 && i <= 400 ? { mediaSent: true, receipt: { delivered: true, message_id: `ACK_${i}` } } : {}),
+  }]));
+  fs.writeFileSync(journalPath, JSON.stringify({ version: 2, entries }));
+  const journal = createAttemptJournal({ filePath: journalPath });
+  const text = 'a'.repeat(3800) + 'last';
+  const sent = [];
+  const { publisher } = makePublisher({ journal, sendMessage: async (_, frame) => {
+    const saved = JSON.parse(fs.readFileSync(journalPath, 'utf8')).entries;
+    assert.equal(Object.keys(saved).length, 512);
+    assert.equal(saved['text-at-cap'].chunksDelivered, sent.length, 'progress is durable before the next send');
+    assert.equal(saved['text-at-cap'].chunksAttempted, sent.length + 1);
+    assert.equal(saved['text-at-cap'].ackReserve, undefined, 'no receipt padding is serialized');
+    assert.equal(saved['media-1'], undefined, 'oldest settled media receipt makes room');
+    assert.ok(saved['media-0'], 'oldest unresolved entry is protected');
+    assert.ok(saved['media-511'], 'newest unresolved entry is protected');
+    sent.push(frame.markdown.content);
+    return { headers: { req_id: `TEXT_${sent.length}` } };
+  } });
+  const body = { conversation: { conversation_id: 'u' }, text, idempotency_key: 'text-at-cap' };
+  assert.equal((await publishText(publisher, body)).statusCode, 200);
+  assert.deepEqual(sent, chunkText(text));
+  const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath }) });
+  assert.equal((await publishText(after.publisher, body)).json().failure_kind, 'already_delivered');
+  assert.equal(after.calls.length, 0);
+});
+
+test('text checkpoints reclaim settled media at the byte cap while preserving pending entries', async () => {
+  const journal = createAttemptJournal({ maxBytes: 2400 });
+  journal.record('pending', { sendAttempted: true });
+  for (let i = 0; i < 3; i++) {
+    journal.record(`settled-${i}`, { receipt: { delivered: true, message_id: 'x'.repeat(600) } });
+  }
+  const { publisher } = makePublisher({ journal, sendMessage: async () => ({ headers: { req_id: '\x01'.repeat(256) } }) });
+  assert.equal((await publishText(publisher, { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'text' })).statusCode, 200);
+  assert.ok(journal.get('pending'));
+  assert.equal(journal.get('settled-0'), undefined);
+  assert.equal(journal.get('settled-2'), undefined, 'ack growth may reclaim multiple settled receipts');
+  assert.equal(journal.get('text').chunksDelivered, 1);
+});
+
+test('text capacity pressure preserves all unresolved media and retained text checkpoints', async () => {
   const logs = [];
   const journal = createAttemptJournal({ cap: 2, log: (m) => logs.push(m) });
-  journal.record('media-a', { fingerprint: { endpoint: 'publish-media' }, mediaSent: true, receipt: { delivered: true, message_id: 'A' } });
-  journal.record('media-b', { fingerprint: { endpoint: 'publish-media' }, mediaSent: true, receipt: { delivered: true, message_id: 'B' } });
+  journal.record('pending', { sendAttempted: true });
+  journal.record('retained', { endpoint: 'publish', textCheckpoint: true, chunksDelivered: 0 });
   const { publisher, calls } = makePublisher({ journal });
-
-  for (const key of ['key-text-1', 'key-text-2']) {
-    const res = await publishText(publisher, { conversation: { conversation_id: 'zhang_san' }, text: 'hello', idempotency_key: key });
-    assert.equal(res.statusCode, 503, 'no send without a checkpoint');
-    assert.equal(journal.get(key), undefined, 'and not journaled');
+  for (const key of ['text-1', 'text-2']) {
+    const res = await publishText(publisher, { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: key });
+    assert.equal(res.json().failure_kind, 'journal_unavailable');
+    assert.equal(journal.get(key), undefined);
   }
   assert.equal(calls.length, 0);
-  assert.equal(journal.get('media-a').receipt.message_id, 'A');
-  assert.equal(journal.get('media-b').receipt.message_id, 'B');
-  assert.equal(journal.size(), 2);
-  assert.equal(logs.filter((m) => /a text send is not journaled/.test(m)).length, 1, 'logged once, not per send');
+  assert.ok(journal.get('pending'));
+  assert.ok(journal.get('retained'));
+  assert.equal(logs.filter((m) => /no settled media receipt/.test(m)).length, 1);
 });
+
+test('a quarantined journal clearly blocks keyed text before any provider write', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  fs.writeFileSync(journalPath, '{broken');
+  const logs = [];
+  const { publisher, calls } = makePublisher({ journal: createAttemptJournal({ filePath: journalPath, log: (m) => logs.push(m) }) });
+  const response = await publishText(publisher, { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'blocked' });
+  assert.equal(response.statusCode, 503);
+  assert.equal(response.json().failure_kind, 'journal_unavailable');
+  assert.match(response.json().error, /quarantined/);
+  assert.equal(calls.length, 0);
+  assert.ok(logs.some((m) => /keyed text publishing fail closed/.test(m)));
+});
+
+for (const keyed of [false, true]) {
+  test(`${keyed ? 'keyed' : 'keyless'} text admitted after 40 s reconnect completes three slow chunks past 45 s`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+    const client = new EventEmitter();
+    client.isConnected = false;
+    const sentAt = [];
+    const sent = [];
+    client.sendMessage = async (_, frame) => {
+      sentAt.push(Date.now());
+      sent.push(frame.markdown.content);
+      t.mock.timers.tick(4000); // each acknowledgement uses less than the SDK's 10 s timeout
+      return { headers: { req_id: `ACK_${sent.length}` } };
+    };
+    const connection = createOutboundConnection(client);
+    let waiting;
+    const admission = new Promise((resolve) => { waiting = resolve; });
+    const { publisher } = makePublisher({ sendMessage: (...args) => {
+      const result = connection.sendMessage(...args);
+      waiting();
+      return result;
+    } });
+    const text = 'a'.repeat(7600) + 'last';
+    const publishing = publishText(publisher, { conversation: { conversation_id: 'u' }, text,
+      ...(keyed ? { idempotency_key: 'slow' } : {}) });
+    await admission;
+    assert.equal(sent.length, 0);
+    t.mock.timers.tick(40_000);
+    client.isConnected = true;
+    client.emit('authenticated');
+    const response = await publishing;
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().delivered, true);
+    assert.deepEqual(sentAt, [41_000, 45_000, 49_000]);
+    assert.equal(Date.now(), 53_000);
+    assert.deepEqual(sent, chunkText(text));
+  });
+}
 
 // Codex round 3 P2: the byte cap let a lone oversized text entry through.
 test('text journaling respects the byte cap even when the journal is empty, and refuses over-long keys', async (t) => {
@@ -3647,13 +3744,22 @@ test('an acknowledgement checkpoint failure refuses replay after restart', async
   assert.equal(after.calls.length, 0, 'the received ack cannot be lost into a replay');
 });
 
-test('text reserves checkpoint growth before any provider write', async () => {
-  const journal = createAttemptJournal({ maxBytes: 1500 });
-  const { publisher, calls } = makePublisher({ journal });
-  const body = { conversation: { conversation_id: 'u' }, text: 'hello', idempotency_key: 'no-ack-room' };
+test('an ack that exceeds all available journal bytes stops the suffix and refuses replay after restart', async (t) => {
+  const journalPath = path.join(tmpDir(t), 'attempts.json');
+  const journal = createAttemptJournal({ filePath: journalPath, maxBytes: 1500 });
+  let sends = 0;
+  const { publisher } = makePublisher({ journal, sendMessage: async () => {
+    sends++;
+    return { headers: { req_id: '\x01'.repeat(256) } };
+  } });
+  const body = { conversation: { conversation_id: 'u' }, text: 'a'.repeat(3800) + 'last', idempotency_key: 'no-ack-room' };
   const failed = await publishText(publisher, body);
   assert.equal(failed.json().failure_kind, 'journal_unavailable');
-  assert.equal(calls.length, 0, 'the initial entry fits but a worst-case acknowledgement would not');
+  assert.equal(failed.json().retry_safe, false);
+  assert.equal(sends, 1, 'the suffix stops when the real acknowledgement cannot fit');
+  const after = makePublisher({ journal: createAttemptJournal({ filePath: journalPath, maxBytes: 1500 }) });
+  assert.equal((await publishText(after.publisher, body)).json().failure_kind, 'delivery_unknown');
+  assert.equal(after.calls.length, 0);
 });
 
 test('text expires behind media without later sending its cancelled callback', async (t) => {
