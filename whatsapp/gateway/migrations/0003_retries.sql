@@ -18,9 +18,11 @@ DROP INDEX deliveries_once;
 --    holder of a recycled number, or the same person bound again in another city after an
 --    unbind). A current id is held from bound_stamp, or, for a wa_id the row took later, from
 --    wa_since. bound_stamp is NULL on a row bound before this migration: held from the start, as
---    before.
+--    before. wa_since is also where the owner's number starts when a number change gave the row
+--    none (Meta shared none, or another row held it): a later notice's old number is the owner's
+--    from there, never from the bind (gp-w376).
 ALTER TABLE phones ADD COLUMN bound_stamp INTEGER; -- Meta's stamp of the binding's invite text
-ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later message that gave the row its wa_id; NULL: the invite text's
+ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later message or number change that brought the owner to its number; NULL: the invite text's
 
 --    A previous id, one a number change replaced, is held from since until changed_at. A
 --    message Meta stamped in that span and retried after the change routes to the owner under

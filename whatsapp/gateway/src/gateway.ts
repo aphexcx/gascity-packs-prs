@@ -808,6 +808,11 @@ export function createGateway(deps: Deps) {
         // number the notice names (one the row already lost to its next holder, rule 2, was still
         // the owner's until the change). Only when the re-key below takes place (no other row
         // holds the new user_id).
+        // A number is held from the stamp that brought the owner to it (w: wa_since, which the
+        // message that showed it or the number change wrote), and from the bind only when
+        // neither came since: the owner's number then is the one it bound with. A number that
+        // came after the bind never reaches back to the bind, where it may have been anyone's
+        // (gp-w376).
         push(
           db
             .prepare(
@@ -820,7 +825,7 @@ export function createGateway(deps: Deps) {
                SELECT c.id, o.conversation_id, o.bound_wamid, c.since, ?5, ?6 FROM o, (
                  SELECT wa_id AS id, w AS since FROM o
                  UNION ALL SELECT user_id, b FROM o
-                 UNION ALL SELECT ?3, b FROM o WHERE ?3 IS NOT o.wa_id
+                 UNION ALL SELECT ?3, w FROM o WHERE ?3 IS NOT o.wa_id
                ) c
                WHERE c.id IS NOT NULL AND c.id IS NOT ?1 AND c.id IS NOT ?2`,
             )
@@ -836,14 +841,16 @@ export function createGateway(deps: Deps) {
               .bind(m.change.waId, m.change.userId, stamp),
           );
         }
+        // The re-key writes the change's stamp to wa_since whether or not the row takes the new
+        // number (Meta shared none, or another row holds it): whatever number the owner has from
+        // here, it has had it only since this stamp, which is where a later notice's old number
+        // starts (above).
         push(
           db
             .prepare(
               `UPDATE phones SET
                  user_id = ?1,
-                 wa_since = CASE WHEN ?2 IS NOT NULL AND NOT EXISTS
-                                   (SELECT 1 FROM phones o WHERE o.wa_id = ?2 AND o.conversation_id <> phones.conversation_id)
-                                 THEN ?5 ELSE NULL END,
+                 wa_since = ?5,
                  wa_id = CASE WHEN ?2 IS NOT NULL AND NOT EXISTS
                                 (SELECT 1 FROM phones o WHERE o.wa_id = ?2 AND o.conversation_id <> phones.conversation_id)
                               THEN ?2 ELSE NULL END
