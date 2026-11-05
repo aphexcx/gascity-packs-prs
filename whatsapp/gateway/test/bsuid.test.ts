@@ -1743,6 +1743,12 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     const inW = (await t.inbox(w)).body.deliveries.map((d: any) => d.message?.id);
     expect(inW).not.toContain(wamidOf(sinceChange));
     expect(inW).toContain(wamidOf(beforeChange));
+    // The span routes from the change too: the owner's own change is on-time evidence (gp-sv2d).
+    // Once C is unbound, A's message stamped between the change and the pairing is A's.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(p).run();
+    const between = textPayload(p, "A's, between its change and the pairing", { wamid: `wamid.${uniq()}`, ts: T1 + (3 * HOUR) / 4 });
+    expect((await t.webhook(between)).status).toBe(200);
+    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === wamidOf(between))).toMatchObject({ kind: "message", conversation_id: w0 });
   });
 
   it("a message naming P beside another user_id: one stamped before A's pairing, landing late, is C's (rule 3) and ends nothing of A's span; one stamped after ends A's span there (rule 2), so P alone stamped later is never A's (gp-byp8)", async () => {
@@ -2709,6 +2715,35 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       expect(await owners(p)).toEqual(before); // the holder takes nothing
     });
   }
+
+  it("a retry under A's previous user_id beside P, once no row holds P, is A's even while B's paired span of P holds its stamp: the user_id decides, and the rule-3 doubt needs a phone-only holder (gp-sv2d)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const y = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const c = (await owners(p))[0] as { conversation_id: string };
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    const b = bsuid();
+    await t.joinAs(y, { user: b });
+    t.clock.now = T1;
+    await t.sayAs({ wa: p, user: b }, "B's pairing"); // B's span of P from T1
+    const own = textAs({ wa: p, user: a }, "A's, beside P", { wamid: `wamid.${uniq()}`, ts: T2 });
+    t.clock.now = T2;
+    flaky.arm(0);
+    expect((await t.webhook(own)).status).toBe(500);
+    t.clock.now = T3;
+    expect((await t.webhook(notice(null, a, bsuid(), null, T3))).status).toBe(200);
+    await unbind(c.conversation_id);
+    t.clock.now = T3 + HOUR / 4;
+    const n = await counted(t, async () => expect((await t.webhook(own)).status).toBe(200));
+    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === wamidOf(own))).toMatchObject({ kind: "message", conversation_id: a });
+    expect(await ids(t, y)).not.toContain(wamidOf(own));
+    expect(n).toEqual({ unrouted: 0, conflicts: 0, line: [{ unrouted: 0, unrouted_conflicts: 0 }], sends: 0 });
+  });
 });
 
 describe("BSUID: retention", () => {
