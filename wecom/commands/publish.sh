@@ -229,7 +229,7 @@ if [ -n "$media" ]; then
 elif [ -n "$idempotency_key" ]; then
   # Keyed text: the adapter resumes a same-key retry after the chunks it
   # already delivered and refuses one whose last chunk went unacknowledged.
-  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without duplicating it)" >&2
+  echo "gc wecom publish: idempotency key $idempotency_key (rerun with --idempotency-key $idempotency_key to resume this send without repeating acknowledged chunks)" >&2
 fi
 
 # Capture status and body separately so the adapter's JSON error payload
@@ -276,6 +276,15 @@ if [ "$status" -ge 400 ] 2>/dev/null; then
     fi
   else
     case "$failure_kind" in
+      retryable)
+        echo "gc wecom publish: retry with --idempotency-key $idempotency_key to resume at the first unacknowledged chunk; a lost acknowledgement may repeat that chunk, but acknowledged chunks are skipped" >&2
+        ;;
+      journal_unavailable)
+        echo "gc wecom publish: restore journal capacity/durability, then retry with the same idempotency key" >&2
+        ;;
+      already_delivered)
+        echo "gc wecom publish: this key is already fully acknowledged; no message was resent" >&2
+        ;;
       not_sent)
         if [ -n "$idempotency_key" ]; then
           echo "gc wecom publish: the failed chunk was not written; retry with --idempotency-key $idempotency_key (safe — it resumes without repeating delivered chunks)" >&2

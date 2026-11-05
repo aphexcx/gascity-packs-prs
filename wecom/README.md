@@ -217,17 +217,17 @@ restart-loop on a suspicion). WeCom has no bot-readable history API, so
 unlike slack-full there is no probe to distinguish quiet-chat from
 dead-push and no backfill — a real stall's messages are unrecoverable,
 which is why surfacing matters. `WECOM_LIVENESS_RECONNECT=true`
-additionally force-cycles the connection while stalled — the only
-remediation available for a ready-but-dead WS. The watchdog starts at boot,
-so a process that never authenticates still reports a stall. First
-authentication resets the stall clock; reconnects do not reset inbound
-silence. Cycles are rate-limited by `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (default the
-larger of the stall threshold and 30min). A recent outbound acknowledgement
-suppresses a new cycle for `WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` (default
-10min; **0 disables suppression**), but only until inbound silence reaches
-**3× the stall threshold**. At that ceiling remediation runs despite fresh
-outbound acks: pongs and successful sends do not prove inbound delivery.
-Alarms remain visible even when acks suppress cycling. Watchdog polling
+runs an active WebSocket ping with a matching pong deadline of
+`WECOM_LIVENESS_PONG_TIMEOUT_MS` (default 10000). Only a failed probe
+permits a reconnect; quiet chat with a healthy transport never cycles,
+regardless of idle duration. The watchdog starts at boot, so a process that
+never authenticates still reports a stall. First authentication resets the
+stall clock; reconnects do not reset inbound silence. Probes and cycles are
+rate-limited by `WECOM_LIVENESS_RECONNECT_MIN_INTERVAL_MS` (default the larger
+of the stall threshold and 30min). The former
+`WECOM_LIVENESS_OUTBOUND_ACK_FRESH_MS` setting is no longer used. Inbound
+alarms remain because a healthy transport cannot prove push delivery.
+Watchdog polling
 and repeat alarms use `WECOM_LIVENESS_TICK_MS` (30000) and
 `WECOM_LIVENESS_ALARM_REPEAT_MS` (1800000).
 
@@ -235,17 +235,34 @@ Before a remediation close, active publishes drain for up to
 `WECOM_RECONNECT_DRAIN_TIMEOUT_MS` (default 30000), with one wait log line.
 An active upload defers remediation until it settles, including uploads
 retained after an HTTP timeout and either upload engine; the drain deadline
-and ack-suppression ceiling do not interrupt progressing upload chunks.
+does not interrupt progressing upload chunks.
 On SIGTERM/SIGINT the HTTP listener stops accepting new publishes first.
 Outbound draining is capped at **1500 ms** (or the configured drain timeout,
 if shorter); inbound buffers flush concurrently, then a final flush after
 the SDK/socket stops awaits any messages received during the drain. A
 1900 ms hard exit keeps shutdown within the supervisor's 2-second budget.
 
-Message sends retain the SDK's request IDs and are **never automatically
-retried after a socket closes before acknowledgement**. Such a publish
-returns HTTP `502 delivery_unknown`; a repeat with the same idempotency key
-is refused (`409`). Check the chat before resending with a fresh key.
+Before writing, `/publish` waits up to `WECOM_PUBLISH_AUTH_WAIT_MS`
+(default 45000) for authentication during reconnect. An expired wait returns
+`503 not_sent` without writing a frame.
+
+Keyed text publishes journal every chunk acknowledgement before advancing.
+After a timeout or drop, `503 retryable` includes the acknowledged count and
+`retry_safe: true`: a same-key retry resumes at the first unacknowledged
+chunk, including after restart. This is **at-least-once delivery** for the
+unacknowledged suffix: a provider acknowledgement lost in transit can cause
+that chunk to repeat. Acknowledged checkpoints are never replayed. The
+SDK request IDs are unchanged and are not provider-side deduplication keys.
+A fully acknowledged key returns `409 already_delivered`; different text or
+conversation under the same key returns `409 idempotency_conflict`.
+
+Checkpoint retention is 24 hours from the last update, with the journal's
+512-entry / 4 MiB capacity. Entries cannot be evicted during retention;
+`503 journal_unavailable` stops a keyed send if a checkpoint cannot be saved.
+Keys are limited to 256 bytes. Legacy ambiguous text entries, degraded
+journals, and recovery from an older backup fail closed. Media and keyless
+text retain `502 delivery_unknown` for missing acknowledgements; ambiguous
+media and legacy text keys remain refused on retry (`409`).
 
 **Empty-payload surfacing** (`src/inbound.js`). The 8/22 22:53 case: a
 voice frame arrived with no server transcript and no media, and the

@@ -291,3 +291,17 @@ test('a media not_sent failure keeps the same-key resume hint', { skip: !toolsPr
   assert.match(run.stderr, new RegExp(`retry with --idempotency-key ${key} to resume`));
   assert.doesNotMatch(run.stderr, /check the chat first/);
 });
+
+for (const [failure, status, hint] of [
+  ['retryable', 503, /first unacknowledged chunk; a lost acknowledgement may repeat that chunk/],
+  ['journal_unavailable', 503, /restore journal capacity\/durability/],
+  ['already_delivered', 409, /already fully acknowledged; no message was resent/],
+]) {
+  test(`text CLI explains ${failure}`, { skip: !toolsPresent && 'jq/curl not on PATH' }, async (t) => {
+    const { url, requests } = await startCaptureServer(t, () => ({ status, payload: { failure_kind: failure } }));
+    const run = await runPublish(['--chat', 'u', '--text', 'hello', '--idempotency-key', 'k'], url);
+    assert.equal(run.code, 1);
+    assert.match(run.stderr, hint);
+    assert.equal(requests.length, 1);
+  });
+}

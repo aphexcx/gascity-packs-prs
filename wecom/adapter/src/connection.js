@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto';
+
 // Coordinate adapter-initiated closes with outbound work. Construct before
 // connect(): an open socket is not usable until subscription is acknowledged.
 export function createOutboundConnection(wsClient, {
   drainTimeoutMs = 30_000,
+  authWaitMs = 45_000,
+  pongTimeoutMs = 10_000,
   now = Date.now,
   log = () => {},
 } = {}) {
@@ -12,9 +16,11 @@ export function createOutboundConnection(wsClient, {
   let stopping = false;
   let cycle = null;
   const idleWaiters = new Set();
+  const authWaiters = new Set();
 
   wsClient.on('authenticated', () => {
     authenticated = true;
+    for (const wake of [...authWaiters]) wake();
   });
   wsClient.on('disconnected', () => {
     authenticated = false;
@@ -60,11 +66,58 @@ export function createOutboundConnection(wsClient, {
     });
   }
 
+  function waitForAuthenticated() {
+    const unavailable = () => new Error('WebSocket not connected, unable to send data');
+    if (stopping) return Promise.reject(unavailable());
+    if (authenticated && wsClient.isConnected) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const finish = (err) => {
+        clearTimeout(timer);
+        authWaiters.delete(wake);
+        if (err) reject(err); else resolve();
+      };
+      const wake = () => {
+        if (stopping) finish(unavailable());
+        else if (authenticated && wsClient.isConnected) finish();
+      };
+      const timer = setTimeout(() => finish(unavailable()), authWaitMs);
+      authWaiters.add(wake);
+      wake();
+    });
+  }
+
+  // The pinned SDK exposes the ws transport here (also used by upload.js).
+  // Match our nonce: unrelated pongs must not satisfy this bounded probe.
+  function healthCheck() {
+    const socket = wsClient.wsManager?.ws;
+    // The SDK already owns reconnection while disconnected/authenticating.
+    if (stopping || !authenticated || !wsClient.isConnected) return Promise.resolve(true);
+    if (!socket?.ping) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const nonce = randomUUID();
+      const finish = (healthy) => {
+        clearTimeout(timer);
+        socket.off('pong', pong);
+        socket.off('close', failed);
+        socket.off('error', failed);
+        // Never cycle a replacement socket because an older probe failed.
+        resolve(healthy || stopping || wsClient.wsManager?.ws !== socket || !authenticated);
+      };
+      const pong = (data) => { if (data.toString() === nonce) finish(true); };
+      const failed = () => finish(false);
+      const timer = setTimeout(failed, pongTimeoutMs);
+      socket.on('pong', pong);
+      socket.once('close', failed);
+      socket.once('error', failed);
+      try { socket.ping(nonce, (err) => { if (err) failed(); }); } catch { failed(); }
+    });
+  }
+
   function sendMessage(chatid, body) {
-    return trackActivity(async () => {
+    return waitForAuthenticated().then(() => trackActivity(async () => {
       try {
         // Keep the SDK's wire format and request-id generation unchanged.
-        // A close before acknowledgement is delivery-unknown, never retried.
+        // The publisher decides whether a keyed retry can resume.
         const ack = await wsClient.sendMessage(chatid, body);
         noteAck();
         return ack;
@@ -72,7 +125,7 @@ export function createOutboundConnection(wsClient, {
         if (typeof err?.errcode === 'number') noteAck(); // refusals also prove the socket is alive
         throw err;
       }
-    });
+    }));
   }
 
   function cycleSocket() {
@@ -107,6 +160,7 @@ export function createOutboundConnection(wsClient, {
 
   function close() {
     stopping = true; // also cancels a reconnect already waiting for idle
+    for (const wake of [...authWaiters]) wake();
     return whenIdle(() => new Promise((resolve, reject) => {
       authenticated = false;
       lastAckAt = null;
@@ -131,7 +185,7 @@ export function createOutboundConnection(wsClient, {
   }
 
   return {
-    sendMessage, trackActivity, trackUpload, noteAck, reconnect, close,
+    sendMessage, trackActivity, trackUpload, noteAck, reconnect, close, healthCheck,
     lastAckAt: () => lastAckAt,
     reconnectDeferral: () => uploads > 0 ? `${uploads} media upload(s) in flight` : null,
   };
