@@ -659,11 +659,12 @@ export function createGateway(deps: Deps) {
         // the stamp (a late retry) or when the user_id is a previous one (a retry of what its owner
         // sent before a number change; no one else ever holds it). A change notice's ids are the
         // ones the owner leaves at its stamp, never a claim on the number; the change below
-        // records them. Setting NULL never hits a UNIQUE.
+        // records them. Setting NULL never hits a UNIQUE. The row keeps where it held the number
+        // from (wa_since), where its next notice's old number starts (gp-w376).
         push(
           db
             .prepare(
-              `UPDATE phones SET wa_id = NULL
+              `UPDATE phones SET wa_id = NULL, wa_since = COALESCE(wa_since, bound_stamp, 0)
                WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2 AND COALESCE(wa_since, bound_stamp, 0) <= ?3
                  AND NOT EXISTS (SELECT 1 FROM phone_aliases WHERE id = ?2)`,
             )
@@ -815,24 +816,27 @@ export function createGateway(deps: Deps) {
         // number the notice names (one the row already lost to its next holder, rule 2, was still
         // the owner's until the change). Only when the re-key below takes place (no other row
         // holds the new user_id).
-        // A number is held from the stamp that brought the owner to it (w: wa_since, which the
-        // message that showed it or the number change wrote), and from the bind only when
-        // neither came since: the owner's number then is the one it bound with. A number that
-        // came after the bind never reaches back to the bind, where it may have been anyone's
-        // (gp-w376).
+        // A number is held from the stamp that brought the owner to it, never from the bind when
+        // it came later, when it may have been anyone's (gp-w376). The row's current number: w,
+        // its wa_since (the message that filled it, or the change), else the bind it came with.
+        // The old number the notice names when the row holds it no longer: s, the wa_since that
+        // rule 2's strip, the fill or a change left on the row. A row with none was never given a
+        // number by the records (another row held it at every message that showed it, or none
+        // did), so that number is no previous holding of the owner: it may have been the other
+        // row's all along.
         push(
           db
             .prepare(
               `WITH o AS (
                  SELECT conversation_id, bound_wamid, wa_id, user_id,
-                        COALESCE(bound_stamp, 0) AS b, COALESCE(wa_since, bound_stamp, 0) AS w
+                        COALESCE(bound_stamp, 0) AS b, COALESCE(wa_since, bound_stamp, 0) AS w, wa_since AS s
                  FROM phones WHERE conversation_id = ${ownerKey("?3", "?4", "?5")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))
                INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
                SELECT c.id, o.conversation_id, o.bound_wamid, c.since, ?5, ?6 FROM o, (
                  SELECT wa_id AS id, w AS since FROM o
                  UNION ALL SELECT user_id, b FROM o
-                 UNION ALL SELECT ?3, w FROM o WHERE ?3 IS NOT o.wa_id
+                 UNION ALL SELECT ?3, s FROM o WHERE ?3 IS NOT o.wa_id AND s IS NOT NULL
                ) c
                WHERE c.id IS NOT NULL AND c.id IS NOT ?1 AND c.id IS NOT ?2`,
             )
@@ -842,7 +846,7 @@ export function createGateway(deps: Deps) {
           push(
             db
               .prepare(
-                `UPDATE phones SET wa_id = NULL
+                `UPDATE phones SET wa_id = NULL, wa_since = COALESCE(wa_since, bound_stamp, 0)
                  WHERE wa_id = ?1 AND user_id IS NOT NULL AND user_id <> ?2 AND COALESCE(wa_since, bound_stamp, 0) <= ?3`,
               )
               .bind(m.change.waId, m.change.userId, stamp),

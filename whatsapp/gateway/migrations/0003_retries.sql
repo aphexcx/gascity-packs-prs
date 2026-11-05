@@ -19,8 +19,10 @@ DROP INDEX deliveries_once;
 --    unbind). A current id is held from bound_stamp, or, for a wa_id the row took later, from
 --    wa_since. bound_stamp is NULL on a row bound before this migration: held from the start, as
 --    before. wa_since is also where the owner's number starts when a number change gave the row
---    none (Meta shared none, or another row held it): a later notice's old number is the owner's
---    from there, never from the bind (gp-w376).
+--    none (Meta shared none, or another row held it), and rule 2's strip keeps it when it takes
+--    the row's number: a later notice's old number is the owner's from there, never from the bind.
+--    A row with neither a wa_id nor a wa_since was never given a number, so the number its notice
+--    names is no previous holding of it (gp-w376).
 ALTER TABLE phones ADD COLUMN bound_stamp INTEGER; -- Meta's stamp of the binding's invite text
 ALTER TABLE phones ADD COLUMN wa_since INTEGER;    -- Meta's stamp of the later message or number change that brought the owner to its number; NULL: the invite text's
 

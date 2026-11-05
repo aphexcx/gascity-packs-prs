@@ -328,6 +328,32 @@ describe("BSUID: sends", () => {
     for (const line of t.logs.map((e) => JSON.stringify(e))) for (const needle of [p, q, a, a2, b]) expect(line).not.toContain(needle);
   });
 
+  it("the 409's owner_user_id is the owner `to` keys whatever order D1 reads the two rows in (gp-w376; the self-review's NIT)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const p = phone();
+    const q = phone();
+    const a2 = bsuid();
+    const b = bsuid();
+    // The recycled-number pair, written straight to D1 with B's row first: B holds P now, and A
+    // (keyed by P, its number at its bind) holds Q.
+    const row = env.DB.prepare(
+      "INSERT INTO phones (conversation_id, wa_id, user_id, city_id, bound_at, bound_wamid, bound_stamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    );
+    await env.DB.batch([
+      row.bind(b, p, b, city.id, T0, `wamid.${uniq()}`, T0),
+      row.bind(p, q, a2, city.id, T0, `wamid.${uniq()}`, T0),
+    ]);
+    const r = await t.send(city, {
+      to: p,
+      idempotency_key: uniq(),
+      type: "template",
+      template: { name: "dynasty_update", language: "en_US", params: ["x"] },
+    });
+    expect([r.status, r.body]).toEqual([409, { error: "ambiguous_recipient", hint: "send to the owner's current id", owner_user_id: a2 }]);
+    expect(t.graph.sends()).toHaveLength(0);
+  });
+
   it("the recycled number in ANOTHER city is no ambiguity: each city's `to: P` names its own one owner (gp-0g2s)", async () => {
     const t = setup();
     const first = await t.enrollCity();
@@ -1131,6 +1157,80 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       expect(await nameOf(holder?.conversation_id)).toBe(holderName);
     });
   }
+
+  /*
+   * gp-w376, the lane's fresh self-review (CRITICAL, reproduced at eaf93d2b). A, known by user_id
+   * alone, never holds P in the records: C, a phone-only owner, holds P at every message that could
+   * have given it to A. A's notice then names P as A's old number. The records never gave A that
+   * number, so it is no previous holding of A's at all. While C stands, P's message stamped T1 is C's.
+   * Once an operator unbinds C, it is nobody's, and never A's.
+   */
+  for (const shown of [true, false]) {
+    it(`a number the owner's records never gave it (another row held it ${shown ? "when a message showed it beside the owner's user_id" : "throughout"}) is no previous holding of the owner: what that row sent reaches its own city while it stands, and no city once it is unbound (gp-w376)`, async () => {
+      const t = setup();
+      const x = await t.enrollCity();
+      const w = await t.enrollCity();
+      const a = bsuid();
+      await t.joinAs(x, { user: a });
+      const p = phone();
+      await t.join(w, p); // C, phone-only, holds P from T0
+      const c = (await owners(p))[0] as { conversation_id: string };
+      const mediaId = `4${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+      t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+      const whileC = textPayload(p, "C's, read while C stands", { wamid: `wamid.${uniq()}`, ts: T1 });
+      const image = mediaPayload("image", p, mediaId, { wamid: `wamid.${uniq()}`, ts: T1 });
+      if (shown) {
+        // Meta shows P beside A's user_id; C, with no user_id, keeps P, so A's row takes nothing.
+        t.clock.now = T2;
+        await t.sayAs({ wa: p, user: a }, "my phone, says Meta");
+        expect(await owners(a)).toEqual([{ conversation_id: a, wa_id: null, user_id: a, username: null, city_id: x.id }]);
+      }
+      t.clock.now = T4;
+      const a2 = bsuid();
+      expect((await t.webhook(notice(p, a, a2, phone(), T4))).status).toBe(200);
+      // While C stands, P's message stamped T1 is C's: C's span holds it and no previous holding does.
+      t.clock.now = T4 + HOUR / 4;
+      expect((await t.webhook(whileC)).status).toBe(200);
+      expect.soft((await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === wamidOf(whileC))).toMatchObject({ conversation_id: c.conversation_id });
+      // README, "Unbind an owner"; then Meta delivers C's image stamped T1, late.
+      t.clock.now = T4 + HOUR / 2;
+      await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR wa_id = ?2").bind(c.conversation_id, p).run();
+      t.clock.now = T4 + HOUR;
+      expect((await t.webhook(image)).status).toBe(200);
+      const xHeld = (await t.inbox(x)).body.deliveries.map((d: any) => d.message?.id);
+      expect(xHeld).not.toContain(wamidOf(image));
+      expect(xHeld).not.toContain(wamidOf(whileC));
+      expect((await t.inbox(w)).body.deliveries.map((d: any) => d.message?.id)).not.toContain(wamidOf(image));
+      for (const city of [x, w]) expect((await t.call("GET", `/v1/media/${mediaId}`, { token: city.token })).status).toBe(404);
+    });
+  }
+
+  it("a number another owner's change takes from its holder (rule 2) stays the holder's previous holding from the holder's bind: what the holder sent before then reaches its city after its own notice (gp-w376)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    // X binds on (P, x) at T0: X's number is the one it bound with.
+    const p = phone();
+    const xUser = bsuid();
+    await t.joinAs(x, { wa: p, user: xUser });
+    const a = bsuid();
+    await t.joinAs(y, { wa: phone(), user: a });
+    const fromX = textPayload(p, "X's, today's shape", { wamid: `wamid.${uniq()}`, ts: T1, name: "X" });
+    // A's number change at T2 shares P: rule 2 takes P from X (another user_id), and A holds it.
+    t.clock.now = T2;
+    const aKey = (await owners(a))[0]!.conversation_id as string;
+    const a2 = bsuid();
+    expect((await t.webhook(notice(aKey, a, a2, p, T2))).status).toBe(200);
+    expect((await owners(xUser))[0]).toMatchObject({ wa_id: null });
+    expect((await owners(a2))[0]).toMatchObject({ wa_id: p });
+    // X's own notice at T4 names P as X's old number: X held it from X's bind until then.
+    t.clock.now = T4;
+    expect((await t.webhook(notice(p, xUser, bsuid(), phone(), T4))).status).toBe(200);
+    t.clock.now = T4 + HOUR;
+    expect((await t.webhook(fromX)).status).toBe(200);
+    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === wamidOf(fromX))).toMatchObject({ conversation_id: p, wa_id: p });
+    expect((await t.inbox(y)).body.deliveries.some((d: any) => d.message?.id === wamidOf(fromX))).toBe(false);
+  });
 
   it("a stranger's stale message naming the number beside its own user_id never takes it from a holder that bound after the message's stamp (gp-0g2s)", async () => {
     const flaky = flakyDb();

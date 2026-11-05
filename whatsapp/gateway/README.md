@@ -202,13 +202,19 @@ What the gateway does:
      (`phone_aliases`). The change records the ids the row held and the ones the notice names. A
      number the row had already lost to its next holder (rule 2) was still the owner's until the
      change.
-   - **A previous number starts where the owner came to it** (gp-w376). That is the message that
-     showed it beside the user_id, or the number change that brought the owner to it (`wa_since`;
-     a change writes it even when the row takes no number, because Meta shared none or another row
-     holds it). It starts at the bind only when neither came since, so the owner's number is still
-     the one it bound with. A number that came after the bind never reaches back to the bind, when
-     it may have been anyone's: a phone-only message stamped before then goes to nobody, and no
-     city is granted its media.
+   - **A previous number starts where the owner came to it** (gp-w376). That is the bind that
+     gave the row the number, the later message that showed it beside the user_id and filled it,
+     or the number change that brought the owner to it (`wa_since`). A change writes it even when
+     the row takes no number, because Meta shared none or another row holds it. Rule 2's strip
+     keeps it when it takes the row's number. A number that came after the bind never reaches
+     back to the bind, when it may have been anyone's: a phone-only message stamped before then
+     goes to nobody, and no city is granted its media.
+   - **A number the records never gave the owner is no previous holding of it** (gp-w376). Say
+     another row held the number at every message that showed it beside the owner's user_id (a
+     phone-only owner, whom rule 2 never strips), or no message ever showed it, and then the
+     owner's notice names it as its old number. The gateway records no previous holding for it.
+     While the other row stands, what that row sent stays its own. Once an operator unbinds it,
+     such a message goes to nobody, and never to the owner.
 
    A message routes to the one binding whose span holds its stamp, or to nobody:
    - **A previous holding routes to its binding.** If one holds the stamp, the message goes to
@@ -225,7 +231,7 @@ What the gateway does:
    - **Which id is matched.** It is the user_id when the message names one, and the wa_id only
      when it names none, as in rule 2.
    - **A known sender's message that no span holds is dropped.** It goes to no city, hears no
-     canned line and is counted as `unrouted_messages`.
+     canned line and is counted as `unrouted_messages`, once for each delivery Meta makes of it.
    - **A routed retry is the owner's message.** It is delivered and moves the owner's window. It
      counts no code attempt, binds nothing and changes none of the owner's ids or names. It never
      takes the old number from whoever holds it now.
@@ -252,6 +258,12 @@ What the gateway does:
    the owner writes under the new ids before Meta's retry. That message is a stranger's: it hears
    the canned line and is not delivered. Once the notice lands, the owner's next message reaches
    their city. An invite code texted in that window binds a second owner row.
+
+   **A second known limit** (gp-w376's self-review). Take an owner known by user_id alone, whose
+   phone the records never showed before its notice. It gets no previous holding of the number the
+   notice names: the notice's own message is the first to show it. So a retry of what that owner
+   sent from the number before the change, in today's shape (the number alone), is a stranger's.
+   It hears the canned line at that number and is not delivered.
 6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
    canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
    starts sharing the stranger's phone, which the canned line itself causes.
@@ -269,8 +281,10 @@ What the gateway does:
    other. So the gateway answers `409 {error: "ambiguous_recipient", hint: "send to the owner's
    current id", owner_user_id}`. It sends nothing and spends no key. `owner_user_id` is the current
    user_id of the owner whose `conversation_id` is `to`, the owner the box files under it, or null
-   when that owner has none (gp-w376; the Fable read r1). The answer names nothing else: not the
-   number, not the other owner, not the owner's ids from before its change. The box resends to
+   when that owner has none (gp-w376; the Fable read r1). It is the user_id the gateway knows the
+   owner by now: while a notice is still on its way, that may be one Meta has already replaced, and
+   then the resend answers as any send to it would. The answer names nothing else: not the number,
+   not the other owner, not an id the gateway has already replaced. The box resends to
    `owner_user_id` at once. The same id is the `user_id` of the owner's entry in `GET /v1/window`,
    which stays the fallback. Do not take it from the newest delivery: right after a number change
    that delivery is the notice itself, which still carries the old id. A repeat of a key Meta already took still
@@ -519,8 +533,9 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   for an owner Meta shares no phone of), its held deliveries and its live credentials. The
   gateway's counters follow: dropped_wrong_number, orphaned_statuses, stale_messages,
   welcome_failed, canned_failed and unrouted_messages (a known sender's message that no binding
-  held when Meta stamped it). The webhook log line counts the same per payload (`unrouted`). No
-  phone number and no user_id appears in clear.
+  held when Meta stamped it). The webhook log line counts the same per payload (`unrouted`). Both
+  count deliveries: a message Meta delivers twice counts twice, and a payload that answered 500
+  writes no log line. No phone number and no user_id appears in clear.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
   ```sh
