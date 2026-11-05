@@ -1019,6 +1019,22 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       between: "nobody",
     },
     {
+      how: "a number change at T2 shares no number, so A's row holds none; B takes P at T3, and A's next notice names P as A's old number (the mutation check's survivor)",
+      async run({ t, city, other, p }) {
+        const w0 = phone();
+        const a = bsuid();
+        await t.joinAs(city, { wa: w0, user: a });
+        t.clock.now = T2;
+        const a2 = bsuid();
+        expect((await t.webhook(notice(w0, a, a2, null, T2))).status).toBe(200);
+        expect(await owners(a2)).toEqual([{ conversation_id: w0, wa_id: null, user_id: a2, username: null, city_id: city.id }]);
+        t.clock.now = T3;
+        await t.joinAs(other, { wa: p, user: bsuid() }, { name: "B" });
+        return { aUser: a2, aKey: w0 };
+      },
+      between: "A",
+    },
+    {
       how: "the Fable read r1's reproduction: P was C's, bound in a third city at T0 and unbound after T1; a message shows P beside A's user_id at T2; B takes P at T3",
       async run({ t, city, other, p }) {
         const a = bsuid();
