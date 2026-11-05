@@ -1,0 +1,187 @@
+# gp-0g2s RED (the second mutation round): the records-disagree test retrying A's BSUID-shaped message, run on
+# 8dab7afb's src/ (the worktree before the strip guard), 2026-11-04 18:00:20 CST (00:00:20Z 11/5),
+# `pnpm exec vitest run --reporter=verbose`: 1 failed (the retry reached A but took P from B), 138 passed.
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway
+
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a known body and secret give the known sha256= header 1ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a header in upper-case hex still verifies (the digest, not its spelling) 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > one tampered byte fails 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a missing header, a wrong prefix, a short digest, non-hex and a wrong secret all fail 0ms
+ ✓ test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > the constant-time compare and the secret compare answer exactly equality 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a text message: sender, wamid, Meta's timestamp, the body and the profile name 1ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a reaction carries no text and no media 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > an image and a voice note carry their media id 1ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > statuses: sent and failed, with the recipient and Meta's object whole 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > a payload for another phone number id is counted and yields nothing 0ms
+ ✓ test/meta.test.ts > webhook payloads (Meta's reference examples) > other objects, other fields and malformed entries are ignored, never thrown 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text from a username user: no from, the BSUID, the username and the profile name 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a text carrying both ids, and today's shape with the wa_id alone 1ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > an id the message lacks is read from its contacts entry: the user_id by the wa_id, the wa_id by the user_id 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > statuses: recipient_user_id beside recipient_id, alone for a send to a BSUID, absent on a failed send to a phone; the username from the contacts entry 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a number change naming the new number new_wa_id (Meta's general webhook reference) reads it as the new phone 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a number change: the new and previous user ids and the new phone; with no phone shared, the previous user id alone names the sender 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a message naming no wa_id, no user_id and no previous user id is skipped, never thrown 0ms
+ ✓ test/meta.test.ts > business-scoped user ids (Meta's BSUID examples) > a send to a BSUID puts it in `recipient`, byte for byte, with `to` omitted; a phone number stays in `to` 0ms
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > text, reaction and template 0ms
+ ✓ test/meta.test.ts > send bodies (Meta's documented shapes) > mark-as-read carries the typing indicator 0ms
+ ✓ test/meta.test.ts > the Graph client > send posts to /<version>/<phone number id>/messages with the token and returns the wamid 1ms
+ ✓ test/meta.test.ts > the Graph client > a Graph error becomes a GraphError with Meta's status and code; a network failure has status 0 0ms
+ ✓ test/meta.test.ts > the Graph client > an answer without a message id is an error, never an empty wamid 0ms
+ ✓ test/meta.test.ts > the Graph client > mark-as-read posts the read body 0ms
+ ✓ test/meta.test.ts > the Graph client > media: mints the URL for the phone number id, then fetches the bytes with the token 1ms
+ ✓ test/meta.test.ts > the Graph client > media: a URL that is not https is refused before the token is sent 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > closes at last inbound + 24 h - 120 s; null when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > open strictly before the close, closed at and after it, closed when the phone never wrote 0ms
+ ✓ test/meta.test.ts > the 24-hour window (120-second margin) > a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not 0ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > an invite text carrying only a user_id binds the owner by it, welcomes it at the BSUID in `recipient`, and its messages reach only that city 21ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > an owner bound with both ids is one row keyed by its wa_id; a later message carrying only its user_id routes to it and moves its window 7ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > an owner bound by wa_id alone gains its user_id from the first message carrying both, never a second row; a user_id-only message then routes to it 11ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > the window moves on a message from either id: a user_id-only message reopens it for a send to the wa_id, a wa_id-only one for a send to the BSUID 16ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > a message from an owner's phone carrying another user_id is someone else's (a recycled number): never routed, it hears the canned line, the owner loses the number and is sent to by its user_id, and the newcomer can join 13ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > one person bound twice (once by phone, once by BSUID): a message carrying both ids goes to the user_id's row, takes no id from the other, and Meta gets 200 11ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > an image from an owner known only by user_id is delivered, and its media is served to that city alone 9ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > a delivery the v1 Worker wrote after migration 0002 (no conversation_id) reads its wa_id as its conversation_id 6ms
+ ✓ test/bsuid.test.ts > BSUID: binding and routing > a message naming neither a wa_id nor a user_id is skipped, and Meta still gets 200 6ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > echoes hub.challenge only for the verify token 1ms
+ ✓ test/gateway.test.ts > Meta side: the verify handshake > refuses the handshake while no verify token is configured 0ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a tampered byte answers 401 and stores nothing 11ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a missing header answers 401 and stores nothing 6ms
+ ✓ test/gateway.test.ts > Meta side: the signature > a body over 1.9 MB answers 413 3ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload for another phone number id is dropped and counted 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a bound sender's text lands in exactly its city's inbox and in no other 13ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a live invite code binds the phone, marks the code used, appends the joined entry and sends the welcome once 8ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload carrying the invite text twice binds once and welcomes once 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an unknown sender gets the canned line once and silence on the next message within 7 days 4ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a Meta redelivery of the same wamid yields one delivery 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a payload too big for one D1 batch lands whole, every message once 61ms
+ ✓ test/bsuid.test.ts > BSUID: sends > a send to a BSUID reaches Meta in `recipient`, byte for byte and with no `to`; a send to the wa_id goes in `to` 10ms
+ ✓ test/bsuid.test.ts > BSUID: sends > a malformed BSUID is 400 without a Graph call; a well-formed one that is no owner of this city is 403 17ms
+ ✓ test/bsuid.test.ts > BSUID: sends > a `to` naming two owners of the city (one's retained key, the other's current number) answers 409 ambiguous_recipient and reaches neither; each owner's current ids reach that owner alone (gp-0g2s, the mayor's R1) 19ms
+ ✓ test/bsuid.test.ts > BSUID: sends > the recycled number in ANOTHER city is no ambiguity: each city's `to: P` names its own one owner (gp-0g2s) 12ms
+ ✓ test/bsuid.test.ts > BSUID: sends > Meta's refusal of a BSUID recipient (131062: an authentication template) reads meta_error and frees the key 6ms
+ ✓ test/bsuid.test.ts > BSUID: strangers > a stranger is known by its user_id: one canned line in `recipient`, and none again within 7 days when a later message also carries its phone 4ms
+ ✓ test/bsuid.test.ts > BSUID: strangers > five wrong codes from one user_id stop its sixth, the right one included, whichever ids each text carries 11ms
+ ✓ test/bsuid.test.ts > BSUID: statuses > statuses of a send to the BSUID and of a send to the phone reach the city with the owner's conversation_id; a raced one is adopted with its user_id 13ms
+ ✓ test/bsuid.test.ts > BSUID: a number change > user_changed_number reaches the owner's city as a system message, moves no window, re-keys the owner, and its next message by the new ids keeps the conversation 15ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once 31ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row 7ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite text whose welcome send fails still binds and answers 200; its redelivery is one row and no second bind 8ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > a phone bound to one city texting another city's code stays put; the code stays live 8ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > minting a new invite code retires the city's previous live one 6ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > an invite code expires after 24 hours 4ms
+ ✓ test/gateway.test.ts > Meta side: routing by phone > five wrong codes in a day stop a phone's code attempts, the right one included 13ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > a wrong-code text Meta redelivers is one attempt, not two 14ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > an invite text Meta stamped before the code expired binds on a redelivery after the expiry 5ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > redeliveries of two wrong-code texts interleaved (A, B, A, B, A) are two attempts, and the owner's right code then binds (gp-0g2s) 11ms
+ ✓ test/bsuid.test.ts > BSUID: a number change > user_changed_user_id, with no phone shared, routes by the previous user_id and re-keys; a send to the old key goes to the new BSUID; an unknown user's notice is dropped silently 12ms
+ ✓ test/bsuid.test.ts > BSUID: a number change > a notice Meta delivers twice is one delivery and one re-key; a notice and the owner's first message under the new ids in one payload reach the owner's conversation with no canned line 11ms
+ ✓ test/bsuid.test.ts > BSUID: a number change > a number change never makes a payload fail: a new number another owner holds beside its own user_id moves to the changer; a new user_id another owner holds, or a new number an owner holds with no user_id, is never taken 22ms
+ ✓ test/bsuid.test.ts > BSUID: a number change > an owner known by phone and BSUID whose number changes with no phone shared keeps no phone: its old number is never sent to 8ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a message sent before the change whose first delivery failed, retried after the notice committed, reaches the owner's conversation: no canned line, no id changes, its window moves 12ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a retry landing after the owner already wrote under its new ids leaves the window at the newer message (self-review r1 S7) 9ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > with no phone shared (user_changed_user_id) a retry under the previous user_id is the owner's, even when its text is another city's live invite code; a retry in today's shape (the old number alone) is the owner's too 18ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a retry under the old ids reaches the owner and never the person who holds the old number now: in Meta's BSUID shape or in today's (the number alone); it takes nothing from that person, whose own messages stay theirs 12ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > the limit and the day are unchanged by the dedup: three more wrong codes after A, B, A, B, A make five, and the right code is then the sixth (gp-0g2s) 15ms
+ ✓ test/gateway.test.ts > Meta side: invite-code edges > the cron deletes a counted wrong code's wamid once Meta can no longer redeliver it: 8 days (TOMBSTONE_SECONDS) after it was counted (gp-0g2s) 6ms
+ ✓ test/gateway.test.ts > Meta side: a wamid belongs to the city that first received it (gp-0g2s) > after the phone is unbound and joins another city, Meta's retry of an acknowledged image reaches no city again and grants the new city no media; the joining text likewise; Meta gets 200 14ms
+ ✓ test/gateway.test.ts > Meta side: a wamid belongs to the city that first received it (gp-0g2s) > a message whose first delivery failed, retried after the owner moved to another city, reaches neither city and grants no media: the new binding holds only what Meta stamped after it (self-review r1 S1a) 14ms
+ ✓ test/gateway.test.ts > Meta side: a wamid belongs to the city that first received it (gp-0g2s) > the same for another person who binds the number next (today's shape, the number alone), and for a stranger's text sent before it joined (self-review r1 S1b) 14ms
+ ✓ test/gateway.test.ts > Meta side: a wamid belongs to the city that first received it (gp-0g2s) > the same holds for a retry of a message A never acknowledged: it stays A's, held for A alone 9ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a poll with no after returns every unacknowledged delivery again, oldest first 7ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > after and limit page the held deliveries; an empty page keeps the cursor 10ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ack deletes exactly the listed ids and leaves an unlisted earlier id in the inbox 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > HOLD: a delivery is held, body and all, and returned by every poll until the ack names its id 9ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > one number two owners left in turn: a retry goes to the owner that held it when Meta stamped it, whatever the order of their bind wamids (self-review r1 S8) 15ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > the old number's message Meta stamped after the change is not the owner's, nor is one naming the number beside another user_id: each a stranger's 7ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > an alias names the owner's binding: once the operator unbinds the owner and the old number binds again, a retry under the old ids reaches no city and takes nothing from the new holder 15ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a notice whose first delivery failed, landing after the old number's next holder joined, takes nothing from that holder and still keeps the old number as the owner's alias (self-review r1 S3) 13ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a notice Meta redelivers after the owner changed number again takes nothing from the old number's next holder (self-review r1 S4) 12ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a number is the owner's only from the message that gave it to the row: what its previous holder sent before that reaches no city (self-review r1) 16ms
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > a late notice never takes its new number from a holder that showed it after the notice's stamp (self-review r1) 10ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ACK OF A DELETED ID: an ack for an id the cron already deleted is a no-op 200 8ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > REPEATED ACK: acking an id an earlier ack already deleted is the same no-op, and touches nothing else 8ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an ack naming another city's id is a no-op for it: the other city still holds it 8ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a malformed ack answers 400 and deletes nothing 8ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a delivery never acknowledged survives the ack of other ids until the cron deletes it at 7 days 26ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an acknowledged wamid redelivered by Meta is still one row: no second delivery 6ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > over 5,000 held for one city Meta gets 503 and nothing is stored; below it again, 200 15ms
+ ✓ test/gateway.test.ts > City side: the inbox, the hold and the ack by id > the cron deletes bodies older than 7 days and keeps phones 10ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > sent, delivered and read for one wamid land as three status rows; a redelivery of one makes no fourth 12ms
+ × test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > when the records disagree (the number's next holder showed it before the old owner's notice), a message stamped between them goes to nobody (self-review r1) 18ms
+   → expected [ { …(5) } ] to deeply equal [ { …(5) } ]
+ ✓ test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > the cron deletes an alias at the horizon: 8 days (TOMBSTONE_SECONDS) after the change Meta stamped 8ms
+ ✓ test/bsuid.test.ts > BSUID: retention > the ack and the 7-day cron clear a delivery's user_id, username and conversation_id with its body 8ms
+ ✓ test/bsuid.test.ts > BSUID: retention > the cron clears the ids a v1 Worker's ack left on a body-less row (the conversation_id migration 0002 wrote) 4ms
+ ✓ test/bsuid.test.ts > BSUID: the operator's view and the logs > the admin listing shows a phone's last four digits and 'id' for an owner with no phone, never a full id 8ms
+ ✓ test/bsuid.test.ts > BSUID: the operator's view and the logs > no log line carries a user_id, a username or a phone on the BSUID paths 17ms
+ ✓ test/bsuid.test.ts > BSUID: migrations 0002 and 0003 over schema v1 rows > a v1 phone keeps its wa_id as its key, a held delivery gains its conversation_id, a stranger's row keeps its key, user_id is unique where present, and a wamid is one row whichever city 13ms
+ ✓ test/gateway.test.ts > City side: statuses of the city's sends > a status for a wamid no city sent reaches no city 6ms
+ ✓ test/gateway.test.ts > City side: send > a send to an unbound phone, or to another city's phone, answers 403 without a Graph call 6ms
+ ✓ test/gateway.test.ts > City side: send > a repeated idempotency_key makes one Graph call and answers the same message_id 6ms
+ ✓ test/gateway.test.ts > City side: send > the same idempotency_key in two cities is two sends (the key is per city) 14ms
+ ✓ test/gateway.test.ts > City side: send > Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends 8ms
+ ✓ test/gateway.test.ts > City side: send > an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call 8ms
+ ✓ test/gateway.test.ts > City side: send > Meta's own outside-window answer (131047) reads window_closed 5ms
+ ✓ test/gateway.test.ts > City side: send > a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again 5ms
+ ✓ test/gateway.test.ts > City side: send > a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send 7ms
+ ✓ test/gateway.test.ts > City side: send > refuses malformed sends with 400 and over-long text with text_too_long 10ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a text just before the close sends; at the close and at 24h01 it answers window_closed without a Graph call 8ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a template at 24h01 sends and leaves the window closed; the owner's next message reopens it 8ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > GET /v1/window: close = last inbound + 24 h - 120 s, moves on the owner's message, not on any send; null for a phone that never wrote; no other city's phone 13ms
+stdout | test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route
+{"event":"handshake"}
+
+ ✓ test/gateway.test.ts > City side: the 24-hour window > an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement) 8ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > a system notice is delivered but does not move the window 6ms
+ ✓ test/gateway.test.ts > City side: the 24-hour window > Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped 6ms
+ ✓ test/gateway.test.ts > City side: read, media > read marks a delivered message read with the typing indicator; another city's message is 404 7ms
+ ✓ test/gateway.test.ts > City side: read, media > media streams the bytes with Meta's mime type to its city; another city's media id is 404 7ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > enroll mints a city and one credential for a live code, once; a used code is 403 2ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > an unknown or expired enrollment code is 403; a malformed enroll is 400 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > a revoked credential is 401; so are an unknown one and none 3ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin routes need ADMIN_TOKEN; an unset admin token opens nothing 1ms
+ ✓ test/gateway.test.ts > Credentials and enrollment > admin cities lists counts and the last four digits of each phone, never a number in clear 4ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > healthz answers ok, the held total and the last webhook time, with no phone and no body 5ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > no log line carries a phone number, a message body, a token or a secret 13ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret 3ms
+ ✓ test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/bsuid.test.ts > BSUID: a number change keeps the old ids as aliases through Meta's retries (gp-0g2s) > when the records disagree (the number's next holder showed it before the old owner's notice), a message stamped between them goes to nobody (self-review r1)
+AssertionError: expected [ { …(5) } ] to deeply equal [ { …(5) } ]
+
+- Expected
++ Received
+
+@@ -2,8 +2,8 @@
+    {
+      "city_id": "city_955a3374e9ef900fa303e257",
+      "conversation_id": "US.22523628053291264186",
+      "user_id": "US.22523628053291264186",
+      "username": null,
+-     "wa_id": "5527557912233",
++     "wa_id": null,
+    },
+  ]
+
+ ❯ test/bsuid.test.ts:1010:29
+    1008|     expect((await t.webhook(fromA)).status).toBe(200);
+    1009|     expect((await t.inbox(city)).body.deliveries.find((x: any) => x.me…
+    1010|     expect(await owners(b)).toEqual([{ conversation_id: b, wa_id: p, u…
+       |                             ^
+    1011|     // B changes number too: now two previous spans hold that stamp, a…
+    1012|     t.clock.now = T0 + 5 * HOUR;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 2 passed (3)
+      Tests  1 failed | 138 passed (139)
+   Start at  18:00:20
+   Duration  1.15s (transform 184ms, setup 171ms, import 253ms, tests 1.11s, environment 0ms)
+
