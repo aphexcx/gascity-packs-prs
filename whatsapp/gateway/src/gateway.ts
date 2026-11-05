@@ -920,9 +920,12 @@ export function createGateway(deps: Deps) {
         // the owner's, so no new number shared means none held), its conversation_id stays. A row
         // holding the new number beside another user_id loses it first, as above. An id another
         // row still holds is never taken from it.
-        // The owner is the binding the notice routes to: the one that held its old ids at its
-        // stamp. A notice Meta redelivers after the re-key, or after the old number found a new
-        // holder, names nobody and changes nothing; so does one whose old number a phone-only row
+        // The owner is the binding that holds the notice's old ids now (ownerKey) and that the
+        // notice routes to (routeKey): the one that held them at its stamp, alone. A notice Meta
+        // redelivers after the re-key, or after the old number found a new holder, names nobody
+        // and changes nothing: its old user_id is only a previous holding now, which routes but
+        // is no current holder (the codex self-review r3: a replayed first notice must never
+        // roll the owner back from its latest ids). So does one whose old number a phone-only row
         // holds while another binding's span of it holds the stamp (gp-byp8: the notice of an
         // owner an operator unbound never re-keys the phone-only row).
         // First, each id the change replaces becomes a previous holding of the owner's binding,
@@ -947,7 +950,7 @@ export function createGateway(deps: Deps) {
             .prepare(
               `UPDATE OR REPLACE phone_aliases SET changed_at = ?2, expires_at = ?3, since = ${endedSince("?2")}
                WHERE changed_at = ${OPEN} AND since <= ?2 AND (conversation_id, bound_wamid) IN (
-                 SELECT conversation_id, bound_wamid FROM phones WHERE conversation_id = ${routeKey("?4", "?5", "?2")}
+                 SELECT conversation_id, bound_wamid FROM phones WHERE conversation_id = ${ownerKey("?4", "?5", "?2")} AND conversation_id = ${routeKey("?4", "?5", "?2")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))`,
             )
             .bind(m.change.userId, stamp, stamp + ALIAS_SECONDS, wa, user),
@@ -958,7 +961,7 @@ export function createGateway(deps: Deps) {
               `WITH o AS (
                  SELECT conversation_id, bound_wamid, wa_id, user_id,
                         COALESCE(bound_stamp, 0) AS b, COALESCE(wa_since, bound_stamp, 0) AS w, wa_since AS s
-                 FROM phones WHERE conversation_id = ${routeKey("?3", "?4", "?5")}
+                 FROM phones WHERE conversation_id = ${ownerKey("?3", "?4", "?5")} AND conversation_id = ${routeKey("?3", "?4", "?5")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))
                INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
                SELECT c.id, o.conversation_id, o.bound_wamid, c.since, ?5, ?6 FROM o, (
@@ -993,7 +996,7 @@ export function createGateway(deps: Deps) {
                  wa_id = CASE WHEN ?2 IS NOT NULL AND NOT EXISTS
                                 (SELECT 1 FROM phones o WHERE o.wa_id = ?2 AND o.conversation_id <> phones.conversation_id)
                               THEN ?2 ELSE NULL END
-               WHERE conversation_id = ${routeKey("?3", "?4", "?5")}
+               WHERE conversation_id = ${ownerKey("?3", "?4", "?5")} AND conversation_id = ${routeKey("?3", "?4", "?5")}
                  AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = ?1 AND o.conversation_id <> phones.conversation_id)`,
             )
             .bind(m.change.userId, m.change.waId, wa, user, stamp),

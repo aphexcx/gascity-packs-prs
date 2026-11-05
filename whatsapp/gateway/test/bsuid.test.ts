@@ -930,6 +930,28 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect(t.graph.sends().at(-1)!.body).toMatchObject({ to: p });
   });
 
+  it("a notice Meta redelivers after the owner changed number twice changes nothing: the owner keeps its latest ids, and its messages under them reach its city (gp-byp8; the codex self-review r3 MAJOR)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const p = phone();
+    const u0 = bsuid();
+    await t.joinAs(city, { wa: p, user: u0 });
+    t.clock.now = T0 + HOUR;
+    const q = phone();
+    const u1 = bsuid();
+    const first = notice(p, u0, u1, q, t.clock.now);
+    expect((await t.webhook(first)).status).toBe(200);
+    t.clock.now = T0 + 2 * HOUR;
+    const r = phone();
+    const u2 = bsuid();
+    expect((await t.webhook(notice(q, u1, u2, r, t.clock.now))).status).toBe(200);
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(first)).status).toBe(200);
+    expect(await owners(p)).toEqual([{ conversation_id: p, wa_id: r, user_id: u2, username: null, city_id: city.id }]);
+    const latest = await t.sayAs({ wa: r, user: u2 }, "under my latest ids");
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === latest.wamid)).toMatchObject({ conversation_id: p, user_id: u2 });
+  });
+
   it("a number is the owner's only from the message that gave it to the row: what its previous holder sent before that reaches no city (self-review r1)", async () => {
     const flaky = flakyDb();
     const t = setup({ db: flaky.db });
