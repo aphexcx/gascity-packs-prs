@@ -219,9 +219,11 @@ What the gateway does:
      bound before Meta sent user ids, whom rule 2 never strips. The owner's row cannot take it
      (`wa_id` is unique), but Meta has said whose it is. So the gateway keeps it as the owner's
      **paired number**, an open span in `phone_aliases`, held from where the owner came to it:
-     the earliest stamp that showed it, or the number change that brought the owner to it when
-     that change shared no number. Both rows then hold the number, and a message naming it alone
-     goes to nobody (below). The span ends, and is kept as a previous holding for the 8-day
+     the earliest stamp that showed it, or where the owner came to its current number
+     (`wa_since`, such as a number change that shared no number). Both rows then hold the number,
+     and a message naming it alone goes to nobody (below). A pairing Meta delivers only after the
+     owner's number change (it names the owner's previous user_id) is kept too: as the owner's
+     span of the number up to that change, merged into the one the change ended. The span ends, and is kept as a previous holding for the 8-day
      horizon, at the owner's next number change (whether or not its notice names the number),
      when Meta names the number beside another current user_id (rule 2), or, once an operator
      unbinds the owner, at the next daily cron. It stays open when the owner's row later takes
@@ -292,10 +294,14 @@ What the gateway does:
    - **Evidence arrives when it arrives.** A message naming the number alone that the gateway
      routes before it has seen any pairing (an earlier message in the same payload, or Meta's
      redelivery order) goes by the records it has: to the phone-only owner.
-   - **Rule 3 is unchanged.** A message naming the number beside a user_id no row holds is the
-     phone-only owner's, whose row takes that user_id, as before. It also ends every other
-     binding's paired span of the number at its stamp (rule 2). A paired span holds only messages
-     that name no user_id.
+   - **Rule 3 yields to a paired span.** A message naming the number beside a user_id no row
+     holds is the phone-only owner's, whose row takes that user_id (rule 3), unless another
+     binding's span of the number holds its stamp. Then it goes to nobody, counted as a
+     conflict, and the phone-only row takes nothing from it: no user_id, and no re-key when it
+     is a number change. That keeps an unbound owner's messages and notice from its old binding
+     away from the phone-only owner. Such a message also ends every other standing binding's
+     paired span at its stamp (rule 2), so the next one is the phone-only owner's again. A
+     span never routes a message that names a user_id.
    - **One person bound twice** (by phone in one city, by user_id in another) has the number
      paired with the second binding: what Meta sends from the number alone goes to nobody until
      an operator unbinds one of them, and each is counted in `unrouted_conflicts`.
@@ -576,7 +582,8 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   writes no log line. No phone number and no user_id appears in clear. A growing
   unrouted_conflicts most likely means a phone-only owner holds a number Meta now shows beside
   another owner's user_id: an owner who left that number, or one person bound twice. Unbinding
-  the stale binding settles it.
+  the phone-only owner settles it at once. Unbinding the other owner settles it at the next
+  daily cron, or at once with the statement in "Unbind an owner" below.
 - **Revoke a city's credential** (the box gets 401 on its next call):
 
   ```sh
@@ -615,9 +622,18 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   whoever it is, holds only what Meta stamped after its own invite text, and the owner's previous
   ids name nobody once its binding is gone. Such a retry is counted as `unrouted_messages`. The
   cron deletes the owner's previous ids within 8 days. An owner's paired number (gp-byp8) keeps
-  holding the number until the next daily cron ends it at the cron's clock, so nothing the owner
-  sent before the unbind reaches the phone-only owner who holds the number; the cron deletes it
-  8 days after that.
+  holding the number until the next daily cron ends it at the cron's clock, and the cron deletes
+  it 8 days after that. Until then, what the owner sent before the unbind reaches no city: not
+  the number alone, not the number beside the owner's user_id (rule 3 yields to the span), and
+  not its number-change notice. It never reaches the phone-only owner who holds the number. But
+  the phone-only owner's own messages from the number go to nobody too, until the span ends. To
+  end it at once, run this first, in the same `--command`, with the same ids:
+
+  ```sql
+  UPDATE OR REPLACE phone_aliases SET changed_at = unixepoch(), expires_at = unixepoch() + 691200
+  WHERE changed_at = 253402300799 AND since <= unixepoch() AND bound_wamid IN
+    (SELECT bound_wamid FROM phones WHERE conversation_id = '<id>' OR wa_id = '<digits>' OR user_id = '<user id>');
+  ```
 
 ## Data, retention, logs
 

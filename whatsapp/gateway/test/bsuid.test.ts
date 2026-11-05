@@ -1844,6 +1844,260 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM phone_aliases WHERE id = ?").bind(p).first<{ n: number }>())?.n).toBe(0);
   });
 
+  /*
+   * gp-byp8, the lane's fresh self-review r1 (two CRITICALs, reproduced at 17a54f6e and d520e098):
+   * a pairing that lands after the owner's notice, and rule 3 for an owner an operator unbound.
+   */
+  const ids = async (t: ReturnType<typeof setup>, city: City) => (await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id);
+  const imageAt = (t: ReturnType<typeof setup>, from: string, ts: number, ids2: { user?: string } = {}) => {
+    const mediaId = `6${ts}${Math.floor(Math.random() * 1_000_000)}`;
+    t.graph.media.set(mediaId, { mime: "image/jpeg", bytes: new Uint8Array([255, 216, 255]) });
+    const payload = mediaPayload("image", from, mediaId, { wamid: `wamid.${uniq()}`, ts });
+    if (ids2.user) {
+      payload.entry[0].changes[0].value.messages[0].from_user_id = ids2.user;
+      payload.entry[0].changes[0].value.contacts[0].user_id = ids2.user;
+    }
+    return { payload, mediaId };
+  };
+  const mediaStatus = async (t: ReturnType<typeof setup>, city: City, mediaId: string) =>
+    (await t.call("GET", `/v1/media/${mediaId}`, { token: city.token })).status;
+
+  for (const from of ["P", "no old number"] as const) {
+    it(`a pairing Meta delivers only after A's notice (which names ${from}) is kept as A's span up to that notice: A's T3 image, delivered after both, goes to nobody while C stands (gp-byp8; self-review r1 CRITICAL 1)`, async () => {
+      const flaky = flakyDb();
+      const t = setup({ db: flaky.db });
+      const x = await t.enrollCity();
+      const w = await t.enrollCity();
+      const p = phone();
+      await t.join(w, p); // C
+      const a = bsuid();
+      await t.joinAs(x, { user: a });
+      const pairing = textAs({ wa: p, user: a }, "my phone, says Meta", { wamid: `wamid.${uniq()}`, ts: T2 });
+      t.clock.now = T2;
+      flaky.arm(0);
+      expect((await t.webhook(pairing)).status).toBe(500);
+      const image = imageAt(t, p, T3);
+      t.clock.now = T3;
+      flaky.arm(0);
+      expect((await t.webhook(image.payload)).status).toBe(500);
+      t.clock.now = T4;
+      expect((await t.webhook(notice(from === "P" ? p : null, a, bsuid(), from === "P" ? phone() : null, T4))).status).toBe(200);
+      t.clock.now = T4 + HOUR / 4;
+      expect((await t.webhook(pairing)).status).toBe(200);
+      expect((await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ?").bind(p).all()).results).toEqual([{ since: T2, changed_at: T4 }]);
+      t.clock.now = T4 + HOUR / 2;
+      expect((await t.webhook(image.payload)).status).toBe(200);
+      for (const city of [w, x]) {
+        expect.soft(await ids(t, city)).not.toContain(wamidOf(image.payload));
+        expect.soft(await mediaStatus(t, city, image.mediaId)).toBe(404);
+      }
+    });
+  }
+
+  it("a pairing older than A's span, landing only after A's notice ended it, moves its start back: A's image stamped between them goes to nobody while C stands (gp-byp8; self-review r1 CRITICAL 1, R1c)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    const early = textAs({ wa: p, user: a }, "first pairing", { wamid: `wamid.${uniq()}`, ts: T1 + HOUR / 2 });
+    t.clock.now = T1 + HOUR / 2;
+    flaky.arm(0);
+    expect((await t.webhook(early)).status).toBe(500);
+    const image = imageAt(t, p, T1 + (3 * HOUR) / 4);
+    t.clock.now = T1 + (3 * HOUR) / 4;
+    flaky.arm(0);
+    expect((await t.webhook(image.payload)).status).toBe(500);
+    t.clock.now = T2;
+    await t.sayAs({ wa: p, user: a }, "second pairing");
+    t.clock.now = T4;
+    expect((await t.webhook(notice(null, a, bsuid(), null, T4))).status).toBe(200);
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(early)).status).toBe(200);
+    expect((await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ?").bind(p).all()).results).toEqual([
+      { since: T1 + HOUR / 2, changed_at: T4 },
+    ]);
+    expect((await t.webhook(image.payload)).status).toBe(200);
+    for (const city of [w, x]) {
+      expect.soft(await ids(t, city)).not.toContain(wamidOf(image.payload));
+      expect.soft(await mediaStatus(t, city, image.mediaId)).toBe(404);
+    }
+  });
+
+  it("a late pairing stamped before the owner bound keeps nothing from before the bind (gp-byp8)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    const before = textAs({ wa: p, user: a }, "before A bound", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR / 2 });
+    t.clock.now = T0 + HOUR / 2;
+    flaky.arm(0);
+    expect((await t.webhook(before)).status).toBe(500);
+    t.clock.now = T1;
+    await t.joinAs(x, { user: a });
+    t.clock.now = T4;
+    expect((await t.webhook(notice(null, a, bsuid(), null, T4))).status).toBe(200);
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(before)).status).toBe(200);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM phone_aliases WHERE id = ?").bind(p).first<{ n: number }>())?.n).toBe(0);
+  });
+
+  for (const what of ["A's image naming P beside A's user_id", "A's notice, then A's messages under its new ids"] as const) {
+    it(`once an operator unbinds A, ${what} goes to nobody while A's span holds its stamp: C's row takes none of A's ids (gp-byp8; self-review r1 CRITICAL 2)`, async () => {
+      const flaky = flakyDb();
+      const t = setup({ db: flaky.db });
+      const x = await t.enrollCity();
+      const w = await t.enrollCity();
+      const p = phone();
+      await t.join(w, p); // C
+      const c = (await owners(p))[0] as { conversation_id: string };
+      const a = bsuid();
+      await t.joinAs(x, { user: a });
+      t.clock.now = T2;
+      await t.sayAs({ wa: p, user: a }, "my phone, says Meta");
+      const cBefore = await owners(c.conversation_id);
+      const sent: Array<{ payload: any; mediaId?: string }> = [];
+      if (what === "A's image naming P beside A's user_id") {
+        const image = imageAt(t, p, T3, { user: a });
+        t.clock.now = T3;
+        flaky.arm(0);
+        expect((await t.webhook(image.payload)).status).toBe(500);
+        sent.push(image);
+      }
+      t.clock.now = T3 + HOUR / 4;
+      await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1 OR user_id = ?1").bind(a).run();
+      t.clock.now = T3 + HOUR / 2;
+      if (what === "A's image naming P beside A's user_id") {
+        expect((await t.webhook(sent[0]!.payload)).status).toBe(200);
+      } else {
+        const a2 = bsuid();
+        const p2 = phone();
+        const change = notice(p, a, a2, p2, T3 + HOUR / 2);
+        expect((await t.webhook(change)).status).toBe(200);
+        sent.push({ payload: change });
+        t.clock.now = T4;
+        const image = imageAt(t, p2, T4);
+        expect((await t.webhook(image.payload)).status).toBe(200);
+        sent.push(image);
+        const both = textAs({ wa: p2, user: a2 }, "A, after its change", { wamid: `wamid.${uniq()}`, ts: T4 });
+        expect((await t.webhook(both)).status).toBe(200);
+        sent.push({ payload: both });
+      }
+      expect(await owners(c.conversation_id)).toEqual(cBefore);
+      for (const m of sent) {
+        expect.soft(await ids(t, w)).not.toContain(wamidOf(m.payload));
+        if (m.mediaId) expect.soft(await mediaStatus(t, w, m.mediaId)).toBe(404);
+      }
+    });
+  }
+
+  it("the rule-3 doubt only refuses: P beside a user_id no row holds, inside A's span with no row holding P, is a stranger's and never A's; P beside A's current user_id is A's whatever other spans hold its stamp (gp-byp8)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const y = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const c = (await owners(p))[0] as { conversation_id: string };
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    const b = bsuid();
+    await t.joinAs(y, { user: b });
+    t.clock.now = T2;
+    await t.sayAs({ wa: p, user: b }, "B's pairing"); // B's span of P from T2
+    // A's own message naming P beside A's current user_id, inside B's span: A's.
+    t.clock.now = T2 + HOUR / 4;
+    const fromA = await t.sayAs({ wa: p, user: a }, "A's");
+    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === fromA.wamid)).toMatchObject({ conversation_id: a });
+    // A's message just ended B's span and opened A's; C is unbound: D's message naming P beside d,
+    // a user_id no row holds, inside A's span, is a stranger's (the canned line), never A's.
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(c.conversation_id).run();
+    t.clock.now = T3;
+    const calls = t.graph.sends().length;
+    const fromD = await t.sayAs({ wa: p, user: bsuid() }, "D's");
+    expect(await ids(t, x)).not.toContain(fromD.wamid);
+    expect(t.graph.sends().length - calls).toBe(1);
+  });
+
+  for (const by of ["B's pairing at that stamp", "the cron at that clock, after an operator unbinds A"] as const) {
+  it(`an end at a stamp where the binding's span of the number already ends merges into it, keeping the earlier start, and fails nothing: ${by} (gp-byp8)`, async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const y = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    const b = bsuid();
+    await t.joinAs(y, { user: b });
+    // A's pairing under a, stamped T2, fails; A's notice at T3 (a -> a2) lands; A pairs P under a2 at T3.
+    const late = textAs({ wa: p, user: a }, "A, under a", { wamid: `wamid.${uniq()}`, ts: T2 });
+    t.clock.now = T2;
+    flaky.arm(0);
+    expect((await t.webhook(late)).status).toBe(500);
+    t.clock.now = T3;
+    const a2 = bsuid();
+    expect((await t.webhook(notice(null, a, a2, null, T3))).status).toBe(200);
+    await t.sayAs({ wa: p, user: a2 }, "A, under a2");
+    // The late pairing lands: A's span [T2, T3]; A's open span starts at T3.
+    t.clock.now = T3 + HOUR / 4;
+    expect((await t.webhook(late)).status).toBe(200);
+    const spans = async () =>
+      (await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ? ORDER BY since, changed_at").bind(p).all()).results;
+    expect(await spans()).toEqual([
+      { since: T2, changed_at: T3 },
+      { since: T3, changed_at: 253_402_300_799 },
+    ]);
+    if (by === "B's pairing at that stamp") {
+      // B pairs P at T3, landing now: A's open span ends at T3, into [T2, T3]; B's opens.
+      t.clock.now = T3 + HOUR / 2;
+      expect((await t.webhook(textAs({ wa: p, user: b }, "B's", { wamid: `wamid.${uniq()}`, ts: T3 }))).status).toBe(200);
+      expect(await spans()).toEqual([
+        { since: T2, changed_at: T3 },
+        { since: T3, changed_at: 253_402_300_799 },
+      ]);
+    } else {
+      // An operator unbinds A, and the cron runs at T3 sharp: A's open span ends at T3, into [T2, T3].
+      await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(a).run();
+      t.clock.now = T3;
+      await t.gateway.maintain();
+      expect(await spans()).toEqual([{ since: T2, changed_at: T3 }]);
+    }
+  });
+  }
+
+  it("Meta's redelivery of a message a city already holds is not counted as unrouted when the records changed since (gp-byp8)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    // C's text stamped T3 reaches W before any pairing; Meta then pairs P with A from T2.
+    const fromC = textPayload(p, "C's", { wamid: `wamid.${uniq()}`, ts: T3 });
+    t.clock.now = T3;
+    expect((await t.webhook(fromC)).status).toBe(200);
+    expect(await ids(t, w)).toContain(wamidOf(fromC));
+    t.clock.now = T3 + HOUR / 4;
+    await t.sayAs({ wa: p, user: a }, "my phone, says Meta", { ts: T2 });
+    const stat = async (name: string) =>
+      (await env.DB.prepare("SELECT value FROM stats WHERE name = ?").bind(name).first<{ value: number }>())?.value ?? 0;
+    const before = [await stat("unrouted_messages"), await stat("unrouted_conflicts")];
+    const logsBefore = t.logs.length;
+    expect((await t.webhook(fromC)).status).toBe(200);
+    expect([await stat("unrouted_messages"), await stat("unrouted_conflicts")]).toEqual(before);
+    expect(t.logs.slice(logsBefore).filter((e) => e.event === "webhook")).toEqual([expect.objectContaining({ unrouted: 0, unrouted_conflicts: 0 })]);
+  });
+
   it("a number another owner's change takes from its holder (rule 2) stays the holder's previous holding from the holder's bind: what the holder sent before then reaches its city after its own notice (gp-w376)", async () => {
     const t = setup();
     const x = await t.enrollCity();
