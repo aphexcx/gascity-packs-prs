@@ -339,11 +339,22 @@ const stranger = (wa: string, user: string, stamp: string) =>
  * binding an operator unbound is left to the cron: the owner's own retry, landing after the unbind,
  * names a user_id no row holds now, and must not end the span below what the owner sent next.
  *
- * pairingOpens: the row holding the user_id at the stamp lacks a number, and another row held the
- * number at the stamp, so the row's fill could not take it: the number is the row's paired number,
- * held from where the owner came to it (wa_since: its number change, when that brought the owner
- * to the number Meta had not shared yet) or this stamp, whichever is earlier. Seen again, its span
- * starts at the earliest stamp that showed it.
+ * The pairing (paired): the row holding the user_id at the stamp lacks a number, and another row
+ * held the number at the stamp, so the row's fill could not take it. Meta's evidence that the
+ * number was the binding's at the stamp, kept by the two statements below.
+ *
+ * pairingWidens: the evidence belongs to the binding's first span of the number that ends at or
+ * after the stamp, open or ended: its start moves back to the stamp when that is earlier. A
+ * pairing a later span's end already covers (Meta's replay of history) never reopens anything.
+ *
+ * pairingOpens: when no span of the binding's ends at or after the stamp, the number is the row's
+ * paired number from here: an open span, from where the owner came to it (wa_since: its number
+ * change, when that brought the owner to the number Meta had not shared yet) or this stamp,
+ * whichever is earlier, but never before the second after the binding's last ended span of it.
+ *
+ * So a binding's open span of a number starts after every ended one, and every statement that
+ * ends an open span ends it at or after its start: no end ever collides with an earlier one (the
+ * key is (id, bound_wamid, changed_at)), and no payload fails on it (the codex self-review r1).
  */
 const OPEN = 253_402_300_799; // 9999-12-31T23:59:59Z: a span that has not ended
 const pairingEnds = `UPDATE phone_aliases SET changed_at = ?3, expires_at = ?4
@@ -351,12 +362,20 @@ const pairingEnds = `UPDATE phone_aliases SET changed_at = ?3, expires_at = ?4
      AND NOT EXISTS (SELECT 1 FROM phone_aliases x WHERE x.id = ?2)
      AND EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = phone_aliases.conversation_id
                    AND p.bound_wamid = phone_aliases.bound_wamid AND p.user_id IS NOT ?2)`;
-const pairingOpens = `INSERT INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
-   SELECT ?1, conversation_id, bound_wamid, MIN(COALESCE(wa_since, ?3), ?3), ${OPEN}, ${OPEN} FROM phones
-   WHERE conversation_id = ${ownerKey("?1", "?2", "?3")} AND NOT EXISTS ${otherHolding("?1", "?2", "?3")}
+const paired = `conversation_id = ${ownerKey("?1", "?2", "?3")} AND NOT EXISTS ${otherHolding("?1", "?2", "?3")}
      AND wa_id IS NULL AND user_id = ?2
-     AND EXISTS (SELECT 1 FROM phones o WHERE o.wa_id = ?1 AND COALESCE(o.wa_since, o.bound_stamp, 0) <= ?3)
-   ON CONFLICT (id, bound_wamid, changed_at) DO UPDATE SET since = MIN(since, excluded.since)`;
+     AND EXISTS (SELECT 1 FROM phones o WHERE o.wa_id = ?1 AND COALESCE(o.wa_since, o.bound_stamp, 0) <= ?3)`;
+const pairingWidens = `UPDATE phone_aliases SET since = MIN(since, ?3)
+   WHERE id = ?1 AND (conversation_id, bound_wamid) IN (SELECT conversation_id, bound_wamid FROM phones WHERE ${paired})
+     AND changed_at = (SELECT MIN(h.changed_at) FROM phone_aliases h
+                       WHERE h.id = ?1 AND h.bound_wamid = phone_aliases.bound_wamid AND h.changed_at >= ?3)`;
+const pairingOpens = `INSERT OR IGNORE INTO phone_aliases (id, conversation_id, bound_wamid, since, changed_at, expires_at)
+   SELECT ?1, conversation_id, bound_wamid,
+          MAX(MIN(COALESCE(wa_since, ?3), ?3),
+              COALESCE((SELECT MAX(h.changed_at) + 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid), 0)),
+          ${OPEN}, ${OPEN} FROM phones
+   WHERE ${paired}
+     AND NOT EXISTS (SELECT 1 FROM phone_aliases h WHERE h.id = ?1 AND h.bound_wamid = phones.bound_wamid AND h.changed_at >= ?3)`;
 
 interface OwnerRow {
   conversation_id: string;
@@ -860,8 +879,10 @@ export function createGateway(deps: Deps) {
       if (wa !== null && user !== null && !m.change) {
         // The message names the number beside a current user_id (gp-byp8): every other binding's
         // span of it ends here; and if a row still held the number at this stamp, so the fill
-        // above could not take it, it is the user_id row's paired number.
+        // above could not take it, the pairing widens the user_id row's span it belongs to, or
+        // opens its paired number.
         push(db.prepare(pairingEnds).bind(wa, user, stamp, stamp + ALIAS_SECONDS));
+        push(db.prepare(pairingWidens).bind(wa, user, stamp));
         push(db.prepare(pairingOpens).bind(wa, user, stamp));
       }
       if (m.change?.userId) {
@@ -888,11 +909,12 @@ export function createGateway(deps: Deps) {
         // Before that, the owner's paired numbers end at the change (gp-byp8): each is a previous
         // holding from its start until the change, for the alias horizon, and the notice's old
         // number when it is one of them keeps that start (the insert below ignores a second row).
+        // A span that starts after the change (a late notice) is left open: no end precedes a start.
         push(
           db
             .prepare(
               `UPDATE phone_aliases SET changed_at = ?2, expires_at = ?3
-               WHERE changed_at = ${OPEN} AND (conversation_id, bound_wamid) IN (
+               WHERE changed_at = ${OPEN} AND since <= ?2 AND (conversation_id, bound_wamid) IN (
                  SELECT conversation_id, bound_wamid FROM phones WHERE conversation_id = ${ownerKey("?4", "?5", "?2")}
                    AND NOT EXISTS (SELECT 1 FROM phones x WHERE x.user_id = ?1 AND x.conversation_id <> phones.conversation_id))`,
             )
@@ -948,7 +970,9 @@ export function createGateway(deps: Deps) {
           // The change names the new number beside the new user_id (gp-byp8): every other
           // binding's span of it ends here, and if a row (a phone-only owner; the strip above took
           // it from any other) still held it at this stamp, so the re-key gave the owner none, it
-          // is the owner's paired number from this stamp.
+          // is the owner's paired number from this stamp. Every span the owner can have of its new
+          // number starts at or after this stamp (the new user_id names it from here), so a replay
+          // of the notice has nothing to widen, and pairingOpens reopens nothing.
           push(db.prepare(pairingEnds).bind(m.change.waId, m.change.userId, stamp, stamp + ALIAS_SECONDS));
           push(db.prepare(pairingOpens).bind(m.change.waId, m.change.userId, stamp));
         }
@@ -1406,7 +1430,8 @@ export function createGateway(deps: Deps) {
    * aliases past their horizon and counted code wamids Meta can no longer redeliver. A paired
    * number's open span whose binding an operator unbound ends at the cron's clock (gp-byp8): until
    * then it held every later stamp, so nothing the owner sent before the unbind reached the other
-   * row's city, and it is kept for the alias horizon from there.
+   * row's city, and it is kept for the alias horizon from there. One that starts after the clock
+   * waits for the next run.
    */
   async function maintain(): Promise<Record<string, number>> {
     const now = deps.now();
@@ -1437,7 +1462,7 @@ export function createGateway(deps: Deps) {
       db
         .prepare(
           `UPDATE phone_aliases SET changed_at = ?1, expires_at = ?2
-           WHERE changed_at = ${OPEN} AND NOT EXISTS (SELECT 1 FROM phones p
+           WHERE changed_at = ${OPEN} AND since <= ?1 AND NOT EXISTS (SELECT 1 FROM phones p
              WHERE p.conversation_id = phone_aliases.conversation_id AND p.bound_wamid = phone_aliases.bound_wamid)`,
         )
         .bind(now, now + ALIAS_SECONDS),

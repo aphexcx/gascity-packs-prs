@@ -1508,6 +1508,152 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     }
   });
 
+  it("Meta's replays of two owners' pairings, A's then B's, again and again, reopen nothing and fail no payload: A's span stays ended at B's pairing, and a pairing older than it moves its start back (gp-byp8; the codex self-review r1 MAJOR)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const y = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const c = (await owners(p))[0] as { conversation_id: string };
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    const b = bsuid();
+    await t.joinAs(y, { user: b });
+    const fromA = textAs({ wa: p, user: a }, "A's", { wamid: `wamid.${uniq()}`, ts: T1 });
+    const fromB = textAs({ wa: p, user: b }, "B's", { wamid: `wamid.${uniq()}`, ts: T2 });
+    const spans = async () =>
+      (await env.DB.prepare("SELECT conversation_id, since, changed_at FROM phone_aliases WHERE id = ? ORDER BY since, changed_at").bind(p).all()).results;
+    const ended = [
+      { conversation_id: a, since: T1, changed_at: T2 },
+      { conversation_id: b, since: T2, changed_at: 253_402_300_799 },
+    ];
+    t.clock.now = T1;
+    expect((await t.webhook(fromA)).status).toBe(200);
+    t.clock.now = T2;
+    expect((await t.webhook(fromB)).status).toBe(200);
+    expect(await spans()).toEqual(ended);
+    for (let round = 0; round < 2; round++) {
+      t.clock.now += HOUR / 4;
+      expect((await t.webhook(fromA)).status).toBe(200);
+      expect.soft(await spans()).toEqual(ended);
+      expect((await t.webhook(fromB)).status).toBe(200);
+      expect(await spans()).toEqual(ended);
+    }
+    // A pairs P again at T3: B's span ends there, and A's new span starts at T3, after A's ended one.
+    t.clock.now = T3;
+    const againA = textAs({ wa: p, user: a }, "A's, again", { wamid: `wamid.${uniq()}`, ts: T3 });
+    expect((await t.webhook(againA)).status).toBe(200);
+    const three = [ended[0], { ...ended[1], changed_at: T3 }, { conversation_id: a, since: T3, changed_at: 253_402_300_799 }];
+    expect(await spans()).toEqual(three);
+    // A pairing of A's stamped T0 + 30 min, landing now, moves the start of A's first span back,
+    // and only that one: Meta's replays of B's T2 and A's T3 pairings then fail nothing.
+    t.clock.now = T3 + HOUR / 4;
+    const older = textAs({ wa: p, user: a }, "A's, older", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR / 2 });
+    expect((await t.webhook(older)).status).toBe(200);
+    const widened = [{ ...three[0], since: T0 + HOUR / 2 }, three[1], three[2]];
+    expect(await spans()).toEqual(widened);
+    for (const replay of [fromB, againA, fromA]) {
+      expect((await t.webhook(replay)).status).toBe(200);
+      expect(await spans()).toEqual(widened);
+    }
+    // P alone: each stamp inside a span is held by two bindings (nobody's); one before every span is C's.
+    const ids = async (city: City) => (await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id);
+    const at = (ts: number) => textPayload(p, `P alone at ${ts}`, { wamid: `wamid.${uniq()}`, ts });
+    const held = [at(T0 + (3 * HOUR) / 4), at(T2 + HOUR / 2), at(T3 + HOUR / 8)];
+    const beforeA = at(T0 + HOUR / 4);
+    for (const m of [...held, beforeA]) expect((await t.webhook(m)).status).toBe(200);
+    for (const m of held) for (const city of [w, x, y]) expect(await ids(city)).not.toContain(wamidOf(m));
+    expect((await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === wamidOf(beforeA))).toMatchObject({ conversation_id: c.conversation_id });
+  });
+
+  it("a binding paired again after its span ended opens its new span after that end, even when the change that brought the owner to its number came earlier: Meta's replay of the pairing that ended it fails nothing (gp-byp8)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const y = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const w0 = phone();
+    const a = bsuid();
+    await t.joinAs(x, { wa: w0, user: a });
+    const b = bsuid();
+    await t.joinAs(y, { user: b });
+    // A's change at T1 shares no number: A's row holds none, from T1.
+    t.clock.now = T1;
+    const a2 = bsuid();
+    expect((await t.webhook(notice(w0, a, a2, null, T1))).status).toBe(200);
+    t.clock.now = T2;
+    await t.sayAs({ wa: p, user: a2 }, "A's, by its new user_id");
+    const fromB = textAs({ wa: p, user: b }, "B's", { wamid: `wamid.${uniq()}`, ts: T3 });
+    t.clock.now = T3;
+    expect((await t.webhook(fromB)).status).toBe(200);
+    t.clock.now = T4;
+    await t.sayAs({ wa: p, user: a2 }, "A's, again");
+    const spans = async () =>
+      (await env.DB.prepare("SELECT conversation_id, since, changed_at FROM phone_aliases WHERE id = ? ORDER BY since, changed_at").bind(p).all()).results;
+    const expected = [
+      { conversation_id: w0, since: T1, changed_at: T3 },
+      { conversation_id: w0, since: T3 + 1, changed_at: 253_402_300_799 },
+      { conversation_id: b, since: T3, changed_at: T4 },
+    ].sort((l, r) => l.since - r.since || l.changed_at - r.changed_at);
+    expect(await spans()).toEqual(expected);
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(fromB)).status).toBe(200);
+    expect(await spans()).toEqual(expected);
+  });
+
+  it("a late notice ends none of the owner's spans that started after its stamp (gp-byp8)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    // A's notice stamped T2 fails; at T3 Meta still names P beside A's (old) user_id.
+    const late = notice(null, a, bsuid(), null, T2);
+    t.clock.now = T2;
+    flaky.arm(0);
+    expect((await t.webhook(late)).status).toBe(500);
+    t.clock.now = T3;
+    await t.sayAs({ wa: p, user: a }, "A's");
+    t.clock.now = T4;
+    expect((await t.webhook(late)).status).toBe(200);
+    expect((await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ?").bind(p).all()).results).toEqual([
+      { since: T3, changed_at: 253_402_300_799 },
+    ]);
+    const image = textPayload(p, "P alone, after A's pairing", { wamid: `wamid.${uniq()}`, ts: T3 + HOUR / 2 });
+    t.clock.now = T4 + HOUR / 4;
+    expect((await t.webhook(image)).status).toBe(200);
+    for (const city of [w, x]) expect((await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id)).not.toContain(wamidOf(image));
+  });
+
+  it("the cron ends an unbound owner's open span only once its start has passed the cron's clock (gp-byp8)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const w = await t.enrollCity();
+    const p = phone();
+    await t.join(w, p); // C
+    const a = bsuid();
+    await t.joinAs(x, { user: a });
+    // Meta's stamp runs 10 minutes ahead of the gateway's clock.
+    t.clock.now = T2;
+    await t.sayAs({ wa: p, user: a }, "A's", { ts: T2 + HOUR / 6 });
+    await env.DB.prepare("DELETE FROM phones WHERE conversation_id = ?1").bind(a).run();
+    await t.gateway.maintain();
+    const span = async () => (await env.DB.prepare("SELECT since, changed_at FROM phone_aliases WHERE id = ?").bind(p).all()).results;
+    expect(await span()).toEqual([{ since: T2 + HOUR / 6, changed_at: 253_402_300_799 }]);
+    const fromA = textPayload(p, "A's, P alone", { wamid: `wamid.${uniq()}`, ts: T2 + HOUR / 3 });
+    t.clock.now = T2 + HOUR / 2;
+    expect((await t.webhook(fromA)).status).toBe(200);
+    for (const city of [w, x]) expect((await t.inbox(city)).body.deliveries.map((d: any) => d.message?.id)).not.toContain(wamidOf(fromA));
+    t.clock.now = T2 + HOUR;
+    await t.gateway.maintain();
+    expect(await span()).toEqual([{ since: T2 + HOUR / 6, changed_at: T2 + HOUR }]);
+  });
+
   it("a notice whose re-key is refused (another row holds the new user_id) ends none of the owner's paired spans (gp-byp8)", async () => {
     const t = setup();
     const x = await t.enrollCity();

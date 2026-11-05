@@ -226,6 +226,9 @@ What the gateway does:
      when Meta names the number beside another current user_id (rule 2), or, once an operator
      unbinds the owner, at the next daily cron. It stays open when the owner's row later takes
      the number. A pairing Meta stamped before the other row held the number pairs nothing.
+     Meta's replay of a pairing that an ended span already covers only moves that span's start
+     back: it never reopens it. A span opened again after an end starts after that end, so no
+     end can ever collide with an earlier one and fail a payload (the codex self-review r1).
 
    A message routes to the one binding whose span holds its stamp, or to nobody:
    - **A previous holding routes to its binding.** If one holds the stamp, the message goes to
