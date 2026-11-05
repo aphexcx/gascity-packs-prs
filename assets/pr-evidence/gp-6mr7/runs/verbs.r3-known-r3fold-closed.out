@@ -1,0 +1,4 @@
+# fail closed: the r3-fold verbs.py with an unreadable record as its only record
+FAIL record /private/tmp/claude-gp28td/no-such-record.env readable (FileNotFoundError)
+FAIL citadel's records yield the Meta ids to look for (0, at least 7)
+FAIL citadel's records yield the test number to look for (0, at least 1)

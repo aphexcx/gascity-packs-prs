@@ -1,0 +1,3 @@
+# fail closed: the known-values verbs.py with an unreadable record as its only record
+FAIL record /private/tmp/claude-gp28td/no-such-record.env readable (FileNotFoundError)
+FAIL citadel's records yield the Meta values to look for (0, at least 8)

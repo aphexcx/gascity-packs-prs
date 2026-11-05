@@ -1,0 +1,47 @@
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --off' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp consent <wa_id> --on' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --clear [--tz America/Sao_Paulo]' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <wa_id>' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound resolve <rid> --dead' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound resolve <rid> --delivered' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp invite' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp invite --proactive-consent --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --to <wa_id> --text "message"' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --to <wa_id> --text-file <path>' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --update' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp publish --update --to <wa_id> --text "today\'s update"' in A's help.md
+PASS whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp status' in A's help.md
+PASS whatsapp/template-fragments/whatsapp-v0.template.md: verb form 'gc whatsapp publish --to <wa_id> --text-file <path>' in A's help.md
+PASS whatsapp/template-fragments/whatsapp-v0.template.md: verb form 'gc whatsapp publish --update --to <wa_id> --text "today\'s update"' in A's help.md
+PASS whatsapp/docs/meta-setup.md: verb form 'gc whatsapp invite --proactive-consent' in A's help.md
+PASS whatsapp/docs/meta-setup.md: verb form 'gc whatsapp publish' in A's help.md
+PASS skill quotes the daily update (window open)
+PASS A's adapter source carries the daily update (window open): "[window-keeper] <wa_id>: daily update due. Send today's short business update with one acknowledgement ask. Window open, closes <time>."
+PASS skill quotes the daily update (window closed)
+PASS A's adapter source carries the daily update (window closed): 'Window closed since <time>'
+PASS skill quotes the nudge (unshifted)
+PASS A's adapter source carries the nudge (unshifted): '[window-keeper] <wa_id>: window closes in <N> minutes, nobody from the business has written since <time>. One short line asking anyone in the group to reply.'
+PASS skill quotes the nudge (shifted)
+PASS A's adapter source carries the nudge (shifted): 'window closes at <time>, after your hours; last chance before close of business in <N> minutes.'
+PASS skill quotes the redelivery marker
+PASS A's adapter source carries the redelivery marker: '[redelivery <wamid>: a first copy may have reached you; if you already answered it, do nothing]'
+PASS skill quotes the actor
+PASS A's adapter source carries the actor: 'Dynasty window-keeper'
+PASS skill quotes the reply line
+PASS A's adapter source carries the reply line: 'gc whatsapp publish --to <wa_id> --text-file <path>'
+PASS skill quotes the attachment line
+PASS A's adapter source carries the attachment line: 'saved to <path>; Read that path to view it'
+PASS skill quotes the voice transcript
+PASS A's adapter source carries the voice transcript: '[voice note transcript: <name>]'
+PASS skill quotes the reaction
+PASS A's adapter source carries the reaction: '[reaction <emoji> to <message id>]'
+PASS skill quotes the failed delivery
+PASS A's adapter source carries the failed delivery: '[delivery failed: <code> <title>]'
+PASS fragment quotes '[window-keeper] <wa_id>: daily update due.'
+PASS fragment quotes '[window-keeper] <wa_id>: window closes in <N> minutes,'
+PASS fragment quotes '[redelivery <wamid>:'
+PASS fragment quotes '[delivery failed:'
+PASS Afik's words quoted in the skill and the fragment
+PASS the keeper's one ask quoted in the skill and the fragment
+rc=0

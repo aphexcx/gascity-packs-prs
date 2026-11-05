@@ -1,0 +1,4 @@
+parsed /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/template-fragments/whatsapp-v0.template.md defines=[whatsapp-v0]
+DUPLICATE define "whatsapp-v0" in /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/template-fragments/whatsapp-v0.template.md (first in /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/template-fragments/whatsapp-v0.template.md)
+exit status 1
+rc=1
