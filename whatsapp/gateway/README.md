@@ -223,6 +223,10 @@ What the gateway does:
      takes the old number from whoever holds it now.
    - **A notice that arrives late or twice names nobody** once its old ids have moved, so it
      changes nothing.
+   - **A pairing that is history takes no number.** Rule 2 takes a number from a row only when
+     the row held it at the message's stamp and the message's user_id is a current one. A late
+     retry takes nothing, nor does a retry naming a previous user_id, nor a change notice's own
+     old ids.
    - **The horizon is 8 days** (`TOMBSTONE_SECONDS`) from the change Meta stamped. Meta retries a
      webhook for up to 7 days, and the gateway drops any message stamped more than 8 days ago, so
      no message a previous holding may route can arrive later. The daily cron then deletes it.
