@@ -868,20 +868,21 @@ export function createGateway(deps: Deps) {
         // 2): the text binds by its user_id alone, keyed by it, and the number stays that row's.
         // Meta paired the two at the stamp, so the number is the new owner's paired number from
         // here (pairingOpens below): contested, so the number alone goes to nobody while both
-        // stand. A phone-only text (no user_id) is never bound that way: it would hold no id.
+        // stand. A phone-only row is keyed by its own number, so a text naming that number alone
+        // (no user_id) is keyed by nothing (k.id NULL) and never bound that way.
         const bindIndex = push(
           db
             .prepare(
               `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at, bound_stamp)
                SELECT k.id, k.wa, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?11
                FROM invite_codes i,
-                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1 OR wa_id = ?1)
+                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1)
                                  THEN ?1 ELSE ?2 END AS id,
                             CASE WHEN EXISTS (SELECT 1 FROM phones WHERE wa_id = ?1) THEN NULL ELSE ?1 END AS wa) k
                WHERE i.code = ?8 AND i.used_at IS NULL AND i.expires_at > ?7 AND k.id IS NOT NULL
                  AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?9), 0) <= ?10
                  AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = k.id OR p.user_id = ?2
-                                   OR (p.wa_id = ?1 AND (p.user_id IS NOT NULL OR ?2 IS NULL)))
+                                   OR (p.wa_id = ?1 AND p.user_id IS NOT NULL))
                  AND NOT EXISTS ${otherHolding("?1", "?2", "?11")}
                ON CONFLICT DO NOTHING`,
             )

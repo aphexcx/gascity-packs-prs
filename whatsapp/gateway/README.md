@@ -176,6 +176,17 @@ What the gateway does:
    beside the other, unless another row already holds it. That never makes a second row. A
    delivery carries the owner row's id for any id the message omits. An owner known by phone keeps
    its `wa_id` on every delivery even when Meta names them by user_id alone.
+
+   **An invite code is the exception** (gp-sv2d; the Fable read r2, CRITICAL 2). Say C is bound by
+   phone alone on number P, and a text names P beside a user_id no row holds. If the text is
+   another city's live invite code, it is a join, not C's message. It binds the sender to that
+   city by its user_id, keyed by it: the code is spent and the welcome sent. P stays C's row's,
+   and Meta's pairing makes it the new owner's paired number (rule 5): P is contested, so a message
+   naming P alone goes to nobody, counted, until one of the two is unbound. The code text never
+   reaches C's city, and C's row takes nothing from it. Its attempt counts toward the sender's 5 a
+   day (rule 6). If the bind is refused (the day's attempts are used up), the text still reaches no
+   city and C's row still takes nothing. Any other text, a six-digit one that is no live code
+   included, is C's, and C's row takes the user_id, as above.
 4. **The window** is the owner row's, so it moves on a message from either id.
 5. **Number changes.** The notice is delivered to the owner's city as kind `message` with
    `message.type` `system`, the shape every system notice already has. It moves no window and is
@@ -222,15 +233,38 @@ What the gateway does:
      the earliest stamp that showed it, or where the owner came to its current number
      (`wa_since`, such as a number change that shared no number). Both rows then hold the number,
      and a message naming it alone goes to nobody (below). A pairing Meta delivers only after the
-     owner's number change (it names the owner's previous user_id) is kept too: as the owner's
-     span of the number up to that change, merged into the one the change ended. The span ends, and is kept as a previous holding for the 8-day
+     owner's number change (it names the owner's previous user_id) is kept too, as the owner's
+     span of the number up to that change, but it only refuses (the next bullet). The span ends,
+     and is kept as a previous holding for the 8-day
      horizon, at the owner's next number change (whether or not its notice names the number),
      when Meta names the number beside another current user_id (rule 2), or, once an operator
      unbinds the owner, at the next daily cron. It stays open when the owner's row later takes
      the number. A pairing Meta stamped before the other row held the number pairs nothing.
-     Meta's replay of a pairing that an ended span already covers only moves that span's start
-     back: it never reopens it. A span opened again after an end starts after that end, so no
-     end can ever collide with an earlier one and fail a payload (the codex self-review r1).
+     Meta's replay of a pairing that an ended span already covers never reopens it. A span opened
+     again after an end starts after that end, so no end can ever collide with an earlier one and
+     fail a payload (the codex self-review r1).
+   - **Late evidence refuses, never routes** (gp-sv2d). This is Afik's choice (A), 11:20Z
+     Thu 11/5, on round 4's stop. Each previous holding and paired number holds its stamps from
+     `since` and routes them from `routes_from` (`phone_aliases`). A span the gateway learned on
+     time routes from its start: the owner's own number change, or a pairing under the owner's
+     current user_id that opens the span or falls inside it. What the gateway learns late only
+     refuses:
+     - **A pairing under a previous user_id**, which Meta delivers after the owner's change, is
+       kept as a span that never routes (`routes_from` 253402300799).
+     - **A pairing stamped before a span's start** moves where the span holds from, never where
+       it routes from.
+
+     A stamp that only such a late part holds goes to nobody, counted as `unrouted_messages`. When
+     another binding holds it too, it is a conflict as well (below). It is never the span's
+     owner's. That fails closed, and (A) accepts the cost: once the other row's owner is unbound,
+     the owner's own messages stamped in a late part go to nobody, counted, instead of to the
+     owner. This is the codex self-review r5's case. A's first pairing (P beside U) at T1 is
+     delayed until after A's notice at T4. Meanwhile P beside V at T2 gave phone-only C the
+     user_id V. C's image stamped T3, retried after C is unbound, now reaches no city. Before
+     (A), it reached A's.
+     A message that arrives late still routes by the spans as they stand when it lands. A retry of
+     the owner's own text under a previous user_id goes by that id's previous holding, which the
+     owner's change made on time. Only the pairing the retry carries is late evidence.
 
    A message routes to the one binding whose span holds its stamp, or to nobody:
    - **A previous holding routes to its binding.** If one holds the stamp, the message goes to
@@ -239,6 +273,8 @@ What the gateway does:
      This is how Meta's retry of a message the owner sent before a number change reaches the
      owner's conversation under the old ids. When two owners each held the same number in turn,
      the message goes to the one that held it at the stamp.
+   - **A stamp only a late part holds goes to nobody** (the bullet above), counted, with no
+     canned line: the sender is known.
    - **Two spans holding one stamp go to nobody.** That happens only when the records disagree:
      a number's next holder showed it before the old owner's change notice landed, or a
      phone-only owner holds a number Meta paired with another owner's user_id. Such a message,
@@ -305,11 +341,37 @@ What the gateway does:
    - **One person bound twice** (by phone in one city, by user_id in another) has the number
      paired with the second binding: what Meta sends from the number alone goes to nobody until
      an operator unbinds one of them, and each is counted in `unrouted_conflicts`.
+   - **A previous user_id beside a phone-only owner's number** (gp-sv2d; the Fable read r2,
+     MINOR 3). Say owner A's own text names P beside a, A's user_id until A's notice at T4. It is
+     stamped T3, and Meta delivers it only after the notice. It goes by a's previous holding: to
+     A's city when no other row holds P at T3, or when the row that does carries its own user_id.
+     When phone-only C holds P at T3, it goes to nobody, counted as a conflict. The two holders
+     differ on purpose. A row with its own user_id is someone else, because Meta gives a user_id
+     to no one else. A phone-only row may be the very person behind a (rule 3), bound by phone in
+     another city: the case of one person bound twice, above. The records cannot tell those
+     apart, so the message is held twice. The pairing such a retry carries is late (it names a
+     previous user_id), so it only refuses.
+   - **An end only gives stamps back.** Meta naming the number beside another current user_id
+     ends a paired span at that stamp (rule 2), and so do the owner's change and the cron. An end
+     never routes a message to the span's owner. The stamps after it go to whoever else holds
+     them, as if the span had never covered them. A late end (Meta delivers the pairing that ends
+     the span after the owner's own later pairings) gives the phone-only owner back the stamps the
+     span refused, which is what the gateway did before any span existed.
    - **Sends are unchanged.** The phone-only owner's city still sends to the number, which reaches
      whoever holds it now.
 6. **Strangers** are keyed by their user_id when Meta sends one, else their wa_id. This covers the
    canned line once per 7 days and the 5 code attempts a day. The key does not change when Meta
    starts sharing the stranger's phone, which the canned line itself causes.
+
+   **Who hears the canned line** (gp-sv2d; the Fable read r2, MINOR 4). Only a sender no binding
+   holds now, whose message no span holds at its stamp. An owner's own number never hears it while
+   any span of it holds the message's stamp, a late one included: the message routes, or it goes
+   to nobody, counted. So with C unbound, A's image stamped after A's on-time pairing reaches A's
+   city, and no one is answered. A message stamped where no span of the number reaches is a
+   stranger's, even from a number some binding held at another time. An example is a message
+   stamped before A's first pairing, once the phone-only owner who held the number then is
+   unbound. The records name no holder at that stamp, so it hears the line, at most once per 7
+   days, like any stranger's.
 7. **Sends.** `POST /v1/send`'s `to` names one of the city's owners by its `conversation_id`, its
    `wa_id` or its `user_id`. The gateway sends `to` to Meta exactly as given (a user_id byte for
    byte in `recipient`) while it is one of the owner's current ids. A `conversation_id` the owner
@@ -473,6 +535,20 @@ Never Robert's account or his domain.
    after the deploy, is then no new attempt. No attempt is counted in the gap, because the old
    code's stranger path answers 500 (above). The order is always migrations, then the deploy, in
    one sitting.
+
+   **Rolling the Worker back** to PR 73's code after 0002 and 0003 (gp-sv2d; the Fable read r2,
+   NOTE 6) puts it in the gap's state above, for as long as it runs:
+   - **It keeps** bound owners' messages, sends, statuses and the window.
+   - **It answers 500 to** every stranger's text and every invite text, until a Worker that knows
+     `sender_key` is deployed again. Meta redelivers those payloads while it still retries (rule 5,
+     "The horizon").
+   - **It cannot see** an owner bound by user_id alone (no `wa_id`): it routes by `wa_id`, and a
+     message naming only a user_id is not a shape it reads.
+   - **It leaves behind** `phone_aliases` and `code_attempt_wamids`, which its cron deletes neither
+     of, and the phones columns `bound_stamp` and `wa_since`, which it never reads.
+
+   So a rollback keeps bound owners' messages, sends, statuses and the window, and nothing else.
+   0002 cannot be undone without rebuilding phones.
 
 4. **Deploy.**
 

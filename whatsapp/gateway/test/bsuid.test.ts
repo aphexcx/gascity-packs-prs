@@ -2397,12 +2397,19 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
    * first delivery. The T2 pairing then lands late:
    * - under a previous user_id: after A's notice (a to a2) at T4 (late (i));
    * - before an open span's start: after A pairs P again, on time, at T3 + 30 min (late (ii));
-   * - before an ended span's start: the same, and B pairs P at T4, which ends A's span there.
+   * - before an ended span's start: the same, and B pairs P at T4, which ends A's span there;
+   * - under a previous user_id, before the span it ended: A pairs P on time at T3 + 30 min, and A's
+   *   notice at T4 ends that span; the T2 pairing then names a previous user_id (late (i) and (ii)).
    * A's T3 image then goes to nobody whether or not C stands: with C a conflict, without C counted,
    * and never X's. A's image stamped T3 + 45 min, inside the on-time span, routes as before the
    * round: a conflict while C stands, X's once C is unbound.
    */
-  const lateKinds = ["under a previous user_id", "before an open span's start", "before an ended span's start"] as const;
+  const lateKinds = [
+    "under a previous user_id",
+    "before an open span's start",
+    "before an ended span's start",
+    "under a previous user_id, before the span its notice ended",
+  ] as const;
   const lateRows = lateKinds.flatMap((late) => (["stands", "is unbound"] as const).map((cIs) => ({ late, cIs })));
   for (const row of lateRows) {
     it(`the refuse-only rows: Meta pairs P with A late (${row.late}) while C's phone-only binding holds P; A's image stamped in the late part goes to nobody while C ${row.cIs}, counted, never to X; one stamped in the on-time span routes as before (gp-sv2d)`, async () => {
@@ -2424,24 +2431,27 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
       t.clock.now = T3;
       flaky.arm(0);
       expect((await t.webhook(image.payload)).status).toBe(500);
-      if (row.late === "under a previous user_id") {
-        t.clock.now = T4;
-        expect((await t.webhook(notice(null, a, bsuid(), null, T4))).status).toBe(200);
-      } else {
+      const previous = row.late.startsWith("under a previous user_id");
+      const onTimeSpan = row.late !== "under a previous user_id";
+      if (onTimeSpan) {
         t.clock.now = T3 + HOUR / 2;
         await t.sayAs({ wa: p, user: a }, "A's pairing, on time"); // A's open span from T3 + 30 min
-        if (row.late === "before an ended span's start") {
-          const b = bsuid();
-          await t.joinAs(y, { user: b });
-          t.clock.now = T4;
-          await t.sayAs({ wa: p, user: b }, "B's pairing"); // rule 2: A's span ends at T4
-        }
+      }
+      if (row.late === "before an ended span's start") {
+        const b = bsuid();
+        await t.joinAs(y, { user: b });
+        t.clock.now = T4;
+        await t.sayAs({ wa: p, user: b }, "B's pairing"); // rule 2: A's span ends at T4
+      }
+      if (previous) {
+        t.clock.now = T4;
+        expect((await t.webhook(notice(null, a, bsuid(), null, T4))).status).toBe(200); // ends A's span, if any, at T4
       }
       t.clock.now = T4 + HOUR / 4;
       expect((await t.webhook(pairing)).status).toBe(200);
       // A's own text names a: X's under A's current user_id; under a previous one, while phone-only C
       // holds P, it is mirror (v)'s conflict (below).
-      if (row.late === "under a previous user_id") expect(await ids(t, x)).not.toContain(wamidOf(pairing));
+      if (previous) expect(await ids(t, x)).not.toContain(wamidOf(pairing));
       else expect(await ids(t, x)).toContain(wamidOf(pairing));
       if (row.cIs === "is unbound") await unbind(c.conversation_id);
       t.clock.now = T4 + HOUR / 2;
@@ -2455,7 +2465,7 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
           ? { unrouted: 1, conflicts: 1, line: [{ unrouted: 1, unrouted_conflicts: 1 }], sends: 0 }
           : { unrouted: 1, conflicts: 0, line: [{ unrouted: 1, unrouted_conflicts: 0 }], sends: 0 },
       );
-      if (row.late !== "under a previous user_id") {
+      if (onTimeSpan) {
         const onTime = imageAt(t, p, T3 + (3 * HOUR) / 4);
         const m = await counted(t, async () => expect((await t.webhook(onTime.payload)).status).toBe(200));
         if (row.cIs === "stands") {
@@ -2555,21 +2565,24 @@ describe("BSUID: a number change keeps the old ids as aliases through Meta's ret
     expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === after.wamid)).toMatchObject({ kind: "message", conversation_id: a, wa_id: p });
   });
 
-  it("a six-digit text beside phone-only C's number that is no live code, from a user_id no row holds, is C's: C's row takes the user_id (rule 3) and the text reaches C's city (gp-sv2d: the adoption rule stands for any text that is no live code)", async () => {
-    const t = setup();
-    const x = await t.enrollCity();
-    const w = await t.enrollCity();
-    const p = phone();
-    await t.join(w, p); // C
-    const c = (await owners(p))[0] as { conversation_id: string };
-    const spent = await t.invite(x);
-    await t.say(phone(), spent); // another phone joins X with it: the code is no longer live
-    const u = bsuid();
-    const text = await t.sayAs({ wa: p, user: u }, spent);
-    expect(text.res.status).toBe(200);
-    expect(await ids(t, w)).toContain(text.wamid);
-    expect(await owners(u)).toEqual([{ conversation_id: c.conversation_id, wa_id: p, user_id: u, username: null, city_id: w.id }]);
-  });
+  for (const dead of ["spent", "expired"] as const) {
+    it(`a six-digit text beside phone-only C's number that is no live code (${dead}), from a user_id no row holds, is C's: C's row takes the user_id (rule 3) and the text reaches C's city (gp-sv2d: the adoption rule stands for any text that is no live code)`, async () => {
+      const t = setup();
+      const x = await t.enrollCity();
+      const w = await t.enrollCity();
+      const p = phone();
+      await t.join(w, p); // C
+      const c = (await owners(p))[0] as { conversation_id: string };
+      const code = await t.invite(x);
+      if (dead === "spent") await t.say(phone(), code); // another phone joins X with it
+      else t.clock.now = T0 + DAY + HOUR; // an invite code lives a day
+      const u = bsuid();
+      const text = await t.sayAs({ wa: p, user: u }, code);
+      expect(text.res.status).toBe(200);
+      expect(await ids(t, w)).toContain(text.wamid);
+      expect(await owners(u)).toEqual([{ conversation_id: c.conversation_id, wa_id: p, user_id: u, username: null, city_id: w.id }]);
+    });
+  }
 
   it("a live code beside phone-only C's number, from a user_id past its day's five code attempts, binds nothing and is never C's: the text reaches no city, the code stays live, and C's row takes nothing (gp-sv2d)", async () => {
     const t = setup();
