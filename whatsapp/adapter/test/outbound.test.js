@@ -368,7 +368,7 @@ test('sends to one wa_id are serialized: a second publish waits for every chunk 
   const longParts = chunkText(long);
   assert.deepEqual(forPhone, [...longParts.map((_, i) => textChunkKey('gc-A', PHONE, long, i)), textChunkKey('gc-B', PHONE, 'B', 0)]);
   const cAt = s.gw.requests.findIndex((r) => r.idempotency_key === textChunkKey('gc-C', OTHER, 'C', 0));
-  assert.ok(cAt < 3, 'another phone does not wait behind the first');
+  assert.ok(cAt >= 0 && cAt < 3, `another phone does not wait behind the first (C's send at ${cAt})`);
 });
 
 test('a CLI publish records the outbound transcript through gc with the same idempotency key; gc\'s call-back is answered without a re-send', async (t) => {

@@ -131,9 +131,11 @@ owner or another message is therefore another gateway key, even once the
 adapter's own record of the key (7 days or 1,024 keys) is gone and the
 gateway's (30 days) is not. A number the gateway finds naming two owners of
 the city (a recycled number: 409 `ambiguous_recipient`, nothing sent) is
-resent once, under the same key, to the owner's current id, the `user_id` of
-that conversation's `GET /v1/window` entry; a second 409, or no `user_id`
-there, is the permanent `gateway_refused`. WhatsApp's 24-hour window (24 h after the owner's last message, minus a
+gc's permanent publish error, `metadata.reason gateway_refused` with
+`metadata.gateway_error ambiguous_recipient` and a hint naming the ambiguity,
+never resent: conversations here are keyed by phone number, so after a
+recycle the adapter cannot tell which owner a conversation means (the resend
+to the owner's `user_id` waits for the `conversation_id` keying). WhatsApp's 24-hour window (24 h after the owner's last message, minus a
 120-second margin) is the gateway's to enforce: a free-form send outside it
 answers gc's permanent publish error with `metadata.reason window_closed` and
 a hint naming the update verb. `gc whatsapp publish --update --to <wa_id>

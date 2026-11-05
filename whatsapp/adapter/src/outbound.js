@@ -39,8 +39,9 @@
 // under the same chunk key and gets the same answer.
 //
 // THE RECIPIENT. A number the gateway finds naming two owners (409
-// ambiguous_recipient, PR 76's rule R1) is resent once, under the same key,
-// to the user_id of that conversation's GET /v1/window entry (sendMessage).
+// ambiguous_recipient, PR 76's rule R1) is the permanent gateway_refused with
+// metadata.gateway_error ambiguous_recipient and the gateway's hint, never
+// resent: see failure().
 //
 // THE CLI'S TRANSCRIPT. gc records the outbound transcript for its own
 // publishes (HandleOutbound, step 6). A CLI publish reaches this adapter
@@ -238,11 +239,26 @@ export function createPublisher({
     let kind = 'permanent';
     let reason = 'gateway_refused';
     let hint = '';
+    let gatewayError = '';
     if (err?.status === 422 && err.json?.error === 'window_closed') {
       reason = 'window_closed';
       hint = 'The 24-hour WhatsApp window for this conversation is closed: Meta refuses a free-form message until the owner writes again. '
         + `An actual update goes as the approved template: gc whatsapp publish --update --to ${waId} --text "<the update>". `
         + 'Otherwise wait for the owner\'s next message; this reply can then be retried with the same idempotency key.';
+    } else if (err?.status === 409 && err.json?.error === 'ambiguous_recipient') {
+      // PR 76's rule R1 (gp-0g2s): the number names two owners of this city
+      // (a recycled number) and the gateway sent nothing. Its remedy, a resend
+      // to the user_id of the owner's GET /v1/window entry, needs the owner
+      // this conversation means; conversations here are keyed by phone number
+      // until the conversation_id keying lands, and after a recycle the new
+      // owner's messages sit in the number's conversation while the number's
+      // window entry is the old owner's. A guess would hand one owner's
+      // message to the other, so the refusal stands (gateway_refused, the
+      // ambiguity named; the mayor's word on gp-szj9, 00:34Z 11/5).
+      gatewayError = 'ambiguous_recipient';
+      const gatewayHint = typeof err.json.hint === 'string' && err.json.hint ? ` (the gateway's hint: "${err.json.hint}")` : '';
+      hint = `The gateway found two owners of this city on this phone number (a recycled number) and sent nothing${gatewayHint}. `
+        + 'This adapter keys conversations by phone number, so it cannot tell which owner this conversation means and does not resend.';
     } else if (err?.status === 403) {
       reason = 'not_bound';
       hint = 'This phone is not bound to this city at the gateway; the owner joins by texting a code from gc whatsapp invite to the Dynasty number.';
@@ -274,39 +290,13 @@ export function createPublisher({
     }
     log(`send to …${lastFour(waId)} failed at chunk ${delivered + 1}/${chunks}: ${reason} (${err?.status ?? 'no answer'})`);
     const metadata = { reason, chunks: String(chunks), chunks_delivered: String(delivered) };
+    if (gatewayError) metadata.gateway_error = gatewayError;
     if (hint) metadata.hint = hint;
     if (Number.isInteger(err?.status)) metadata.gateway_status = String(err.status);
     return {
       status: 200,
       json: { conversation, delivered: false, failure_kind: kind, idempotency_key: key, error: hint || reason, metadata },
     };
-  }
-
-  // THE RECIPIENT (PR 76's 409 ambiguous_recipient; gp-0g2s, the mayor's rule
-  // R1). The gateway refuses a `to` that names two owners of this city (one's
-  // conversation, kept from a phone number it no longer holds, and another's
-  // current number: a recycled number), sends nothing and spends no key. The
-  // box means the owner of its conversation, so the message is resent, once,
-  // to that owner's current id: the user_id of the GET /v1/window entry whose
-  // conversation_id is the number (whatsapp/gateway/README.md rule 7 at
-  // ba82ab46), and the message's later chunks go there too. No user_id there,
-  // or a second 409, leaves the 409 standing (gateway_refused); a failed
-  // window read is the failure. The gateway key stays the message's: the
-  // same message to the same owner, by another of its ids.
-  async function sendMessage(route, body) {
-    try {
-      return await gateway.send({ ...body, to: route.to });
-    } catch (err) {
-      if (route.resent || err?.status !== 409 || err.json?.error !== 'ambiguous_recipient') throw err;
-      route.resent = true;
-      const windows = (await gateway.window())?.windows;
-      const own = (Array.isArray(windows) ? windows : []).find((w) => String(w?.conversation_id ?? '') === route.waId);
-      const userId = str(own?.user_id);
-      if (!userId) throw err;
-      log(`send to …${lastFour(route.waId)}: the gateway found two owners on this number; resent to the owner's current id`);
-      route.to = userId;
-      return gateway.send({ ...body, to: route.to });
-    }
   }
 
   // Runs one key's work once: a concurrent call with the same key awaits
@@ -335,11 +325,10 @@ export function createPublisher({
     if (!entry) {
       entry = { endpoint: 'publish', wa_id: waId, text_sha256: textSha, chunks: chunks.length, delivered: 0, message_ids: [] };
     }
-    const route = { waId, to: waId };
     for (let i = entry.delivered; i < chunks.length; i++) {
       let answer;
       try {
-        answer = await sendMessage(route, { idempotency_key: textChunkKey(key, waId, text, i), type: 'text', text: chunks[i] });
+        answer = await gateway.send({ to: waId, idempotency_key: textChunkKey(key, waId, text, i), type: 'text', text: chunks[i] });
         if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
       } catch (err) {
         if (entry.delivered > 0) progress.save(key, entry);
@@ -454,7 +443,7 @@ export function createPublisher({
     const template = { name: UPDATE_TEMPLATE, language: updateLanguage, params: [text] };
     let answer;
     try {
-      answer = await sendMessage({ waId: to, to }, { idempotency_key: templateKey(key, to, template), type: 'template', template });
+      answer = await gateway.send({ to, idempotency_key: templateKey(key, to, template), type: 'template', template });
       if (!str(answer?.message_id)) throw Object.assign(new Error('the gateway answered without a message id'), { noMessageId: true });
     } catch (err) {
       return failure(err, { waId: to, conversation, key, chunks: 1, delivered: 0 });

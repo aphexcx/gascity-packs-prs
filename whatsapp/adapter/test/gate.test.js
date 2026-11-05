@@ -520,82 +520,81 @@ test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot,
 // A send whose `to` names two owners of the city (one's conversation_id, kept
 // from a phone number it no longer holds, and another's current wa_id: a
 // recycled number) is answered 409 {error: ambiguous_recipient}: nothing sent,
-// no key spent. The box resends, once, to the owner's current id, the user_id
-// of the owner's entry in GET /v1/window (whatsapp/gateway/README.md rule 7 at
-// ba82ab46). A second 409 is gateway_refused, as every 409 was before.
+// no key spent (whatsapp/gateway/README.md rule 7 at ba82ab46). The gateway's
+// remedy, a resend to the user_id of the owner's GET /v1/window entry, needs
+// the box to know which owner its conversation means. This adapter files a
+// delivery under its wa_id (render.js) until the conversation_id keying (the
+// Opus read r2's NOTE 3), so after a recycle the NEW owner's messages sit in
+// the conversation keyed by the number, whose window entry is the OLD
+// owner's: a resend there hands one owner's reply to the other (the round's
+// self-review r1 MAJOR). Until that keying the 409 is refused, never resent:
+// gateway_refused as before, the ambiguity named (the mayor's word, 00:34Z 11/5).
 
-const A_USER = 'US.ownerA1';
+const A_USER = 'US.ownerA2'; // owner A's current user_id, after A's number change
+const B_USER = 'US.ownerB1'; // owner B's user_id, also B's conversation_id at the gateway
 const sendTos = (s) => s.gw.requests.filter((q) => q.route === 'POST /v1/send').map((q) => q.body.to);
 const windowReads = (s) => s.gw.requests.filter((q) => q.route === 'GET /v1/window').length;
+const refusal = (answer) => ({
+  delivered: answer.json.delivered,
+  kind: answer.json.failure_kind,
+  reason: answer.json.metadata?.reason,
+  error: answer.json.metadata?.gateway_error,
+  status: answer.json.metadata?.gateway_status,
+});
+const AMBIGUOUS = { delivered: false, kind: 'permanent', reason: 'gateway_refused', error: 'ambiguous_recipient', status: '409' };
 
-test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a text to a number naming two owners is resent once to the owner\'s user_id from GET /v1/window; every chunk reaches that owner, delivered under the resend\'s ids', async (t) => {
+test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a text or an update to a number naming two owners is refused once, gateway_refused with the ambiguity named; never a second send, no window read, nothing sent', async (t) => {
   const s = await publisherWorld(t);
   s.gw.userIds.set(A, A_USER);
   s.gw.ambiguous.add(A);
   s.gw.lastInbound.set(A, s.clock.now());
   const reply = await s.publish(`${'a'.repeat(4096)}the tail`, 'K');
-  assert.deepEqual(
-    { delivered: reply.json.delivered, tos: sendTos(s), windowReads: windowReads(s) },
-    { delivered: true, tos: [A, A_USER, A_USER], windowReads: 1 },
-    `chunk 0 refused at the number and resent to the user_id, chunk 1 straight to it, one window read (${JSON.stringify(reply.json)})`,
-  );
-  assert.deepEqual(s.gw.sends.map((x) => x.to), [A_USER, A_USER], 'both chunks reached Meta addressed to the owner\'s current id');
-  assert.deepEqual(reply.json.metadata.message_ids.split(','), s.gw.sends.map((_, i) => `wamid.out.${i + 1}`));
-  const keys = s.sendKeys();
-  assert.equal(keys[1], keys[0], 'the resend is the same message under the same gateway key (the 409 spent none)');
-});
-
-test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): an update to a number naming two owners is resent once to the owner\'s user_id; the template reaches that owner', async (t) => {
-  const s = await publisherWorld(t);
-  s.gw.userIds.set(A, A_USER);
-  s.gw.ambiguous.add(A);
   const update = await s.update('Weekly numbers are in.', 'U');
   assert.deepEqual(
-    { delivered: update.json.delivered, tos: sendTos(s), windowReads: windowReads(s) },
-    { delivered: true, tos: [A, A_USER], windowReads: 1 },
-    `refused at the number, resent to the user_id (${JSON.stringify(update.json)})`,
+    { reply: refusal(reply), update: refusal(update), tos: sendTos(s), windowReads: windowReads(s) },
+    { reply: AMBIGUOUS, update: AMBIGUOUS, tos: [A, A], windowReads: 0 },
+    `each refused once at the number, never resent (${JSON.stringify(reply.json)})`,
   );
-  assert.deepEqual(s.gw.sends.map((x) => [x.type, x.to]), [['template', A_USER]]);
-  assert.equal(update.json.message_id, 'wamid.out.1');
-});
-
-test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a 409 again after the resend, or no user_id on the owner\'s window entry, is gateway_refused as before; never a second resend, nothing sent', async (t) => {
-  const s = await publisherWorld(t);
-  s.gw.lastInbound.set(A, s.clock.now());
-  s.gw.ambiguous.add(A);
-  const refused = (answer) => ({
-    delivered: answer.json.delivered, kind: answer.json.failure_kind, reason: answer.json.metadata?.reason, status: answer.json.metadata?.gateway_status,
-  });
-  const want = { delivered: false, kind: 'permanent', reason: 'gateway_refused', status: '409' };
-
-  const noUser = await s.publish('no current id known', 'K1'); // the window entry has no user_id
-  assert.deepEqual({ ...refused(noUser), tos: sendTos(s), windowReads: windowReads(s) }, { ...want, tos: [A], windowReads: 1 },
-    'the window was read; no user_id to resend to, so the 409 stands');
-
-  s.gw.userIds.set(A, A_USER);
-  s.gw.ambiguous.add(A_USER); // the resend is refused too
-  const twice = await s.publish('refused twice', 'K2');
-  assert.deepEqual({ ...refused(twice), tos: sendTos(s).slice(1), windowReads: windowReads(s) }, { ...want, tos: [A, A_USER], windowReads: 2 },
-    'one resend, then the second 409 is gateway_refused');
-
-  const update = await s.update('refused twice too', 'U');
-  assert.deepEqual({ ...refused(update), tos: sendTos(s).slice(3) }, { ...want, tos: [A, A_USER] });
+  for (const answer of [reply, update]) {
+    assert.match(answer.json.metadata.hint, /two owners of this city on this phone number .*the gateway's hint: "send to the owner's current id"/);
+    assert.equal(answer.json.error, answer.json.metadata.hint, 'gc\'s error text names the ambiguity');
+  }
   assert.equal(s.gw.sends.length, 0, 'nothing reached Meta');
 });
 
-test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a failed window read is transient; the retry under the same key reads it again and delivers to the user_id', async (t) => {
-  const s = await publisherWorld(t);
-  s.gw.userIds.set(A, A_USER);
-  s.gw.ambiguous.add(A);
-  s.gw.lastInbound.set(A, s.clock.now());
-  s.gw.windowFailures = 1;
-  const first = await s.publish('after the window read heals', 'K');
-  assert.deepEqual({ delivered: first.json.delivered, kind: first.json.failure_kind, windowReads: windowReads(s) },
-    { delivered: false, kind: 'transient', windowReads: 1 }, `the window read failed: retry later (${JSON.stringify(first.json)})`);
-  assert.equal(s.gw.sends.length, 0);
-  const retry = await s.publish('after the window read heals', 'K');
-  assert.equal(retry.json.delivered, true);
-  assert.deepEqual(s.gw.sends.map((x) => x.to), [A_USER]);
+test('ADDENDUM 1 (the round\'s self-review r1 MAJOR): a recycled number\'s new owner B writes; the mayor\'s reply and update in the conversation gc filed it under never reach the old owner A', async (t) => {
+  // Owner A bound on phone A (A's conversation_id is A) and changed number
+  // (A's user_id is now A_USER); owner B joined the same city on the
+  // recycled number, so B's wa_id is A and B's conversation_id is B_USER.
+  const w = await world(t);
+  w.gw.userIds.set(A, A_USER);
+  w.gw.bound.add(B_USER);
+  w.gw.userIds.set(B_USER, B_USER);
+  w.gw.ambiguous.add(A);
+  startEngine(w);
+  // B's message as ba82ab46's inbox answers it: wa_id the number, user_id and
+  // conversation_id B's (gateway.ts:737, :966).
+  const id = w.gw.addText(A, 'wamid.GB-recycled', 'hi, this is B, my order is 4471');
+  Object.assign(w.gw.deliveries.get(id), { user_id: B_USER, conversation_id: B_USER });
+  w.gw.lastInbound.set(B_USER, w.clock.now());
+  await waitFor(() => w.gw.acked.has(id), { what: 'B\'s message delivered and acked' });
+  const filedUnder = w.gc.posts.find((p) => p.pmid === 'wamid.GB-recycled').message.conversation.conversation_id;
+  const pub = createPublisher({
+    stateDir: w.stateDir,
+    gateway: createGatewayClient({ url: w.gw.url, credential: CREDENTIAL, timeoutMs: 2000 }),
+    gc: createGcClient({ base: 'http://127.0.0.1:9', city: CITY }),
+    city: CITY,
+    clock: w.clock.now,
+  });
+  const reply = await pub.handlePublish(JSON.stringify({
+    session_id: 's-mayor', conversation: conversationRef(CITY, filedUnder), text: 'B: your order 4471 ships tomorrow', idempotency_key: 'reply-to-B',
+  }));
+  const update = await pub.handlePublishUpdate(JSON.stringify({ to: filedUnder, text: 'B: invoice 4471 is in the portal', idempotency_key: 'update-to-B' }));
+  assert.deepEqual(
+    { reply: refusal(reply), update: refusal(update), meta: w.gw.sends.map((x) => [x.type, x.to]) },
+    { reply: AMBIGUOUS, update: AMBIGUOUS, meta: [] },
+    `B's reply and update never reach A's ${A_USER} (filed under ${filedUnder}; Meta asked to send ${JSON.stringify(w.gw.sends.map((x) => [x.type, x.to]))})`,
+  );
 });
 
 // --- MINOR (inbound.js:197) ------------------------------------------------------

@@ -117,7 +117,6 @@ export async function startFakeGateway({ clock } = {}) {
     media: new Map(),
     reads: [],
     windowCalls: 0,
-    windowFailures: 0, // window reads that answer 503 before one succeeds
     requests: [],
     hung: [],
     inboxDelayMs: 0, // a page computed now, answered later (the poll/ack race)
@@ -211,7 +210,6 @@ export async function startFakeGateway({ clock } = {}) {
     if (route === 'POST /v1/read') { g.reads.push(body.message_id); return send(res, 200, { ok: true }); }
     if (route === 'GET /v1/window') {
       g.windowCalls += 1;
-      if (g.windowFailures > 0) { g.windowFailures -= 1; return send(res, 503, { error: 'unavailable' }); }
       return send(res, 200, { windows: [...g.bound].map((waId) => g.windowFor(waId)) });
     }
     const media = url.pathname.match(/^\/v1\/media\/(.+)$/);
