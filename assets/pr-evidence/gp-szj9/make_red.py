@@ -1,21 +1,27 @@
-"""Build the round-3 RED trees for gp-szj9 (PR 74's Opus read r2 MAJOR 1 and
-the bead's ADDENDUM 1, PR 76's 409 ambiguous_recipient).
+"""Build the round-3 RED trees for gp-szj9 (PR 74's Opus read r2 MAJOR 1, and
+the bead's ADDENDUM 1 as the mayor ruled it: PR 76's 409 ambiguous_recipient
+refused, never resent).
 
 Run from a clean checkout of the round's head:
 
     python3 -I assets/pr-evidence/gp-szj9/make_red.py <out-dir>
 
-It writes two copies of whatsapp/adapter under <out-dir> (nothing in the
+It writes three copies of whatsapp/adapter under <out-dir> (nothing in the
 checkout changes), each the named commit's adapter (git archive) with the
-round's test/gate.test.js and test/fakes.js added. The fakes gain PR 76's
-user_id on a window entry, a send to a user_id, the 409 ambiguous_recipient
-and a failing window read; nothing they answered before changes.
+round head's test/gate.test.js and test/fakes.js added. The fakes gain PR
+76's user_id on a window entry, a send to a user_id and the 409
+ambiguous_recipient; nothing they answered before changes.
 
   24d75c41/  the round-2 head. RED: the two "Opus read r2 MAJOR 1" tests (the
              gateway key binds neither the recipient nor the whole message)
-             and the four "ADDENDUM 1" tests (every 409 is gateway_refused).
-  e5a7fda6/  the round's key fix, before the resend. RED: the four
-             "ADDENDUM 1" tests only.
+             and the two "ADDENDUM 1" tests (the 409 is a bare
+             gateway_refused, the ambiguity unnamed).
+  e5a7fda6/  the round's key fix. RED: the two "ADDENDUM 1" tests (the
+             ambiguity unnamed) only.
+  be93583a/  the round's first cut of ADDENDUM 1, the resend to the window's
+             user_id. RED: the two "ADDENDUM 1" tests: a second send, and in
+             the end-to-end test B's reply and update reach A's user_id (the
+             self-review r1 MAJOR).
 
 Then run, in each tree's whatsapp/adapter:
 
@@ -32,6 +38,7 @@ import tarfile
 TREES = (
     '24d75c415434dba4d7177fc7faec906e807a8227',
     'e5a7fda6',
+    'be93583a',
 )
 ROUND_FILES = ('test/gate.test.js', 'test/fakes.js')
 
