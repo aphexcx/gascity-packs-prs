@@ -1,0 +1,33 @@
+FF.                                                                      [100%]
+=================================== FAILURES ===================================
+____________ test_restore_row_reads_a_head_it_never_got_as_unknown _____________
+
+tmp_path = PosixPath('/private/var/folders/n0/yx26c20j4y5b0597zqpc5kzh0000gn/T/pytest-of-tailor512/pytest-2090/test_restore_row_reads_a_head_0')
+
+    def test_restore_row_reads_a_head_it_never_got_as_unknown(tmp_path):
+        write_journal(tmp_path, [GAP_HEAD_UNKNOWN])
+        result = doctor('restore', GC_CITY_PATH=str(tmp_path))
+        assert result.returncode == 1
+>       assert '(sequence unknown)' in result.stdout and 'null' not in result.stdout
+E       assert ('(sequence unknown)' in "restore gap: ...1234: the journal's accepted 2026-11-04T22:45:53.689Z (sequence 9) is ahead of the gc store's head none (sequence null); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n")
+E        +  where "restore gap: ...1234: the journal's accepted 2026-11-04T22:45:53.689Z (sequence 9) is ahead of the gc store's head none (sequence null); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n" = CompletedProcess(args=['/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c...sequence null); every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>\n", stderr='').stdout
+
+whatsapp/tests/test_pack.py:297: AssertionError
+__________ test_clear_gap_and_status_read_a_head_never_got_as_unknown __________
+
+fake = <function fake.<locals>.make at 0x10af73ce0>
+
+    def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
+        gap = {key: value for key, value in GAP_HEAD_UNKNOWN.items() if key != 't'}
+        adapter = fake({'POST /inbound/clear-gap': (200, {'ok': True, 'gap': gap, 'head': {'sequence': 4, 'created_at': '2026-11-01T00:00:00Z'}})})
+        result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
+        assert result.returncode == 0, result.stderr
+>       assert 'gc store head:     sequence unknown' in result.stdout and 'null' not in result.stdout
+E       AssertionError: assert ('gc store head:     sequence unknown' in 'Gap cleared for ...1234:\n  journal watermark: sequence 9, accepted 1793832353689\n  gc store head:     sequence null at - when found\n  watermark rebased to the store head now: sequence 4 (2026-11-01T00:00:00Z)\n')
+E        +  where 'Gap cleared for ...1234:\n  journal watermark: sequence 9, accepted 1793832353689\n  gc store head:     sequence null at - when found\n  watermark rebased to the store head now: sequence 4 (2026-11-01T00:00:00Z)\n' = CompletedProcess(args=['/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c...uence null at - when found\n  watermark rebased to the store head now: sequence 4 (2026-11-01T00:00:00Z)\n', stderr='').stdout
+
+whatsapp/tests/test_pack.py:489: AssertionError
+=========================== short test summary info ============================
+FAILED whatsapp/tests/test_pack.py::test_restore_row_reads_a_head_it_never_got_as_unknown
+FAILED whatsapp/tests/test_pack.py::test_clear_gap_and_status_read_a_head_never_got_as_unknown
+2 failed, 1 passed, 41 deselected in 1.65s

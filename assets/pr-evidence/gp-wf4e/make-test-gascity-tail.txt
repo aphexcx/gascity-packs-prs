@@ -1,0 +1,5 @@
+................................................................... [ 92%]
+............................................................. [ 98%]
+..........                                                               [100%]
+831 passed, 113 skipped, 10514 subtests passed in 425.29s (0:07:05)
+(PATH=<toolchain>:$PATH make test-gascity, tail -4; started at 4de5efdf 23:16Z, finished 23:23Z after 1878a086 landed: that commit touches whatsapp/adapter only, outside this target's 'tests gascity/tests'; no failure line in the summary)

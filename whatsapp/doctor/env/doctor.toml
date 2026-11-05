@@ -1,0 +1,2 @@
+description = 'required WhatsApp adapter env names are configured without revealing values'
+run = '../check-env.sh'

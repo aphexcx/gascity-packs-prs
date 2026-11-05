@@ -1,0 +1,2 @@
+description = 'the running whatsapp service answers /healthz on its socket'
+run = '../check-runtime.sh'

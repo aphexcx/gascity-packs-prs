@@ -1,0 +1,90 @@
+✔ (11a) accepted pending at N, the store restored below it, the log empty: no plain post; the gap on disk BEFORE the one marked copy (333.924833ms)
+ℹ watermark N=2, store head after the restore 1
+✔ (11b) as (11a) with the paste in the surviving session log: acked with no further POST, the gap still shown (374.904166ms)
+✔ (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as (11a) (388.382709ms)
+✔ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (806.481125ms)
+✖ (11d2) a never-accepted entry of B, B's watermark intact, while A's gap stands: the marked path, two POSTs, the second marked (8416.186959ms)
+✔ (11e) a never-accepted entry, every watermark intact and the probe NOT FOUND: the plain post, exactly one POST (542.501458ms)
+✖ (11f) the watermark survives compaction: an acked rid compacted away leaves the watermark, and a later restore still reads the gap (8544.40275ms)
+✖ (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before (8529.675167ms)
+✖ (11h) THE GATE r7 RULE 1: a gc-only restore WHILE THE ADAPTER RUNS drops A's newer record, B's older watermark intact: B's in-doubt entry takes the marked path, A's gap on disk before B's POST (868.958917ms)
+✖ (11i) the all-watermark read is evidenced before (11e)'s plain post: every conversation's watermark read after the probe (609.3055ms)
+✖ (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (8550.83925ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 5
+ℹ fail 6
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 38019.952667
+
+✖ failing tests:
+
+test at test/restore.test.js:111:1
+✖ (11d2) a never-accepted entry of B, B's watermark intact, while A's gap stands: the marked path, two POSTs, the second marked (8416.186959ms)
+  Error: timed out waiting for the scheduled read finds A's gap
+      at waitFor (file:///private/tmp/wa-red/red1/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:123:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:147:1
+✖ (11f) the watermark survives compaction: an acked rid compacted away leaves the watermark, and a later restore still reads the gap (8544.40275ms)
+  Error: timed out waiting for the gap read after the compaction
+      at waitFor (file:///private/tmp/wa-red/red1/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:157:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:160:1
+✖ (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before (8529.675167ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red1/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:168:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:189:1
+✖ (11h) THE GATE r7 RULE 1: a gc-only restore WHILE THE ADAPTER RUNS drops A's newer record, B's older watermark intact: B's in-doubt entry takes the marked path, A's gap on disk before B's POST (868.958917ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the response lost"
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:204:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/restore.test.js:216:1
+✖ (11i) the all-watermark read is evidenced before (11e)'s plain post: every conversation's watermark read after the probe (609.3055ms)
+  AssertionError [ERR_ASSERTION]: A's watermark is read too, after the probe and before the post
+  + actual - expected
+  
+  + []
+  - [
+  -   '5511900000001',
+  -   '5511900000002'
+  - ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:233:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [],
+    expected: [ '5511900000001', '5511900000002' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/restore.test.js:237:1
+✖ (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (8550.83925ms)
+  Error: timed out waiting for both gaps from the scheduled read
+      at waitFor (file:///private/tmp/wa-red/red1/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red1/test/restore.test.js:246:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

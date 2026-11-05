@@ -1,0 +1,2 @@
+description = 'paste probes answered by a terminal snapshot in the last 7 days'
+run = '../check-probes.sh'

@@ -1,0 +1,177 @@
+✖ (12a) a dead-letter transition whose ack fails (500, then nothing), a compaction, a SIGKILL, a restart: the dead line survives, the ack is re-sent and confirmed, no new POST (342.089958ms)
+▶ (12b) the same across every dead reason
+  ✖ pending_deadline (8703.129667ms)
+  ✖ in_doubt (1492.422333ms)
+  ✖ redelivery_no_route (1383.531917ms)
+  ✖ held_terminal (326.904084ms)
+  ✖ repost_bound (9295.140667ms)
+  ✖ rejected (2324.612834ms)
+  ✖ no_route (309.505167ms)
+✖ (12b) the same across every dead reason (23838.449541ms)
+✖ (12c) a kill between the dead-letter file line and the dead journal line: the restart repeats the transition with no second dead-letter line, then acks (8187.41925ms)
+✔ the fold derives each state from the last progress line (44.439084ms)
+✔ every line is replayed in order after a restart, a torn tail dropped (13.794458ms)
+✔ accepted lines raise the watermark; a watermark line sets it; clear and rebase (43.099833ms)
+✖ THE GATE r7 RULE 2: compaction drops only acknowledged rids and keeps a dead rid whose ack is unconfirmed (131.164333ms)
+✔ the dead-letter store writes one line per rid and indexes the files at start (17.935417ms)
+ℹ tests 15
+ℹ suites 0
+ℹ pass 4
+ℹ fail 11
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 32420.128416
+
+✖ failing tests:
+
+test at test/deadack.test.js:49:1
+✖ (12a) a dead-letter transition whose ack fails (500, then nothing), a compaction, a SIGKILL, a restart: the dead line survives, the ack is re-sent and confirmed, no new POST (342.089958ms)
+  AssertionError [ERR_ASSERTION]: the dead line survives the compaction
+  
+  0 !== 1
+  
+      at compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:35:10)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:58:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/deadack.test.js:124:13
+✖ pending_deadline (8703.129667ms)
+  Error: timed out waiting for the dead line (pending_deadline)
+      at waitFor (file:///private/tmp/wa-red/red2/test/fakes.js:27:38)
+      at async compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:26:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ in_doubt (1492.422333ms)
+  AssertionError [ERR_ASSERTION]: the dead line survives the compaction
+  
+  0 !== 1
+  
+      at compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:35:10)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/deadack.test.js:124:13
+✖ redelivery_no_route (1383.531917ms)
+  Error: no new POST stopped holding
+      at stays (file:///private/tmp/wa-red/red2/test/fakes.js:36:37)
+      at async compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:44:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ held_terminal (326.904084ms)
+  AssertionError [ERR_ASSERTION]: the dead line survives the compaction
+  
+  0 !== 1
+  
+      at compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:35:10)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/deadack.test.js:124:13
+✖ repost_bound (9295.140667ms)
+  Error: timed out waiting for four POSTs
+      at waitFor (file:///private/tmp/wa-red/red2/test/fakes.js:27:38)
+      at async repost_bound (file:///private/tmp/wa-red/red2/test/deadack.test.js:107:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:127:28)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ rejected (2324.612834ms)
+  Error: no new POST stopped holding
+      at stays (file:///private/tmp/wa-red/red2/test/fakes.js:36:37)
+      at async compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:44:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ no_route (309.505167ms)
+  AssertionError [ERR_ASSERTION]: the dead line survives the compaction
+  
+  0 !== 1
+  
+      at compactKillRestart (file:///private/tmp/wa-red/red2/test/deadack.test.js:35:10)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:128:7)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/deadack.test.js:134:1
+✖ (12c) a kill between the dead-letter file line and the dead journal line: the restart repeats the transition with no second dead-letter line, then acks (8187.41925ms)
+  Error: timed out waiting for the ack after the repeated transition
+      at waitFor (file:///private/tmp/wa-red/red2/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/deadack.test.js:143:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/journal.test.js:75:1
+✖ THE GATE r7 RULE 2: compaction drops only acknowledged rids and keeps a dead rid whose ack is unconfirmed (131.164333ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  3 !== 2
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red2/test/journal.test.js:94:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 3,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
