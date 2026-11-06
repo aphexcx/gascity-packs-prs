@@ -206,8 +206,9 @@ function idChange(m: Obj): IdChange | null {
  *
  * A message names its sender by `from` (the wa_id) and `from_user_id` (the user_id). Either may be
  * absent; the contacts entry for the same user (matched by either id) supplies the other, the
- * profile name and the username. A message is skipped when it names no wa_id, no user_id and (on a
- * number change) no previous user_id. A status's username comes from the contacts entry matched by
+ * profile name and the username. A message is skipped when it names no wa_id and no user_id,
+ * unless it is a number-change notice: one of those is kept whatever ids it names, so the gateway
+ * counts one naming none (gp-lv49). A status's username comes from the contacts entry matched by
  * its recipient ids.
  */
 export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBatch {
@@ -243,7 +244,8 @@ export function parseWebhook(payload: unknown, phoneNumberId: string): WebhookBa
         const contact = contactOf(people, ownFrom, ownUser);
         const from = ownFrom ?? contact?.wa ?? null;
         const fromUserId = ownUser ?? contact?.user ?? null;
-        if (!wamid || (!from && !fromUserId && !change?.previousUserId)) continue;
+        // A number-change notice is kept whatever ids it names: one naming none is still counted.
+        if (!wamid || (!from && !fromUserId && !change)) continue;
         let mediaId: string | null = null;
         for (const t of MEDIA_TYPES) {
           const media = m[t];

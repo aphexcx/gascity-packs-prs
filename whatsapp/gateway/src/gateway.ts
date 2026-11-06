@@ -597,7 +597,9 @@ export function createGateway(deps: Deps) {
     // be a copy whose dedup row is gone, so it is dropped and counted, never delivered again.
     const fresh = messages.filter((m) => m.timestamp === null || m.timestamp > now - TOMBSTONE_SECONDS);
     plan.stale = messages.length - fresh.length;
-    messages = fresh;
+    // A payload's number-change notices are planned first: a message in the same payload under the
+    // id a notice brings routes by the link the notice records, whatever order Meta listed them in.
+    messages = [...fresh.filter((m) => m.change), ...fresh.filter((m) => !m.change)];
     const each = async <T>(sql: string, values: string[], ...extra: unknown[]): Promise<T[]> =>
       values.length
         ? (await db.prepare(sql).bind(JSON.stringify(values), ...extra).all<T>()).results
@@ -646,7 +648,7 @@ export function createGateway(deps: Deps) {
     const push = (s: D1PreparedStatement) => plan.statements.push(s) - 1;
     for (const [i, m] of messages.entries()) {
       const { wa, user } = ids[i] ?? { wa: null, user: null };
-      if (wa === null && user === null) continue; // parseWebhook never yields one
+      if (wa === null && user === null && !m.change) continue; // parseWebhook yields only a notice naming no id
       plan.groupStarts.push(plan.statements.length);
       // The window's clock and the invite's expiry read Meta's stamp clamped to the gateway's
       // clock (at); who held an id reads Meta's own stamps (stamp), all on one clock.

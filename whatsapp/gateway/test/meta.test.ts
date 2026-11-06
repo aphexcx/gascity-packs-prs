@@ -230,7 +230,7 @@ describe("business-scoped user ids (Meta's BSUID examples)", () => {
     });
   });
 
-  it("a message naming no wa_id, no user_id and no previous user id is skipped, never thrown", () => {
+  it("a message naming no wa_id and no user_id is skipped, never thrown; a number-change notice naming no id at all is kept, so the gateway counts it (gp-lv49)", () => {
     const nobody = copy(textBsuid);
     const value = nobody.entry[0].changes[0].value;
     delete value.messages[0].from_user_id;
@@ -238,7 +238,7 @@ describe("business-scoped user ids (Meta's BSUID examples)", () => {
     expect(parseWebhook(nobody, PNID).messages).toEqual([]);
     const notice = copy(changedUserId);
     delete notice.entry[0].changes[0].value.messages[0].system.previous_user_id;
-    expect(parseWebhook(notice, PNID).messages).toEqual([]);
+    expect(parseWebhook(notice, PNID).messages.map((m) => [m.from, m.fromUserId, m.change?.previousUserId])).toEqual([[null, null, null]]);
   });
 
   it("a send to a BSUID puts it in `recipient`, byte for byte, with `to` omitted; a phone number stays in `to`", () => {

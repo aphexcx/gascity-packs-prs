@@ -1651,6 +1651,34 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(y.id).first()).toEqual({ n: 0 });
   });
 
+  it("a notice naming no id at all (no `from`, no previous_user_id) is counted too, in notices_without_previous_id and unrouted_messages (fresh review r1, F3)", async () => {
+    const t = setup();
+    await t.enrollCity();
+    const bare = changeAs("user_changed_user_id", { previousUser: bsuid(), newUser: bsuid() }, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    delete bare.entry[0].changes[0].value.messages[0].system.previous_user_id;
+    const before = { noPrevious: await t.stat("notices_without_previous_id"), unrouted: await t.stat("unrouted_messages") };
+    expect((await t.webhook(bare)).status).toBe(200);
+    expect(await t.stat("notices_without_previous_id")).toBe(before.noPrevious + 1);
+    expect(await t.stat("unrouted_messages")).toBe(before.unrouted + 1);
+  });
+
+  it("a payload carrying the owner's first message under its new id before the notice that links it still reaches the owner's city: a payload's notices are planned first (fresh review r1, F4)", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const [p, q] = [phone(), phone()];
+    const [a, a2] = [bsuid(), bsuid()];
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    const both = textAs({ wa: q, user: a2 }, "my new phone", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    const notice = changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now - 60 });
+    both.entry[0].changes[0].value.messages.push(notice.entry[0].changes[0].value.messages[0]);
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(both)).status).toBe(200);
+    const text = both.entry[0].changes[0].value.messages[0].id;
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === text)).toMatchObject({ conversation_id: p, user_id: a2 });
+    expect(t.graph.sends()).toHaveLength(calls);
+  });
+
   it("a notice whose previous user id no binding answers to reaches no city, hears nothing and is counted", async () => {
     const t = setup();
     await t.enrollCity();
