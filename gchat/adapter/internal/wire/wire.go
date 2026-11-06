@@ -24,7 +24,7 @@ type Actor struct {
 type Attachment struct {
 	ProviderID string `json:"provider_id"`
 	URL        string `json:"url"`
-	MIMEType   string `json:"mime_type,omitempty"`
+	MIMEType   string `json:"mime_type"`
 }
 
 // InboundMessage is gc's ExternalInboundMessage.

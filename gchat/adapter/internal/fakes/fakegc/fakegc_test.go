@@ -169,6 +169,18 @@ func TestInboundDedupIgnoresDedupKey(t *testing.T) {
 	}
 }
 
+func TestInboundRejectsAttachmentWithoutMIMEType(t *testing.T) {
+	s := New(t)
+	m := inbound("drive-link")
+	m.Message.Attachments = []wire.Attachment{{ProviderID: "spaces/room/messages/drive-link/attachments/a", URL: "https://drive.google.com/file/d/id/view"}}
+	call(t, s, "POST", "inbound", m, true, 422)
+	if len(s.Inbound()) != 0 {
+		t.Fatal("rejected attachment was recorded")
+	}
+	m.Message.Attachments[0].MIMEType = "application/vnd.google-apps.file"
+	call(t, s, "POST", "inbound", m, true, 200)
+}
+
 func TestConcludedFailureDoesNotOverwriteSuccessfulRetry(t *testing.T) {
 	s := New(t)
 	s.NextDelivery = "pending"

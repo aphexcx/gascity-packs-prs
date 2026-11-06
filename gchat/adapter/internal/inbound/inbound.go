@@ -1047,7 +1047,7 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		if name == "" {
 			name = fmt.Sprintf("attachment-%d", i+1)
 		}
-		item := wire.Attachment{ProviderID: a.Name, MIMEType: a.ContentType}
+		item := wire.Attachment{ProviderID: a.Name, MIMEType: attachmentMIMEType(a)}
 		reason := ""
 		switch {
 		case a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "":
@@ -1113,7 +1113,10 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		if reason != "" {
 			line += " unavailable: " + reason
 		} else {
-			line += " (" + a.ContentType + ") " + item.URL
+			if a.ContentType != "" {
+				line += " (" + a.ContentType + ")"
+			}
+			line += " " + item.URL
 		}
 		if w.Text != "" {
 			w.Text += "\n"
@@ -1121,6 +1124,20 @@ func appendAttachments(ctx context.Context, client *chat.Client, endpoints confi
 		w.Text += line
 		w.Attachments = append(w.Attachments, item)
 	}
+}
+
+// attachmentMIMEType never returns an empty value: gc's inbound schema requires
+// mime_type on every attachment, and Chat omits contentType for Drive links
+// (driveDataRef) and occasionally for uploads. A Drive link whose real type is
+// unknown without a Drive API call carries Google's generic Drive file type.
+func attachmentMIMEType(a *api.Attachment) string {
+	if a.ContentType != "" {
+		return a.ContentType
+	}
+	if a.DriveDataRef != nil && a.DriveDataRef.DriveFileId != "" {
+		return "application/vnd.google-apps.file"
+	}
+	return "application/octet-stream"
 }
 
 func mediaReason(err error) string {

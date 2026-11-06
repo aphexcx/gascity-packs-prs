@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Inbound attachments always carry a mime_type: Chat sends no contentType for
+  Drive links, and gc rejects an attachment without one (HTTP 422), which
+  silently dropped any message with a Drive attachment. Drive links without a
+  type carry application/vnd.google-apps.file, other untyped attachments
+  application/octet-stream, and the text line omits an empty "()". The fake gc
+  now enforces gc's rule so the suite catches it.
+
 ## 0.5.0
 
 - Bound inbound attachments: `media.max_attachments` (default 20) caps the
