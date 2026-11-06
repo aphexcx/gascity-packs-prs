@@ -368,16 +368,3 @@ schema = 1
     commit = "510a4e22a34d325063fe24f77038c004221b7e7e"
     hash = "sha256:e4d85af1e0e202e30785ac33ac12c83f26dba1cc61de22573d3ac5f8ea9e80de"
     description = "First release under the new name; the pack was renamed from contributing. Carries everything since contributing 0.2.1: the mol-contributing-* formula set, renamed lifecycle skills with an orchestrated umbrella, default-branch resolution from the local ref, and bead commands routed through gc. Imports must switch from //contributing to //contributing-to-gascity."
-
-[[pack]]
-name = "gchat"
-description = "Google Chat provider: one Workspace user identity per city for DMs, spaces, threads, files and reactions through the Chat and Workspace Events APIs; no public listener."
-source = "https://github.com/gastownhall/gascity-packs/tree/main/gchat"
-source_kind = "git"
-
-  [[pack.release]]
-  version = "0.1.0"
-  ref = "main"
-  commit = "83b8e4b64ff21fc014a66e332dfaf7fdc349cedb"
-  hash = "sha256:c214165ed6698cc05e67dded7733963840f00448882bf6241e0b679549f13d56"
-  description = "Initial gchat pack release."
