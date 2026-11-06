@@ -1,5 +1,5 @@
 #!/bin/sh
-# gc whatsapp inbound clear-gap <wa_id>
+# gc whatsapp inbound clear-gap <conversation_id>
 #
 # A RESTORE GAP stands when the adapter's journal records gc accepting a
 # message the gc store no longer holds (a beads store restored from an older
@@ -15,13 +15,13 @@ WA_VERB="inbound clear-gap"
 wa_require curl
 wa_require jq
 
-wa_id="${1:-}"
-case "$wa_id" in
+conversation_id="${1:-}"
+case "$conversation_id" in
   -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
-  ''|-*) wa_usage_error "usage: gc whatsapp inbound clear-gap <wa_id>" ;;
+  ''|-*) wa_usage_error "usage: gc whatsapp inbound clear-gap <conversation_id>" ;;
 esac
 
-wa_call POST /inbound/clear-gap "$(jq -n --arg wa "$wa_id" '{wa_id: $wa}')"
+wa_call POST /inbound/clear-gap "$(jq -n --arg id "$conversation_id" '{conversation_id: $id}')"
 if [ "$WA_STATUS" -ge 400 ] 2>/dev/null; then
   wa_die "adapter answered HTTP $WA_STATUS: $(wa_error_of "$WA_BODY")"
 fi

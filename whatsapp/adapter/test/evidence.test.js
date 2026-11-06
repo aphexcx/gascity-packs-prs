@@ -39,7 +39,7 @@ test('a later paste whose BODY quotes the id line while its own id line names an
   assert.equal(pasteFound({ format: 'conversation', turns: [{ role: 'user', text: quoting }] }, WA, ID), false);
 });
 
-test('the header must name whatsapp/<wa_id> exactly', () => {
+test('the header must name whatsapp/<conversation_id> exactly', () => {
   const other = pasteText({ conversationId: '5511900000009', text: 'x', pmid: ID });
   assert.equal(pasteFound({ format: 'conversation', turns: [{ role: 'user', text: other }] }, WA, ID), false);
   const body = `New message in shared conversation whatsapp/${WA}:\n\nMessage id: ${ID}`;

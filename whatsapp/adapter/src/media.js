@@ -12,7 +12,9 @@
 // does not match is refused: nothing is saved and the message carries the
 // note.
 //
-// THE STORE. <mediaDir>/<wa_id>/<wamid>-<safe filename>, directories 0700
+// THE STORE. <mediaDir>/<conversation_id>/<wamid>-<safe filename> (the
+// owner's key, render.js conversationOf; for an owner of the contract v1 its
+// number, the directory it always had), directories 0700
 // and files 0600, written atomically (temp, fsync, rename). The name comes
 // from the webhook alone (the document's filename, else the kind and an
 // extension from the mime type), so a re-hydrate of the same message (a
@@ -38,7 +40,7 @@
 // hydrate NEVER rejects: every failure returns ok:false and a one-line
 // note for the message text. Never logged: a phone number in clear (last
 // four digits only), a wamid (it encodes the phone), a path (it holds the
-// wa_id), message text, a caption, a transcript, or the key.
+// conversation id), message text, a caption, a transcript, or the key.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -366,8 +368,8 @@ export function createMedia({
     const m = input?.media;
     const voice = kind === 'audio' && Boolean(m?.voice);
     const label = voice ? 'voice note' : kind;
-    const waId = String(input?.waId ?? '').trim();
-    const who = `…${lastFour(waId)} ${label}`;
+    const conversationId = String(input?.conversationId ?? '').trim();
+    const who = `…${lastFour(conversationId)} ${label}`;
     const fail = (reason) => {
       log(`media ${who}: not saved (${reason})`);
       return { ok: false, kind, label, note: `${label} not saved: ${reason}` };
@@ -378,7 +380,7 @@ export function createMedia({
     if (expected === false) return fail('the webhook\'s sha256 is unreadable, so the download cannot be verified (refused)');
 
     const wamid = String(input?.wamid ?? '').trim() || mediaId;
-    const convDir = path.join(mediaDir, safePathComponent(waId || 'unknown'));
+    const convDir = path.join(mediaDir, safePathComponent(conversationId || 'unknown'));
     const name = storedName(kind, m);
     const dest = path.join(convDir, `${safePathComponent(wamid)}-${name}`);
 
@@ -443,7 +445,7 @@ export function createMedia({
         return await hydrateOne(input);
       } catch (err) {
         const kind = KINDS.has(input?.kind) ? input.kind : 'document';
-        log(`media …${lastFour(input?.waId)} ${kind}: hydration failed inside the adapter (${err?.code ?? 'error'})`);
+        log(`media …${lastFour(input?.conversationId)} ${kind}: hydration failed inside the adapter (${err?.code ?? 'error'})`);
         return { ok: false, kind, label: kind, note: `${kind} not saved: an internal error in the adapter` };
       }
     },

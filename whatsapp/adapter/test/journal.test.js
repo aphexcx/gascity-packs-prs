@@ -12,9 +12,37 @@ import { tempDir } from './fakes.js';
 
 const RID = 'whatsapp:dynasty:wamid.J1';
 
-function received(rid = RID, waId = '5511900000001', deliveryId = 1) {
-  return { t: 'received', rid, delivery_id: deliveryId, kind: 'message', wa_id: waId, envelope: { id: deliveryId } };
+function received(rid = RID, conversationId = '5511900000001', deliveryId = 1) {
+  return { t: 'received', rid, delivery_id: deliveryId, kind: 'message', conversation_id: conversationId, envelope: { id: deliveryId } };
 }
+
+// gp-g02t: the journal format moved from wa_id to conversation_id. A line the
+// PR 74 adapter wrote is TOLERATED (never rewritten): it names the gc
+// conversation that adapter posted under, its wa_id.
+test('the PR 74 received line (wa_id only) folds as its gc conversation, beside the new lines, through a compaction and a replay', () => {
+  const dir = tempDir();
+  let now = 1000;
+  const P = '5511900000001';
+  const old = 'whatsapp:dynasty:wamid.OLD';
+  const fresh = 'whatsapp:dynasty:wamid.NEW';
+  const j = openJournal({ stateDir: dir, clock: () => now });
+  j.append({ t: 'received', rid: old, delivery_id: 1, kind: 'message', wa_id: P, envelope: { id: 1, wa_id: P } });
+  j.append({ t: 'accepted', rid: old, verdict: 'delivered', receipt_id: 'r1', sequence: 4, provider_message_id: 'wamid.OLD' });
+  j.append(received(fresh, P, 2));
+  j.append({ t: 'received', rid: 'whatsapp:dynasty:wamid.BSUID', delivery_id: 3, kind: 'message', conversation_id: 'US.13491208655302741918', wa_id: null, envelope: { id: 3 } });
+  const keys = (jj) => [old, fresh, 'whatsapp:dynasty:wamid.BSUID'].map((rid) => jj.entries.get(rid).conversationId);
+  assert.deepEqual(keys(j), [P, P, 'US.13491208655302741918'], 'the old line is its wa_id\'s conversation; a new line names its own, never its wa_id');
+  assert.equal(j.watermarks.get(P)?.sequence, 4, 'the old line\'s acceptance raises its conversation\'s watermark');
+  now = 2000;
+  j.compact(() => false);
+  const kept = readLines(path.join(dir, JOURNAL_FILE)).lines.find((l) => l.rid === old && l.t === 'received');
+  assert.deepEqual([kept.wa_id, 'conversation_id' in kept], [P, false], 'compaction keeps the old line as written');
+  j.close();
+  const again = openJournal({ stateDir: dir, clock: () => now });
+  assert.deepEqual(keys(again), [P, P, 'US.13491208655302741918'], 'the same after a replay');
+  assert.equal(again.watermarks.get(P)?.sequence, 4);
+  again.close();
+});
 
 test('the fold derives each state from the last progress line', () => {
   const dir = tempDir();

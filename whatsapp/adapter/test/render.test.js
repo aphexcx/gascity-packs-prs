@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { providerMessageId, renderMessage, ridFor } from '../src/render.js';
+import { conversationOf, numberOf, providerMessageId, renderMessage, ridFor } from '../src/render.js';
 
 const CITY = 'test-city';
 const WA = '5511987654321';
@@ -17,7 +17,7 @@ const fakeMedia = {
   calls: [],
   async hydrate(args) {
     this.calls.push(args);
-    const path = `/city/.gc/whatsapp-media/inbound/${args.waId}/${args.wamid}-${args.media.filename ?? args.kind}`;
+    const path = `/city/.gc/whatsapp-media/inbound/${args.conversationId}/${args.wamid}-${args.media.filename ?? args.kind}`;
     return { ok: true, path, attachment: { provider_id: args.media.id, url: `file://${path}`, mime_type: args.media.mime_type }, transcript: args.kind === 'audio' ? 'hello from a voice note' : undefined };
   },
   describe(results) {
@@ -25,9 +25,48 @@ const fakeMedia = {
   },
 };
 
+// The inbound path renders with its received line's key (conversationOf).
 async function render(d, opts = {}) {
-  return renderMessage(d, { city: CITY, media: fakeMedia, ...opts });
+  return renderMessage(d, { city: CITY, conversationId: conversationOf(d), media: fakeMedia, ...opts });
 }
+
+// PR 76's inbox shape: the owner's conversation_id beside the number shown.
+const P = '5511900000001';
+const BSUID = 'US.13491208655302741918';
+function v2(message, { conversation_id, wa_id, kind = 'message', profile_name = 'Taylor' }) {
+  return {
+    id: 9, received_at: 1793815924, kind, wa_id, user_id: BSUID, username: 'taylor', conversation_id, profile_name,
+    message: { ...(wa_id ? { from: wa_id } : {}), from_user_id: BSUID, id: 'wamid.V2', timestamp: TS, ...message },
+  };
+}
+
+test('the owner\'s key: PR 76\'s conversation_id when the field is there (null or empty is no key, never the number); the contract v1\'s wa_id only when it is not', () => {
+  const text = { type: 'text', text: { body: 'x' } };
+  assert.deepEqual(
+    [
+      conversationOf(v2(text, { conversation_id: P, wa_id: '5511900000077' })),
+      conversationOf(v2(text, { conversation_id: BSUID, wa_id: null })),
+      conversationOf(v2(text, { conversation_id: null, wa_id: P })),
+      conversationOf(v2(text, { conversation_id: '', wa_id: P })),
+      conversationOf(delivery(text)),
+      conversationOf({ ...delivery(text), wa_id: null }),
+      conversationOf({ ...delivery(text), wa_id: 5511987654321 }),
+      conversationOf(undefined),
+    ],
+    [P, BSUID, '', '', WA, '', '', ''],
+  );
+  assert.deepEqual([numberOf(v2(text, { conversation_id: BSUID, wa_id: null })), numberOf(delivery(text))], ['', WA], 'the number, display only');
+});
+
+test('PR 76: the conversation and the actor are the owner\'s conversation_id whatever number the delivery shows; the media directory too', async () => {
+  const moved = await render(v2({ type: 'image', image: { id: 'm9', mime_type: 'image/jpeg', sha256: 'abc' } }, { conversation_id: P, wa_id: '5511900000077' }));
+  assert.equal(moved.conversation.conversation_id, P);
+  assert.deepEqual(moved.actor, { id: P, display_name: 'Taylor', is_bot: false });
+  assert.equal(fakeMedia.calls.at(-1).conversationId, P, 'the media store files the owner\'s files under its conversation');
+  const bare = await render(v2({ type: 'text', text: { body: 'x' } }, { conversation_id: BSUID, wa_id: null, profile_name: '' }));
+  assert.equal(bare.conversation.conversation_id, BSUID);
+  assert.deepEqual(bare.actor, { id: BSUID, display_name: BSUID, is_bot: false }, 'no profile name and no number: the id itself');
+});
 
 test('text: the envelope, the actor, the dedup key and the message time', async () => {
   const m = await render(delivery({ type: 'text', text: { body: 'bom dia' } }));
@@ -39,9 +78,11 @@ test('text: the envelope, the actor, the dedup key and the message time', async 
   assert.equal(m.received_at, new Date(Number(TS) * 1000).toISOString());
 });
 
-test('the profile name falls back to the wa_id', async () => {
+test('the profile name falls back to the number the delivery shows', async () => {
   const m = await render(delivery({ type: 'text', text: { body: 'x' } }, 'message', { profile_name: '' }));
   assert.equal(m.actor.display_name, WA);
+  const shown = await render(v2({ type: 'text', text: { body: 'x' } }, { conversation_id: BSUID, wa_id: P, profile_name: '' }));
+  assert.deepEqual(shown.actor, { id: BSUID, display_name: P, is_bot: false });
 });
 
 test('image and document: the attachment record and the saved-path block', async () => {
@@ -87,10 +128,12 @@ test('a failed status: provider_message_id <wamid>:status:failed and the error l
   assert.equal(providerMessageId(delivered), 'wamid.out.3:status:delivered', 'a delivered status never collides either');
 });
 
-test('joined: "<name> joined from <last four digits>"', async () => {
+test('joined: "<name> joined from <last four digits>", or no number shown', async () => {
   const m = await render(delivery({ type: 'text', text: { body: '482913' } }, 'joined', { profile_name: 'Taylor' }));
   assert.equal(m.text, 'Taylor joined from 4321');
   assert.equal(m.provider_message_id, 'wamid.F1');
+  const bare = await render(v2({ type: 'text', text: { body: '482913' } }, { kind: 'joined', conversation_id: BSUID, wa_id: null }));
+  assert.equal(bare.text, 'Taylor joined (no phone number shown)');
 });
 
 test('the marked copy carries the one marker line before the text', async () => {

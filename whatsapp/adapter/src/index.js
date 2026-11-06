@@ -140,8 +140,8 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
     },
     'POST /inbound/clear-gap': async (body) => {
       const req = parseJSON(body);
-      if (!req?.wa_id) return { status: 400, json: { error: 'wa_id is required' } };
-      return inbound.clearGap(String(req.wa_id));
+      if (!req?.conversation_id) return { status: 400, json: { error: 'conversation_id is required' } };
+      return inbound.clearGap(String(req.conversation_id));
     },
     'POST /invite': async (body) => {
       const req = parseJSON(body) ?? {};
@@ -152,25 +152,27 @@ export function createListener({ inbound, publisher, keeper, ledger, gateway, he
       keeper.recordInvite(String(invite.code), fields);
       return { status: 200, json: { code: invite.code, expires_at: invite.expires_at, keeper: fields } };
     },
-    // /consent and /hours answer the last four digits of the conversation
-    // the keeper matched (the verb prints those, never the operator's input);
-    // an unknown phone is refused 404 and nothing is recorded.
+    // /consent and /hours name a conversation by its id as gc shows it (a
+    // phone number or a user id, typed in any form) and answer the last four
+    // digits of the conversation the keeper matched (the verb prints those,
+    // never the operator's input); an unknown one is refused 404 and nothing
+    // is recorded.
     'POST /consent': async (body) => {
       const req = parseJSON(body);
-      if (!req?.wa_id || typeof req.on !== 'boolean') return { status: 400, json: { error: 'wa_id and on (boolean) are required' } };
-      const id = keeper.setConsent(String(req.wa_id), req.on);
-      return { status: 200, json: { ok: true, consent: req.on, wa_id_last4: String(id).slice(-4) } };
+      if (!req?.conversation_id || typeof req.on !== 'boolean') return { status: 400, json: { error: 'conversation_id and on (boolean) are required' } };
+      const id = keeper.setConsent(String(req.conversation_id), req.on);
+      return { status: 200, json: { ok: true, consent: req.on, conversation_last4: String(id).slice(-4) } };
     },
     // hours "" clears the recorded hours (tz may then be omitted: the
     // recorded zone is kept; tz "" clears it too).
     'POST /hours': async (body) => {
       const req = parseJSON(body);
-      if (!req?.wa_id || typeof req.hours !== 'string') return { status: 400, json: { error: 'wa_id and hours are required (hours "" clears them)' } };
+      if (!req?.conversation_id || typeof req.hours !== 'string') return { status: 400, json: { error: 'conversation_id and hours are required (hours "" clears them)' } };
       const hours = req.hours.trim();
       if (req.tz !== undefined && typeof req.tz !== 'string') return { status: 400, json: { error: 'tz must be a string' } };
       if (hours && !req.tz?.trim()) return { status: 400, json: { error: 'tz is required with hours' } };
-      const id = keeper.setHours(String(req.wa_id), hours, req.tz);
-      return { status: 200, json: { ok: true, wa_id_last4: String(id).slice(-4), hours: hours || null } };
+      const id = keeper.setHours(String(req.conversation_id), hours, req.tz);
+      return { status: 200, json: { ok: true, conversation_last4: String(id).slice(-4), hours: hours || null } };
     },
   };
 
@@ -267,7 +269,7 @@ export async function main() {
     clock,
     log,
     ledger,
-    onWindowClosed: (waId) => keeper.noteRefusedNudge(waId),
+    onWindowClosed: (conversationId) => keeper.noteRefusedNudge(conversationId),
     updateLanguage: cfg.updateLanguage,
   });
 

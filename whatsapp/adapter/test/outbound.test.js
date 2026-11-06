@@ -19,7 +19,7 @@ import { createGatewayClient } from '../src/gateway.js';
 import { conversationRef, createGcClient } from '../src/gc.js';
 import { createLedger } from '../src/ledger.js';
 import {
-  chunkText, createPublisher, outboundChunkChars, templateKey, textChunkKey,
+  PROGRESS_FILE, chunkText, createPublisher, outboundChunkChars, templateKey, textChunkKey,
 } from '../src/outbound.js';
 
 const CITY = 'testcity';
@@ -143,7 +143,7 @@ async function setup(t, { bound, log } = {}) {
     const ledger = createLedger({ stateDir, clock, log });
     const pub = createPublisher({
       stateDir, gateway, gc, city: CITY, clock, ledger, log,
-      onWindowClosed: (waId) => closed.push(waId),
+      onWindowClosed: (conversationId) => closed.push(conversationId),
     });
     gcFake.publisher = pub;
     return { ledger, pub };
@@ -276,6 +276,32 @@ test('the same idempotency key yields one gateway send and the same receipt', as
   assert.equal(s.gw.requests.length, 2);
 });
 
+// gp-g02t: the progress entry names its conversation under conversation_id;
+// an entry written before names the same value under wa_id (the old field).
+test('a progress entry written before gp-g02t (its conversation under wa_id) still answers its receipt to the same key and conversation, and conflicts for another', async (t) => {
+  const s = await setup(t);
+  s.gw.window.set(PHONE, true);
+  const first = await s.pub.handlePublish(publishBody('hello owner', { key: 'gc-old' }));
+  const update = await s.pub.handlePublishUpdate(JSON.stringify({ to: PHONE, text: 'Weekly numbers are in.', idempotency_key: 'gc-old-u' }));
+  assert.deepEqual([first.json.delivered, update.json.delivered], [true, true], JSON.stringify(update.json));
+  const file = path.join(s.stateDir, PROGRESS_FILE);
+  const stored = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const key of ['gc-old', 'gc-old-u']) {
+    const { conversation_id: conversationId, ...rest } = stored.entries[key];
+    assert.equal(conversationId, PHONE, 'the entry names its conversation under conversation_id');
+    stored.entries[key] = { ...rest, wa_id: conversationId };
+  }
+  fs.writeFileSync(file, `${JSON.stringify(stored)}\n`);
+  const requests = s.gw.requests.length;
+  const { pub } = s.make();
+  const again = await pub.handlePublish(publishBody('hello owner', { key: 'gc-old' }));
+  const againUpdate = await pub.handlePublishUpdate(JSON.stringify({ to: PHONE, text: 'Weekly numbers are in.', idempotency_key: 'gc-old-u' }));
+  assert.deepEqual([again.json, againUpdate.json.message_id], [first.json, update.json.message_id], 'the settled receipts');
+  const other = await pub.handlePublish(publishBody('hello owner', { to: OTHER, key: 'gc-old' }));
+  assert.equal(other.status, 409, 'the same key for another conversation is a conflict');
+  assert.equal(s.gw.requests.length, requests, 'no gateway call');
+});
+
 test('a mid-chunk failure resumes at the failed chunk', async (t) => {
   const s = await setup(t);
   s.gw.window.set(PHONE, true);
@@ -353,7 +379,7 @@ test('publish without session attribution is refused', async (t) => {
   assert.equal(legacy.json.delivered, true);
 });
 
-test('sends to one wa_id are serialized: a second publish waits for every chunk of the first', async (t) => {
+test('sends to one conversation are serialized: a second publish waits for every chunk of the first', async (t) => {
   const s = await setup(t);
   s.gw.window.set(PHONE, true);
   s.gw.window.set(OTHER, true);

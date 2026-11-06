@@ -12,9 +12,10 @@ Read this before you answer anyone on WhatsApp, and before you write first.
 Each WhatsApp conversation is one person: an owner of this city's business,
 or someone the owner invited with an invite code. Nobody else can reach you.
 A stranger who texts the number gets one canned line from the gateway and
-never reaches the city. The conversation is `whatsapp/<wa_id>`, where the
-wa_id is the person's WhatsApp id, and the message carries their WhatsApp
-profile name.
+never reaches the city. The conversation is `whatsapp/<conversation_id>`,
+the person's id at the gateway: their phone number, or a WhatsApp user id
+(`US.1349...`) for someone who joined without showing one. It stays the same
+when they change numbers. The message carries their WhatsApp profile name.
 
 They text the shared Dynasty number, saved on their phone as "Dynasty". You
 are the same mayor they reach on Slack, with the same memory.
@@ -26,10 +27,10 @@ phone. Write the reply to a file, then send it, as the reply line under each
 message says:
 
 ```
-gc whatsapp publish --to <wa_id> --text-file <path>
+gc whatsapp publish --to <conversation_id> --text-file <path>
 ```
 
-`gc whatsapp publish --to <wa_id> --text "message"` works for a simple
+`gc whatsapp publish --to <conversation_id> --text "message"` works for a simple
 string. Use the file for anything with quotes or code.
 
 Answer promptly, even if it is only "on it". The owner sees the blue ticks
@@ -64,7 +65,7 @@ have three choices:
 3. Send the update template, and only for an actual update:
 
 ```
-gc whatsapp publish --update --to <wa_id> --text "today's update"
+gc whatsapp publish --update --to <conversation_id> --text "today's update"
 ```
 
 The rule is Afik's, in his words: "only if there is an actual update". An
@@ -122,7 +123,7 @@ come in two shapes.
 **The daily update**, once a business day:
 
 ```
-[window-keeper] <wa_id>: daily update due. Send today's short business update with one acknowledgement ask. Window open, closes <time>.
+[window-keeper] <conversation_id>: daily update due. Send today's short business update with one acknowledgement ask. Window open, closes <time>.
 ```
 
 Send ONE short, true update from the business's own day, with ONE ask:
@@ -137,7 +138,7 @@ and only for an actual update. Otherwise send nothing.
 **The nudge**, as the window nears its close:
 
 ```
-[window-keeper] <wa_id>: window closes in <N> minutes, nobody from the business has written since <time>. One short line asking anyone in the group to reply.
+[window-keeper] <conversation_id>: window closes in <N> minutes, nobody from the business has written since <time>. One short line asking anyone in the group to reply.
 ```
 
 When the window would close after the business's hours, the nudges come
@@ -161,15 +162,15 @@ Whatever you send is for the owner: the update, the nudge, or nothing. Never
 reminders, turn the keeper off at once:
 
 ```
-gc whatsapp consent <wa_id> --off
+gc whatsapp consent <conversation_id> --off
 ```
 
-`gc whatsapp consent <wa_id> --on` turns it back on when they ask. When they
+`gc whatsapp consent <conversation_id> --on` turns it back on when they ask. When they
 give their business hours, record them with their time zone; hours need a
 zone, so ask for it if it is missing:
 
 ```
-gc whatsapp hours <wa_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo
+gc whatsapp hours <conversation_id> --hours "Mon-Fri 09:00-18:00" --tz America/Sao_Paulo
 ```
 
 When they keep no fixed hours, or no longer do, remove the hours; the update
@@ -178,11 +179,11 @@ then comes at a fixed hour of their day and the nudges run at any hour. Add
 enough), or leave it off to keep the zone already recorded:
 
 ```
-gc whatsapp hours <wa_id> --clear [--tz America/Sao_Paulo]
+gc whatsapp hours <conversation_id> --clear [--tz America/Sao_Paulo]
 ```
 
-Both verbs take the phone in any form and print the last four digits they
-matched. Check those digits against the conversation.
+Both verbs take the conversation id in any form and print the last four
+digits they matched. Check those digits against the conversation.
 
 ## Files, voice notes, reactions
 
@@ -223,7 +224,7 @@ doctor rows and in `gc whatsapp status`.
   gc accepted. Until an operator runs
 
   ```
-  gc whatsapp inbound clear-gap <wa_id>
+  gc whatsapp inbound clear-gap <conversation_id>
   ```
 
   every in-doubt message of every conversation reaches you as the marked

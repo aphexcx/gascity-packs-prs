@@ -1,6 +1,6 @@
 #!/bin/sh
-# gc whatsapp publish --to <wa_id> --text "..." | --text-file <path>
-# gc whatsapp publish --update --to <wa_id> --text "..." | --text-file <path>
+# gc whatsapp publish --to <conversation_id> --text "..." | --text-file <path>
+# gc whatsapp publish --update --to <conversation_id> --text "..." | --text-file <path>
 #
 # Free-form text to an owner's chat inside WhatsApp's 24-hour window, or,
 # with --update, the one approved utility template (dynasty_update, "Your
@@ -35,7 +35,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-[ -n "$to" ] || wa_usage_error "--to <wa_id> is required"
+[ -n "$to" ] || wa_usage_error "--to <conversation_id> is required"
 if [ -n "$text" ] && [ -n "$text_file" ]; then wa_usage_error "use --text or --text-file, not both"; fi
 if [ -n "$text_file" ]; then
   [ -f "$text_file" ] || wa_usage_error "--text-file $text_file not found"

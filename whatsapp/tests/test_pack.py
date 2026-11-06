@@ -245,7 +245,9 @@ def write_journal(city, lines):
 
 
 NOW_MS = int(time.time() * 1000)
-RECEIVED = {'t': 'received', 'rid': 'whatsapp:dynasty:wamid.H', 'delivery_id': 3, 'kind': 'message', 'wa_id': '5511900001234', 'envelope': {}}
+RECEIVED = {'t': 'received', 'rid': 'whatsapp:dynasty:wamid.H', 'delivery_id': 3, 'kind': 'message', 'conversation_id': 'US.13491208655300001234', 'envelope': {}}
+# The received line the PR 74 adapter wrote: wa_id, its gc conversation (gp-g02t: tolerated, never rewritten).
+RECEIVED_PR74 = {'t': 'received', 'rid': 'whatsapp:dynasty:wamid.H', 'delivery_id': 3, 'kind': 'message', 'wa_id': '5511900001234', 'envelope': {}}
 
 
 @pytest.mark.parametrize('row', ['held', 'restore', 'probes', 'deadletters', 'keeper'])
@@ -255,10 +257,11 @@ def test_state_rows_fail_closed_without_a_city(row):
     assert 'GC_CITY_PATH is unset' in result.stdout
 
 
-def test_held_row(tmp_path):
-    write_journal(tmp_path, [RECEIVED])
+@pytest.mark.parametrize('received', [RECEIVED, RECEIVED_PR74], ids=['conversation_id', 'pr74-wa_id'])
+def test_held_row(tmp_path, received):
+    write_journal(tmp_path, [received])
     assert doctor('held', GC_CITY_PATH=str(tmp_path)).returncode == 0
-    write_journal(tmp_path, [RECEIVED, {'t': 'held_terminal', 'rid': RECEIVED['rid'], 'receipt_id': 'r1', 'at': NOW_MS - 600000}])
+    write_journal(tmp_path, [received, {'t': 'held_terminal', 'rid': received['rid'], 'receipt_id': 'r1', 'at': NOW_MS - 600000}])
     result = doctor('held', GC_CITY_PATH=str(tmp_path))
     assert result.returncode == 1
     assert '1 terminal hold(s)' in result.stdout
@@ -450,7 +453,7 @@ def test_resolve_prints_last_four_and_receipt_never_the_text(fake):
     rid = 'whatsapp:dynasty:wamid.H'
     ref = 'm-' + hashlib.sha256(rid.encode()).hexdigest()[:10]
     adapter = fake({
-        'GET /status': (200, {'inbound': {'held': [{'ref': ref, 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': NOW_MS}]}}),
+        'GET /status': (200, {'inbound': {'held': [{'ref': ref, 'conversation_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': NOW_MS}]}}),
         'POST /inbound/resolve': (200, {'ok': True}),
     })
     result = verb('resolve.sh', 'wamid.H', '--dead', WHATSAPP_ADAPTER_URL=adapter.url)
@@ -478,6 +481,7 @@ def test_clear_gap_prints_the_gap_and_the_head(fake):
     result = verb('clear-gap.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
     assert 'sequence 9' in result.stdout and 'rebased to the store head now: sequence 4' in result.stdout
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234'}
 
 
 def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
@@ -501,8 +505,8 @@ def test_clear_gap_and_status_read_a_head_never_got_as_unknown(fake):
 
 def test_invite_consent_hours(fake):
     adapter = fake({'POST /invite': (200, {'code': '482913', 'expires_at': '2026-11-05T18:00:00Z'}),
-                    'POST /consent': (200, {'ok': True, 'consent': False, 'wa_id_last4': '1234'}),
-                    'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234'})})
+                    'POST /consent': (200, {'ok': True, 'consent': False, 'conversation_last4': '1234'}),
+                    'POST /hours': (200, {'ok': True, 'conversation_last4': '1234'})})
     result = verb('invite.sh', '--proactive-consent', '--hours', 'Mon-Fri 09:00-18:00', '--tz', 'America/Sao_Paulo',
                   WHATSAPP_ADAPTER_URL=adapter.url)
     assert result.returncode == 0, result.stderr
@@ -512,7 +516,7 @@ def test_invite_consent_hours(fake):
     # The verb sends the number as typed and prints the conversation the adapter matched.
     off = verb('consent.sh', '+55 11 90000-9999', '--off', WHATSAPP_ADAPTER_URL=adapter.url)
     assert off.returncode == 0, off.stderr
-    assert adapter.requests[-1][2] == {'wa_id': '+55 11 90000-9999', 'on': False}
+    assert adapter.requests[-1][2] == {'conversation_id': '+55 11 90000-9999', 'on': False}
     assert 'OFF for ...1234' in off.stdout and '9999' not in off.stdout
     hours = verb('hours.sh', '5511900001234', '--hours', 'Mon-Sat 18:00-02:00', '--tz', 'America/Chicago',
                  WHATSAPP_ADAPTER_URL=adapter.url)
@@ -521,14 +525,14 @@ def test_invite_consent_hours(fake):
 
 
 def test_hours_clear(fake):
-    adapter = fake({'POST /hours': (200, {'ok': True, 'wa_id_last4': '1234', 'hours': None})})
+    adapter = fake({'POST /hours': (200, {'ok': True, 'conversation_last4': '1234', 'hours': None})})
     cleared = verb('hours.sh', '5511900001234', '--clear', WHATSAPP_ADAPTER_URL=adapter.url)
     assert cleared.returncode == 0, cleared.stderr
-    assert adapter.requests[-1][2] == {'wa_id': '5511900001234', 'hours': ''}
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'hours': ''}
     assert 'Hours cleared for ...1234 (the recorded zone kept).' in cleared.stdout
     with_zone = verb('hours.sh', '5511900001234', '--clear', '--tz', 'America/Sao_Paulo', WHATSAPP_ADAPTER_URL=adapter.url)
     assert with_zone.returncode == 0, with_zone.stderr
-    assert adapter.requests[-1][2] == {'wa_id': '5511900001234', 'hours': '', 'tz': 'America/Sao_Paulo'}
+    assert adapter.requests[-1][2] == {'conversation_id': '5511900001234', 'hours': '', 'tz': 'America/Sao_Paulo'}
     assert verb('hours.sh', '5511900001234', '--clear', '--hours', 'Mon 09:00-10:00', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
     assert verb('hours.sh', '5511900001234', WHATSAPP_ADAPTER_URL=adapter.url).returncode == 2
 
@@ -551,7 +555,7 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     adapter = fake({'GET /status': (200, {
         'health': {'gateway_auth': 'ok'},
         'inbound': {'last_poll_at': close_ms, 'last_poll_error': '', 'entries': {'accepted:pending': 1}, 'acks_owed': 1, 'binds_owed': 1,
-                    'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'wa_id_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
+                    'dead_letters': 2, 'held': [{'ref': 'm-0123456789', 'conversation_last4': '1234', 'receipt_id': 'rcpt-9', 'held_at': close_ms}],
                     'gaps': [{'conversation_id': '...1234', 'watermark_sequence': 9, 'head_sequence': 4}]},
         'keeper': {'conversations': {'5511900001234': {'consent': True, 'window_closes_at': '2026-11-05T15:33:20.000Z',
                                                       'update_day': '2026-11-04', 'marks_fired': [60, 30], 'lapses_7d': 1}},
@@ -563,7 +567,7 @@ def test_status_renders_holds_gaps_and_windows_without_full_numbers(fake):
     assert result.returncode == 0, result.stderr
     out = result.stdout
     assert 'Enrolled:      yes' in out and 'Dead letters:  2' in out
-    assert 'm-0123456789  phone ...1234  receipt rcpt-9' in out
+    assert 'm-0123456789  conversation ...1234  receipt rcpt-9' in out
     assert 'acks owed 1 (1 held for a keeper bind)' in out
     assert 'journal watermark 9 not in the gc store (store head 4)' in out
     assert '...1234  closes 2026-11-05T15:33:20Z (adapter ledger' in out

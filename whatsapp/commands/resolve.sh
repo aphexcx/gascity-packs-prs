@@ -7,7 +7,7 @@
 #   --delivered  the mayor did take it: the adapter acks the gateway.
 #   --dead       it was not taken: a dead letter under reason held_terminal
 #                with the envelope, then the ack.
-# Prints the phone's last four digits, the receipt id and the time, never
+# Prints the conversation's last four digits, the receipt id and the time, never
 # the message text, before it acts.
 set -eu
 WA_VERB="inbound resolve"
@@ -42,7 +42,7 @@ wa_call GET /status
 [ "$WA_STATUS" = 200 ] || wa_die "adapter answered HTTP $WA_STATUS to /status"
 held=$(printf '%s' "$WA_BODY" | jq -c --arg ref "$ref" '.inbound.held[] | select(.ref == $ref)')
 [ -n "$held" ] || wa_die "$ref is not a terminal hold (gc whatsapp status lists the holds)"
-echo "Terminal hold $ref: phone ...$(printf '%s' "$held" | jq -r '.wa_id_last4'), receipt $(printf '%s' "$held" | jq -r '.receipt_id'), held since $(printf '%s' "$held" | jq -r '.held_at // "?"' )"
+echo "Terminal hold $ref: conversation ...$(printf '%s' "$held" | jq -r '.conversation_last4'), receipt $(printf '%s' "$held" | jq -r '.receipt_id'), held since $(printf '%s' "$held" | jq -r '.held_at // "?"' )"
 echo "Resolving as $as."
 
 # jq 1.6 (Debian bookworm) reads a bare as as a keyword: quote the key.

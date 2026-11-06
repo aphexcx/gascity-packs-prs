@@ -1,7 +1,7 @@
 # gc whatsapp inbound clear-gap
 
 ```
-gc whatsapp inbound clear-gap <wa_id>
+gc whatsapp inbound clear-gap <conversation_id>
 ```
 
 The adapter keeps, per conversation, a WATERMARK: the highest transcript

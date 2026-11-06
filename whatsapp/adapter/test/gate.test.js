@@ -518,17 +518,16 @@ test('Opus read r2 MAJOR 1 (outbound.js:116-117): a caller key the store forgot,
 
 // --- gp-szj9 ADDENDUM 1: PR 76's 409 ambiguous_recipient (gp-0g2s; the mayor's rule R1) ---
 // A send whose `to` names two owners of the city (one's conversation_id, kept
-// from a phone number it no longer holds, and another's current wa_id: a
+// from a phone number it no longer holds, and another's current number: a
 // recycled number) is answered 409 {error: ambiguous_recipient}: nothing sent,
-// no key spent (whatsapp/gateway/README.md rule 7 at ba82ab46). The gateway's
-// remedy, a resend to the user_id of the owner's GET /v1/window entry, needs
-// the box to know which owner its conversation means. This adapter files a
-// delivery under its wa_id (render.js) until the conversation_id keying (the
-// Opus read r2's NOTE 3), so after a recycle the NEW owner's messages sit in
-// the conversation keyed by the number, whose window entry is the OLD
-// owner's: a resend there hands one owner's reply to the other (the round's
-// self-review r1 MAJOR). Until that keying the 409 is refused, never resent:
-// gateway_refused as before, the ambiguity named (the mayor's word, 00:34Z 11/5).
+// no key spent (whatsapp/gateway/README.md rule 7). The 409 is refused, never
+// resent: gateway_refused, the ambiguity named (the mayor's word, 00:34Z 11/5).
+// Before gp-g02t this adapter filed a delivery under its wa_id, so a recycled
+// number's NEW owner's messages sat in the OLD owner's conversation and the
+// mayor's reply there named the number (the round's self-review r1 MAJOR).
+// Since gp-g02t every delivery is filed under its conversation_id
+// (render.js conversationOf), so the new owner's conversation is its own and
+// the reply names the new owner's id: the second test below.
 
 const A_USER = 'US.ownerA2'; // owner A's current user_id, after A's number change
 const B_USER = 'US.ownerB1'; // owner B's user_id, also B's conversation_id at the gateway
@@ -556,16 +555,19 @@ test('ADDENDUM 1 (PR 76\'s 409 ambiguous_recipient): a text or an update to a nu
     `each refused once at the number, never resent (${JSON.stringify(reply.json)})`,
   );
   for (const answer of [reply, update]) {
-    assert.match(answer.json.metadata.hint, /two owners of this city on this phone number .*the gateway's hint: "send to the owner's current id"/);
+    assert.match(answer.json.metadata.hint, /two owners of this city answering to this conversation's id .*the gateway's hint: "send to the owner's current id".*does not resend/);
     assert.equal(answer.json.error, answer.json.metadata.hint, 'gc\'s error text names the ambiguity');
   }
   assert.equal(s.gw.sends.length, 0, 'nothing reached Meta');
 });
 
-test('ADDENDUM 1 (the round\'s self-review r1 MAJOR): a recycled number\'s new owner B writes; the mayor\'s reply and update in the conversation gc filed it under never reach the old owner A', async (t) => {
+test('ADDENDUM 1 (the round\'s self-review r1 MAJOR, gp-g02t): a recycled number\'s new owner B writes; gc files it under B\'s conversation_id, and the mayor\'s reply and update there reach B and never the old owner A', async (t) => {
   // Owner A bound on phone A (A's conversation_id is A) and changed number
   // (A's user_id is now A_USER); owner B joined the same city on the
   // recycled number, so B's wa_id is A and B's conversation_id is B_USER.
+  // Before gp-g02t gc filed B's message under A (the number) and the reply
+  // there was refused 409; now it is filed under B_USER, and the reply goes
+  // to B_USER, which names B alone.
   const w = await world(t);
   w.gw.userIds.set(A, A_USER);
   w.gw.bound.add(B_USER);
@@ -591,9 +593,9 @@ test('ADDENDUM 1 (the round\'s self-review r1 MAJOR): a recycled number\'s new o
   }));
   const update = await pub.handlePublishUpdate(JSON.stringify({ to: filedUnder, text: 'B: invoice 4471 is in the portal', idempotency_key: 'update-to-B' }));
   assert.deepEqual(
-    { reply: refusal(reply), update: refusal(update), meta: w.gw.sends.map((x) => [x.type, x.to]) },
-    { reply: AMBIGUOUS, update: AMBIGUOUS, meta: [] },
-    `B's reply and update never reach A's ${A_USER} (filed under ${filedUnder}; Meta asked to send ${JSON.stringify(w.gw.sends.map((x) => [x.type, x.to]))})`,
+    { filedUnder, reply: reply.json.delivered, update: update.json.delivered, meta: w.gw.sends.map((x) => [x.type, x.to]) },
+    { filedUnder: B_USER, reply: true, update: true, meta: [['text', B_USER], ['template', B_USER]] },
+    `B's reply and update reach B's ${B_USER}, never A's ${A} or ${A_USER} (${JSON.stringify(reply.json)})`,
   );
 });
 

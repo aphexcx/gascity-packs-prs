@@ -5,15 +5,17 @@ Send text to an owner's WhatsApp chat through the running whatsapp adapter.
 ## Usage
 
 ```
-gc whatsapp publish --to <wa_id> --text-file <path>
-gc whatsapp publish --to <wa_id> --text "message"
-gc whatsapp publish --update --to <wa_id> --text "today's update"
+gc whatsapp publish --to <conversation_id> --text-file <path>
+gc whatsapp publish --to <conversation_id> --text "message"
+gc whatsapp publish --update --to <conversation_id> --text "today's update"
 ```
 
 ## Flags
 
-- `--to` (required): the owner's WhatsApp id (the conversation id gc shows
-  in the paste, `whatsapp/<wa_id>`).
+- `--to` (required): the conversation id gc shows in the paste
+  (`whatsapp/<conversation_id>`): the owner's phone number, or a WhatsApp
+  user id for an owner who joined without one. It stays the same when the
+  owner changes numbers.
 - `--text-file`: a file holding the message; preferred, since reply text
   with quotes or code is unsafe to put on a command line.
 - `--text`: an inline message (simple strings only).

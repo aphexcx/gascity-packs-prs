@@ -171,7 +171,7 @@ function held() {
   if (!holds.length) return finish(0, 'no terminal holds');
   const now = Date.now();
   const oldest = Math.max(...holds.map((e) => now - (e.held?.at ?? now)));
-  const list = holds.map((e) => `${ref(e.rid)} (...${last4(e.waId)}, receipt ${e.held?.receipt_id || e.accepted?.receipt_id || '?'}, held ${e.held?.at ? new Date(e.held.at).toISOString() : '?'})`).join(', ');
+  const list = holds.map((e) => `${ref(e.rid)} (...${last4(e.conversationId)}, receipt ${e.held?.receipt_id || e.accepted?.receipt_id || '?'}, held ${e.held?.at ? new Date(e.held.at).toISOString() : '?'})`).join(', ');
   finish(1, `${holds.length} terminal hold(s), the oldest ${Math.round(oldest / 60000)} min: ${list}; resolve each with gc whatsapp inbound resolve <ref> --delivered|--dead`);
 }
 
@@ -180,7 +180,7 @@ function restore() {
   if (error) return finish(1, error);
   if (!fold.gaps.size) return finish(0, `no restore gap (${fold.watermarks.size} watermark(s))`);
   const lines = [...fold.gaps.values()].map((g) => `...${last4(g.conversation_id)}: the journal's accepted ${g.watermark_accepted_at ? new Date(g.watermark_accepted_at).toISOString() : '?'} (sequence ${g.watermark_sequence}) is not in the gc store (${g.head_sequence == null ? 'its head unknown' : `its head ${g.head_created_at ?? 'none'}, sequence ${g.head_sequence}`})`);
-  finish(1, `restore gap: ${lines.join('; ')}; every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <wa_id>`);
+  finish(1, `restore gap: ${lines.join('; ')}; every in-doubt message takes the marked path until gc whatsapp inbound clear-gap <conversation_id>`);
 }
 
 function probes() {
@@ -212,11 +212,11 @@ function keeper() {
   const recent = (list) => (Array.isArray(list) ? list.filter((x) => atMs(x) >= since).length : 0);
   const conversations = state.conversations ?? {};
   const rows = [];
-  for (const [waId, c] of Object.entries(conversations)) {
+  for (const [conversationId, c] of Object.entries(conversations)) {
     const lapses = recent(c.lapses);
     const undelivered = recent(c.undelivered);
     const refused = recent(c.refused_nudges);
-    if (lapses || undelivered || refused) rows.push(`...${last4(waId)}: ${lapses} lapse(s), ${undelivered} undelivered keeper event(s), ${refused} refused publish(es)`);
+    if (lapses || undelivered || refused) rows.push(`...${last4(conversationId)}: ${lapses} lapse(s), ${undelivered} undelivered keeper event(s), ${refused} refused publish(es)`);
   }
   const on = Object.values(conversations).filter((c) => c?.consent === true).length;
   const okAt = instant(state.window_read_ok_at);

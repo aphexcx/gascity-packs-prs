@@ -61,13 +61,15 @@ export function createGcClient({ base, city, postTimeoutMs = 30000, readTimeoutM
 }
 
 // The conversation ref every inbound envelope, keeper event and outbound
-// transcript uses: account id = the stable alias dynasty (design line 13).
-export function conversationRef(city, waId) {
+// transcript uses: account id = the stable alias dynasty (design line 13);
+// conversation id = the owner's key at the gateway (render.js
+// conversationOf), a phone number or a WhatsApp user id.
+export function conversationRef(city, conversationId) {
   return {
     scope_id: city,
     provider: 'whatsapp',
     account_id: 'dynasty',
-    conversation_id: String(waId),
+    conversation_id: String(conversationId),
     kind: 'dm',
   };
 }

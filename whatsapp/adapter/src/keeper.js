@@ -84,9 +84,9 @@ export function parseInstant(value) {
 
 const iso = (ms) => (ms == null ? null : new Date(ms).toISOString());
 // Logs name a conversation by its last four digits only.
-const tag = (waId) => `…${String(waId).slice(-4)}`;
+const tag = (conversationId) => `…${String(conversationId).slice(-4)}`;
 const blank = (v) => v === undefined || v === null || (typeof v === 'string' && !v.trim());
-const digitsOf = (waId) => String(waId ?? '').replace(/\D/g, '');
+const digitsOf = (conversationId) => String(conversationId ?? '').replace(/\D/g, '');
 // A refusal the internal listener answers with its own status (index.js).
 const refusal = (status, message) => Object.assign(new Error(message), { status });
 
@@ -288,20 +288,22 @@ export function createKeeper({
     for (const [code, inv] of Object.entries(s.invites)) if (inv.recorded_at < keepAfter) delete s.invites[code];
   }
 
-  function row(waId) {
-    const id = String(waId);
+  function row(conversationId) {
+    const id = String(conversationId);
     if (!Object.hasOwn(state.conversations, id)) state.conversations[id] = freshRow();
     return state.conversations[id];
   }
 
-  // The operator's verbs name a phone as typed ("+55 11 99999-0001"); a row
-  // is keyed by the gateway's wa_id. The digits must match a row, or a
-  // conversation of the last good window read; a verb never creates a row
-  // for a phone the keeper does not know (consent --off on a mistyped number
-  // must not answer OK while the real one stays ON). Returns the row's id.
-  function knownConversation(waId) {
-    const digits = digitsOf(waId);
-    if (!digits) throw refusal(400, 'wa_id has no digits: give the phone number the owner joined from');
+  // The operator's verbs name a conversation as typed ("+55 11 99999-0001",
+  // or a user id "US.1349..."); a row is keyed by the gateway's
+  // conversation_id (its GET /v1/window entry, the conversation gc shows).
+  // The digits must match a row, or a conversation of the last good window
+  // read; a verb never creates a row for a conversation the keeper does not
+  // know (consent --off on a mistyped number must not answer OK while the
+  // real one stays ON). Returns the row's id.
+  function knownConversation(conversationId) {
+    const digits = digitsOf(conversationId);
+    if (!digits) throw refusal(400, 'the conversation id has no digits: give the id gc shows for the conversation (whatsapp/<conversation_id>)');
     if (Object.hasOwn(state.conversations, digits)) return digits;
     const id = Object.keys(state.conversations).find((key) => digitsOf(key) === digits) ?? lastWindowIds.get(digits);
     if (id !== undefined) return id;
@@ -387,21 +389,21 @@ export function createKeeper({
     if (dirty || hadError || !(t - savedOkAt < stampEvery)) persist();
   }
 
-  function applyWindow(waId, last, close, t) {
-    const r = row(waId);
+  function applyWindow(conversationId, last, close, t) {
+    const r = row(conversationId);
     if (r.window_closes_at === close && r.last_inbound_at === last) return false;
     // Only an inbound moves last_inbound_at, and only forward. A read that
     // carries an older one (a gateway restored from a backup, a replica
     // behind) is ignored: taking it would empty the fired set and raise a
     // mark's id a second time when the newer one comes back.
     if (r.last_inbound_at != null && (last == null || last < r.last_inbound_at)) {
-      logOnce(`backward:${waId}:${last}`, `keeper: ${tag(waId)}: the gateway's last_inbound_at went back (${iso(last) ?? 'none'} after ${iso(r.last_inbound_at)}); read ignored`);
+      logOnce(`backward:${conversationId}:${last}`, `keeper: ${tag(conversationId)}: the gateway's last_inbound_at went back (${iso(last) ?? 'none'} after ${iso(r.last_inbound_at)}); read ignored`);
       return false;
     }
     const oldClose = r.window_closes_at;
     // (d) a close that passed before the message that moved it was a lapse,
     // counted here too in case no tick saw it pass (the keeper was down).
-    if (oldClose != null && last != null && last >= oldClose) countLapse(waId, r, oldClose, t);
+    if (oldClose != null && last != null && last >= oldClose) countLapse(conversationId, r, oldClose, t);
     r.last_inbound_at = last;
     r.window_closes_at = close;
     // (a) a new close time empties the fired set; (c) the case is decided
@@ -409,7 +411,7 @@ export function createKeeper({
     if (r.marks.close_at !== close) r.marks = { close_at: close, fired: [] };
     r.plan = close == null ? null : planLadder(r, t);
     // A nudge waiting on the ladder for the old close is moot: the business wrote.
-    dropRetries((job) => job.waId === waId && job.kind === 'nudge' && job.close !== close);
+    dropRetries((job) => job.conversationId === conversationId && job.kind === 'nudge' && job.close !== close);
     return true;
   }
 
@@ -459,13 +461,13 @@ export function createKeeper({
     return plan('shifted', ladder(businessClose).filter((m) => inside(m.at)), businessClose);
   }
 
-  function countLapse(waId, r, close, t) {
+  function countLapse(conversationId, r, close, t) {
     if (r.consent !== true) return false;
     if (r.consent_at != null && close < r.consent_at) return false;
     if (r.lapse_close_at != null && r.lapse_close_at >= close) return false; // once per close
     r.lapse_close_at = close;
     r.lapses.push({ close_at: close, at: t });
-    log(`keeper: ${tag(waId)}: the window closed with nobody from the business writing (lapse)`);
+    log(`keeper: ${tag(conversationId)}: the window closed with nobody from the business writing (lapse)`);
     return true;
   }
 
@@ -500,7 +502,7 @@ export function createKeeper({
     return null;
   }
 
-  async function raiseUpdate(waId, r, slot, t) {
+  async function raiseUpdate(conversationId, r, slot, t) {
     const close = r.window_closes_at;
     const open = close != null && t < close;
     const before = structuredClone(r);
@@ -508,29 +510,29 @@ export function createKeeper({
     // (e) at most one update per window: a second business day inside the
     // same open window (a 23-hour DST day) is recorded without an event.
     if (open && r.update_window_closes_at === close) {
-      log(`keeper: ${tag(waId)}: ${slot.day} update skipped, one already raised in this window`);
+      log(`keeper: ${tag(conversationId)}: ${slot.day} update skipped, one already raised in this window`);
       persist();
       return;
     }
     r.update_at = t;
     r.update_window_closes_at = open ? close : null;
     const zone = zoneOf(r);
-    const head = `[window-keeper] ${waId}: daily update due. Send today's short business update with one acknowledgement ask.`;
+    const head = `[window-keeper] ${conversationId}: daily update due. Send today's short business update with one acknowledgement ask.`;
     let text;
     if (open) text = `${head} Window open, closes ${formatHHMM(close, zone)}.`;
     else if (close != null) text = `${head} Window closed since ${formatHHMM(close, zone)}: ${CLOSED_TAIL}`;
     else text = `${head} Window closed (nobody from the business has written yet): ${CLOSED_TAIL}`;
-    await raise(waId, r, before, { kind: 'update', id: `keeper:${waId}:${slot.day}:update`, text, close }, t);
+    await raise(conversationId, r, before, { kind: 'update', id: `keeper:${conversationId}:${slot.day}:update`, text, close }, t);
   }
 
   // --- the ladder (c), the lapse (d), the quiet rules (e) --------------------
 
-  async function runLadder(waId, r, t) {
+  async function runLadder(conversationId, r, t) {
     const close = r.window_closes_at;
     if (close == null) return;
     if (t >= close) {
       // No nudge after the close; a close that passed with nobody writing is one lapse.
-      if (countLapse(waId, r, close, t)) persist();
+      if (countLapse(conversationId, r, close, t)) persist();
       return;
     }
     if (r.marks.close_at !== close) r.marks = { close_at: close, fired: [] };
@@ -553,8 +555,8 @@ export function createKeeper({
       return;
     }
     r.marks.fired.push({ mark: mark.mark, at: t, event: true });
-    const id = `keeper:${waId}:${new Date(close).toISOString()}:${mark.mark}`;
-    await raise(waId, r, before, { kind: 'nudge', id, text: nudgeText(waId, r, mark, t), close }, t);
+    const id = `keeper:${conversationId}:${new Date(close).toISOString()}:${mark.mark}`;
+    await raise(conversationId, r, before, { kind: 'nudge', id, text: nudgeText(conversationId, r, mark, t), close }, t);
   }
 
   // The business day an instant belongs to, as dueUpdate defines it: with
@@ -597,21 +599,21 @@ export function createKeeper({
     return `${n} minute${n === 1 ? '' : 's'}`;
   }
 
-  function nudgeText(waId, r, mark, t) {
+  function nudgeText(conversationId, r, mark, t) {
     const zone = zoneOf(r);
     if (r.plan.case === 'shifted') {
       const left = minutesLeft(r.plan.business_close_at, t, mark.mark);
-      return `[window-keeper] ${waId}: window closes at ${formatHHMM(r.window_closes_at, zone)}, after your hours; last chance before close of business in ${left}. ${NUDGE_TAIL}`;
+      return `[window-keeper] ${conversationId}: window closes at ${formatHHMM(r.window_closes_at, zone)}, after your hours; last chance before close of business in ${left}. ${NUDGE_TAIL}`;
     }
     const left = minutesLeft(r.window_closes_at, t, mark.mark);
-    return `[window-keeper] ${waId}: window closes in ${left}, nobody from the business has written since ${formatHHMM(r.last_inbound_at, zone)}. ${NUDGE_TAIL}`;
+    return `[window-keeper] ${conversationId}: window closes in ${left}, nobody from the business has written since ${formatHHMM(r.last_inbound_at, zone)}. ${NUDGE_TAIL}`;
   }
 
   // --- raising and posting an event ------------------------------------------
 
   // `r` holds the event's record (the update day, the mark fired); `before`
   // is the row as it was before that record was made.
-  async function raise(waId, r, before, ev, t) {
+  async function raise(conversationId, r, before, ev, t) {
     // (a) the record reaches the disk before the event exists anywhere.
     try {
       save();
@@ -622,13 +624,13 @@ export function createKeeper({
       restoreRow(r, before);
       if (t - raiseFailLogAt >= MINUTE) {
         raiseFailLogAt = t;
-        log(`keeper: ${tag(waId)}: state write failed, ${ev.kind} not raised yet (retried every tick): ${err.message}`);
+        log(`keeper: ${tag(conversationId)}: state write failed, ${ev.kind} not raised yet (retried every tick): ${err.message}`);
       }
       return;
     }
     killPoint('keeper-after-state', ev.id);
     await post({
-      waId,
+      conversationId,
       kind: ev.kind,
       id: ev.id,
       close: ev.close ?? null,
@@ -636,7 +638,7 @@ export function createKeeper({
       dueAt: t,
       message: {
         provider_message_id: ev.id,
-        conversation: conversationRef(city, waId),
+        conversation: conversationRef(city, conversationId),
         actor: { ...ACTOR },
         text: ev.text,
         received_at: new Date(t).toISOString(),
@@ -655,7 +657,7 @@ export function createKeeper({
           job.attempt += 1;
           job.dueAt = now() + delay; // clock time, not a sleep
           retries.push(job);
-          log(`keeper: ${tag(job.waId)}: ${job.kind} answered HTTP ${err.status}; retry ${job.attempt} in ${delay / 1000}s`);
+          log(`keeper: ${tag(job.conversationId)}: ${job.kind} answered HTTP ${err.status}; retry ${job.attempt} in ${delay / 1000}s`);
           return;
         }
         return undelivered(job, `HTTP ${err.status} through the retry ladder`);
@@ -672,10 +674,10 @@ export function createKeeper({
   }
 
   function undelivered(job, reason) {
-    const r = state.conversations[job.waId];
+    const r = state.conversations[job.conversationId];
     if (!r) return;
     r.undelivered.push({ id: job.id, kind: job.kind, at: now(), reason });
-    log(`keeper: ${tag(job.waId)}: ${job.kind} not delivered (${reason}); counted, never raised again`);
+    log(`keeper: ${tag(job.conversationId)}: ${job.kind} not delivered (${reason}); counted, never raised again`);
     persist();
   }
 
@@ -688,7 +690,7 @@ export function createKeeper({
     if (!due.length) return;
     dropRetries((job) => due.includes(job));
     for (const job of due) {
-      const r = state.conversations[job.waId];
+      const r = state.conversations[job.conversationId];
       if (!r || r.consent !== true) continue; // consent withdrawn: dropped
       if (job.kind === 'nudge' && (r.window_closes_at !== job.close || t >= job.close)) {
         // A nudge never goes out after its close, nor after the business wrote.
@@ -705,11 +707,11 @@ export function createKeeper({
     const t = now();
     await readWindow(t);
     await retryDue(t);
-    for (const [waId, r] of Object.entries(state.conversations)) {
+    for (const [conversationId, r] of Object.entries(state.conversations)) {
       if (r.consent !== true) continue; // (e) OFF without recorded consent: no event at all
       try {
         const slot = dueUpdate(r, t);
-        if (slot) await raiseUpdate(waId, r, slot, t);
+        if (slot) await raiseUpdate(conversationId, r, slot, t);
         // The update's post awaited gc: consent --off may have landed
         // meanwhile (setters commit in place, so r is the live row).
         if (r.consent !== true) continue;
@@ -719,9 +721,9 @@ export function createKeeper({
         // for a fresh clock rather than nudge on a stale one. The update
         // does not. The doctor row turns red when this lasts.
         if (readOwed()) continue;
-        await runLadder(waId, r, t);
+        await runLadder(conversationId, r, t);
       } catch (err) {
-        log(`keeper: ${tag(waId)}: ${err?.message ?? err}`);
+        log(`keeper: ${tag(conversationId)}: ${err?.message ?? err}`);
       }
     }
   }
@@ -767,9 +769,9 @@ export function createKeeper({
     // and at startup: true when the code is bound to that phone (now, or
     // already), false when there is nothing to bind. Throws on a failed
     // write, nothing changed.
-    bindInvite(code, waId) {
+    bindInvite(code, conversationId) {
       const key = String(code ?? '').trim();
-      const id = String(waId);
+      const id = String(conversationId);
       const invite = key && Object.hasOwn(state.invites, key) ? state.invites[key] : null;
       if (!invite) {
         logOnce(`no-invite:${key}:${id}`, `keeper: no onboarding record for that invite code; ${tag(id)} keeps its keeper record`);
@@ -791,25 +793,25 @@ export function createKeeper({
       return true;
     },
 
-    // gc whatsapp consent <wa_id> --on|--off. Returns the matched row's id;
-    // an unknown phone is refused (404), never recorded.
-    setConsent(waId, on) {
+    // gc whatsapp consent <conversation_id> --on|--off. Returns the matched row's id;
+    // an unknown conversation is refused (404), never recorded.
+    setConsent(conversationId, on) {
       if (typeof on !== 'boolean') throw refusal(400, 'consent must be true (--on) or false (--off)');
-      const id = knownConversation(waId);
+      const id = knownConversation(conversationId);
       const r = draftRow(id);
       if (on && r.consent !== true) r.consent_at = now();
       r.consent = on;
       commit({ rows: { [id]: r } });
-      if (!on) dropRetries((job) => job.waId === id);
+      if (!on) dropRetries((job) => job.conversationId === id);
       return id;
     },
 
-    // gc whatsapp hours <wa_id> --hours "..." --tz <zone> | --clear. Blank
+    // gc whatsapp hours <conversation_id> --hours "..." --tz <zone> | --clear. Blank
     // hours clear them; tz undefined keeps the recorded zone, blank clears
-    // it. Returns the matched row's id; an unknown phone is refused (404).
-    setHours(waId, hoursText, tz) {
+    // it. Returns the matched row's id; an unknown conversation is refused (404).
+    setHours(conversationId, hoursText, tz) {
       const fields = checkFields(hoursText, tz);
-      const id = knownConversation(waId);
+      const id = knownConversation(conversationId);
       const r = draftRow(id);
       r.hours = fields.hours;
       if (tz !== undefined) r.tz = fields.tz;
@@ -819,8 +821,8 @@ export function createKeeper({
     },
 
     // The gateway refused a free-form publish window_closed: counted, never a template.
-    noteRefusedNudge(waId) {
-      row(waId).refused_nudges.push({ at: now() });
+    noteRefusedNudge(conversationId) {
+      row(conversationId).refused_nudges.push({ at: now() });
       persist();
     },
 
@@ -829,14 +831,14 @@ export function createKeeper({
       const since = t - STATUS_SPAN_MS;
       const recent = (list) => list.filter((x) => x.at >= since).length;
       const conversations = {};
-      for (const [waId, r] of Object.entries(state.conversations)) {
+      for (const [conversationId, r] of Object.entries(state.conversations)) {
         const zone = zoneOf(r);
         const close = r.window_closes_at;
         const plan = r.plan?.close_at === close ? r.plan : null;
         const fired = r.marks.close_at === close ? r.marks.fired : [];
         let today = null;
         try { today = localDate(t, zone); } catch { /* a bad zone shows as not today */ }
-        conversations[waId] = {
+        conversations[conversationId] = {
           keeper: r.consent === true ? 'on' : 'off',
           consent: r.consent,
           consent_at: iso(r.consent_at),

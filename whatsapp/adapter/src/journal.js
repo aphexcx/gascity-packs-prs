@@ -7,8 +7,13 @@
 // in process memory is the record.
 //
 // Line types (field t):
-//   received      {rid, delivery_id, kind, wa_id, profile_name, envelope, received_at,
+//   received      {rid, delivery_id, kind, conversation_id, profile_name, envelope, received_at,
 //                  recovery?: dead (+recovery_reason) | in_doubt (+recovery_at)}
+//                  conversation_id is the owner's key (render.js conversationOf), decided once
+//                  here; every later step reads it from the fold (conversationId). A received
+//                  line the PR 74 adapter wrote carries wa_id instead: that adapter posted the
+//                  delivery under gc conversation wa_id, so the fold reads that wa_id as the
+//                  line's conversation (TOLERATED, never rewritten; gp-g02t).
 //   posted        {rid, at, reposts, boundary, marked}       before each POST /extmsg/inbound
 //   accepted      {rid, receipt_id, verdict, terminal, sequence, members, via, at}
 //   redelivered   {rid, at}                                  before the one marked copy
@@ -47,7 +52,7 @@ function entryFor(fold, rid) {
     e = {
       rid,
       received: null,
-      waId: '',
+      conversationId: '',
       deliveryId: undefined,
       kind: '',
       posts: 0,
@@ -76,7 +81,9 @@ export function applyLine(fold, line) {
       const e = entryFor(fold, line.rid);
       if (!e.received) {
         e.received = line;
-        e.waId = String(line.wa_id ?? '');
+        // A line names its conversation by its own field; one the PR 74
+        // adapter wrote has none and was posted under its wa_id (header).
+        e.conversationId = String((Object.hasOwn(line, 'conversation_id') ? line.conversation_id : line.wa_id) ?? '');
         e.deliveryId = line.delivery_id;
         e.kind = line.kind;
         // The classification of a new rid rides IN its received line (the
@@ -113,8 +120,8 @@ export function applyLine(fold, line) {
       if (line.verdict === 'pending' && line.terminal === true) e.held = e.held || line;
       // The operator's --delivered (or any later delivered word) releases a hold.
       if (line.verdict === 'delivered') e.held = null;
-      if (Number.isSafeInteger(line.sequence) && line.sequence > 0 && e.waId) {
-        raiseWatermark(fold, e.waId, {
+      if (Number.isSafeInteger(line.sequence) && line.sequence > 0 && e.conversationId) {
+        raiseWatermark(fold, e.conversationId, {
           sequence: line.sequence,
           provider_message_id: line.provider_message_id,
           accepted_at: line.at,

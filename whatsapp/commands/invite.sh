@@ -46,5 +46,5 @@ echo
 if [ "$consent" = true ]; then
   echo "Window-keeper: ON for this phone once it joins${hours:+ (hours $hours, $tz)}."
 else
-  echo "Window-keeper: OFF for this phone (no --proactive-consent); gc whatsapp consent <wa_id> --on after the owner agrees."
+  echo "Window-keeper: OFF for this phone (no --proactive-consent); gc whatsapp consent <conversation_id> --on after the owner agrees."
 fi

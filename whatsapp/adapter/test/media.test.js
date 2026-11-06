@@ -99,7 +99,7 @@ test('media saved with the webhook\'s mime and the sha256 checked', async (t) =>
 
   // Meta's webhook carries the hash base64-encoded; hex is accepted too.
   const img = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.HBgLMTU1NTEyMzQ1NjcVAgA=', kind: 'image',
+    conversationId: PHONE, wamid: 'wamid.HBgLMTU1NTEyMzQ1NjcVAgA=', kind: 'image',
     media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(JPEG, 'base64'), caption: 'the shop front' },
   });
   assert.equal(img.ok, true, img.note);
@@ -111,7 +111,7 @@ test('media saved with the webhook\'s mime and the sha256 checked', async (t) =>
   assert.deepEqual(img.attachment, { provider_id: 'm-img', url: pathToFileURL(expectedPath).href, mime_type: 'image/jpeg' });
 
   const doc = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.DOC1', kind: 'document',
+    conversationId: PHONE, wamid: 'wamid.DOC1', kind: 'document',
     media: { id: 'm-doc', mime_type: 'application/pdf', sha256: sha256(PDF, 'hex'), filename: '../Q3 report.pdf' },
   });
   assert.equal(doc.ok, true, doc.note);
@@ -134,7 +134,7 @@ test('a sha256 mismatch is refused with a note and nothing is saved', async (t) 
   gw.media.set('m-bad', { bytes: JPEG, mime: 'image/jpeg' });
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0 });
   const r = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.BAD', kind: 'image',
+    conversationId: PHONE, wamid: 'wamid.BAD', kind: 'image',
     media: { id: 'm-bad', mime_type: 'image/jpeg', sha256: sha256(Buffer.from('other bytes'), 'base64') },
   });
   assert.equal(r.ok, false);
@@ -151,7 +151,7 @@ test('a transcript inline for a voice note with a fake Scribe, cached beside the
   gw.media.set('m-voice', { bytes: OGG, mime: 'audio/ogg; codecs=opus' });
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0, apiKey: () => 'k-test', scribeURL: scribe.url });
   const input = {
-    waId: PHONE, wamid: 'wamid.VOICE1', kind: 'audio',
+    conversationId: PHONE, wamid: 'wamid.VOICE1', kind: 'audio',
     media: { id: 'm-voice', mime_type: 'audio/ogg; codecs=opus', sha256: sha256(OGG, 'base64'), voice: true },
   };
   const r = await media.hydrate(input);
@@ -183,7 +183,7 @@ test('the degrade note without a key', async (t) => {
   gw.media.set('m-voice', { bytes: OGG, mime: 'audio/ogg; codecs=opus' });
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0, apiKey: () => '', scribeURL: scribe.url });
   const r = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.VOICE2', kind: 'audio',
+    conversationId: PHONE, wamid: 'wamid.VOICE2', kind: 'audio',
     media: { id: 'm-voice', mime_type: 'audio/ogg; codecs=opus', sha256: sha256(OGG, 'base64'), voice: true },
   });
   assert.equal(r.ok, true, 'the voice note is saved without a key');
@@ -199,7 +199,7 @@ test('a Scribe failure degrades to the saved-not-transcribed note', async (t) =>
   gw.media.set('m-voice', { bytes: OGG, mime: 'audio/ogg' });
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0, apiKey: () => 'k-test', scribeURL: scribe.url });
   const r = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.VOICE3', kind: 'audio',
+    conversationId: PHONE, wamid: 'wamid.VOICE3', kind: 'audio',
     media: { id: 'm-voice', mime_type: 'audio/ogg', sha256: sha256(OGG, 'hex'), voice: true },
   });
   assert.equal(r.ok, true);
@@ -217,7 +217,7 @@ test('a quota breach rejects the save with the in-message note', async (t) => {
   gw.media.set('m-img', { bytes: JPEG, mime: 'image/jpeg' });
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0, quotaBytes: 120 });
   const r = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.Q1', kind: 'image',
+    conversationId: PHONE, wamid: 'wamid.Q1', kind: 'image',
     media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(JPEG, 'base64') },
   });
   assert.equal(r.ok, false);
@@ -233,7 +233,7 @@ test('the free-disk floor and the size cap reject the save with the in-message n
   const mediaDir = tempStore(t);
   gw.media.set('m-img', { bytes: JPEG, mime: 'image/jpeg' });
   const input = {
-    waId: PHONE, wamid: 'wamid.F1', kind: 'image',
+    conversationId: PHONE, wamid: 'wamid.F1', kind: 'image',
     media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(JPEG, 'base64') },
   };
   const floor = await createMedia({ mediaDir, gateway: gw.client, minFreeBytes: Number.MAX_SAFE_INTEGER }).hydrate(input);
@@ -250,7 +250,7 @@ test('a re-hydrate of the same media reuses the file without a second download',
   const mediaDir = tempStore(t);
   gw.media.set('m-img', { bytes: JPEG, mime: 'image/jpeg' });
   const input = {
-    waId: PHONE, wamid: 'wamid.R1', kind: 'image',
+    conversationId: PHONE, wamid: 'wamid.R1', kind: 'image',
     media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(JPEG, 'base64') },
   };
   const first = await createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0 }).hydrate(input);
@@ -274,9 +274,9 @@ test('nothing logged carries a phone number in clear, a wamid, a path, a transcr
     mediaDir, gateway: gw.client, minFreeBytes: 0, apiKey: () => 'SECRET-KEY', scribeURL: scribe.url,
     log: (line) => lines.push(String(line)),
   });
-  await media.hydrate({ waId: PHONE, wamid: 'wamid.LOGVOICE', kind: 'audio', media: { id: 'm-voice', mime_type: 'audio/ogg', sha256: sha256(OGG, 'hex'), voice: true } });
-  await media.hydrate({ waId: PHONE, wamid: 'wamid.LOGBAD', kind: 'image', media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(OGG, 'hex') } });
-  await media.hydrate({ waId: PHONE, wamid: 'wamid.LOGGONE', kind: 'image', media: { id: 'm-gone', mime_type: 'image/jpeg' } });
+  await media.hydrate({ conversationId: PHONE, wamid: 'wamid.LOGVOICE', kind: 'audio', media: { id: 'm-voice', mime_type: 'audio/ogg', sha256: sha256(OGG, 'hex'), voice: true } });
+  await media.hydrate({ conversationId: PHONE, wamid: 'wamid.LOGBAD', kind: 'image', media: { id: 'm-img', mime_type: 'image/jpeg', sha256: sha256(OGG, 'hex') } });
+  await media.hydrate({ conversationId: PHONE, wamid: 'wamid.LOGGONE', kind: 'image', media: { id: 'm-gone', mime_type: 'image/jpeg' } });
   assert.ok(lines.length >= 3);
   for (const line of lines) {
     for (const secret of [PHONE, 'wamid.LOG', mediaDir, 'SECRET-TRANSCRIPT', 'SECRET-KEY', CREDENTIAL]) {
@@ -291,7 +291,7 @@ test('a gateway failure never rejects: ok false with a one-line note', async (t)
   const mediaDir = tempStore(t);
   const media = createMedia({ mediaDir, gateway: gw.client, minFreeBytes: 0 });
   const missing = await media.hydrate({
-    waId: PHONE, wamid: 'wamid.N1', kind: 'video',
+    conversationId: PHONE, wamid: 'wamid.N1', kind: 'video',
     media: { id: 'm-gone', mime_type: 'video/mp4', sha256: sha256(JPEG, 'base64') },
   });
   assert.equal(missing.ok, false);
@@ -300,9 +300,9 @@ test('a gateway failure never rejects: ok false with a one-line note', async (t)
 
   const dead = createMedia({ mediaDir, gateway: createGatewayClient({ url: 'http://127.0.0.1:9', credential: CREDENTIAL }), minFreeBytes: 0 });
   const unreachable = await dead.hydrate({
-    waId: PHONE, wamid: 'wamid.N2', kind: 'image', media: { id: 'm-img', mime_type: 'image/jpeg' },
+    conversationId: PHONE, wamid: 'wamid.N2', kind: 'image', media: { id: 'm-img', mime_type: 'image/jpeg' },
   });
   assert.equal(unreachable.ok, false);
-  const bad = await media.hydrate({ waId: PHONE, wamid: 'wamid.N3', kind: 'image', media: null });
+  const bad = await media.hydrate({ conversationId: PHONE, wamid: 'wamid.N3', kind: 'image', media: null });
   assert.equal(bad.ok, false);
 });
