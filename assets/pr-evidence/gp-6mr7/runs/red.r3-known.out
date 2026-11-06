@@ -1,0 +1,20 @@
+verbs.py rc=1 on the mutated mirror; 17 FAIL lines:
+  FAIL whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <conversation>' in A's help.md
+  FAIL skill quotes the nudge (unshifted)
+  FAIL skill quotes the failed delivery
+  FAIL whatsapp/docs/meta-setup.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-dashed.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-double-space.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-grouped.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-hexlike.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-nbsp.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-stamp-shaped.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-touching.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-id-url.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-phone-e164-touching.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-phone-e164.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-phone-national.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-phone-nbsp.md: no Meta value from citadel's records (found 1)
+  FAIL whatsapp/docs/red-phone-parens.md: no Meta value from citadel's records (found 1)
+RED OK
+rc=0

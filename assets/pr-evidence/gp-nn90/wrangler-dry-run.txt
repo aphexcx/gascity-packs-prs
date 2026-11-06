@@ -1,0 +1,16 @@
+# pnpm exec wrangler deploy --dry-run --outdir dist   (no login; nothing deployed)
+# cwd: whatsapp/gateway   head: 11285f36597ec3ab0aedbfec9dfc3bf324a93e22   node: v24.21.0   exit: 0
+
+
+ ⛅️ wrangler 4.154.0 (update available 4.157.0)
+───────────────────────────────────────────────
+Total Upload: 43.20 KiB / gzip: 11.52 KiB
+Your Worker has access to the following bindings:
+Binding                                                      Resource
+env.DB (whatsapp-gateway)                                    D1 Database
+env.PUBLIC_URL ("https://whatsapp.dynasty.computer")         Environment Variable
+env.DISPLAY_NAME ("Dynasty")                                 Environment Variable
+env.GRAPH_VERSION ("v26.0")                                  Environment Variable
+
+--dry-run: exiting now.
+pnpm wrapper: verify-deps off for exec (round 3)

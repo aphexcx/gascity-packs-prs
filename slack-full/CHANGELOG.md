@@ -98,6 +98,15 @@ deliveries also log their registry label.
 
 ### Fixed
 
+- Retry adapter registration during gc boot for up to ten minutes, with
+  exponential waits from one to thirty seconds (gp-ktdn, gp-xgjf). Connection
+  refusal, city-not-running 404s, all 5xx responses, timeouts, connection resets,
+  EOF and unexpected EOF keep the process alive within that same budget; `/healthz` reports
+  `registering: attempt N` through gc's advisory degraded-health headers.
+  Normal requests wait for startup. The legacy template fallback requires a
+  400 naming `reply_instructions` or a 422 identifying that field as an
+  unexpected property. Permanent failures still exit.
+
 - Preserve shared HTTPS `x.com` targets in the generic base64 redactor
   (gp-zbq3), with identical ASCII URL boundaries in Python and Go. Unicode,
   controls, nested URLs, and directly adjacent Slack labels cannot widen the

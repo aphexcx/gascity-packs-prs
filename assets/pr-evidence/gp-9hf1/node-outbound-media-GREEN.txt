@@ -1,0 +1,39 @@
+GREEN run: the final test set (27 tests) against src/{ledger,outbound,media}.js as built.
+$ cd whatsapp/adapter && /Users/tailor512/city/.gc/shims/toolchain/pnpm exec node --test test/outbound.test.js test/media.test.js
+# node v24.21.0, 2026-11-04T18:40:38Z
+✔ media saved with the webhook's mime and the sha256 checked (80.912792ms)
+✔ a sha256 mismatch is refused with a note and nothing is saved (13.2475ms)
+✔ a transcript inline for a voice note with a fake Scribe, cached beside the file (71.949166ms)
+✔ the degrade note without a key (29.291625ms)
+✔ a Scribe failure degrades to the saved-not-transcribed note (39.496667ms)
+✔ a quota breach rejects the save with the in-message note (12.700292ms)
+✔ the free-disk floor and the size cap reject the save with the in-message note (9.649167ms)
+✔ a re-hydrate of the same media reuses the file without a second download (26.075958ms)
+✔ nothing logged carries a phone number in clear, a wamid, a path, a transcript or the key (49.404666ms)
+✔ a gateway failure never rejects: ok false with a one-line note (2.417875ms)
+✔ chunking at 4096 keeps a surrogate pair whole (1.326583ms)
+✔ chunking at 4096 prefers a newline past the midpoint (1.190875ms)
+✔ the same idempotency key yields one gateway send and the same receipt (107.016333ms)
+✔ a mid-chunk failure resumes at the failed chunk (145.061167ms)
+✔ window_closed maps to the permanent error with the hint naming the update verb (27.729167ms)
+✔ 403 not bound maps to permanent with reason not_bound; a 401 maps to auth (3.747417ms)
+✔ publish without session attribution is refused (46.359166ms)
+✔ sends to one wa_id are serialized: a second publish waits for every chunk of the first (244.7615ms)
+✔ a CLI publish records the outbound transcript through gc with the same idempotency key; gc's call-back is answered without a re-send (132.034583ms)
+✔ /publish-update refused when the window is open (409) (14.205458ms)
+✔ /publish-update refused when the text is empty (400) (0.897458ms)
+✔ /publish-update journaled to updates.jsonl when sent (35.185417ms)
+✔ an update with a session records its outbound transcript through gc under the same key; the call-back never re-sends (57.618375ms)
+✔ a template send leaves the window closed: a /publish right after it still maps to window_closed with the hint, and the owner's next inbound reopens it (103.231125ms)
+✔ nothing logged carries message text, a phone number in clear or the credential (121.623417ms)
+✔ the ledger opens the window only on an inbound (24 hours minus the 120-second margin), never on a send of any type (63.864375ms)
+✔ the gateway's window_closed closes the ledger's window until the next inbound (72.239417ms)
+ℹ tests 27
+ℹ suites 0
+ℹ pass 27
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1233.012209
+exit=0

@@ -1,0 +1,38 @@
+✔ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (2443.075916ms)
+ℹ gap: watermark 2, head 4; A's watermark now 4
+✔ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (2340.031333ms)
+✖ gate r1 MAJOR 1 (inbound.js:420): a crash while the detection's head read is held, after acceptances advanced that watermark: the restart still holds the gap; B's in-doubt entry takes the marked path (585.654459ms)
+✔ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.940667ms)
+✔ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (46.46275ms)
+✔ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash at the first append after its received line (before the round: the classification's own line), a restart: the in-doubt rule from zero, never a plain post (448.517166ms)
+✔ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (347.553709ms)
+✔ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (890.013208ms)
+✔ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (39.580083ms)
+✔ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (72.092917ms)
+✔ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (91.274792ms)
+✔ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (1258.110792ms)
+✔ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (165.772708ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 12
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 8794.240458
+
+✖ failing tests:
+
+test at test/gate.test.js:237:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a crash while the detection's head read is held, after acceptances advanced that watermark: the restart still holds the gap; B's in-doubt entry takes the marked path (585.654459ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/v1/whatsapp/adapter/test/gate.test.js:252:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

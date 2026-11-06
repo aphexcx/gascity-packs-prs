@@ -23,13 +23,10 @@
 //     inbound_liveness=stalled so monitoring can see the degraded state.
 //   - Recovery is logged (with the stall duration) the moment any
 //     inbound frame arrives.
-//   - Optional remediation: WECOM_LIVENESS_RECONNECT=true wires a
-//     reconnect hook that force-cycles the WS on stall (rate-limited).
-//     Recent outbound acknowledgements suppress a new cycle: quiet
-//     inbound alone is insufficient reason to tear down a live socket
-//     until silence reaches 3× the stall threshold (acks cannot mask a
-//     half-dead socket indefinitely).
-//     The inbound alarm remains, since acks do not prove push delivery.
+//   - Optional remediation probes the socket with a bounded ping/pong check.
+//     Only a failed probe permits a rate-limited reconnect. Quiet chat
+//     alone never tears down a healthy connection, even after a long idle.
+//     The alarm remains because a pong cannot prove inbound push delivery.
 //
 // What deliberately does NOT port from slack-full: the history probe
 // and backfill. WeCom's aibot surface is push-only — there is no
@@ -38,7 +35,7 @@
 // URLs die in ~5 minutes; texts are never re-fetchable). A stall here
 // is therefore a SUSPICION, not proof — the alarm text says so — and
 // missed traffic is unrecoverable, which is exactly why surfacing the
-// suspicion loudly (and optionally cycling the connection) matters.
+// suspicion loudly matters.
 
 // livenessTickMs is the watchdog's clock resolution.
 export const livenessTickMs = 30 * 1000;
@@ -58,11 +55,9 @@ export const livenessReconnectMinIntervalMs = 30 * 60 * 1000;
 // opts:
 //   stallAfterMs   idle threshold before the state flips to stalled;
 //                  0 (default) disables the watchdog entirely.
-//   reconnect      optional () => void; called (rate-limited) while
-//                  stalled to force-cycle the WS. null = detection only.
-//   lastOutboundAck optional () => timestamp|null for this socket's last ack
-//   outboundAckFreshMs how long that ack suppresses a new reconnect;
-//                  0 disables suppression, as does idle >= 3× stallAfterMs
+//   reconnect      optional () => Promise<void>; cycle after a failed probe.
+//   healthCheck    () => Promise<boolean>; true proves transport health.
+//                  No probe means detection only, never a blind reconnect.
 //   reconnectDeferral optional () => string|null; a non-empty reason
 //                  postpones a due cycle to a later tick (jg-bw5gsw: a
 //                  cycle tears down any media upload in flight, and a
@@ -75,8 +70,7 @@ export function createInboundLiveness(opts = {}) {
     stallAfterMs = 0,
     reconnect = null,
     reconnectDeferral = null,
-    lastOutboundAck = () => null,
-    outboundAckFreshMs = stallAfterMs,
+    healthCheck = null,
     alarmRepeatMs = livenessAlarmRepeatMs,
     reconnectMinIntervalMs = Math.max(stallAfterMs, livenessReconnectMinIntervalMs),
     now = Date.now,
@@ -88,6 +82,7 @@ export function createInboundLiveness(opts = {}) {
   let stalledSince = null;
   let lastAlarmAt = null;
   let lastReconnectAt = null;
+  let stopped = false;
   let framesTotal = 0;
   let alarmsTotal = 0;
   let reconnectsTotal = 0;
@@ -110,8 +105,8 @@ export function createInboundLiveness(opts = {}) {
 
   // tick runs one evaluation; production arms it on livenessTickMs via
   // start(), tests call it directly with a fake clock.
-  function tick() {
-    if (stallAfterMs <= 0) return;
+  async function tick() {
+    if (stopped || stallAfterMs <= 0) return;
     const t = now();
     // Silence before this process started is not this process's stall.
     const ref = Math.max(lastInboundAt ?? 0, startedAt);
@@ -123,17 +118,14 @@ export function createInboundLiveness(opts = {}) {
       lastAlarmAt = t;
       alarmsTotal++;
       const remediation = reconnect
-        ? 'reconnect remediation is enabled; recent outbound acknowledgements suppress a new cycle only below 3× the stall threshold'
-        : 'set WECOM_LIVENESS_RECONNECT=true to force a reconnect cycle on stall';
+        ? 'active ping/pong health checks are enabled; reconnect only on probe failure'
+        : 'set WECOM_LIVENESS_RECONNECT=true to probe transport health on stall';
       log(`INBOUND LIVENESS ALARM: no inbound WeCom frame for ${Math.round(idle / 1000)}s `
         + `(threshold ${Math.round(stallAfterMs / 1000)}s) — either the chat is quiet or the long connection `
         + `is ready-but-dead (the 8/19 signature: socket up, pongs flowing, zero pushes). WeCom has no `
         + `history API, so anything sent during a real stall is NOT recoverable; ${remediation}`);
     }
-    const ackAt = lastOutboundAck();
-    if (idle < 3 * stallAfterMs && outboundAckFreshMs > 0
-      && ackAt !== null && t - ackAt < outboundAckFreshMs) return;
-    if (reconnectPending) return;
+    if (reconnectPending || !healthCheck) return;
     if (reconnect && (lastReconnectAt === null || t - lastReconnectAt >= reconnectMinIntervalMs)) {
       let deferral = null;
       try {
@@ -150,19 +142,20 @@ export function createInboundLiveness(opts = {}) {
         return;
       }
       deferralLogged = false;
+      reconnectPending = true;
+      // Rate-limit probes too, including successful ones on quiet nights.
       lastReconnectAt = t;
-      reconnectsTotal++;
-      log('inbound liveness: forcing a WS reconnect cycle (stall remediation)');
       try {
-        const result = reconnect();
-        if (result?.then) {
-          reconnectPending = true;
-          Promise.resolve(result).catch((err) => {
-            log(`inbound liveness: reconnect hook failed: ${err.message}`);
-          }).finally(() => { reconnectPending = false; });
-        }
+        let healthy;
+        try { healthy = await healthCheck(); } catch { healthy = false; }
+        if (healthy || stopped) return;
+        reconnectsTotal++;
+        log('inbound liveness: ping/pong health check failed; reconnecting the WebSocket');
+        await reconnect();
       } catch (err) {
         log(`inbound liveness: reconnect hook failed: ${err.message}`);
+      } finally {
+        reconnectPending = false;
       }
     }
   }
@@ -181,11 +174,13 @@ export function createInboundLiveness(opts = {}) {
 
   function start(tickMs = livenessTickMs) {
     if (timer || stallAfterMs <= 0) return;
+    stopped = false;
     timer = setInterval(tick, tickMs);
     timer.unref?.();
   }
 
   function stop() {
+    stopped = true;
     if (timer) clearInterval(timer);
     timer = null;
   }

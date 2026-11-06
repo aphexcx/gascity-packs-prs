@@ -1,0 +1,10 @@
+# the new table (red.py) against the pre-fold verbs.py of fcbb7a60: the rows it misses
+rc=1
+MISSED red-id-link-split.md
+MISSED red-id-ref-split.md
+MISSED red-id-html-split.md
+caught red-synthetic-invalid-stamp.md
+caught red-synthetic-prefixed-stamp.md
+MISSED red-synthetic-nbsp-phone.md
+verbs.py rc=1 on the mutated mirror; 19 FAIL lines:
+RED NOT SEEN

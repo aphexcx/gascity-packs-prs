@@ -1,0 +1,5 @@
+parsed /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/slack-full/template-fragments/slack-v0.template.md defines=[slack-v0]
+parsed /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/whatsapp/template-fragments/whatsapp-v0.template.md defines=[whatsapp-v0]
+rendered 8085 bytes composing [slack-v0 whatsapp-v0]
+OK: unique defines, unique headings, renders clean
+rc=0

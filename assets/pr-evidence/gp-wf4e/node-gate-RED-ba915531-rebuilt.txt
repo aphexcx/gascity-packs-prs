@@ -1,0 +1,231 @@
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (2438.656375ms)
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (2417.842084ms)
+✖ gate r1 MAJOR 1 (inbound.js:420): a crash while the detection's head read is held, after acceptances advanced that watermark: the restart still holds the gap; B's in-doubt entry takes the marked path (797.264542ms)
+✖ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.731167ms)
+✖ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (49.583666ms)
+✖ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash at the first append after its received line (before the round: the classification's own line), a restart: the in-doubt rule from zero, never a plain post (500.34375ms)
+✖ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (385.410459ms)
+✖ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (351.489083ms)
+✖ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (53.205792ms)
+✖ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (105.027292ms)
+✖ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (140.1135ms)
+✖ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (188.921417ms)
+✖ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (217.76625ms)
+ℹ tests 13
+ℹ suites 0
+ℹ pass 0
+ℹ fail 13
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 7714.921958
+
+✖ failing tests:
+
+test at test/gate.test.js:190:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected while its head read is held stays detected however far acceptances advance that watermark meanwhile; B's in-doubt entry takes the marked path (2438.656375ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:208:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:216:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a rollback detected whose head read FAILS stays detected while acceptances advance that watermark; the gap is written with the head unknown (2417.842084ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:230:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:237:1
+✖ gate r1 MAJOR 1 (inbound.js:420): a crash while the detection's head read is held, after acceptances advanced that watermark: the restart still holds the gap; B's in-doubt entry takes the marked path (797.264542ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked duplicate: "delivered, the answer lost"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:252:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:259:1
+✖ gate r1 MAJOR 2: ONE classifier decides what a new rid is, fresh only on positive proof (the table) (0.731167ms)
+  AssertionError [ERR_ASSERTION]: one exported classifier decides a new rid
+  + actual - expected
+  
+  + 'undefined'
+  - 'function'
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:261:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'undefined',
+    expected: 'function',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:275:1
+✖ gate r1 MAJOR 2: the classification rides IN the received line; the fold applies it from that one line, live and on replay (49.583666ms)
+  AssertionError [ERR_ASSERTION]: live: in doubt from its first step
+  + actual - expected
+  
+  + 'received'
+  - 'posted'
+  
+      at check (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:285:12)
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:294:3)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 'received',
+    expected: 'posted',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:319:1
+✖ gate r1 MAJOR 2 (inbound.js:284): a delivery older than the journal's genesis, a crash at the first append after its received line (before the round: the classification's own line), a restart: the in-doubt rule from zero, never a plain post (500.34375ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked repost: "posted by a journal that is gone"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:330:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:335:1
+✖ gate r1 MAJOR 2 (inbound.js:284): the same delivery when the append after its received line FAILS and the engine runs on: never a plain post (385.410459ms)
+  AssertionError [ERR_ASSERTION]: never an unmarked repost: "posted by a journal that is gone"
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:344:10)
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at process.processTimers (node:internal/timers:615:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:347:1
+✖ gate r1 MAJOR 2 (the same two writes): a delivery a lost journal dead-lettered, the append after its received line FAILS: dead and acked, never posted again (351.489083ms)
+  Error: never posted again stopped holding
+      at stays (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/fakes.js:40:37)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:361:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/gate.test.js:395:1
+✖ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (53.205792ms)
+  AssertionError [ERR_ASSERTION]: the text reached Meta (gateway keys ["K:0","K:0"])
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:403:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:409:1
+✖ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (105.027292ms)
+  AssertionError [ERR_ASSERTION]: the template reached Meta (gateway keys ["K:0","K:1","K:1"])
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:418:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:422:1
+✖ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (140.1135ms)
+  AssertionError [ERR_ASSERTION]: the second text reached Meta (gateway keys ["K:0","U","K:0","U"])
+  + actual - expected
+  
+    [
+      'the first message',
+  -   'another message'
+    ]
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:434:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'the first message' ],
+    expected: [ 'the first message', 'another message' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test/gate.test.js:448:1
+✖ gate r1 MINOR (inbound.js:197): a join whose keeper bind fails is not retired: held at the gateway and in the journal across a restart, bound and acked once the keeper heals (188.921417ms)
+  Error: the join held at the gateway while its keeper bind is owed stopped holding
+      at stays (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/fakes.js:40:37)
+      at async TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:470:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/gate.test.js:483:1
+✖ Fable read r1 MINOR 1 (inbound.js:50): an order moves the window ledger as the gateway counts it (its reading 7); a system notice does not (217.76625ms)
+  AssertionError [ERR_ASSERTION]: an order opens the window in the ledger, as at the gateway
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///private/tmp/gp-wf4e-red/final/ba915531/whatsapp/adapter/test/gate.test.js:491:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,2 @@
+description = 'Node.js 20 or newer is available (the adapter has no package dependency)'
+run = '../check-dependencies.sh'

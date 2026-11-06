@@ -1,0 +1,3 @@
+# Local PR snapshots and gate launch output; portable results are committed.
+pr-*.json
+gate-launch.log

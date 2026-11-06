@@ -1,0 +1,2 @@
+description = "restore gaps: the gc store behind the journal's watermark (gc whatsapp inbound clear-gap)"
+run = '../check-restore.sh'

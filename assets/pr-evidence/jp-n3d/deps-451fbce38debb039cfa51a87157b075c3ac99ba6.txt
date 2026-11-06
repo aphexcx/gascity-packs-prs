@@ -1,0 +1,4 @@
+Source commit: 451fbce38debb039cfa51a87157b075c3ac99ba6
+Command: bash run.sh --deps-only
+Node: v26.7.0
+gc-wecom-adapter: dependencies ready

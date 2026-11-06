@@ -1,0 +1,35 @@
+✔ gate r1 MAJOR 3 (outbound.js:398): an update keyed K:0, the window opening, then a text keyed K: the text is SENT, never answered with the template's receipt (70.104542ms)
+✔ gate r1 MAJOR 3 (outbound.js:398): the reverse, a two-chunk text keyed K, then an update keyed K:1: the template is SENT, never answered with chunk 1's receipt (58.18025ms)
+✖ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (84.9185ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 2
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 277.611541
+
+✖ failing tests:
+
+test at test/gate.test.js:422:1
+✖ self-review r1 NOTE 5 (the MAJOR 3 class): a caller key reused for ANOTHER text once the progress store forgot it is SENT, text and template alike, never answered with the first message's receipt (84.9185ms)
+  AssertionError [ERR_ASSERTION]: the second text reached Meta (gateway keys ["text:86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177:0","template:a25513c7e0f6eaa80a3337ee18081b9e2ed09e00af8531c8f7bb2542764027e7","text:86be9a55762d316a3026c2836d044f5fc76e34da10e1b45feee5f18be7edb177:0","template:a25513c7e0f6eaa80a3337ee18081b9e2ed09e00af8531c8f7bb2542764027e7"])
+  + actual - expected
+  
+    [
+      'the first message',
+  -   'another message'
+    ]
+  
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-c/whatsapp/adapter/test/gate.test.js:434:10)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: [ 'the first message' ],
+    expected: [ 'the first message', 'another message' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

@@ -1,0 +1,796 @@
+✖ (12a) a dead-letter transition whose ack fails (500, then nothing), a compaction, a SIGKILL, a restart: the dead line survives, the ack is re-sent and confirmed, no new POST (8030.141625ms)
+▶ (12b) the same across every dead reason
+  ✖ pending_deadline (8014.854208ms)
+  ✖ in_doubt (8014.457792ms)
+  ✖ redelivery_no_route (3972.344583ms)
+✖ (12b) the same across every dead reason (20002.218292ms)
+✖ (12c) a kill between the dead-letter file line and the dead journal line: the restart repeats the transition with no second dead-letter line, then acks (20004.521542ms)
+✖ held_terminal (8019.7105ms)
+✖ repost_bound (8009.212084ms)
+✖ rejected (8022.037542ms)
+✖ no_route (8017.844958ms)
+✖ FOUND: format conversation and a user turn with the header and the last id line (0.464083ms)
+✖ a format text answer is a snapshot and is NOT FOUND whatever the pane shows (the gate r6 first finding) (0.069666ms)
+✖ a tool result, an assistant turn or an output turn quoting the id is NOT FOUND (0.073083ms)
+✖ a later paste whose BODY quotes the id line while its own id line names another wamid is NOT FOUND (0.062291ms)
+✖ the header must name whatsapp/<wa_id> exactly (0.062416ms)
+✖ verdicts: the terminal flag is read first; partial kept apart; no_route; unsupported (0.068708ms)
+✖ the read-back schedule: 5 s for 10 min, 60 s to the hour, then 5 min, no cutoff (0.048458ms)
+✖ the fold derives each state from the last progress line (0.624375ms)
+✖ every line is replayed in order after a restart, a torn tail dropped (0.419459ms)
+✖ accepted lines raise the watermark; a watermark line sets it; clear and rebase (0.205125ms)
+✖ THE GATE r7 RULE 2: compaction drops only acknowledged rids and keeps a dead rid whose ack is unconfirmed (0.58075ms)
+✖ the dead-letter store writes one line per rid and indexes the files at start (0.220292ms)
+✔ registers with gc as provider whatsapp, account dynasty, with the reply instructions (78.393541ms)
+✖ two senders deliver in order within each sender and independently across senders (8016.80475ms)
+✖ a 500 from gc retries on the ladder and then delivers once (8010.682542ms)
+✖ a 404 retries (gc answers it during a city restart) (8010.890958ms)
+✖ a 400 dead-letters one 0600 line with the envelope and the chain moves on (8013.416416ms)
+✖ the ack names delivery ids, follows the accepted line on disk, and never comes on a pending verdict (8004.553834ms)
+✖ a failed-status delivery posts as <wamid>:status:failed beside the outbound record; other statuses are acked without a POST (8009.302084ms)
+✖ a failed receipt reposts three times, then dead-letters and acks: four POSTs in all (8011.327666ms)
+✖ a partial receipt reposts three times, then dead-letters and acks: four POSTs in all (8007.756875ms)
+✖ a no_route receipt dead-letters the envelope and acks at once with no repost (8011.594ms)
+✖ every acknowledged entry is compacted away; the watermark stays (8014.394833ms)
+✖ a 401 stops polling and sets the doctor fact (8017.159125ms)
+✖ the journal is 0600 in a 0700 directory and holds the full envelope before the POST (8021.337583ms)
+✖ (1) killed after the poll and before the received line: the restart re-reads the held delivery; one POST (20007.353708ms)
+✖ (2) killed after received and before posted: one POST (20013.345875ms)
+✖ (3) killed after posted, gc recorded and pasted, before accepted, the log empty: one marked copy, one record, never a third (8016.168208ms)
+✖ (3b) killed after posted with the request never reaching gc: the probe NOT FOUND, every watermark intact: exactly one plain POST (20003.467083ms)
+✖ (3c) as (3) with the paste in the session log as a user turn: acked, exactly one POST (8020.411167ms)
+✖ (3d) as (3) with NO log and the id only in the PANE (format text): NOT FOUND, one marked copy, never acked on the snapshot (8007.753708ms)
+✖ (3e) a tool-result turn, an assistant turn and a later paste whose BODY quotes the id: NOT FOUND, the marked copy (8022.138833ms)
+✖ (3f) the snapshot probe line survives a SIGKILL, a restart and a compaction (the probes row reads it) (8017.784417ms)
+✖ (4) the response lost without a kill: the entry stays posted; after the grace one marked copy; two POSTs, one record, no third (8013.457625ms)
+✖ (5) killed after a delivered receipt and before the ack: the restart acks from the journal with no second POST (20007.062125ms)
+✖ (6) killed while the receipt was pending; gc resolves it delivered: the restart reads it back, acks, one POST (20008.829917ms)
+✖ (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt (8008.248084ms)
+✖ (6c) the fork head's fan-out dedup answers the marked copy no_route (suppression), the log empty: dead-lettered redelivery_no_route, acked, never as delivered (8018.237375ms)
+✖ (6d) a concluded receipt whose delivery is pending stays on the schedule; when gc forgets it the in-doubt rule sends one marked copy (8428.456833ms)
+✖ (6e) the lost response without a kill never re-posts on the ladder: one POST until the grace has passed (8466.103209ms)
+✖ (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST (8004.718333ms)
+✖ (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost (8009.949875ms)
+✖ (7c) no_route on the marked copy, the suppression meaning, the log CARRYING the paste: acked as delivered, no dead letter, two POSTs, one paste (8009.720583ms)
+✖ (7d) the empty-membership meaning: the same outcome, and the two no_route answers byte-identical but for the receipt id (8021.624625ms)
+✖ (7e) as (7c) with the id only in the PANE: NOT FOUND, dead-lettered redelivery_no_route, acked, never as delivered (8019.414584ms)
+✖ (8) a failure concluding after one hour: read inside the hour after the conclusion, reposted plain, two POSTs, acked (8007.095708ms)
+✖ (8b) the same with the adapter killed through the conclusion and restarted 70 min after it: unknown, the record from the posted boundary, one marked copy (8013.567916ms)
+✖ (8c) the terminal hold, then unknown, then 24 h: no further POST, no read-back, the gateway holds it; resolve --dead and --delivered (8008.900959ms)
+✖ (8d) the hold across a SIGKILL, and a kill between the accepted (terminal) line and the held_terminal line, restarted 70 min later (20004.819875ms)
+✖ (9) the pending deadline: pending 24 h across a kill and restart; dead-lettered pending_deadline with the read count; held until that ack; one POST (8006.462959ms)
+✖ text: the envelope, the actor, the dedup key and the message time (0.569583ms)
+✖ the profile name falls back to the wa_id (0.093ms)
+✖ image and document: the attachment record and the saved-path block (0.0975ms)
+✖ voice note: transcribed inline (0.072417ms)
+✖ location, reaction, button reply, list reply, quick-reply button, unsupported (0.097875ms)
+✖ a failed status: provider_message_id <wamid>:status:failed and the error line (0.082291ms)
+✖ joined: "<name> joined from <last four digits>" (0.067708ms)
+✖ the marked copy carries the one marker line before the text (0.082959ms)
+✖ a reply carries reply_to_message_id from the context (0.107709ms)
+✖ (11a) accepted pending at N, the store restored below it, the log empty: no plain post; the gap on disk BEFORE the one marked copy (8028.468459ms)
+✖ (11b) as (11a) with the paste in the surviving session log: acked with no further POST, the gap still shown (8006.582083ms)
+✖ (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as (11a) (8014.159917ms)
+✖ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (8014.582667ms)
+✖ (11d2) a never-accepted entry of B, B's watermark intact, while A's gap stands: the marked path, two POSTs, the second marked (8020.297583ms)
+✖ (11e) a never-accepted entry, every watermark intact and the probe NOT FOUND: the plain post, exactly one POST (8008.931375ms)
+✖ (11f) the watermark survives compaction: an acked rid compacted away leaves the watermark, and a later restore still reads the gap (8006.647584ms)
+✖ (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before (8010.535625ms)
+✖ (11h) THE GATE r7 RULE 1: a gc-only restore WHILE THE ADAPTER RUNS drops A's newer record, B's older watermark intact: B's in-doubt entry takes the marked path, A's gap on disk before B's POST (8005.762833ms)
+✖ (11i) the all-watermark read is evidenced before (11e)'s plain post: every conversation's watermark read after the probe (8021.978042ms)
+✖ (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (8007.198834ms)
+ℹ tests 80
+ℹ suites 0
+ℹ pass 1
+ℹ fail 70
+ℹ cancelled 9
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 273230.449042
+
+✖ failing tests:
+
+test at test/deadack.test.js:49:1
+✖ (12a) a dead-letter transition whose ack fails (500, then nothing), a compaction, a SIGKILL, a restart: the dead line survives, the ack is re-sent and confirmed, no new POST (8030.141625ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/deadack.test.js:55:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/deadack.test.js:124:13
+✖ pending_deadline (8014.854208ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async pending_deadline (file:///private/tmp/wa-red/red0/test/deadack.test.js:69:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/deadack.test.js:127:28)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ in_doubt (8014.457792ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async in_doubt (file:///private/tmp/wa-red/red0/test/deadack.test.js:77:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/deadack.test.js:127:28)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/deadack.test.js:124:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/deadack.test.js:124:13
+✖ redelivery_no_route (3972.344583ms)
+  'test did not finish before its parent and was cancelled'
+
+test at test/deadack.test.js:63:1
+✖ (12b) the same across every dead reason (20002.218292ms)
+  'test timed out after 20000ms'
+
+test at test/deadack.test.js:134:1
+✖ (12c) a kill between the dead-letter file line and the dead journal line: the restart repeats the transition with no second dead-letter line, then acks (20004.521542ms)
+  'test timed out after 20000ms'
+
+test at test/deadack.test.js:124:13
+✖ held_terminal (8019.7105ms)
+  'test could not be started because its parent finished'
+
+test at test/deadack.test.js:124:13
+✖ repost_bound (8009.212084ms)
+  'test could not be started because its parent finished'
+
+test at test/deadack.test.js:124:13
+✖ rejected (8022.037542ms)
+  'test could not be started because its parent finished'
+
+test at test/deadack.test.js:124:13
+✖ no_route (8017.844958ms)
+  'test could not be started because its parent finished'
+
+test at test/evidence.test.js:14:1
+✖ FOUND: format conversation and a user turn with the header and the last id line (0.464083ms)
+  Error: not implemented
+      at probeShape (file:///private/tmp/wa-red/red0/src/evidence.js:2:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:16:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test/evidence.test.js:22:1
+✖ a format text answer is a snapshot and is NOT FOUND whatever the pane shows (the gate r6 first finding) (0.069666ms)
+  Error: not implemented
+      at probeShape (file:///private/tmp/wa-red/red0/src/evidence.js:2:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:24:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/evidence.test.js:28:1
+✖ a tool result, an assistant turn or an output turn quoting the id is NOT FOUND (0.073083ms)
+  Error: not implemented
+      at pasteFound (file:///private/tmp/wa-red/red0/src/evidence.js:4:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:34:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/evidence.test.js:37:1
+✖ a later paste whose BODY quotes the id line while its own id line names another wamid is NOT FOUND (0.062291ms)
+  Error: not implemented
+      at pasteFound (file:///private/tmp/wa-red/red0/src/evidence.js:4:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:39:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/evidence.test.js:42:1
+✖ the header must name whatsapp/<wa_id> exactly (0.062416ms)
+  Error: not implemented
+      at pasteFound (file:///private/tmp/wa-red/red0/src/evidence.js:4:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:44:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/evidence.test.js:51:1
+✖ verdicts: the terminal flag is read first; partial kept apart; no_route; unsupported (0.068708ms)
+  Error: not implemented
+      at verdictOf (file:///private/tmp/wa-red/red0/src/inbound.js:4:40)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:52:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/evidence.test.js:63:1
+✖ the read-back schedule: 5 s for 10 min, 60 s to the hour, then 5 min, no cutoff (0.048458ms)
+  Error: not implemented
+      at readbackInterval (file:///private/tmp/wa-red/red0/src/inbound.js:5:47)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/evidence.test.js:64:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/journal.test.js:19:1
+✖ the fold derives each state from the last progress line (0.624375ms)
+  Error: not implemented
+      at entryState (file:///private/tmp/wa-red/red0/src/journal.js:5:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/journal.test.js:24:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test/journal.test.js:43:1
+✖ every line is replayed in order after a restart, a torn tail dropped (0.419459ms)
+  Error: not implemented
+      at entryState (file:///private/tmp/wa-red/red0/src/journal.js:5:41)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/journal.test.js:52:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/journal.test.js:60:1
+✖ accepted lines raise the watermark; a watermark line sets it; clear and rebase (0.205125ms)
+  TypeError: Cannot read properties of undefined (reading 'sequence')
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/journal.test.js:65:53)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/journal.test.js:75:1
+✖ THE GATE r7 RULE 2: compaction drops only acknowledged rids and keeps a dead rid whose ack is unconfirmed (0.58075ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 2
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/journal.test.js:94:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/journal.test.js:114:1
+✖ the dead-letter store writes one line per rid and indexes the files at start (0.220292ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/journal.test.js:117:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test/pipeline.test.js:33:1
+✖ two senders deliver in order within each sender and independently across senders (8016.80475ms)
+  Error: timed out waiting for the ack of delivery 3
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:41:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:52:1
+✖ a 500 from gc retries on the ladder and then delivers once (8010.682542ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:57:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:65:1
+✖ a 404 retries (gc answers it during a city restart) (8010.890958ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:70:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:76:1
+✖ a 400 dead-letters one 0600 line with the envelope and the chain moves on (8013.416416ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:82:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:93:1
+✖ the ack names delivery ids, follows the accepted line on disk, and never comes on a pending verdict (8004.553834ms)
+  Error: timed out waiting for the ack of delivery 2
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:99:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:113:1
+✖ a failed-status delivery posts as <wamid>:status:failed beside the outbound record; other statuses are acked without a POST (8009.302084ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:121:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:130:3
+✖ a failed receipt reposts three times, then dead-letters and acks: four POSTs in all (8011.327666ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:135:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:130:3
+✖ a partial receipt reposts three times, then dead-letters and acks: four POSTs in all (8007.756875ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:135:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:144:1
+✖ a no_route receipt dead-letters the envelope and acks at once with no repost (8011.594ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:149:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:154:1
+✖ every acknowledged entry is compacted away; the watermark stays (8014.394833ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:158:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:164:1
+✖ a 401 stops polling and sets the doctor fact (8017.159125ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:168:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/pipeline.test.js:179:1
+✖ the journal is 0600 in a 0700 directory and holds the full envelope before the POST (8021.337583ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/pipeline.test.js:184:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:26:1
+✖ (1) killed after the poll and before the received line: the restart re-reads the held delivery; one POST (20007.353708ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:39:1
+✖ (2) killed after received and before posted: one POST (20013.345875ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:50:1
+✖ (3) killed after posted, gc recorded and pasted, before accepted, the log empty: one marked copy, one record, never a third (8016.168208ms)
+  Error: timed out waiting for the first POST
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:55:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:70:1
+✖ (3b) killed after posted with the request never reaching gc: the probe NOT FOUND, every watermark intact: exactly one plain POST (20003.467083ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:83:1
+✖ (3c) as (3) with the paste in the session log as a user turn: acked, exactly one POST (8020.411167ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:88:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:97:1
+✖ (3d) as (3) with NO log and the id only in the PANE (format text): NOT FOUND, one marked copy, never acked on the snapshot (8007.753708ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:103:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:115:1
+✖ (3e) a tool-result turn, an assistant turn and a later paste whose BODY quotes the id: NOT FOUND, the marked copy (8022.138833ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:120:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:134:1
+✖ (3f) the snapshot probe line survives a SIGKILL, a restart and a compaction (the probes row reads it) (8017.784417ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:140:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:154:1
+✖ (4) the response lost without a kill: the entry stays posted; after the grace one marked copy; two POSTs, one record, no third (8013.457625ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:159:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:168:1
+✖ (5) killed after a delivered receipt and before the ack: the restart acks from the journal with no second POST (20007.062125ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:180:1
+✖ (6) killed while the receipt was pending; gc resolves it delivered: the restart reads it back, acks, one POST (20008.829917ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:194:1
+✖ (6b) the receipt read back as unknown (gc restarted, transcript kept): the record is found, one marked copy, acked on its delivered receipt (8008.248084ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:199:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:207:1
+✖ (6c) the fork head's fan-out dedup answers the marked copy no_route (suppression), the log empty: dead-lettered redelivery_no_route, acked, never as delivered (8018.237375ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:213:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:227:1
+✖ (6d) a concluded receipt whose delivery is pending stays on the schedule; when gc forgets it the in-doubt rule sends one marked copy (8428.456833ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:232:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:243:1
+✖ (6e) the lost response without a kill never re-posts on the ladder: one POST until the grace has passed (8466.103209ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:248:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:262:1
+✖ (7a) the lookup boundary: accepted pending at N with no later message, gc restarted: found from the posted boundary (< N), one unmarked and one marked POST (8004.718333ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async acceptedBefore (file:///private/tmp/wa-red/red0/test/recovery.test.js:258:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:266:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:282:1
+✖ (7b) the same with two later messages accepted at N+1 and N+2 before the receipt was lost (8009.949875ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async acceptedBefore (file:///private/tmp/wa-red/red0/test/recovery.test.js:258:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:286:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:324:1
+✖ (7c) no_route on the marked copy, the suppression meaning, the log CARRYING the paste: acked as delivered, no dead letter, two POSTs, one paste (8009.720583ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async noRouteOnMarked (file:///private/tmp/wa-red/red0/test/recovery.test.js:317:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:325:23)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:332:1
+✖ (7d) the empty-membership meaning: the same outcome, and the two no_route answers byte-identical but for the receipt id (8021.624625ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async noRouteOnMarked (file:///private/tmp/wa-red/red0/test/recovery.test.js:317:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:333:13)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:348:1
+✖ (7e) as (7c) with the id only in the PANE: NOT FOUND, dead-lettered redelivery_no_route, acked, never as delivered (8019.414584ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async noRouteOnMarked (file:///private/tmp/wa-red/red0/test/recovery.test.js:317:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:349:23)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:357:1
+✖ (8) a failure concluding after one hour: read inside the hour after the conclusion, reposted plain, two POSTs, acked (8007.095708ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:362:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:375:1
+✖ (8b) the same with the adapter killed through the conclusion and restarted 70 min after it: unknown, the record from the posted boundary, one marked copy (8013.567916ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:380:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:395:1
+✖ (8c) the terminal hold, then unknown, then 24 h: no further POST, no read-back, the gateway holds it; resolve --dead and --delivered (8008.900959ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:401:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/recovery.test.js:421:1
+✖ (8d) the hold across a SIGKILL, and a kill between the accepted (terminal) line and the held_terminal line, restarted 70 min later (20004.819875ms)
+  'test timed out after 20000ms'
+
+test at test/recovery.test.js:443:1
+✖ (9) the pending deadline: pending 24 h across a kill and restart; dead-lettered pending_deadline with the read count; held until that ack; one POST (8006.462959ms)
+  Error: timed out waiting for condition
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/recovery.test.js:448:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:32:1
+✖ text: the envelope, the actor, the dedup key and the message time (0.569583ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:33:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)
+
+test at test/render.test.js:42:1
+✖ the profile name falls back to the wa_id (0.093ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:43:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/render.test.js:47:1
+✖ image and document: the attachment record and the saved-path block (0.0975ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:48:23)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:56:1
+✖ voice note: transcribed inline (0.072417ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:57:23)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:62:1
+✖ location, reaction, button reply, list reply, quick-reply button, unsupported (0.097875ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:63:21)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:79:1
+✖ a failed status: provider_message_id <wamid>:status:failed and the error line (0.082291ms)
+  Error: not implemented
+      at providerMessageId (file:///private/tmp/wa-red/red0/src/render.js:2:48)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:81:16)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:90:1
+✖ joined: "<name> joined from <last four digits>" (0.067708ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:91:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:96:1
+✖ the marked copy carries the one marker line before the text (0.082959ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:97:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/render.test.js:102:1
+✖ a reply carries reply_to_message_id from the context (0.107709ms)
+  Error: not implemented
+      at renderMessage (file:///private/tmp/wa-red/red0/src/render.js:10:44)
+      at render (file:///private/tmp/wa-red/red0/test/render.test.js:29:10)
+      at TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/render.test.js:103:19)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:33:1
+✖ (11a) accepted pending at N, the store restored below it, the log empty: no plain post; the gap on disk BEFORE the one marked copy (8028.468459ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:37:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/restore.test.js:59:1
+✖ (11b) as (11a) with the paste in the surviving session log: acked with no further POST, the gap still shown (8006.582083ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:63:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:75:1
+✖ (11c) the store re-issued sequence N to another id: the watermark reads behind, the same outcome as (11a) (8014.159917ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:79:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:94:1
+✖ (11d) a never-accepted entry in a conversation whose watermark reads behind: the marked path, two POSTs, the second marked (8014.582667ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:99:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:111:1
+✖ (11d2) a never-accepted entry of B, B's watermark intact, while A's gap stands: the marked path, two POSTs, the second marked (8020.297583ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:115:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:132:1
+✖ (11e) a never-accepted entry, every watermark intact and the probe NOT FOUND: the plain post, exactly one POST (8008.931375ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:135:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:147:1
+✖ (11f) the watermark survives compaction: an acked rid compacted away leaves the watermark, and a later restore still reads the gap (8006.647584ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:151:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:160:1
+✖ (11g) clear-gap prints the gap and the head, rebases the watermark; a SIGKILL and restart read no gap; a later message raises it as before (8010.535625ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:163:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:189:1
+✖ (11h) THE GATE r7 RULE 1: a gc-only restore WHILE THE ADAPTER RUNS drops A's newer record, B's older watermark intact: B's in-doubt entry takes the marked path, A's gap on disk before B's POST (8005.762833ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:193:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:216:1
+✖ (11i) the all-watermark read is evidenced before (11e)'s plain post: every conversation's watermark read after the probe (8021.978042ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:219:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/restore.test.js:237:1
+✖ (11j) the scheduled read finds a restore with no in-doubt entry anywhere and shows the gap (8007.198834ms)
+  Error: timed out waiting for the ack of delivery 1
+      at waitFor (file:///private/tmp/wa-red/red0/test/fakes.js:27:38)
+      at async deliver (file:///private/tmp/wa-red/red0/test/restore.test.js:29:3)
+      at async TestContext.<anonymous> (file:///private/tmp/wa-red/red0/test/restore.test.js:241:3)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

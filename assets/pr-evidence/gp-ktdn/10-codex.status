@@ -1,0 +1,1 @@
+codex-gate review --base origin/main --class STANDARD --model gpt-6-astra exit=0

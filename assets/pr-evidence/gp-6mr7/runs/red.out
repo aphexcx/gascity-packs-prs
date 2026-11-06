@@ -1,0 +1,5 @@
+verbs.py rc=1 on the mutated mirror; 2 FAIL lines:
+  FAIL whatsapp/skills/whatsapp/SKILL.md: verb form 'gc whatsapp inbound clear-gap <conversation>' in A's help.md
+  FAIL skill quotes the nudge (unshifted)
+RED OK
+rc=0

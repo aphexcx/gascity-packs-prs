@@ -1,0 +1,1363 @@
+# pnpm exec vitest run --reporter=verbose   (RED: the same suite against API-only stubs of src/gateway.ts, src/meta.ts, src/window.ts)
+# cwd: whatsapp/gateway   head: 11285f36597ec3ab0aedbfec9dfc3bf324a93e22   node: v24.21.0   exit: 1
+
+
+ RUN  v4.1.12 /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs-b/whatsapp/gateway
+
+ × test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a known body and secret give the known sha256= header 2ms
+   → not implemented
+ × test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a header in upper-case hex still verifies (the digest, not its spelling) 0ms
+   → not implemented
+ × test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > one tampered byte fails 0ms
+   → not implemented
+ × test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a missing header, a wrong prefix, a short digest, non-hex and a wrong secret all fail 0ms
+   → not implemented
+ × test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > the constant-time compare and the secret compare answer exactly equality 1ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > a text message: sender, wamid, Meta's timestamp, the body and the profile name 0ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > a reaction carries no text and no media 0ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > an image and a voice note carry their media id 0ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > statuses: sent and failed, with the recipient and Meta's object whole 0ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > a payload for another phone number id is counted and yields nothing 1ms
+   → not implemented
+ × test/meta.test.ts > webhook payloads (Meta's reference examples) > other objects, other fields and malformed entries are ignored, never thrown 0ms
+   → not implemented
+ × test/meta.test.ts > send bodies (Meta's documented shapes) > text, reaction and template 0ms
+   → not implemented
+ × test/meta.test.ts > send bodies (Meta's documented shapes) > mark-as-read carries the typing indicator 0ms
+   → not implemented
+ × test/meta.test.ts > the Graph client > send posts to /<version>/<phone number id>/messages with the token and returns the wamid 0ms
+   → not implemented
+ × test/meta.test.ts > the Graph client > a Graph error becomes a GraphError with Meta's status and code; a network failure has status 0 1ms
+   → expected Error: not implemented to be an instance of GraphError
+ × test/meta.test.ts > the Graph client > an answer without a message id is an error, never an empty wamid 1ms
+   → expected Error: not implemented to be an instance of GraphError
+ × test/meta.test.ts > the Graph client > mark-as-read posts the read body 0ms
+   → not implemented
+ × test/meta.test.ts > the Graph client > media: mints the URL for the phone number id, then fetches the bytes with the token 0ms
+   → not implemented
+ × test/meta.test.ts > the Graph client > media: a URL that is not https is refused before the token is sent 0ms
+   → expected Error: not implemented to be an instance of GraphError
+ × test/meta.test.ts > the 24-hour window (120-second margin) > closes at last inbound + 24 h - 120 s; null when the phone never wrote 0ms
+   → not implemented
+ × test/meta.test.ts > the 24-hour window (120-second margin) > open strictly before the close, closed at and after it, closed when the phone never wrote 0ms
+   → not implemented
+ × test/meta.test.ts > the 24-hour window (120-second margin) > a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not 1ms
+   → not implemented
+ × test/gateway.test.ts > Meta side: the verify handshake > echoes hub.challenge only for the verify token 5ms
+   → expected 501 to be 200 // Object.is equality
+ × test/gateway.test.ts > Meta side: the verify handshake > refuses the handshake while no verify token is configured 0ms
+   → expected 501 to be 403 // Object.is equality
+ × test/gateway.test.ts > Meta side: the signature > a tampered byte answers 401 and stores nothing 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: the signature > a missing header answers 401 and stores nothing 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: the signature > a body over 1.9 MB answers 413 1ms
+   → expected 501 to be 413 // Object.is equality
+ × test/gateway.test.ts > Meta side: routing by phone > a payload for another phone number id is dropped and counted 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a bound sender's text lands in exactly its city's inbox and in no other 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a live invite code binds the phone, marks the code used, appends the joined entry and sends the welcome once 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a payload carrying the invite text twice binds once and welcomes once 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > an unknown sender gets the canned line once and silence on the next message within 7 days 1ms
+   → not implemented
+ × test/gateway.test.ts > Meta side: routing by phone > a Meta redelivery of the same wamid yields one delivery 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a payload too big for one D1 batch lands whole, every message once 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > an invite text whose welcome send fails still binds and answers 200; its redelivery is one row and no second bind 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > a phone bound to one city texting another city's code stays put; the code stays live 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > minting a new invite code retires the city's previous live one 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > an invite code expires after 24 hours 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: routing by phone > five wrong codes in a day stop a phone's code attempts, the right one included 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: invite-code edges > a wrong-code text Meta redelivers is one attempt, not two 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Meta side: invite-code edges > an invite text Meta stamped before the code expired binds on a redelivery after the expiry 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a poll with no after returns every unacknowledged delivery again, oldest first 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > after and limit page the held deliveries; an empty page keeps the cursor 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ack deletes exactly the listed ids and leaves an unlisted earlier id in the inbox 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > HOLD: a delivery is held, body and all, and returned by every poll until the ack names its id 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ACK OF A DELETED ID: an ack for an id the cron already deleted is a no-op 200 2ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > REPEATED ACK: acking an id an earlier ack already deleted is the same no-op, and touches nothing else 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an ack naming another city's id is a no-op for it: the other city still holds it 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a malformed ack answers 400 and deletes nothing 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a delivery never acknowledged survives the ack of other ids until the cron deletes it at 7 days 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an acknowledged wamid redelivered by Meta is still one row: no second delivery 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > over 5,000 held for one city Meta gets 503 and nothing is stored; below it again, 200 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the inbox, the hold and the ack by id > the cron deletes bodies older than 7 days and keeps phones 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: statuses of the city's sends > sent, delivered and read for one wamid land as three status rows; a redelivery of one makes no fourth 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: statuses of the city's sends > a status for a wamid no city sent reaches no city 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > a send to an unbound phone, or to another city's phone, answers 403 without a Graph call 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > a repeated idempotency_key makes one Graph call and answers the same message_id 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > the same idempotency_key in two cities is two sends (the key is per city) 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > Meta's own outside-window answer (131047) reads window_closed 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: send > refuses malformed sends with 400 and over-long text with text_too_long 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > a text just before the close sends; at the close and at 24h01 it answers window_closed without a Graph call 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > a template at 24h01 sends and leaves the window closed; the owner's next message reopens it 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > GET /v1/window: close = last inbound + 24 h - 120 s, moves on the owner's message, not on any send; null for a phone that never wrote; no other city's phone 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement) 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > a system notice is delivered but does not move the window 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: the 24-hour window > Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: read, media > read marks a delivered message read with the typing indicator; another city's message is 404 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > City side: read, media > media streams the bytes with Meta's mime type to its city; another city's media id is 404 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Credentials and enrollment > enroll mints a city and one credential for a live code, once; a used code is 403 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Credentials and enrollment > an unknown or expired enrollment code is 403; a malformed enroll is 400 0ms
+   → expected 501 to be 403 // Object.is equality
+ × test/gateway.test.ts > Credentials and enrollment > a revoked credential is 401; so are an unknown one and none 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Credentials and enrollment > admin routes need ADMIN_TOKEN; an unset admin token opens nothing 0ms
+   → expected 501 to be 401 // Object.is equality
+ × test/gateway.test.ts > Credentials and enrollment > admin cities lists counts and the last four digits of each phone, never a number in clear 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Health, logs, the entry point > healthz answers ok, the held total and the last webhook time, with no phone and no body 1ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Health, logs, the entry point > no log line carries a phone number, a message body, a token or a secret 0ms
+   → enroll-codes answered 501
+ × test/gateway.test.ts > Health, logs, the entry point > the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret 2ms
+   → not implemented
+ × test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route 2ms
+   → expected 501 to be 200 // Object.is equality
+
+ Test Files  2 failed (2)
+      Tests  84 failed (84)
+   Start at  13:07:18
+   Duration  459ms (transform 70ms, setup 56ms, import 110ms, tests 29ms, environment 0ms)
+
+pnpm wrapper: verify-deps off for exec (round 3)
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 84 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/gateway.test.ts > Meta side: the verify handshake > echoes hub.challenge only for the verify token
+AssertionError: expected 501 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 501
+
+ ❯ test/gateway.test.ts:19:23
+     17|     const t = setup();
+     18|     const ok = await t.call("GET", `/meta/webhook?hub.mode=subscribe&h…
+     19|     expect(ok.status).toBe(200);
+       |                       ^
+     20|     expect(ok.body).toBe("1158201444");
+     21|     const bad = await t.call("GET", "/meta/webhook?hub.mode=subscribe&…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: the verify handshake > refuses the handshake while no verify token is configured
+AssertionError: expected 501 to be 403 // Object.is equality
+
+- Expected
++ Received
+
+- 403
++ 501
+
+ ❯ test/gateway.test.ts:30:22
+     28|     const t = setup({ config: { metaVerifyToken: "" } });
+     29|     const r = await t.call("GET", "/meta/webhook?hub.mode=subscribe&hu…
+     30|     expect(r.status).toBe(403);
+       |                      ^
+     31|   });
+     32| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: the signature > a tampered byte answers 401 and stores nothing
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:37:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: the signature > a missing header answers 401 and stores nothing
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:59:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: the signature > a body over 1.9 MB answers 413
+AssertionError: expected 501 to be 413 // Object.is equality
+
+- Expected
++ Received
+
+- 413
++ 501
+
+ ❯ test/gateway.test.ts:71:22
+     69|     const big = new Uint8Array(MAX_BODY_BYTES + 1).fill(0x20);
+     70|     const r = await t.call("POST", "/meta/webhook", { raw: big, header…
+     71|     expect(r.status).toBe(413);
+       |                      ^
+     72|   });
+     73| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a payload for another phone number id is dropped and counted
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:78:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a bound sender's text lands in exactly its city's inbox and in no other
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:92:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a live invite code binds the phone, marks the code used, appends the joined entry and sends the welcome once
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:108:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a payload carrying the invite text twice binds once and welcomes once
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:134:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > an unknown sender gets the canned line once and silence on the next message within 7 days
+Error: not implemented
+ ❯ signatureHeader src/meta.ts:63:9
+     61| }
+     62| export async function signatureHeader(_raw: Uint8Array, _secret: strin…
+     63|   throw new Error("not implemented");
+       |         ^
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+ ❯ webhook test/harness.ts:267:52
+ ❯ Object.say test/harness.ts:276:23
+ ❯ test/gateway.test.ts:149:13
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a Meta redelivery of the same wamid yields one delivery
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:163:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a message Meta stamped longer ago than any dedup row lives (8 days) is dropped and counted; 7.5 days old still lands
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:174:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a payload too big for one D1 batch lands whole, every message once
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:189:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a split payload whose second batch fails: one message's bind is never cut in two, and the redelivery binds once and welcomes once
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:207:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a webhook whose D1 write fails answers 500 with nothing stored, and its redelivery yields one row
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:247:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > an invite text whose welcome send fails still binds and answers 200; its redelivery is one row and no second bind
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:271:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > a phone bound to one city texting another city's code stays put; the code stays live
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:291:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > minting a new invite code retires the city's previous live one
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:305:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > an invite code expires after 24 hours
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:318:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: routing by phone > five wrong codes in a day stop a phone's code attempts, the right one included
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:329:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: invite-code edges > a wrong-code text Meta redelivers is one attempt, not two
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:348:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/84]⎯
+
+ FAIL  test/gateway.test.ts > Meta side: invite-code edges > an invite text Meta stamped before the code expired binds on a redelivery after the expiry
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:363:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a poll with no after returns every unacknowledged delivery again, oldest first
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:381:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > after and limit page the held deliveries; an empty page keeps the cursor
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:397:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ack deletes exactly the listed ids and leaves an unlisted earlier id in the inbox
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:413:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > HOLD: a delivery is held, body and all, and returned by every poll until the ack names its id
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:426:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > ACK OF A DELETED ID: an ack for an id the cron already deleted is a no-op 200
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:442:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > REPEATED ACK: acking an id an earlier ack already deleted is the same no-op, and touches nothing else
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:460:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an ack naming another city's id is a no-op for it: the other city still holds it
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:474:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a malformed ack answers 400 and deletes nothing
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:485:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > a delivery never acknowledged survives the ack of other ids until the cron deletes it at 7 days
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:495:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > an acknowledged wamid redelivered by Meta is still one row: no second delivery
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:514:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > over 5,000 held for one city Meta gets 503 and nothing is stored; below it again, 200
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:526:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the inbox, the hold and the ack by id > the cron deletes bodies older than 7 days and keeps phones
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:547:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: statuses of the city's sends > sent, delivered and read for one wamid land as three status rows; a redelivery of one makes no fourth
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:564:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: statuses of the city's sends > a status for a wamid no city sent reaches no city
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:580:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[36/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > a send to an unbound phone, or to another city's phone, answers 403 without a Graph call
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:591:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[37/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > a repeated idempotency_key makes one Graph call and answers the same message_id
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:605:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[38/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > the same idempotency_key in two cities is two sends (the key is per city)
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:619:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[39/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > Meta's refusal (a 4xx answer) records nothing, so a retry under the same key sends
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:631:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[40/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > an outcome Meta never confirmed (no answer, a 5xx) spends the key: its repeat answers outcome_unknown with no second Graph call
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:645:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[41/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > Meta's own outside-window answer (131047) reads window_closed
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:664:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[42/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > a key whose first request is still at Meta answers 409 in_flight; a claim abandoned past 60 s reads outcome_unknown and is never sent again
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:674:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[43/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > a status Meta delivers before the send has recorded its wamid is held apart, then adopted into the city by that send
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:693:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[44/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: send > refuses malformed sends with 400 and over-long text with text_too_long
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:716:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[45/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > a text just before the close sends; at the close and at 24h01 it answers window_closed without a Graph call
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:742:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[46/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > a template at 24h01 sends and leaves the window closed; the owner's next message reopens it
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:765:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[47/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > GET /v1/window: close = last inbound + 24 h - 120 s, moves on the owner's message, not on any send; null for a phone that never wrote; no other city's phone
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:787:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[48/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement)
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:820:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[49/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > a system notice is delivered but does not move the window
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:832:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[50/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: the 24-hour window > Meta's timestamp drives the clock: a redelivery hours late does not stretch the window, a timestamp ahead of the gateway's clock is clamped
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:847:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[51/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: read, media > read marks a delivered message read with the typing indicator; another city's message is 404
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:860:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[52/84]⎯
+
+ FAIL  test/gateway.test.ts > City side: read, media > media streams the bytes with Meta's mime type to its city; another city's media id is 404
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:874:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[53/84]⎯
+
+ FAIL  test/gateway.test.ts > Credentials and enrollment > enroll mints a city and one credential for a live code, once; a used code is 403
+Error: enroll-codes answered 501
+ ❯ Object.enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ test/gateway.test.ts:896:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[54/84]⎯
+
+ FAIL  test/gateway.test.ts > Credentials and enrollment > an unknown or expired enrollment code is 403; a malformed enroll is 400
+AssertionError: expected 501 to be 403 // Object.is equality
+
+- Expected
++ Received
+
+- 403
++ 501
+
+ ❯ test/gateway.test.ts:909:111
+    907|   it("an unknown or expired enrollment code is 403; a malformed enroll…
+    908|     const t = setup();
+    909|     expect((await t.call("POST", "/v1/enroll", { body: { code: "AAAA-B…
+       |                                                                                                               ^
+    910|     const code = await t.enrollCode("Late City");
+    911|     t.clock.now += 3 * DAY;
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[55/84]⎯
+
+ FAIL  test/gateway.test.ts > Credentials and enrollment > a revoked credential is 401; so are an unknown one and none
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:919:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[56/84]⎯
+
+ FAIL  test/gateway.test.ts > Credentials and enrollment > admin routes need ADMIN_TOKEN; an unset admin token opens nothing
+AssertionError: expected 501 to be 401 // Object.is equality
+
+- Expected
++ Received
+
+- 401
++ 501
+
+ ❯ test/gateway.test.ts:932:99
+    930|   it("admin routes need ADMIN_TOKEN; an unset admin token opens nothin…
+    931|     const t = setup();
+    932|     expect((await t.call("POST", "/v1/admin/enroll-codes", { body: { c…
+       |                                                                                                   ^
+    933|     expect((await t.call("POST", "/v1/admin/enroll-codes", { token: "w…
+    934|     const unset = setup({ config: { adminToken: "" } });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[57/84]⎯
+
+ FAIL  test/gateway.test.ts > Credentials and enrollment > admin cities lists counts and the last four digits of each phone, never a number in clear
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:945:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[58/84]⎯
+
+ FAIL  test/gateway.test.ts > Health, logs, the entry point > healthz answers ok, the held total and the last webhook time, with no phone and no body
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:958:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[59/84]⎯
+
+ FAIL  test/gateway.test.ts > Health, logs, the entry point > no log line carries a phone number, a message body, a token or a secret
+Error: enroll-codes answered 501
+ ❯ enrollCode test/harness.ts:254:33
+    252|   async function enrollCode(cityName: string): Promise<string> {
+    253|     const r = await admin("POST", "/v1/admin/enroll-codes", { city_nam…
+    254|     if (r.status !== 200) throw new Error(`enroll-codes answered ${r.s…
+       |                                 ^
+    255|     return r.body.code as string;
+    256|   }
+ ❯ Object.enrollCity test/harness.ts:259:18
+ ❯ test/gateway.test.ts:972:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[60/84]⎯
+
+ FAIL  test/gateway.test.ts > Health, logs, the entry point > the Worker entry's own console lines (a webhook, a refused handshake, the cron) carry no phone, body, token or secret
+Error: not implemented
+ ❯ signatureHeader src/meta.ts:63:9
+     61| }
+     62| export async function signatureHeader(_raw: Uint8Array, _secret: strin…
+     63|   throw new Error("not implemented");
+       |         ^
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+ ❯ test/gateway.test.ts:1018:51
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[61/84]⎯
+
+ FAIL  test/gateway.test.ts > Health, logs, the entry point > the Worker entry answers healthz, the handshake with its configured secret, and 404 on an unknown route
+AssertionError: expected 501 to be 200 // Object.is equality
+
+- Expected
++ Received
+
+- 200
++ 501
+
+ ❯ test/gateway.test.ts:1038:27
+    1036|   it("the Worker entry answers healthz, the handshake with its configu…
+    1037|     const health = await SELF.fetch("https://whatsapp.dynasty.computer…
+    1038|     expect(health.status).toBe(200);
+       |                           ^
+    1039|     expect(((await health.json()) as { ok: boolean }).ok).toBe(true);
+    1040|     const hs = await SELF.fetch(`https://whatsapp.dynasty.computer/met…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[62/84]⎯
+
+ FAIL  test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a known body and secret give the known sha256= header
+Error: not implemented
+ ❯ signatureHeader src/meta.ts:63:9
+     61| }
+     62| export async function signatureHeader(_raw: Uint8Array, _secret: strin…
+     63|   throw new Error("not implemented");
+       |         ^
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+ ❯ test/meta.test.ts:40:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[63/84]⎯
+
+ FAIL  test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a header in upper-case hex still verifies (the digest, not its spelling)
+Error: not implemented
+ ❯ verifySignature src/meta.ts:66:9
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+     66|   throw new Error("not implemented");
+       |         ^
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+ ❯ test/meta.test.ts:46:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[64/84]⎯
+
+ FAIL  test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > one tampered byte fails
+Error: not implemented
+ ❯ verifySignature src/meta.ts:66:9
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+     66|   throw new Error("not implemented");
+       |         ^
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+ ❯ test/meta.test.ts:52:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[65/84]⎯
+
+ FAIL  test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > a missing header, a wrong prefix, a short digest, non-hex and a wrong secret all fail
+Error: not implemented
+ ❯ verifySignature src/meta.ts:66:9
+     64| }
+     65| export async function verifySignature(_raw: Uint8Array, _header: strin…
+     66|   throw new Error("not implemented");
+       |         ^
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+ ❯ test/meta.test.ts:57:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[66/84]⎯
+
+ FAIL  test/meta.test.ts > signature (X-Hub-Signature-256 over the raw bytes) > the constant-time compare and the secret compare answer exactly equality
+Error: not implemented
+ ❯ timingSafeEqual src/meta.ts:54:9
+     52|
+     53| export function timingSafeEqual(_a: Uint8Array, _b: Uint8Array): boole…
+     54|   throw new Error("not implemented");
+       |         ^
+     55| }
+     56| export async function sha256Hex(_text: string): Promise<string> {
+ ❯ test/meta.test.ts:67:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[67/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > a text message: sender, wamid, Meta's timestamp, the body and the profile name
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:79:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[68/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > a reaction carries no text and no media
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:97:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[69/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > an image and a voice note carry their media id
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:105:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[70/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > statuses: sent and failed, with the recipient and Meta's object whole
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:112:18
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[71/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > a payload for another phone number id is counted and yields nothing
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:126:15
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[72/84]⎯
+
+ FAIL  test/meta.test.ts > webhook payloads (Meta's reference examples) > other objects, other fields and malformed entries are ignored, never thrown
+Error: not implemented
+ ❯ parseWebhook src/meta.ts:69:9
+     67| }
+     68| export function parseWebhook(_payload: unknown, _phoneNumberId: string…
+     69|   throw new Error("not implemented");
+       |         ^
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+ ❯ test/meta.test.ts:132:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[73/84]⎯
+
+ FAIL  test/meta.test.ts > send bodies (Meta's documented shapes) > text, reaction and template
+Error: not implemented
+ ❯ sendBody src/meta.ts:72:9
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+     72|   throw new Error("not implemented");
+       |         ^
+     73| }
+     74| export function readBody(_messageId: string): Record<string, unknown> {
+ ❯ test/meta.test.ts:146:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[74/84]⎯
+
+ FAIL  test/meta.test.ts > send bodies (Meta's documented shapes) > mark-as-read carries the typing indicator
+Error: not implemented
+ ❯ readBody src/meta.ts:75:9
+     73| }
+     74| export function readBody(_messageId: string): Record<string, unknown> {
+     75|   throw new Error("not implemented");
+       |         ^
+     76| }
+     77| export async function graphSend(_g: GraphClient, _body: Record<string,…
+ ❯ test/meta.test.ts:176:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[75/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > send posts to /<version>/<phone number id>/messages with the token and returns the wamid
+Error: not implemented
+ ❯ sendBody src/meta.ts:72:9
+     70| }
+     71| export function sendBody(_to: string, _req: SendRequest): Record<strin…
+     72|   throw new Error("not implemented");
+       |         ^
+     73| }
+     74| export function readBody(_messageId: string): Record<string, unknown> {
+ ❯ test/meta.test.ts:196:52
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[76/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > a Graph error becomes a GraphError with Meta's status and code; a network failure has status 0
+AssertionError: expected Error: not implemented to be an instance of GraphError
+ ❯ test/meta.test.ts:206:19
+    204|     g.failNext({ status: 400, body: { error: { code: 131047, message: …
+    205|     const first = await graphSend(client(g.fetch), {}).catch((e: unkno…
+    206|     expect(first).toBeInstanceOf(GraphError);
+       |                   ^
+    207|     expect(first).toMatchObject({ status: 400, code: 131047 });
+    208|     const second = await graphSend(client(g.fetch), {}).catch((e: unkn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[77/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > an answer without a message id is an error, never an empty wamid
+AssertionError: expected Error: not implemented to be an instance of GraphError
+ ❯ test/meta.test.ts:214:47
+    212|   it("an answer without a message id is an error, never an empty wamid…
+    213|     const fetch = (async () => Response.json({ messages: [] })) as unk…
+    214|     await expect(graphSend(client(fetch), {})).rejects.toBeInstanceOf(…
+       |                                               ^
+    215|   });
+    216|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[78/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > mark-as-read posts the read body
+Error: not implemented
+ ❯ graphMarkRead src/meta.ts:81:9
+     79| }
+     80| export async function graphMarkRead(_g: GraphClient, _messageId: strin…
+     81|   throw new Error("not implemented");
+       |         ^
+     82| }
+     83| export async function graphMedia(_g: GraphClient, _mediaId: string): P…
+ ❯ test/meta.test.ts:219:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[79/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > media: mints the URL for the phone number id, then fetches the bytes with the token
+Error: not implemented
+ ❯ graphMedia src/meta.ts:84:9
+     82| }
+     83| export async function graphMedia(_g: GraphClient, _mediaId: string): P…
+     84|   throw new Error("not implemented");
+       |         ^
+     85| }
+     86|
+ ❯ test/meta.test.ts:226:23
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[80/84]⎯
+
+ FAIL  test/meta.test.ts > the Graph client > media: a URL that is not https is refused before the token is sent
+AssertionError: expected Error: not implemented to be an instance of GraphError
+ ❯ test/meta.test.ts:240:51
+    238|       return Response.json({ url: "http://evil.example/x", mime_type: …
+    239|     }) as unknown as typeof globalThis.fetch;
+    240|     await expect(graphMedia(client(fetch), "777")).rejects.toBeInstanc…
+       |                                                   ^
+    241|     expect(calls).toHaveLength(1);
+    242|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[81/84]⎯
+
+ FAIL  test/meta.test.ts > the 24-hour window (120-second margin) > closes at last inbound + 24 h - 120 s; null when the phone never wrote
+Error: not implemented
+ ❯ windowClosesAt src/window.ts:6:9
+      4|
+      5| export function windowClosesAt(_lastInboundAt: number | null): number …
+      6|   throw new Error("not implemented");
+       |         ^
+      7| }
+      8|
+ ❯ test/meta.test.ts:248:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[82/84]⎯
+
+ FAIL  test/meta.test.ts > the 24-hour window (120-second margin) > open strictly before the close, closed at and after it, closed when the phone never wrote
+Error: not implemented
+ ❯ windowOpen src/window.ts:10:9
+      8|
+      9| export function windowOpen(_lastInboundAt: number | null, _now: number…
+     10|   throw new Error("not implemented");
+       |         ^
+     11| }
+     12|
+ ❯ test/meta.test.ts:254:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[83/84]⎯
+
+ FAIL  test/meta.test.ts > the 24-hour window (120-second margin) > a customer message moves it, a reaction included; a system notice, an unsupported and an unknown type do not
+Error: not implemented
+ ❯ movesWindow src/window.ts:14:9
+     12|
+     13| export function movesWindow(_messageType: string): boolean {
+     14|   throw new Error("not implemented");
+       |         ^
+     15| }
+     16|
+ ❯ test/meta.test.ts:263:14
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[84/84]⎯

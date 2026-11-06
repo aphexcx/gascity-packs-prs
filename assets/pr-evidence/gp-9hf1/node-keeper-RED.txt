@@ -1,0 +1,288 @@
+✖ (10a) no hours: the four nudges fire at the close minus 60, 30, 15 and 5 (06:58 07:28 07:43 07:53 for a close at 07:58), each once, is_bot true (6.699542ms)
+✖ (10b) an inbound between the 60 and the 30 cancels the old close, empties the fired set, and the new close fires 06:08 06:38 06:53 07:03 (1.318583ms)
+✖ (10c) hours shift: close at 02:00 under Mon-Fri 09:00-18:00 fires 17:00 17:30 17:45 17:55 the day before, shifted text (0.879792ms)
+✖ (10c) hours unshifted: the owner wrote 09:30 Tue, close 09:28 Wed: the 60 and 30 drop, the 15 and 5 fire at 09:13 and 09:23 (0.777375ms)
+✖ (10c) hours crossing midnight: 18:00-02:00 and a close at 03:00 fire 01:00 01:30 01:45 01:55 (0.791917ms)
+✖ (10c) hours, no span before the close: a close on Saturday under Mon-Fri 09:00-18:00 raises no mark and counts one lapse (0.587583ms)
+✖ (10c) quiet rule: the business wrote 16:20 Fri after the 16:00 update, so no ladder mark that day (0.616541ms)
+✖ (10d) no nudge after the close: one lapse, the next update says "Window closed since 07:58", a refused nudge is counted, no template sent (0.645625ms)
+✖ (10d) a keeper down across the close raises no overdue nudge after it and counts one lapse (0.656666ms)
+✖ (10e) no hours: the daily update fires once per local day at 10:00 in the recorded zone, else the city's (0.591ms)
+✖ (10e) hours: the daily update fires two hours before the close of business (16:00 under 09:00-18:00), clamped inside a short span, none on Sunday (0.542416ms)
+✖ (10e) a SIGKILL between the update's state write and its post, then a restart the same day: the update is never raised twice (0.553709ms)
+✖ (10e) the update posted, then a SIGKILL and a restart the same day: not raised again (1.46875ms)
+✖ (10f) a SIGKILL between the 30 and the 15 marks and a restart: the 15 and the 5 fire, the 60 and the 30 do not fire again (0.6175ms)
+✖ (10f) a SIGKILL between the 30's state write and its post: the 30 is lost and never raised twice; the 15 and the 5 fire after the restart (0.659125ms)
+✖ (10g) without recorded consent: no event at all through a whole window and the next day's update hour (0.538ms)
+✖ (10g) consent --off mid-window stops the remaining marks; --on resumes from the next mark (0.517416ms)
+✖ (10h) a keeper event answered 500 is retried on the ladder in clock time (+1 s, +5 s) until delivered (1.237541ms)
+✖ (10h) an event answered no_route, answered 400 or dropped with no answer is counted on the keeper row and never re-raised for that mark (0.664334ms)
+✖ (10h) a keeper event answered 500 every time is dropped after the ladder (1, 5, 15, 60 s) and counted (0.623666ms)
+✖ (zoned) business hours parse: day ranges, lists, midnight crossing, inherited days (0.049791ms)
+✖ (zoned) bad business hours and bad zones are refused with a clear message (0.323375ms)
+✖ (zoned) a wall time to an instant: plain, a DST gap moves forward, a DST fold takes the earlier (0.05475ms)
+ℹ tests 23
+ℹ suites 0
+ℹ pass 0
+ℹ fail 23
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 74.892875
+
+✖ failing tests:
+
+test at test/keeper.test.js:246:1
+✖ (10a) no hours: the four nudges fire at the close minus 60, 30, 15 and 5 (06:58 07:28 07:43 07:53 for a close at 07:58), each once, is_bot true (6.699542ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:252:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at test/keeper.test.js:285:1
+✖ (10b) an inbound between the 60 and the 30 cancels the old close, empties the fired set, and the new close fires 06:08 06:38 06:53 07:03 (1.318583ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:293:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:331:1
+✖ (10c) hours shift: close at 02:00 under Mon-Fri 09:00-18:00 fires 17:00 17:30 17:45 17:55 the day before, shifted text (0.879792ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:337:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:360:1
+✖ (10c) hours unshifted: the owner wrote 09:30 Tue, close 09:28 Wed: the 60 and 30 drop, the 15 and 5 fire at 09:13 and 09:23 (0.777375ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:366:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:384:1
+✖ (10c) hours crossing midnight: 18:00-02:00 and a close at 03:00 fire 01:00 01:30 01:45 01:55 (0.791917ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:390:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:410:1
+✖ (10c) hours, no span before the close: a close on Saturday under Mon-Fri 09:00-18:00 raises no mark and counts one lapse (0.587583ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:416:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:432:1
+✖ (10c) quiet rule: the business wrote 16:20 Fri after the 16:00 update, so no ladder mark that day (0.616541ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:438:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:465:1
+✖ (10d) no nudge after the close: one lapse, the next update says "Window closed since 07:58", a refused nudge is counted, no template sent (0.645625ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:471:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:497:1
+✖ (10d) a keeper down across the close raises no overdue nudge after it and counts one lapse (0.656666ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:503:19)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:519:1
+✖ (10e) no hours: the daily update fires once per local day at 10:00 in the recorded zone, else the city's (0.591ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:524:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:543:1
+✖ (10e) hours: the daily update fires two hours before the close of business (16:00 under 09:00-18:00), clamped inside a short span, none on Sunday (0.542416ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:547:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:559:1
+✖ (10e) a SIGKILL between the update's state write and its post, then a restart the same day: the update is never raised twice (0.553709ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:563:5)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:585:1
+✖ (10e) the update posted, then a SIGKILL and a restart the same day: not raised again (1.46875ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:589:5)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:602:1
+✖ (10f) a SIGKILL between the 30 and the 15 marks and a restart: the 15 and the 5 fire, the 60 and the 30 do not fire again (0.6175ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:608:5)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:626:1
+✖ (10f) a SIGKILL between the 30's state write and its post: the 30 is lost and never raised twice; the 15 and the 5 fire after the restart (0.659125ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:632:5)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:654:1
+✖ (10g) without recorded consent: no event at all through a whole window and the next day's update hour (0.538ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:660:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:674:1
+✖ (10g) consent --off mid-window stops the remaining marks; --on resumes from the next mark (0.517416ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:680:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:701:1
+✖ (10h) a keeper event answered 500 is retried on the ladder in clock time (+1 s, +5 s) until delivered (1.237541ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:709:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:723:1
+✖ (10h) an event answered no_route, answered 400 or dropped with no answer is counted on the keeper row and never re-raised for that mark (0.664334ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:732:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:743:1
+✖ (10h) a keeper event answered 500 every time is dropped after the ladder (1, 5, 15, 60 s) and counted (0.623666ms)
+  Error: keeper.js not implemented
+      at createKeeper (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/keeper.js:3:9)
+      at Object.make (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:146:31)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:749:20)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:762:1
+✖ (zoned) business hours parse: day ranges, lists, midnight crossing, inherited days (0.049791ms)
+  Error: zoned.js not implemented
+      at todo (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/zoned.js:2:28)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:763:20)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at test/keeper.test.js:776:1
+✖ (zoned) bad business hours and bad zones are refused with a clear message (0.323375ms)
+  AssertionError [ERR_ASSERTION]: refuses ""
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:778:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: Error: zoned.js not implemented
+        at todo (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/zoned.js:2:28)
+        at file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:778:25
+        at getActual (node:assert:611:5)
+        at strict.throws (node:assert:759:24)
+        at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:778:12)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+        at Test.postRun (node:internal/test_runner/test:1542:19)
+        at Test.run (node:internal/test_runner/test:1467:12),
+    expected: /hours/,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at test/keeper.test.js:793:1
+✖ (zoned) a wall time to an instant: plain, a DST gap moves forward, a DST fold takes the earlier (0.05475ms)
+  Error: zoned.js not implemented
+      at todo (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/src/zoned.js:2:28)
+      at TestContext.<anonymous> (file:///Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/adapter/test/keeper.test.js:802:21)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
