@@ -702,21 +702,20 @@ export function createGateway(deps: Deps) {
         // Meta stamped after the id's last unbind (a text the owner sent while bound elsewhere is
         // that binding's, never a new one's: the design note's T8). The number beside it never
         // matters: a phone number Meta pairs with a new user id is no claim on it (no adoption,
-        // point 5). The row's wa_id holds no number (the mark shows one); its conversation_id is
-        // the wa_id, unless that number is already another owner's conversation_id (a recycled
-        // number), else the user_id (README rule 1). It answers to the id from this text's stamp. The rows below
-        // find it by the wamid that bound it.
+        // point 5). The row holds no number (the mark shows one), and its conversation_id is the
+        // user id, never the number (gp-g02t; README rule 1): a number names its owner only while
+        // that owner is bound and no one else shows it, so a key taken from one would outlive the
+        // owner and be handed to whoever binds on that number next. It answers to the id from this
+        // text's stamp. The rows below find it by the wamid that bound it.
         const bindIndex = push(
           db
             .prepare(
               `INSERT INTO phones (conversation_id, wa_id, user_id, username, city_id, profile_name, bound_at, bound_wamid, last_inbound_at, bound_stamp)
-               SELECT k.id, NULL, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?10
-               FROM invite_codes i,
-                    (SELECT CASE WHEN ?1 IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phones WHERE conversation_id = ?1)
-                                 THEN ?1 ELSE ?2 END AS id) k
+               SELECT ?2, NULL, ?2, ?3, i.city_id, ?4, ?5, ?6, ?7, ?10
+               FROM invite_codes i
                WHERE i.code = ?8 AND i.used_at IS NULL AND i.expires_at > ?7
                  AND COALESCE((SELECT code_attempts FROM unknown_senders WHERE sender_key = ?2), 0) <= ?9
-                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = k.id)
+                 AND NOT EXISTS (SELECT 1 FROM phones p WHERE p.conversation_id = ?2)
                  AND ${stranger("?2", "?10")}
                ON CONFLICT DO NOTHING`,
             )
@@ -1044,8 +1043,9 @@ export function createGateway(deps: Deps) {
     if (prior) return repeatAnswer(prior, now);
     // A `to` naming two owners (one's conversation_id, kept from a phone number it no longer
     // holds, and the number another shows now: a recycled number) is refused, and nothing is
-    // sent: the box may mean either, and a guess hands one owner's message to the other. The box
-    // resends to the owner's current id. (gp-0g2s; the mayor's rule R1.)
+    // sent: the box may mean either, and a guess hands one owner's message to the other. A box
+    // may resend to the owner's current id; the pack's adapter sends to user ids from GET
+    // /v1/window and never names a number (gp-g02t). (gp-0g2s; the mayor's rule R1.)
     // The box files an owner under its conversation_id, so the answer names the owner `to` keys by
     // its current user_id (null when it has none), and the box can resend at once; GET /v1/window
     // shows the same id. Both rows are this city's own owners; the answer carries neither the

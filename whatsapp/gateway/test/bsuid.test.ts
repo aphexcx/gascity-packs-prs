@@ -51,6 +51,20 @@ async function owners(...ids: string[]) {
   return results;
 }
 
+/**
+ * An owner keyed by its phone number P that also answers to a user id, the shape the 409 rule
+ * (rule 7) guards, written straight to D1 with its mark. Since gp-g02t no binding this code makes
+ * is keyed by a number (rule 1: the user id); PR 73's rows are, and a test of the rule seeds one.
+ */
+async function numberKeyed(cityId: string, p: string, user: string, at: number) {
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO phones (conversation_id, wa_id, user_id, city_id, bound_at, bound_wamid, bound_stamp) VALUES (?, NULL, ?, ?, ?, ?, ?)",
+    ).bind(p, user, cityId, at, `wamid.${uniq()}`, at),
+    env.DB.prepare("INSERT INTO marks (number, user_id, stamp) VALUES (?, ?, ?)").bind(p, user, at),
+  ]);
+}
+
 describe("BSUID: binding and routing", () => {
   it("an invite text carrying only a user_id binds the owner by it, welcomes it at the BSUID in `recipient`, and its messages reach only that city", async () => {
     const t = setup();
@@ -85,7 +99,7 @@ describe("BSUID: binding and routing", () => {
     expect((await t.window(a)).body.windows).toEqual([{ conversation_id: user, user_id: user, last_inbound_at: T0, window_closes_at: T0 + CLOSE }]);
   });
 
-  it("an owner bound with both ids is one row keyed by its wa_id, welcomed at its user id; a later message carrying only its user_id routes to it and moves its window", async () => {
+  it("an owner bound with both ids is one row keyed by its user id (gp-g02t), welcomed at its user id; a later message carrying only its user_id routes to it and moves its window", async () => {
     const t = setup();
     const city = await t.enrollCity();
     const wa = phone();
@@ -100,11 +114,11 @@ describe("BSUID: binding and routing", () => {
     const d = (await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamid);
     // The delivery carries the number the owner shows (its mark) although Meta omitted it: a box
     // keyed by wa_id (the adapter at PR 74) still files it.
-    expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: wa });
+    expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: user });
     expect(d.message.from).toBeUndefined(); // Meta's object exactly as received
-    expect(await owners(wa, user)).toEqual([{ conversation_id: wa, shows: wa, user_id: user, username: null, city_id: city.id }]);
+    expect(await owners(wa, user)).toEqual([{ conversation_id: user, shows: wa, user_id: user, username: null, city_id: city.id }]);
     expect((await t.window(city)).body.windows).toEqual([
-      { conversation_id: wa, user_id: user, last_inbound_at: T0 + 2 * HOUR, window_closes_at: T0 + 2 * HOUR + CLOSE },
+      { conversation_id: user, user_id: user, last_inbound_at: T0 + 2 * HOUR, window_closes_at: T0 + 2 * HOUR + CLOSE },
     ]);
   });
 
@@ -158,16 +172,41 @@ describe("BSUID: binding and routing", () => {
     const { wamid } = await t.sayAs({ wa, user: newcomer }, "is this the pizza place?");
     expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
     expect(t.graph.sends().filter((c) => c.body?.recipient === newcomer && c.body?.text?.body === CANNED)).toHaveLength(1);
-    expect(await owners(wa, owner)).toEqual([{ conversation_id: wa, shows: null, user_id: owner, username: null, city_id: city.id }]);
-    // The owner's city still writes to the conversation it holds; it reaches the owner, never the number.
-    expect((await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "for the owner" })).status).toBe(200);
+    expect(await owners(wa, owner)).toEqual([{ conversation_id: owner, shows: null, user_id: owner, username: null, city_id: city.id }]);
+    // The owner's city still writes to the conversation it holds (its user id, gp-g02t); it reaches
+    // the owner, never the number.
+    expect((await t.send(city, { to: owner, idempotency_key: uniq(), type: "text", text: "for the owner" })).status).toBe(200);
     expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: owner, text: { body: "for the owner" } });
-    // The newcomer joins another city; the number is the owner's conversation id, so the newcomer
-    // is keyed by its user_id, and welcomed at it.
+    // The newcomer joins another city; like every binding, it is keyed by its user_id (gp-g02t),
+    // and welcomed at it.
     await t.joinAs(other, { wa, user: newcomer });
     expect(await owners(newcomer)).toEqual([{ conversation_id: newcomer, shows: wa, user_id: newcomer, username: null, city_id: other.id }]);
     expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: newcomer, text: { body: "You're connected to Other City's mayor. Say hi." } });
     expect((await t.inbox(other)).body.deliveries.map((d: any) => [d.kind, d.conversation_id])).toEqual([["joined", newcomer]]);
+  });
+
+  it("gp-g02t (M3): a new binding is keyed by its user id, never the number: a PR 73 owner A keyed by P is unbound, then B binds on P: B is keyed by its user id and its messages never land in A's conversation P; a new owner showing a number is keyed by its user id too", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const wa = phone();
+    await legacyBind(env.DB, city.id, wa); // A, keyed by P (PR 73)
+    expect((await t.unbind(wa)).route).toBe("admin");
+    t.clock.now += HOUR;
+    const b = bsuid();
+    await t.joinAs(city, { wa, user: b });
+    const { wamid } = await t.sayAs({ wa, user: b }, "B, on A's old number");
+    t.clock.now += HOUR;
+    const wa2 = phone();
+    const c = bsuid();
+    await t.joinAs(city, { wa: wa2, user: c });
+    expect(await owners(wa, b, wa2, c)).toEqual([
+      { conversation_id: b, shows: wa, user_id: b, username: null, city_id: city.id },
+      { conversation_id: c, shows: wa2, user_id: c, username: null, city_id: city.id },
+    ]);
+    const filed = (await t.inbox(city)).body.deliveries.map((d: any) => [d.kind, d.conversation_id]);
+    expect(filed).toEqual([["joined", b], ["message", b], ["joined", c]]);
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === wamid)).toMatchObject({ wa_id: wa, user_id: b, conversation_id: b });
+    expect((await t.window(city)).body.windows.map((w: any) => w.conversation_id).sort()).toEqual([b, c].sort());
   });
 
   it("one person bound twice (once by PR 73, by phone alone; once by BSUID): a message carrying both ids goes to the user_id's row, takes no id from the other, and Meta gets 200", async () => {
@@ -301,10 +340,10 @@ describe("BSUID: sends", () => {
   it("a `to` naming two owners of the city (one's retained key, the other's current number) answers 409 ambiguous_recipient and reaches neither; each owner's current ids reach that owner alone (gp-0g2s, the mayor's R1)", async () => {
     const t = setup();
     const city = await t.enrollCity();
-    // A binds on P (A's conversation_id is P), then changes number to Q.
+    // A keyed by P (numberKeyed: the shape the rule guards), then A changes number to Q.
     const p = phone();
     const a = bsuid();
-    await t.joinAs(city, { wa: p, user: a });
+    await numberKeyed(city.id, p, a, t.clock.now);
     const q = phone();
     const a2 = bsuid();
     expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
@@ -387,7 +426,7 @@ describe("BSUID: sends", () => {
     const second = await t.enrollCity();
     const p = phone();
     const a = bsuid();
-    await t.joinAs(first, { wa: p, user: a });
+    await numberKeyed(first.id, p, a, t.clock.now); // A keyed by P (the shape the rule guards)
     const q = phone();
     expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: bsuid(), newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
     const b = bsuid();
@@ -473,10 +512,10 @@ describe("BSUID: statuses", () => {
     // The username is the status's contacts entry's (Meta's example user, "pablomorales"); today's
     // status shape carries no contacts.
     expect(statuses.map((d: any) => [d.message.id, d.message.status, d.wa_id, d.user_id, d.conversation_id, d.username, d.profile_name])).toEqual([
-      [byUser, "delivered", null, user, wa, "pablomorales", null],
-      [byPhone, "read", wa, user, wa, "pablomorales", null],
-      [byPhone, "failed", wa, null, wa, null, null],
-      [raced, "sent", null, user, wa, "pablomorales", null],
+      [byUser, "delivered", null, user, user, "pablomorales", null],
+      [byPhone, "read", wa, user, user, "pablomorales", null],
+      [byPhone, "failed", wa, null, user, null, null],
+      [raced, "sent", null, user, user, "pablomorales", null],
     ]);
   });
 });
@@ -498,25 +537,26 @@ describe("BSUID: a number change", () => {
     const r = await t.webhook(changeAs("user_changed_number", { from: wa, previousUser: user, newUser, newWa }, { wamid, ts: t.clock.now }));
     expect(r.status).toBe(200);
     const notice = (await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === wamid);
-    expect(notice).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: wa });
+    expect(notice).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: user });
     expect(notice.message).toMatchObject({
       type: "system",
       system: { type: "user_changed_number", user_id: newUser, previous_user_id: user, wa_id: newWa },
     });
     expect((await t.inbox(other)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
     expect(t.graph.sends()).toHaveLength(calls); // no canned line and no welcome
-    expect((await t.window(city)).body.windows).toEqual([{ conversation_id: wa, user_id: newUser, last_inbound_at: T0, window_closes_at: T0 + CLOSE }]);
-    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect((await t.window(city)).body.windows).toEqual([{ conversation_id: user, user_id: newUser, last_inbound_at: T0, window_closes_at: T0 + CLOSE }]);
+    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: user, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
 
     t.clock.now = T0 + 2 * HOUR;
     const next = await t.sayAs({ wa: newWa, user: newUser }, "my new phone");
     expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === next.wamid)).toMatchObject({
       wa_id: newWa,
       user_id: newUser,
-      conversation_id: wa,
+      conversation_id: user,
     });
-    // The box still holds the old number as the conversation id: the send goes to the owner's current user id.
-    expect((await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "got it" })).status).toBe(200);
+    // The box holds the owner's conversation id (its user id at the bind, gp-g02t), which the change
+    // left as it was: the send goes to the owner's current user id.
+    expect((await t.send(city, { to: user, idempotency_key: uniq(), type: "text", text: "got it" })).status).toBe(200);
     expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: newUser, text: { body: "got it" } });
     expect(t.graph.sends().some((c) => "to" in c.body! && c.body?.text?.body === "got it")).toBe(false);
     // The old number alone is a stranger now: it may be someone else's.
@@ -567,7 +607,7 @@ describe("BSUID: a number change", () => {
     expect((await t.webhook(notice)).status).toBe(200);
     expect((await t.webhook(notice)).status).toBe(200);
     expect((await t.inbox(city)).body.deliveries.filter((d: any) => d.message?.id === wamid)).toHaveLength(1);
-    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: user, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
 
     // A second owner changes number; Meta's payload carries the notice and the first message after it.
     const wa2 = phone();
@@ -582,7 +622,7 @@ describe("BSUID: a number change", () => {
     both.entry[0].changes[0].value.messages.push(text.messages[0]);
     const calls = t.graph.sends().length;
     expect((await t.webhook(both)).status).toBe(200);
-    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === textWamid)).toMatchObject({ user_id: newUser2, conversation_id: wa2 });
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === textWamid)).toMatchObject({ user_id: newUser2, conversation_id: user2 });
     expect(t.graph.sends()).toHaveLength(calls);
   });
 
@@ -599,8 +639,8 @@ describe("BSUID: a number change", () => {
     await t.joinAs(city, b);
     const aUser = bsuid();
     expect((await notice(a.wa, a.user, aUser, b.wa)).status).toBe(200);
-    expect(await owners(a.wa)).toEqual([{ conversation_id: a.wa, shows: b.wa, user_id: aUser, username: null, city_id: city.id }]);
-    expect(await owners(b.wa)).toContainEqual({ conversation_id: b.wa, shows: null, user_id: b.user, username: null, city_id: city.id });
+    expect(await owners(aUser)).toEqual([{ conversation_id: a.user, shows: b.wa, user_id: aUser, username: null, city_id: city.id }]);
+    expect(await owners(b.user)).toEqual([{ conversation_id: b.user, shows: null, user_id: b.user, username: null, city_id: city.id }]);
 
     // C's new user_id is D's (Meta never reuses one; the guard holds anyway): no binding changes.
     // The notice still moves the marks (point 4: display only): C's old number shows nobody, the
@@ -611,7 +651,7 @@ describe("BSUID: a number change", () => {
     await t.joinAs(city, { user: d });
     const cNew = phone();
     expect((await notice(c.wa, c.user, d, cNew)).status).toBe(200);
-    expect(await owners(c.user)).toEqual([{ conversation_id: c.wa, shows: null, user_id: c.user, username: null, city_id: city.id }]);
+    expect(await owners(c.user)).toEqual([{ conversation_id: c.user, shows: null, user_id: c.user, username: null, city_id: city.id }]);
     expect(await owners(d)).toEqual([{ conversation_id: d, shows: cNew, user_id: d, username: null, city_id: city.id }]);
     // The link to an id another binding answers to links nothing (one id, one binding).
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM links WHERE old_id = ?").bind(c.user).first()).toEqual({ n: 0 });
@@ -624,7 +664,7 @@ describe("BSUID: a number change", () => {
     await legacyBind(env.DB, city.id, f);
     const eUser = bsuid();
     expect((await notice(e.wa, e.user, eUser, f)).status).toBe(200);
-    expect(await owners(e.wa)).toEqual([{ conversation_id: e.wa, shows: f, user_id: eUser, username: null, city_id: city.id }]);
+    expect(await owners(eUser)).toEqual([{ conversation_id: e.user, shows: f, user_id: eUser, username: null, city_id: city.id }]);
     expect(await owners(f)).toContainEqual({ conversation_id: f, shows: f, user_id: null, username: null, city_id: city.id });
   });
 
@@ -636,8 +676,10 @@ describe("BSUID: a number change", () => {
     const newUser = bsuid();
     await t.joinAs(city, { wa, user });
     await t.webhook(changeAs("user_changed_user_id", { previousUser: user, newUser }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }));
-    expect(await owners(wa, user, newUser)).toEqual([{ conversation_id: wa, shows: null, user_id: newUser, username: null, city_id: city.id }]);
-    expect((await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "after the change" })).status).toBe(200);
+    expect(await owners(wa, user, newUser)).toEqual([{ conversation_id: user, shows: null, user_id: newUser, username: null, city_id: city.id }]);
+    // The old number names no owner now (its mark went with the change); the conversation does.
+    expect((await t.send(city, { to: wa, idempotency_key: uniq(), type: "text", text: "to the old number" })).status).toBe(403);
+    expect((await t.send(city, { to: user, idempotency_key: uniq(), type: "text", text: "after the change" })).status).toBe(200);
     const sent = t.graph.sends().at(-1)!.body!;
     expect(sent.recipient).toBe(newUser);
     expect("to" in sent).toBe(false);
@@ -674,14 +716,14 @@ describe("BSUID: a number change links the old user id to the new one through Me
     const calls = t.graph.sends().length;
     expect((await t.webhook(before)).status).toBe(200);
     const d = (await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(before));
-    expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: wa });
+    expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: user });
     expect(d.message.text.body).toBe("sent before the change");
     // Under a previous id, the retry is older than the binding's names: it changes none of them.
-    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(wa).first()).toEqual({ profile_name: "Owner Name" });
+    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(user).first()).toEqual({ profile_name: "Owner Name" });
     expect(t.graph.sends()).toHaveLength(calls); // no canned line, least of all to the old number
-    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: user, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
     expect((await t.window(city)).body.windows).toEqual([
-      { conversation_id: wa, user_id: newUser, last_inbound_at: T0 + HOUR, window_closes_at: T0 + HOUR + CLOSE },
+      { conversation_id: user, user_id: newUser, last_inbound_at: T0 + HOUR, window_closes_at: T0 + HOUR + CLOSE },
     ]);
     // A second retry of the same message is still one delivery.
     expect((await t.webhook(before)).status).toBe(200);
@@ -690,7 +732,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect((await t.webhook(change)).status).toBe(200);
     expect((await t.inbox(city)).body.deliveries.filter((x: any) => x.message?.id === wamidOf(change))).toHaveLength(1);
     expect((await t.window(city)).body.windows[0].last_inbound_at).toBe(T0 + HOUR);
-    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: user, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
   });
 
   it("a retry landing after the owner already wrote under its new ids leaves the window at the newer message (self-review r1 S7)", async () => {
@@ -746,7 +788,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect((await t.webhook(byId)).status).toBe(200);
     expect((await t.webhook(byPhone)).status).toBe(200);
     const deliveries = (await t.inbox(city)).body.deliveries;
-    expect(deliveries.find((x: any) => x.message?.id === wamidOf(byId))).toMatchObject({ kind: "message", wa_id: null, user_id: user, conversation_id: wa1 });
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(byId))).toMatchObject({ kind: "message", wa_id: null, user_id: user, conversation_id: user });
     // A number can change hands unseen: one naming no user id is no binding's (point 1).
     expect(deliveries.some((x: any) => x.message?.id === wamidOf(byPhone))).toBe(false);
     expect(t.graph.sends()).toHaveLength(calls);
@@ -758,7 +800,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
           .all()
       ).results,
     ).toEqual([{ sender_key: user, code_attempts: 1, last_replied_at: null }]);
-    expect(await owners(wa1, user, newUser)).toEqual([{ conversation_id: wa1, shows: null, user_id: newUser, username: null, city_id: city.id }]);
+    expect(await owners(wa1, user, newUser)).toEqual([{ conversation_id: user, shows: null, user_id: newUser, username: null, city_id: city.id }]);
     expect((await t.inbox(other)).body.deliveries).toEqual([]);
     expect(await env.DB.prepare("SELECT used_at FROM invite_codes WHERE code = ?").bind(otherCode).first()).toEqual({ used_at: null });
   });
@@ -789,12 +831,12 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect((await t.webhook(before)).status).toBe(200);
     expect((await t.webhook(legacy)).status).toBe(200);
     const deliveries = (await t.inbox(city)).body.deliveries;
-    expect(deliveries.find((x: any) => x.message?.id === wamidOf(before))).toMatchObject({ conversation_id: p, user_id: a });
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(before))).toMatchObject({ conversation_id: a, user_id: a });
     // Meta shows the number alone: the pairing that would say whose it was may still be in flight,
     // so it is nobody's (point 1), neither A's nor B's.
     expect(deliveries.some((x: any) => x.message?.id === wamidOf(legacy))).toBe(false);
     expect(await owners(p, q, a, a2, b)).toEqual([
-      { conversation_id: p, shows: q, user_id: a2, username: null, city_id: city.id },
+      { conversation_id: a, shows: q, user_id: a2, username: null, city_id: city.id },
       { conversation_id: b, shows: p, user_id: b, username: null, city_id: city.id },
     ]);
     expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(b).first()).toEqual({ profile_name: "B" });
@@ -836,7 +878,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     const calls = t.graph.sends().length;
     expect((await t.webhook(between)).status).toBe(200);
     const deliveries = (await t.inbox(city)).body.deliveries;
-    expect(deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: p });
+    expect(deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: a });
     expect(deliveries.find((x: any) => x.message?.id === wamidOf(fromB))).toMatchObject({ conversation_id: b });
     // A third person's user id, no binding's: a stranger's, neither owner's.
     expect(deliveries.some((x: any) => x.message?.id === wamidOf(between))).toBe(false);
@@ -892,8 +934,8 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect(t.graph.sends()).toHaveLength(quiet);
     t.clock.now = T0 + 3 * HOUR;
     const c = bsuid();
-    await t.joinAs(second, { wa: p, user: c }, { name: "C" }); // its key is the number, which is free again
-    expect(await owners(p)).toEqual([{ conversation_id: p, shows: p, user_id: c, username: null, city_id: second.id }]);
+    await t.joinAs(second, { wa: p, user: c }, { name: "C" }); // keyed by its user id (gp-g02t), never the number
+    expect(await owners(p)).toEqual([{ conversation_id: c, shows: p, user_id: c, username: null, city_id: second.id }]);
     t.clock.now = T0 + 4 * HOUR;
     const calls = t.graph.sends().length;
     expect((await t.webhook(before)).status).toBe(200);
@@ -905,8 +947,8 @@ describe("BSUID: a number change links the old user id to the new one through Me
         expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(m))).toBe(false);
       }
     }
-    expect(await owners(p)).toEqual([{ conversation_id: p, shows: p, user_id: c, username: null, city_id: second.id }]);
-    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(p).first()).toEqual({ profile_name: "C" });
+    expect(await owners(p)).toEqual([{ conversation_id: c, shows: p, user_id: c, username: null, city_id: second.id }]);
+    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(c).first()).toEqual({ profile_name: "C" });
     expect(t.graph.sends()).toHaveLength(calls);
   });
 
@@ -934,11 +976,11 @@ describe("BSUID: a number change links the old user id to the new one through Me
     t.clock.now = T0 + 4 * HOUR;
     expect((await t.webhook(late)).status).toBe(200);
     expect(await owners(p, q, a, a2, b)).toEqual([
-      { conversation_id: p, shows: q, user_id: a2, username: null, city_id: city.id },
+      { conversation_id: a, shows: q, user_id: a2, username: null, city_id: city.id },
       { conversation_id: b, shows: p, user_id: b, username: null, city_id: city.id },
     ]);
     expect((await t.webhook(legacy)).status).toBe(200);
-    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(legacy))).toMatchObject({ conversation_id: p });
+    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(legacy))).toMatchObject({ conversation_id: a });
     const calls = t.graph.sends().length;
     const mine = await t.sayAs({ wa: p, user: b }, "B's");
     expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === mine.wamid)).toMatchObject({ conversation_id: b });
@@ -965,7 +1007,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect((await t.webhook(notice(q, a2, bsuid(), phone(), t.clock.now))).status).toBe(200);
     t.clock.now = T0 + 4 * HOUR;
     expect((await t.webhook(first)).status).toBe(200);
-    expect(await owners(p)).toEqual([{ conversation_id: p, shows: p, user_id: userOf(p), username: null, city_id: other.id }]);
+    expect(await owners(p)).toEqual([{ conversation_id: userOf(p), shows: p, user_id: userOf(p), username: null, city_id: other.id }]);
     const s = await t.send(other, { to: p, idempotency_key: uniq(), type: "template", template: { name: "dynasty_update", language: "en_US", params: ["x"] } });
     expect(s.status).toBe(200);
     expect(t.graph.sends().at(-1)!.body).toMatchObject({ recipient: userOf(p) });
@@ -995,16 +1037,19 @@ describe("BSUID: a number change links the old user id to the new one through Me
     t.clock.now = T0 + 2 * HOUR;
     await t.sayAs({ wa: p, user: a }, "now with my phone");
     expect((await t.webhook(notice(r, c, bsuid(), q, t.clock.now))).status).toBe(200);
-    expect(await owners(p, q)).toEqual([
-      { conversation_id: r, shows: q, user_id: expect.any(String), username: null, city_id: city.id },
+    // Both bound at T0: owners() orders them by their keys, two user ids since gp-g02t.
+    const both = await owners(p, q);
+    expect(both).toHaveLength(2);
+    expect(both).toEqual(expect.arrayContaining([
+      { conversation_id: c, shows: q, user_id: expect.any(String), username: null, city_id: city.id },
       { conversation_id: a, shows: p, user_id: a, username: null, city_id: city.id },
-    ]);
+    ]));
     t.clock.now = T0 + 2 * HOUR + HOUR / 4;
     expect((await t.webhook(fromP)).status).toBe(200);
     expect((await t.webhook(fromQ)).status).toBe(200);
     // C moves on from Q; Q's previous holder is still no binding's.
     t.clock.now = T0 + 2 * HOUR + HOUR / 2;
-    const cNow = (await owners(r))[0]!.user_id as string;
+    const cNow = (await owners(c))[0]!.user_id as string;
     expect((await t.webhook(notice(q, cNow, bsuid(), phone(), t.clock.now))).status).toBe(200);
     t.clock.now = T0 + 3 * HOUR;
     expect((await t.webhook(fromQ)).status).toBe(200);
@@ -1041,7 +1086,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
         t.clock.now = T2;
         const a2 = bsuid();
         expect((await t.webhook(notice(w0, a, a2, p, T2))).status).toBe(200);
-        expect(await owners(a2)).toEqual([{ conversation_id: w0, shows: p, user_id: a2, username: null, city_id: city.id }]);
+        expect(await owners(a2)).toEqual([{ conversation_id: a, shows: p, user_id: a2, username: null, city_id: city.id }]);
         t.clock.now = T3;
         await t.joinAs(other, { wa: p, user: bsuid() }, { name: "B" }); // P's newest pairing is B's
         expect((await owners(a2))[0]).toMatchObject({ shows: null });
@@ -1072,7 +1117,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
         t.clock.now = T2;
         const a2 = bsuid();
         expect((await t.webhook(notice(w0, a, a2, p, T2))).status).toBe(200);
-        expect(await owners(a2)).toEqual([{ conversation_id: w0, shows: p, user_id: a2, username: null, city_id: city.id }]);
+        expect(await owners(a2)).toEqual([{ conversation_id: a, shows: p, user_id: a2, username: null, city_id: city.id }]);
         return { aUser: a2 };
       },
     },
@@ -1085,7 +1130,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
         t.clock.now = T2;
         const a2 = bsuid();
         expect((await t.webhook(notice(w0, a, a2, null, T2))).status).toBe(200);
-        expect(await owners(a2)).toEqual([{ conversation_id: w0, shows: null, user_id: a2, username: null, city_id: city.id }]);
+        expect(await owners(a2)).toEqual([{ conversation_id: a, shows: null, user_id: a2, username: null, city_id: city.id }]);
         t.clock.now = T3;
         await t.joinAs(other, { wa: p, user: bsuid() }, { name: "B" });
         return { aUser: a2 };
@@ -1186,7 +1231,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
         t.clock.now = T2;
         await t.sayAs({ wa: p, user: a }, "my phone, says Meta");
         expect(await owners(a)).toEqual([{ conversation_id: a, shows: p, user_id: a, username: null, city_id: x.id }]);
-        expect(await owners(c)).toEqual([{ conversation_id: p, shows: null, user_id: c, username: null, city_id: w.id }]);
+        expect(await owners(c)).toEqual([{ conversation_id: c, shows: null, user_id: c, username: null, city_id: w.id }]);
       }
       t.clock.now = T4;
       const a2 = bsuid();
@@ -1194,7 +1239,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
       // While C stands, C's message stamped T1 is C's.
       t.clock.now = T4 + HOUR / 4;
       expect((await t.webhook(whileC)).status).toBe(200);
-      expect((await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === wamidOf(whileC))).toMatchObject({ conversation_id: p });
+      expect((await t.inbox(w)).body.deliveries.find((d: any) => d.message?.id === wamidOf(whileC))).toMatchObject({ conversation_id: c });
       // README, "Unbind an owner"; then Meta delivers C's image stamped T1, late.
       t.clock.now = T4 + HOUR / 2;
       await t.unbind(c);
@@ -1231,7 +1276,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect((await t.webhook(notice(p, xUser, bsuid(), phone(), T4))).status).toBe(200);
     t.clock.now = T4 + HOUR;
     expect((await t.webhook(fromX)).status).toBe(200);
-    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === wamidOf(fromX))).toMatchObject({ conversation_id: p, wa_id: p });
+    expect((await t.inbox(x)).body.deliveries.find((d: any) => d.message?.id === wamidOf(fromX))).toMatchObject({ conversation_id: xUser, wa_id: p });
     expect((await t.inbox(y)).body.deliveries.some((d: any) => d.message?.id === wamidOf(fromX))).toBe(false);
   });
 
@@ -1249,7 +1294,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     await t.joinAs(city, { wa: p, user: b });
     t.clock.now = T0 + 3 * HOUR;
     expect((await t.webhook(stale)).status).toBe(200);
-    expect(await owners(b)).toEqual([{ conversation_id: p, shows: p, user_id: b, username: null, city_id: city.id }]);
+    expect(await owners(b)).toEqual([{ conversation_id: b, shows: p, user_id: b, username: null, city_id: city.id }]);
     expect((await t.inbox(city)).body.deliveries.some((x: any) => x.message?.id === wamidOf(stale))).toBe(false);
   });
 
@@ -1273,8 +1318,8 @@ describe("BSUID: a number change links the old user id to the new one through Me
     t.clock.now = T0 + 3 * HOUR;
     expect((await t.webhook(late)).status).toBe(200);
     expect(await owners(p, q, a2, d)).toEqual([
-      { conversation_id: p, shows: null, user_id: a2, username: null, city_id: city.id },
-      { conversation_id: q, shows: q, user_id: d, username: null, city_id: city.id },
+      { conversation_id: a, shows: null, user_id: a2, username: null, city_id: city.id },
+      { conversation_id: d, shows: q, user_id: d, username: null, city_id: city.id },
     ]);
   });
 
@@ -1317,7 +1362,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     // A's own message names A's previous user_id, which no one else ever holds: it is A's, and its
     // pairing with P, stamped below the notice, moves no mark.
     expect((await t.webhook(fromA)).status).toBe(200);
-    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: p, user_id: a });
+    expect((await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(fromA))).toMatchObject({ conversation_id: a, user_id: a });
     expect(await owners(b)).toEqual([{ conversation_id: b, shows: null, user_id: b, username: null, city_id: city.id }]);
     // B changes number too; the number alone still goes to nobody.
     t.clock.now = T0 + 5 * HOUR;
@@ -1361,7 +1406,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     expect(report.marks_deleted).toBeGreaterThanOrEqual(2);
     expect(await evidence()).toEqual({ links: 0, unbinds: 0, marks: [newWa] });
     // The owner keeps its current id and its number past the horizon.
-    expect(await owners(newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
+    expect(await owners(newUser)).toEqual([{ conversation_id: user, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
   });
 });
 
@@ -1467,7 +1512,8 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
   it("POST /v1/admin/unbind, by any id the owner is known by, deletes the binding and records every user id it answered to; an id no binding has unbinds nothing; a malformed body is 400; the log line names no id", async () => {
     const t = setup();
     const city = await t.enrollCity();
-    // By the conversation_id: an owner that changed number twice answered to three user ids.
+    // By the conversation_id (its first user id, gp-g02t): an owner that changed number twice
+    // answered to three user ids.
     const p = phone();
     const [a, a2, a3] = [bsuid(), bsuid(), bsuid()];
     await t.joinAs(city, { wa: p, user: a });
@@ -1475,9 +1521,9 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: phone() }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
     expect((await t.webhook(changeAs("user_changed_user_id", { previousUser: a2, newUser: a3 }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
     t.clock.now = T0 + 2 * HOUR;
-    const r = await t.admin("POST", "/v1/admin/unbind", { id: p });
+    const r = await t.admin("POST", "/v1/admin/unbind", { id: a });
     expect([r.status, r.body]).toEqual([200, { unbound: 1 }]);
-    expect(await owners(p, a3)).toEqual([]);
+    expect(await owners(a, a3)).toEqual([]);
     const recorded = await env.DB.prepare("SELECT user_id, unbound_at FROM unbinds WHERE user_id IN (?, ?, ?) ORDER BY user_id").bind(a, a2, a3).all();
     expect(recorded.results).toEqual([a, a2, a3].sort().map((user_id) => ({ user_id, unbound_at: T0 + 2 * HOUR })));
     // By the current user id, and by a PR 73 row's number (it records no user id: it has none).
@@ -1536,12 +1582,12 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     t.clock.now = T0 + 2 * HOUR + HOUR / 4;
     const calls = t.graph.sends().length;
     expect((await t.webhook(joining)).status).toBe(200);
-    expect(await owners(a3)).toEqual([{ conversation_id: p, shows: q, user_id: a3, username: null, city_id: city.id }]);
+    expect(await owners(a3)).toEqual([{ conversation_id: a2, shows: q, user_id: a3, username: null, city_id: city.id }]);
     expect(t.graph.sends().slice(calls).map((c) => [c.body?.recipient, c.body?.text?.body])).toEqual([[a3, "You're connected to Hou Dynasty's mayor. Say hi."]]);
     // The owner writes under its newest id: its own city, no canned line.
     t.clock.now = T0 + 3 * HOUR;
     const next = await t.sayAs({ wa: q, user: a3 }, "my new phone");
-    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === next.wamid)).toMatchObject({ conversation_id: p, user_id: a3 });
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === next.wamid)).toMatchObject({ conversation_id: a2, user_id: a3 });
     expect(t.graph.sends().slice(calls)).toHaveLength(1);
   });
 
@@ -1788,7 +1834,7 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     const calls = t.graph.sends().length;
     expect((await t.webhook(both)).status).toBe(200);
     const text = both.entry[0].changes[0].value.messages[0].id;
-    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === text)).toMatchObject({ conversation_id: p, user_id: a2 });
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === text)).toMatchObject({ conversation_id: a, user_id: a2 });
     expect(t.graph.sends()).toHaveLength(calls);
   });
 

@@ -87,7 +87,7 @@ changes a route or a field.
    | 400 | `bad_request` | A malformed send. |
    | 400 | `text_too_long` | Text over 4096 characters (code points); the box chunks. |
    | 403 | `not_bound` | `to` names no owner of this city, or one with no user_id ("Business-scoped user ids", rule 7). |
-   | 409 | `ambiguous_recipient` (with `hint` and `owner_user_id`) | `to` names two owners of this city: one owner's `conversation_id`, kept from a phone number it no longer holds, and another owner's current wa_id (a recycled number). Nothing is sent and the key is not spent. Resend to `owner_user_id`: the current user_id of the owner whose `conversation_id` is `to`, or null when it has none (then `GET /v1/window`). Added by gp-0g2s, `owner_user_id` by gp-w376; see "Business-scoped user ids", rule 7. |
+   | 409 | `ambiguous_recipient` (with `hint` and `owner_user_id`) | `to` names two owners of this city: one owner's `conversation_id`, a phone number (a PR 73 binding), and another owner who shows that number now (a recycled number). Nothing is sent and the key is not spent. Resend to `owner_user_id`: the current user_id of the owner whose `conversation_id` is `to`, or null when it has none (then `GET /v1/window`). Added by gp-0g2s, `owner_user_id` by gp-w376; see "Business-scoped user ids", rule 7. |
    | 422 | `window_closed` | A text or a reaction outside the window: the gateway's own check, or Meta's 131047. |
    | 409 | `in_flight` | Another request with the same `idempotency_key` is still at Meta (claimed under 60 s ago). Retry it. |
    | 502 | `meta_error` (with `meta_status`, `meta_code`) | Meta answered and refused (a 4xx). Nothing was sent, so a retry under the same key sends. |
@@ -158,16 +158,15 @@ What Meta sends:
 
 What the gateway does:
 
-1. **The owner key.** An owner row is keyed by its `conversation_id`. It is set once, at the bind,
-   to the binding text's wa_id. It is the user_id instead when Meta shared no phone, or when that
-   phone number is already another owner's `conversation_id` (a recycled number). It never changes
-   after that. Every owner bound before this change keeps its wa_id as its key, so no box sees a
-   new conversation. The row also holds the user_id Meta names the owner by now, unique. Its
-   `wa_id` is empty: the number an owner shows now is its mark (rule 3). But a key taken from the
-   binding text's wa_id is that phone number: the row keeps it as its `conversation_id` until the
-   owner is unbound, whatever number the owner shows later, and the inbox, `GET /v1/window` and
-   the sends name the owner by it ("Data, retention, logs", Owners). A row PR 73 bound by its
-   number alone holds that number in `wa_id` and no user_id (rule 2).
+1. **The owner key.** An owner row is keyed by its `conversation_id`, set once at the bind to the
+   owner's user id and never changed after that (gp-g02t). Never the number: a number names its
+   owner only while that owner is bound and no one else shows it, so a key taken from one would
+   outlive the owner and pass to whoever binds on that number next, into the same box
+   conversation. The row also holds the user_id Meta names the owner by now, unique (after a
+   number change that is a newer id than the key). It holds no phone number: the number an owner
+   shows now is its mark (rule 3). A row PR 73 bound by its number alone keeps that number as its
+   key, holds it in `wa_id`, and has no user_id (rule 2), until the operator re-invites it (Deploy
+   step 7).
 2. **Routing: by the user id, never the number** (gp-lv49; the design of record,
    `whatsapp/docs/design-bsuid-pairing-and-spans.md`). Since early April 2026 Meta puts the
    sender's user id on every message. A message goes to the binding that answers to its user id
@@ -260,21 +259,23 @@ What the gateway does:
    `403 not_bound`.
 
    **A `to` naming two owners is refused** (gp-0g2s; the mayor's rule R1, 22:39Z 11/4). Say owner
-   A binds on phone P, so A's `conversation_id` is P. A then changes number, and owner B joins
-   the same city on the recycled P, keyed by B's user_id. Now `to: P` is both A's conversation and
-   the number B shows. The box may mean either, and a guess would hand one owner's message to the
-   other. So the gateway answers `409 {error: "ambiguous_recipient", hint: "send to the owner's
-   current id", owner_user_id}`. It sends nothing and spends no key. `owner_user_id` is the current
-   user_id of the owner whose `conversation_id` is `to`, the owner the box files under it, or null
-   when that owner has none (gp-w376; the Fable read r1). It is the user_id the gateway knows the
-   owner by now: while a notice is still on its way, that may be one Meta has already replaced, and
-   then the resend answers as any send to it would. The answer names nothing else: not the number,
-   not the other owner, not an id the gateway has already replaced. The box resends to
-   `owner_user_id` at once. The same id is the `user_id` of the owner's entry in `GET /v1/window`,
-   which stays the fallback. Do not take it from the newest delivery: right after a number change
-   that delivery is the notice itself, which still carries the old id. A repeat of a key Meta
-   already took still answers its first `message_id`, because it makes no new call. In another
-   city, P names only that city's owner, so it is no ambiguity.
+   A is keyed by its phone number P (a binding PR 73 made; since gp-g02t no new binding is keyed
+   by a number, rule 1), and owner B, bound by its user id, shows P now (a recycled number). Then
+   `to: P` is both A's conversation and the number B shows. The box may mean either, and a guess
+   would hand one owner's message to the other. So the gateway answers `409 {error:
+   "ambiguous_recipient", hint: "send to the owner's current id", owner_user_id}`. It sends nothing
+   and spends no key. `owner_user_id` is the current user_id of the owner whose `conversation_id`
+   is `to`, the owner the box files under it, or null when that owner has none, as a PR 73 row
+   never has (gp-w376; the Fable read r1). It is the user_id the gateway knows the owner by now:
+   while a notice is still on its way, that may be one Meta has already replaced, and then a
+   resend answers as any send to it would. The answer names nothing else: not the number, not the
+   other owner, not an id the gateway has already replaced. The same id is the `user_id` of the
+   owner's entry in `GET /v1/window`. Do not take it from the newest delivery: right after a number
+   change that delivery is the notice itself, which still carries the old id. The pack's adapter
+   never sends to a number: it sends to the user id `GET /v1/window` gives for the conversation
+   (gp-g02t), so its own sends meet no 409, and it refuses one without a resend. A repeat of a key
+   Meta already took still answers its first `message_id`, because it makes no new call. In
+   another city, P names only that city's owner, so it is no ambiguity.
 8. **Authentication templates.** One-tap, zero-tap and copy-code authentication templates cannot be
    sent to a user_id. Meta refuses them with code 131062, and the gateway answers `502 meta_error`
    with `meta_code` 131062, freeing the key. The one template here (`dynasty_update`, utility) is
@@ -299,8 +300,10 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
   wrote reads its `wa_id` as one. Its `wa_id` is only the number it shows: null for an owner
   known by user id alone, the new number after a number change, the same number for two owners
   after a recycled number. So the box keys every conversation, ack and journal line by
-  `conversation_id`, and shows the number only. The pack's adapter does so since gp-g02t
-  (`whatsapp/adapter/src/render.js`, `conversationOf`). An adapter that keys by `wa_id` leaves a
+  `conversation_id`, shows the number only, and sends each reply to the user id `GET /v1/window`
+  gives for the conversation (nothing at all when the window no longer lists it). The pack's
+  adapter does so since gp-g02t (`whatsapp/adapter/src/render.js` `conversationOf`, `outbound.js`
+  THE RECIPIENT). An adapter that keys by `wa_id` leaves a
   null-number owner's deliveries unacknowledged (held 7 days, then lost, and counted against the
   5,000 cap meanwhile), splits an owner's conversation at a number change, and puts two owners
   in one conversation after a recycled number. The boxes therefore take that adapter before
@@ -321,10 +324,11 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
   unbind recorded the owner's user ids, and a message Meta stamped before the unbind reaches no
   city, the new one included ("Business-scoped user ids", rule 2, and "Unbind an owner"). Either
   way the new city gets no delivery and no access to its media.
-- **409 `ambiguous_recipient` on a send** (gp-0g2s). Resend to `owner_user_id`, the current
-  user_id of the owner `to` names by its conversation_id (gp-w376). When it is null, take the
-  owner's current id from `GET /v1/window`. See "Business-scoped user ids", rule 7. The pack's
-  adapter refuses the send and does not resend (the mayor's word on gp-szj9).
+- **409 `ambiguous_recipient` on a send** (gp-0g2s). `owner_user_id` is the current user_id of
+  the owner `to` names by its conversation_id (gp-w376), null when it has none; `GET /v1/window`
+  gives the same id. See "Business-scoped user ids", rule 7. The pack's adapter sends to that
+  window's user id for the conversation, never to a number (gp-g02t), so it meets a 409 only on
+  PR 73's gateway, whose window gives no user id; it refuses it and does not resend.
 - **Meta is answered after the commit.** The gateway answers Meta 200 only after every D1 write
   for the payload has committed. A failed write answers 500 with nothing acknowledged, and Meta
   redelivers.
@@ -486,9 +490,9 @@ then the migrations (step 3), then the deploy (step 4).
 
    Unbind each by its `conversation_id` with `POST /v1/admin/unbind` (Operator runbook), then ask
    its city for a new invite code (`gc whatsapp invite`) and give it to the owner. The owner's
-   code text binds it again, by its user id. When Meta shows the same number beside that text, the
-   new binding is keyed by that number again (rule 1), so the box keeps the conversation. The Fable
-   reads of 11/5 found none; recount at the deploy.
+   code text binds it again, by its user id, and the new binding is keyed by that user id (rule
+   1): the box files it in a new conversation (`whatsapp/<user id>`), and the old one, keyed by
+   the number, keeps its history. The Fable reads of 11/5 found none; recount at the deploy.
 
 The test-number to production-number switch is one `wrangler secret put META_PHONE_NUMBER_ID`.
 Every box's gc account id is the stable alias `dynasty`, so no conversation identity changes.
@@ -648,12 +652,10 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
-- **Owners** (the phones table: the `conversation_id`, the user id, the last username and profile
-  name Meta showed, and for a PR 73 binding its number in `wa_id`) are kept until an operator
-  unbinds them. A username the owner later drops stays until then. The `conversation_id` is the
-  binding text's phone number whenever Meta showed one that no other row held (rule 1), so such an
-  owner's number at the bind is kept with the row, and with its sends for 30 days, until the
-  unbind, even after the owner changes numbers.
+- **Owners** (the phones table: the `conversation_id`, which is the owner's user id at the bind or,
+  for a PR 73 binding, its number; the user id; the last username and profile name Meta showed;
+  and for a PR 73 binding its number in `wa_id`) are kept until an operator unbinds them. A
+  username the owner later drops stays until then.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
   number, a user_id, a username, a profile name, a code, a token, a secret or an error's message.
   Three tests check every line against those values:

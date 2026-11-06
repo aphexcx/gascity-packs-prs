@@ -474,8 +474,9 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const held = (await t.inbox(a)).body.deliveries;
     expect(held.map((d: any) => d.kind)).toEqual(["joined", "message"]);
     expect((await t.ack(a, held.map((d: any) => d.id))).status).toBe(200);
-    // README, "Unbind an owner"; then the phone joins city B by B's invite code.
-    await t.unbind(wa);
+    // README, "Unbind an owner" (by its conversation_id: its user id, gp-g02t); then the phone
+    // joins city B by B's invite code.
+    await t.unbind(userOf(wa));
     t.clock.now += HOUR;
     await t.join(b, wa);
     t.clock.now += HOUR;
@@ -562,7 +563,7 @@ describe("Meta side: a wamid belongs to the city that first received it (gp-0g2s
     const wa = await t.join(a);
     const said = await t.say(wa, "still held for A");
     const payload = textPayload(wa, "still held for A", { wamid: said.wamid, ts: t.clock.now });
-    await t.unbind(wa);
+    await t.unbind(userOf(wa)); // its conversation_id: its user id (gp-g02t)
     t.clock.now += HOUR;
     await t.join(b, wa);
     expect((await t.webhook(payload)).status).toBe(200);
@@ -993,10 +994,10 @@ describe("City side: the 24-hour window", () => {
     const read = async () =>
       (await t.window(a)).body.windows as Array<{ conversation_id: string; user_id: string | null; last_inbound_at: number | null; window_closes_at: number | null }>;
     let w = await read();
-    expect(w.map((x) => x.conversation_id).sort()).toEqual([silent, wa].sort());
+    expect(w.map((x) => x.conversation_id).sort()).toEqual([silent, userOf(wa)].sort());
     expect(w.some((x) => x.conversation_id === waB)).toBe(false);
     expect(w.find((x) => x.conversation_id === silent)).toEqual({ conversation_id: silent, user_id: null, last_inbound_at: null, window_closes_at: null });
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: userOf(wa), last_inbound_at: T0, window_closes_at: T0 + CLOSE });
+    expect(w.find((x) => x.conversation_id === userOf(wa))).toEqual({ conversation_id: userOf(wa), user_id: userOf(wa), last_inbound_at: T0, window_closes_at: T0 + CLOSE });
 
     t.clock.now = T0 + 2 * HOUR;
     const sends = [
@@ -1006,12 +1007,12 @@ describe("City side: the 24-hour window", () => {
     ];
     expect(sends.map((s) => s.status)).toEqual([200, 200, 200]);
     w = await read();
-    expect(w.find((x) => x.conversation_id === wa)?.last_inbound_at).toBe(T0);
+    expect(w.find((x) => x.conversation_id === userOf(wa))?.last_inbound_at).toBe(T0);
 
     t.clock.now = T0 + 3 * HOUR;
     await t.say(wa, "the owner again", { ts: T0 + 3 * HOUR });
     w = await read();
-    expect(w.find((x) => x.conversation_id === wa)).toEqual({ conversation_id: wa, user_id: userOf(wa), last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
+    expect(w.find((x) => x.conversation_id === userOf(wa))).toEqual({ conversation_id: userOf(wa), user_id: userOf(wa), last_inbound_at: T0 + 3 * HOUR, window_closes_at: T0 + 3 * HOUR + CLOSE });
   });
 
   it("an owner's reaction is delivered and moves the window (the keeper's thumbs-up acknowledgement)", async () => {
@@ -1212,17 +1213,17 @@ describe("Health, logs, the entry point", () => {
     // made the message a stranger's and the canned line went out through the real fetch.)
     const net = vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response('{"error":{"message":"no network in this test"}}', { status: 500 }));
     try {
-      // A bound owner, as this branch's bind writes one (gateway.ts bind: keyed by the binding
-      // text's number, wa_id NULL, answering to its user id): the payload carries the same user
-      // id (textPayload: userOf), so the message routes to the city.
+      // A bound owner, as this branch's bind writes one (gateway.ts bind: keyed by its user id,
+      // wa_id NULL): the payload carries the same user id (textPayload: userOf), so the message
+      // routes to the city.
       const wa = phone();
       const cityId = `city_entry_${uniq()}`;
       await env.DB.batch([
         env.DB.prepare("INSERT INTO cities (id, name, box_name, created_at) VALUES (?, 'Entry City', 'entry-box', 0)").bind(cityId),
         env.DB.prepare(
           `INSERT INTO phones (conversation_id, wa_id, user_id, city_id, profile_name, bound_at, bound_wamid, last_inbound_at, bound_stamp)
-           VALUES (?1, NULL, ?2, ?3, NULL, 0, ?4, NULL, 0)`,
-        ).bind(wa, userOf(wa), cityId, `wamid.${uniq()}`),
+           VALUES (?1, NULL, ?1, ?2, NULL, 0, ?3, NULL, 0)`,
+        ).bind(userOf(wa), cityId, `wamid.${uniq()}`),
       ]);
       const payload = textPayload(wa, "entry body text 9876", { wamid: `wamid.${uniq()}`, ts: Math.floor(Date.now() / 1000) });
       const raw = new TextEncoder().encode(JSON.stringify(payload));
@@ -1236,7 +1237,7 @@ describe("Health, logs, the entry point", () => {
       );
       expect(res.status).toBe(200);
       const delivered = await env.DB.prepare("SELECT kind, wa_id, user_id, conversation_id FROM deliveries WHERE city_id = ?").bind(cityId).all();
-      expect(delivered.results).toEqual([{ kind: "message", wa_id: wa, user_id: userOf(wa), conversation_id: wa }]);
+      expect(delivered.results).toEqual([{ kind: "message", wa_id: wa, user_id: userOf(wa), conversation_id: userOf(wa) }]);
       await worker.fetch(new Request(`https://whatsapp.dynasty.computer/meta/webhook?hub.mode=subscribe&hub.verify_token=nope-${wa}&hub.challenge=1`), env);
       await worker.scheduled(createScheduledController({ scheduledTime: Date.now(), cron: "17 4 * * *" }), env);
       expect(net.mock.calls.map((c) => String(c[0] instanceof Request ? c[0].url : c[0]))).toEqual([]);

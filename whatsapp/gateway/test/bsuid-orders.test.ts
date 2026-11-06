@@ -280,7 +280,9 @@ describe("T2, round 4b finding 2 (R3, R3b, R3c): A on Q, Q re-paired; C's image 
           const pairing = text(form, { wa: p, user: aNow }, "A pairs P", T3);
           expect(await deliver(t, pairing)).toBe(200);
           sentInOrder.push(pairing);
-          if (!order.cStands) await t.unbind(p);
+          // The operator unbinds C by an id its binding is known by: P for C's PR 73 row; its user
+          // id for C with one, whose binding holds no number (gp-g02t: keyed by its user id).
+          if (!order.cStands) await t.unbind(cKind === "with a user id" ? c : p);
           expect(await deliver(t, cImage, T3 + LATER)).toBe(200);
           sentInOrder.push(cImage);
           const cities = { x, w, v };
@@ -427,8 +429,11 @@ describe("T6, new: a→a2 (T1) fails until a2→a3 (T2) lands; then a→a2 is re
       table.check("A's message under a3", await where(t, { x }, m), meta ? ["x"] : []);
       table.check("canned lines", canned(), 0);
       table.check("A's current user id", (await t.window(x)).body.windows.map((o: any) => o.user_id), [meta ? a3 : a]);
-      // X's box files A under the number A bound with (README rule 1); the send reaches A's current id.
-      table.check("X's send to A's conversation", await sentTo(t, x, p), { status: 200, recipient: meta ? a3 : a, to: null });
+      // X's box files A under the id A bound with (README rule 1: its user id then, gp-g02t), as
+      // GET /v1/window names it; the send reaches A's current id.
+      const aConversation = (await t.window(x)).body.windows[0]?.conversation_id;
+      table.check("A's conversation id", aConversation, a);
+      table.check("X's send to A's conversation", await sentTo(t, x, aConversation), { status: 200, recipient: meta ? a3 : a, to: null });
       // Meta replays both notices; then A writes again.
       expect(await deliver(t, first, T3 + LATER)).toBe(200);
       expect(await deliver(t, second, T3 + LATER)).toBe(200);
