@@ -162,8 +162,11 @@ What the gateway does:
    to the binding text's wa_id. It is the user_id instead when Meta shared no phone, or when that
    phone number is already another owner's `conversation_id` (a recycled number). It never changes
    after that. Every owner bound before this change keeps its wa_id as its key, so no box sees a
-   new conversation. The row also holds the user_id Meta names the owner by now, unique. It holds
-   no phone number: the number an owner shows is its mark (rule 3). A row PR 73 bound by its
+   new conversation. The row also holds the user_id Meta names the owner by now, unique. Its
+   `wa_id` is empty: the number an owner shows now is its mark (rule 3). But a key taken from the
+   binding text's wa_id is that phone number: the row keeps it as its `conversation_id` until the
+   owner is unbound, whatever number the owner shows later, and the inbox, `GET /v1/window` and
+   the sends name the owner by it ("Data, retention, logs", Owners). A row PR 73 bound by its
    number alone holds that number in `wa_id` and no user_id (rule 2).
 2. **Routing: by the user id, never the number** (gp-lv49; the design of record,
    `whatsapp/docs/design-bsuid-pairing-and-spans.md`). Since early April 2026 Meta puts the
@@ -291,6 +294,17 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
 
 ## Behaviours the box adapter relies on
 
+- **The owner's key is `conversation_id`** (gp-g02t). Every delivery the inbox returns names its
+  owner by `conversation_id`: a message, a joined and a status alike, and a row the v1 Worker
+  wrote reads its `wa_id` as one. Its `wa_id` is only the number it shows: null for an owner
+  known by user id alone, the new number after a number change, the same number for two owners
+  after a recycled number. So the box keys every conversation, ack and journal line by
+  `conversation_id`, and shows the number only. The pack's adapter does so since gp-g02t
+  (`whatsapp/adapter/src/render.js`, `conversationOf`). An adapter that keys by `wa_id` leaves a
+  null-number owner's deliveries unacknowledged (held 7 days, then lost, and counted against the
+  5,000 cap meanwhile), splits an owner's conversation at a number change, and puts two owners
+  in one conversation after a recycled number. The boxes therefore take that adapter before
+  this gateway deploys ("Deploy", before step 1).
 - **The hold.** A delivery is held, body and all, until `POST /v1/inbox/ack` names its id, and
   every poll returns it again. The hold has two bounds: the 7-day cron, and the 5,000-held cap per
   city (beyond which Meta gets 503 and retries).
@@ -309,7 +323,8 @@ An owner may join and write with a WhatsApp username: the gateway knows them by 
   way the new city gets no delivery and no access to its media.
 - **409 `ambiguous_recipient` on a send** (gp-0g2s). Resend to `owner_user_id`, the current
   user_id of the owner `to` names by its conversation_id (gp-w376). When it is null, take the
-  owner's current id from `GET /v1/window`. See "Business-scoped user ids", rule 7.
+  owner's current id from `GET /v1/window`. See "Business-scoped user ids", rule 7. The pack's
+  adapter refuses the send and does not resend (the mayor's word on gp-szj9).
 - **Meta is answered after the commit.** The gateway answers Meta 200 only after every D1 write
   for the payload has committed. A failed write answers 500 with nothing acknowledged, and Meta
   redelivers.
@@ -323,8 +338,8 @@ These rules add to the contract without changing a route or a field. Each has it
 
 - **Stale messages.** A message Meta stamped more than 8 days ago is dropped and counted
   (`stale_messages`). That is longer than any dedup row lives, so it could otherwise be a second
-  delivery of something already acknowledged. Meta's own retries stop at 7 days (an assumption:
-  "Business-scoped user ids", rule 5, "The horizon").
+  delivery of something already acknowledged. Meta's own retries stop at 7 days (Meta's webhooks
+  page, cited at "Business-scoped user ids", rule 5, "The horizon").
 - **Invite-code attempts.** A stranger may text 6-digit codes 5 times a day. The sixth is not
   bound even by a live code, and a Meta redelivery of any attempt is not a second attempt, however
   the redeliveries interleave: A, B, A, B, A is two attempts (gp-0g2s). The gateway keeps each
@@ -363,6 +378,15 @@ ship their binaries as optional dependencies.
 
 Everything below happens in the **Houmanoids** Cloudflare account, which holds `dynasty.computer`.
 Never Robert's account or his domain.
+
+**Before step 1: the boxes' adapter** (gp-g02t). Every box that runs the whatsapp pack must run
+its adapter at this change's pack pin, or later, before step 3. That adapter keys every owner by
+`conversation_id` ("Behaviours the box adapter relies on"). It still reads PR 73's inbox, whose
+deliveries have no `conversation_id` field (it keys those by `wa_id`), so the boxes can take it
+while PR 73's gateway serves. An older adapter refuses this gateway's deliveries that show no
+number and splits or mixes conversations by the number. Check each box's pack pin names a commit
+that holds `conversationOf` in `whatsapp/adapter/src/render.js`. The order is the boxes' adapter,
+then the migrations (step 3), then the deploy (step 4).
 
 1. **Log in and check the account.**
 
@@ -410,7 +434,11 @@ Never Robert's account or his domain.
    misroute 0003 fixes could have written such a pair, and the deployed D1 holds no deliveries.
    0003 was edited in place because no remote D1 has applied it: main had only 0001. Confirm that
    before step 3 with `$PNPM exec wrangler d1 migrations list whatsapp-gateway --remote`, which
-   must list 0002 and 0003 as not yet applied.
+   must list 0002 and 0003 as not yet applied. **If it lists 0003 as applied, stop.** That D1 ran
+   the parked text of 0003: wrangler skips this 0003 by its name, so `links`, `unbinds` and
+   `marks` never exist and this code answers 500 to every message payload, and the new text cannot
+   be run by hand either (its first statement fails: the index `deliveries_wamid_once` already
+   exists). That D1 needs a new migration, written for it, before this deploy.
 
    0003 also carries each stranger's last counted code text (`unknown_senders.last_code_wamid`)
    into `code_attempt_wamids` (gp-w376). A code text the old code counted, and Meta redelivers
@@ -620,9 +648,12 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
   welcome and canned lines leave theirs there.
 - **Codes and keys.** Spent and expired invite codes are pruned 7 days after expiry, enrollment
   codes 30 days after, and send idempotency keys after 30 days.
-- **Owners** (the phones table: the user id, the last username and profile name Meta showed, and
-  for a PR 73 binding its number) are kept until an operator unbinds them. A username the owner
-  later drops stays until then.
+- **Owners** (the phones table: the `conversation_id`, the user id, the last username and profile
+  name Meta showed, and for a PR 73 binding its number in `wa_id`) are kept until an operator
+  unbinds them. A username the owner later drops stays until then. The `conversation_id` is the
+  binding text's phone number whenever Meta showed one that no other row held (rule 1), so such an
+  owner's number at the bind is kept with the row, and with its sends for 30 days, until the
+  unbind, even after the owner changes numbers.
 - **Logs** carry fixed event names and counts only. No log line ever carries a body, a phone
   number, a user_id, a username, a profile name, a code, a token, a secret or an error's message.
   Three tests check every line against those values:

@@ -702,9 +702,9 @@ export function createGateway(deps: Deps) {
         // Meta stamped after the id's last unbind (a text the owner sent while bound elsewhere is
         // that binding's, never a new one's: the design note's T8). The number beside it never
         // matters: a phone number Meta pairs with a new user id is no claim on it (no adoption,
-        // point 5). The row holds no number (the mark shows one); its conversation_id is the wa_id,
-        // unless that number is already another owner's conversation_id (a recycled number), else
-        // the user_id (README rule 1). It answers to the id from this text's stamp. The rows below
+        // point 5). The row's wa_id holds no number (the mark shows one); its conversation_id is
+        // the wa_id, unless that number is already another owner's conversation_id (a recycled
+        // number), else the user_id (README rule 1). It answers to the id from this text's stamp. The rows below
         // find it by the wamid that bound it.
         const bindIndex = push(
           db
