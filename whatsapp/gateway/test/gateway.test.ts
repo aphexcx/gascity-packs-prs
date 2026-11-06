@@ -225,8 +225,9 @@ describe("Meta side: routing by phone", () => {
     const owner = await t.join(city);
     const code = await t.invite(city);
     const stranger = phone();
-    // 99 messages of a bound owner (4 statements each since gp-0g2s = 396), then a stranger's
-    // invite text whose 10 statements would straddle a cut at 400. Re-cut these counts whenever a
+    // 99 messages of a bound owner (4 statements each since gp-0g2s = 396; gp-lv49: the mark, the
+    // delivery, the count, the window), then a stranger's invite text whose 11 statements (gp-lv49:
+    // the re-key after the bind) would straddle a cut at 400. Re-cut these counts whenever a
     // message's statements change: the mutation check's "naive batch slicing" survives otherwise.
     const payload = textPayload(owner, "b0", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
     const value = payload.entry[0].changes[0].value;

@@ -1514,6 +1514,35 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     expect(t.logs.at(-1)).toMatchObject({ event: "webhook", unrouted: 1 });
   });
 
+  it("a code text under a user id whose number-change notice already landed binds and is re-keyed along the waiting link: the owner answers to its newest id, and the welcome goes there (point 2: links in any order)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const city = await t.enrollCity("Hou Dynasty");
+    const [p, q] = [phone(), phone()];
+    const [a2, a3] = [bsuid(), bsuid()];
+    const code = await t.invite(city);
+    // The owner texts the code under a2 at T1; the write fails.
+    t.clock.now = T0 + HOUR;
+    const joining = textAs({ wa: p, user: a2 }, code, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    flaky.arm(0);
+    expect((await t.webhook(joining)).status).toBe(500);
+    // The owner's number change a2 -> a3 at T2 lands first: no binding answers to a2 yet, so its
+    // link waits.
+    t.clock.now = T0 + 2 * HOUR;
+    expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a2, newUser: a3, newWa: q }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    // Meta's retry of the code text binds the owner, and the waiting link is reached.
+    t.clock.now = T0 + 2 * HOUR + HOUR / 4;
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(joining)).status).toBe(200);
+    expect(await owners(a3)).toEqual([{ conversation_id: p, shows: q, user_id: a3, username: null, city_id: city.id }]);
+    expect(t.graph.sends().slice(calls).map((c) => [c.body?.recipient, c.body?.text?.body])).toEqual([[a3, "You're connected to Hou Dynasty's mayor. Say hi."]]);
+    // The owner writes under its newest id: its own city, no canned line.
+    t.clock.now = T0 + 3 * HOUR;
+    const next = await t.sayAs({ wa: q, user: a3 }, "my new phone");
+    expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === next.wamid)).toMatchObject({ conversation_id: p, user_id: a3 });
+    expect(t.graph.sends().slice(calls)).toHaveLength(1);
+  });
+
   it("an owner PR 73 bound by its number alone has no address: a send to it is 403 not_bound and never reaches Meta", async () => {
     const t = setup();
     const city = await t.enrollCity();

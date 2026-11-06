@@ -298,6 +298,19 @@ const route = (id: string, stamp: string) =>
  */
 const stranger = (id: string, stamp: string) =>
   `(${id} IS NOT NULL AND ${holder(id)} IS NULL AND ${stamp} > COALESCE(${unboundAt(id)}, -1))`;
+/**
+ * The re-key, for the binding whose current user id is ?1: along the links from it, to the newest
+ * id no other binding answers to. A link is reached when its old id becomes a binding's, by the
+ * notice that links to it or by a bind under it, and both run this one statement (point 2).
+ */
+const REKEY = `UPDATE phones SET user_id = (
+     WITH RECURSIVE fwd(id, depth) AS (
+       SELECT ?1, 0
+       UNION ALL
+       SELECT l.new_id, fwd.depth + 1 FROM fwd JOIN links l ON l.old_id = fwd.id
+       WHERE fwd.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+     SELECT id FROM fwd ORDER BY depth DESC LIMIT 1)
+   WHERE user_id = ?1`;
 /** The number a binding shows (the admin view, a delivery omitting it): its id's newest mark. */
 const shownNumber = (row: string) =>
   `(CASE WHEN ${row}.user_id IS NULL THEN ${row}.wa_id
@@ -484,11 +497,13 @@ export function createGateway(deps: Deps) {
     let canned = 0;
     for (const b of plan.binds) {
       if (!committed(b.index)) continue;
-      const city = await db
-        .prepare("SELECT c.name FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.bound_wamid = ?")
+      // The welcome goes to the binding's current user id, read after the commit (a link waiting
+      // from the bound id may have re-keyed it).
+      const bound = await db
+        .prepare("SELECT c.name, p.user_id FROM phones p JOIN cities c ON c.id = p.city_id WHERE p.bound_wamid = ?")
         .bind(b.wamid)
-        .first<{ name: string }>();
-      if (await tell(b.id, `You're connected to ${city?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
+        .first<{ name: string; user_id: string | null }>();
+      if (await tell(bound?.user_id ?? b.id, `You're connected to ${bound?.name ?? "your city"}'s mayor. Say hi.`, "welcome")) welcomed += 1;
     }
     for (const c of plan.canned) {
       if (!committed(c.index)) continue;
@@ -699,6 +714,9 @@ export function createGateway(deps: Deps) {
             )
             .bind(now, m.wamid, wa, user, m.username, m.profileName, body),
         );
+        // A link already waiting from the bound id (its notice landed before this text) is reached
+        // now: the new binding is re-keyed along it, as a notice's own landing would.
+        push(db.prepare(REKEY).bind(user));
         plan.binds.push({ index: bindIndex, id: user, wamid: m.wamid });
       }
       // The message itself, routed to the binding answering to its user id when Meta stamped it,
@@ -776,20 +794,7 @@ export function createGateway(deps: Deps) {
           // A link a binding reaches re-keys it: from its current id, along the links, to the
           // newest id no other binding answers to. A link waiting for its old id's own notice is
           // reached when that one lands, by this same statement.
-          push(
-            db
-              .prepare(
-                `UPDATE phones SET user_id = (
-                   WITH RECURSIVE fwd(id, depth) AS (
-                     SELECT ?1, 0
-                     UNION ALL
-                     SELECT l.new_id, fwd.depth + 1 FROM fwd JOIN links l ON l.old_id = fwd.id
-                     WHERE fwd.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
-                   SELECT id FROM fwd ORDER BY depth DESC LIMIT 1)
-                 WHERE user_id = ?1`,
-              )
-              .bind(previousUserId),
-          );
+          push(db.prepare(REKEY).bind(previousUserId));
         }
         // The mark: the new number shows the new id from the notice's stamp, the old number shows
         // nobody, each unless Meta already paired it later (point 4).
