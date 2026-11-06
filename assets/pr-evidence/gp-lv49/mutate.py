@@ -14,11 +14,11 @@ MUTANTS = [
     ("M1 route: a previous id routes past the notice that replaced it", "(walk.until IS NULL OR ${stamp} <= walk.until) AND ", "", 1),
     ("M2 route: a binding takes what Meta stamped before its invite text", "${stamp} >= COALESCE(p.bound_stamp, 0)", "${stamp} >= 0", 1),
     ("M3 route: no unbind floor", "AND ${stamp} > COALESCE(${unboundAt(id)}, -1)\n     LIMIT 1)", "AND ${stamp} > -1\n     LIMIT 1)", 1),
-    ("M4 walk: does not stop at the first current id", "WHERE walk.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))", "WHERE walk.depth < ${LINK_DEPTH})", 1),
+    ("M4 walk: does not stop at the first current id", "FROM walk JOIN links l ON l.old_id = walk.id\n     WHERE NOT EXISTS (SELECT 1 FROM phones h WHERE h.user_id = walk.id))", "FROM walk JOIN links l ON l.old_id = walk.id)", 1),
     ("M5 stranger: no unbind floor (a text from before an unbind is a stranger's)", "${holder(id)} IS NULL AND ${stamp} > COALESCE(${unboundAt(id)}, -1))", "${holder(id)} IS NULL AND ${stamp} > -1)", 1),
     ("M6 link: recorded even when its new id is another binding's", "WHERE ?1 <> ?2 AND ${holder(\"?2\")} IS NULL", "WHERE ?1 <> ?2", 1),
-    ("M7 re-key: walks into an id another binding holds", "WHERE fwd.depth < ${LINK_DEPTH} AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))", "WHERE fwd.depth < ${LINK_DEPTH})", 1),
-    ("M8 no re-key after a bind", "push(db.prepare(REKEY).bind(user));", "", 1),
+    ("M7 re-key: walks into an id another binding holds", "SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id\n       WHERE NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))", "SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id)", 1),
+    ("M23 a late link never extends an unbind's record", "push(db.prepare(EXTEND_UNBINDS).bind(previousUserId));", "", 1),    ("M8 no re-key after a bind", "push(db.prepare(REKEY).bind(user));", "", 1),
     ("M9 no re-key on a notice", "push(db.prepare(REKEY).bind(previousUserId));", "", 1),
     ("M10 a pairing moves the mark even when stamped below it", "WHERE excluded.stamp >= marks.stamp`,\n            )\n            .bind(wa, m.fromUserId, stamp)", "WHERE excluded.stamp >= 0`,\n            )\n            .bind(wa, m.fromUserId, stamp)", 1),
     ("M11 a notice does not clear its old number", "if (wa !== null && wa !== waId) {", "if (false && wa !== waId) {", 1),
@@ -28,19 +28,12 @@ MUTANTS = [
     ("M15 a notice no binding answers to is not counted", "IS NULL AND (?3 OR NOT ${stranger(\"?1\", \"?2\")})", "IS NULL AND (?3 = -1 OR NOT ${stranger(\"?1\", \"?2\")})", 1),
     ("M16 the cron deletes marks naming a current binding", "AND (user_id IS NULL OR NOT EXISTS (SELECT 1 FROM phones p WHERE p.user_id = marks.user_id))", "AND 1 = 1", 1),
     ("M17 a code binds a previous id of a standing binding (holder dropped)", "AND ${stranger(\"?2\", \"?10\")}", "AND ?2 IS NOT NULL AND ?10 > COALESCE((SELECT MAX(unbound_at) FROM unbinds WHERE user_id = ?2), -1)", 1),
-    ("M18 the window moves only for a message under the current id", "THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,\n               profile_name", "THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,\n               profile_name", 1),
+    ("M18 the window moves only for a message under the current id", "last_inbound_at = CASE WHEN ?3 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,", "last_inbound_at = CASE WHEN ?3 AND user_id = ?5 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,", 1),
     ("M19 a retry under a previous id overwrites the names", "profile_name = CASE WHEN user_id = ?5 THEN COALESCE(?1, profile_name) ELSE profile_name END", "profile_name = COALESCE(?1, profile_name)", 1),
     ("M20 a delivery omitting the number carries none", "COALESCE(?3, ${shownNumber(\"p\")})", "COALESCE(?3, NULL)", 1),
     ("M21 a send's `to` never names a number an owner shows", "OR EXISTS (SELECT 1 FROM marks k WHERE k.number = ?1 AND k.user_id = p.user_id)) LIMIT 2", ") LIMIT 2", 1),
     ("M22 the route ignores the walk's end (any id on the chain)", "SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id\n     WHERE", "SELECT p.conversation_id FROM walk JOIN phones p ON p.user_id = walk.id OR p.conversation_id = walk.id\n     WHERE", 1),
 ]
-# M18 is a placeholder kept equal on purpose? No: replace it with the real window mutation below.
-MUTANTS[17] = (
-    "M18 the window moves only for a message under the current id",
-    "last_inbound_at = CASE WHEN ?3 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,",
-    "last_inbound_at = CASE WHEN ?3 AND user_id = ?5 THEN MAX(COALESCE(last_inbound_at, 0), ?4) ELSE last_inbound_at END,",
-    1,
-)
 
 
 def sha(b):

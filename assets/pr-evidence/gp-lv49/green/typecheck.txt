@@ -1,0 +1,6 @@
+# gp-lv49 typecheck
+# HEAD 40d9d7ec5b8122d0ba1b59faefc0e9d7cd93c9ab; src/gateway.ts sha256 9aeeec0e4367
+# 2026-11-06T07:57:29Z pnpm typecheck (cwd whatsapp/gateway) -> exit 0
+
+pnpm wrapper: verify-deps off for run typecheck (round 3)
+$ tsc -p tsconfig.json --noEmit
