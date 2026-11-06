@@ -1,0 +1,18 @@
+# Google Chat provider pack. One Workspace user identity per city;
+# Workspace Events API + Pub/Sub streaming pull inbound, Chat API outbound.
+# No public listener.
+[pack]
+name = "gchat"
+version = "0.1.0"
+schema = 2
+
+[[service]]
+name = "gchat"
+kind = "proxy_process"
+
+[service.publication]
+visibility = "private"
+
+[service.process]
+command = ["./adapter/run.sh"]
+health_path = "/healthz"
