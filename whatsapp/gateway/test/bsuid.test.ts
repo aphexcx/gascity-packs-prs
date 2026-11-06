@@ -664,7 +664,7 @@ describe("BSUID: a number change links the old user id to the new one through Me
     // The gate's order: the owner writes at T0 + 1 h and the gateway's write fails (Meta will retry),
     // the number change commits at T0 + 2 h, and Meta's retry arrives at T0 + 3 h under the old ids.
     t.clock.now = T0 + HOUR;
-    const before = textAs({ wa, user }, "sent before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR });
+    const before = textAs({ wa, user }, "sent before the change", { wamid: `wamid.${uniq()}`, ts: T0 + HOUR, name: "A, before the change" });
     flaky.arm(0);
     expect((await t.webhook(before)).status).toBe(500);
     t.clock.now = T0 + 2 * HOUR;
@@ -676,6 +676,8 @@ describe("BSUID: a number change links the old user id to the new one through Me
     const d = (await t.inbox(city)).body.deliveries.find((x: any) => x.message?.id === wamidOf(before));
     expect(d).toMatchObject({ kind: "message", wa_id: wa, user_id: user, conversation_id: wa });
     expect(d.message.text.body).toBe("sent before the change");
+    // Under a previous id, the retry is older than the binding's names: it changes none of them.
+    expect(await env.DB.prepare("SELECT profile_name FROM phones WHERE conversation_id = ?").bind(wa).first()).toEqual({ profile_name: "Owner Name" });
     expect(t.graph.sends()).toHaveLength(calls); // no canned line, least of all to the old number
     expect(await owners(wa, newWa, user, newUser)).toEqual([{ conversation_id: wa, shows: newWa, user_id: newUser, username: null, city_id: city.id }]);
     expect((await t.window(city)).body.windows).toEqual([
@@ -1541,6 +1543,57 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     const next = await t.sayAs({ wa: q, user: a3 }, "my new phone");
     expect((await t.inbox(city)).body.deliveries.find((d: any) => d.message?.id === next.wamid)).toMatchObject({ conversation_id: p, user_id: a3 });
     expect(t.graph.sends().slice(calls)).toHaveLength(1);
+  });
+
+  it("a replaced user id answers until its notice and never after: a message under it that Meta stamped after the notice reaches no city, hears nothing and is counted", async () => {
+    const t = setup();
+    const city = await t.enrollCity();
+    const p = phone();
+    const [a, a2] = [bsuid(), bsuid()];
+    await t.joinAs(city, { wa: p, user: a });
+    t.clock.now = T0 + HOUR;
+    expect((await t.webhook(changeAs("user_changed_number", { from: p, previousUser: a, newUser: a2, newWa: phone() }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    t.clock.now = T0 + 2 * HOUR;
+    const unrouted = await t.stat("unrouted_messages");
+    const calls = t.graph.sends().length;
+    const after = await t.sayAs({ user: a }, "under the replaced id, after its notice");
+    expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === after.wamid)).toBe(false);
+    expect(await t.stat("unrouted_messages")).toBe(unrouted + 1);
+    expect(t.graph.sends()).toHaveLength(calls);
+  });
+
+  it("an unbind's record holds even when a later notice links its id to another binding (a retired id reissued): what Meta stamped before the unbind reaches no city", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    const [a, b] = [bsuid(), bsuid()];
+    await t.joinAs(y, { user: b }); // Y's owner, from T0
+    await t.joinAs(x, { user: a }); // X's owner, from T0
+    t.clock.now = T0 + HOUR;
+    const m = textAs({ user: a }, "for X's mayor", { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    flaky.arm(0);
+    expect((await t.webhook(m)).status).toBe(500);
+    t.clock.now = T0 + 2 * HOUR;
+    await t.unbind(a);
+    // Meta's page does not say a retired user id is never issued again: Y's owner's notice names a.
+    t.clock.now = T0 + 3 * HOUR;
+    expect((await t.webhook(changeAs("user_changed_user_id", { previousUser: b, newUser: a }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    expect(await owners(a)).toEqual([{ conversation_id: b, shows: null, user_id: a, username: null, city_id: y.id }]);
+    t.clock.now = T0 + 4 * HOUR;
+    expect((await t.webhook(m)).status).toBe(200);
+    const wamid = m.entry[0].changes[0].value.messages[0].id;
+    for (const city of [x, y]) expect((await t.inbox(city)).body.deliveries.some((d: any) => d.message?.id === wamid)).toBe(false);
+  });
+
+  it("a notice whose previous user id no binding answers to reaches no city, hears nothing and is counted", async () => {
+    const t = setup();
+    await t.enrollCity();
+    const unrouted = await t.stat("unrouted_messages");
+    const calls = t.graph.sends().length;
+    expect((await t.webhook(changeAs("user_changed_number", { from: phone(), previousUser: bsuid(), newUser: bsuid(), newWa: phone() }, { wamid: `wamid.${uniq()}`, ts: t.clock.now }))).status).toBe(200);
+    expect(await t.stat("unrouted_messages")).toBe(unrouted + 1);
+    expect(t.graph.sends()).toHaveLength(calls);
   });
 
   it("an owner PR 73 bound by its number alone has no address: a send to it is 403 not_bound and never reaches Meta", async () => {
