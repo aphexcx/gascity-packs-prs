@@ -1719,6 +1719,51 @@ describe("BSUID: the operator's unbind, a notice naming no previous id, and an o
     expect((await t.inbox(z)).body.deliveries.some((d: any) => d.message?.id === mine.wamid)).toBe(false);
   });
 
+  it("the cron never erases an unbind's reach while a message it decides can still arrive: an expiring link leaves its component's floor on both its ids (codex self-review r3, finding 1)", async () => {
+    const flaky = flakyDb();
+    const t = setup({ db: flaky.db });
+    const x = await t.enrollCity();
+    const y = await t.enrollCity();
+    const [a, b] = [bsuid(), bsuid()];
+    await t.joinAs(x, { user: a });
+    const change = changeAs("user_changed_user_id", { previousUser: a, newUser: b }, { wamid: `wamid.${uniq()}`, ts: T0 + DAY });
+    t.clock.now = T0 + DAY;
+    flaky.arm(0);
+    expect((await t.webhook(change)).status).toBe(500);
+    t.clock.now = T0 + 3 * DAY;
+    const ky = await t.invite(y);
+    const code = textAs({ user: b }, ky, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    flaky.arm(0);
+    expect((await t.webhook(code)).status).toBe(500);
+    t.clock.now = T0 + 4 * DAY;
+    await t.unbind(a);
+    t.clock.now = T0 + 5 * DAY;
+    expect((await t.webhook(change)).status).toBe(200);
+    t.clock.now = T0 + 9 * DAY;
+    await t.gateway.maintain(); // the link (stamped day 1) is past its 8 days
+    t.clock.now = T0 + 9 * DAY + HOUR;
+    expect((await t.webhook(code)).status).toBe(200); // stamped day 3: within its own 8 days
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM phones WHERE city_id = ?").bind(y.id).first()).toEqual({ n: 0 });
+  });
+
+  it("links that loop (a -> b and b -> a, neither bound) leave a binding on its own id, however Meta replays them (codex self-review r3, finding 2)", async () => {
+    const t = setup();
+    const x = await t.enrollCity();
+    const [a, b] = [bsuid(), bsuid()];
+    t.clock.now = T0 + HOUR;
+    const ab = changeAs("user_changed_user_id", { previousUser: a, newUser: b }, { wamid: `wamid.${uniq()}`, ts: t.clock.now });
+    const ba = changeAs("user_changed_user_id", { previousUser: b, newUser: a }, { wamid: `wamid.${uniq()}`, ts: t.clock.now + 60 });
+    for (const n of [ab, ba]) expect((await t.webhook(n)).status).toBe(200);
+    t.clock.now = T0 + 2 * HOUR;
+    await t.joinAs(x, { user: a });
+    const current = async () => (await t.window(x)).body.windows.map((w: any) => w.user_id);
+    expect(await current()).toEqual([a]);
+    for (const n of [ba, ab, ba]) {
+      expect((await t.webhook(n)).status).toBe(200);
+      expect(await current()).toEqual([a]);
+    }
+  });
+
   it("a notice naming no id at all (no `from`, no previous_user_id) is counted too, in notices_without_previous_id and unrouted_messages (fresh review r1, F3)", async () => {
     const t = setup();
     await t.enrollCity();

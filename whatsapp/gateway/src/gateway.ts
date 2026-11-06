@@ -328,10 +328,10 @@ const REKEY = `UPDATE phones SET user_id = COALESCE((
        SELECT ?1
        UNION
        SELECT l.new_id FROM fwd JOIN links l ON l.old_id = fwd.id
-       WHERE l.stamp > COALESCE(${floorOf("?1")}, -1) AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+       WHERE l.stamp > COALESCE(${floorOf("?1")}, -1) AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id AND o.user_id <> ?1))
      SELECT f.id FROM fwd f
      WHERE NOT EXISTS (SELECT 1 FROM links l WHERE l.old_id = f.id AND l.stamp > COALESCE(${floorOf("?1")}, -1)
-                         AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id))
+                         AND NOT EXISTS (SELECT 1 FROM phones o WHERE o.user_id = l.new_id AND o.user_id <> ?1))
      LIMIT 1), ?1)
    WHERE user_id = ?1`;
 /** The number a binding shows (the admin view, a delivery omitting it): its id's newest mark. */
@@ -1340,6 +1340,22 @@ export function createGateway(deps: Deps) {
    */
   async function maintain(): Promise<Record<string, number>> {
     const now = deps.now();
+    // A link past its 8 days may still join an id to an unbind whose own 8 days run later (a
+    // notice that landed after the unbind; the codex self-review r3, finding 1). Before it goes,
+    // its component's floor is written on both its ids, so the record outlives the link exactly as
+    // long as the unbind's own record does.
+    const { results: expiring } = await db
+      .prepare("SELECT old_id, new_id FROM links WHERE stamp <= ?")
+      .bind(now - EVIDENCE_SECONDS)
+      .all<{ old_id: string; new_id: string }>();
+    const carry = expiring.flatMap((l) =>
+      [l.old_id, l.new_id].map((id) =>
+        db
+          .prepare(`INSERT OR IGNORE INTO unbinds (user_id, unbound_at) SELECT ?1, f FROM (SELECT ${floorOf("?1")} AS f) WHERE f IS NOT NULL`)
+          .bind(id),
+      ),
+    );
+    if (carry.length) await db.batch(carry);
     const results = await db.batch([
       db
         .prepare(

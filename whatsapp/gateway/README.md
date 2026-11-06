@@ -608,7 +608,9 @@ Admin calls carry `Authorization: Bearer $ADMIN_TOKEN`.
 - **Number changes and unbinds.** A number change's link (the old user id, the new one, Meta's
   stamp) is kept 8 days from that stamp (`links`). An unbind's record (each user id the owner
   answered to, and the time) is kept 8 days from the unbind (`unbinds`). The cron deletes both at
-  the end of that time. An owner row keeps Meta's stamp of its invite text (`bound_stamp`) until an
+  the end of that time. Before a link goes, the cron writes the unbind floor of its ids (the last
+  unbind of any id linked to them) on both, so a late notice's reach outlives its link for as
+  long as the unbind's own record lives. An owner row keeps Meta's stamp of its invite text (`bound_stamp`) until an
   operator unbinds it.
 - **Marks.** Each phone number's newest pairing with a user id, and Meta's stamp of it (`marks`).
   A mark naming an owner's current user id is the number that owner shows, kept while it does. Any

@@ -1,0 +1,14 @@
+# codex-gate exec: prompt /Users/tailor512/city/assets/pr-evidence/gp-lv49/codex-r3-prompt.md (3993 bytes, on stdin) repo /Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs; model gpt-6-astra; 2026-11-06T08:11:46Z
+# codex route: the hub (CODEX_HOME /Users/tailor512/.config/citadel-mayor/codex-hub; the hub rotates its Codex seats)
+
+1. **MAJOR — Cron can erase an unbind’s protection while retries remain valid.** [gateway.ts:1366](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:1366)
+
+   A is bound to X as `a`. Its `a→b` notice fails on day 1. On day 3, its text containing Y’s freshly minted invite and a subsequent image both fail. X unbinds A on day 4, recording only `a`; the notice lands on day 5. On day 9, cron deletes the link but retains the unbind. Now `floorOf(b)` returns NULL: retrying the six-day-old code binds A to Y, and the image retry reaches Y with its media. The invite remains retained and was live at its stamp. This reopens T8 and the late-notice unbind regression. Preserve the affected ids’ unbind floors through their retry horizon before deleting connecting links.
+
+2. **MINOR — Cyclic waiting links change the binding on replay.** [gateway.ts:331](/Users/tailor512/city/.worktrees/gascity-packs/lane-implementation-worker-opus-gascity-packs/whatsapp/gateway/src/gateway.ts:331)
+
+   If `a→b` and `b→a` arrive while neither id is bound, both links are accepted. Binding `a` then re-keys it to `b`: the query treats its own row at `a` as an obstruction, making `b` appear terminal. Replaying `b→a` switches it back; replaying `a→b` switches it again. Recursion terminates, but the documented cycle fallback and replay invariance do not hold. Distinguish the row being updated from another binding and preserve its id when the chain cycles.
+
+Tests/builds: **not run (sandbox)**. Head transcripts report **226/226 tests passed**, clean typecheck, and successful Wrangler dry run. Findings above are from static tracing.
+
+VERDICT: BLOCK
